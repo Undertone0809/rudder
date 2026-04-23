@@ -95,6 +95,7 @@ npx rudder run
 For contributors working on the repo itself:
 
 ```bash
+git clone https://github.com/Undertone0809/rudder
 pnpm install
 pnpm dev
 ```
