@@ -98,7 +98,17 @@ Reserve always-visible helper copy for blocking, risky, or state-critical guidan
 Rudder is about work and outcomes.
 The interface should bias toward artifacts, execution state, approvals, and results, not setup theater.
 
-### 3.4.1 Review Blocks Inside Chat
+### 3.4.1 Transcript Rendering
+
+Run transcripts are operator visibility surfaces, not raw protocol dumps.
+Use presentation language that matches the entry type:
+
+- Command entries should show the actual command and the command response. Hide shell wrappers such as `/bin/zsh -lc`, working-directory payload fields, transport metadata, and result envelope lines such as `command:`, `status:`, and `exit_code:`.
+- Generic tool entries may show structured request and response payloads when expanded, because the payload shape is part of understanding the tool call.
+- Standalone stdout/stderr entries should remain clearly labeled as stream output and should not be merged into generic tool metadata.
+- Top-level transcript summaries should describe operator-meaningful activity such as reading, searching, editing, or running commands; expandable details are for the exact command, tool payload, or stream body.
+
+### 3.4.2 Review Blocks Inside Chat
 
 When chat produces a proposal, approval, or lightweight change that needs operator review, that object is no longer just another message, even if it has not become a formal issue yet.
 

@@ -241,6 +241,50 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("sh: vitest: command not found");
   });
 
+  it("renders command details without shell wrappers or result envelope metadata", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "Checking the Vercel directory.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-wrapper-1",
+              input: {
+                command: "/bin/zsh -lc 'ls -la /Users/zeeland/.vercel 2>/dev/null || true'",
+                cwd: "/Users/zeeland/projects/rudder-oss",
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "cmd-wrapper-1",
+              content:
+                "command: /bin/zsh -lc 'ls -la /Users/zeeland/.vercel 2>/dev/null || true'\nstatus: failed\nexit_code: 1\n\nls: /Users/zeeland/.vercel: Permission denied",
+              isError: true,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Command");
+    expect(html).toContain("ls -la /Users/zeeland/.vercel 2&gt;/dev/null || true");
+    expect(html).toContain("ls: /Users/zeeland/.vercel: Permission denied");
+    expect(html).not.toContain("/bin/zsh -lc");
+    expect(html).not.toContain("&quot;cwd&quot;");
+    expect(html).not.toContain("exit_code");
+    expect(html).not.toContain("status: failed");
+  });
+
   it("falls back to an implicit model turn for chat transcripts without turn markers", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

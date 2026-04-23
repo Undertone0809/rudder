@@ -717,10 +717,7 @@ function parseStructuredToolResult(result: string | undefined) {
     }
   }
 
-  const body = lines.slice(Math.min(bodyStartIndex + 1, lines.length))
-    .map((line) => compactWhitespace(line))
-    .filter(Boolean)
-    .join("\n");
+  const body = lines.slice(Math.min(bodyStartIndex + 1, lines.length)).join("\n").trim();
 
   return {
     command: metadata.get("command") ?? null,
@@ -728,6 +725,19 @@ function parseStructuredToolResult(result: string | undefined) {
     exitCode: metadata.get("exit_code") ?? null,
     body,
   };
+}
+
+function formatCommandResult(result: string | undefined, status: TranscriptToolCardEntry["status"]): string | null {
+  if (!result) return status === "running" ? "Waiting for result..." : null;
+  const structured = parseStructuredToolResult(result);
+  if (structured) {
+    if (structured.body) return structured.body;
+    if (structured.status === "completed") return "Completed";
+    if (structured.status === "failed" || structured.status === "error") {
+      return structured.exitCode ? `Failed with exit code ${structured.exitCode}` : "Failed";
+    }
+  }
+  return result;
 }
 
 function isCommandTool(name: string, input: unknown): boolean {
@@ -1521,6 +1531,13 @@ function TranscriptToolCard({
         ? "text-red-700 dark:text-red-300"
         : "text-emerald-700 dark:text-emerald-300";
   const duration = formatTranscriptDuration(block.ts, block.endTs);
+  const command = getToolCommand(block);
+  const requestText = command ?? (formatToolPayload(block.input) || "<empty>");
+  const responseText = command
+    ? formatCommandResult(block.result, block.status)
+    : block.result
+      ? formatToolPayload(block.result)
+      : "Waiting for result...";
   const detailsClass = cn(
     "space-y-3",
     block.status === "error" && "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3",
@@ -1584,10 +1601,10 @@ function TranscriptToolCard({
             <div className={cn("grid gap-3", compact ? "grid-cols-1" : "lg:grid-cols-2")}>
               <div>
                 <div className="mb-1 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground">
-                  Request
+                  {command ? "Command" : "Request"}
                 </div>
                 <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
-                  {formatToolPayload(block.input) || "<empty>"}
+                  {requestText}
                 </pre>
               </div>
               <div>
@@ -1598,7 +1615,7 @@ function TranscriptToolCard({
                   "overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px]",
                   block.status === "error" ? "text-red-700 dark:text-red-300" : "text-foreground/80",
                 )}>
-                  {block.result ? formatToolPayload(block.result) : "Waiting for result..."}
+                  {responseText ?? "No response"}
                 </pre>
               </div>
             </div>
@@ -1976,11 +1993,13 @@ function TranscriptChatToolActionRow({
   const requestText = command ?? (formatToolPayload(block.input) || "<empty>");
   const responseText = shouldHideChatToolResult(semantic)
     ? null
-    : block.result
-      ? formatToolPayload(block.result)
-      : block.status === "running"
-        ? "Waiting for result..."
-        : null;
+    : command
+      ? formatCommandResult(block.result, block.status)
+      : block.result
+        ? formatToolPayload(block.result)
+        : block.status === "running"
+          ? "Waiting for result..."
+          : null;
   const canExpand = Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
   const [open, setOpen] = useState(block.status === "error");
   const duration = formatTranscriptDuration(block.ts, block.endTs);
@@ -2365,7 +2384,7 @@ function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTimelineRo
         rows.push({
           key: `${block.ts}-command-${index}-${item.ts}`,
           ts: item.ts,
-          label: "tool",
+          label: "command",
           tone:
             item.status === "error"
               ? "danger"
