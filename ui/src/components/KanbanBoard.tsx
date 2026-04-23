@@ -23,8 +23,12 @@ import { Identity } from "./Identity";
 import { Button } from "@/components/ui/button";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { cn } from "@/lib/utils";
-import { Plus } from "lucide-react";
-import type { Issue } from "@rudder/shared";
+import { formatChatAgentLabel } from "@/lib/agent-labels";
+import { formatAssigneeUserLabel } from "@/lib/assignees";
+import { pickTextColorForPillBg } from "@/lib/color-contrast";
+import { timeAgo } from "@/lib/timeAgo";
+import { CalendarClock, FolderKanban, Plus, User } from "lucide-react";
+import type { AgentRole, Issue } from "@rudder/shared";
 
 const boardStatuses = [
   "backlog",
@@ -74,12 +78,32 @@ function statusLabel(status: string): string {
 interface Agent {
   id: string;
   name: string;
+  icon?: string | null;
+  role: AgentRole;
+  title: string | null;
 }
+
+interface ProjectOption {
+  id: string;
+  name: string;
+}
+
+export type IssueDisplayProperty =
+  | "identifier"
+  | "priority"
+  | "assignee"
+  | "labels"
+  | "project"
+  | "updated"
+  | "created";
 
 interface KanbanBoardProps {
   issues: Issue[];
   agents?: Agent[];
+  currentUserId?: string | null;
+  displayProperties?: IssueDisplayProperty[];
   liveIssueIds?: Set<string>;
+  projects?: ProjectOption[];
   onCreateIssue?: (status: string) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
 }
@@ -113,13 +137,19 @@ function KanbanColumn({
   status,
   issues,
   agents,
+  currentUserId,
+  displayProperties = ["identifier", "priority", "assignee"],
   liveIssueIds,
+  projects,
   onCreateIssue,
 }: {
   status: string;
   issues: Issue[];
   agents?: Agent[];
+  currentUserId?: string | null;
+  displayProperties?: IssueDisplayProperty[];
   liveIssueIds?: Set<string>;
+  projects?: ProjectOption[];
   onCreateIssue?: (status: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
@@ -161,7 +191,10 @@ function KanbanColumn({
               key={issue.id}
               issue={issue}
               agents={agents}
+              currentUserId={currentUserId}
+              displayProperties={displayProperties}
               isLive={liveIssueIds?.has(issue.id)}
+              projects={projects}
             />
           ))}
         </SortableContext>
@@ -208,13 +241,19 @@ function HiddenKanbanStatus({
 function KanbanCard({
   issue,
   agents,
+  currentUserId,
+  displayProperties = ["identifier", "priority", "assignee"],
   isLive,
   isOverlay,
+  projects,
 }: {
   issue: Issue;
   agents?: Agent[];
+  currentUserId?: string | null;
+  displayProperties?: IssueDisplayProperty[];
   isLive?: boolean;
   isOverlay?: boolean;
+  projects?: ProjectOption[];
 }) {
   const {
     attributes,
@@ -230,10 +269,20 @@ function KanbanCard({
     transition,
   };
 
-  const agentName = (id: string | null) => {
-    if (!id || !agents) return null;
-    return agents.find((a) => a.id === id)?.name ?? null;
-  };
+  const visibleProperties = new Set(displayProperties);
+  const agent = issue.assigneeAgentId
+    ? agents?.find((candidate) => candidate.id === issue.assigneeAgentId) ?? null
+    : null;
+  const projectName = issue.projectId
+    ? projects?.find((project) => project.id === issue.projectId)?.name ?? issue.project?.name ?? null
+    : null;
+  const showIdentifier = visibleProperties.has("identifier");
+  const showPriority = visibleProperties.has("priority");
+  const showAssignee = visibleProperties.has("assignee");
+  const showLabels = visibleProperties.has("labels") && (issue.labels ?? []).length > 0;
+  const showProject = visibleProperties.has("project") && Boolean(projectName);
+  const showUpdated = visibleProperties.has("updated");
+  const showCreated = visibleProperties.has("created");
 
   return (
     <div
@@ -255,31 +304,88 @@ function KanbanCard({
           if (isDragging) e.preventDefault();
         }}
       >
-        <div className="flex items-start gap-1.5 mb-1.5">
-          <span className="text-xs text-muted-foreground font-mono shrink-0">
-            {issue.identifier ?? issue.id.slice(0, 8)}
-          </span>
-          {isLive && (
-            <span className="relative flex h-2 w-2 shrink-0 mt-0.5">
-              <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
-            </span>
-          )}
-        </div>
-        <p className="text-sm leading-snug line-clamp-2 mb-2">{issue.title}</p>
-        <div className="flex items-center gap-2">
-          <PriorityIcon priority={issue.priority} />
-          {issue.assigneeAgentId && (() => {
-            const name = agentName(issue.assigneeAgentId);
-            return name ? (
-              <Identity name={name} size="xs" />
-            ) : (
-              <span className="text-xs text-muted-foreground font-mono">
-                {issue.assigneeAgentId.slice(0, 8)}
+        {(showIdentifier || isLive) ? (
+          <div className="flex items-start gap-1.5 mb-1.5">
+            {showIdentifier ? (
+              <span className="text-xs text-muted-foreground font-mono shrink-0">
+                {issue.identifier ?? issue.id.slice(0, 8)}
               </span>
-            );
-          })()}
-        </div>
+            ) : null}
+            {isLive && (
+              <span className="relative flex h-2 w-2 shrink-0 mt-0.5">
+                <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+              </span>
+            )}
+          </div>
+        ) : null}
+        <p className="text-sm leading-snug line-clamp-2 mb-2">{issue.title}</p>
+        {(showPriority || showAssignee) && (
+          <div className="flex items-center gap-2">
+            {showPriority ? <PriorityIcon priority={issue.priority} /> : null}
+            {showAssignee && issue.assigneeAgentId ? (
+              agent ? (
+                <Identity name={formatChatAgentLabel(agent)} size="xs" />
+              ) : (
+                <span className="text-xs text-muted-foreground font-mono">
+                  {issue.assigneeAgentId.slice(0, 8)}
+                </span>
+              )
+            ) : null}
+            {showAssignee && issue.assigneeUserId ? (
+              <span className="inline-flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                <User className="h-3 w-3 shrink-0" />
+                <span className="truncate">
+                  {formatAssigneeUserLabel(issue.assigneeUserId, currentUserId) ?? "User"}
+                </span>
+              </span>
+            ) : null}
+          </div>
+        )}
+        {showLabels ? (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {(issue.labels ?? []).slice(0, 3).map((label) => (
+              <span
+                key={label.id}
+                className="inline-flex max-w-full items-center truncate rounded-[calc(var(--radius-sm)-2px)] border px-1.5 py-0.5 text-[10px] font-medium"
+                style={{
+                  borderColor: label.color,
+                  color: pickTextColorForPillBg(label.color, 0.12),
+                  backgroundColor: `${label.color}1f`,
+                }}
+              >
+                {label.name}
+              </span>
+            ))}
+            {(issue.labels ?? []).length > 3 ? (
+              <span className="text-[10px] text-muted-foreground">
+                +{(issue.labels ?? []).length - 3}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        {(showProject || showUpdated || showCreated) ? (
+          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+            {showProject ? (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <FolderKanban className="h-3 w-3 shrink-0" />
+                <span className="truncate">{projectName}</span>
+              </span>
+            ) : null}
+            {showUpdated ? (
+              <span className="flex items-center gap-1.5">
+                <CalendarClock className="h-3 w-3 shrink-0" />
+                <span>Updated {timeAgo(issue.updatedAt)}</span>
+              </span>
+            ) : null}
+            {showCreated ? (
+              <span className="flex items-center gap-1.5">
+                <CalendarClock className="h-3 w-3 shrink-0" />
+                <span>Created {timeAgo(issue.createdAt)}</span>
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </Link>
     </div>
   );
@@ -290,7 +396,10 @@ function KanbanCard({
 export function KanbanBoard({
   issues,
   agents,
+  currentUserId,
+  displayProperties,
   liveIssueIds,
+  projects,
   onCreateIssue,
   onUpdateIssue,
 }: KanbanBoardProps) {
@@ -383,7 +492,10 @@ export function KanbanBoard({
                 status={status}
                 issues={columnIssues[status] ?? []}
                 agents={agents}
+                currentUserId={currentUserId}
+                displayProperties={displayProperties}
                 liveIssueIds={liveIssueIds}
+                projects={projects}
                 onCreateIssue={onCreateIssue}
               />
             ))}
@@ -417,7 +529,14 @@ export function KanbanBoard({
       </div>
       <DragOverlay>
         {activeIssue ? (
-          <KanbanCard issue={activeIssue} agents={agents} isOverlay />
+          <KanbanCard
+            issue={activeIssue}
+            agents={agents}
+            currentUserId={currentUserId}
+            displayProperties={displayProperties}
+            isOverlay
+            projects={projects}
+          />
         ) : null}
       </DragOverlay>
     </DndContext>

@@ -124,6 +124,15 @@ const secondIssue: Issue = {
   identifier: "RUD-2",
 };
 
+const label = {
+  id: "label-1",
+  orgId: "org-1",
+  name: "Backend",
+  color: "#2563eb",
+  createdAt: new Date("2026-04-19T08:00:00.000Z"),
+  updatedAt: new Date("2026-04-19T08:00:00.000Z"),
+};
+
 function renderIssuesList(onUpdateIssue: (id: string, data: Record<string, unknown>) => void) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -349,6 +358,109 @@ describe("IssuesList", () => {
       assigneeAgentId: "agent-1",
       labelIds: ["label-1"],
       status: "todo",
+    });
+  });
+
+  it("renders board cards from saved display properties", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({
+        viewMode: "board",
+        displayProperties: ["labels", "project", "updated"],
+      }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[{
+            ...baseIssue,
+            labels: [label],
+            labelIds: [label.id],
+            projectId: "project-1",
+          }]}
+          agents={[{ id: "agent-1", name: "Alice", role: "engineer", title: null }]}
+          projects={[{ id: "project-1", name: "Operator console" }]}
+          viewStateKey="test:issues"
+          toolbarMode="hidden"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("Backend");
+    expect(container.textContent).toContain("Operator console");
+    expect(container.textContent).toContain("Updated");
+    expect(container.textContent).not.toContain("RUD-1");
+  });
+
+  it("toggles board display properties from the toolbar and persists them", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({
+        viewMode: "board",
+        displayProperties: ["identifier"],
+      }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[{ ...baseIssue, projectId: "project-1" }]}
+          agents={[{ id: "agent-1", name: "Alice", role: "engineer", title: null }]}
+          projects={[{ id: "project-1", name: "Operator console" }]}
+          viewStateKey="test:issues"
+          toolbarMode="controls-only"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.textContent).not.toContain("Operator console");
+
+    const displayButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Display"),
+    );
+    expect(displayButton).toBeTruthy();
+
+    act(() => {
+      displayButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const projectLabel = Array.from(document.body.querySelectorAll("label")).find(
+      (entry) => entry.textContent?.trim() === "Project",
+    );
+    expect(projectLabel).toBeTruthy();
+
+    act(() => {
+      projectLabel?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain("Operator console");
+    expect(JSON.parse(window.localStorage.getItem("test:issues:org-1") ?? "{}")).toMatchObject({
+      displayProperties: ["identifier", "project"],
     });
   });
 });

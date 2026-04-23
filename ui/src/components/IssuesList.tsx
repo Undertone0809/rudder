@@ -23,8 +23,8 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverAnchor, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import { CircleDot, Plus, Filter, ArrowUpDown, Layers, Check, X, ChevronRight, List, Columns3, User, Search, Star } from "lucide-react";
-import { KanbanBoard } from "./KanbanBoard";
+import { CircleDot, Plus, Filter, ArrowUpDown, Layers, Check, X, ChevronRight, List, Columns3, User, Search, Star, SlidersHorizontal } from "lucide-react";
+import { KanbanBoard, type IssueDisplayProperty } from "./KanbanBoard";
 import type { AgentRole, Issue } from "@rudder/shared";
 
 /* ── Helpers ── */
@@ -44,6 +44,7 @@ export type IssueViewState = {
   assignees: string[];
   labels: string[];
   projects: string[];
+  displayProperties: IssueDisplayProperty[];
   sortField: "status" | "priority" | "title" | "created" | "updated";
   sortDir: "asc" | "desc";
   groupBy: "status" | "priority" | "assignee" | "project" | "none";
@@ -51,12 +52,29 @@ export type IssueViewState = {
   collapsedGroups: string[];
 };
 
+const displayPropertyOptions: Array<{ value: IssueDisplayProperty; label: string }> = [
+  { value: "identifier", label: "Identifier" },
+  { value: "priority", label: "Priority" },
+  { value: "assignee", label: "Assignee" },
+  { value: "labels", label: "Labels" },
+  { value: "project", label: "Project" },
+  { value: "updated", label: "Updated" },
+  { value: "created", label: "Created" },
+];
+
+const displayPropertyValues = new Set<IssueDisplayProperty>(
+  displayPropertyOptions.map((option) => option.value),
+);
+
+const defaultDisplayProperties: IssueDisplayProperty[] = ["identifier", "priority", "assignee"];
+
 const defaultViewState: IssueViewState = {
   statuses: [],
   priorities: [],
   assignees: [],
   labels: [],
   projects: [],
+  displayProperties: defaultDisplayProperties,
   sortField: "updated",
   sortDir: "desc",
   groupBy: "none",
@@ -74,13 +92,34 @@ const quickFilterPresets = [
 function getViewState(key: string): IssueViewState {
   try {
     const raw = localStorage.getItem(key);
-    if (raw) return { ...defaultViewState, ...JSON.parse(raw) };
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<IssueViewState>;
+      return {
+        ...defaultViewState,
+        ...parsed,
+        displayProperties: normalizeDisplayProperties(parsed.displayProperties),
+      };
+    }
   } catch { /* ignore */ }
   return { ...defaultViewState };
 }
 
 function saveViewState(key: string, state: IssueViewState) {
   localStorage.setItem(key, JSON.stringify(state));
+}
+
+function normalizeDisplayProperties(value: unknown): IssueDisplayProperty[] {
+  if (!Array.isArray(value)) return [...defaultDisplayProperties];
+  const seen = new Set<IssueDisplayProperty>();
+  const properties: IssueDisplayProperty[] = [];
+  for (const item of value) {
+    if (!displayPropertyValues.has(item as IssueDisplayProperty)) continue;
+    const property = item as IssueDisplayProperty;
+    if (seen.has(property)) continue;
+    seen.add(property);
+    properties.push(property);
+  }
+  return properties;
 }
 
 function arraysEqual(a: string[], b: string[]): boolean {
@@ -640,6 +679,38 @@ export function IssuesList({
             </PopoverContent>
           </Popover>
 
+          {viewState.viewMode === "board" && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className="text-xs">
+                  <SlidersHorizontal className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+                  <span className="hidden sm:inline">Display</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-52 p-0">
+                <div className="p-2 space-y-0.5">
+                  {displayPropertyOptions.map((option) => (
+                    <label
+                      key={option.value}
+                      className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent/50"
+                    >
+                      <Checkbox
+                        checked={viewState.displayProperties.includes(option.value)}
+                        onCheckedChange={() => updateView({
+                          displayProperties: toggleInArray(
+                            viewState.displayProperties,
+                            option.value,
+                          ) as IssueDisplayProperty[],
+                        })}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
+
           {/* Sort (list view only) */}
           {viewState.viewMode === "list" && (
             <Popover>
@@ -745,7 +816,10 @@ export function IssuesList({
           <KanbanBoard
             issues={filtered}
             agents={agents}
+            currentUserId={currentUserId}
+            displayProperties={viewState.displayProperties}
             liveIssueIds={liveIssueIds}
+            projects={projects}
             onCreateIssue={(status) => openNewIssue({ ...contextNewIssueDefaults, status })}
             onUpdateIssue={onUpdateIssue}
           />
