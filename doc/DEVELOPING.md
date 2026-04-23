@@ -196,6 +196,17 @@ pnpm rudder run  # persistent local prod_local instance
 `pnpm dev` tracks backend-relevant file changes and pending migrations.
 When stale, board UI shows a `Restart required` banner.
 
+### Browser Verification
+
+When a task requires browser-based verification, prefer `@browser-use` as the
+first testing path for local Rudder URLs. Use it for navigation, interaction
+checks, console-aware inspection, and screenshots before falling back to other
+browser automation tools.
+
+This preference applies to visible UI checks, workflow smoke tests that need a
+browser, and layout-sensitive validation. Keep temporary screenshots and other
+ad-hoc verification artifacts outside the repository tree.
+
 ### Staging Worktree Sandbox
 
 If you keep a dedicated `staging` branch in a separate git worktree, do not add a new global local env profile for it.

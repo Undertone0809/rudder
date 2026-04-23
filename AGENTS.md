@@ -204,6 +204,7 @@ Task-specific additions:
   - run the relevant E2E suite (`pnpm test:e2e`, `pnpm test:release-smoke`, or another feature-specific E2E path) when that area is affected
 - Visible UI changes:
   - verify the rendered result in a browser or desktop shell, not just by tests
+  - when browser verification is needed, prefer `@browser-use` for local navigation, inspection, interaction checks, and screenshots before falling back to other browser automation paths
   - store temporary screenshots and other ad-hoc verification artifacts outside the repository tree (for example under `/tmp` or the system temp dir), not in the project root
 
 ## 8. API and Auth Expectations
@@ -227,7 +228,7 @@ When adding endpoints:
 - Surface failures clearly; do not silently ignore API errors
 - Follow `doc/DESIGN.md` for visible UI defaults, especially density, hierarchy, dialog structure, copy style, and progressive disclosure
 - For desktop-shell UI changes, preserve the `Desktop Shell` contract and review checklist in `doc/DESIGN.md`; do not revert the shell to raw-wallpaper transparency or push glass treatment into the work cards.
-- For visible UI changes, verify the rendered result before hand-off using a browser, screenshot, or equivalent visual inspection. Do not rely on code review, typecheck, or tests alone for layout-sensitive changes.
+- For visible UI changes, verify the rendered result before hand-off using a browser, screenshot, or equivalent visual inspection. Prefer `@browser-use` when that verification uses a browser. Do not rely on code review, typecheck, or tests alone for layout-sensitive changes.
 - If a change affects user-visible functionality, include the relevant final screenshots in the hand-off response so the reviewer can see the shipped result, not just read about it.
 
 ## 10. Definition of Done
