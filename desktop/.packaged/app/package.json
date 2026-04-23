@@ -1,0 +1,9 @@
+{
+  "name": "@rudder/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rudder Desktop local-first Electron shell",
+  "author": "Rudder",
+  "type": "module",
+  "main": "dist/main.js"
+}

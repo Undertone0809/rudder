@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: rudder
+      POSTGRES_PASSWORD: rudder
+      POSTGRES_DB: rudder
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rudder -d rudder"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "3100:3100"
+    environment:
+      DATABASE_URL: postgres://rudder:rudder@db:5432/rudder
+      PORT: "3100"
+      SERVE_UI: "true"
+      RUDDER_DEPLOYMENT_MODE: "authenticated"
+      RUDDER_DEPLOYMENT_EXPOSURE: "private"
+      RUDDER_PUBLIC_URL: "${RUDDER_PUBLIC_URL:-http://localhost:3100}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
+    volumes:
+      - rudder-data:/rudder
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  rudder-data:

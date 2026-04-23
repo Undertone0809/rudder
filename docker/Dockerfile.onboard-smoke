@@ -1,0 +1,40 @@
+FROM ubuntu:24.04
+
+ARG NODE_MAJOR=20
+ARG RUDDER_VERSION=latest
+ARG HOST_UID=10001
+
+ENV DEBIAN_FRONTEND=noninteractive \
+  RUDDER_HOME=/rudder \
+  RUDDER_OPEN_ON_LISTEN=false \
+  HOST=0.0.0.0 \
+  PORT=3100 \
+  HOME=/home/rudder \
+  LANG=en_US.UTF-8 \
+  LC_ALL=en_US.UTF-8 \
+  NPM_CONFIG_UPDATE_NOTIFIER=false \
+  NODE_MAJOR=${NODE_MAJOR} \
+  RUDDER_VERSION=${RUDDER_VERSION}
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl gnupg locales \
+  && mkdir -p /etc/apt/keyrings \
+  && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+  && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
+    > /etc/apt/sources.list.d/nodesource.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends nodejs \
+  && locale-gen en_US.UTF-8 \
+  && groupadd --gid 10001 rudder \
+  && useradd --create-home --shell /bin/bash --uid "${HOST_UID}" --gid 10001 rudder \
+  && mkdir -p /rudder /home/rudder/workspace \
+  && chown -R rudder:rudder /rudder /home/rudder \
+  && rm -rf /var/lib/apt/lists/*
+
+VOLUME ["/rudder"]
+WORKDIR /home/rudder/workspace
+EXPOSE 3100
+USER rudder
+
+CMD ["bash", "-lc", "set -euo pipefail; mkdir -p \"$RUDDER_HOME\"; npx --yes \"rudder@${RUDDER_VERSION}\" onboard --yes --data-dir \"$RUDDER_HOME\""]

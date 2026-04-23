@@ -1,0 +1,18 @@
+services:
+  rudder:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "${RUDDER_PORT:-3100}:3100"
+    environment:
+      HOST: "0.0.0.0"
+      RUDDER_HOME: "/rudder"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      RUDDER_DEPLOYMENT_MODE: "authenticated"
+      RUDDER_DEPLOYMENT_EXPOSURE: "private"
+      RUDDER_PUBLIC_URL: "${RUDDER_PUBLIC_URL:-http://localhost:3100}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
+    volumes:
+      - "${RUDDER_DATA_DIR:-../data/docker-rudder}:/rudder"

@@ -1,0 +1,64 @@
+{
+  "name": "@rudder/cli",
+  "version": "0.1.0",
+  "description": "Rudder CLI — orchestrate AI agent teams to run a business",
+  "type": "module",
+  "bin": {
+    "rudder": "./dist/index.js"
+  },
+  "keywords": [
+    "rudder",
+    "ai",
+    "agents",
+    "orchestration",
+    "cli"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Undertone0809/rudder",
+    "directory": "cli"
+  },
+  "homepage": "https://github.com/Undertone0809/rudder",
+  "bugs": {
+    "url": "https://github.com/Undertone0809/rudder/issues"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "node --input-type=module -e \"import esbuild from 'esbuild'; import config from './esbuild.config.mjs'; await esbuild.build(config);\" && chmod +x dist/index.js",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.10.1",
+    "@langfuse/client": "^5.1.0",
+    "@rudder/agent-runtime-claude-local": "workspace:*",
+    "@rudder/agent-runtime-codex-local": "workspace:*",
+    "@rudder/agent-runtime-cursor-local": "workspace:*",
+    "@rudder/agent-runtime-gemini-local": "workspace:*",
+    "@rudder/agent-runtime-openclaw-gateway": "workspace:*",
+    "@rudder/agent-runtime-opencode-local": "workspace:*",
+    "@rudder/agent-runtime-pi-local": "workspace:*",
+    "@rudder/agent-runtime-utils": "workspace:*",
+    "@rudder/db": "workspace:*",
+    "@rudder/run-intelligence-core": "workspace:*",
+    "@rudder/server": "workspace:*",
+    "@rudder/shared": "workspace:*",
+    "commander": "^13.1.0",
+    "dotenv": "^17.3.1",
+    "drizzle-orm": "0.38.4",
+    "embedded-postgres": "18.1.0-beta.16",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

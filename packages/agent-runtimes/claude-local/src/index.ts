@@ -1,0 +1,38 @@
+export const type = "claude_local";
+export const label = "Claude Code (local)";
+
+export const models = [
+  { id: "claude-opus-4-6", label: "Claude Opus 4.6" },
+  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { id: "claude-haiku-4-6", label: "Claude Haiku 4.6" },
+  { id: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5" },
+  { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+];
+
+export const agentConfigurationDoc = `# claude_local agent configuration
+
+Adapter: claude_local
+
+Core fields:
+- cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
+- instructionsFilePath (string, optional): absolute path to a markdown instructions file injected at runtime
+- model (string, optional): Claude model id
+- effort (string, optional): reasoning effort passed via --effort (low|medium|high)
+- chrome (boolean, optional): pass --chrome when running Claude
+- promptTemplate (string, optional): run prompt template
+- maxTurnsPerRun (number, optional): max turns for one run
+- dangerouslySkipPermissions (boolean, optional): pass --dangerously-skip-permissions to claude
+- command (string, optional): defaults to "claude"
+- extraArgs (string[], optional): additional CLI args
+- env (object, optional): KEY=VALUE environment variables
+- workspaceStrategy (object, optional): execution workspace strategy; currently supports { type: "git_worktree", baseRef?, branchTemplate?, worktreeParentDir? }
+- workspaceRuntime (object, optional): workspace runtime service intents; local host-managed services are realized before Claude starts and exposed back via context/env
+
+Operational fields:
+- timeoutSec (number, optional): run timeout in seconds
+- graceSec (number, optional): SIGTERM grace period in seconds
+
+Notes:
+- When Rudder realizes a workspace/runtime for a run, it injects RUDDER_WORKSPACE_* and RUDDER_RUNTIME_* env vars for agent-side tooling.
+- Claude loads only the bundled Rudder skills plus the skills explicitly enabled on the agent's Skills page. Unselected skills already present in the real user home do not load.
+`;

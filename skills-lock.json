@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "skills": {
+    "electron": {
+      "source": "teachingai/full-stack-skills",
+      "sourceType": "github",
+      "computedHash": "9d82126e6c46dd626fc6b1d2e259687d1b64ad61900166b8fc5a3b661c243cf4"
+    },
+    "elon-musk-perspective": {
+      "source": "alchaincyf/elon-musk-skill",
+      "sourceType": "github",
+      "computedHash": "cc5f837ec481fb1bc80e768078f8a7e9997aa96ba0f3abb80a66df3ce9025ceb"
+    },
+    "langfuse": {
+      "source": "langfuse/skills",
+      "sourceType": "github",
+      "computedHash": "d2561d49820b0625ceff795a82d6d215e39099a639838e241d446b26cd21c5f6"
+    }
+  }
+}

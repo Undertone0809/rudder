@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Run Intelligence</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">Run Intelligence</div>
+          <h1 id="pageTitle">Runs</h1>
+          <p id="pageSubtitle" class="muted">Browse all runs, then open one in a dedicated detail view or queue several for comparison.</p>
+        </div>
+        <div class="topbar-actions">
+          <a id="runsHomeLink" class="button subtle-button" href="/">Runs</a>
+          <button id="refreshButton" class="button">Refresh</button>
+        </div>
+      </header>
+
+      <section id="selectionBar" class="selection-bar"></section>
+      <main id="pageBody" class="page-body"></main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+  </html>

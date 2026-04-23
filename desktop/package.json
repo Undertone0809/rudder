@@ -1,0 +1,82 @@
+{
+  "name": "@rudder/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rudder Desktop local-first Electron shell",
+  "author": "Rudder",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "pnpm --filter @rudder/server prepare:ui-dist && rm -rf dist && tsc -p tsconfig.json && electron dist/main.js",
+    "build": "pnpm --filter @rudder/server... build && pnpm --filter @rudder/server prepare:ui-dist && node scripts/stage-server.mjs && node scripts/stage-cli.mjs && rm -rf dist && tsc -p tsconfig.json && node scripts/stage-app.mjs",
+    "dist": "pnpm run build && node scripts/prune-packaging-node-modules.mjs && node scripts/dist.mjs",
+    "prune:packaging-node-modules": "node scripts/prune-packaging-node-modules.mjs",
+    "stage:server": "node scripts/stage-server.mjs",
+    "stage:cli": "node scripts/stage-cli.mjs",
+    "stage:app": "node scripts/stage-app.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.4",
+    "@types/node": "^24.12.0",
+    "electron": "^37.3.1",
+    "electron-builder": "^26.0.12",
+    "tsx": "^4.21.0"
+  },
+  "build": {
+    "appId": "ai.rudder.desktop",
+    "productName": "Rudder",
+    "executableName": "Rudder",
+    "asar": false,
+    "directories": {
+      "app": ".packaged/app",
+      "output": "release"
+    },
+    "afterPack": "./scripts/after-pack.mjs",
+    "extraResources": [
+      {
+        "from": "build/trayTemplate.png",
+        "to": "trayTemplate.png"
+      },
+      {
+        "from": "build/trayTemplate@2x.png",
+        "to": "trayTemplate@2x.png"
+      }
+    ],
+    "dmg": {
+      "title": "Rudder",
+      "size": 5500
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "!**/node_modules/electron",
+      "!**/node_modules/electron/**/*",
+      "!**/node_modules/electron-builder",
+      "!**/node_modules/electron-builder/**/*",
+      "!**/node_modules/@electron",
+      "!**/node_modules/@electron/**/*"
+    ],
+    "mac": {
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    }
+  }
+}

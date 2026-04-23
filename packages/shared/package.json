@@ -1,0 +1,48 @@
+{
+  "name": "@rudder/shared",
+  "version": "0.1.0",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://github.com/Undertone0809/rudder",
+  "bugs": {
+    "url": "https://github.com/Undertone0809/rudder/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Undertone0809/rudder",
+    "directory": "packages/shared"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./*": {
+        "types": "./dist/*.d.ts",
+        "import": "./dist/*.js"
+      }
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

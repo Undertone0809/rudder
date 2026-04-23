@@ -1,0 +1,37 @@
+{
+  "name": "@rudder/plugin-kitchen-sink-example",
+  "version": "0.1.0",
+  "description": "Reference plugin that demonstrates the full Rudder plugin surface area in one package",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "rudderPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js",
+    "ui": "./dist/ui/"
+  },
+  "scripts": {
+    "prebuild": "node ../../../../scripts/ensure-plugin-build-deps.mjs",
+    "build": "tsc && node ./scripts/build-ui.mjs",
+    "clean": "rm -rf dist",
+    "typecheck": "pnpm --filter @rudder/plugin-sdk build && tsc --noEmit"
+  },
+  "dependencies": {
+    "@rudder/plugin-sdk": "workspace:*",
+    "@rudder/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "esbuild": "^0.27.4",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  }
+}

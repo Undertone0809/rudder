@@ -1,0 +1,17 @@
+.git
+.github
+.rudder
+.pnpm-store
+node_modules
+**/node_modules
+**/dist
+coverage
+data
+desktop/.packaged
+desktop/build
+desktop/release
+report
+playwright-report
+test-results
+tmp
+*.log

@@ -1,0 +1,42 @@
+{
+  "name": "@rudder/plugin-file-browser-example",
+  "version": "0.1.0",
+  "description": "Example plugin: project sidebar Files link + project detail tab with workspace selector and file browser",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "rudderPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js",
+    "ui": "./dist/ui/"
+  },
+  "scripts": {
+    "prebuild": "node ../../../../scripts/ensure-plugin-build-deps.mjs",
+    "build": "tsc && node ./scripts/build-ui.mjs",
+    "clean": "rm -rf dist",
+    "typecheck": "pnpm --filter @rudder/plugin-sdk build && tsc --noEmit"
+  },
+  "dependencies": {
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/language": "^6.12.2",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.40.0",
+    "@lezer/highlight": "^1.2.3",
+    "@rudder/plugin-sdk": "workspace:*",
+    "codemirror": "^6.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "esbuild": "^0.27.4",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  }
+}

@@ -1,0 +1,50 @@
+export const type = "codex_local";
+export const label = "Codex (local)";
+export const DEFAULT_CODEX_LOCAL_MODEL = "gpt-5.4";
+export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = true;
+
+export const models = [
+  { id: DEFAULT_CODEX_LOCAL_MODEL, label: DEFAULT_CODEX_LOCAL_MODEL },
+  { id: "gpt-5.3-codex-spark", label: "gpt-5.3-codex-spark" },
+  { id: "gpt-5", label: "gpt-5" },
+  { id: "o3", label: "o3" },
+  { id: "o4-mini", label: "o4-mini" },
+  { id: "gpt-5-mini", label: "gpt-5-mini" },
+  { id: "gpt-5-nano", label: "gpt-5-nano" },
+  { id: "o3-mini", label: "o3-mini" },
+  { id: "codex-mini-latest", label: "Codex Mini" },
+];
+
+export const agentConfigurationDoc = `# codex_local agent configuration
+
+Adapter: codex_local
+
+Core fields:
+- cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
+- instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to stdin prompt at runtime
+- model (string, optional): Codex model id
+- modelReasoningEffort (string, optional): reasoning effort override (minimal|low|medium|high) passed via -c model_reasoning_effort=...
+- promptTemplate (string, optional): run prompt template
+- search (boolean, optional): run codex with --search
+- dangerouslyBypassApprovalsAndSandbox (boolean, optional): run with bypass flag
+- command (string, optional): defaults to "codex"
+- extraArgs (string[], optional): additional CLI args
+- env (object, optional): KEY=VALUE environment variables
+- workspaceStrategy (object, optional): execution workspace strategy; currently supports { type: "git_worktree", baseRef?, branchTemplate?, worktreeParentDir? }
+- workspaceRuntime (object, optional): workspace runtime service intents; local host-managed services are realized before Codex starts and exposed back via context/env
+
+Operational fields:
+- timeoutSec (number, optional): run timeout in seconds
+- graceSec (number, optional): SIGTERM grace period in seconds
+
+Notes:
+- Prompts are piped via stdin (Codex receives "-" prompt argument).
+- If instructionsFilePath is configured, Rudder prepends that file's contents to the stdin prompt on every run.
+- Codex exec automatically applies repo-scoped AGENTS.md instructions from the active workspace. Rudder cannot suppress that discovery in exec mode, so repo AGENTS.md files may still apply even when you only configured an explicit instructionsFilePath.
+- Agent enabled-skill state is controlled only by Rudder's bundled skills plus the selections saved on the agent's Skills page.
+- The codex_local adapter does not materialize skills into repo-scoped ".agents/skills"; it realizes selected skills by linking them into the Rudder-managed \`CODEX_HOME/skills\` directory that Codex discovers at runtime.
+- Unless explicitly overridden in adapter config, Rudder runs Codex with a per-organization managed CODEX_HOME under the active Rudder instance and seeds auth/config from the shared Codex home (the CODEX_HOME env var, when set, or ~/.codex).
+- Rudder also isolates the child process HOME/USERPROFILE away from the operator's real home so Codex does not auto-discover unrelated global skills from ~/.agents/skills during agent runs.
+- Some model/tool combinations reject certain effort levels (for example minimal with web search enabled).
+- When Rudder realizes a workspace/runtime for a run, it injects RUDDER_WORKSPACE_* and RUDDER_RUNTIME_* env vars for agent-side tooling.
+`;

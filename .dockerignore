@@ -1,0 +1,10 @@
+.git
+.github
+.rudder
+.pnpm-store
+node_modules
+**/node_modules
+coverage
+data
+tmp
+*.log

@@ -1,0 +1,203 @@
+import { URL } from "node:url";
+
+export class ApiRequestError extends Error {
+  status: number;
+  code?: string | null;
+  details?: unknown;
+  body?: unknown;
+
+  constructor(status: number, message: string, details?: unknown, body?: unknown, code?: string | null) {
+    super(message);
+    this.status = status;
+    this.code = code ?? null;
+    this.details = details;
+    this.body = body;
+  }
+}
+
+interface RequestOptions {
+  ignoreNotFound?: boolean;
+}
+
+interface RecoverAuthInput {
+  path: string;
+  method: string;
+  error: ApiRequestError;
+}
+
+interface ApiClientOptions {
+  apiBase: string;
+  apiKey?: string;
+  runId?: string;
+  recoverAuth?: (input: RecoverAuthInput) => Promise<string | null>;
+}
+
+export class RudderApiClient {
+  readonly apiBase: string;
+  apiKey?: string;
+  readonly runId?: string;
+  readonly recoverAuth?: (input: RecoverAuthInput) => Promise<string | null>;
+
+  constructor(opts: ApiClientOptions) {
+    this.apiBase = opts.apiBase.replace(/\/+$/, "");
+    this.apiKey = opts.apiKey?.trim() || undefined;
+    this.runId = opts.runId?.trim() || undefined;
+    this.recoverAuth = opts.recoverAuth;
+  }
+
+  get<T>(path: string, opts?: RequestOptions): Promise<T | null> {
+    return this.request<T>(path, { method: "GET" }, opts);
+  }
+
+  post<T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T | null> {
+    return this.request<T>(path, {
+      method: "POST",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }, opts);
+  }
+
+  patch<T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T | null> {
+    return this.request<T>(path, {
+      method: "PATCH",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }, opts);
+  }
+
+  put<T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T | null> {
+    return this.request<T>(path, {
+      method: "PUT",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }, opts);
+  }
+
+  delete<T>(path: string, opts?: RequestOptions): Promise<T | null> {
+    return this.request<T>(path, { method: "DELETE" }, opts);
+  }
+
+  setApiKey(apiKey: string | undefined) {
+    this.apiKey = apiKey?.trim() || undefined;
+  }
+
+  private async request<T>(
+    path: string,
+    init: RequestInit,
+    opts?: RequestOptions,
+    hasRetriedAuth = false,
+  ): Promise<T | null> {
+    const url = buildUrl(this.apiBase, path);
+
+    const headers: Record<string, string> = {
+      accept: "application/json",
+      ...toStringRecord(init.headers),
+    };
+
+    if (init.body !== undefined) {
+      headers["content-type"] = headers["content-type"] ?? "application/json";
+    }
+
+    if (this.apiKey) {
+      headers.authorization = `Bearer ${this.apiKey}`;
+    }
+
+    if (this.runId && shouldAttachRunId(init.method)) {
+      headers["x-rudder-run-id"] = this.runId;
+    }
+
+    const response = await fetch(url, {
+      ...init,
+      headers,
+    });
+
+    if (opts?.ignoreNotFound && response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      const apiError = await toApiError(response);
+      if (!hasRetriedAuth && this.recoverAuth) {
+        const recoveredToken = await this.recoverAuth({
+          path,
+          method: String(init.method ?? "GET").toUpperCase(),
+          error: apiError,
+        });
+        if (recoveredToken) {
+          this.setApiKey(recoveredToken);
+          return this.request<T>(path, init, opts, true);
+        }
+      }
+      throw apiError;
+    }
+
+    if (response.status === 204) {
+      return null;
+    }
+
+    const text = await response.text();
+    if (!text.trim()) {
+      return null;
+    }
+
+    return safeParseJson(text) as T;
+  }
+}
+
+function shouldAttachRunId(method: string | undefined): boolean {
+  const normalized = String(method ?? "GET").toUpperCase();
+  return normalized !== "GET" && normalized !== "HEAD";
+}
+
+function buildUrl(apiBase: string, path: string): string {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const [pathname, query] = normalizedPath.split("?");
+  const url = new URL(apiBase);
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}${pathname}`;
+  if (query) url.search = query;
+  return url.toString();
+}
+
+function safeParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+async function toApiError(response: Response): Promise<ApiRequestError> {
+  const text = await response.text();
+  const parsed = safeParseJson(text);
+
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    const body = parsed as Record<string, unknown>;
+    const message =
+      (typeof body.error === "string" && body.error.trim()) ||
+      (typeof body.message === "string" && body.message.trim()) ||
+      `Request failed with status ${response.status}`;
+    const code = typeof body.code === "string" && body.code.trim().length > 0
+      ? body.code.trim()
+      : null;
+
+    return new ApiRequestError(response.status, message, body.details, parsed, code);
+  }
+
+  return new ApiRequestError(
+    response.status,
+    `Request failed with status ${response.status}`,
+    undefined,
+    parsed,
+    null,
+  );
+}
+
+function toStringRecord(headers: HeadersInit | undefined): Record<string, string> {
+  if (!headers) return {};
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(headers.map(([key, value]) => [key, String(value)]));
+  }
+  if (headers instanceof Headers) {
+    return Object.fromEntries(headers.entries());
+  }
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [key, String(value)]),
+  );
+}

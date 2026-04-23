@@ -1,0 +1,50 @@
+{
+  "name": "@rudder/run-intelligence-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./*": {
+        "types": "./dist/*.d.ts",
+        "import": "./dist/*.js"
+      }
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@rudder/agent-runtime-claude-local": "workspace:*",
+    "@rudder/agent-runtime-codex-local": "workspace:*",
+    "@rudder/agent-runtime-cursor-local": "workspace:*",
+    "@rudder/agent-runtime-gemini-local": "workspace:*",
+    "@rudder/agent-runtime-openclaw-gateway": "workspace:*",
+    "@rudder/agent-runtime-opencode-local": "workspace:*",
+    "@rudder/agent-runtime-pi-local": "workspace:*",
+    "@rudder/agent-runtime-utils": "workspace:*",
+    "@rudder/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

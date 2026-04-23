@@ -1,0 +1,17 @@
+Rudder
+Copyright 2025-2026 Rudder contributors
+
+This repository began as a fork of an early version of Paperclip.
+
+New contributions made to the Rudder project are licensed under the Apache
+License, Version 2.0.
+
+Portions derived from upstream Paperclip preserve the original MIT notice where
+applicable. The preserved upstream MIT text is available in
+`LICENSES/MIT-PAPERCLIP`.
+
+This NOTICE file describes lineage and attribution for the repository. It does
+not replace or modify the license terms in `LICENSE` or
+`LICENSES/MIT-PAPERCLIP`.
+
+When internals are renamed or rebranded, the repo prefers compatibility-preserving changes unless a deliberate breaking migration is planned.

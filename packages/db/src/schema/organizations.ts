@@ -1,0 +1,32 @@
+import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
+
+export const organizations = pgTable(
+  "organizations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    urlKey: text("url_key").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    status: text("status").notNull().default("active"),
+    pauseReason: text("pause_reason"),
+    pausedAt: timestamp("paused_at", { withTimezone: true }),
+    issuePrefix: text("issue_prefix").notNull().default("PAP"),
+    issueCounter: integer("issue_counter").notNull().default(0),
+    budgetMonthlyCents: integer("budget_monthly_cents").notNull().default(0),
+    spentMonthlyCents: integer("spent_monthly_cents").notNull().default(0),
+    requireBoardApprovalForNewAgents: boolean("require_board_approval_for_new_agents")
+      .notNull()
+      .default(true),
+    defaultChatIssueCreationMode: text("default_chat_issue_creation_mode").notNull().default("manual_approval"),
+    defaultChatAgentRuntimeType: text("default_chat_agent_runtime_type"),
+    defaultChatAgentRuntimeConfig: jsonb("default_chat_agent_runtime_config").$type<Record<string, unknown>>(),
+    workspaceConfig: jsonb("workspace_config").$type<Record<string, unknown>>(),
+    brandColor: text("brand_color"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    issuePrefixUniqueIdx: uniqueIndex("organizations_issue_prefix_idx").on(table.issuePrefix),
+    urlKeyUniqueIdx: uniqueIndex("organizations_url_key_idx").on(table.urlKey),
+  }),
+);

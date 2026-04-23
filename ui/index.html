@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#1f1f1d" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Rudder" />
+    <title>Rudder</title>
+    <!-- RUDDER_RUNTIME_BRANDING_START -->
+    <!-- RUDDER_RUNTIME_BRANDING_END -->
+    <!-- RUDDER_FAVICON_START -->
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <!-- RUDDER_FAVICON_END -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <script>
+      (() => {
+        const key = "rudder.theme";
+        const darkThemeColor = "#1f1f1d";
+        const lightThemeColor = "#f1f0ef";
+        try {
+          const stored = window.localStorage.getItem(key);
+          const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          const theme = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+          const isDark = theme === "system" ? prefersDark : theme === "dark";
+          document.documentElement.classList.toggle("dark", isDark);
+          document.documentElement.style.colorScheme = isDark ? "dark" : "light";
+          const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+          if (themeColorMeta) {
+            themeColorMeta.setAttribute("content", isDark ? darkThemeColor : lightThemeColor);
+          }
+        } catch {
+          document.documentElement.classList.add("dark");
+          document.documentElement.style.colorScheme = "dark";
+        }
+
+        const isMacDesktopShell =
+          typeof window !== "undefined"
+          && Boolean(window.desktopShell)
+          && /Mac/i.test(window.navigator.userAgent);
+        document.documentElement.classList.toggle("desktop-shell-macos", isMacDesktopShell);
+        document.documentElement.style.backgroundColor = isMacDesktopShell
+          ? "transparent"
+          : (document.documentElement.classList.contains("dark") ? darkThemeColor : lightThemeColor);
+        if (isMacDesktopShell && typeof window.desktopShell?.setAppearance === "function") {
+          void window.desktopShell.setAppearance(theme);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

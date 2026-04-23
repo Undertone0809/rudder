@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./packages/agent-runtime-utils" },
+    { "path": "./packages/shared" },
+    { "path": "./packages/db" },
+    { "path": "./packages/agent-runtimes/claude-local" },
+    { "path": "./packages/agent-runtimes/codex-local" },
+    { "path": "./packages/agent-runtimes/cursor-local" },
+    { "path": "./packages/agent-runtimes/openclaw-gateway" },
+    { "path": "./packages/agent-runtimes/opencode-local" },
+    { "path": "./packages/agent-runtimes/pi-local" },
+    { "path": "./server" },
+    { "path": "./ui" },
+    { "path": "./cli" },
+    { "path": "./desktop" }
+  ]
+}

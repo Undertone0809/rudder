@@ -1,0 +1,14 @@
+This package is part of the Rudder project.
+
+Rudder began as a fork of an early version of Paperclip.
+
+Licensing for this package follows the repository-level transition:
+- new Rudder contributions are made under the Apache License, Version 2.0
+- upstream-derived Paperclip portions preserve the original MIT notice where applicable
+
+Canonical project-level license and attribution texts live in the source repository:
+- `LICENSE`
+- `NOTICE`
+- `LICENSES/MIT-PAPERCLIP`
+
+Source repository: https://github.com/Undertone0809/rudder

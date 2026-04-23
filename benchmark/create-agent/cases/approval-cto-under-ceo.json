@@ -1,0 +1,23 @@
+{
+  "id": "approval-cto-under-ceo",
+  "prompt": "Hire a CTO agent for this organization. The CTO should report to the current CEO, use codex_local, keep the title exactly 'Chief Technology Officer', and request board approval instead of bypassing governance.",
+  "expectedPath": "approval_required",
+  "expectedAgentShape": {
+    "role": "cto",
+    "title": "Chief Technology Officer",
+    "reportsToFixture": "ceo",
+    "agentRuntimeType": "codex_local",
+    "desiredSkills": [],
+    "sourceIssueRequired": true
+  },
+  "fixtures": {
+    "requiredApproval": true,
+    "requiredFixtureKeys": [
+      "ceo"
+    ]
+  },
+  "judgeFocus": [
+    "Does the run choose the correct approval path?",
+    "Does the resulting CTO scope feel role-specific and not inflated?"
+  ]
+}

@@ -1,0 +1,58 @@
+#!/usr/bin/env node
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  prompt += chunk;
+});
+process.on("SIGTERM", () => {});
+process.stdin.on("end", async () => {
+  const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+  const finalText = "Streaming reply for chat.\n" + sentinel + JSON.stringify({
+    kind: "message",
+    body: "Streaming reply for chat.",
+    structuredPayload: null,
+  });
+  process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-e2e", model: "gpt-5.4" }) + "\n");
+  process.stdout.write(
+    JSON.stringify({
+      type: "item.completed",
+      item: { id: "reason-1", type: "reasoning", text: "Inspecting current chat state" },
+    }) + "\n",
+  );
+  process.stdout.write(
+    JSON.stringify({
+      type: "item.started",
+      item: { type: "tool_use", id: "tool-1", name: "command_execution", input: { command: "echo chat" } },
+    }) + "\n",
+  );
+  process.stdout.write(
+    JSON.stringify({
+      type: "item.completed",
+      item: { type: "tool_result", tool_use_id: "tool-1", content: "TRANSCRIPT_TOOL_OUTPUT_E2E", status: "completed" },
+    }) + "\n",
+  );
+  process.stdout.write(
+    JSON.stringify({
+      type: "item.completed",
+      item: { id: "msg-1", type: "agent_message", text: "Streaming reply " },
+    }) + "\n",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 30_000));
+  process.stdout.write(
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "msg-2",
+        type: "agent_message",
+        text: finalText.replace("Streaming reply ", ""),
+      },
+    }) + "\n",
+  );
+  process.stdout.write(
+    JSON.stringify({
+      type: "turn.completed",
+      result: finalText,
+      usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
+    }) + "\n",
+  );
+});

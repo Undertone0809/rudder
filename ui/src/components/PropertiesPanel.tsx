@@ -1,0 +1,32 @@
+import { X } from "lucide-react";
+import { usePanel } from "../context/PanelContext";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+
+export function PropertiesPanel() {
+  const { panelContent, panelVisible, setPanelVisible } = usePanel();
+
+  if (!panelContent) return null;
+
+  return (
+    <aside
+      className="hidden shrink-0 overflow-hidden border-l border-[color:var(--border-soft)] bg-transparent md:flex md:flex-col transition-[width,opacity] duration-200 ease-in-out"
+      style={{ width: panelVisible ? 320 : 0, opacity: panelVisible ? 1 : 0 }}
+    >
+      <div className="w-80 flex-1 flex flex-col min-w-[320px]">
+        <div className="flex items-center justify-between border-b panel-divider px-4 py-3">
+          <div>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Inspector</span>
+            <p className="mt-1 text-sm font-medium text-foreground">Properties</p>
+          </div>
+          <Button variant="ghost" size="icon-xs" onClick={() => setPanelVisible(false)}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <ScrollArea className="flex-1">
+          <div className="p-4">{panelContent}</div>
+        </ScrollArea>
+      </div>
+    </aside>
+  );
+}

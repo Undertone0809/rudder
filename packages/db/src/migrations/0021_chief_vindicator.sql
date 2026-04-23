@@ -1,0 +1,1 @@
+ALTER TABLE "issues" ADD COLUMN "assignee_agent_runtime_overrides" jsonb;

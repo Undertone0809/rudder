@@ -1,0 +1,596 @@
+import { execFile, spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createStoredZipArchive } from "./helpers/zip.js";
+
+type EmbeddedPostgresInstance = {
+  initialise(): Promise<void>;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+};
+
+type EmbeddedPostgresCtor = new (opts: {
+  databaseDir: string;
+  user: string;
+  password: string;
+  port: number;
+  persistent: boolean;
+  initdbFlags?: string[];
+  onLog?: (message: unknown) => void;
+  onError?: (message: unknown) => void;
+}) => EmbeddedPostgresInstance;
+
+const execFileAsync = promisify(execFile);
+type ServerProcess = ReturnType<typeof spawn>;
+
+async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
+  const mod = await import("embedded-postgres");
+  return mod.default as EmbeddedPostgresCtor;
+}
+
+async function getAvailablePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate test port")));
+        return;
+      }
+      const { port } = address;
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(port);
+      });
+    });
+  });
+}
+
+async function startTempDatabase() {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "rudder-company-cli-db-"));
+  const port = await getAvailablePort();
+  const EmbeddedPostgres = await getEmbeddedPostgresCtor();
+  const instance = new EmbeddedPostgres({
+    databaseDir: dataDir,
+    user: "rudder",
+    password: "rudder",
+    port,
+    persistent: true,
+    initdbFlags: ["--encoding=UTF8", "--locale=C"],
+    onLog: () => {},
+    onError: () => {},
+  });
+  await instance.initialise();
+  await instance.start();
+
+  const { applyPendingMigrations, ensurePostgresDatabase } = await import("@rudder/db");
+  const adminConnectionString = `postgres://rudder:rudder@127.0.0.1:${port}/postgres`;
+  await ensurePostgresDatabase(adminConnectionString, "rudder");
+  const connectionString = `postgres://rudder:rudder@127.0.0.1:${port}/rudder`;
+  await applyPendingMigrations(connectionString);
+
+  return { connectionString, dataDir, instance };
+}
+
+function writeTestConfig(configPath: string, tempRoot: string, port: number, connectionString: string) {
+  const config = {
+    $meta: {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      source: "doctor",
+    },
+    database: {
+      mode: "postgres",
+      connectionString,
+      embeddedPostgresDataDir: path.join(tempRoot, "embedded-db"),
+      embeddedPostgresPort: 54329,
+      backup: {
+        enabled: false,
+        intervalMinutes: 60,
+        retentionDays: 30,
+        dir: path.join(tempRoot, "backups"),
+      },
+    },
+    logging: {
+      mode: "file",
+      logDir: path.join(tempRoot, "logs"),
+    },
+    server: {
+      deploymentMode: "local_trusted",
+      exposure: "private",
+      host: "127.0.0.1",
+      port,
+      allowedHostnames: [],
+      serveUi: false,
+    },
+    auth: {
+      baseUrlMode: "auto",
+      disableSignUp: false,
+    },
+    storage: {
+      provider: "local_disk",
+      localDisk: {
+        baseDir: path.join(tempRoot, "storage"),
+      },
+      s3: {
+        bucket: "rudder",
+        region: "us-east-1",
+        prefix: "",
+        forcePathStyle: false,
+      },
+    },
+    secrets: {
+      provider: "local_encrypted",
+      strictMode: false,
+      localEncrypted: {
+        keyFilePath: path.join(tempRoot, "secrets", "master.key"),
+      },
+    },
+  };
+
+  mkdirSync(path.dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+function createServerEnv(configPath: string, port: number, connectionString: string, instanceId: string) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("RUDDER_")) {
+      delete env[key];
+    }
+  }
+  delete env.DATABASE_URL;
+  delete env.PORT;
+  delete env.HOST;
+  delete env.SERVE_UI;
+  delete env.HEARTBEAT_SCHEDULER_ENABLED;
+
+  env.RUDDER_CONFIG = configPath;
+  env.RUDDER_INSTANCE_ID = instanceId;
+  env.DATABASE_URL = connectionString;
+  env.HOST = "127.0.0.1";
+  env.PORT = String(port);
+  env.SERVE_UI = "false";
+  env.RUDDER_DB_BACKUP_ENABLED = "false";
+  env.HEARTBEAT_SCHEDULER_ENABLED = "false";
+  env.RUDDER_MIGRATION_AUTO_APPLY = "true";
+  env.RUDDER_UI_DEV_MIDDLEWARE = "false";
+
+  return env;
+}
+
+function createCliEnv() {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("RUDDER_")) {
+      delete env[key];
+    }
+  }
+  delete env.DATABASE_URL;
+  delete env.PORT;
+  delete env.HOST;
+  delete env.SERVE_UI;
+  delete env.RUDDER_DB_BACKUP_ENABLED;
+  delete env.HEARTBEAT_SCHEDULER_ENABLED;
+  delete env.RUDDER_MIGRATION_AUTO_APPLY;
+  delete env.RUDDER_UI_DEV_MIDDLEWARE;
+  return env;
+}
+
+function collectTextFiles(root: string, current: string, files: Record<string, string>) {
+  for (const entry of readdirSync(current, { withFileTypes: true })) {
+    const absolutePath = path.join(current, entry.name);
+    if (entry.isDirectory()) {
+      collectTextFiles(root, absolutePath, files);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const relativePath = path.relative(root, absolutePath).replace(/\\/g, "/");
+    files[relativePath] = readFileSync(absolutePath, "utf8");
+  }
+}
+
+async function stopServerProcess(child: ServerProcess | null) {
+  if (!child || child.exitCode !== null) return;
+  child.kill("SIGTERM");
+  await new Promise<void>((resolve) => {
+    child.once("exit", () => resolve());
+    setTimeout(() => {
+      if (child.exitCode === null) {
+        child.kill("SIGKILL");
+      }
+    }, 5_000);
+  });
+}
+
+async function api<T>(baseUrl: string, pathname: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${baseUrl}${pathname}`, init);
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Request failed ${res.status} ${pathname}: ${text}`);
+  }
+  return text ? JSON.parse(text) as T : (null as T);
+}
+
+async function runCliJson<T>(args: string[], opts: { apiBase: string; configPath: string }): Promise<T> {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+
+  // Use node directly instead of pnpm to avoid pnpm's output buffering
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["cli/node_modules/tsx/dist/cli.mjs", "cli/src/index.ts", ...args, "--api-base", opts.apiBase, "--config", opts.configPath, "--json"],
+      {
+        cwd: repoRoot,
+        env: createCliEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+    });
+
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+    });
+
+    child.on("close", (code) => {
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+
+      if (code !== 0) {
+        reject(new Error(`CLI exited with code ${code}.\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+        return;
+      }
+
+      const trimmed = stdout.trim();
+      const jsonStart = trimmed.search(/[\[{]/);
+      if (jsonStart === -1) {
+        reject(new Error(`CLI did not emit JSON.\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(trimmed.slice(jsonStart)) as T);
+      } catch (err) {
+        reject(new Error(`Failed to parse JSON: ${err}.\nstdout length: ${stdout.length}\nstdout:\n${stdout.slice(0, 2000)}...\nstderr:\n${stderr}`));
+      }
+    });
+
+    child.on("error", (err) => {
+      reject(new Error(`Failed to spawn CLI: ${err.message}`));
+    });
+  });
+}
+
+async function waitForServer(
+  apiBase: string,
+  child: ServerProcess,
+  output: { stdout: string[]; stderr: string[] },
+) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 30_000) {
+    if (child.exitCode !== null) {
+      throw new Error(
+        `rudder run exited before healthcheck succeeded.\nstdout:\n${output.stdout.join("")}\nstderr:\n${output.stderr.join("")}`,
+      );
+    }
+
+    try {
+      const res = await fetch(`${apiBase}/api/health`);
+      if (res.ok) return;
+    } catch {
+      // Server is still starting.
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  throw new Error(
+    `Timed out waiting for ${apiBase}/api/health.\nstdout:\n${output.stdout.join("")}\nstderr:\n${output.stderr.join("")}`,
+  );
+}
+
+describe("rudder org import/export e2e", () => {
+  let tempRoot = "";
+  let configPath = "";
+  let exportDir = "";
+  let apiBase = "";
+  let serverProcess: ServerProcess | null = null;
+  let dbDataDir = "";
+  let dbInstance: EmbeddedPostgresInstance | null = null;
+  let instanceId = "";
+
+  beforeAll(async () => {
+    tempRoot = mkdtempSync(path.join(os.tmpdir(), "rudder-org-cli-e2e-"));
+    configPath = path.join(tempRoot, "config", "config.json");
+    exportDir = path.join(tempRoot, "exported-organization");
+    instanceId = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const db = await startTempDatabase();
+    dbDataDir = db.dataDir;
+    dbInstance = db.instance;
+
+    const port = await getAvailablePort();
+    writeTestConfig(configPath, tempRoot, port, db.connectionString);
+    apiBase = `http://127.0.0.1:${port}`;
+
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+    const output = { stdout: [] as string[], stderr: [] as string[] };
+    const child = spawn(
+      process.execPath,
+      ["cli/node_modules/tsx/dist/cli.mjs", "cli/src/index.ts", "run", "--config", configPath],
+      {
+        cwd: repoRoot,
+        env: createServerEnv(configPath, port, db.connectionString, instanceId),
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    serverProcess = child;
+    child.stdout?.on("data", (chunk) => {
+      output.stdout.push(String(chunk));
+    });
+    child.stderr?.on("data", (chunk) => {
+      output.stderr.push(String(chunk));
+    });
+
+    await waitForServer(apiBase, child, output);
+  }, 120_000);
+
+  afterAll(async () => {
+    await stopServerProcess(serverProcess);
+    await dbInstance?.stop();
+    if (dbDataDir) {
+      rmSync(dbDataDir, { recursive: true, force: true });
+    }
+    if (tempRoot) {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("exports an organization package and imports it into new and existing organizations", async () => {
+    expect(serverProcess).not.toBeNull();
+
+    const sourceOrganization = await api<{ id: string; name: string; issuePrefix: string }>(apiBase, "/api/orgs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: `CLI Export Source ${Date.now()}` }),
+    });
+
+    const sourceAgent = await api<{ id: string; name: string }>(
+      apiBase,
+      `/api/orgs/${sourceOrganization.id}/agents`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "Export Engineer",
+          role: "engineer",
+          agentRuntimeType: "claude_local",
+          agentRuntimeConfig: {
+            promptTemplate: "You verify organization portability.",
+          },
+        }),
+      },
+    );
+
+    const sourceProject = await api<{ id: string; name: string }>(
+      apiBase,
+      `/api/orgs/${sourceOrganization.id}/projects`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "Portability Verification",
+          status: "in_progress",
+        }),
+      },
+    );
+
+    const largeIssueDescription = `Round-trip the organization package through the CLI.\n\n${"portable-data ".repeat(100)}`;
+
+    const sourceIssue = await api<{ id: string; title: string; identifier: string }>(
+      apiBase,
+      `/api/orgs/${sourceOrganization.id}/issues`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: "Validate organization import/export",
+          description: largeIssueDescription,
+          status: "todo",
+          projectId: sourceProject.id,
+          assigneeAgentId: sourceAgent.id,
+        }),
+      },
+    );
+
+    const sourceSubIssue = await api<{ id: string; title: string; identifier: string }>(
+      apiBase,
+      `/api/orgs/${sourceOrganization.id}/issues`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: "Sub-task for export validation",
+          status: "backlog",
+          parentId: sourceIssue.id,
+        }),
+      },
+    );
+
+    const exportResult = await runCliJson<{
+      ok: boolean;
+      out: string;
+      filesWritten: number;
+    }>(
+      [
+        "org",
+        "export",
+        sourceOrganization.id,
+        "--out",
+        exportDir,
+        "--include",
+        "organization,agents,projects,issues",
+      ],
+      { apiBase, configPath },
+    );
+
+    expect(exportResult.ok).toBe(true);
+    expect(exportResult.filesWritten).toBeGreaterThan(0);
+    expect(readFileSync(path.join(exportDir, "ORGANIZATION.md"), "utf8")).toContain(sourceOrganization.name);
+    expect(readFileSync(path.join(exportDir, ".rudder.yaml"), "utf8")).toContain('schema: "rudder/v1"');
+
+    const importedNew = await runCliJson<{
+      organization: { id: string; name: string; action: string };
+      agents: Array<{ id: string | null; action: string; name: string }>;
+    }>(
+      [
+        "org",
+        "import",
+        exportDir,
+        "--target",
+        "new",
+        "--new-organization-name",
+        `Imported ${sourceOrganization.name}`,
+        "--include",
+        "organization,agents,projects,issues",
+        "--yes",
+      ],
+      { apiBase, configPath },
+    );
+
+    expect(importedNew.organization.action).toBe("created");
+    expect(importedNew.agents).toHaveLength(1);
+    expect(importedNew.agents[0]?.action).toBe("created");
+
+    const importedAgents = await api<Array<{ id: string; name: string }>>(
+      apiBase,
+      `/api/orgs/${importedNew.organization.id}/agents`,
+    );
+    const importedProjects = await api<Array<{ id: string; name: string }>>(
+      apiBase,
+      `/api/orgs/${importedNew.organization.id}/projects`,
+    );
+    const importedIssues = await api<Array<{ id: string; title: string; identifier: string }>>(
+      apiBase,
+      `/api/orgs/${importedNew.organization.id}/issues`,
+    );
+
+    expect(importedAgents.map((agent) => agent.name)).toContain(sourceAgent.name);
+    expect(importedProjects.map((project) => project.name)).toContain(sourceProject.name);
+    expect(importedIssues.map((issue) => issue.title)).toContain(sourceIssue.title);
+
+    const previewExisting = await runCliJson<{
+      errors: string[];
+      plan: {
+        organizationAction: string;
+        agentPlans: Array<{ action: string }>;
+        projectPlans: Array<{ action: string }>;
+        issuePlans: Array<{ action: string }>;
+      };
+    }>(
+      [
+        "org",
+        "import",
+        exportDir,
+        "--target",
+        "existing",
+        "--org-id",
+        importedNew.organization.id,
+        "--include",
+        "organization,agents,projects,issues",
+        "--collision",
+        "rename",
+        "--dry-run",
+      ],
+      { apiBase, configPath },
+    );
+
+    expect(previewExisting.errors).toEqual([]);
+    expect(previewExisting.plan.organizationAction).toBe("none");
+    expect(previewExisting.plan.agentPlans.some((plan) => plan.action === "create")).toBe(true);
+    expect(previewExisting.plan.projectPlans.some((plan) => plan.action === "create")).toBe(true);
+    expect(previewExisting.plan.issuePlans.some((plan) => plan.action === "create")).toBe(true);
+
+    const importedExisting = await runCliJson<{
+      organization: { id: string; action: string };
+      agents: Array<{ id: string | null; action: string; name: string }>;
+    }>(
+      [
+        "org",
+        "import",
+        exportDir,
+        "--target",
+        "existing",
+        "--org-id",
+        importedNew.organization.id,
+        "--include",
+        "organization,agents,projects,issues",
+        "--collision",
+        "rename",
+        "--yes",
+      ],
+      { apiBase, configPath },
+    );
+
+    expect(importedExisting.organization.action).toBe("unchanged");
+    expect(importedExisting.agents.some((agent) => agent.action === "created")).toBe(true);
+
+    const twiceImportedAgents = await api<Array<{ id: string; name: string }>>(
+      apiBase,
+      `/api/orgs/${importedNew.organization.id}/agents`,
+    );
+    const twiceImportedProjects = await api<Array<{ id: string; name: string }>>(
+      apiBase,
+      `/api/orgs/${importedNew.organization.id}/projects`,
+    );
+    const twiceImportedIssues = await api<Array<{ id: string; title: string; identifier: string }>>(
+      apiBase,
+      `/api/orgs/${importedNew.organization.id}/issues`,
+    );
+
+    expect(twiceImportedAgents).toHaveLength(2);
+    expect(new Set(twiceImportedAgents.map((agent) => agent.name)).size).toBe(2);
+    expect(twiceImportedProjects).toHaveLength(2);
+    expect(twiceImportedIssues).toHaveLength(4);
+
+    const zipPath = path.join(tempRoot, "exported-organization.zip");
+    const portableFiles: Record<string, string> = {};
+    collectTextFiles(exportDir, exportDir, portableFiles);
+    writeFileSync(zipPath, createStoredZipArchive(portableFiles, "rudder-demo"));
+
+    const importedFromZip = await runCliJson<{
+      organization: { id: string; name: string; action: string };
+      agents: Array<{ id: string | null; action: string; name: string }>;
+    }>(
+      [
+        "org",
+        "import",
+        zipPath,
+        "--target",
+        "new",
+        "--new-organization-name",
+        `Zip Imported ${sourceOrganization.name}`,
+        "--include",
+        "organization,agents,projects,issues",
+        "--yes",
+      ],
+      { apiBase, configPath },
+    );
+
+    expect(importedFromZip.organization.action).toBe("created");
+    expect(importedFromZip.agents.some((agent) => agent.action === "created")).toBe(true);
+  }, 180_000);
+});

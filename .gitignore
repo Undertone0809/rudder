@@ -1,0 +1,63 @@
+ui-dist/
+node_modules/
+dist/
+.env
+*.tsbuildinfo
+drizzle/meta/
+.vite/
+coverage/
+.DS_Store
+data/
+.rudder/
+.pnpm-store/
+tmp-*
+cli/tmp/
+.artifacts/
+
+# Scratch/seed scripts (but not scripts/ dir)
+check-*.mjs
+!scripts/check-*.mjs
+new-agent*.json
+newcompany.json
+seed-*.mjs
+server/check-*.mjs
+server/seed-*.mjs
+packages/db/seed-*.mjs
+
+# npm publish build artifacts
+cli/package.dev.json
+
+# Build artifacts in src directories
+server/src/**/*.js
+server/src/**/*.js.map
+server/src/**/*.d.ts
+server/src/**/*.d.ts.map
+tmp/
+desktop/dist/
+desktop/release/
+server/ui-dist/index.html
+
+# Editor / tool temp files
+*.tmp
+.vscode/
+.claude/settings.local.json
+.rudder-local/
+/.idea/
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/stop-rudder-dev-maintainer/
+!/.agents/skills/stop-rudder-dev-maintainer/**
+!/.agents/skills/self-improvement/
+!/.agents/skills/self-improvement/**
+
+# Doc maintenance cursor
+.doc-review-cursor
+
+# Playwright
+tests/e2e/test-results/
+tests/e2e/playwright-report/
+tests/release-smoke/test-results/
+tests/release-smoke/playwright-report/
+.superset/
+.claude/worktrees/

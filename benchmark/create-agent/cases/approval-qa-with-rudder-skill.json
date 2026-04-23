@@ -1,0 +1,24 @@
+{
+  "id": "approval-qa-with-rudder-skill",
+  "prompt": "Create a QA agent that reports to the CEO. The QA agent should use codex_local, request board approval, and start with the desired skill 'rudder/rudder' enabled on day one.",
+  "expectedPath": "approval_required",
+  "expectedAgentShape": {
+    "role": "qa",
+    "reportsToFixture": "ceo",
+    "agentRuntimeType": "codex_local",
+    "desiredSkills": [
+      "rudder/rudder"
+    ],
+    "sourceIssueRequired": true
+  },
+  "fixtures": {
+    "requiredApproval": true,
+    "requiredFixtureKeys": [
+      "ceo"
+    ]
+  },
+  "judgeFocus": [
+    "Does the run correctly resolve desired skills instead of hallucinating local file setup?",
+    "Does the QA role stay narrowly operational?"
+  ]
+}
