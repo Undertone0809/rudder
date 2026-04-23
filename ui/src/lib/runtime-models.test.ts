@@ -7,6 +7,7 @@ describe("resolveRuntimeModels", () => {
     const models = resolveRuntimeModels("codex_local");
 
     expect(models.some((model) => model.id === DEFAULT_CODEX_LOCAL_MODEL)).toBe(true);
+    expect(models.some((model) => model.id === "gpt-5.5")).toBe(true);
     expect(models.some((model) => model.id === "gpt-5.4")).toBe(true);
   });
 
