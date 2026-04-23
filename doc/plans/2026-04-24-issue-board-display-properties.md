@@ -16,7 +16,7 @@ related_code:
   - ui/src/components/KanbanBoard.tsx
   - ui/src/components/IssuesList.test.tsx
 commit_refs:
-  - bdc7371
+  - 16ce14b
 updated_at: 2026-04-24
 ---
 
