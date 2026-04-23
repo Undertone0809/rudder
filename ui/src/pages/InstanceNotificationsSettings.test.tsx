@@ -82,6 +82,7 @@ vi.mock("@/context/I18nContext", () => ({
         "notifications.permission.access.testNotificationTitle": "Rudder notifications are on",
         "notifications.permission.access.testNotificationBody": "Test body",
         "notifications.permission.access.desktopHelp": "Desktop help for {{appName}}.",
+        "notifications.permission.access.desktopHelpProd": "Production desktop help for {{appName}}.",
         "notifications.permission.access.lastTest": "Last notification {{title}} at {{timestamp}}.",
         "notifications.permission.access.openSettings": "Open notification settings",
         "notifications.environment.title": "Environment",
@@ -199,6 +200,41 @@ describe("InstanceNotificationsSettings", () => {
     expect(container.textContent).toContain("Send test notification");
     expect(container.textContent).toContain("Preview badge");
     expect(container.textContent).toContain("Last notification Rudder notifications are on at 2026-04-22T09:30:00.000Z.");
+    expect(container.textContent).not.toContain("Enable notifications");
+  });
+
+  it("hides desktop debug actions outside the dev desktop shell", async () => {
+    desktopShellValue = desktopShellMock;
+    desktopShellMock.onBootState.mockReturnValue(() => {});
+    desktopShellMock.getBootState.mockResolvedValue({
+      capabilities: {
+        notifications: true,
+        badgeCount: true,
+      },
+      diagnostics: {
+        lastBadgeCount: 2,
+        badgeSyncSucceeded: true,
+        lastNotificationTitle: "Rudder notifications are on",
+        lastNotificationTriggeredAt: "2026-04-22T09:30:00.000Z",
+      },
+      runtime: {
+        localEnv: "prod_local",
+      },
+    });
+
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Running inside the desktop shell.");
+    expect(container.textContent).toContain("Production desktop help for Rudder.");
+    expect(container.textContent).toContain("Open notification settings");
+    expect(container.textContent).not.toContain("Send test notification");
+    expect(container.textContent).not.toContain("Preview badge");
+    expect(container.textContent).not.toContain("Last notification Rudder notifications are on at 2026-04-22T09:30:00.000Z.");
+    expect(container.textContent).not.toContain("Desktop debug badge copy.");
     expect(container.textContent).not.toContain("Enable notifications");
   });
 });

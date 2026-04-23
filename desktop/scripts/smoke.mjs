@@ -425,9 +425,18 @@ async function verifySettingsOverlayFlow(page, companyId, issuePrefix) {
   await sidebar.locator('a[href$="/instance/settings/notifications"]').click();
   await page.waitForURL(/\/instance\/settings\/notifications$/, { timeout: 15_000 });
   await modal.getByRole("heading", { name: "Notifications" }).waitFor({ state: "visible", timeout: 15_000 });
-  await modal.getByRole("button", { name: "Send test notification" }).waitFor({ state: "visible", timeout: 15_000 });
-  await modal.getByRole("button", { name: "Preview badge" }).waitFor({ state: "visible", timeout: 15_000 });
-  console.log("[desktop-smoke] notifications route exposes desktop debug actions");
+  await modal.getByRole("button", { name: "Open notification settings" }).waitFor({ state: "visible", timeout: 15_000 });
+  assert.equal(
+    await modal.getByRole("button", { name: "Send test notification" }).count(),
+    0,
+    "prod-local desktop smoke should not expose the test notification debug action",
+  );
+  assert.equal(
+    await modal.getByRole("button", { name: "Preview badge" }).count(),
+    0,
+    "prod-local desktop smoke should not expose the badge preview debug action",
+  );
+  console.log("[desktop-smoke] notifications route hides desktop debug actions in prod-local");
 
   await sidebar.locator('a[href$="/instance/settings/about"]').click();
   await page.waitForURL(/\/instance\/settings\/about$/, { timeout: 15_000 });

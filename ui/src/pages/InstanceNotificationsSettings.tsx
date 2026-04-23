@@ -163,6 +163,7 @@ export function InstanceNotificationsSettings() {
   const settings = notificationsQuery.data ?? DEFAULT_NOTIFICATION_SETTINGS;
   const desktopShell = readDesktopShell();
   const isDesktopShell = desktopShell !== null;
+  const isDevDesktopShell = isDesktopShell && desktopBootState?.runtime?.localEnv === "dev";
   const notificationSupported = isDesktopShell
     ? (desktopBootState?.capabilities?.notifications ?? false)
     : notificationPermission !== "unsupported";
@@ -173,7 +174,10 @@ export function InstanceNotificationsSettings() {
   const badgeSyncSucceeded = desktopBootState?.diagnostics?.badgeSyncSucceeded;
   const lastNotificationTitle = desktopBootState?.diagnostics?.lastNotificationTitle;
   const lastNotificationTriggeredAt = desktopBootState?.diagnostics?.lastNotificationTriggeredAt;
-  const desktopAppName = desktopBootState?.runtime?.localEnv === "dev" ? "Rudder-dev" : "Rudder";
+  const desktopAppName = isDevDesktopShell ? "Rudder-dev" : "Rudder";
+  const desktopPermissionHelpKey = isDevDesktopShell
+    ? "notifications.permission.access.desktopHelp"
+    : "notifications.permission.access.desktopHelpProd";
   const permissionSummary = isDesktopShell
     ? t("notifications.permission.access.summaryDesktop", {
         permission: t("notifications.permission.access.systemManaged"),
@@ -222,7 +226,7 @@ export function InstanceNotificationsSettings() {
               <div>{permissionSummary}</div>
               {isDesktopShell ? (
                 <div className="text-[12px]">
-                  {t("notifications.permission.access.desktopHelp", {
+                  {t(desktopPermissionHelpKey, {
                     appName: desktopAppName,
                   })}
                 </div>
@@ -235,7 +239,7 @@ export function InstanceNotificationsSettings() {
                   {t("notifications.permission.access.denied.browser")}
                 </div>
               ) : null}
-              {isDesktopShell && lastNotificationTitle && lastNotificationTriggeredAt ? (
+              {isDevDesktopShell && lastNotificationTitle && lastNotificationTriggeredAt ? (
                 <div className="text-[12px]">
                   {t("notifications.permission.access.lastTest", {
                     title: lastNotificationTitle,
@@ -247,7 +251,7 @@ export function InstanceNotificationsSettings() {
           )}
           action={(
             <div className="flex flex-col items-end gap-2">
-              {isDesktopShell ? (
+              {isDevDesktopShell ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -344,14 +348,14 @@ export function InstanceNotificationsSettings() {
                   })}
                 </div>
               ) : null}
-              {isDesktopShell ? (
+              {isDevDesktopShell ? (
                 <div className="text-[12px]">{t("notifications.behavior.badge.desktopDebug")}</div>
               ) : null}
             </div>
           )}
           action={(
             <div className="flex flex-col items-end gap-2">
-              {isDesktopShell ? (
+              {isDevDesktopShell ? (
                 <Button
                   variant="outline"
                   size="sm"

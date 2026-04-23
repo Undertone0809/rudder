@@ -329,6 +329,8 @@ export const en = {
     "If you do not see this alert or a macOS prompt, open System Settings and allow notifications for Rudder.",
   "notifications.permission.access.desktopHelp":
     "Electron can trigger native notifications here, but macOS owns the real allow/block state. Use a test notification first; if nothing appears, open system settings and look for {{appName}}.",
+  "notifications.permission.access.desktopHelpProd":
+    "macOS owns the real allow/block state. If notifications do not appear, open system settings and look for {{appName}}.",
   "notifications.permission.access.lastTest":
     "Last test/native notification requested: \"{{title}}\" at {{timestamp}}.",
   "notifications.permission.access.openSettings": "Open notification settings",

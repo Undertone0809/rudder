@@ -306,6 +306,8 @@ export const zhCN: Messages = {
     "如果你没有看到这条提醒或 macOS 权限弹窗，请打开系统设置并允许 Rudder 的通知。",
   "notifications.permission.access.desktopHelp":
     "这里能触发原生通知，但真正的允许/阻止状态由 macOS 管理。先发送一次测试通知；如果仍然没有任何反应，就去系统设置里检查 {{appName}}。",
+  "notifications.permission.access.desktopHelpProd":
+    "真正的允许/阻止状态由 macOS 管理。如果没有弹出通知，请打开系统设置并检查 {{appName}}。",
   "notifications.permission.access.lastTest":
     "最近一次请求的测试/原生通知: \"{{title}}\"，时间 {{timestamp}}。",
   "notifications.permission.access.openSettings": "打开通知设置",
