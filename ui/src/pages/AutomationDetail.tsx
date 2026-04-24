@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link, useParams } from "@/lib/router";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Link, useNavigate, useParams } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
@@ -9,7 +9,6 @@ import {
   Play,
   RefreshCw,
   Repeat,
-  Save,
   Trash2,
   Webhook,
   Zap,
@@ -138,6 +137,15 @@ function SidebarRow({
   );
 }
 
+function SidebarSelectValue({ children }: { children: ReactNode }) {
+  return (
+    <>
+      <span className="flex min-w-0 items-center gap-1.5">{children}</span>
+      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+    </>
+  );
+}
+
 function TriggerEditor({
   trigger,
   onSave,
@@ -155,6 +163,7 @@ function TriggerEditor({
     signingMode: trigger.signingMode ?? "bearer",
     replayWindowSec: String(trigger.replayWindowSec ?? 300),
   });
+  const skipNextAutosaveRef = useRef(true);
 
   useEffect(() => {
     setDraft({
@@ -163,22 +172,65 @@ function TriggerEditor({
       signingMode: trigger.signingMode ?? "bearer",
       replayWindowSec: String(trigger.replayWindowSec ?? 300),
     });
+    skipNextAutosaveRef.current = true;
   }, [trigger]);
 
+  const isTriggerDirty = useMemo(() => {
+    if (draft.label !== (trigger.label ?? "")) return true;
+    if (trigger.kind === "schedule") {
+      return draft.cronExpression !== (trigger.cronExpression ?? "");
+    }
+    if (trigger.kind === "webhook") {
+      return (
+        draft.signingMode !== (trigger.signingMode ?? "bearer") ||
+        draft.replayWindowSec !== String(trigger.replayWindowSec ?? 300)
+      );
+    }
+    return false;
+  }, [draft, trigger]);
+
+  const canAutosaveTrigger =
+    trigger.kind !== "schedule" || draft.cronExpression.trim().length > 0;
+
+  useEffect(() => {
+    if (skipNextAutosaveRef.current) {
+      skipNextAutosaveRef.current = false;
+      return;
+    }
+    if (!isTriggerDirty || !canAutosaveTrigger) return;
+
+    const timeoutId = window.setTimeout(() => {
+      onSave(trigger.id, buildAutomationTriggerPatch(trigger, draft, getLocalTimezone()));
+    }, 650);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [canAutosaveTrigger, draft, isTriggerDirty, onSave, trigger]);
+
   return (
-    <div className="rounded-lg border border-border p-4 space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="space-y-3 rounded-md border border-border/70 p-3">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm font-medium">
           {trigger.kind === "schedule" ? <Clock3 className="h-3.5 w-3.5" /> : trigger.kind === "webhook" ? <Webhook className="h-3.5 w-3.5" /> : <Zap className="h-3.5 w-3.5" />}
           {trigger.label ?? trigger.kind}
         </div>
-        <span className="text-xs text-muted-foreground">
-          {trigger.kind === "schedule" && trigger.nextRunAt
-            ? `Next: ${new Date(trigger.nextRunAt).toLocaleString()}`
-            : trigger.kind === "webhook"
-              ? "Webhook"
-              : "API"}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {trigger.kind === "schedule" && trigger.nextRunAt
+              ? `Next: ${new Date(trigger.nextRunAt).toLocaleString()}`
+              : trigger.kind === "webhook"
+                ? "Webhook"
+                : "API"}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="text-muted-foreground hover:text-destructive"
+            aria-label="Delete trigger"
+            onClick={() => onDelete(trigger.id)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
@@ -227,33 +279,19 @@ function TriggerEditor({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {trigger.lastResult && <span className="text-xs text-muted-foreground">Last: {trigger.lastResult}</span>}
-        <div className="ml-auto flex items-center gap-2">
-          {trigger.kind === "webhook" && (
-            <Button variant="outline" size="sm" onClick={() => onRotate(trigger.id)}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-              Rotate secret
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onSave(trigger.id, buildAutomationTriggerPatch(trigger, draft, getLocalTimezone()))}
-          >
-            <Save className="mr-1.5 h-3.5 w-3.5" />
-            Save
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground hover:text-destructive"
-            onClick={() => onDelete(trigger.id)}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+      {(trigger.lastResult || trigger.kind === "webhook") ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {trigger.lastResult && <span className="text-xs text-muted-foreground">Last: {trigger.lastResult}</span>}
+          <div className="ml-auto flex items-center gap-2">
+            {trigger.kind === "webhook" && (
+              <Button variant="outline" size="sm" onClick={() => onRotate(trigger.id)}>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                Rotate secret
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -261,10 +299,12 @@ function TriggerEditor({
 export function AutomationDetail() {
   const { automationId } = useParams<{ automationId: string }>();
   const { selectedOrganizationId } = useOrganization();
-  const { setBreadcrumbs } = useBreadcrumbs();
+  const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { pushToast } = useToast();
   const hydratedAutomationIdRef = useRef<string | null>(null);
+  const lastSubmittedEditKeyRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
@@ -360,6 +400,23 @@ export function AutomationDetail() {
       editDraft.catchUpPolicy !== automationDefaults.catchUpPolicy
     );
   }, [editDraft, automationDefaults]);
+  const canAutoSaveAutomation = Boolean(
+    editDraft.title.trim() &&
+    editDraft.projectId &&
+    editDraft.assigneeAgentId,
+  );
+  const editDraftKey = useMemo(
+    () => JSON.stringify({
+      title: editDraft.title,
+      description: editDraft.description.trim() || null,
+      projectId: editDraft.projectId,
+      assigneeAgentId: editDraft.assigneeAgentId,
+      priority: editDraft.priority,
+      concurrencyPolicy: editDraft.concurrencyPolicy,
+      catchUpPolicy: editDraft.catchUpPolicy,
+    }),
+    [editDraft],
+  );
 
   useEffect(() => {
     if (!automation) return;
@@ -370,6 +427,7 @@ export function AutomationDetail() {
     if (changedAutomation || !isEditDirty) {
       setEditDraft(automationDefaults);
       hydratedAutomationIdRef.current = automation.id;
+      if (changedAutomation) lastSubmittedEditKeyRef.current = null;
     }
   }, [automation, automationDefaults, isEditDirty, setBreadcrumbs]);
 
@@ -391,10 +449,10 @@ export function AutomationDetail() {
   };
 
   const saveAutomation = useMutation({
-    mutationFn: () => {
+    mutationFn: (draft: typeof editDraft) => {
       return automationsApi.update(automationId!, {
-        ...editDraft,
-        description: editDraft.description.trim() || null,
+        ...draft,
+        description: draft.description.trim() || null,
       });
     },
     onSuccess: async () => {
@@ -405,6 +463,7 @@ export function AutomationDetail() {
       ]);
     },
     onError: (error) => {
+      lastSubmittedEditKeyRef.current = null;
       pushToast({
         title: "Failed to save automation",
         body: error instanceof Error ? error.message : "Rudder could not save the automation.",
@@ -412,6 +471,26 @@ export function AutomationDetail() {
       });
     },
   });
+
+  useEffect(() => {
+    if (!automation || !isEditDirty || !canAutoSaveAutomation || saveAutomation.isPending) return;
+    if (lastSubmittedEditKeyRef.current === editDraftKey) return;
+
+    const draftSnapshot = editDraft;
+    const timeoutId = window.setTimeout(() => {
+      lastSubmittedEditKeyRef.current = editDraftKey;
+      saveAutomation.mutate(draftSnapshot);
+    }, 700);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    automation,
+    canAutoSaveAutomation,
+    editDraft,
+    editDraftKey,
+    isEditDirty,
+    saveAutomation,
+  ]);
 
   const runAutomation = useMutation({
     mutationFn: () => automationsApi.run(automationId!),
@@ -432,6 +511,74 @@ export function AutomationDetail() {
       });
     },
   });
+
+  const deleteAutomation = useMutation({
+    mutationFn: () => automationsApi.update(automationId!, { status: "archived" }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.automations.detail(automationId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.automations.activity(selectedOrganizationId!, automationId!) }),
+      ]);
+      pushToast({ title: "Automation deleted", tone: "success" });
+      navigate("/automations");
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to delete automation",
+        body: error instanceof Error ? error.message : "Rudder could not delete the automation.",
+        tone: "error",
+      });
+    },
+  });
+
+  useEffect(() => {
+    if (!selectedOrganizationId || !automation) {
+      setHeaderActions(null);
+      return;
+    }
+
+    const isArchived = automation.status === "archived";
+    setHeaderActions(
+      <>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground hover:text-destructive"
+          disabled={deleteAutomation.isPending || isArchived}
+          onClick={() => {
+            const confirmed = window.confirm(
+              `Delete "${automation.title}"? It will be archived and stop new runs.`,
+            );
+            if (!confirmed) return;
+            deleteAutomation.mutate();
+          }}
+        >
+          <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+          {deleteAutomation.isPending ? "Deleting..." : "Delete"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={runAutomation.isPending || isArchived}
+          onClick={() => runAutomation.mutate()}
+        >
+          <Play className="mr-1.5 h-3.5 w-3.5" />
+          {runAutomation.isPending ? "Starting..." : "Run now"}
+        </Button>
+      </>,
+    );
+
+    return () => setHeaderActions(null);
+  }, [
+    automation?.id,
+    automation?.status,
+    automation?.title,
+    deleteAutomation.isPending,
+    runAutomation.isPending,
+    selectedOrganizationId,
+    setHeaderActions,
+  ]);
 
   const updateAutomationStatus = useMutation({
     mutationFn: (status: string) => automationsApi.update(automationId!, { status }),
@@ -513,6 +660,12 @@ export function AutomationDetail() {
       });
     },
   });
+  const saveTriggerDraft = useCallback(
+    (id: string, patch: Record<string, unknown>) => {
+      updateTrigger.mutate({ id, patch });
+    },
+    [updateTrigger],
+  );
 
   const deleteTrigger = useMutation({
     mutationFn: (id: string) => automationsApi.deleteTrigger(id),
@@ -611,7 +764,16 @@ export function AutomationDetail() {
     : automationEnabled
       ? "text-emerald-400"
       : "text-muted-foreground";
-  const saveDisabled = saveAutomation.isPending || !editDraft.title.trim() || !editDraft.projectId || !editDraft.assigneeAgentId;
+  const editSyncLabel = saveAutomation.isPending
+    ? "Saving..."
+    : !canAutoSaveAutomation
+      ? "Needs fields"
+      : isEditDirty
+        ? "Autosaving..."
+        : "In sync";
+  const editSyncClassName = saveAutomation.isPending || isEditDirty
+    ? "text-amber-600"
+    : "text-muted-foreground";
   const nextTrigger = [...automation.triggers]
     .filter((trigger) => trigger.enabled)
     .sort((a, b) => {
@@ -691,68 +853,70 @@ export function AutomationDetail() {
               bordered={false}
               className="bg-transparent"
               contentClassName="min-h-[320px] text-[15px] leading-7 text-foreground/90"
-              onSubmit={() => {
-                if (!saveAutomation.isPending && editDraft.title.trim() && editDraft.projectId && editDraft.assigneeAgentId) {
-                  saveAutomation.mutate();
-                }
-              }}
             />
           </section>
 
           <section className="max-w-3xl space-y-4 border-t border-border/70 pt-5">
             <div className="flex items-center justify-between gap-4">
               <h2 className="text-sm font-medium">Triggers</h2>
-              <Button size="sm" onClick={() => createTrigger.mutate()} disabled={createTrigger.isPending}>
-                {createTrigger.isPending ? "Adding..." : "Add trigger"}
-              </Button>
             </div>
-            <div className="grid gap-3 md:grid-cols-[150px_minmax(0,1fr)] md:items-end">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Kind</Label>
-                <Select value={newTrigger.kind} onValueChange={(kind) => setNewTrigger((current) => ({ ...current, kind }))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {triggerKinds.map((kind) => (
-                      <SelectItem key={kind} value={kind} disabled={kind === "webhook"}>
-                        {kind}{kind === "webhook" ? " - coming soon" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {newTrigger.kind === "schedule" && (
+            <div
+              data-testid="automation-add-trigger-card"
+              className="space-y-3 rounded-md border border-border/70 bg-muted/20 p-3"
+            >
+              <div className="grid gap-3 lg:grid-cols-[150px_minmax(0,1fr)]">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Schedule</Label>
-                  <ScheduleEditor
-                    value={newTrigger.cronExpression}
-                    onChange={(cronExpression) => setNewTrigger((current) => ({ ...current, cronExpression }))}
-                  />
+                  <Label className="text-xs">Kind</Label>
+                  <Select value={newTrigger.kind} onValueChange={(kind) => setNewTrigger((current) => ({ ...current, kind }))}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {triggerKinds.map((kind) => (
+                        <SelectItem key={kind} value={kind} disabled={kind === "webhook"}>
+                          {kind}{kind === "webhook" ? " - coming soon" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-              )}
-              {newTrigger.kind === "webhook" && (
-                <>
+                {newTrigger.kind === "schedule" && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">Signing mode</Label>
-                    <Select value={newTrigger.signingMode} onValueChange={(signingMode) => setNewTrigger((current) => ({ ...current, signingMode }))}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {signingModes.map((mode) => (
-                          <SelectItem key={mode} value={mode}>{mode}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">{signingModeDescriptions[newTrigger.signingMode]}</p>
+                    <Label className="text-xs">Schedule</Label>
+                    <ScheduleEditor
+                      value={newTrigger.cronExpression}
+                      onChange={(cronExpression) => setNewTrigger((current) => ({ ...current, cronExpression }))}
+                    />
                   </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Replay window</Label>
-                    <Input value={newTrigger.replayWindowSec} onChange={(event) => setNewTrigger((current) => ({ ...current, replayWindowSec: event.target.value }))} />
-                  </div>
-                </>
-              )}
+                )}
+                {newTrigger.kind === "webhook" && (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Signing mode</Label>
+                      <Select value={newTrigger.signingMode} onValueChange={(signingMode) => setNewTrigger((current) => ({ ...current, signingMode }))}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {signingModes.map((mode) => (
+                            <SelectItem key={mode} value={mode}>{mode}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">{signingModeDescriptions[newTrigger.signingMode]}</p>
+                    </div>
+                    <div className="space-y-1.5 lg:col-start-2">
+                      <Label className="text-xs">Replay window</Label>
+                      <Input value={newTrigger.replayWindowSec} onChange={(event) => setNewTrigger((current) => ({ ...current, replayWindowSec: event.target.value }))} />
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="flex justify-end">
+                <Button size="sm" onClick={() => createTrigger.mutate()} disabled={createTrigger.isPending}>
+                  {createTrigger.isPending ? "Adding..." : "Add trigger"}
+                </Button>
+              </div>
             </div>
 
             <div data-testid="automation-triggers-list" className="space-y-3">
@@ -765,7 +929,7 @@ export function AutomationDetail() {
                   <TriggerEditor
                     key={trigger.id}
                     trigger={trigger}
-                    onSave={(id, patch) => updateTrigger.mutate({ id, patch })}
+                    onSave={saveTriggerDraft}
                     onRotate={(id) => rotateTrigger.mutate(id)}
                     onDelete={(id) => deleteTrigger.mutate(id)}
                   />
@@ -805,17 +969,6 @@ export function AutomationDetail() {
         </main>
 
         <aside className="space-y-8 border-t border-border/70 pt-5 lg:border-l lg:border-t-0 lg:pl-7 lg:pr-2 lg:pt-8">
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => runAutomation.mutate()} disabled={runAutomation.isPending}>
-              <Play className="mr-1.5 h-3.5 w-3.5" />
-              {runAutomation.isPending ? "Starting..." : "Run now"}
-            </Button>
-            <Button size="sm" onClick={() => saveAutomation.mutate()} disabled={saveDisabled}>
-              <Save className="mr-1.5 h-3.5 w-3.5" />
-              {saveAutomation.isPending ? "Saving..." : "Save"}
-            </Button>
-          </div>
-
           <SidebarSection title="Status">
             <SidebarRow label="Status">
               <div className="flex items-center justify-end gap-2">
@@ -837,9 +990,7 @@ export function AutomationDetail() {
               <span className="truncate">{latestRun ? timeAgo(latestRun.triggeredAt) : "-"}</span>
             </SidebarRow>
             <SidebarRow label="Edits">
-              <span className={isEditDirty ? "text-amber-600" : "text-muted-foreground"}>
-                {isEditDirty ? "Unsaved" : "In sync"}
-              </span>
+              <span className={editSyncClassName}>{editSyncLabel}</span>
             </SidebarRow>
             {hasLiveRun ? (
               <SidebarRow label="Run">
@@ -867,7 +1018,7 @@ export function AutomationDetail() {
                 noneLabel="No assignee"
                 searchPlaceholder="Search assignees..."
                 emptyMessage="No assignees found."
-                className="ml-auto max-w-full border-0 bg-transparent p-0 text-sm font-medium shadow-none hover:bg-transparent"
+                className="ml-auto min-h-8 max-w-full justify-between border-border/80 bg-muted/30 px-2.5 py-1.5 text-sm font-medium shadow-none hover:border-border hover:bg-accent/60"
                 onChange={(assigneeAgentId) => {
                   if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
                   setEditDraft((current) => ({ ...current, assigneeAgentId }));
@@ -881,16 +1032,20 @@ export function AutomationDetail() {
                 }}
                 renderTriggerValue={(option) =>
                   option ? (
-                    currentAssignee ? (
-                      <>
-                        <AgentIcon icon={currentAssignee.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <SidebarSelectValue>
+                      {currentAssignee ? (
+                        <>
+                          <AgentIcon icon={currentAssignee.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate">{option.label}</span>
+                        </>
+                      ) : (
                         <span className="truncate">{option.label}</span>
-                      </>
-                    ) : (
-                      <span className="truncate">{option.label}</span>
-                    )
+                      )}
+                    </SidebarSelectValue>
                   ) : (
-                    <span className="text-muted-foreground">Assignee</span>
+                    <SidebarSelectValue>
+                      <span className="text-muted-foreground">Assignee</span>
+                    </SidebarSelectValue>
                   )
                 }
                 renderOption={(option) => {
@@ -914,20 +1069,22 @@ export function AutomationDetail() {
                 noneLabel="No project"
                 searchPlaceholder="Search projects..."
                 emptyMessage="No projects found."
-                className="ml-auto max-w-full border-0 bg-transparent p-0 text-sm font-medium shadow-none hover:bg-transparent"
+                className="ml-auto min-h-8 max-w-full justify-between border-border/80 bg-muted/30 px-2.5 py-1.5 text-sm font-medium shadow-none hover:border-border hover:bg-accent/60"
                 onChange={(projectId) => setEditDraft((current) => ({ ...current, projectId }))}
                 onConfirm={() => descriptionEditorRef.current?.focus()}
                 renderTriggerValue={(option) =>
                   option && currentProject ? (
-                    <>
+                    <SidebarSelectValue>
                       <span
                         className="h-3.5 w-3.5 shrink-0 rounded-sm"
                         style={{ backgroundColor: currentProject.color ?? "#64748b" }}
                       />
                       <span className="truncate">{option.label}</span>
-                    </>
+                    </SidebarSelectValue>
                   ) : (
-                    <span className="text-muted-foreground">Project</span>
+                    <SidebarSelectValue>
+                      <span className="text-muted-foreground">Project</span>
+                    </SidebarSelectValue>
                   )
                 }
                 renderOption={(option) => {
@@ -951,7 +1108,7 @@ export function AutomationDetail() {
           </SidebarSection>
 
           <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="border-t border-border/70 pt-5">
-            <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 text-left text-sm font-medium text-muted-foreground">
+            <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               Delivery rules
               {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </CollapsibleTrigger>

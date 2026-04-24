@@ -8,7 +8,7 @@ async function selectOrganization(page: Page, orgId: string) {
 }
 
 test.describe("Automation detail layout", () => {
-  test("keeps the editor centered and the trigger workspace stacked", async ({ page }, testInfo) => {
+  test("keeps page actions in the header and relies on autosave", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1200 });
 
     const orgRes = await page.request.post("/api/orgs", {
@@ -66,41 +66,65 @@ test.describe("Automation detail layout", () => {
     await selectOrganization(page, organization.id);
     await page.goto(`/automations/${automation.id}?tab=triggers`);
 
+    const headerActions = page.getByTestId("workspace-main-header-actions");
     const shell = page.getByTestId("automation-detail-shell");
-    const mainCard = page.getByTestId("automation-main-card");
-    const summaryRow = page.getByTestId("automation-summary-row");
     const addTriggerCard = page.getByTestId("automation-add-trigger-card");
     const triggersList = page.getByTestId("automation-triggers-list");
+    const deleteButton = headerActions.getByRole("button", { name: "Delete" });
+    const runButton = headerActions.getByRole("button", { name: "Run now" });
 
+    await expect(headerActions).toBeVisible();
     await expect(shell).toBeVisible();
-    await expect(mainCard).toBeVisible();
-    await expect(summaryRow).toBeVisible();
     await expect(addTriggerCard).toBeVisible();
     await expect(triggersList).toBeVisible();
-    await expect(page.getByRole("button", { name: "Save changes" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Run now" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Add trigger" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Configured triggers" })).toBeVisible();
+    await expect(deleteButton).toBeVisible();
+    await expect(runButton).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Save$/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
+    await expect(addTriggerCard.getByRole("button", { name: "Add trigger" })).toBeVisible();
+
+    const assigneeSelector = page.getByRole("button", { name: /Automation Layout Agent/ });
+    const projectSelector = page.getByRole("button", { name: /Onboarding/ });
+    await expect(assigneeSelector).toHaveCSS("border-top-width", "1px");
+    await expect(projectSelector).toHaveCSS("border-top-width", "1px");
+
+    const titleInput = page.getByPlaceholder("Automation title");
+    const patchPromise = page.waitForResponse((response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes(`/api/automations/${automation.id}`),
+    );
+    await titleInput.fill("Every morning summarize onboarding blockers and risks");
+    const patchResponse = await patchPromise;
+    expect(patchResponse.ok()).toBe(true);
+    await expect(page.getByText("In sync")).toBeVisible({ timeout: 10_000 });
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toContain("Delete");
+      await dialog.dismiss();
+    });
+    await deleteButton.click();
 
     const viewport = page.viewportSize();
     const shellBox = await shell.boundingBox();
-    const mainCardBox = await mainCard.boundingBox();
+    const headerActionsBox = await headerActions.boundingBox();
+    const deleteButtonBox = await deleteButton.boundingBox();
+    const runButtonBox = await runButton.boundingBox();
     const addTriggerBox = await addTriggerCard.boundingBox();
     const triggersListBox = await triggersList.boundingBox();
 
     expect(viewport).not.toBeNull();
     expect(shellBox).not.toBeNull();
-    expect(mainCardBox).not.toBeNull();
+    expect(headerActionsBox).not.toBeNull();
+    expect(deleteButtonBox).not.toBeNull();
+    expect(runButtonBox).not.toBeNull();
     expect(addTriggerBox).not.toBeNull();
     expect(triggersListBox).not.toBeNull();
 
-    const shellCenter = shellBox!.x + shellBox!.width / 2;
-    const viewportCenter = viewport!.width / 2;
-    expect(Math.abs(shellCenter - viewportCenter)).toBeLessThan(40);
-    expect(shellBox!.width).toBeLessThan(980);
-    expect(Math.abs(mainCardBox!.x - shellBox!.x)).toBeLessThan(4);
+    expect(deleteButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
+    expect(runButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
+    expect(runButtonBox!.x).toBeGreaterThan(deleteButtonBox!.x);
     expect(addTriggerBox!.y + addTriggerBox!.height).toBeLessThan(triggersListBox!.y + 8);
-    expect(Math.abs(addTriggerBox!.width - shellBox!.width)).toBeLessThan(12);
+    expect(addTriggerBox!.x).toBeGreaterThanOrEqual(shellBox!.x - 2);
 
     await page.screenshot({
       path: testInfo.outputPath("automation-detail-layout.png"),
