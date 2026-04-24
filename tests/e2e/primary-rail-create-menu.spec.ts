@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function installDesktopShellStub(page: Page, pickedPath: string) {
   await page.addInitScript((selectedPath) => {
@@ -28,6 +28,10 @@ async function installDesktopShellStub(page: Page, pickedPath: string) {
       value: desktopShell,
     });
   }, pickedPath);
+}
+
+async function computedBorderRadius(locator: Locator) {
+  return locator.evaluate((element) => getComputedStyle(element).borderRadius);
 }
 
 function parseRgbChannels(value: string): [number, number, number] {
@@ -235,10 +239,31 @@ test.describe("Primary rail create menu", () => {
     await expect(dialog).toBeVisible();
 
     await dialog.getByPlaceholder("Project name").fill("Structured Resource Project");
-    await dialog.getByRole("button", { name: "New resource" }).click();
-    await dialog.getByPlaceholder("Rudder repo").fill("Rudder repo");
-    await dialog.getByPlaceholder("~/projects/rudder or https://linear.app/acme/project/...").fill("~/projects/rudder");
-    await dialog.getByPlaceholder("What this resource contains and when agents should use it.").fill(
+    const newResourceButton = dialog.getByRole("button", { name: "New resource" });
+    await newResourceButton.click();
+
+    const sharedControlRadius = await computedBorderRadius(newResourceButton);
+    const resourceNameInput = dialog.getByPlaceholder("Rudder repo");
+    const resourceKindSelect = dialog.getByLabel("Kind");
+    const resourceLocatorInput = dialog.getByPlaceholder("~/projects/rudder or https://linear.app/acme/project/...");
+    const resourceDescriptionInput = dialog.getByPlaceholder("What this resource contains and when agents should use it.");
+    const projectRoleSelect = dialog.getByLabel("Project role");
+    const projectNoteInput = dialog.getByPlaceholder("Optional guidance specific to this project");
+
+    for (const control of [
+      resourceNameInput,
+      resourceKindSelect,
+      resourceLocatorInput,
+      resourceDescriptionInput,
+      projectRoleSelect,
+      projectNoteInput,
+    ]) {
+      expect(await computedBorderRadius(control)).toBe(sharedControlRadius);
+    }
+
+    await resourceNameInput.fill("Rudder repo");
+    await resourceLocatorInput.fill("~/projects/rudder");
+    await resourceDescriptionInput.fill(
       "Main monorepo checkout for implementation work.",
     );
 
