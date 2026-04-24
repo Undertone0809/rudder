@@ -6,7 +6,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { agentsApi } from "../api/agents";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { queryKeys } from "../lib/queryKeys";
-import { AGENT_ROLES } from "@rudder/shared";
+import { AGENT_ROLES } from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -24,9 +24,9 @@ import { ReportsToPicker } from "../components/ReportsToPicker";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
-} from "@rudder/agent-runtime-codex-local";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudder/agent-runtime-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudder/agent-runtime-gemini-local";
+} from "@rudderhq/agent-runtime-codex-local";
+import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
+import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import {
   buildOrganizationSkillPickerItems,
   filterSelectableNewAgentOrganizationSkillItems,

@@ -18,14 +18,14 @@ It is intentionally narrower than [PLUGIN_SPEC.md](./PLUGIN_SPEC.md). The spec i
 Use the scaffold package:
 
 ```bash
-pnpm --filter @rudder/create-rudder-plugin build
+pnpm --filter @rudderhq/create-rudder-plugin build
 node packages/plugins/create-rudder-plugin/dist/index.js @yourscope/plugin-name --output ./packages/plugins/examples
 ```
 
 For a plugin that lives outside the Rudder repo:
 
 ```bash
-pnpm --filter @rudder/create-rudder-plugin build
+pnpm --filter @rudderhq/create-rudder-plugin build
 node packages/plugins/create-rudder-plugin/dist/index.js @yourscope/plugin-name \
   --output /absolute/path/to/plugin-repos \
   --sdk-path /absolute/path/to/rudder/packages/plugins/sdk
@@ -40,9 +40,9 @@ That creates a package with:
 - `esbuild.config.mjs`
 - `rollup.config.mjs`
 
-Inside this monorepo, the scaffold uses `workspace:*` for `@rudder/plugin-sdk`.
+Inside this monorepo, the scaffold uses `workspace:*` for `@rudderhq/plugin-sdk`.
 
-Outside this monorepo, the scaffold snapshots `@rudder/plugin-sdk` from the local Rudder checkout into a `.rudder-sdk/` tarball so you can build and test a plugin without publishing anything to npm first.
+Outside this monorepo, the scaffold snapshots `@rudderhq/plugin-sdk` from the local Rudder checkout into a `.rudder-sdk/` tarball so you can build and test a plugin without publishing anything to npm first.
 
 ## Recommended local workflow
 
@@ -96,7 +96,7 @@ UI:
 - `usePluginStream`
 - `usePluginToast`
 - `useHostContext`
-- typed slot props from `@rudder/plugin-sdk/ui`
+- typed slot props from `@rudderhq/plugin-sdk/ui`
 
 Mount surfaces currently wired in the host include:
 

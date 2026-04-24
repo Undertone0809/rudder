@@ -1,4 +1,4 @@
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import type express from "express";
 import { createHttpApp } from "./bootstrap/create-http-app.js";
 import { createPluginHostRuntime } from "./bootstrap/plugin-host-runtime.js";

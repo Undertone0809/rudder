@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { and, asc, eq } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { agents as agentRows, organizationSkills } from "@rudder/db";
-import { readRudderSkillSyncPreference, writeRudderSkillSyncPreference } from "@rudder/agent-runtime-utils/server-utils";
-import type { RudderSkillEntry } from "@rudder/agent-runtime-utils/server-utils";
-import { readSkillMetadataFromPath } from "@rudder/agent-runtime-utils/server-utils";
+import type { Db } from "@rudderhq/db";
+import { agents as agentRows, organizationSkills } from "@rudderhq/db";
+import { readRudderSkillSyncPreference, writeRudderSkillSyncPreference } from "@rudderhq/agent-runtime-utils/server-utils";
+import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
+import { readSkillMetadataFromPath } from "@rudderhq/agent-runtime-utils/server-utils";
 import type {
   AgentSkillEntry,
   AgentSkillSnapshot,
@@ -36,7 +36,7 @@ import type {
   OrganizationSkillTrustLevel,
   OrganizationSkillUpdateStatus,
   OrganizationSkillUsageAgent,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import {
   RUDDER_BUNDLED_SKILL_SLUGS,
   getBundledRudderSkillSlug,
@@ -44,7 +44,7 @@ import {
   normalizeAgentUrlKey,
   resolveOrganizationSkillReference,
   toBundledRudderSkillKey,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import {
   resolveAgentSkillsDir,
   resolveOrganizationSkillsDir,

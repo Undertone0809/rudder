@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { approvalComments, approvals } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { approvalComments, approvals } from "@rudderhq/db";
 import { notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { agentService } from "./agents.js";

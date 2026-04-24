@@ -14,8 +14,8 @@ import {
   projectResourceAttachments,
   projectWorkspaces,
   projects,
-} from "@rudder/db";
-import { deriveOrganizationUrlKey } from "@rudder/shared";
+} from "@rudderhq/db";
+import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { projectService } from "../services/projects.js";
 import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 

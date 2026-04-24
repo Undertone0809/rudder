@@ -20,8 +20,8 @@ import {
   automationRuns,
   automations,
   automationTriggers,
-} from "@rudder/db";
-import { deriveOrganizationUrlKey } from "@rudder/shared";
+} from "@rudderhq/db";
+import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { issueService } from "../services/issues.ts";
 import { automationService } from "../services/automations.ts";
 

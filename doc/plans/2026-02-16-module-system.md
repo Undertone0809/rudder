@@ -106,7 +106,7 @@ Modules live in a top-level `modules/` directory. Each module is a pnpm workspac
 
 Key fields:
 
-- **`id`**: Unique identifier, used as the npm package name suffix (`@rudder/mod-observability`)
+- **`id`**: Unique identifier, used as the npm package name suffix (`@rudderhq/mod-observability`)
 - **`slot`**: Optional exclusive category. If set, only one module with this slot can be active. Omit for modules that can coexist freely.
 - **`hooks`**: Which core events this module subscribes to. Declared upfront so the core knows what to emit.
 - **`routes.prefix`**: Mounted under `/api/modules/<prefix>`. The module owns this namespace.
@@ -120,7 +120,7 @@ Key fields:
 The module's `src/index.ts` exports a `register` function that receives the module API:
 
 ```typescript
-import type { ModuleAPI } from "@rudder/core";
+import type { ModuleAPI } from "@rudderhq/core";
 import { createRouter } from "./routes.js";
 import { onHeartbeat, onBudgetThreshold } from "./hooks.js";
 
@@ -238,7 +238,7 @@ This keeps the core fast and resilient. If you need pre-commit validation (e.g.,
 
 ```typescript
 // modules/observability/src/hooks.ts
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import { tokenMetrics } from "./schema.js";
 
 export function createHeartbeatHandler(db: Db) {
@@ -384,7 +384,7 @@ export const modulePages = [
   {
     path: "/observability",
     label: "Observability",
-    component: lazy(() => import("@rudder/mod-observability/ui")),
+    component: lazy(() => import("@rudderhq/mod-observability/ui")),
   },
 ];
 
@@ -393,7 +393,7 @@ export const dashboardWidgets = [
     id: "token-burn-rate",
     label: "Token Burn Rate",
     placement: "dashboard",
-    component: lazy(() => import("@rudder/mod-observability/ui").then(m => ({ default: m.TokenBurnRateWidget }))),
+    component: lazy(() => import("@rudderhq/mod-observability/ui").then(m => ({ default: m.TokenBurnRateWidget }))),
   },
 ];
 ```
@@ -629,7 +629,7 @@ pnpm rudder store export                  # export current company as template
 
 ### Phase 1: Core infrastructure
 
-Add to `@rudder/server`:
+Add to `@rudderhq/server`:
 
 1. **HookBus** — Event emitter with `register()` and `emit()`, using `Promise.allSettled`
 2. **Module loader** — Scans `modules/`, validates manifests, calls `register(api)`
@@ -638,7 +638,7 @@ Add to `@rudder/server`:
 5. **Module migration runner** — Extends `db:migrate` to discover and run module migrations
 6. **Emit hooks from core services** — Add `hookBus.emit()` calls to existing CRUD operations
 
-Add to `@rudder/ui`:
+Add to `@rudderhq/ui`:
 
 7. **Module page loader** — Reads module manifests, generates lazy routes
 8. **Dashboard widget slots** — Render module-contributed widgets on the Dashboard page
@@ -646,7 +646,7 @@ Add to `@rudder/ui`:
 
 Add new package:
 
-10. **`@rudder/module-sdk`** — TypeScript types for `ModuleAPI`, `HookEvent`, `HookHandler`, manifest schema
+10. **`@rudderhq/module-sdk`** — TypeScript types for `ModuleAPI`, `HookEvent`, `HookHandler`, manifest schema
 
 ### Phase 2: First module (observability)
 

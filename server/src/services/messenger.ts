@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   activityLog,
   approvalComments,
@@ -11,7 +11,7 @@ import {
   issues,
   joinRequests,
   messengerThreadUserStates,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import type {
   Approval,
   BudgetIncident,
@@ -29,7 +29,7 @@ import type {
   MessengerThreadAction,
   MessengerThreadDetail,
   MessengerThreadSummary,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { issueService } from "./issues.js";
 import { chatService } from "./chats.js";
 import { budgetService } from "./budgets.js";

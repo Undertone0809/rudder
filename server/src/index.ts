@@ -7,7 +7,7 @@ import { stdin, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 import type { Request as ExpressRequest, RequestHandler } from "express";
 import { and, eq } from "drizzle-orm";
-import type { DeploymentExposure, DeploymentMode } from "@rudder/shared";
+import type { DeploymentExposure, DeploymentMode } from "@rudderhq/shared";
 import {
   createDb,
   cleanupStaleSysvSharedMemorySegments,
@@ -25,7 +25,7 @@ import {
   organizations,
   organizationMemberships,
   instanceUserRoles,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import detectPort from "detect-port";
 import { createRudderApp } from "./app.js";
 import { loadConfig, type Config } from "./config.js";

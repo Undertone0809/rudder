@@ -1,4 +1,4 @@
-import type { HeartbeatRun, HeartbeatRunEvent } from "@rudder/shared";
+import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
 import { diagnoseRun } from "../diagnosis.js";
 import { getTranscriptParser } from "../parsers.js";
 import { buildTranscript, parseNdjsonLog } from "../transcript.js";

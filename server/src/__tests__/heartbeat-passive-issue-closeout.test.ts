@@ -20,8 +20,8 @@ import {
   issues,
   organizationSkills,
   organizations,
-} from "@rudder/db";
-import { deriveOrganizationUrlKey } from "@rudder/shared";
+} from "@rudderhq/db";
+import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { heartbeatService } from "../services/heartbeat.ts";
 
 const mockBudgetService = vi.hoisted(() => ({

@@ -1,4 +1,4 @@
-import type { AgentRuntimeType, JoinRequest } from "@rudder/shared";
+import type { AgentRuntimeType, JoinRequest } from "@rudderhq/shared";
 import { api } from "./client";
 
 type InviteSummary = {

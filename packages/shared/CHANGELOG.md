@@ -1,4 +1,4 @@
-# @rudder/shared
+# @rudderhq/shared
 
 ## 0.3.1
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Agent, Approval } from "@rudder/shared";
+import type { Agent, Approval } from "@rudderhq/shared";
 import {
   appendCreateAgentBenchmarkMetadata,
   buildCreateAgentBenchmarkMetadata,

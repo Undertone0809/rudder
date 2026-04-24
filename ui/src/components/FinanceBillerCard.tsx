@@ -1,4 +1,4 @@
-import type { FinanceByBiller } from "@rudder/shared";
+import type { FinanceByBiller } from "@rudderhq/shared";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents, providerDisplayName } from "@/lib/utils";
 

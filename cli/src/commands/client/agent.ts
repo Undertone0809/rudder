@@ -5,11 +5,11 @@ import {
   type AgentDetail,
   type AgentSkillSnapshot,
   type Approval,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import {
   removeMaintainerOnlySkillSymlinks,
   resolveRudderSkillsDir,
-} from "@rudder/agent-runtime-utils/server-utils";
+} from "@rudderhq/agent-runtime-utils/server-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

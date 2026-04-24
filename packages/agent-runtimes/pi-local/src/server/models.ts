@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { AgentRuntimeModel } from "@rudder/agent-runtime-utils";
-import { asString, runChildProcess } from "@rudder/agent-runtime-utils/server-utils";
+import type { AgentRuntimeModel } from "@rudderhq/agent-runtime-utils";
+import { asString, runChildProcess } from "@rudderhq/agent-runtime-utils/server-utils";
 
 const MODELS_CACHE_TTL_MS = 60_000;
 

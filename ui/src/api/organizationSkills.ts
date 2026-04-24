@@ -10,7 +10,7 @@ import type {
   OrganizationSkillProjectScanRequest,
   OrganizationSkillProjectScanResult,
   OrganizationSkillUpdateStatus,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { api } from "./client";
 
 export const organizationSkillsApi = {

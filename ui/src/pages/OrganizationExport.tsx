@@ -7,7 +7,7 @@ import type {
   OrganizationPortabilityExportResult,
   OrganizationPortabilityManifest,
   Project,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { useNavigate, useLocation } from "@/lib/router";
 import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";

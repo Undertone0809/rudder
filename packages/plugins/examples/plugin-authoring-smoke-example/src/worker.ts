@@ -1,4 +1,4 @@
-import { definePlugin, runWorker } from "@rudder/plugin-sdk";
+import { definePlugin, runWorker } from "@rudderhq/plugin-sdk";
 
 const plugin = definePlugin({
   async setup(ctx) {

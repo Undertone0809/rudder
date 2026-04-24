@@ -1,5 +1,5 @@
 import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   organizations,
   organizationLogos,
@@ -46,8 +46,8 @@ import {
   organizationSkills,
   workspaceOperations,
   workspaceRuntimeServices,
-} from "@rudder/db";
-import { deriveOrganizationUrlKey } from "@rudder/shared";
+} from "@rudderhq/db";
+import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, removeOrganizationStorage } from "../home-paths.js";
 import { logger } from "../middleware/logger.js";

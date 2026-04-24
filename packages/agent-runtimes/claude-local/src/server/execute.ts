@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "@rudder/agent-runtime-utils";
-import type { RunProcessResult } from "@rudder/agent-runtime-utils/server-utils";
+import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import type { RunProcessResult } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   asString,
   asNumber,
@@ -22,7 +22,7 @@ import {
   renderTemplate,
   runChildProcess,
   selectPromptTemplate,
-} from "@rudder/agent-runtime-utils/server-utils";
+} from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   parseClaudeStreamJson,
   describeClaudeFailure,

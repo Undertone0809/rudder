@@ -1,5 +1,5 @@
 import { and, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   agents,
   approvals,
@@ -8,7 +8,7 @@ import {
   organizations,
   costEvents,
   projects,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import type {
   BudgetIncident,
   BudgetIncidentResolutionInput,
@@ -20,7 +20,7 @@ import type {
   BudgetScopeType,
   BudgetThresholdType,
   BudgetWindowKind,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
 

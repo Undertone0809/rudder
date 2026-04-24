@@ -1,4 +1,4 @@
-import type { OrganizationPortabilityFileEntry } from "@rudder/shared";
+import type { OrganizationPortabilityFileEntry } from "@rudderhq/shared";
 
 const contentTypeByExtension: Record<string, string> = {
   ".gif": "image/gif",

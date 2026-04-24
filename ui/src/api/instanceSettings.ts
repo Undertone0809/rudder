@@ -11,7 +11,7 @@ import type {
   PatchInstanceNotificationSettings,
   PatchInstanceExperimentalSettings,
   PatchOperatorProfileSettings,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { api } from "./client";
 
 export const instanceSettingsApi = {

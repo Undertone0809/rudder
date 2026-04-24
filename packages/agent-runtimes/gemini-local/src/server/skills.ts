@@ -5,14 +5,14 @@ import { fileURLToPath } from "node:url";
 import type {
   AgentRuntimeSkillContext,
   AgentRuntimeSkillSnapshot,
-} from "@rudder/agent-runtime-utils";
+} from "@rudderhq/agent-runtime-utils";
 import {
   buildPersistentSkillSnapshot,
   ensureRudderSkillSymlink,
   readRudderRuntimeSkillEntries,
   readInstalledSkillTargets,
   resolveRudderDesiredSkillNames,
-} from "@rudder/agent-runtime-utils/server-utils";
+} from "@rudderhq/agent-runtime-utils/server-utils";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 

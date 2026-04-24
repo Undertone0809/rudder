@@ -5,7 +5,7 @@ import {
   type AgentSkillEntry,
   type AgentSkillSnapshot,
   type OrganizationSkillListItem,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { organizationSkillMarkdownTarget } from "./organization-skill-picker";
 
 export interface SkillMentionOption {

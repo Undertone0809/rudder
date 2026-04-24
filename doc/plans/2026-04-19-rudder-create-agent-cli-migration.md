@@ -110,7 +110,7 @@ debt, not the intended workflow.
 
 ## Validation
 
-- `pnpm --filter @rudder/cli typecheck`
+- `pnpm --filter @rudderhq/cli typecheck`
 - `pnpm exec vitest run cli/src/__tests__/agent-v1-registry.test.ts cli/src/__tests__/agent-cli-e2e.test.ts`
 - `pnpm -r typecheck`
 - `pnpm build`

@@ -1,4 +1,4 @@
-import { asNumber, asString, parseJson, parseObject } from "@rudder/agent-runtime-utils/server-utils";
+import { asNumber, asString, parseJson, parseObject } from "@rudderhq/agent-runtime-utils/server-utils";
 
 function collectMessageText(message: unknown): string[] {
   if (typeof message === "string") {

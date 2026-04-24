@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { InstancePathPickerSelectionType } from "@rudder/shared";
+import type { InstancePathPickerSelectionType } from "@rudderhq/shared";
 import { Apple, Loader2, Monitor, Terminal } from "lucide-react";
 import {
   Dialog,

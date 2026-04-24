@@ -1,4 +1,4 @@
-import type { Agent } from "@rudder/shared";
+import type { Agent } from "@rudderhq/shared";
 
 export function resolveRequestedPreferredAgentId(
   requestedAgentId: string | null | undefined,

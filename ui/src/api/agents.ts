@@ -14,8 +14,8 @@ import type {
   Approval,
   AgentConfigRevision,
   OrganizationSkillCreateRequest,
-} from "@rudder/shared";
-import { isUuidLike, normalizeAgentUrlKey } from "@rudder/shared";
+} from "@rudderhq/shared";
+import { isUuidLike, normalizeAgentUrlKey } from "@rudderhq/shared";
 import { ApiError, api } from "./client";
 
 export interface AgentKey {

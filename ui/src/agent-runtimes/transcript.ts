@@ -1,4 +1,4 @@
-import { redactHomePathUserSegments, redactTranscriptEntryPaths } from "@rudder/agent-runtime-utils";
+import { redactHomePathUserSegments, redactTranscriptEntryPaths } from "@rudderhq/agent-runtime-utils";
 import type { TranscriptEntry, StdoutLineParser } from "./types";
 
 export type RunLogChunk = { ts: string; stream: "stdout" | "stderr" | "system"; chunk: string };

@@ -2,7 +2,7 @@ export { execute, ensureCursorSkillsInjected } from "./execute.js";
 export { listCursorSkills, syncCursorSkills } from "./skills.js";
 export { testEnvironment } from "./test.js";
 export { parseCursorJsonl, isCursorUnknownSessionError } from "./parse.js";
-import type { AgentRuntimeSessionCodec } from "@rudder/agent-runtime-utils";
+import type { AgentRuntimeSessionCodec } from "@rudderhq/agent-runtime-utils";
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;

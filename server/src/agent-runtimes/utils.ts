@@ -22,11 +22,11 @@ export {
   ensurePathInEnv,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
-} from "@rudder/agent-runtime-utils/server-utils";
+} from "@rudderhq/agent-runtime-utils/server-utils";
 
 // Re-export runChildProcess with the server's pino logger wired in.
-import { runChildProcess as _runChildProcess } from "@rudder/agent-runtime-utils/server-utils";
-import type { RunProcessResult } from "@rudder/agent-runtime-utils/server-utils";
+import { runChildProcess as _runChildProcess } from "@rudderhq/agent-runtime-utils/server-utils";
+import type { RunProcessResult } from "@rudderhq/agent-runtime-utils/server-utils";
 
 export async function runChildProcess(
   runId: string,

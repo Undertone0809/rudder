@@ -2,7 +2,7 @@ import type {
   AgentRuntimeEnvironmentCheck,
   AgentRuntimeEnvironmentTestContext,
   AgentRuntimeEnvironmentTestResult,
-} from "@rudder/agent-runtime-utils";
+} from "@rudderhq/agent-runtime-utils";
 import {
   asString,
   asStringArray,
@@ -11,7 +11,7 @@ import {
   ensureCommandResolvable,
   ensurePathInEnv,
   runChildProcess,
-} from "@rudder/agent-runtime-utils/server-utils";
+} from "@rudderhq/agent-runtime-utils/server-utils";
 import { discoverOpenCodeModels, ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";
 import { parseOpenCodeJsonl } from "./parse.js";
 

@@ -6,7 +6,7 @@ import type {
   Issue,
   JoinRequest,
   MessengerThreadSummary,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 
 export const RECENT_ISSUES_LIMIT = 100;
 export const FAILED_RUN_STATUSES = new Set(["failed", "timed_out"]);

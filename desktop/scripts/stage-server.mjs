@@ -66,7 +66,7 @@ async function main() {
   await fs.rm(targetDir, { recursive: true, force: true });
   await fs.mkdir(path.dirname(targetDir), { recursive: true });
 
-  await run(pnpmBin, ["--filter", "@rudder/server", "--prod", "deploy", targetDir], repoRoot);
+  await run(pnpmBin, ["--filter", "@rudderhq/server", "--prod", "deploy", targetDir], repoRoot);
   await rewritePublishedManifest(targetDir);
   await normalizeSelfReference(targetDir);
 

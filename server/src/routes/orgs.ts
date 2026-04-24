@@ -1,6 +1,6 @@
 import { Router, type Request } from "express";
-import type { Db } from "@rudder/db";
-import { normalizeAgentUrlKey } from "@rudder/shared";
+import type { Db } from "@rudderhq/db";
+import { normalizeAgentUrlKey } from "@rudderhq/shared";
 import {
   organizationPortabilityExportSchema,
   organizationPortabilityImportSchema,
@@ -11,7 +11,7 @@ import {
   updateOrganizationBrandingSchema,
   updateOrganizationSchema,
   updateOrganizationWorkspaceFileSchema,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { z } from "zod";
 import { forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";

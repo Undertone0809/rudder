@@ -4,7 +4,7 @@ import type {
   BudgetOverview,
   BudgetPolicySummary,
   BudgetPolicyUpsertInput,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { api } from "./client";
 
 export const budgetsApi = {

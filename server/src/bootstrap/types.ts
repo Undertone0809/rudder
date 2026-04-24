@@ -1,5 +1,5 @@
 import type { Request, RequestHandler } from "express";
-import type { DeploymentExposure, DeploymentMode } from "@rudder/shared";
+import type { DeploymentExposure, DeploymentMode } from "@rudderhq/shared";
 import type { StorageService } from "../storage/types.js";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 

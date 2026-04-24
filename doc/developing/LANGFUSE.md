@@ -92,7 +92,7 @@ LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_ENVIRONMENT=local
 ```
 
-Rudder now loads the workspace-root `.env` even when you start a package-level dev process such as `pnpm --filter @rudder/server dev`.
+Rudder now loads the workspace-root `.env` even when you start a package-level dev process such as `pnpm --filter @rudderhq/server dev`.
 
 You can still provide the same values via shell env if you want to override them for a single process:
 
@@ -154,7 +154,7 @@ pnpm dev
 If you only want the server process, this also works and still reads the repo-root `.env`:
 
 ```sh
-pnpm --filter @rudder/server dev
+pnpm --filter @rudderhq/server dev
 ```
 
 ### Isolated verification path
@@ -172,7 +172,7 @@ LANGFUSE_BASE_URL=http://localhost:3000 \
 LANGFUSE_PUBLIC_KEY=pk-lf-... \
 LANGFUSE_SECRET_KEY=sk-lf-... \
 LANGFUSE_ENVIRONMENT=local \
-pnpm --filter @rudder/server dev
+pnpm --filter @rudderhq/server dev
 ```
 
 This path is useful when:
@@ -284,7 +284,7 @@ The first benchmark loop is local and manual on purpose. Rudder owns the cases a
 Example single case:
 
 ```sh
-pnpm --filter @rudder/cli dev benchmark create-agent run approval-cto-under-ceo \
+pnpm --filter @rudderhq/cli dev benchmark create-agent run approval-cto-under-ceo \
   --org-id <org-id> \
   --benchmark-agent-id <agent-id> \
   --fixture ceo=<ceo-agent-id>
@@ -293,7 +293,7 @@ pnpm --filter @rudder/cli dev benchmark create-agent run approval-cto-under-ceo 
 Example set:
 
 ```sh
-pnpm --filter @rudder/cli dev benchmark create-agent run-set smoke \
+pnpm --filter @rudderhq/cli dev benchmark create-agent run-set smoke \
   --org-id <org-id> \
   --benchmark-agent-id <agent-id> \
   --fixture ceo=<ceo-agent-id>
@@ -302,13 +302,13 @@ pnpm --filter @rudder/cli dev benchmark create-agent run-set smoke \
 Useful follow-up commands:
 
 ```sh
-pnpm --filter @rudder/cli dev benchmark create-agent rescore \
+pnpm --filter @rudderhq/cli dev benchmark create-agent rescore \
   .artifacts/create-agent-benchmark/runs/<case-id>-<run-id>/result.json
 
-pnpm --filter @rudder/cli dev benchmark create-agent sync-langfuse \
+pnpm --filter @rudderhq/cli dev benchmark create-agent sync-langfuse \
   .artifacts/create-agent-benchmark/runs/<case-id>-<run-id>/result.json
 
-pnpm --filter @rudder/cli dev benchmark create-agent report \
+pnpm --filter @rudderhq/cli dev benchmark create-agent report \
   .artifacts/create-agent-benchmark/runs/<case-id>-<run-id>/result.json --markdown
 ```
 

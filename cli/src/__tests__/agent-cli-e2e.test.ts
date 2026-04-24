@@ -16,7 +16,7 @@ import {
   issueComments,
   issues,
   organizations,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import type {
   AgentDetail,
   AgentSkillSnapshot,
@@ -28,7 +28,7 @@ import type {
   OrganizationSkillFileDetail,
   OrganizationSkillListItem,
   OrganizationSkillLocalScanResult,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;

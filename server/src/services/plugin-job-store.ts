@@ -31,14 +31,14 @@
  */
 
 import { and, desc, eq } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { plugins, pluginJobs, pluginJobRuns } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { plugins, pluginJobs, pluginJobRuns } from "@rudderhq/db";
 import type {
   PluginJobDeclaration,
   PluginJobRunStatus,
   PluginJobRunTrigger,
   PluginJobRecord,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { notFound } from "../errors.js";
 
 /**

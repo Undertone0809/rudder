@@ -1,4 +1,4 @@
-import type { Agent } from "@rudder/shared";
+import type { Agent } from "@rudderhq/shared";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;

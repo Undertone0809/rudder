@@ -9,7 +9,7 @@ import type {
   IssueComment,
   Agent,
   Goal,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import type {
   EventFilter,
   PluginContext,

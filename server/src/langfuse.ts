@@ -13,7 +13,7 @@ import {
   type LangfuseObservationType,
 } from "@langfuse/tracing";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-import type { DeploymentMode, ExecutionLangfuseLink, ExecutionObservabilityContext } from "@rudder/shared";
+import type { DeploymentMode, ExecutionLangfuseLink, ExecutionObservabilityContext } from "@rudderhq/shared";
 import { logger } from "./middleware/logger.js";
 
 export interface LangfuseRuntimeConfig {

@@ -6,16 +6,16 @@ Rudder already has a CLI implementation in the monorepo, but its current npm pac
 
 The desired user journey is:
 
-1. first use: `npx @rudder/cli onboard --yes`
+1. first use: `npx @rudderhq/cli onboard --yes`
 2. during onboarding, install the same package so the persistent `rudder` binary becomes available
 3. after install, the primary documented command becomes `rudder ...`
-4. `npx @rudder/cli ...` remains supported as a zero-install fallback
+4. `npx @rudderhq/cli ...` remains supported as a zero-install fallback
 
 This plan intentionally keeps the solution to a single npm package. There will be no separate bootstrap package.
 
 ## Recommendation In One Sentence
 
-Publish the existing CLI as `@rudder/cli`, keep `rudder` as its only binary, add a first-run global install flow when invoked through `npx`, and treat `rudder ...` as the primary long-term command while still supporting `npx @rudder/cli ...`.
+Publish the existing CLI as `@rudderhq/cli`, keep `rudder` as its only binary, add a first-run global install flow when invoked through `npx`, and treat `rudder ...` as the primary long-term command while still supporting `npx @rudderhq/cli ...`.
 
 ## Core Decisions
 
@@ -23,7 +23,7 @@ Publish the existing CLI as `@rudder/cli`, keep `rudder` as its only binary, add
 
 The package model is:
 
-- npm package: `@rudder/cli`
+- npm package: `@rudderhq/cli`
 - installed binary: `rudder`
 
 There is no second bootstrap package, wrapper package, or shell shim. Both first-run and long-term use go through the same CLI codebase and the same release artifact.
@@ -35,17 +35,17 @@ Why this is the right tradeoff:
 - it reduces release, canary, and smoke-testing complexity
 - it lets the docs tell one coherent story
 
-### 2. The first-run entrypoint is `npx @rudder/cli ...`
+### 2. The first-run entrypoint is `npx @rudderhq/cli ...`
 
 The CLI should explicitly support npm exec usage as the public quickstart path:
 
 ```bash
-npx @rudder/cli onboard --yes
+npx @rudderhq/cli onboard --yes
 ```
 
 This is the only first-run syntax that docs should lead with.
 
-`npm exec @rudder/cli ...` can still work, but it should not be the primary documented path.
+`npm exec @rudderhq/cli ...` can still work, but it should not be the primary documented path.
 
 ### 3. The long-term command is still `rudder ...`
 
@@ -63,7 +63,7 @@ The scoped package name exists to solve npm distribution and first-run discovery
 
 ### 4. First-run install happens from inside the same CLI
 
-When the CLI is launched through `npx` and the persistent `rudder` binary is not already available, onboarding should offer to install `@rudder/cli` globally with npm.
+When the CLI is launched through `npx` and the persistent `rudder` binary is not already available, onboarding should offer to install `@rudderhq/cli` globally with npm.
 
 Behavior:
 
@@ -79,13 +79,13 @@ Behavior:
 
 The CLI should not try to write shell profile aliases or generate local wrapper scripts. Persistence should be handled by npm global install only.
 
-### 5. `npx @rudder/cli ...` remains supported after install
+### 5. `npx @rudderhq/cli ...` remains supported after install
 
 Even after the persistent `rudder` binary is available, users should still be able to run:
 
 ```bash
-npx @rudder/cli doctor
-npx @rudder/cli issue list
+npx @rudderhq/cli doctor
+npx @rudderhq/cli issue list
 ```
 
 This is useful as:
@@ -100,11 +100,11 @@ However, docs should bias users toward `rudder ...` after installation.
 
 ### First-time local setup
 
-1. User runs `npx @rudder/cli onboard --yes`
+1. User runs `npx @rudderhq/cli onboard --yes`
 2. CLI performs the normal onboarding flow
 3. CLI detects that it is being executed through `npx`
 4. CLI checks whether `rudder` already exists on the machine
-5. If `rudder` is missing, CLI installs `@rudder/cli` globally with npm
+5. If `rudder` is missing, CLI installs `@rudderhq/cli` globally with npm
 6. CLI prints the next commands using `rudder`
 
 ### Returning user
@@ -120,18 +120,18 @@ rudder --help
 If they prefer not to install globally on another machine, they can still use:
 
 ```bash
-npx @rudder/cli run
+npx @rudderhq/cli run
 ```
 
 ## Implementation Plan
 
 ### 1. Package identity and metadata
 
-Update the CLI package metadata so the published package is `@rudder/cli` while the executable remains `rudder`.
+Update the CLI package metadata so the published package is `@rudderhq/cli` while the executable remains `rudder`.
 
 Required outcomes:
 
-- `cli/package.json` uses `name: "@rudder/cli"`
+- `cli/package.json` uses `name: "@rudderhq/cli"`
 - `bin` stays:
   - `"rudder": "./dist/index.js"`
 - the publishable manifest generated during release preserves that exact shape
@@ -145,8 +145,8 @@ Add a small internal utility module that determines:
 - whether the current process is running through `npx` / `npm exec`
 - whether a usable `rudder` binary is already available outside the current transient execution context
 - which package spec should be installed:
-  - stable default: `@rudder/cli`
-  - canary usage: `@rudder/cli@canary`
+  - stable default: `@rudderhq/cli`
+  - canary usage: `@rudderhq/cli@canary`
   - explicit version if the invocation was version-pinned
 
 The detection should be conservative. If the CLI cannot confidently determine that `rudder` is already installed, it should offer installation rather than silently assuming persistence exists.
@@ -181,12 +181,12 @@ This work is packaging and first-run UX only. It is not a CLI redesign.
 
 ### 5. Release and packaging updates
 
-Update release packaging so `@rudder/cli` is the publish target for the CLI.
+Update release packaging so `@rudderhq/cli` is the publish target for the CLI.
 
 Required updates:
 
 - npm build script produces a publishable manifest using the scoped package name
-- release scripts treat `@rudder/cli` as the CLI package identity
+- release scripts treat `@rudderhq/cli` as the CLI package identity
 - canary and stable smoke flows use the new package name
 - README copied into the publish artifact remains accurate for the scoped package install story
 
@@ -201,9 +201,9 @@ Update the following docs so they all tell the same story:
 
 Documentation rules:
 
-- first-run quickstart uses `npx @rudder/cli onboard --yes`
+- first-run quickstart uses `npx @rudderhq/cli onboard --yes`
 - long-term examples prefer `rudder ...`
-- canary examples use `npx @rudder/cli@canary ...`
+- canary examples use `npx @rudderhq/cli@canary ...`
 - avoid mentioning any separate bootstrap package
 
 ## Test Plan
@@ -226,16 +226,16 @@ Add tests for:
 Cover these scenarios:
 
 1. clean environment:
-   - `npx @rudder/cli onboard --yes`
+   - `npx @rudderhq/cli onboard --yes`
    - onboarding succeeds
    - persistent `rudder` becomes available
 
 2. already installed environment:
-   - `npx @rudder/cli onboard`
+   - `npx @rudderhq/cli onboard`
    - no unnecessary reinstall prompt
 
 3. fallback path:
-   - `npx @rudder/cli doctor`
+   - `npx @rudderhq/cli doctor`
    - command still works after installation
 
 4. persistent usage:

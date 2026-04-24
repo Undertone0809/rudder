@@ -1,8 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { Router } from "express";
-import type { Db } from "@rudder/db";
-import { issues, projects, projectWorkspaces } from "@rudder/db";
-import { updateExecutionWorkspaceSchema } from "@rudder/shared";
+import type { Db } from "@rudderhq/db";
+import { issues, projects, projectWorkspaces } from "@rudderhq/db";
+import { updateExecutionWorkspaceSchema } from "@rudderhq/shared";
 import { validate } from "../middleware/validate.js";
 import { executionWorkspaceService, logActivity, workspaceOperationService } from "../services/index.js";
 import { parseProjectExecutionWorkspacePolicy } from "../services/execution-workspace-policy.js";

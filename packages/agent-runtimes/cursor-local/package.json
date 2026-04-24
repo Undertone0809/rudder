@@ -1,5 +1,5 @@
 {
-  "name": "@rudder/agent-runtime-cursor-local",
+  "name": "@rudderhq/agent-runtime-cursor-local",
   "version": "0.1.0",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/Undertone0809/rudder",
@@ -51,7 +51,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@rudder/agent-runtime-utils": "workspace:*",
+    "@rudderhq/agent-runtime-utils": "workspace:*",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import type { ChatStreamTranscriptEntry } from "@rudder/shared";
+import type { Db } from "@rudderhq/db";
+import type { ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import {
   agents,
   approvals,
@@ -14,7 +14,7 @@ import {
   organizations,
   issues,
   projects,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import { notFound, unprocessable } from "../errors.js";
 import { agentService } from "./agents.js";
 import { logActivity } from "./activity-log.js";

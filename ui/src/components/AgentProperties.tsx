@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@/lib/router";
-import { AGENT_ROLE_LABELS, type Agent, type AgentRuntimeState } from "@rudder/shared";
+import { AGENT_ROLE_LABELS, type Agent, type AgentRuntimeState } from "@rudderhq/shared";
 import { agentsApi } from "../api/agents";
 import { useOrganization } from "../context/OrganizationContext";
 import { queryKeys } from "../lib/queryKeys";

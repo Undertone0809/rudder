@@ -1,5 +1,5 @@
 {
-  "name": "@rudder/agent-runtime-claude-local",
+  "name": "@rudderhq/agent-runtime-claude-local",
   "version": "0.1.0",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/Undertone0809/rudder",
@@ -53,7 +53,7 @@
     "probe:quota:raw": "pnpm exec tsx src/cli/quota-probe.ts --json --raw-cli"
   },
   "dependencies": {
-    "@rudder/agent-runtime-utils": "workspace:*",
+    "@rudderhq/agent-runtime-utils": "workspace:*",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {

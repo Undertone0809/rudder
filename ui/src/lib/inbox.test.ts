@@ -8,7 +8,7 @@ import type {
   Issue,
   JoinRequest,
   MessengerThreadSummary,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import {
   computeInboxBadgeData,
   getApprovalsForTab,

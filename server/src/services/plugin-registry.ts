@@ -1,5 +1,5 @@
 import { asc, eq, ne, sql, and } from "drizzle-orm";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   plugins,
   pluginConfig,
@@ -7,7 +7,7 @@ import {
   pluginJobs,
   pluginJobRuns,
   pluginWebhookDeliveries,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import type {
   PaperclipPluginManifestV1,
   PluginStatus,
@@ -24,7 +24,7 @@ import type {
   PluginJobRunStatus,
   PluginJobRunTrigger,
   PluginWebhookDeliveryStatus,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { conflict, notFound } from "../errors.js";
 
 // ---------------------------------------------------------------------------

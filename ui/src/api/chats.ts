@@ -6,7 +6,7 @@ import type {
   ChatIssueCreationMode,
   ChatOperationProposalDecisionAction,
   ChatStreamEvent,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { ApiError, api } from "./client";
 
 export const chatsApi = {

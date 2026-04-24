@@ -1,4 +1,4 @@
-import type { AgentSkillAnalytics, HeartbeatRun } from "@rudder/shared";
+import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 /* ---- Utilities ---- */

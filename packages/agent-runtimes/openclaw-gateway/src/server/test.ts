@@ -2,8 +2,8 @@ import type {
   AgentRuntimeEnvironmentCheck,
   AgentRuntimeEnvironmentTestContext,
   AgentRuntimeEnvironmentTestResult,
-} from "@rudder/agent-runtime-utils";
-import { asString, parseObject } from "@rudder/agent-runtime-utils/server-utils";
+} from "@rudderhq/agent-runtime-utils";
+import { asString, parseObject } from "@rudderhq/agent-runtime-utils/server-utils";
 import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
 

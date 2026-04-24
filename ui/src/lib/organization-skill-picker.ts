@@ -4,7 +4,7 @@ import {
   isCanonicalBundledRudderSkillKey,
   type OrganizationSkillListItem,
   type OrganizationSkillPublicRefContext,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 
 export interface OrganizationSkillPickerItem extends OrganizationSkillListItem {
   publicRef: string;

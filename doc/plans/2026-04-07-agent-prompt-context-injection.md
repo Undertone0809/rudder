@@ -62,7 +62,7 @@ Add hardcoded source-specific prompt templates selected based on `context.wakeSo
 
 **Implementation:**
 
-1. Add `selectPromptTemplate(context)` function in `@rudder/agent-runtime-utils`
+1. Add `selectPromptTemplate(context)` function in `@rudderhq/agent-runtime-utils`
 2. Enrich `contextSnapshot` with entity data at wakeup sites
 3. Update all agent runtimes to use `selectPromptTemplate()`
 
@@ -164,7 +164,7 @@ Same pattern - include full `issue` object in `contextSnapshot`.
 
 ### 2. Prompt Template Selection
 
-Add to `@rudder/agent-runtime-utils/src/server-utils.ts`:
+Add to `@rudderhq/agent-runtime-utils/src/server-utils.ts`:
 
 ```typescript
 export const DEFAULT_AGENT_PROMPT_TEMPLATE =

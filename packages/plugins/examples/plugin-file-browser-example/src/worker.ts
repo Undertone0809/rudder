@@ -1,4 +1,4 @@
-import { definePlugin, runWorker } from "@rudder/plugin-sdk";
+import { definePlugin, runWorker } from "@rudderhq/plugin-sdk";
 import * as fs from "node:fs";
 import * as path from "node:path";
 

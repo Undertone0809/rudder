@@ -1,4 +1,4 @@
-import type { PaperclipPluginManifestV1 } from "@rudder/plugin-sdk";
+import type { PaperclipPluginManifestV1 } from "@rudderhq/plugin-sdk";
 
 const PLUGIN_ID = "rudder-file-browser-example";
 const FILES_SIDEBAR_SLOT_ID = "files-link";

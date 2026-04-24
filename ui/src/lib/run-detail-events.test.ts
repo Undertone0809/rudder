@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../agent-runtimes";
-import type { HeartbeatRunEvent } from "@rudder/shared";
+import type { HeartbeatRunEvent } from "@rudderhq/shared";
 import {
   heartbeatRunEventText,
   heartbeatRunEventToTranscriptEntry,

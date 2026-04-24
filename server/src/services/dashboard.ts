@@ -1,6 +1,6 @@
 import { and, eq, gte, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { agents, approvals, organizations, costEvents, issues } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { agents, approvals, organizations, costEvents, issues } from "@rudderhq/db";
 import { notFound } from "../errors.js";
 import { budgetService } from "./budgets.js";
 

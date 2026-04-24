@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   authUsers,
   boardApiKeys,
@@ -8,7 +8,7 @@ import {
   organizations,
   organizationMemberships,
   instanceUserRoles,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import { conflict, forbidden, notFound } from "../errors.js";
 
 export const BOARD_API_KEY_TTL_MS = 30 * 24 * 60 * 60 * 1000;

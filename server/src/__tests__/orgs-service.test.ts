@@ -24,8 +24,8 @@ import {
   projects,
   workspaceOperations,
   workspaceRuntimeServices,
-} from "@rudder/db";
-import { deriveOrganizationUrlKey } from "@rudder/shared";
+} from "@rudderhq/db";
+import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { agentService } from "../services/agents.js";
 import { organizationService } from "../services/orgs.js";

@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 
-export const CLI_NPM_PACKAGE_NAME = "@rudder/cli";
+export const CLI_NPM_PACKAGE_NAME = "@rudderhq/cli";
 export const CLI_BIN_NAME = "rudder";
 
 interface PersistentCliStateOptions {

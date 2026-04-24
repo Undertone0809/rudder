@@ -5,7 +5,7 @@ import type {
   MessengerSystemThreadKind,
   MessengerThreadDetail,
   MessengerThreadSummary,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { api } from "./client";
 
 type MessengerThreadDetailResponse<TItem> = {

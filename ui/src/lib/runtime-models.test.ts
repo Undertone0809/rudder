@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CODEX_LOCAL_MODEL } from "@rudder/agent-runtime-codex-local";
+import { DEFAULT_CODEX_LOCAL_MODEL } from "@rudderhq/agent-runtime-codex-local";
 import { resolveRuntimeModels } from "./runtime-models";
 
 describe("resolveRuntimeModels", () => {

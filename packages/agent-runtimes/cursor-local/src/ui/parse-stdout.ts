@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "@rudder/agent-runtime-utils";
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import { normalizeCursorStreamLine } from "../shared/stream.js";
 
 function safeJsonParse(text: string): unknown {

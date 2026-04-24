@@ -51,7 +51,7 @@ Current traces have three concrete instrumentation problems:
 
 ## Validation
 
-- `pnpm --filter @rudder/server test -- --run langfuse`
+- `pnpm --filter @rudderhq/server test -- --run langfuse`
 - targeted trace fetch via `langfuse-cli`
 
 ## Commit

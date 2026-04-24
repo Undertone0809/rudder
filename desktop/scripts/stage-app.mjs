@@ -13,7 +13,7 @@ async function main() {
   await fs.cp(sourceDistDir, path.join(stagedAppDir, "dist"), { recursive: true });
 
   const appManifest = {
-    name: "@rudder/desktop",
+    name: "@rudderhq/desktop",
     version: "0.1.0",
     private: true,
     description: "Rudder Desktop local-first Electron shell",

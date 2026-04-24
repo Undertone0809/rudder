@@ -1,6 +1,6 @@
 import { inflateRawSync } from "node:zlib";
 import path from "node:path";
-import type { OrganizationPortabilityFileEntry } from "@rudder/shared";
+import type { OrganizationPortabilityFileEntry } from "@rudderhq/shared";
 
 const textDecoder = new TextDecoder();
 

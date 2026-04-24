@@ -1,6 +1,6 @@
 import { lt, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { pluginLogs } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { pluginLogs } from "@rudderhq/db";
 import { logger } from "../middleware/logger.js";
 
 /** Default retention period: 7 days. */

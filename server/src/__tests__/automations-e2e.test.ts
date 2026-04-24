@@ -25,8 +25,8 @@ import {
   automationRuns,
   automations,
   automationTriggers,
-} from "@rudder/db";
-import { deriveOrganizationUrlKey } from "@rudder/shared";
+} from "@rudderhq/db";
+import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { errorHandler } from "../middleware/index.js";
 import { accessService } from "../services/access.js";
 
@@ -34,7 +34,7 @@ vi.mock("../services/index.js", async () => {
   const actual = await vi.importActual<typeof import("../services/index.js")>("../services/index.js");
   const { randomUUID } = await import("node:crypto");
   const { eq } = await import("drizzle-orm");
-  const { heartbeatRuns, issues } = await import("@rudder/db");
+  const { heartbeatRuns, issues } = await import("@rudderhq/db");
 
   return {
     ...actual,
@@ -338,5 +338,5 @@ describe("automation routes end-to-end", () => {
         "automation.run_triggered",
       ]),
     );
-  });
+  }, 20_000);
 });

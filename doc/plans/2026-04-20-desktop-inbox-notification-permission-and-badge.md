@@ -95,8 +95,8 @@ behavior can fail silently.
 
 ## Validation
 
-- `pnpm --filter @rudder/desktop typecheck`
-- `pnpm --filter @rudder/ui typecheck`
+- `pnpm --filter @rudderhq/desktop typecheck`
+- `pnpm --filter @rudderhq/ui typecheck`
 - targeted Vitest coverage for the new desktop permission workflow
 - relevant desktop smoke or UI automation coverage for the visible permission
   surface when feasible

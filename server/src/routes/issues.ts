@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   addIssueCommentSchema,
   createIssueAttachmentMetadataSchema,
@@ -14,7 +14,7 @@ import {
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
 import {

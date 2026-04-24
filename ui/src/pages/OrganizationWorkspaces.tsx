@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { OrganizationWorkspaceFileEntry } from "@rudder/shared";
+import type { OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useSearchParams } from "@/lib/router";
 import { Button } from "@/components/ui/button";
 import { organizationsApi } from "../api/orgs";

@@ -7,7 +7,7 @@ import {
   index,
   unique,
 } from "drizzle-orm/pg-core";
-import type { PluginStateScopeKind } from "@rudder/shared";
+import type { PluginStateScopeKind } from "@rudderhq/shared";
 import { plugins } from "./plugins.js";
 
 /**

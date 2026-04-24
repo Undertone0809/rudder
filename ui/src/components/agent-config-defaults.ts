@@ -1,4 +1,4 @@
-import type { CreateConfigValues } from "@rudder/agent-runtime-utils";
+import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 
 export const defaultCreateValues: CreateConfigValues = {
   agentRuntimeType: "claude_local",

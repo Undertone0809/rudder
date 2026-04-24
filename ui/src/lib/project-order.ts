@@ -1,4 +1,4 @@
-import type { Project } from "@rudder/shared";
+import type { Project } from "@rudderhq/shared";
 
 export const PROJECT_ORDER_UPDATED_EVENT = "rudder:project-order-updated";
 const PROJECT_ORDER_STORAGE_PREFIX = "rudder.projectOrder";

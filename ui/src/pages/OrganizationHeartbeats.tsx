@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Agent, HeartbeatRun } from "@rudder/shared";
+import type { Agent, HeartbeatRun } from "@rudderhq/shared";
 import { Activity, ArrowUpRight, Bot, Clock3, Play } from "lucide-react";
 import { Link } from "@/lib/router";
 import { agentsApi } from "@/api/agents";

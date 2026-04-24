@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { and, asc, eq } from "drizzle-orm";
-import type { RudderSkillEntry } from "@rudder/agent-runtime-utils/server-utils";
-import type { Db } from "@rudder/db";
-import { agents, issues, projectWorkspaces } from "@rudder/db";
-import type { AgentRuntimeType, OrganizationResource, ProjectResourceAttachment } from "@rudder/shared";
+import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
+import type { Db } from "@rudderhq/db";
+import { agents, issues, projectWorkspaces } from "@rudderhq/db";
+import type { AgentRuntimeType, OrganizationResource, ProjectResourceAttachment } from "@rudderhq/shared";
 import { parseObject } from "../agent-runtimes/utils.js";
 import {
   ensureAgentWorkspaceLayout,

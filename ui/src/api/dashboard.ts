@@ -1,4 +1,4 @@
-import type { DashboardSummary } from "@rudder/shared";
+import type { DashboardSummary } from "@rudderhq/shared";
 import { api } from "./client";
 
 export const dashboardApi = {

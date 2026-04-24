@@ -16,7 +16,7 @@ async function rewriteInternalPackageManifest(packageDir) {
 
   const raw = await fs.readFile(manifestPath, "utf8");
   const manifest = JSON.parse(raw);
-  if (!manifest.name?.startsWith?.("@rudder/")) return;
+  if (!manifest.name?.startsWith?.("@rudderhq/")) return;
   if (!manifest.publishConfig) return;
 
   const nextManifest = {

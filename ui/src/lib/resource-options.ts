@@ -3,7 +3,7 @@ import {
   PROJECT_RESOURCE_ATTACHMENT_ROLES,
   type OrganizationResourceKind,
   type ProjectResourceAttachmentRole,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 
 export const organizationResourceKindOptions: Array<{
   value: OrganizationResourceKind;

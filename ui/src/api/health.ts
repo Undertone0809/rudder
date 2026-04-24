@@ -1,4 +1,4 @@
-import type { InstanceLocale } from "@rudder/shared";
+import type { InstanceLocale } from "@rudderhq/shared";
 
 export type DevServerHealthStatus = {
   enabled: true;

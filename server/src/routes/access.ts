@@ -10,13 +10,13 @@ import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import type { Request } from "express";
 import { and, eq, isNull, desc } from "drizzle-orm";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   agentApiKeys,
   authUsers,
   invites,
   joinRequests
-} from "@rudder/db";
+} from "@rudderhq/db";
 import {
   acceptInviteSchema,
   createCliAuthChallengeSchema,
@@ -28,8 +28,8 @@ import {
   updateMemberPermissionsSchema,
   updateUserCompanyAccessSchema,
   PERMISSION_KEYS
-} from "@rudder/shared";
-import type { DeploymentExposure, DeploymentMode } from "@rudder/shared";
+} from "@rudderhq/shared";
+import type { DeploymentExposure, DeploymentMode } from "@rudderhq/shared";
 import {
   forbidden,
   conflict,

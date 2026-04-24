@@ -1,4 +1,4 @@
-import type { SecretProvider, SecretProviderDescriptor } from "@rudder/shared";
+import type { SecretProvider, SecretProviderDescriptor } from "@rudderhq/shared";
 import { localEncryptedProvider } from "./local-encrypted-provider.js";
 import {
   awsSecretsManagerProvider,

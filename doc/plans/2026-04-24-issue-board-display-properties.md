@@ -73,7 +73,7 @@ cards into detail previews.
 
 ## Validation
 
-- `pnpm --filter @rudder/ui typecheck`
+- `pnpm --filter @rudderhq/ui typecheck`
 - `pnpm vitest run ui/src/components/IssuesList.test.tsx`
 - `pnpm -r typecheck`
 - `pnpm test:run`

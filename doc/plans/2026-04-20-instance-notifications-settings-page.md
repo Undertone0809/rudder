@@ -103,9 +103,9 @@ This is a product-shape problem, not just an Electron IPC problem.
 ## Validation
 
 - `pnpm db:generate`
-- `pnpm --filter @rudder/ui test -- --run ui/src/pages/InstanceNotificationsSettings.test.tsx`
-- `pnpm --filter @rudder/ui test -- --run ui/src/lib/instance-settings.test.ts ui/src/lib/settings-prefetch.test.ts`
-- `pnpm --filter @rudder/server test -- --run src/__tests__/instance-settings-routes.test.ts`
+- `pnpm --filter @rudderhq/ui test -- --run ui/src/pages/InstanceNotificationsSettings.test.tsx`
+- `pnpm --filter @rudderhq/ui test -- --run ui/src/lib/instance-settings.test.ts ui/src/lib/settings-prefetch.test.ts`
+- `pnpm --filter @rudderhq/server test -- --run src/__tests__/instance-settings-routes.test.ts`
 - `pnpm test:e2e -- tests/e2e/settings-sidebar.spec.ts`
 - `pnpm -r typecheck`
 - `pnpm build`

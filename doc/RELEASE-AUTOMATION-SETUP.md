@@ -35,8 +35,8 @@ Do this for every public package that Rudder publishes.
 
 At minimum that includes:
 
-- `@rudder/cli`
-- `@rudder/server`
+- `@rudderhq/cli`
+- `@rudderhq/server`
 - public packages under `packages/`
 
 ### 2.1. In npm, open each package settings page
@@ -215,7 +215,7 @@ After setup:
 Start-path check:
 
 ```bash
-npx @rudder/cli@canary onboard
+npx @rudderhq/cli@canary onboard
 ```
 
 ## 12. Verify the Stable Workflow
@@ -240,7 +240,7 @@ After at least one good canary exists:
 Start-path check:
 
 ```bash
-npx @rudder/cli@latest start --no-open
+npx @rudderhq/cli@latest start --no-open
 ```
 
 After the persistent CLI has been prepared, the equivalent direct check is:

@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, isNotNull, lt, lte, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { activityLog, agents, organizations, costEvents, issues, projects } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { activityLog, agents, organizations, costEvents, issues, projects } from "@rudderhq/db";
 import { notFound, unprocessable } from "../errors.js";
 import { observeExecutionEvent } from "../langfuse.js";
 import { budgetService, type BudgetServiceHooks } from "./budgets.js";

@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { InstanceLocale } from "@rudder/shared";
+import type { InstanceLocale } from "@rudderhq/shared";
 import { healthApi } from "@/api/health";
 import { queryKeys } from "@/lib/queryKeys";
 import { en, type TranslationKey } from "@/i18n/locales/en";

@@ -10,7 +10,7 @@ import type {
   OrganizationPortabilityInclude,
   OrganizationPortabilityPreviewResult,
   OrganizationPortabilityImportResult,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { ApiRequestError } from "../../client/http.js";
 import { openUrl } from "../../client/board-auth.js";
 import { binaryContentTypeByExtension, readZipArchive } from "./zip.js";

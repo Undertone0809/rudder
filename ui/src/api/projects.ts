@@ -4,7 +4,7 @@ import type {
   ProjectResourceAttachment,
   ProjectResourceAttachmentInput,
   UpdateProjectResourceAttachmentRequest,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { api } from "./client";
 
 function withCompanyScope(path: string, orgId?: string) {

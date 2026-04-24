@@ -1,4 +1,4 @@
-# @rudder/agent-runtime-utils
+# @rudderhq/agent-runtime-utils
 
 ## 0.3.1
 

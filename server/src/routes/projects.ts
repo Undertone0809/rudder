@@ -1,12 +1,12 @@
 import { Router, type Request } from "express";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   createProjectSchema,
   isUuidLike,
   projectResourceAttachmentInputSchema,
   updateProjectResourceAttachmentSchema,
   updateProjectSchema,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { validate } from "../middleware/validate.js";
 import { projectService, resourceCatalogService, logActivity } from "../services/index.js";
 import { conflict } from "../errors.js";

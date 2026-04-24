@@ -1,5 +1,5 @@
 {
-  "name": "@rudder/plugin-authoring-smoke-example",
+  "name": "@rudderhq/plugin-authoring-smoke-example",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -11,7 +11,7 @@
     "dev": "node ./esbuild.config.mjs --watch",
     "dev:ui": "rudder-plugin-dev-server --root . --ui-dir dist/ui --port 4177",
     "test": "vitest run --config ./vitest.config.ts",
-    "typecheck": "pnpm --filter @rudder/plugin-sdk build && tsc --noEmit"
+    "typecheck": "pnpm --filter @rudderhq/plugin-sdk build && tsc --noEmit"
   },
   "rudderPlugin": {
     "manifest": "./dist/manifest.js",
@@ -26,7 +26,7 @@
   "author": "Plugin Author",
   "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
-    "@rudder/plugin-sdk": "workspace:*"
+    "@rudderhq/plugin-sdk": "workspace:*"
   },
   "devDependencies": {
     "@rollup/plugin-node-resolve": "^16.0.3",

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Issue } from "@rudder/shared";
+import type { Issue } from "@rudderhq/shared";
 import { Link } from "@/lib/router";
 import { cn } from "../lib/utils";
 import { StatusIcon } from "./StatusIcon";

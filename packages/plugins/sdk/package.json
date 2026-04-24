@@ -1,5 +1,5 @@
 {
-  "name": "@rudder/plugin-sdk",
+  "name": "@rudderhq/plugin-sdk",
   "version": "0.1.0",
   "description": "Stable public API for Rudder plugins — worker-side context and UI bridge hooks",
   "license": "SEE LICENSE IN LICENSE",
@@ -101,13 +101,13 @@
     "dist"
   ],
   "scripts": {
-    "build": "pnpm --filter @rudder/shared build && tsc",
+    "build": "pnpm --filter @rudderhq/shared build && tsc",
     "clean": "rm -rf dist",
-    "typecheck": "pnpm --filter @rudder/shared build && tsc --noEmit",
+    "typecheck": "pnpm --filter @rudderhq/shared build && tsc --noEmit",
     "dev:server": "tsx src/dev-cli.ts"
   },
   "dependencies": {
-    "@rudder/shared": "workspace:*",
+    "@rudderhq/shared": "workspace:*",
     "zod": "^3.25.76"
   },
   "devDependencies": {

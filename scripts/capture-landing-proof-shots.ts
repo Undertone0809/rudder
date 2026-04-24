@@ -229,7 +229,7 @@ async function startServer() {
   await fs.writeFile(SERVER_LOG_PATH, "", "utf8");
   const child = spawn(
     "/opt/homebrew/bin/npx",
-    ["pnpm", "--filter", "@rudder/server", "dev"],
+    ["pnpm", "--filter", "@rudderhq/server", "dev"],
     {
       cwd: REPO_ROOT,
       env: {

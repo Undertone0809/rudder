@@ -2,7 +2,7 @@ import type {
   AgentRuntimeEnvironmentCheck,
   AgentRuntimeEnvironmentTestContext,
   AgentRuntimeEnvironmentTestResult,
-} from "@rudder/agent-runtime-utils";
+} from "@rudderhq/agent-runtime-utils";
 import {
   asString,
   asBoolean,
@@ -13,7 +13,7 @@ import {
   ensureCommandResolvable,
   ensurePathInEnv,
   runChildProcess,
-} from "@rudder/agent-runtime-utils/server-utils";
+} from "@rudderhq/agent-runtime-utils/server-utils";
 import path from "node:path";
 import { detectClaudeLoginRequired, parseClaudeStreamJson } from "./parse.js";
 

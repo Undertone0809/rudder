@@ -1,6 +1,6 @@
 import { Router } from "express";
-import type { Db } from "@rudder/db";
-import { createGoalSchema, updateGoalSchema } from "@rudder/shared";
+import type { Db } from "@rudderhq/db";
+import { createGoalSchema, updateGoalSchema } from "@rudderhq/shared";
 import { validate } from "../middleware/validate.js";
 import { goalService, logActivity } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";

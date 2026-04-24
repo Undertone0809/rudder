@@ -1,4 +1,4 @@
-import type { PaperclipPluginManifestV1 } from "@rudder/plugin-sdk";
+import type { PaperclipPluginManifestV1 } from "@rudderhq/plugin-sdk";
 import {
   DEFAULT_CONFIG,
   EXPORT_NAMES,

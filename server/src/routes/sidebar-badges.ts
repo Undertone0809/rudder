@@ -1,7 +1,7 @@
 import { Router } from "express";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import { and, eq, sql } from "drizzle-orm";
-import { joinRequests } from "@rudder/db";
+import { joinRequests } from "@rudderhq/db";
 import { sidebarBadgeService } from "../services/sidebar-badges.js";
 import { accessService } from "../services/access.js";
 import { chatService } from "../services/chats.js";

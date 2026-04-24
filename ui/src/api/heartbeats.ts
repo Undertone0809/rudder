@@ -3,7 +3,7 @@ import type {
   HeartbeatRunEvent,
   InstanceSchedulerHeartbeatAgent,
   WorkspaceOperation,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { api } from "./client";
 
 export interface ActiveRunForIssue extends HeartbeatRun {

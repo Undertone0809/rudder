@@ -1,4 +1,4 @@
-import type { OrganizationPortabilityIssueManifestEntry } from "@rudder/shared";
+import type { OrganizationPortabilityIssueManifestEntry } from "@rudderhq/shared";
 
 function isTaskPath(filePath: string): boolean {
   return /(?:^|\/)tasks\//.test(filePath);

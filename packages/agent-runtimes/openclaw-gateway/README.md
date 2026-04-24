@@ -1,6 +1,6 @@
 # OpenClaw Gateway Adapter
 
-This document describes how `@rudder/agent-runtime-openclaw-gateway` invokes OpenClaw over the Gateway protocol.
+This document describes how `@rudderhq/agent-runtime-openclaw-gateway` invokes OpenClaw over the Gateway protocol.
 
 ## Transport
 

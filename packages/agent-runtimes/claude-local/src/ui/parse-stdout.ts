@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "@rudder/agent-runtime-utils";
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;

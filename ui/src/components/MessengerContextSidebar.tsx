@@ -16,7 +16,7 @@ import {
   UserPlus,
   XCircle,
 } from "lucide-react";
-import type { ChatConversation } from "@rudder/shared";
+import type { ChatConversation } from "@rudderhq/shared";
 import { chatsApi } from "@/api/chats";
 import { messengerApi } from "@/api/messenger";
 import { Link, useLocation, useNavigate } from "@/lib/router";

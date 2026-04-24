@@ -2,7 +2,7 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import { actorMiddleware } from "../middleware/auth.js";
 import { errorHandler, httpLogger } from "../middleware/index.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "../middleware/private-hostname-guard.js";

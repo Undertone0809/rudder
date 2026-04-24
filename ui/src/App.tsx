@@ -72,7 +72,7 @@ import { getOrganizationSettingsPath } from "./lib/organization-settings-path";
 import { agentUrl } from "./lib/utils";
 import { shouldRedirectOrganizationlessRouteToOnboarding } from "./lib/onboarding-route";
 import { findOrganizationByPrefix } from "./lib/organization-routes";
-import type { Agent } from "@rudder/shared";
+import type { Agent } from "@rudderhq/shared";
 
 function BootstrapPendingPage({ hasActiveInvite = false }: { hasActiveInvite?: boolean }) {
   const { t } = useI18n();

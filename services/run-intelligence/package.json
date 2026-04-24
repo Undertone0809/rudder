@@ -1,5 +1,5 @@
 {
-  "name": "@rudder/run-intelligence",
+  "name": "@rudderhq/run-intelligence",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,8 +11,8 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
-    "@rudder/run-intelligence-core": "workspace:*",
-    "@rudder/shared": "workspace:*",
+    "@rudderhq/run-intelligence-core": "workspace:*",
+    "@rudderhq/shared": "workspace:*",
     "express": "^5.2.1",
     "ws": "^8.20.0"
   },

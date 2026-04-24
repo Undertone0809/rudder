@@ -1,4 +1,4 @@
-import type { ExecutionLangfuseLink } from "@rudder/shared";
+import type { ExecutionLangfuseLink } from "@rudderhq/shared";
 import type { ObservedRunDetail, RunDiagnosis } from "./types.js";
 
 export interface LangfuseScoreDraft {

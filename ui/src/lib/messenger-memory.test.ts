@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { beforeEach, describe, expect, it } from "vitest";
-import type { MessengerThreadSummary } from "@rudder/shared";
+import type { MessengerThreadSummary } from "@rudderhq/shared";
 import {
   getRememberedMessengerPath,
   rememberMessengerPath,

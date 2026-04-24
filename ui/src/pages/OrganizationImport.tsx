@@ -6,7 +6,7 @@ import type {
   OrganizationPortabilityPreviewResult,
   OrganizationPortabilitySource,
   OrganizationPortabilityAgentRuntimeOverride,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
@@ -35,7 +35,7 @@ import {
 import { Field, adapterLabels } from "../components/agent-config-primitives";
 import { defaultCreateValues } from "../components/agent-config-defaults";
 import { getUIAdapter, listUIAdapters } from "../agent-runtimes";
-import type { CreateConfigValues } from "@rudder/agent-runtime-utils";
+import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 import {
   type FileTreeNode,
   type FrontmatterData,

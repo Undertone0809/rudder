@@ -1,6 +1,6 @@
 import { Router, type Request } from "express";
-import type { Db } from "@rudder/db";
-import { AGENT_ICON_NAMES } from "@rudder/shared";
+import type { Db } from "@rudderhq/db";
+import { AGENT_ICON_NAMES } from "@rudderhq/shared";
 import { forbidden } from "../errors.js";
 import { listServerAdapters } from "../agent-runtimes/index.js";
 import { agentService } from "../services/agents.js";

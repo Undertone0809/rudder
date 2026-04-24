@@ -1,5 +1,5 @@
 import { Router, type Request } from "express";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   createAutomationSchema,
   createAutomationTriggerSchema,
@@ -7,7 +7,7 @@ import {
   runAutomationSchema,
   updateAutomationSchema,
   updateAutomationTriggerSchema,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { validate } from "../middleware/validate.js";
 import { accessService, logActivity, automationService } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";

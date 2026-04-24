@@ -29,8 +29,8 @@ import type {
   IssueDocumentSummary,
   Agent,
   Goal,
-} from "@rudder/shared";
-export type { PluginLauncherRenderContextSnapshot } from "@rudder/shared";
+} from "@rudderhq/shared";
+export type { PluginLauncherRenderContextSnapshot } from "@rudderhq/shared";
 
 import type {
   PluginEvent,

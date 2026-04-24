@@ -1,4 +1,4 @@
-import type { Approval, ApprovalComment, Issue } from "@rudder/shared";
+import type { Approval, ApprovalComment, Issue } from "@rudderhq/shared";
 import { api } from "./client";
 
 export const approvalsApi = {

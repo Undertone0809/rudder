@@ -7,7 +7,7 @@ import {
   type Issue,
   type Approval,
   type ApprovalComment,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import {
   addCommonClientOptions,
   formatInlineRecord,

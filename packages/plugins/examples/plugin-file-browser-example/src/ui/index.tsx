@@ -3,8 +3,8 @@ import type {
   PluginDetailTabProps,
   PluginCommentAnnotationProps,
   PluginCommentContextMenuItemProps,
-} from "@rudder/plugin-sdk/ui";
-import { usePluginAction, usePluginData } from "@rudder/plugin-sdk/ui";
+} from "@rudderhq/plugin-sdk/ui";
+import { usePluginAction, usePluginData } from "@rudderhq/plugin-sdk/ui";
 import { useMemo, useState, useEffect, useRef, type MouseEvent, type RefObject } from "react";
 import { EditorView } from "@codemirror/view";
 import { basicSetup } from "codemirror";

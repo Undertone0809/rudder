@@ -40,7 +40,7 @@ Phase 1 is intentionally vertical and local-only:
 - add a CLI runner under `rudder benchmark create-agent ...`
 - reuse existing issue creation, assignment wakeup, issue run, and run-intelligence APIs
 - add benchmark trace tags/metadata to issue-backed Langfuse traces
-- add deterministic create-agent eval logic in `@rudder/run-intelligence-core`
+- add deterministic create-agent eval logic in `@rudderhq/run-intelligence-core`
 - support optional judge + annotation queue sync when external credentials exist
 
 Out of scope:
@@ -102,13 +102,13 @@ Issue descriptions for benchmark-generated tasks carry a hidden metadata block. 
 
 ## Validation
 
-- `pnpm --filter @rudder/run-intelligence-core test`
-- `pnpm --filter @rudder/cli typecheck`
-- `pnpm --filter @rudder/run-intelligence-core typecheck`
+- `pnpm --filter @rudderhq/run-intelligence-core test`
+- `pnpm --filter @rudderhq/cli typecheck`
+- `pnpm --filter @rudderhq/run-intelligence-core typecheck`
 - `pnpm -r typecheck`
 - `pnpm test:run`
 - `pnpm build`
-- `pnpm --filter @rudder/cli dev benchmark create-agent --help`
+- `pnpm --filter @rudderhq/cli dev benchmark create-agent --help`
 
 ## Commit
 

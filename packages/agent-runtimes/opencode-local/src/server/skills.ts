@@ -5,13 +5,13 @@ import type {
   AgentRuntimeSkillContext,
   AgentRuntimeSkillEntry,
   AgentRuntimeSkillSnapshot,
-} from "@rudder/agent-runtime-utils";
+} from "@rudderhq/agent-runtime-utils";
 import {
   readRudderRuntimeSkillEntries,
   readInstalledSkillTargets,
   readSkillMetadataFromPath,
   resolveRudderDesiredSkillNames,
-} from "@rudder/agent-runtime-utils/server-utils";
+} from "@rudderhq/agent-runtime-utils/server-utils";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 

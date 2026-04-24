@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AGENT_RUNTIME_TYPES } from "@rudder/shared";
+import { AGENT_RUNTIME_TYPES } from "@rudderhq/shared";
 import type {
   Agent,
   AgentRuntimeEnvironmentTestResult,
   OrganizationSecret,
   EnvBinding,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import type { AgentRuntimeModel } from "../api/agents";
 import { agentsApi } from "../api/agents";
 import { secretsApi } from "../api/secrets";
@@ -14,9 +14,9 @@ import { assetsApi } from "../api/assets";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
-} from "@rudder/agent-runtime-codex-local";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudder/agent-runtime-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudder/agent-runtime-gemini-local";
+} from "@rudderhq/agent-runtime-codex-local";
+import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
+import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import {
   Popover,
   PopoverContent,
@@ -53,10 +53,10 @@ import { ReportsToPicker } from "./ReportsToPicker";
 
 /* ---- Create mode values ---- */
 
-// Canonical type lives in @rudder/agent-runtime-utils; re-exported here
+// Canonical type lives in @rudderhq/agent-runtime-utils; re-exported here
 // so existing imports from this file keep working.
-export type { CreateConfigValues } from "@rudder/agent-runtime-utils";
-import type { CreateConfigValues } from "@rudder/agent-runtime-utils";
+export type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
+import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 
 /* ---- Props ---- */
 

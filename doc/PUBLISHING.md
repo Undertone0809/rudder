@@ -18,11 +18,11 @@ Rudder no longer uses release branches or Changesets for publishing.
 
 ## Why the CLI needs special packaging
 
-The CLI package, `@rudder/cli`, imports code from workspace packages such as:
+The CLI package, `@rudderhq/cli`, imports code from workspace packages such as:
 
-- `@rudder/server`
-- `@rudder/db`
-- `@rudder/shared`
+- `@rudderhq/server`
+- `@rudderhq/db`
+- `@rudderhq/shared`
 - adapter packages under `packages/agent-runtimes/`
 
 Those workspace references are valid in development but not in a publishable npm package. The release flow builds a publishable CLI bundle from the committed semver metadata, and only rewrites versions temporarily for canary prereleases.
@@ -88,12 +88,12 @@ Canaries publish under the npm dist-tag `canary`.
 
 Example:
 
-- `@rudder/cli@0.1.0-canary.2`
+- `@rudderhq/cli@0.1.0-canary.2`
 
 This keeps the default install path unchanged while allowing explicit installs with:
 
 ```bash
-npx @rudder/cli@canary onboard
+npx @rudderhq/cli@canary onboard
 ```
 
 ### Stable
@@ -102,7 +102,7 @@ Stable publishes use the npm dist-tag `latest`.
 
 Example:
 
-- `@rudder/cli@0.1.0`
+- `@rudderhq/cli@0.1.0`
 
 Stable publishes do not create a release commit. Instead:
 
@@ -115,14 +115,14 @@ Stable publishes do not create a release commit. Instead:
 The primary user install path is:
 
 ```bash
-npx @rudder/cli@latest start
+npx @rudderhq/cli@latest start
 ```
 
 The `start` command checks npm for newer CLI releases, uses npm for the
 persistent CLI, and uses GitHub Release assets for the desktop app. Desktop
 binaries are intentionally not published to npm.
 
-`npx @rudder/cli@latest <command>` and `rudder <command>` are the same command
+`npx @rudderhq/cli@latest <command>` and `rudder <command>` are the same command
 surface once they resolve to the same CLI version. Public docs use the `npx`
 form for first-run setup; installed users can run `rudder start` directly.
 

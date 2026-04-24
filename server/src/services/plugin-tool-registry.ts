@@ -22,8 +22,8 @@
 import type {
   PaperclipPluginManifestV1,
   PluginToolDeclaration,
-} from "@rudder/shared";
-import type { ToolRunContext, ToolResult, ExecuteToolParams } from "@rudder/plugin-sdk";
+} from "@rudderhq/shared";
+import type { ToolRunContext, ToolResult, ExecuteToolParams } from "@rudderhq/plugin-sdk";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 import { logger } from "../middleware/logger.js";
 

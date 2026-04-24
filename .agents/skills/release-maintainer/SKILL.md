@@ -4,7 +4,7 @@ description: >
   Maintain and execute Rudder releases across npm, GitHub Releases, and Desktop
   installers. Use this skill whenever the user asks about 发版, release,
   publishing to npm, canary/stable promotion, GitHub Release assets, Desktop
-  distribution, `npx @rudder/cli@latest start`, version bumps, rollback, or
+  distribution, `npx @rudderhq/cli@latest start`, version bumps, rollback, or
   release workflow failures. Prefer this skill for both planning and hands-on
   release operations in the Rudder repository, even when the user only asks
   "现在要做什么" or "帮我发版".
@@ -23,9 +23,9 @@ execute only the steps the user has authorized.
 
 - npm publishes the CLI and public runtime/workspace packages.
 - Desktop binaries are GitHub Release assets, not npm packages.
-- The stable user entrypoint is `npx @rudder/cli@latest start`.
+- The stable user entrypoint is `npx @rudderhq/cli@latest start`.
 - After the persistent CLI exists, `rudder <command>` and
-  `npx @rudder/cli@latest <command>` are the same CLI surface when they resolve
+  `npx @rudderhq/cli@latest <command>` are the same CLI surface when they resolve
   to the same CLI version. The `npx` form is the first-run or explicit dist-tag
   form.
 - Canaries publish from `main` automatically and use npm dist-tag `canary`.
@@ -72,8 +72,8 @@ When the task depends on remote truth, also check:
 gh workflow list
 gh run list --workflow release.yml --limit 10
 gh run list --workflow desktop-release.yml --limit 10
-npm view @rudder/cli dist-tags --json
-npm view @rudder/cli versions --json
+npm view @rudderhq/cli dist-tags --json
+npm view @rudderhq/cli versions --json
 ```
 
 If the worktree has unrelated dirty files, explicitly say you will ignore them
@@ -111,7 +111,7 @@ Canary releases should normally be automatic.
 5. Smoke test with:
 
 ```bash
-npx @rudder/cli@canary onboard
+npx @rudderhq/cli@canary onboard
 ```
 
 If canary smoke fails, do not promote stable. Fix forward on `main`, wait for
@@ -138,7 +138,7 @@ node scripts/release-package-map.mjs list
 8. Smoke test:
 
 ```bash
-npx @rudder/cli@latest start --no-open
+npx @rudderhq/cli@latest start --no-open
 rudder start --no-open
 ```
 
@@ -238,7 +238,7 @@ Expected behavior:
 
 **Entrypoint confusion**
 
-User: `npx @rudder/cli@latest start 和 rudder start 是什么关系？`
+User: `npx @rudderhq/cli@latest start 和 rudder start 是什么关系？`
 
 Expected behavior:
 - explain they are the same CLI surface when versions match

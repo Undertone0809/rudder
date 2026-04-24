@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   agents,
   organizationSecrets,
@@ -11,7 +11,7 @@ import {
   automationRuns,
   automations,
   automationTriggers,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import type {
   CreateAutomation,
   CreateAutomationTrigger,
@@ -24,7 +24,7 @@ import type {
   RunAutomation,
   UpdateAutomation,
   UpdateAutomationTrigger,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { conflict, forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { issueService } from "./issues.js";

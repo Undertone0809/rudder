@@ -60,8 +60,8 @@ export interface PluginBundlerPresets {
  */
 export function createPluginBundlerPresets(input: PluginBundlerPresetInput = {}): PluginBundlerPresets {
   const uiExternal = [
-    "@rudder/plugin-sdk/ui",
-    "@rudder/plugin-sdk/ui/hooks",
+    "@rudderhq/plugin-sdk/ui",
+    "@rudderhq/plugin-sdk/ui/hooks",
     "react",
     "react-dom",
     "react/jsx-runtime",
@@ -129,7 +129,7 @@ export function createPluginBundlerPresets(input: PluginBundlerPresetInput = {})
       sourcemap,
       entryFileNames: "manifest.js",
     },
-    external: ["@rudder/plugin-sdk"],
+    external: ["@rudderhq/plugin-sdk"],
   };
 
   const rollupUi = uiEntry

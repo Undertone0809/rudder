@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   activityLog,
   agents,
@@ -20,8 +20,8 @@ import {
   labels,
   projectWorkspaces,
   projects,
-} from "@rudder/db";
-import { extractAgentMentionIds, extractProjectMentionIds } from "@rudder/shared";
+} from "@rudderhq/db";
+import { extractAgentMentionIds, extractProjectMentionIds } from "@rudderhq/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,

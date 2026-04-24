@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { OrganizationPortabilityPreviewResult } from "@rudder/shared";
+import type { OrganizationPortabilityPreviewResult } from "@rudderhq/shared";
 import {
   buildCompanyDashboardUrl,
   buildDefaultImportAdapterOverrides,

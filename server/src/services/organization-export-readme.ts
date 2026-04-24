@@ -1,7 +1,7 @@
 /**
  * Generates README.md with Mermaid org chart for organization exports.
  */
-import type { OrganizationPortabilityManifest } from "@rudder/shared";
+import type { OrganizationPortabilityManifest } from "@rudderhq/shared";
 
 const ROLE_LABELS: Record<string, string> = {
   ceo: "CEO",

@@ -1,4 +1,4 @@
-import type { PaperclipPluginManifestV1 } from "@rudder/plugin-sdk";
+import type { PaperclipPluginManifestV1 } from "@rudderhq/plugin-sdk";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "rudder.plugin-authoring-smoke-example",

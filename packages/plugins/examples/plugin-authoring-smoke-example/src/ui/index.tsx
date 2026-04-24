@@ -1,4 +1,4 @@
-import { usePluginAction, usePluginData, type PluginWidgetProps } from "@rudder/plugin-sdk/ui";
+import { usePluginAction, usePluginData, type PluginWidgetProps } from "@rudderhq/plugin-sdk/ui";
 
 type HealthData = {
   status: "ok" | "degraded" | "error";

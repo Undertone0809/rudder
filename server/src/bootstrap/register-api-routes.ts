@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
 import { accessRoutes } from "../routes/access.js";
 import { activityRoutes } from "../routes/activity.js";

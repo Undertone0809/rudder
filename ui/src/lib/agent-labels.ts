@@ -1,4 +1,4 @@
-import { AGENT_ROLE_LABELS, type Agent } from "@rudder/shared";
+import { AGENT_ROLE_LABELS, type Agent } from "@rudderhq/shared";
 
 const COMPACT_AGENT_TITLE_MAX_LENGTH = 18;
 

@@ -31,9 +31,9 @@ pnpm desktop:verify
 pnpm prod
 pnpm desktop:build
 pnpm desktop:dist
-pnpm --filter @rudder/desktop smoke
+pnpm --filter @rudderhq/desktop smoke
 node desktop/scripts/smoke.mjs --mode=packaged
-npx @rudder/cli@latest start
+npx @rudderhq/cli@latest start
 ```
 
 Recommended defaults:
@@ -42,7 +42,7 @@ Recommended defaults:
 - `pnpm dev:watch` starts the watched local `dev` runtime first, then opens the development Desktop shell against that same shared instance
 - `pnpm desktop:verify` is the default contributor validation flow for Desktop work: dev-shell smoke, packaged build, then packaged-app smoke
 - `pnpm prod` builds the packaged Desktop installer for the current platform, verifies the packaged app boots successfully, and then opens it so you can install the local production Desktop app
-- `npx @rudder/cli@latest start` is the public first-run form; after the
+- `npx @rudderhq/cli@latest start` is the public first-run form; after the
   persistent CLI exists, `rudder start` is the equivalent direct form. Both
   check for newer CLI releases and download/open the matching Desktop installer
   from the GitHub Release when needed.
@@ -50,13 +50,13 @@ Recommended defaults:
 Low-frequency escape hatches:
 
 - `RUDDER_DESKTOP_RESIDENT_SHELL=1 pnpm dev:watch` keeps the shared `dev` profile but forces resident tray/menu lifecycle for local debugging
-- `pnpm --filter @rudder/desktop dev` runs only the development Desktop shell
+- `pnpm --filter @rudderhq/desktop dev` runs only the development Desktop shell
 - `pnpm rudder run` is the persistent local `prod_local` runtime entrypoint that packaged Desktop attaches to
 - `pnpm desktop:dist` builds installer artifacts without opening them
 
 Smoke scenarios:
 
-- `pnpm --filter @rudder/desktop smoke` runs the clean-instance desktop smoke path.
+- `pnpm --filter @rudderhq/desktop smoke` runs the clean-instance desktop smoke path.
 - `node desktop/scripts/smoke.mjs --mode=packaged` now runs both a clean packaged smoke path and an upgrade smoke path that downgrades the temp `prod_local` schema before relaunching.
 - Pass `--scenario=clean`, `--scenario=upgrade`, or `--scenario=all` to target a specific smoke path manually.
 
@@ -161,7 +161,7 @@ For smoke tests or isolated manual runs, override both the shared Rudder home an
 RUDDER_HOME=/tmp/rudder-home \
 RUDDER_DESKTOP_USER_DATA_DIR=/tmp/rudder-electron \
 RUDDER_LOCAL_ENV=prod_local \
-pnpm --filter @rudder/desktop smoke
+pnpm --filter @rudderhq/desktop smoke
 ```
 
 `RUDDER_HOME` controls shared Rudder state. `RUDDER_DESKTOP_USER_DATA_DIR` only controls Electron shell preferences.
@@ -171,7 +171,7 @@ pnpm --filter @rudder/desktop smoke
 Use this validation split when changing Desktop behavior:
 
 - Development-shell changes:
-  - `pnpm --filter @rudder/desktop smoke`
+  - `pnpm --filter @rudderhq/desktop smoke`
 - Packaged boot, local prod startup, installer, icons, startup migrations, or shared-instance path changes:
   - `pnpm desktop:verify`
 

@@ -35,20 +35,20 @@ updated_at: 2026-04-24
 
 Ship Rudder through two coordinated public distribution surfaces:
 
-- npm publishes `@rudder/cli` plus the public runtime/workspace packages.
+- npm publishes `@rudderhq/cli` plus the public runtime/workspace packages.
 - GitHub Releases publish the desktop installers for macOS, Windows, and Linux.
 
 The public first-run command should be:
 
 ```bash
-npx @rudder/cli@latest start
+npx @rudderhq/cli@latest start
 ```
 
 By default, `start` checks for newer CLI releases, prepares the matching
 persistent CLI, and starts the matching desktop path for the current platform.
 After the persistent CLI exists, `rudder start` is equivalent to
-`npx @rudder/cli@latest start`; more generally, the npm form
-`npx @rudder/cli@latest <command>` and the direct form `rudder <command>` are
+`npx @rudderhq/cli@latest start`; more generally, the npm form
+`npx @rudderhq/cli@latest <command>` and the direct form `rudder <command>` are
 the same CLI surface when they resolve to the same version.
 
 ## Decisions
@@ -56,14 +56,14 @@ the same CLI surface when they resolve to the same version.
 - Keep desktop binaries on GitHub Releases, not npm.
 - Keep npm focused on the CLI and public runtime packages.
 - Make `rudder start` the operator-friendly launch command.
-- `npx @rudder/cli@latest start` prepares both the desktop app and the same
+- `npx @rudderhq/cli@latest start` prepares both the desktop app and the same
   CLI version globally unless explicitly skipped.
-- Document `npx @rudder/cli@latest <command>` as the first-run npm form and
+- Document `npx @rudderhq/cli@latest <command>` as the first-run npm form and
   `rudder <command>` as the equivalent persistent CLI form.
-- `start` checks npm for a newer `@rudder/cli` stable release and prints a
+- `start` checks npm for a newer `@rudderhq/cli` stable release and prints a
   non-blocking update reminder when one exists.
 - Use the currently running CLI package version to select the desktop release
-  tag. For example, `@rudder/cli@0.1.0` installs desktop release `v0.1.0`.
+  tag. For example, `@rudderhq/cli@0.1.0` installs desktop release `v0.1.0`.
 - Keep `@canary` usable by resolving the latest canary tag from GitHub when the
   running CLI version is a canary prerelease.
 - Restore CI release workflows because the docs and scripts currently describe
@@ -96,7 +96,7 @@ the same CLI surface when they resolve to the same version.
    - Attach all desktop artifacts and checksums to the stable GitHub Release.
 
 4. Update release docs.
-   - Document `npx @rudder/cli@latest start`.
+   - Document `npx @rudderhq/cli@latest start`.
    - Document npm trusted publishing setup for `release.yml`.
    - Document GitHub Release desktop artifacts and the desktop workflow.
    - Clarify alpha signing/notarization limitations if signing is not yet
@@ -119,7 +119,7 @@ the same CLI surface when they resolve to the same version.
 
 ## Validation
 
-- `pnpm --filter @rudder/cli typecheck`
+- `pnpm --filter @rudderhq/cli typecheck`
 - targeted CLI Vitest tests for start helpers
 - `pnpm -r typecheck`
 - `pnpm test:run`
@@ -145,12 +145,12 @@ the failure in this plan before hand-off.
 ## Validation Results
 
 - Passed: `pnpm vitest run cli/src/__tests__/start.test.ts`
-- Passed: `pnpm --filter @rudder/cli typecheck`
+- Passed: `pnpm --filter @rudderhq/cli typecheck`
 - Passed: `pnpm rudder start --dry-run --no-open --no-version-check`
 - Passed: `node scripts/collect-desktop-release-assets.mjs --version 0.1.0 --platform macos --arch arm64 --out /tmp/rudder-desktop-assets-check`
 - Passed: `node scripts/release-package-map.mjs list`
 - Passed: workflow YAML parse check with Ruby `YAML.load_file`
-- Passed: `pnpm --filter @rudder/cli build`
+- Passed: `pnpm --filter @rudderhq/cli build`
 - Passed: `pnpm -r typecheck`
 - Passed: `pnpm build`
 - Passed: `pnpm desktop:verify`

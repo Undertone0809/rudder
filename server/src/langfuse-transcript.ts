@@ -1,6 +1,6 @@
 import type { LangfuseObservation } from "@langfuse/tracing";
-import type { TranscriptEntry, UsageSummary } from "@rudder/agent-runtime-utils";
-import type { ExecutionObservabilityContext } from "@rudder/shared";
+import type { TranscriptEntry, UsageSummary } from "@rudderhq/agent-runtime-utils";
+import type { ExecutionObservabilityContext } from "@rudderhq/shared";
 import { startExecutionChildObservation, updateExecutionObservation } from "./langfuse.js";
 
 interface TranscriptFallbackResult {

@@ -1,5 +1,5 @@
 {
-  "name": "@rudder/db",
+  "name": "@rudderhq/db",
   "version": "0.1.0",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/Undertone0809/rudder",
@@ -43,7 +43,7 @@
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {
-    "@rudder/shared": "workspace:*",
+    "@rudderhq/shared": "workspace:*",
     "drizzle-orm": "^0.38.4",
     "embedded-postgres": "18.1.0-beta.16",
     "postgres": "^3.4.8"

@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import type { LangfuseObservation } from "@langfuse/tracing";
-import type { TranscriptEntry } from "@rudder/agent-runtime-utils";
-import type { Db } from "@rudder/db";
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type { Db } from "@rudderhq/db";
 import {
   addChatMessageSchema,
   updateChatConversationUserStateSchema,
@@ -18,7 +18,7 @@ import {
   createChatConversationSchema,
   resolveChatOperationProposalSchema,
   updateChatConversationSchema,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import type { StorageService } from "../storage/types.js";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";

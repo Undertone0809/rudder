@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { ProviderQuotaResult, QuotaWindow } from "@rudder/agent-runtime-utils";
+import type { ProviderQuotaResult, QuotaWindow } from "@rudderhq/agent-runtime-utils";
 
 const execFileAsync = promisify(execFile);
 

@@ -18,7 +18,7 @@ await esbuild.build({
     "react",
     "react-dom",
     "react/jsx-runtime",
-    "@rudder/plugin-sdk/ui",
+    "@rudderhq/plugin-sdk/ui",
   ],
   logLevel: "info",
 });

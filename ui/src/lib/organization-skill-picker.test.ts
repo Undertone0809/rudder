@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { OrganizationSkillListItem } from "@rudder/shared";
+import type { OrganizationSkillListItem } from "@rudderhq/shared";
 import {
   appendSkillReferencesToDraft,
   buildOrganizationSkillPickerItems,

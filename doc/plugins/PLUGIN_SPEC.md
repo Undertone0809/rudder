@@ -278,7 +278,7 @@ Rules:
 
 - plugin contributions are additive by default
 - plugins may not override core routes or core actions by name collision
-- UI slot IDs are automatically namespaced by plugin ID (e.g. `@rudder/plugin-linear:sync-health-widget`), so cross-plugin collisions are structurally impossible
+- UI slot IDs are automatically namespaced by plugin ID (e.g. `@rudderhq/plugin-linear:sync-health-widget`), so cross-plugin collisions are structurally impossible
 - if a single plugin declares duplicate slot IDs within its own manifest, the host must reject at install time
 
 ## 10. Package Contract
@@ -295,7 +295,7 @@ Suggested `package.json` keys:
 
 ```json
 {
-  "name": "@rudder/plugin-linear",
+  "name": "@rudderhq/plugin-linear",
   "version": "0.1.0",
   "rudderPlugin": {
     "manifest": "./dist/manifest.js",
@@ -812,7 +812,7 @@ Plugins may emit custom events using `ctx.events.emit(name, payload)`. Plugin-em
 Other plugins may subscribe to these events using the same `ctx.events.on()` API:
 
 ```ts
-ctx.events.on("plugin.@rudder/plugin-git.push-detected", async (event) => {
+ctx.events.on("plugin.@rudderhq/plugin-git.push-detected", async (event) => {
   // react to the git plugin detecting a push
 });
 ```
@@ -873,7 +873,7 @@ The plugin's UI bundle exports:
 
 ```tsx
 // dist/ui/index.tsx
-import { usePluginData, usePluginAction, MetricCard, StatusBadge } from "@rudder/plugin-sdk/ui";
+import { usePluginData, usePluginAction, MetricCard, StatusBadge } from "@rudderhq/plugin-sdk/ui";
 
 export function DashboardWidget({ context }: PluginWidgetProps) {
   const { data, loading } = usePluginData("sync-health", { orgId: context.orgId });
@@ -905,7 +905,7 @@ export function DashboardWidget({ context }: PluginWidgetProps) {
 - The host decides **where** plugin components appear (which slots exist and when they mount).
 - The host provides the **bridge** — plugin UI cannot make arbitrary network requests or access host internals directly.
 - The host enforces **capability gates** — if a plugin's worker does not have a capability, the bridge rejects the call even if the UI requests it.
-- The host provides **design tokens and shared components** via `@rudder/plugin-sdk/ui` so plugins can match the host's visual language without being forced to.
+- The host provides **design tokens and shared components** via `@rudderhq/plugin-sdk/ui` so plugins can match the host's visual language without being forced to.
 
 **What the plugin controls:**
 
@@ -913,7 +913,7 @@ export function DashboardWidget({ context }: PluginWidgetProps) {
 - The plugin decides **what data** to fetch and **what actions** to expose.
 - The plugin can use any React patterns (hooks, context, third-party component libraries) inside its bundle.
 
-### 19.0.1 Plugin UI SDK (`@rudder/plugin-sdk/ui`)
+### 19.0.1 Plugin UI SDK (`@rudderhq/plugin-sdk/ui`)
 
 The SDK includes a `ui` subpath export that plugin frontends import. This subpath provides:
 
@@ -930,7 +930,7 @@ Plugin UI bundles are loaded as standard ES modules, not iframed. This gives plu
 
 Isolation rules:
 
-- Plugin bundles must not import from host internals. They may only import from `@rudder/plugin-sdk/ui` and their own dependencies.
+- Plugin bundles must not import from host internals. They may only import from `@rudderhq/plugin-sdk/ui` and their own dependencies.
 - Plugin bundles must not access `window.fetch` or `XMLHttpRequest` directly for host API calls. All host communication goes through the bridge.
 - The host may enforce Content Security Policy rules that restrict plugin network access to the bridge endpoint only.
 - Plugin bundles must be statically analyzable — no dynamic `import()` of URLs outside the plugin's own bundle.
@@ -987,7 +987,7 @@ Plugins may add sidebar links to:
 - global plugin settings
 - organization-context plugin pages
 
-## 19.6 Shared Components In `@rudder/plugin-sdk/ui`
+## 19.6 Shared Components In `@rudderhq/plugin-sdk/ui`
 
 The host SDK ships shared components that plugins can import to quickly build UIs that match the host's look and feel. These are convenience building blocks, not a requirement.
 
@@ -1041,7 +1041,7 @@ Error codes:
 - `TIMEOUT` — the worker did not respond within the configured timeout
 - `UNKNOWN` — unexpected bridge-level failure
 
-The `@rudder/plugin-sdk/ui` subpath should also export an `ErrorBoundary` component that plugin authors can use to catch rendering errors without crashing the host page.
+The `@rudderhq/plugin-sdk/ui` subpath should also export an `ErrorBoundary` component that plugin authors can use to catch rendering errors without crashing the host page.
 
 ## 19.8 Plugin Settings UI
 
@@ -1441,7 +1441,7 @@ These events can be consumed by other plugins (e.g. a notification plugin) or su
 
 ## 27. Plugin Development And Testing
 
-### 27.1 `@rudder/plugin-test-harness`
+### 27.1 `@rudderhq/plugin-test-harness`
 
 The host should publish a test harness package that plugin authors use for local development and testing.
 
@@ -1458,7 +1458,7 @@ The test harness provides:
 Example usage:
 
 ```ts
-import { createTestHarness } from "@rudder/plugin-test-harness";
+import { createTestHarness } from "@rudderhq/plugin-test-harness";
 import manifest from "../dist/manifest.js";
 import { register } from "../dist/worker.js";
 
@@ -1502,14 +1502,14 @@ The host should publish a starter template (`create-rudder-plugin`) that scaffol
 
 This spec directly supports the following plugin types:
 
-- `@rudder/plugin-workspace-files`
-- `@rudder/plugin-terminal`
-- `@rudder/plugin-git`
-- `@rudder/plugin-linear`
-- `@rudder/plugin-github-issues`
-- `@rudder/plugin-grafana`
-- `@rudder/plugin-runtime-processes`
-- `@rudder/plugin-stripe`
+- `@rudderhq/plugin-workspace-files`
+- `@rudderhq/plugin-terminal`
+- `@rudderhq/plugin-git`
+- `@rudderhq/plugin-linear`
+- `@rudderhq/plugin-github-issues`
+- `@rudderhq/plugin-grafana`
+- `@rudderhq/plugin-runtime-processes`
+- `@rudderhq/plugin-stripe`
 
 ## 29. Compatibility And Versioning
 
@@ -1525,19 +1525,19 @@ This spec directly supports the following plugin types:
 
 The host publishes a single SDK package for plugin authors:
 
-- `@rudder/plugin-sdk` — the complete plugin SDK
+- `@rudderhq/plugin-sdk` — the complete plugin SDK
 
 The package uses subpath exports to separate worker and UI concerns:
 
-- `@rudder/plugin-sdk` — worker-side SDK (context, events, state, tools, logger, `definePlugin`, `z`)
-- `@rudder/plugin-sdk/ui` — frontend SDK (bridge hooks, shared components, design tokens)
+- `@rudderhq/plugin-sdk` — worker-side SDK (context, events, state, tools, logger, `definePlugin`, `z`)
+- `@rudderhq/plugin-sdk/ui` — frontend SDK (bridge hooks, shared components, design tokens)
 
 A single package simplifies dependency management for plugin authors — one dependency, one version, one changelog. The subpath exports keep bundle separation clean: worker code imports from the root, UI code imports from `/ui`. Build tools tree-shake accordingly so the worker bundle does not include React components and the UI bundle does not include worker-only code.
 
 Versioning rules:
 
 1. **Semver**: The SDK follows strict semantic versioning. Major version bumps indicate breaking changes to either the worker or UI surface; minor versions add new features backwards-compatibly; patch versions are bug fixes only.
-2. **Tied to API version**: Each major SDK version corresponds to exactly one plugin `apiVersion`. When `@rudder/plugin-sdk@2.x` ships, it targets `apiVersion: 2`. Plugins built with SDK 1.x continue to declare `apiVersion: 1`.
+2. **Tied to API version**: Each major SDK version corresponds to exactly one plugin `apiVersion`. When `@rudderhq/plugin-sdk@2.x` ships, it targets `apiVersion: 2`. Plugins built with SDK 1.x continue to declare `apiVersion: 1`.
 3. **Host multi-version support**: The host must support at least the current and one previous `apiVersion` simultaneously. This means plugins built against the previous SDK major version continue to work without modification. The host maintains separate IPC protocol handlers for each supported API version.
 4. **Minimum SDK version in manifest**: Plugins declare `sdkVersion` in the manifest as a semver range (e.g. `">=1.4.0 <2.0.0"`). The host validates this at install time and warns if the plugin's declared range is outside the host's supported SDK versions.
 5. **Deprecation timeline**: When a new `apiVersion` ships, the previous version enters a deprecation period of at least 6 months. During this period:
@@ -1564,7 +1564,7 @@ This matrix is published in the host docs and queryable via `GET /api/plugins/co
 
 When a new SDK version is released:
 
-1. Plugin author updates `@rudder/plugin-sdk` dependency.
+1. Plugin author updates `@rudderhq/plugin-sdk` dependency.
 2. Plugin author follows the migration guide to update code.
 3. Plugin author updates `apiVersion` and `sdkVersion` in the manifest.
 4. Plugin author publishes a new plugin version.
@@ -1584,7 +1584,7 @@ When a new SDK version is released:
 - jobs
 - webhooks
 - settings page
-- plugin UI bundle loading, host bridge, and `@rudder/plugin-sdk/ui`
+- plugin UI bundle loading, host bridge, and `@rudderhq/plugin-sdk/ui`
 - extension slot mounting for pages, tabs, widgets, sidebar entries
 - bridge error propagation (`PluginBridgeError`)
 - auto-generated settings form from `instanceConfigSchema`
@@ -1593,7 +1593,7 @@ When a new SDK version is released:
 - event filtering
 - graceful shutdown with configurable deadlines
 - plugin logging and health dashboard
-- `@rudder/plugin-test-harness`
+- `@rudderhq/plugin-test-harness`
 - `create-rudder-plugin` starter template
 - uninstall with data retention grace period
 - hot plugin lifecycle (install, uninstall, upgrade, config change without server restart)

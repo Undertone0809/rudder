@@ -1,5 +1,5 @@
-import type { Agent, OrganizationPortabilitySidebarOrder, Project } from "@rudder/shared";
-import { deriveProjectUrlKey, normalizeAgentUrlKey } from "@rudder/shared";
+import type { Agent, OrganizationPortabilitySidebarOrder, Project } from "@rudderhq/shared";
+import { deriveProjectUrlKey, normalizeAgentUrlKey } from "@rudderhq/shared";
 
 function uniqueSlug(base: string, used: Set<string>) {
   if (!used.has(base)) {

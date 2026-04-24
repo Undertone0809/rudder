@@ -46,7 +46,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { PageTabBar } from "../components/PageTabBar";
-import type { Approval, ChatConversation, HeartbeatRun, Issue, JoinRequest } from "@rudder/shared";
+import type { Approval, ChatConversation, HeartbeatRun, Issue, JoinRequest } from "@rudderhq/shared";
 import {
   ACTIONABLE_APPROVAL_STATUSES,
   getApprovalsForTab,

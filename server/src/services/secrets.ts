@@ -1,8 +1,8 @@
 import { and, desc, eq } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { organizationSecrets, organizationSecretVersions } from "@rudder/db";
-import type { AgentEnvConfig, EnvBinding, SecretProvider } from "@rudder/shared";
-import { envBindingSchema } from "@rudder/shared";
+import type { Db } from "@rudderhq/db";
+import { organizationSecrets, organizationSecretVersions } from "@rudderhq/db";
+import type { AgentEnvConfig, EnvBinding, SecretProvider } from "@rudderhq/shared";
+import { envBindingSchema } from "@rudderhq/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { getSecretProvider, listSecretProviders } from "../secrets/provider-registry.js";
 

@@ -1,7 +1,7 @@
 /**
  * Rudder plugin UI SDK — types for plugin frontend components.
  *
- * Plugin UI bundles import from `@rudder/plugin-sdk/ui`.  This subpath
+ * Plugin UI bundles import from `@rudderhq/plugin-sdk/ui`.  This subpath
  * provides the bridge hooks, component prop interfaces, and error types that
  * plugin React components use to communicate with the host.
  *
@@ -18,7 +18,7 @@ import type {
   PluginBridgeErrorCode,
   PluginLauncherBounds,
   PluginLauncherRenderEnvironment,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import type {
   PluginLauncherRenderContextSnapshot,
   PluginModalBoundsRequest,
@@ -30,7 +30,7 @@ export type {
   PluginBridgeErrorCode,
   PluginLauncherBounds,
   PluginLauncherRenderEnvironment,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 export type {
   PluginLauncherRenderContextSnapshot,
   PluginModalBoundsRequest,

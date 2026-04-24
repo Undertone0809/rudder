@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { LangfuseObservation } from "@langfuse/tracing";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   addApprovalCommentSchema,
   createApprovalSchema,
@@ -8,7 +8,7 @@ import {
   resolveApprovalSchema,
   resubmitApprovalSchema,
   type ExecutionObservabilityContext,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { validate } from "../middleware/validate.js";
 import { observeExecutionEvent, withExecutionObservation } from "../langfuse.js";
 import { logger } from "../middleware/logger.js";

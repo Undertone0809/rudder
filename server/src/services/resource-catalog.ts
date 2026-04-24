@@ -1,10 +1,10 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   organizationResources,
   projectResourceAttachments,
   projects,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import type {
   CreateOrganizationResourceRequest,
   CreateProjectInlineResourceInput,
@@ -13,7 +13,7 @@ import type {
   ProjectResourceAttachmentInput,
   UpdateProjectResourceAttachmentRequest,
   UpdateOrganizationResourceRequest,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 
 function toOrganizationResource(row: typeof organizationResources.$inferSelect): OrganizationResource {
   return {

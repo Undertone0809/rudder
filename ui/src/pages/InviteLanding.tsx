@@ -6,8 +6,8 @@ import { authApi } from "../api/auth";
 import { healthApi } from "../api/health";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
-import { AGENT_RUNTIME_TYPES } from "@rudder/shared";
-import type { AgentRuntimeType, JoinRequest } from "@rudder/shared";
+import { AGENT_RUNTIME_TYPES } from "@rudderhq/shared";
+import type { AgentRuntimeType, JoinRequest } from "@rudderhq/shared";
 import { useI18n } from "../context/I18nContext";
 
 type JoinType = "human" | "agent";

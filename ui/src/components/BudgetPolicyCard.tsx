@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { BudgetPolicySummary } from "@rudder/shared";
+import type { BudgetPolicySummary } from "@rudderhq/shared";
 import { AlertTriangle, PauseCircle, ShieldAlert, Wallet } from "lucide-react";
 import { cn, formatCents } from "../lib/utils";
 import { Button } from "@/components/ui/button";

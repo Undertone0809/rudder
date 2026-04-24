@@ -1,5 +1,5 @@
-import type { Db } from "@rudder/db";
-import { organizations, instanceSettings } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { organizations, instanceSettings } from "@rudderhq/db";
 import {
   instanceGeneralSettingsSchema,
   type InstanceGeneralSettings,
@@ -12,7 +12,7 @@ import {
   type PatchInstanceNotificationSettings,
   type InstanceSettings,
   type PatchInstanceExperimentalSettings,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 
 const DEFAULT_SINGLETON_KEY = "default";

@@ -1,5 +1,5 @@
 import * as p from "@clack/prompts";
-import type { SecretProvider } from "@rudder/shared";
+import type { SecretProvider } from "@rudderhq/shared";
 import type { SecretsConfig } from "../config/schema.js";
 import { resolveDefaultSecretsKeyFilePath, resolveRudderInstanceId } from "../config/home.js";
 

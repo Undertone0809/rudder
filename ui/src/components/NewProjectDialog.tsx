@@ -6,7 +6,7 @@ import type {
   OrganizationResourceKind,
   ProjectResourceAttachmentInput,
   ProjectResourceAttachmentRole,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { projectsApi } from "../api/projects";
@@ -39,7 +39,7 @@ import {
   Link2,
   Folder,
 } from "lucide-react";
-import { PROJECT_COLORS } from "@rudder/shared";
+import { PROJECT_COLORS } from "@rudderhq/shared";
 import { cn } from "../lib/utils";
 import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
 import { ResourceLocatorField, suggestResourceNameFromLocator } from "./ResourceLocatorField";

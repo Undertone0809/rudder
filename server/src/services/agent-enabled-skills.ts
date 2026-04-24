@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { agentEnabledSkills } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { agentEnabledSkills } from "@rudderhq/db";
 
 export function agentEnabledSkillsService(db: Db) {
   async function listKeys(agentId: string): Promise<string[]> {

@@ -1,4 +1,4 @@
-import type { PluginLauncherRegistration } from "@rudder/plugin-sdk";
+import type { PluginLauncherRegistration } from "@rudderhq/plugin-sdk";
 
 export const PLUGIN_ID = "rudder-kitchen-sink-example";
 export const PLUGIN_VERSION = "0.1.0";

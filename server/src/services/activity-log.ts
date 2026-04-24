@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { Db } from "@rudder/db";
-import { activityLog } from "@rudder/db";
-import { PLUGIN_EVENT_TYPES, type PluginEventType } from "@rudder/shared";
-import type { PluginEvent } from "@rudder/plugin-sdk";
+import type { Db } from "@rudderhq/db";
+import { activityLog } from "@rudderhq/db";
+import { PLUGIN_EVENT_TYPES, type PluginEventType } from "@rudderhq/shared";
+import type { PluginEvent } from "@rudderhq/plugin-sdk";
 import { publishLiveEvent } from "./live-events.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { sanitizeRecord } from "../redaction.js";

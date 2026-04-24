@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, MoreHorizontal, PencilLine, Pin, PinOff, Plus } from "lucide-react";
-import type { ChatConversation } from "@rudder/shared";
+import type { ChatConversation } from "@rudderhq/shared";
 import { useLocation, useNavigate } from "@/lib/router";
 import {
   DropdownMenu,

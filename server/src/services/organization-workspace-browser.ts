@@ -1,12 +1,12 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import { agents, type Db } from "@rudder/db";
+import { agents, type Db } from "@rudderhq/db";
 import type {
   OrganizationWorkspaceFileDetail,
   OrganizationWorkspaceFileEntry,
   OrganizationWorkspaceFileList,
   OrganizationWorkspaceRootSource,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import { resolveStoredOrDerivedAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { notFound, unprocessable } from "../errors.js";

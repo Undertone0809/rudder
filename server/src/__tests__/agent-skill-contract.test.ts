@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentSkillEntrySchema,
   agentSkillSnapshotSchema,
-} from "@rudder/shared/validators/adapter-skills";
+} from "@rudderhq/shared/validators/adapter-skills";
 
 describe("agent skill contract", () => {
   it("accepts source-aware provenance metadata on skill entries", () => {

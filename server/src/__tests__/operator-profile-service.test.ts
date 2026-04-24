@@ -8,7 +8,7 @@ import {
   createDb,
   ensurePostgresDatabase,
   operatorProfiles,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import { eq } from "drizzle-orm";
 import { operatorProfileService } from "../services/operator-profile.js";
 

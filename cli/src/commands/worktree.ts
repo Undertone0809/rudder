@@ -41,7 +41,7 @@ import {
   projects,
   runDatabaseBackup,
   runDatabaseRestore,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import type { Command } from "commander";
 import { ensureAgentJwtSecret, loadRudderEnvFile, mergePaperclipEnvEntries, readPaperclipEnvEntries, resolvePaperclipEnvFile } from "../config/env.js";
 import { expandHomePrefix } from "../config/home.js";

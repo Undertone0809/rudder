@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { Db } from "@rudder/db";
-import { workspaceOperations } from "@rudder/db";
-import type { WorkspaceOperation, WorkspaceOperationPhase, WorkspaceOperationStatus } from "@rudder/shared";
+import type { Db } from "@rudderhq/db";
+import { workspaceOperations } from "@rudderhq/db";
+import type { WorkspaceOperation, WorkspaceOperationPhase, WorkspaceOperationStatus } from "@rudderhq/shared";
 import { asc, desc, eq, inArray, isNull, or, and } from "drizzle-orm";
 import { notFound } from "../errors.js";
 import { withExecutionObservation } from "../langfuse.js";

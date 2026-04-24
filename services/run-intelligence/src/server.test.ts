@@ -1,8 +1,8 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import request from "supertest";
-import type { HeartbeatRun, HeartbeatRunEvent } from "@rudder/shared";
-import { buildObservedRunTrace, type ObservedRunDetail, type RunDiagnosis, type RunExportRow } from "@rudder/run-intelligence-core";
+import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
+import { buildObservedRunTrace, type ObservedRunDetail, type RunDiagnosis, type RunExportRow } from "@rudderhq/run-intelligence-core";
 import { describe, expect, it, vi } from "vitest";
 import { createRunIntelligenceApp, type CachedRunDetail, type CachedRunSummary } from "./server.js";
 

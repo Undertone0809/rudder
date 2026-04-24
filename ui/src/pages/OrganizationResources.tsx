@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { OrganizationResource } from "@rudder/shared";
+import type { OrganizationResource } from "@rudderhq/shared";
 import { organizationsApi } from "../api/orgs";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";

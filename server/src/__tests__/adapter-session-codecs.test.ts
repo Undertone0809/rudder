@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { sessionCodec as claudeSessionCodec } from "@rudder/agent-runtime-claude-local/server";
-import { sessionCodec as codexSessionCodec, isCodexUnknownSessionError } from "@rudder/agent-runtime-codex-local/server";
+import { sessionCodec as claudeSessionCodec } from "@rudderhq/agent-runtime-claude-local/server";
+import { sessionCodec as codexSessionCodec, isCodexUnknownSessionError } from "@rudderhq/agent-runtime-codex-local/server";
 import {
   sessionCodec as cursorSessionCodec,
   isCursorUnknownSessionError,
-} from "@rudder/agent-runtime-cursor-local/server";
+} from "@rudderhq/agent-runtime-cursor-local/server";
 import {
   sessionCodec as geminiSessionCodec,
   isGeminiUnknownSessionError,
-} from "@rudder/agent-runtime-gemini-local/server";
+} from "@rudderhq/agent-runtime-gemini-local/server";
 import {
   sessionCodec as opencodeSessionCodec,
   isOpenCodeUnknownSessionError,
-} from "@rudder/agent-runtime-opencode-local/server";
+} from "@rudderhq/agent-runtime-opencode-local/server";
 
 describe("adapter session codecs", () => {
   it("normalizes claude session params with cwd", () => {

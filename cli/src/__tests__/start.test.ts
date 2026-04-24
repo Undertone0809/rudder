@@ -24,7 +24,7 @@ import {
 describe("persistent CLI install helpers", () => {
   it("detects npx execution from transient _npx entry paths", () => {
     expect(
-      isLikelyNpxExecutionContext("/tmp/npm-cache/_npx/abc/node_modules/@rudder/cli/dist/index.js", {}),
+      isLikelyNpxExecutionContext("/tmp/npm-cache/_npx/abc/node_modules/@rudderhq/cli/dist/index.js", {}),
     ).toBe(true);
   });
 
@@ -42,7 +42,7 @@ describe("persistent CLI install helpers", () => {
         npm_package_name: CLI_NPM_PACKAGE_NAME,
         npm_package_version: "2026.327.0-canary.2",
       }),
-    ).toBe("@rudder/cli@2026.327.0-canary.2");
+    ).toBe("@rudderhq/cli@2026.327.0-canary.2");
   });
 
   it("falls back to the package name when version metadata is missing", () => {
@@ -53,7 +53,7 @@ describe("persistent CLI install helpers", () => {
     const execFileSyncImpl = vi.fn(() =>
       JSON.stringify({
         dependencies: {
-          "@rudder/cli": { version: "0.1.0" },
+          "@rudderhq/cli": { version: "0.1.0" },
         },
       }),
     );
@@ -78,22 +78,22 @@ describe("persistent CLI install helpers", () => {
       .mockReturnValueOnce(
         JSON.stringify({
           dependencies: {
-            "@rudder/cli": { version: "0.1.0" },
+            "@rudderhq/cli": { version: "0.1.0" },
           },
         }),
       );
 
     expect(
       detectPersistentCliState({
-        entryPath: "/tmp/npm-cache/_npx/abc/node_modules/@rudder/cli/dist/index.js",
+        entryPath: "/tmp/npm-cache/_npx/abc/node_modules/@rudderhq/cli/dist/index.js",
         env: {},
         execFileSyncImpl: execFileSyncImpl as never,
       }),
     ).toEqual({
       usingNpx: true,
       alreadyInstalled: true,
-      installSpec: "@rudder/cli",
-      installCommand: "npm install --global @rudder/cli",
+      installSpec: "@rudderhq/cli",
+      installCommand: "npm install --global @rudderhq/cli",
     });
   });
 
@@ -107,9 +107,9 @@ describe("persistent CLI install helpers", () => {
 
     expect(
       detectPersistentCliState({
-        entryPath: "/tmp/npm-cache/_npx/abc/node_modules/@rudder/cli/dist/index.js",
+        entryPath: "/tmp/npm-cache/_npx/abc/node_modules/@rudderhq/cli/dist/index.js",
         env: {
-          npm_package_name: "@rudder/cli",
+          npm_package_name: "@rudderhq/cli",
           npm_package_version: "0.1.0",
         },
         execFileSyncImpl: execFileSyncImpl as never,
@@ -117,8 +117,8 @@ describe("persistent CLI install helpers", () => {
     ).toEqual({
       usingNpx: true,
       alreadyInstalled: false,
-      installSpec: "@rudder/cli@0.1.0",
-      installCommand: "npm install --global @rudder/cli@0.1.0",
+      installSpec: "@rudderhq/cli@0.1.0",
+      installCommand: "npm install --global @rudderhq/cli@0.1.0",
     });
   });
 
@@ -131,18 +131,18 @@ describe("persistent CLI install helpers", () => {
 
     expect(
       installPersistentCli({
-        installSpec: "@rudder/cli@0.1.0",
+        installSpec: "@rudderhq/cli@0.1.0",
         spawnSyncImpl: spawnSyncImpl as never,
       }),
     ).toEqual({
       ok: true,
-      command: "npm install --global @rudder/cli@0.1.0",
+      command: "npm install --global @rudderhq/cli@0.1.0",
       output: "added 1 package",
     });
 
     expect(spawnSyncImpl).toHaveBeenCalledWith(
       process.platform === "win32" ? "npm.cmd" : "npm",
-      ["install", "--global", "@rudder/cli@0.1.0"],
+      ["install", "--global", "@rudderhq/cli@0.1.0"],
       {
         encoding: "utf8",
         stdio: ["inherit", "pipe", "pipe"],
@@ -155,14 +155,14 @@ describe("desktop start command helpers", () => {
   it("resolves the current CLI version from npm execution metadata", () => {
     expect(
       resolveCurrentCliVersion({
-        npm_package_name: "@rudder/cli",
+        npm_package_name: "@rudderhq/cli",
         npm_package_version: "0.3.1",
       }),
     ).toBe("0.3.1");
   });
 
   it("pins the persistent CLI install spec to the resolved version", () => {
-    expect(resolveCliInstallSpec("0.3.1", {})).toBe("@rudder/cli@0.3.1");
+    expect(resolveCliInstallSpec("0.3.1", {})).toBe("@rudderhq/cli@0.3.1");
   });
 
   it("maps stable versions to stable GitHub release tags", () => {

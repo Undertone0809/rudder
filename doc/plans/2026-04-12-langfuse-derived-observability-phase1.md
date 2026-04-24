@@ -55,7 +55,7 @@ Rudder IDs stay canonical. Langfuse trace IDs are deterministic derivatives of R
 
 ## Live Eval
 
-Heartbeat run scoring reuses Rudder diagnosis from `@rudder/run-intelligence-core`.
+Heartbeat run scoring reuses Rudder diagnosis from `@rudderhq/run-intelligence-core`.
 Phase-1 score names:
 
 - `run_health`

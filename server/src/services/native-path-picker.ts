@@ -1,6 +1,6 @@
 import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { promisify } from "node:util";
-import type { InstancePathPickerSelectionType } from "@rudder/shared";
+import type { InstancePathPickerSelectionType } from "@rudderhq/shared";
 
 const execFileAsync = promisify(execFile);
 

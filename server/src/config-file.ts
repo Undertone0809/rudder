@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { rudderConfigSchema, type RudderConfig } from "@rudder/shared";
+import { rudderConfigSchema, type RudderConfig } from "@rudderhq/shared";
 import { resolveRudderConfigPath } from "./paths.js";
 
 function createDefaultConfigFile(): RudderConfig {

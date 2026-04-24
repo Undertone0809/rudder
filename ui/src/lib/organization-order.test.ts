@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Organization } from "@rudder/shared";
+import type { Organization } from "@rudderhq/shared";
 
 import { sortOrganizationsByStoredOrder } from "./organization-order";
 

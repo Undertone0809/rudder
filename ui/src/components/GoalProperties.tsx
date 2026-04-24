@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Link } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
-import type { Goal } from "@rudder/shared";
-import { GOAL_STATUSES, GOAL_LEVELS } from "@rudder/shared";
+import type { Goal } from "@rudderhq/shared";
+import { GOAL_STATUSES, GOAL_LEVELS } from "@rudderhq/shared";
 import { agentsApi } from "../api/agents";
 import { goalsApi } from "../api/goals";
 import { useOrganization } from "../context/OrganizationContext";

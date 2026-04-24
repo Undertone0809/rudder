@@ -1,4 +1,4 @@
-import type { ProviderQuotaResult } from "@rudder/shared";
+import type { ProviderQuotaResult } from "@rudderhq/shared";
 import { listServerAdapters } from "../agent-runtimes/registry.js";
 
 const QUOTA_PROVIDER_TIMEOUT_MS = 20_000;

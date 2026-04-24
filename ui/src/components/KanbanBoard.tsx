@@ -28,7 +28,7 @@ import { formatAssigneeUserLabel } from "@/lib/assignees";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { timeAgo } from "@/lib/timeAgo";
 import { CalendarClock, FolderKanban, Plus, User } from "lucide-react";
-import type { AgentRole, Issue } from "@rudder/shared";
+import type { AgentRole, Issue } from "@rudderhq/shared";
 
 const boardStatuses = [
   "backlog",

@@ -110,7 +110,7 @@ pnpm desktop:verify
 Notes:
 
 - `pnpm desktop:verify` runs:
-  - `pnpm --filter @rudder/desktop smoke`
+  - `pnpm --filter @rudderhq/desktop smoke`
   - `pnpm desktop:dist`
   - `node desktop/scripts/smoke.mjs --mode=packaged`
 - `pnpm prod` is a convenience command for humans. It builds the installer, verifies packaged boot, and opens the installer. Do not treat it as the only validation step while developing.

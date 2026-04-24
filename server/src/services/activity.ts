@@ -1,6 +1,6 @@
 import { and, desc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { activityLog, chatContextLinks, chatConversations, heartbeatRuns, issues } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { activityLog, chatContextLinks, chatConversations, heartbeatRuns, issues } from "@rudderhq/db";
 
 export interface ActivityFilters {
   orgId: string;

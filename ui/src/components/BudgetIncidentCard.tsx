@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { BudgetIncident } from "@rudder/shared";
+import type { BudgetIncident } from "@rudderhq/shared";
 import { AlertOctagon, ArrowUpRight, PauseCircle } from "lucide-react";
 import { cn, formatCents } from "../lib/utils";
 import { Button } from "@/components/ui/button";

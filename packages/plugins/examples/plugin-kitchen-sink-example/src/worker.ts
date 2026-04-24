@@ -20,8 +20,8 @@ import {
   type ScopeKey,
   type ToolResult,
   type ToolRunContext,
-} from "@rudder/plugin-sdk";
-import type { Goal, Issue } from "@rudder/shared";
+} from "@rudderhq/plugin-sdk";
+import type { Goal, Issue } from "@rudderhq/shared";
 import {
   DEFAULT_CONFIG,
   JOB_KEYS,

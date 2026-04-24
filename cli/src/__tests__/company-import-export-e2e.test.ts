@@ -70,7 +70,7 @@ async function startTempDatabase() {
   await instance.initialise();
   await instance.start();
 
-  const { applyPendingMigrations, ensurePostgresDatabase } = await import("@rudder/db");
+  const { applyPendingMigrations, ensurePostgresDatabase } = await import("@rudderhq/db");
   const adminConnectionString = `postgres://rudder:rudder@127.0.0.1:${port}/postgres`;
   await ensurePostgresDatabase(adminConnectionString, "rudder");
   const connectionString = `postgres://rudder:rudder@127.0.0.1:${port}/rudder`;

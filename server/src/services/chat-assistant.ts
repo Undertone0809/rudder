@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { TranscriptEntry } from "@rudder/agent-runtime-utils";
-import type { RudderSkillEntry } from "@rudder/agent-runtime-utils/server-utils";
-import type { Db } from "@rudder/db";
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
+import type { Db } from "@rudderhq/db";
 import type {
   AgentRuntimeType,
   ChatConversation,
@@ -9,7 +9,7 @@ import type {
   ChatMessage,
   ChatRuntimeDescriptor,
   OperatorProfileSettings,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { findServerAdapter } from "../agent-runtimes/index.js";
 import type { AgentRuntimeInvocationMeta, AgentRuntimeLoadedSkillMeta } from "../agent-runtimes/index.js";
 import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "../agent-runtimes/types.js";

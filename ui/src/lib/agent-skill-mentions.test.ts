@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   AgentSkillSnapshot,
   OrganizationSkillListItem,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { buildAgentSkillMentionOptions } from "./agent-skill-mentions";
 
 const now = new Date("2026-04-20T00:00:00.000Z");

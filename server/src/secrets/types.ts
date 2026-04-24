@@ -1,4 +1,4 @@
-import type { SecretProvider, SecretProviderDescriptor } from "@rudder/shared";
+import type { SecretProvider, SecretProviderDescriptor } from "@rudderhq/shared";
 
 export interface StoredSecretVersionMaterial {
   [key: string]: unknown;

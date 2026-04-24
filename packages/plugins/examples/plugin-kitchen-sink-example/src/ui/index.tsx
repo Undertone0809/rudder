@@ -13,7 +13,7 @@ import {
   type PluginSettingsPageProps,
   type PluginSidebarProps,
   type PluginWidgetProps,
-} from "@rudder/plugin-sdk/ui";
+} from "@rudderhq/plugin-sdk/ui";
 import {
   DEFAULT_CONFIG,
   JOB_KEYS,

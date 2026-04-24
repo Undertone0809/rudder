@@ -14,5 +14,5 @@ export type {
   UsageSummary,
   AgentRuntimeAgent,
   AgentRuntimeState,
-} from "@rudder/agent-runtime-utils";
+} from "@rudderhq/agent-runtime-utils";
 export { runningProcesses } from "./utils.js";

@@ -1,6 +1,6 @@
-import type { TranscriptEntry } from "@rudder/agent-runtime-utils";
-import type { ExecutionLangfuseLink } from "@rudder/shared";
-import type { HeartbeatRun, HeartbeatRunEvent } from "@rudder/shared";
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type { ExecutionLangfuseLink } from "@rudderhq/shared";
+import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
 
 export type RunDiagnosisMode = "auto" | "quick" | "error" | "perf" | "full";
 export type RunFindingSeverity = "info" | "warn" | "error";

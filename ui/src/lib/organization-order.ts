@@ -1,4 +1,4 @@
-import type { Organization } from "@rudder/shared";
+import type { Organization } from "@rudderhq/shared";
 
 const ORDER_STORAGE_KEY = "rudder.companyOrder";
 

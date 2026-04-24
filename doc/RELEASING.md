@@ -33,7 +33,7 @@ Important constraints:
 Every stable release has five separate surfaces:
 
 1. **Verification** — the exact git SHA passes typecheck, tests, and build
-2. **npm** — `@rudder/cli` and public workspace packages are published
+2. **npm** — `@rudderhq/cli` and public workspace packages are published
 3. **GitHub** — the stable release gets a git tag and GitHub Release
 4. **Desktop** — macOS, Windows, and Linux installers are attached to the stable GitHub Release
 5. **Website / announcements** — the stable changelog is published externally and announced
@@ -67,9 +67,9 @@ It:
 Users install canaries with:
 
 ```bash
-npx @rudder/cli@canary onboard
+npx @rudderhq/cli@canary onboard
 # or
-npx @rudder/cli@canary onboard --data-dir "$(mktemp -d /tmp/rudder-canary.XXXXXX)"
+npx @rudderhq/cli@canary onboard --data-dir "$(mktemp -d /tmp/rudder-canary.XXXXXX)"
 ```
 
 ### Stable
@@ -108,14 +108,14 @@ The workflow:
 Users install stable Rudder with:
 
 ```bash
-npx @rudder/cli@latest start
+npx @rudderhq/cli@latest start
 ```
 
 By default this checks for newer Rudder CLI releases, prepares the matching
 persistent `rudder` CLI globally, and downloads/opens the matching Rudder
 Desktop installer from the GitHub Release when needed.
 After the persistent CLI exists, `rudder start` is equivalent to the `npx`
-command above. More generally, `npx @rudder/cli@latest <command>` and
+command above. More generally, `npx @rudderhq/cli@latest <command>` and
 `rudder <command>` are the same CLI surface when they resolve to the same
 version; the `npx` form is mainly the first-run and explicit dist-tag form.
 Use `--no-desktop` or `--no-cli` only for targeted maintainer checks.
@@ -196,8 +196,8 @@ gh workflow run release-smoke.yml -f rudder_version=latest
 
 Minimum checks:
 
-- `npx @rudder/cli@latest start --no-open` prepares the persistent CLI and downloads the desktop installer
-- `npx @rudder/cli@canary onboard` installs the canary CLI path
+- `npx @rudderhq/cli@latest start --no-open` prepares the persistent CLI and downloads the desktop installer
+- `npx @rudderhq/cli@canary onboard` installs the canary CLI path
 - onboarding completes without crashes
 - authenticated login works with the smoke credentials
 - the browser lands in onboarding on a fresh instance

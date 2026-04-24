@@ -6,17 +6,17 @@
 
 - Stable release preparation for 0.3.1
 - Updated dependencies
-  - @rudder/agent-runtime-utils@0.3.1
-  - @rudder/agent-runtime-claude-local@0.3.1
-  - @rudder/agent-runtime-codex-local@0.3.1
-  - @rudder/agent-runtime-cursor-local@0.3.1
-  - @rudder/agent-runtime-gemini-local@0.3.1
-  - @rudder/agent-runtime-openclaw-gateway@0.3.1
-  - @rudder/agent-runtime-opencode-local@0.3.1
-  - @rudder/agent-runtime-pi-local@0.3.1
-  - @rudder/db@0.3.1
-  - @rudder/shared@0.3.1
-  - @rudder/server@0.3.1
+  - @rudderhq/agent-runtime-utils@0.3.1
+  - @rudderhq/agent-runtime-claude-local@0.3.1
+  - @rudderhq/agent-runtime-codex-local@0.3.1
+  - @rudderhq/agent-runtime-cursor-local@0.3.1
+  - @rudderhq/agent-runtime-gemini-local@0.3.1
+  - @rudderhq/agent-runtime-openclaw-gateway@0.3.1
+  - @rudderhq/agent-runtime-opencode-local@0.3.1
+  - @rudderhq/agent-runtime-pi-local@0.3.1
+  - @rudderhq/db@0.3.1
+  - @rudderhq/shared@0.3.1
+  - @rudderhq/server@0.3.1
 
 ## 0.3.0
 
@@ -28,16 +28,16 @@
 
 - Updated dependencies [6077ae6]
 - Updated dependencies
-  - @rudder/shared@0.3.0
-  - @rudder/agent-runtime-utils@0.3.0
-  - @rudder/agent-runtime-claude-local@0.3.0
-  - @rudder/agent-runtime-codex-local@0.3.0
-  - @rudder/agent-runtime-cursor-local@0.3.0
-  - @rudder/agent-runtime-openclaw-gateway@0.3.0
-  - @rudder/agent-runtime-opencode-local@0.3.0
-  - @rudder/agent-runtime-pi-local@0.3.0
-  - @rudder/db@0.3.0
-  - @rudder/server@0.3.0
+  - @rudderhq/shared@0.3.0
+  - @rudderhq/agent-runtime-utils@0.3.0
+  - @rudderhq/agent-runtime-claude-local@0.3.0
+  - @rudderhq/agent-runtime-codex-local@0.3.0
+  - @rudderhq/agent-runtime-cursor-local@0.3.0
+  - @rudderhq/agent-runtime-openclaw-gateway@0.3.0
+  - @rudderhq/agent-runtime-opencode-local@0.3.0
+  - @rudderhq/agent-runtime-pi-local@0.3.0
+  - @rudderhq/db@0.3.0
+  - @rudderhq/server@0.3.0
 
 ## 0.2.7
 
@@ -45,13 +45,13 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/shared@0.2.7
-  - @rudder/agent-runtime-utils@0.2.7
-  - @rudder/db@0.2.7
-  - @rudder/agent-runtime-claude-local@0.2.7
-  - @rudder/agent-runtime-codex-local@0.2.7
-  - @rudder/adapter-openclaw@0.2.7
-  - @rudder/server@0.2.7
+  - @rudderhq/shared@0.2.7
+  - @rudderhq/agent-runtime-utils@0.2.7
+  - @rudderhq/db@0.2.7
+  - @rudderhq/agent-runtime-claude-local@0.2.7
+  - @rudderhq/agent-runtime-codex-local@0.2.7
+  - @rudderhq/adapter-openclaw@0.2.7
+  - @rudderhq/server@0.2.7
 
 ## 0.2.6
 
@@ -59,13 +59,13 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/shared@0.2.6
-  - @rudder/agent-runtime-utils@0.2.6
-  - @rudder/db@0.2.6
-  - @rudder/agent-runtime-claude-local@0.2.6
-  - @rudder/agent-runtime-codex-local@0.2.6
-  - @rudder/adapter-openclaw@0.2.6
-  - @rudder/server@0.2.6
+  - @rudderhq/shared@0.2.6
+  - @rudderhq/agent-runtime-utils@0.2.6
+  - @rudderhq/db@0.2.6
+  - @rudderhq/agent-runtime-claude-local@0.2.6
+  - @rudderhq/agent-runtime-codex-local@0.2.6
+  - @rudderhq/adapter-openclaw@0.2.6
+  - @rudderhq/server@0.2.6
 
 ## 0.2.5
 
@@ -73,13 +73,13 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/shared@0.2.5
-  - @rudder/agent-runtime-utils@0.2.5
-  - @rudder/db@0.2.5
-  - @rudder/agent-runtime-claude-local@0.2.5
-  - @rudder/agent-runtime-codex-local@0.2.5
-  - @rudder/adapter-openclaw@0.2.5
-  - @rudder/server@0.2.5
+  - @rudderhq/shared@0.2.5
+  - @rudderhq/agent-runtime-utils@0.2.5
+  - @rudderhq/db@0.2.5
+  - @rudderhq/agent-runtime-claude-local@0.2.5
+  - @rudderhq/agent-runtime-codex-local@0.2.5
+  - @rudderhq/adapter-openclaw@0.2.5
+  - @rudderhq/server@0.2.5
 
 ## 0.2.4
 
@@ -87,13 +87,13 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/shared@0.2.4
-  - @rudder/agent-runtime-utils@0.2.4
-  - @rudder/db@0.2.4
-  - @rudder/agent-runtime-claude-local@0.2.4
-  - @rudder/agent-runtime-codex-local@0.2.4
-  - @rudder/adapter-openclaw@0.2.4
-  - @rudder/server@0.2.4
+  - @rudderhq/shared@0.2.4
+  - @rudderhq/agent-runtime-utils@0.2.4
+  - @rudderhq/db@0.2.4
+  - @rudderhq/agent-runtime-claude-local@0.2.4
+  - @rudderhq/agent-runtime-codex-local@0.2.4
+  - @rudderhq/adapter-openclaw@0.2.4
+  - @rudderhq/server@0.2.4
 
 ## 0.2.3
 
@@ -101,13 +101,13 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/shared@0.2.3
-  - @rudder/agent-runtime-utils@0.2.3
-  - @rudder/db@0.2.3
-  - @rudder/agent-runtime-claude-local@0.2.3
-  - @rudder/agent-runtime-codex-local@0.2.3
-  - @rudder/adapter-openclaw@0.2.3
-  - @rudder/server@0.2.3
+  - @rudderhq/shared@0.2.3
+  - @rudderhq/agent-runtime-utils@0.2.3
+  - @rudderhq/db@0.2.3
+  - @rudderhq/agent-runtime-claude-local@0.2.3
+  - @rudderhq/agent-runtime-codex-local@0.2.3
+  - @rudderhq/adapter-openclaw@0.2.3
+  - @rudderhq/server@0.2.3
 
 ## 0.2.2
 
@@ -115,13 +115,13 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/shared@0.2.2
-  - @rudder/agent-runtime-utils@0.2.2
-  - @rudder/db@0.2.2
-  - @rudder/agent-runtime-claude-local@0.2.2
-  - @rudder/agent-runtime-codex-local@0.2.2
-  - @rudder/adapter-openclaw@0.2.2
-  - @rudder/server@0.2.2
+  - @rudderhq/shared@0.2.2
+  - @rudderhq/agent-runtime-utils@0.2.2
+  - @rudderhq/db@0.2.2
+  - @rudderhq/agent-runtime-claude-local@0.2.2
+  - @rudderhq/agent-runtime-codex-local@0.2.2
+  - @rudderhq/adapter-openclaw@0.2.2
+  - @rudderhq/server@0.2.2
 
 ## 0.2.1
 
@@ -129,10 +129,10 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/shared@0.2.1
-  - @rudder/agent-runtime-utils@0.2.1
-  - @rudder/db@0.2.1
-  - @rudder/agent-runtime-claude-local@0.2.1
-  - @rudder/agent-runtime-codex-local@0.2.1
-  - @rudder/adapter-openclaw@0.2.1
-  - @rudder/server@0.2.1
+  - @rudderhq/shared@0.2.1
+  - @rudderhq/agent-runtime-utils@0.2.1
+  - @rudderhq/db@0.2.1
+  - @rudderhq/agent-runtime-claude-local@0.2.1
+  - @rudderhq/agent-runtime-codex-local@0.2.1
+  - @rudderhq/adapter-openclaw@0.2.1
+  - @rudderhq/server@0.2.1

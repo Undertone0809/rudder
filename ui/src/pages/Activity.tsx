@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { History } from "lucide-react";
-import type { Agent } from "@rudder/shared";
+import type { Agent } from "@rudderhq/shared";
 
 export function Activity() {
   const { selectedOrganizationId } = useOrganization();

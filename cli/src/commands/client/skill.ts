@@ -9,7 +9,7 @@ import {
   type OrganizationSkillListItem,
   type OrganizationSkillLocalScanResult,
   type OrganizationSkillProjectScanResult,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import {
   addCommonClientOptions,
   formatInlineRecord,

@@ -19,8 +19,8 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
-} from "@rudder/db";
-import { deriveOrganizationUrlKey } from "@rudder/shared";
+} from "@rudderhq/db";
+import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { runningProcesses } from "../agent-runtimes/index.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 

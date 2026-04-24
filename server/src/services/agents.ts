@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 import { and, desc, eq, gte, inArray, isNull, lt, ne, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   agents,
   agentConfigRevisions,
@@ -13,9 +13,9 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   organizations,
-} from "@rudder/db";
-import type { AgentRuntimeType } from "@rudder/shared";
-import { isUuidLike, normalizeAgentUrlKey } from "@rudder/shared";
+} from "@rudderhq/db";
+import type { AgentRuntimeType } from "@rudderhq/shared";
+import { isUuidLike, normalizeAgentUrlKey } from "@rudderhq/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { resolveHomeAwarePath, resolveOrganizationAgentsDir } from "../home-paths.js";
 import { normalizeAgentPermissions } from "./agent-permissions.js";

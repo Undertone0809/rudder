@@ -1,6 +1,6 @@
 import { Router } from "express";
-import type { Db } from "@rudder/db";
-import { MESSENGER_SYSTEM_THREAD_KINDS, type MessengerSystemThreadKind } from "@rudder/shared";
+import type { Db } from "@rudderhq/db";
+import { MESSENGER_SYSTEM_THREAD_KINDS, type MessengerSystemThreadKind } from "@rudderhq/shared";
 import { messengerService } from "../services/messenger.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 

@@ -34,9 +34,9 @@
  */
 
 import { eq, and, desc } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { organizationSecrets, organizationSecretVersions, pluginConfig } from "@rudder/db";
-import type { SecretProvider } from "@rudder/shared";
+import type { Db } from "@rudderhq/db";
+import { organizationSecrets, organizationSecretVersions, pluginConfig } from "@rudderhq/db";
+import type { SecretProvider } from "@rudderhq/shared";
 import { getSecretProvider } from "../secrets/provider-registry.js";
 import { pluginRegistryService } from "./plugin-registry.js";
 

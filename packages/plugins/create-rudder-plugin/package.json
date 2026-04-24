@@ -1,5 +1,5 @@
 {
-  "name": "@rudder/create-rudder-plugin",
+  "name": "@rudderhq/create-rudder-plugin",
   "version": "0.1.0",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/Undertone0809/rudder",
@@ -41,7 +41,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@rudder/plugin-sdk": "workspace:*"
+    "@rudderhq/plugin-sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.12.0",

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
-import type { DeploymentExposure, DeploymentMode } from "@rudder/shared";
+import type { DeploymentExposure, DeploymentMode } from "@rudderhq/shared";
 
 import { parse as parseEnvFileContents } from "dotenv";
 import { resolveRudderInstanceId } from "./home-paths.js";

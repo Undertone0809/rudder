@@ -8,7 +8,7 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type { PluginCategory, PluginStatus, PaperclipPluginManifestV1 } from "@rudder/shared";
+import type { PluginCategory, PluginStatus, PaperclipPluginManifestV1 } from "@rudderhq/shared";
 
 /**
  * `plugins` table — stores one row per installed plugin.

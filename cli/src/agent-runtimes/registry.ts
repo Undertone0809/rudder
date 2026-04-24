@@ -1,11 +1,11 @@
-import type { CLIAgentRuntimeModule } from "@rudder/agent-runtime-utils";
-import { printClaudeStreamEvent } from "@rudder/agent-runtime-claude-local/cli";
-import { printCodexStreamEvent } from "@rudder/agent-runtime-codex-local/cli";
-import { printCursorStreamEvent } from "@rudder/agent-runtime-cursor-local/cli";
-import { printGeminiStreamEvent } from "@rudder/agent-runtime-gemini-local/cli";
-import { printOpenCodeStreamEvent } from "@rudder/agent-runtime-opencode-local/cli";
-import { printPiStreamEvent } from "@rudder/agent-runtime-pi-local/cli";
-import { printOpenClawGatewayStreamEvent } from "@rudder/agent-runtime-openclaw-gateway/cli";
+import type { CLIAgentRuntimeModule } from "@rudderhq/agent-runtime-utils";
+import { printClaudeStreamEvent } from "@rudderhq/agent-runtime-claude-local/cli";
+import { printCodexStreamEvent } from "@rudderhq/agent-runtime-codex-local/cli";
+import { printCursorStreamEvent } from "@rudderhq/agent-runtime-cursor-local/cli";
+import { printGeminiStreamEvent } from "@rudderhq/agent-runtime-gemini-local/cli";
+import { printOpenCodeStreamEvent } from "@rudderhq/agent-runtime-opencode-local/cli";
+import { printPiStreamEvent } from "@rudderhq/agent-runtime-pi-local/cli";
+import { printOpenClawGatewayStreamEvent } from "@rudderhq/agent-runtime-openclaw-gateway/cli";
 import { processCLIAdapter } from "./process/index.js";
 import { httpCLIAdapter } from "./http/index.js";
 

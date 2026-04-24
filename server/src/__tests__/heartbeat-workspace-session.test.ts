@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { agents } from "@rudder/db";
-import { sessionCodec as codexSessionCodec } from "@rudder/agent-runtime-codex-local/server";
+import type { agents } from "@rudderhq/db";
+import { sessionCodec as codexSessionCodec } from "@rudderhq/agent-runtime-codex-local/server";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 import {

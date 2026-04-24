@@ -1,4 +1,4 @@
-import type { AutomationTrigger } from "@rudder/shared";
+import type { AutomationTrigger } from "@rudderhq/shared";
 
 export type AutomationTriggerEditorDraft = {
   label: string;

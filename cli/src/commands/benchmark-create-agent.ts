@@ -8,8 +8,8 @@ import type {
   AgentSkillSnapshot,
   Approval,
   Issue,
-} from "@rudder/shared";
-import type { ObservedRunDetail } from "@rudder/run-intelligence-core";
+} from "@rudderhq/shared";
+import type { ObservedRunDetail } from "@rudderhq/run-intelligence-core";
 import {
   appendCreateAgentBenchmarkMetadata,
   buildCreateAgentBenchmarkMetadata,
@@ -26,7 +26,7 @@ import {
   CREATE_AGENT_LOCAL_JUDGE_VERSION,
   evaluateCreateAgentBenchmark,
   parseCreateAgentCase,
-} from "@rudder/run-intelligence-core";
+} from "@rudderhq/run-intelligence-core";
 import type { BaseClientOptions } from "./client/common.js";
 import {
   addCommonClientOptions,

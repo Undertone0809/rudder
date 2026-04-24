@@ -1,7 +1,7 @@
 import { and, asc, desc, eq } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { documentRevisions, documents, issueDocuments, issues } from "@rudder/db";
-import { issueDocumentKeySchema } from "@rudder/shared";
+import type { Db } from "@rudderhq/db";
+import { documentRevisions, documents, issueDocuments, issues } from "@rudderhq/db";
+import { issueDocumentKeySchema } from "@rudderhq/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 
 function normalizeDocumentKey(key: string) {

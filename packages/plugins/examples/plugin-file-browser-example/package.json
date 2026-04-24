@@ -1,5 +1,5 @@
 {
-  "name": "@rudder/plugin-file-browser-example",
+  "name": "@rudderhq/plugin-file-browser-example",
   "version": "0.1.0",
   "description": "Example plugin: project sidebar Files link + project detail tab with workspace selector and file browser",
   "type": "module",
@@ -16,7 +16,7 @@
     "prebuild": "node ../../../../scripts/ensure-plugin-build-deps.mjs",
     "build": "tsc && node ./scripts/build-ui.mjs",
     "clean": "rm -rf dist",
-    "typecheck": "pnpm --filter @rudder/plugin-sdk build && tsc --noEmit"
+    "typecheck": "pnpm --filter @rudderhq/plugin-sdk build && tsc --noEmit"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",
@@ -24,7 +24,7 @@
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.40.0",
     "@lezer/highlight": "^1.2.3",
-    "@rudder/plugin-sdk": "workspace:*",
+    "@rudderhq/plugin-sdk": "workspace:*",
     "codemirror": "^6.0.2"
   },
   "devDependencies": {

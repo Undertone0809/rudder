@@ -300,14 +300,14 @@ async function runPnpm(args, options = {}) {
 
 async function getMigrationStatusPayload() {
   const status = await runPnpm(
-    ["--filter", "@rudder/db", "exec", "tsx", "src/migration-status.ts", "--json"],
+    ["--filter", "@rudderhq/db", "exec", "tsx", "src/migration-status.ts", "--json"],
     { env },
   );
   if (status.code !== 0) {
     process.stderr.write(
       status.stderr ||
         status.stdout ||
-        `[rudder] Command failed with code ${status.code}: pnpm --filter @rudder/db exec tsx src/migration-status.ts --json\n`,
+        `[rudder] Command failed with code ${status.code}: pnpm --filter @rudderhq/db exec tsx src/migration-status.ts --json\n`,
     );
     process.exit(status.code);
   }
@@ -399,7 +399,7 @@ async function maybePreflightMigrations(options = {}) {
 async function buildPluginSdk() {
   console.log("[rudder] building plugin sdk...");
   const result = await runPnpm(
-    ["--filter", "@rudder/plugin-sdk", "build"],
+    ["--filter", "@rudderhq/plugin-sdk", "build"],
     { stdio: "inherit" },
   );
   if (result.signal) {
@@ -561,7 +561,7 @@ async function startServerChild() {
       const serverScript = mode === "watch" ? "dev:watch" : "dev";
       child = spawn(
         pnpmBin,
-        ["--filter", "@rudder/server", serverScript, ...forwardedArgs],
+        ["--filter", "@rudderhq/server", serverScript, ...forwardedArgs],
         { stdio: "inherit", env, shell: process.platform === "win32" },
       );
 

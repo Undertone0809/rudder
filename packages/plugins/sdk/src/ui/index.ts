@@ -1,10 +1,10 @@
 /**
- * `@rudder/plugin-sdk/ui` — Rudder plugin UI SDK.
+ * `@rudderhq/plugin-sdk/ui` — Rudder plugin UI SDK.
  *
  * Import this subpath from plugin UI bundles (React components that run in
  * the host frontend).  Do **not** import this from plugin worker code.
  *
- * The worker-side SDK is available from `@rudder/plugin-sdk` (root).
+ * The worker-side SDK is available from `@rudderhq/plugin-sdk` (root).
  *
  * @see PLUGIN_SPEC.md §19.0.1 — Plugin UI SDK
  * @see PLUGIN_SPEC.md §29.2 — SDK Versioning
@@ -12,8 +12,8 @@
  * @example
  * ```tsx
  * // Plugin UI bundle entry (dist/ui/index.tsx)
- * import { usePluginData, usePluginAction } from "@rudder/plugin-sdk/ui";
- * import type { PluginWidgetProps } from "@rudder/plugin-sdk/ui";
+ * import { usePluginData, usePluginAction } from "@rudderhq/plugin-sdk/ui";
+ * import type { PluginWidgetProps } from "@rudderhq/plugin-sdk/ui";
  *
  * export function DashboardWidget({ context }: PluginWidgetProps) {
  *   const { data, loading, error } = usePluginData("sync-health", {

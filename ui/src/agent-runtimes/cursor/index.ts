@@ -1,7 +1,7 @@
 import type { UIAgentRuntimeModule } from "../types";
-import { parseCursorStdoutLine } from "@rudder/agent-runtime-cursor-local/ui";
+import { parseCursorStdoutLine } from "@rudderhq/agent-runtime-cursor-local/ui";
 import { CursorLocalConfigFields } from "./config-fields";
-import { buildCursorLocalConfig } from "@rudder/agent-runtime-cursor-local/ui";
+import { buildCursorLocalConfig } from "@rudderhq/agent-runtime-cursor-local/ui";
 
 export const cursorLocalUIAdapter: UIAgentRuntimeModule = {
   type: "cursor",

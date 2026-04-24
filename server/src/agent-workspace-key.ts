@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { normalizeAgentUrlKey } from "@rudder/shared";
+import { normalizeAgentUrlKey } from "@rudderhq/shared";
 
 export const AGENT_WORKSPACE_SHORT_ID_MIN_LENGTH = 8;
 export const AGENT_WORKSPACE_SHORT_ID_STEP = 4;

@@ -17,7 +17,7 @@ import { relativeTime, cn, agentRouteRef, agentUrl } from "../lib/utils";
 import { PageTabBar } from "../components/PageTabBar";
 import { Tabs } from "@/components/ui/tabs";
 import { Bot, List, GitBranch, SlidersHorizontal } from "lucide-react";
-import { AGENT_ROLE_LABELS, type Agent } from "@rudder/shared";
+import { AGENT_ROLE_LABELS, type Agent } from "@rudderhq/shared";
 
 const adapterLabels: Record<string, string> = {
   claude_local: "Claude",

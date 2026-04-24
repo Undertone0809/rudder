@@ -1,4 +1,4 @@
-import type { Agent } from "@rudder/shared";
+import type { Agent } from "@rudderhq/shared";
 
 export const AGENT_ORDER_UPDATED_EVENT = "rudder:agent-order-updated";
 const AGENT_ORDER_STORAGE_PREFIX = "rudder.agentOrder";

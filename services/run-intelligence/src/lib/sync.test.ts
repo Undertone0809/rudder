@@ -1,14 +1,14 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { HeartbeatRun } from "@rudder/shared";
-import type { ObservedRunDetail, RunDiagnosis, RunExportRow } from "@rudder/run-intelligence-core";
+import type { HeartbeatRun } from "@rudderhq/shared";
+import type { ObservedRunDetail, RunDiagnosis, RunExportRow } from "@rudderhq/run-intelligence-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunIntelligenceCache } from "./cache.js";
 import { RunIntelligenceSync } from "./sync.js";
-import { diagnoseRun, listObservedRuns, loadObservedRunDetail } from "@rudder/run-intelligence-core";
+import { diagnoseRun, listObservedRuns, loadObservedRunDetail } from "@rudderhq/run-intelligence-core";
 
-vi.mock("@rudder/run-intelligence-core", () => ({
+vi.mock("@rudderhq/run-intelligence-core", () => ({
   listOrganizations: vi.fn(),
   listObservedRuns: vi.fn(),
   loadObservedRunDetail: vi.fn(),

@@ -1,4 +1,4 @@
-# @rudder/agent-runtime-claude-local
+# @rudderhq/agent-runtime-claude-local
 
 ## 0.3.1
 
@@ -6,7 +6,7 @@
 
 - Stable release preparation for 0.3.1
 - Updated dependencies
-  - @rudder/agent-runtime-utils@0.3.1
+  - @rudderhq/agent-runtime-utils@0.3.1
 
 ## 0.3.0
 
@@ -17,7 +17,7 @@
 ### Patch Changes
 
 - Updated dependencies
-  - @rudder/agent-runtime-utils@0.3.0
+  - @rudderhq/agent-runtime-utils@0.3.0
 
 ## 0.2.7
 
@@ -25,7 +25,7 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/agent-runtime-utils@0.2.7
+  - @rudderhq/agent-runtime-utils@0.2.7
 
 ## 0.2.6
 
@@ -33,7 +33,7 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/agent-runtime-utils@0.2.6
+  - @rudderhq/agent-runtime-utils@0.2.6
 
 ## 0.2.5
 
@@ -41,7 +41,7 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/agent-runtime-utils@0.2.5
+  - @rudderhq/agent-runtime-utils@0.2.5
 
 ## 0.2.4
 
@@ -49,7 +49,7 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/agent-runtime-utils@0.2.4
+  - @rudderhq/agent-runtime-utils@0.2.4
 
 ## 0.2.3
 
@@ -57,7 +57,7 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/agent-runtime-utils@0.2.3
+  - @rudderhq/agent-runtime-utils@0.2.3
 
 ## 0.2.2
 
@@ -65,7 +65,7 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/agent-runtime-utils@0.2.2
+  - @rudderhq/agent-runtime-utils@0.2.2
 
 ## 0.2.1
 
@@ -73,4 +73,4 @@
 
 - Version bump (patch)
 - Updated dependencies
-  - @rudder/agent-runtime-utils@0.2.1
+  - @rudderhq/agent-runtime-utils@0.2.1

@@ -67,7 +67,7 @@ matches_target() {
 
   [[ "$cmd" == *"scripts/dev-shell.mjs"* ]] && return 0
   [[ "$cmd" == *"pnpm dev"* ]] && return 0
-  [[ "$cmd" == *"pnpm --filter @rudder/desktop dev"* ]] && return 0
+  [[ "$cmd" == *"pnpm --filter @rudderhq/desktop dev"* ]] && return 0
   [[ "$cmd" == *"scripts/dev-runner.mjs"* ]] && return 0
   [[ "$cmd" == *"electron/cli.js dist/main.js"* ]] && return 0
   [[ "$cmd" == *"/desktop/dist"* && "$cmd" == *"Rudder-dev"* ]] && return 0

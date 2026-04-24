@@ -28,9 +28,9 @@ FROM base AS build
 WORKDIR /app
 COPY --from=deps /app /app
 COPY . .
-RUN pnpm --filter @rudder/ui build
-RUN pnpm --filter @rudder/plugin-sdk build
-RUN pnpm --filter @rudder/server build
+RUN pnpm --filter @rudderhq/ui build
+RUN pnpm --filter @rudderhq/plugin-sdk build
+RUN pnpm --filter @rudderhq/server build
 RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" && exit 1)
 
 FROM base AS production

@@ -16,7 +16,7 @@ pnpm rudder --help
 First-time install from npm:
 
 ```sh
-npx @rudder/cli@latest start
+npx @rudderhq/cli@latest start
 ```
 
 This checks for newer Rudder CLI releases, prepares the matching persistent
@@ -26,21 +26,21 @@ the current-platform installer from the GitHub Release when needed.
 Invocation forms are equivalent once they resolve to the same CLI version:
 
 ```sh
-npx @rudder/cli@latest start
+npx @rudderhq/cli@latest start
 rudder start
 
-npx @rudder/cli@latest onboard --yes
+npx @rudderhq/cli@latest onboard --yes
 rudder onboard --yes
 ```
 
-Use `npx @rudder/cli@latest ...` for the first run or when explicitly selecting
+Use `npx @rudderhq/cli@latest ...` for the first run or when explicitly selecting
 an npm dist-tag/version. Use `rudder ...` after the persistent CLI exists. The
 command behavior is the same; only binary resolution differs.
 
 CLI-only first-run setup remains available:
 
 ```sh
-npx @rudder/cli@latest onboard --yes
+npx @rudderhq/cli@latest onboard --yes
 ```
 
 If you installed the packaged Desktop app, it now also attempts to export a `rudder`
@@ -50,7 +50,7 @@ wrapper; use `pnpm rudder ...` while working from the repo. If no writable PATH 
 is available, fall back to:
 
 ```sh
-npx @rudder/cli@latest onboard --yes
+npx @rudderhq/cli@latest onboard --yes
 ```
 
 First-time local bootstrap + run:

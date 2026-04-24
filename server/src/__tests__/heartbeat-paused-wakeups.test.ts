@@ -18,9 +18,9 @@ import {
   issues,
   organizationSkills,
   organizations,
-} from "@rudder/db";
-import { renderTemplate, selectPromptTemplate } from "@rudder/agent-runtime-utils/server-utils";
-import { deriveOrganizationUrlKey } from "@rudder/shared";
+} from "@rudderhq/db";
+import { renderTemplate, selectPromptTemplate } from "@rudderhq/agent-runtime-utils/server-utils";
+import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 
 const mockBudgetService = vi.hoisted(() => ({
   getInvocationBlock: vi.fn(),

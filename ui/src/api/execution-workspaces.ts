@@ -1,4 +1,4 @@
-import type { ExecutionWorkspace } from "@rudder/shared";
+import type { ExecutionWorkspace } from "@rudderhq/shared";
 import { api } from "./client";
 
 export const executionWorkspacesApi = {

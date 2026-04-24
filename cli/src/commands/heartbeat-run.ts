@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import pc from "picocolors";
-import type { Agent, HeartbeatRun, HeartbeatRunEvent, HeartbeatRunStatus } from "@rudder/shared";
+import type { Agent, HeartbeatRun, HeartbeatRunEvent, HeartbeatRunStatus } from "@rudderhq/shared";
 import { getCLIAdapter } from "../agent-runtimes/index.js";
 import { resolveCommandContext } from "./client/common.js";
 

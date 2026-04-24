@@ -12,7 +12,7 @@ import {
   type DeploymentMode,
   type SecretProvider,
   type StorageProvider,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { configExists, readConfig, resolveConfigPath, writeConfig } from "../config/store.js";
 import type { RudderConfig } from "../config/schema.js";
 import { ensureAgentJwtSecret, resolveAgentJwtEnvFile } from "../config/env.js";
@@ -309,7 +309,7 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
       const s = p.spinner();
       s.start("Testing database connection...");
       try {
-        const { createDb } = await import("@rudder/db");
+        const { createDb } = await import("@rudderhq/db");
         const db = createDb(database.connectionString);
         await db.execute("SELECT 1");
         s.stop("Database connection successful");
@@ -492,12 +492,12 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
 
   p.note(
     [
-      `Run: ${pc.cyan(persistentCliAvailable ? "rudder run" : "npx @rudder/cli run")}`,
+      `Run: ${pc.cyan(persistentCliAvailable ? "rudder run" : "npx @rudderhq/cli run")}`,
       persistentCliAvailable
-        ? `Fallback without install context: ${pc.cyan("npx @rudder/cli run")}`
+        ? `Fallback without install context: ${pc.cyan("npx @rudderhq/cli run")}`
         : `Install later for direct use: ${pc.cyan(persistentCliState.installCommand)}`,
-      `Reconfigure later: ${pc.cyan(persistentCliAvailable ? "rudder configure" : "npx @rudder/cli configure")}`,
-      `Diagnose setup: ${pc.cyan(persistentCliAvailable ? "rudder doctor" : "npx @rudder/cli doctor")}`,
+      `Reconfigure later: ${pc.cyan(persistentCliAvailable ? "rudder configure" : "npx @rudderhq/cli configure")}`,
+      `Diagnose setup: ${pc.cyan(persistentCliAvailable ? "rudder doctor" : "npx @rudderhq/cli doctor")}`,
     ].join("\n"),
     "Next commands",
   );

@@ -1,4 +1,4 @@
-import { deriveOrganizationUrlKey } from "@rudder/shared";
+import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { createDb } from "./client.js";
 import { organizations, agents, goals, projects, issues } from "./schema/index.js";
 

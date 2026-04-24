@@ -27,4 +27,4 @@ export type {
   ResolvedSessionCompactionPolicy,
   SessionCompactionPolicy,
   ServerAgentRuntimeModule,
-} from "@rudder/agent-runtime-utils";
+} from "@rudderhq/agent-runtime-utils";

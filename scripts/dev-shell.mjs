@@ -157,7 +157,7 @@ async function main() {
   desktopChild = spawnManagedChild(
     "desktop",
     pnpmBin,
-    ["--filter", "@rudder/desktop", "dev"],
+    ["--filter", "@rudderhq/desktop", "dev"],
     desktopEnv,
   );
   desktopStarted = true;

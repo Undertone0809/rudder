@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { agentConfigRevisions, agents, heartbeatRunEvents, heartbeatRuns, issues, organizations } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { agentConfigRevisions, agents, heartbeatRunEvents, heartbeatRuns, issues, organizations } from "@rudderhq/db";
 import {
   buildLangfuseRunScores,
   diagnoseRun,
@@ -10,8 +10,8 @@ import {
   type RunDiagnosis,
   type RunDiagnosisMode,
   type RunExportRow,
-} from "@rudder/run-intelligence-core";
-import type { HeartbeatRun, HeartbeatRunEvent } from "@rudder/shared";
+} from "@rudderhq/run-intelligence-core";
+import type { HeartbeatRun, HeartbeatRunEvent } from "@rudderhq/shared";
 import { notFound } from "../errors.js";
 import { getExecutionLangfuseLink } from "../langfuse.js";
 import { getRunLogStore } from "./run-log-store.js";

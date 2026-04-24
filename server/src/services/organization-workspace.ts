@@ -1,4 +1,4 @@
-import type { OrganizationWorkspace, ProjectWorkspaceSourceType } from "@rudder/shared";
+import type { OrganizationWorkspace, ProjectWorkspaceSourceType } from "@rudderhq/shared";
 import { parseObject } from "../agent-runtimes/utils.js";
 
 function readNonEmptyString(value: unknown): string | null {

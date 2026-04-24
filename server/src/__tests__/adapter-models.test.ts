@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { models as codexFallbackModels } from "@rudder/agent-runtime-codex-local";
-import { models as cursorFallbackModels } from "@rudder/agent-runtime-cursor-local";
-import { resetOpenCodeModelsCacheForTests } from "@rudder/agent-runtime-opencode-local/server";
+import { models as codexFallbackModels } from "@rudderhq/agent-runtime-codex-local";
+import { models as cursorFallbackModels } from "@rudderhq/agent-runtime-cursor-local";
+import { resetOpenCodeModelsCacheForTests } from "@rudderhq/agent-runtime-opencode-local/server";
 import { listAgentRuntimeModels } from "../agent-runtimes/index.js";
 import { resetCodexModelsCacheForTests } from "../agent-runtimes/codex-models.js";
 import { resetCursorModelsCacheForTests, setCursorModelsRunnerForTests } from "../agent-runtimes/cursor-models.js";

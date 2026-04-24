@@ -1,11 +1,11 @@
-import type { StdoutLineParser } from "@rudder/agent-runtime-utils";
-import { parseClaudeStdoutLine } from "@rudder/agent-runtime-claude-local/ui";
-import { parseCodexStdoutLine } from "@rudder/agent-runtime-codex-local/ui";
-import { parseCursorStdoutLine } from "@rudder/agent-runtime-cursor-local/ui";
-import { parseGeminiStdoutLine } from "@rudder/agent-runtime-gemini-local/ui";
-import { parseOpenClawGatewayStdoutLine } from "@rudder/agent-runtime-openclaw-gateway/ui";
-import { parseOpenCodeStdoutLine } from "@rudder/agent-runtime-opencode-local/ui";
-import { parsePiStdoutLine } from "@rudder/agent-runtime-pi-local/ui";
+import type { StdoutLineParser } from "@rudderhq/agent-runtime-utils";
+import { parseClaudeStdoutLine } from "@rudderhq/agent-runtime-claude-local/ui";
+import { parseCodexStdoutLine } from "@rudderhq/agent-runtime-codex-local/ui";
+import { parseCursorStdoutLine } from "@rudderhq/agent-runtime-cursor-local/ui";
+import { parseGeminiStdoutLine } from "@rudderhq/agent-runtime-gemini-local/ui";
+import { parseOpenClawGatewayStdoutLine } from "@rudderhq/agent-runtime-openclaw-gateway/ui";
+import { parseOpenCodeStdoutLine } from "@rudderhq/agent-runtime-opencode-local/ui";
+import { parsePiStdoutLine } from "@rudderhq/agent-runtime-pi-local/ui";
 
 const genericParser: StdoutLineParser = (line, ts) => [{ kind: "stdout", ts, text: line }];
 

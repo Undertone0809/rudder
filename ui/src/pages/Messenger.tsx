@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   UserPlus,
 } from "lucide-react";
-import type { MessengerApprovalThreadItem, MessengerEvent, MessengerIssueThreadItem } from "@rudder/shared";
+import type { MessengerApprovalThreadItem, MessengerEvent, MessengerIssueThreadItem } from "@rudderhq/shared";
 import { accessApi } from "@/api/access";
 import { approvalsApi } from "@/api/approvals";
 import { heartbeatsApi } from "@/api/heartbeats";

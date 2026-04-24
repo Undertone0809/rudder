@@ -1,4 +1,4 @@
-import type { ActivityEvent } from "@rudder/shared";
+import type { ActivityEvent } from "@rudderhq/shared";
 import { api } from "./client";
 
 export interface RunForIssue {

@@ -2,7 +2,7 @@ import type {
   Agent,
   AgentSkillSnapshot,
   OrganizationSkillListItem,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import {
   buildAgentSkillMentionOptions,
   type SkillMentionOption,

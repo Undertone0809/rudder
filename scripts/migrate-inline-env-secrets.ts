@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { agents, createDb } from "@rudder/db";
+import { agents, createDb } from "@rudderhq/db";
 import { secretService } from "../server/src/services/secrets.js";
 
 const SENSITIVE_ENV_KEY_RE =

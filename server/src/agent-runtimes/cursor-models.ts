@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { models as cursorFallbackModels } from "@rudder/agent-runtime-cursor-local";
+import { models as cursorFallbackModels } from "@rudderhq/agent-runtime-cursor-local";
 import type { AgentRuntimeModel } from "./types.js";
 
 const CURSOR_MODELS_TIMEOUT_MS = 5_000;

@@ -28,7 +28,7 @@ import {
   type RealmPlugin,
 } from "@mdxeditor/editor";
 import { CircleDot, Sparkles } from "lucide-react";
-import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref } from "@rudder/shared";
+import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";

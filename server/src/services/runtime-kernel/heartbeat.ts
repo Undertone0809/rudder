@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { and, asc, desc, eq, gt, gte, inArray, lte, sql } from "drizzle-orm";
-import type { TranscriptEntry } from "@rudder/agent-runtime-utils";
-import type { Db } from "@rudder/db";
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type { Db } from "@rudderhq/db";
 import type {
   AgentSkillAnalytics,
   BillingType,
@@ -10,7 +10,7 @@ import type {
   ExecutionObservabilitySurface,
   HeartbeatRecoveryTrigger,
   HeartbeatRunRecoveryContext,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import {
   agents,
   agentRuntimeState,
@@ -22,7 +22,7 @@ import {
   issueComments,
   issues,
   projects,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import { conflict, notFound } from "../../errors.js";
 import {
   createExecutionScores,
@@ -84,12 +84,12 @@ import {
   hasSessionCompactionThresholds,
   resolveSessionCompactionPolicy,
   type SessionCompactionPolicy,
-} from "@rudder/agent-runtime-utils";
+} from "@rudderhq/agent-runtime-utils";
 import {
   buildCreateAgentBenchmarkTags,
   coerceCreateAgentBenchmarkMetadata,
   extractCreateAgentBenchmarkMetadata,
-} from "@rudder/run-intelligence-core";
+} from "@rudderhq/run-intelligence-core";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 

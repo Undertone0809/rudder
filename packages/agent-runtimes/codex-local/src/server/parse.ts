@@ -1,4 +1,4 @@
-import { asString, asNumber, parseObject, parseJson } from "@rudder/agent-runtime-utils/server-utils";
+import { asString, asNumber, parseObject, parseJson } from "@rudderhq/agent-runtime-utils/server-utils";
 
 export function parseCodexJsonl(stdout: string) {
   let sessionId: string | null = null;

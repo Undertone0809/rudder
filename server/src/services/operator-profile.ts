@@ -1,10 +1,10 @@
-import type { Db } from "@rudder/db";
-import { operatorProfiles } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { operatorProfiles } from "@rudderhq/db";
 import {
   operatorProfileSettingsSchema,
   type OperatorProfileSettings,
   type PatchOperatorProfileSettings,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 
 function normalizeField(value: string | null | undefined): string | null {

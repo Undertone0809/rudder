@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import type {
   OrganizationPortabilityAgentManifestEntry,
   OrganizationPortabilityCollisionStrategy,
@@ -27,7 +27,7 @@ import type {
   OrganizationPortabilitySidebarOrder,
   OrganizationPortabilitySkillManifestEntry,
   OrganizationSkill,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import {
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
@@ -42,7 +42,7 @@ import {
   getBundledRudderSkillSlug,
   normalizeAgentUrlKey,
   toBundledRudderSkillKey,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { notFound, unprocessable } from "../../errors.js";
 import type { StorageService } from "../../storage/types.js";
 import { accessService } from "../access.js";

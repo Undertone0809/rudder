@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { $createLinkNode, LinkNode } from "@lexical/link";
-import { buildAgentMentionHref } from "@rudder/shared";
+import { buildAgentMentionHref } from "@rudderhq/shared";
 import {
   createEditor,
   $createParagraphNode,

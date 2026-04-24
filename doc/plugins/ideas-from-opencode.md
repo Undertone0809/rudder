@@ -460,7 +460,7 @@ Plugins ship their own React UI as a bundled module inside `dist/ui/`. The host 
 3. The plugin component fetches data from its own worker via the bridge and renders it however it wants.
 4. The host enforces capability gates through the bridge — if the worker doesn't have a capability, the bridge rejects the call.
 
-**What the host controls:** where plugin components appear, the bridge API, capability enforcement, and shared UI primitives (`@rudder/plugin-sdk/ui`) with design tokens and common components.
+**What the host controls:** where plugin components appear, the bridge API, capability enforcement, and shared UI primitives (`@rudderhq/plugin-sdk/ui`) with design tokens and common components.
 
 **What the plugin controls:** how to render its data, what data to fetch, what actions to expose, and whether to use the host's shared components or build entirely custom UI.
 
@@ -483,7 +483,7 @@ Rudder should treat plugin installation as a global instance-level action.
 
 Examples:
 
-- install `@rudder/plugin-linear` once
+- install `@rudderhq/plugin-linear` once
 - make it available everywhere immediately
 - optionally store mappings over Rudder objects if one company maps to a different Linear team than another
 
@@ -529,7 +529,7 @@ This is a natural fit — the plugin already has the SDK context, the external A
 
 ## 8. Support plugin-to-plugin events
 
-Plugins should be able to emit custom events that other plugins can subscribe to. For example, the git plugin detects a push and emits `plugin.@rudder/plugin-git.push-detected`. The GitHub Issues plugin subscribes to that event and updates PR links.
+Plugins should be able to emit custom events that other plugins can subscribe to. For example, the git plugin detects a push and emits `plugin.@rudderhq/plugin-git.push-detected`. The GitHub Issues plugin subscribes to that event and updates PR links.
 
 This avoids plugins needing to coordinate through shared state or external channels. The host routes plugin events through the same event bus with the same delivery semantics as core events.
 
@@ -572,7 +572,7 @@ This is critical for operators. Without observability, debugging plugin issues r
 
 ## 13. Ship a test harness and starter template
 
-A `@rudder/plugin-test-harness` package should provide a mock host with in-memory stores, synthetic event emission, and `getData`/`performAction`/`executeTool` simulation. Plugin authors should be able to write unit tests without a running Rudder instance.
+A `@rudderhq/plugin-test-harness` package should provide a mock host with in-memory stores, synthetic event emission, and `getData`/`performAction`/`executeTool` simulation. Plugin authors should be able to write unit tests without a running Rudder instance.
 
 A `create-rudder-plugin` CLI should scaffold a working plugin with manifest, worker, UI bundle, test file, and build config.
 
@@ -599,8 +599,8 @@ Each worker process is independent — starting, stopping, or replacing one work
 
 Recommended approach:
 
-- **Single SDK package**: `@rudder/plugin-sdk` with subpath exports — root for worker code, `/ui` for frontend code. One dependency, one version, one changelog.
-- **SDK major version = API version**: `@rudder/plugin-sdk@2.x` targets `apiVersion: 2`. Plugins built with SDK 1.x declare `apiVersion: 1` and continue to work.
+- **Single SDK package**: `@rudderhq/plugin-sdk` with subpath exports — root for worker code, `/ui` for frontend code. One dependency, one version, one changelog.
+- **SDK major version = API version**: `@rudderhq/plugin-sdk@2.x` targets `apiVersion: 2`. Plugins built with SDK 1.x declare `apiVersion: 1` and continue to work.
 - **Host multi-version support**: The host supports at least the current and one previous `apiVersion` simultaneously with separate IPC protocol handlers per version.
 - **`sdkVersion` in manifest**: Plugins declare a semver range (e.g. `">=1.4.0 <2.0.0"`). The host validates this at install time.
 - **Deprecation timeline**: Previous API versions get at least 6 months of continued support after a new version ships. The host logs deprecation warnings and shows a banner on the plugin settings page.
@@ -613,10 +613,10 @@ Recommended approach:
 An intentionally narrow first pass could look like this:
 
 ```ts
-import { definePlugin, z } from "@rudder/plugin-sdk";
+import { definePlugin, z } from "@rudderhq/plugin-sdk";
 
 export default definePlugin({
-  id: "@rudder/plugin-linear",
+  id: "@rudderhq/plugin-linear",
   version: "0.1.0",
   categories: ["connector", "ui"],
   capabilities: [
@@ -648,7 +648,7 @@ export default definePlugin({
     });
 
     // subscribe to events from another plugin
-    ctx.events.on("plugin.@rudder/plugin-git.push-detected", async (event) => {
+    ctx.events.on("plugin.@rudderhq/plugin-git.push-detected", async (event) => {
       // react to the git plugin detecting a push
     });
 
@@ -679,7 +679,7 @@ The plugin's UI bundle (separate from the worker) might look like:
 
 ```tsx
 // dist/ui/index.tsx
-import { usePluginData, usePluginAction, MetricCard, ErrorBoundary } from "@rudder/plugin-sdk/ui";
+import { usePluginData, usePluginAction, MetricCard, ErrorBoundary } from "@rudderhq/plugin-sdk/ui";
 
 export function DashboardWidget({ context }: PluginWidgetProps) {
   const { data, loading, error } = usePluginData("sync-health", { orgId: context.orgId });
@@ -806,7 +806,7 @@ If it needs mappings over specific Rudder objects, those are plugin data, not en
 Plugin-originated mutations should flow through the same activity log mechanism, with a dedicated `plugin` actor type:
 
 - `actor_type = plugin`
-- `actor_id = <plugin-id>` (e.g. `@rudder/plugin-linear`)
+- `actor_id = <plugin-id>` (e.g. `@rudderhq/plugin-linear`)
 
 ## 4. Health and failure reporting
 
@@ -1017,7 +1017,7 @@ This is a useful middle ground:
 
 ## Workspace File Browser
 
-Package idea: `@rudder/plugin-workspace-files`
+Package idea: `@rudderhq/plugin-workspace-files`
 
 This plugin lets the board inspect project workspaces, agent workspaces, generated artifacts, and issue-related files without dropping to the shell. It is useful for:
 
@@ -1094,7 +1094,7 @@ Optional event subscriptions:
 
 ## Workspace Terminal
 
-Package idea: `@rudder/plugin-terminal`
+Package idea: `@rudderhq/plugin-terminal`
 
 This plugin gives the board a controlled terminal UI for project workspaces and agent workspaces. It is useful for:
 
@@ -1165,7 +1165,7 @@ Optional event subscriptions:
 
 ## Git Workflow
 
-Package idea: `@rudder/plugin-git`
+Package idea: `@rudderhq/plugin-git`
 
 This plugin adds repo-aware workflow tooling around issues and workspaces. It is useful for:
 
@@ -1232,7 +1232,7 @@ Recommended capabilities and extension points:
 - `projects.read`
 - `project.workspaces.read`
 - optional `agent.tools.register` (e.g. `create-branch`, `get-diff`, `get-status`)
-- optional `events.emit` (e.g. `plugin.@rudder/plugin-git.push-detected`)
+- optional `events.emit` (e.g. `plugin.@rudderhq/plugin-git.push-detected`)
 - `activity.log.write`
 
 The plugin resolves workspace paths through `ctx.projects` and handles all git operations (status, diff, log, branch create, commit, worktree create, push) directly using git CLI or a git library.
@@ -1243,13 +1243,13 @@ Optional event subscriptions:
 - `events.subscribe(issue.updated)`
 - `events.subscribe(agent.run.finished)`
 
-The git plugin can emit `plugin.@rudder/plugin-git.push-detected` events that other plugins (e.g. GitHub Issues) subscribe to for cross-plugin coordination.
+The git plugin can emit `plugin.@rudderhq/plugin-git.push-detected` events that other plugins (e.g. GitHub Issues) subscribe to for cross-plugin coordination.
 
 Note: GitHub/GitLab PR creation should likely live in a separate connector plugin rather than overloading the local git plugin.
 
 ## Linear Issue Tracking
 
-Package idea: `@rudder/plugin-linear`
+Package idea: `@rudderhq/plugin-linear`
 
 This plugin syncs Rudder work with Linear. It is useful for:
 
@@ -1329,7 +1329,7 @@ Important constraint:
 
 ## GitHub Issue Tracking
 
-Package idea: `@rudder/plugin-github-issues`
+Package idea: `@rudderhq/plugin-github-issues`
 
 This plugin syncs Rudder issues with GitHub Issues and optionally links PRs. It is useful for:
 
@@ -1387,7 +1387,7 @@ Recommended capabilities and extension points:
 - `events.subscribe(issue.created)`
 - `events.subscribe(issue.updated)`
 - `events.subscribe(issue.comment.created)`
-- `events.subscribe(plugin.@rudder/plugin-git.push-detected)` (cross-plugin coordination)
+- `events.subscribe(plugin.@rudderhq/plugin-git.push-detected)` (cross-plugin coordination)
 - `jobs.schedule`
 - `webhooks.receive`
 - `http.outbound`
@@ -1405,7 +1405,7 @@ Important constraint:
 
 ## Grafana Metrics
 
-Package idea: `@rudder/plugin-grafana`
+Package idea: `@rudderhq/plugin-grafana`
 
 This plugin surfaces external metrics and dashboards inside Rudder. It is useful for:
 
@@ -1476,7 +1476,7 @@ Important constraint:
 
 ## Child Process / Server Tracking
 
-Package idea: `@rudder/plugin-runtime-processes`
+Package idea: `@rudderhq/plugin-runtime-processes`
 
 This plugin tracks long-lived local processes and dev servers started in project workspaces. It is useful for:
 
@@ -1549,7 +1549,7 @@ Optional event subscriptions:
 
 ## Stripe Revenue Tracking
 
-Package idea: `@rudder/plugin-stripe`
+Package idea: `@rudderhq/plugin-stripe`
 
 This plugin pulls Stripe revenue and subscription data into Rudder. It is useful for:
 
@@ -1667,7 +1667,7 @@ Build:
 - scheduled jobs
 - webhook endpoints
 - activity logging helpers
-- plugin UI bundle loading, host bridge, `@rudder/plugin-sdk/ui`
+- plugin UI bundle loading, host bridge, `@rudderhq/plugin-sdk/ui`
 - extension slot mounting for pages, tabs, widgets, sidebar entries
 - auto-generated settings form from `instanceConfigSchema`
 - bridge error propagation (`PluginBridgeError`)
@@ -1677,7 +1677,7 @@ Build:
 - graceful shutdown with configurable deadlines
 - plugin logging and health dashboard
 - uninstall with data retention grace period
-- `@rudder/plugin-test-harness` and `create-rudder-plugin` starter template
+- `@rudderhq/plugin-test-harness` and `create-rudder-plugin` starter template
 - hot plugin lifecycle (install, uninstall, upgrade, config change without server restart)
 - SDK versioning with multi-version host support and deprecation policy
 
@@ -1732,7 +1732,7 @@ That gets the upside of `opencode`'s extensibility without importing the wrong t
 5. Add agent tool contributions — plugins register namespaced tools that agents can call during runs.
 6. Add plugin observability: structured logging via `ctx.logger`, health dashboard, internal health events.
 7. Add graceful shutdown policy and uninstall data lifecycle with retention grace period.
-8. Ship `@rudder/plugin-test-harness` and `create-rudder-plugin` starter template.
+8. Ship `@rudderhq/plugin-test-harness` and `create-rudder-plugin` starter template.
 9. Implement hot plugin lifecycle — install, uninstall, upgrade, and config changes without server restart.
 10. Define SDK versioning policy — semver, multi-version host support, deprecation timeline, migration guides, published compatibility matrix.
 11. Build workspace plugins (file browser, terminal, git, process tracking) that resolve workspace paths from the host and handle OS-level operations directly.

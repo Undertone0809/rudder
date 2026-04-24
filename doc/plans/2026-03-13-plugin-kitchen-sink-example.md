@@ -135,7 +135,7 @@ The implementation should keep a small validation checklist for these before we 
 The plugin should be named:
 
 - display name: `Kitchen Sink (Example)`
-- package: `@rudder/plugin-kitchen-sink-example`
+- package: `@rudderhq/plugin-kitchen-sink-example`
 - plugin id: `rudder.kitchen-sink-example` or `rudder-kitchen-sink-example`
 
 Recommendation: use `rudder-kitchen-sink-example` to match current in-repo example naming style.

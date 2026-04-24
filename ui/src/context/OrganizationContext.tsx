@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Organization } from "@rudder/shared";
+import type { Organization } from "@rudderhq/shared";
 import { organizationsApi } from "../api/orgs";
 import { ApiError } from "../api/client";
 import { queryKeys } from "../lib/queryKeys";

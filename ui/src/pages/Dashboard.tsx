@@ -28,7 +28,7 @@ import { Bot, CalendarDays, CircleDot, DollarSign, ShieldCheck, LayoutDashboard,
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
-import type { Agent, Issue } from "@rudder/shared";
+import type { Agent, Issue } from "@rudderhq/shared";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 

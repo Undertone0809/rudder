@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { HeartbeatRun } from "@rudder/shared";
+import type { HeartbeatRun } from "@rudderhq/shared";
 import { diagnoseRun } from "../diagnosis.js";
 import { observedRunFromFilesystem } from "./rudder.js";
 import type { RunDiagnosis, RunDiagnosisMode } from "../types.js";

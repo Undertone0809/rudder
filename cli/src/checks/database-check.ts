@@ -16,7 +16,7 @@ export async function databaseCheck(config: RudderConfig, configPath?: string): 
     }
 
     try {
-      const { createDb } = await import("@rudder/db");
+      const { createDb } = await import("@rudderhq/db");
       const db = createDb(config.database.connectionString);
       await db.execute("SELECT 1");
       return {

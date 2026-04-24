@@ -22,12 +22,12 @@
  * @see PLUGIN_SPEC.md §13.10 — `executeTool`
  */
 
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import type {
   PaperclipPluginManifestV1,
   PluginRecord,
-} from "@rudder/shared";
-import type { ToolRunContext, ToolResult } from "@rudder/plugin-sdk";
+} from "@rudderhq/shared";
+import type { ToolRunContext, ToolResult } from "@rudderhq/plugin-sdk";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 import type { PluginLifecycleManager } from "./plugin-lifecycle.js";
 import {

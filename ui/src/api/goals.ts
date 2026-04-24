@@ -1,4 +1,4 @@
-import type { Goal } from "@rudder/shared";
+import type { Goal } from "@rudderhq/shared";
 import { api } from "./client";
 
 export const goalsApi = {

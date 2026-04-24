@@ -1,5 +1,5 @@
 import type { ServerAgentRuntimeModule } from "./types.js";
-import { getAgentRuntimeSessionManagement } from "@rudder/agent-runtime-utils";
+import { getAgentRuntimeSessionManagement } from "@rudderhq/agent-runtime-utils";
 import {
   execute as claudeExecute,
   listClaudeSkills,
@@ -7,9 +7,9 @@ import {
   testEnvironment as claudeTestEnvironment,
   sessionCodec as claudeSessionCodec,
   getQuotaWindows as claudeGetQuotaWindows,
-} from "@rudder/agent-runtime-claude-local/server";
-import { agentConfigurationDoc as claudeAgentConfigurationDoc, models as claudeModels } from "@rudder/agent-runtime-claude-local";
-import { parseClaudeStdoutLine } from "@rudder/agent-runtime-claude-local/ui";
+} from "@rudderhq/agent-runtime-claude-local/server";
+import { agentConfigurationDoc as claudeAgentConfigurationDoc, models as claudeModels } from "@rudderhq/agent-runtime-claude-local";
+import { parseClaudeStdoutLine } from "@rudderhq/agent-runtime-claude-local/ui";
 import {
   execute as codexExecute,
   listCodexSkills,
@@ -17,27 +17,27 @@ import {
   testEnvironment as codexTestEnvironment,
   sessionCodec as codexSessionCodec,
   getQuotaWindows as codexGetQuotaWindows,
-} from "@rudder/agent-runtime-codex-local/server";
-import { agentConfigurationDoc as codexAgentConfigurationDoc, models as codexModels } from "@rudder/agent-runtime-codex-local";
-import { parseCodexStdoutLine } from "@rudder/agent-runtime-codex-local/ui";
+} from "@rudderhq/agent-runtime-codex-local/server";
+import { agentConfigurationDoc as codexAgentConfigurationDoc, models as codexModels } from "@rudderhq/agent-runtime-codex-local";
+import { parseCodexStdoutLine } from "@rudderhq/agent-runtime-codex-local/ui";
 import {
   execute as cursorExecute,
   listCursorSkills,
   syncCursorSkills,
   testEnvironment as cursorTestEnvironment,
   sessionCodec as cursorSessionCodec,
-} from "@rudder/agent-runtime-cursor-local/server";
-import { agentConfigurationDoc as cursorAgentConfigurationDoc, models as cursorModels } from "@rudder/agent-runtime-cursor-local";
-import { parseCursorStdoutLine } from "@rudder/agent-runtime-cursor-local/ui";
+} from "@rudderhq/agent-runtime-cursor-local/server";
+import { agentConfigurationDoc as cursorAgentConfigurationDoc, models as cursorModels } from "@rudderhq/agent-runtime-cursor-local";
+import { parseCursorStdoutLine } from "@rudderhq/agent-runtime-cursor-local/ui";
 import {
   execute as geminiExecute,
   listGeminiSkills,
   syncGeminiSkills,
   testEnvironment as geminiTestEnvironment,
   sessionCodec as geminiSessionCodec,
-} from "@rudder/agent-runtime-gemini-local/server";
-import { agentConfigurationDoc as geminiAgentConfigurationDoc, models as geminiModels } from "@rudder/agent-runtime-gemini-local";
-import { parseGeminiStdoutLine } from "@rudder/agent-runtime-gemini-local/ui";
+} from "@rudderhq/agent-runtime-gemini-local/server";
+import { agentConfigurationDoc as geminiAgentConfigurationDoc, models as geminiModels } from "@rudderhq/agent-runtime-gemini-local";
+import { parseGeminiStdoutLine } from "@rudderhq/agent-runtime-gemini-local/ui";
 import {
   execute as openCodeExecute,
   listOpenCodeSkills,
@@ -45,20 +45,20 @@ import {
   testEnvironment as openCodeTestEnvironment,
   sessionCodec as openCodeSessionCodec,
   listOpenCodeModels,
-} from "@rudder/agent-runtime-opencode-local/server";
+} from "@rudderhq/agent-runtime-opencode-local/server";
 import {
   agentConfigurationDoc as openCodeAgentConfigurationDoc,
-} from "@rudder/agent-runtime-opencode-local";
-import { parseOpenCodeStdoutLine } from "@rudder/agent-runtime-opencode-local/ui";
+} from "@rudderhq/agent-runtime-opencode-local";
+import { parseOpenCodeStdoutLine } from "@rudderhq/agent-runtime-opencode-local/ui";
 import {
   execute as openclawGatewayExecute,
   testEnvironment as openclawGatewayTestEnvironment,
-} from "@rudder/agent-runtime-openclaw-gateway/server";
+} from "@rudderhq/agent-runtime-openclaw-gateway/server";
 import {
   agentConfigurationDoc as openclawGatewayAgentConfigurationDoc,
   models as openclawGatewayModels,
-} from "@rudder/agent-runtime-openclaw-gateway";
-import { parseOpenClawGatewayStdoutLine } from "@rudder/agent-runtime-openclaw-gateway/ui";
+} from "@rudderhq/agent-runtime-openclaw-gateway";
+import { parseOpenClawGatewayStdoutLine } from "@rudderhq/agent-runtime-openclaw-gateway/ui";
 import { listCodexModels } from "./codex-models.js";
 import { listCursorModels } from "./cursor-models.js";
 import {
@@ -68,11 +68,11 @@ import {
   testEnvironment as piTestEnvironment,
   sessionCodec as piSessionCodec,
   listPiModels,
-} from "@rudder/agent-runtime-pi-local/server";
+} from "@rudderhq/agent-runtime-pi-local/server";
 import {
   agentConfigurationDoc as piAgentConfigurationDoc,
-} from "@rudder/agent-runtime-pi-local";
-import { parsePiStdoutLine } from "@rudder/agent-runtime-pi-local/ui";
+} from "@rudderhq/agent-runtime-pi-local";
+import { parsePiStdoutLine } from "@rudderhq/agent-runtime-pi-local/ui";
 import {
   execute as hermesExecute,
   testEnvironment as hermesTestEnvironment,

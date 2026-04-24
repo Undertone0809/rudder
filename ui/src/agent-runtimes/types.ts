@@ -1,8 +1,8 @@
 import type { ComponentType } from "react";
-import type { CreateConfigValues } from "@rudder/agent-runtime-utils";
+import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 
 // Re-export shared types so local consumers don't need to change imports
-export type { TranscriptEntry, StdoutLineParser, CreateConfigValues } from "@rudder/agent-runtime-utils";
+export type { TranscriptEntry, StdoutLineParser, CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 
 export interface AgentRuntimeConfigFieldsProps {
   mode: "create" | "edit";
@@ -27,7 +27,7 @@ export interface AgentRuntimeConfigFieldsProps {
 export interface UIAgentRuntimeModule {
   type: string;
   label: string;
-  parseStdoutLine: (line: string, ts: string) => import("@rudder/agent-runtime-utils").TranscriptEntry[];
+  parseStdoutLine: (line: string, ts: string) => import("@rudderhq/agent-runtime-utils").TranscriptEntry[];
   ConfigFields: ComponentType<AgentRuntimeConfigFieldsProps>;
   buildAdapterConfig: (values: CreateConfigValues) => Record<string, unknown>;
 }

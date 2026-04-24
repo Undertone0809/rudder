@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { agents } from "@rudder/db";
-import type { HireApprovedPayload } from "@rudder/agent-runtime-utils";
+import type { Db } from "@rudderhq/db";
+import { agents } from "@rudderhq/db";
+import type { HireApprovedPayload } from "@rudderhq/agent-runtime-utils";
 import { findServerAdapter } from "../agent-runtimes/registry.js";
 import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";

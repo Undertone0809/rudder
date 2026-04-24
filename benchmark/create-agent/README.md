@@ -10,7 +10,7 @@ Repo-tracked benchmark cases for the create-agent workflow.
 ## Run
 
 ```sh
-pnpm --filter @rudder/cli dev benchmark create-agent run approval-cto-under-ceo \
+pnpm --filter @rudderhq/cli dev benchmark create-agent run approval-cto-under-ceo \
   --org-id <org-id> \
   --benchmark-agent-id <agent-id> \
   --fixture ceo=<ceo-agent-id>
@@ -19,7 +19,7 @@ pnpm --filter @rudder/cli dev benchmark create-agent run approval-cto-under-ceo 
 Batch:
 
 ```sh
-pnpm --filter @rudder/cli dev benchmark create-agent run-set smoke \
+pnpm --filter @rudderhq/cli dev benchmark create-agent run-set smoke \
   --org-id <org-id> \
   --benchmark-agent-id <agent-id> \
   --fixture ceo=<ceo-agent-id>

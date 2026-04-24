@@ -1,5 +1,5 @@
-import { createHostClientHandlers } from "@rudder/plugin-sdk";
-import type { Db } from "@rudder/db";
+import { createHostClientHandlers } from "@rudderhq/plugin-sdk";
+import type { Db } from "@rudderhq/db";
 import { logger } from "../middleware/logger.js";
 import { setPluginEventBus } from "../services/activity-log.js";
 import { createPluginDevWatcher } from "../services/plugin-dev-watcher.js";

@@ -1,5 +1,5 @@
-import type { Db } from "@rudder/db";
-import { pluginLogs, agentTaskSessions as agentTaskSessionsTable } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { pluginLogs, agentTaskSessions as agentTaskSessionsTable } from "@rudderhq/db";
 import { eq, and, like, desc } from "drizzle-orm";
 import type {
   HostServices,
@@ -10,7 +10,7 @@ import type {
   Goal,
   PluginWorkspace,
   IssueComment,
-} from "@rudder/plugin-sdk";
+} from "@rudderhq/plugin-sdk";
 import { organizationService } from "./orgs.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
@@ -559,7 +559,7 @@ export function buildHostServices(
         await scopedBus.emit(params.name, params.orgId, params.payload);
       },
       async subscribe(params: { eventPattern: string; filter?: Record<string, unknown> | null }) {
-        const handler = async (event: import("@rudder/plugin-sdk").PluginEvent) => {
+        const handler = async (event: import("@rudderhq/plugin-sdk").PluginEvent) => {
           if (notifyWorker) {
             notifyWorker("onEvent", { event });
           }

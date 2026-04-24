@@ -1,4 +1,4 @@
-import type { AssetImage } from "@rudder/shared";
+import type { AssetImage } from "@rudderhq/shared";
 import { api } from "./client";
 
 export const assetsApi = {

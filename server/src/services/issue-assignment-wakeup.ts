@@ -1,5 +1,5 @@
 import { logger } from "../middleware/logger.js";
-import { extractCreateAgentBenchmarkMetadata } from "@rudder/run-intelligence-core";
+import { extractCreateAgentBenchmarkMetadata } from "@rudderhq/run-intelligence-core";
 
 type WakeupTriggerDetail = "manual" | "ping" | "callback" | "system";
 type WakeupSource = "timer" | "assignment" | "on_demand" | "automation";

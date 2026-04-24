@@ -1,8 +1,8 @@
 import { Router } from "express";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import { and, count, eq, gt, inArray, isNull, sql } from "drizzle-orm";
-import { heartbeatRuns, instanceUserRoles, invites } from "@rudder/db";
-import type { DeploymentExposure, DeploymentMode } from "@rudder/shared";
+import { heartbeatRuns, instanceUserRoles, invites } from "@rudderhq/db";
+import type { DeploymentExposure, DeploymentMode } from "@rudderhq/shared";
 import { readPersistedDevServerStatus, toDevServerHealthStatus } from "../dev-server-status.js";
 import { resolveEffectiveLocalEnvName, resolveRuntimeOwnerKind } from "../local-runtime.js";
 import { instanceSettingsService } from "../services/instance-settings.js";

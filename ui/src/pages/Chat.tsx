@@ -27,7 +27,7 @@ import {
   type ChatOperationProposalDecisionStatus,
   type ChatPrimaryIssueSummary,
   type MessengerThreadSummary,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import type { TranscriptEntry } from "@/agent-runtimes";
 import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";

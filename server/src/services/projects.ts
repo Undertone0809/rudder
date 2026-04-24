@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
-import type { Db } from "@rudder/db";
-import { projects, projectGoals, goals, projectWorkspaces, workspaceRuntimeServices } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
+import { projects, projectGoals, goals, projectWorkspaces, workspaceRuntimeServices } from "@rudderhq/db";
 import {
   PROJECT_COLORS,
   deriveProjectUrlKey,
@@ -14,7 +14,7 @@ import {
   type ProjectResourceAttachmentInput,
   type ProjectWorkspace,
   type WorkspaceRuntimeService,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { listWorkspaceRuntimeServicesForProjectWorkspaces } from "./workspace-runtime.js";
 import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
 import {

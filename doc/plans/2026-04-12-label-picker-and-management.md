@@ -82,8 +82,8 @@ Refactor issue label UX so the issue detail popover is a search-first picker, wh
 ## Verification
 
 - `pnpm -r typecheck`
-- `pnpm --filter @rudder/server build`
-- `pnpm --filter @rudder/ui build`
+- `pnpm --filter @rudderhq/server build`
+- `pnpm --filter @rudderhq/ui build`
 - `RUDDER_E2E_USE_EXISTING_SERVER=1 RUDDER_E2E_BASE_URL=http://127.0.0.1:3100 npx playwright test --config tests/e2e/playwright.config.ts tests/e2e/issue-detail-toolbar-actions.spec.ts`
 - `RUDDER_E2E_USE_EXISTING_SERVER=1 RUDDER_E2E_BASE_URL=http://127.0.0.1:3100 npx playwright test --config tests/e2e/playwright.config.ts tests/e2e/settings-sidebar.spec.ts --grep "manages issue labels from organization settings"`
 - `pnpm build` was attempted twice but failed in the existing desktop packaged staging step under `desktop/.packaged/server-package` with filesystem cleanup/copy errors unrelated to the label changes.

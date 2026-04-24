@@ -1,12 +1,12 @@
 import { Router, type Request } from "express";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   organizationSkillCreateSchema,
   organizationSkillFileUpdateSchema,
   organizationSkillImportSchema,
   organizationSkillLocalScanRequestSchema,
   organizationSkillProjectScanRequestSchema,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { validate } from "../middleware/validate.js";
 import { accessService, agentService, organizationSkillService, logActivity } from "../services/index.js";
 import { forbidden } from "../errors.js";

@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 import { expect, test } from "@playwright/test";
-import type { HeartbeatRun } from "@rudder/shared";
+import type { HeartbeatRun } from "@rudderhq/shared";
 import { buildObservedRunTrace } from "../../packages/run-intelligence-core/src/trace.js";
 import type { ObservedRunDetail, RunDiagnosis, RunExportRow } from "../../packages/run-intelligence-core/src/types.js";
 import { createRunIntelligenceApp, type CachedRunDetail, type CachedRunSummary } from "../../services/run-intelligence/src/server.js";

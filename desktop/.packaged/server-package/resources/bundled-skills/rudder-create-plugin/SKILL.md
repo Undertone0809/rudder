@@ -35,14 +35,14 @@ Current runtime assumptions:
 Use the scaffold package instead of hand-writing the boilerplate:
 
 ```bash
-pnpm --filter @rudder/create-rudder-plugin build
+pnpm --filter @rudderhq/create-rudder-plugin build
 node packages/plugins/create-rudder-plugin/dist/index.js <npm-package-name> --output <target-dir>
 ```
 
 For a plugin that lives outside the Rudder repo, pass `--sdk-path` and let the scaffold snapshot the local SDK/shared packages into `.rudder-sdk/`:
 
 ```bash
-pnpm --filter @rudder/create-rudder-plugin build
+pnpm --filter @rudderhq/create-rudder-plugin build
 node packages/plugins/create-rudder-plugin/dist/index.js @acme/plugin-name \
   --output /absolute/path/to/plugin-repos \
   --sdk-path /absolute/path/to/rudder/packages/plugins/sdk

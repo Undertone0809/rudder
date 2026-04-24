@@ -1,5 +1,5 @@
 import type { TranscriptEntry } from "../agent-runtimes";
-import type { HeartbeatRunEvent } from "@rudder/shared";
+import type { HeartbeatRunEvent } from "@rudderhq/shared";
 
 interface RunDetailEventOptions {
   redactText?: (value: string) => string;

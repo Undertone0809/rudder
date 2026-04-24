@@ -48,7 +48,7 @@
  * @see PLUGIN_SPEC.md §15 — Capability Model
  */
 
-import type { PluginCapability } from "@rudder/shared";
+import type { PluginCapability } from "@rudderhq/shared";
 import type { WorkerToHostMethods, WorkerToHostMethodName } from "./protocol.js";
 import { PLUGIN_RPC_ERROR_CODES } from "./protocol.js";
 

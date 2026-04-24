@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import os from "node:os";
-import type { AgentRuntimeModel } from "@rudder/agent-runtime-utils";
+import type { AgentRuntimeModel } from "@rudderhq/agent-runtime-utils";
 import {
   asString,
   ensurePathInEnv,
   runChildProcess,
-} from "@rudder/agent-runtime-utils/server-utils";
+} from "@rudderhq/agent-runtime-utils/server-utils";
 
 const MODELS_CACHE_TTL_MS = 60_000;
 const MODELS_DISCOVERY_TIMEOUT_MS = 20_000;

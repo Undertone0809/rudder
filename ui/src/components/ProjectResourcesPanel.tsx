@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { OrganizationResource, Project, ProjectResourceAttachmentRole } from "@rudder/shared";
+import type { OrganizationResource, Project, ProjectResourceAttachmentRole } from "@rudderhq/shared";
 import { organizationsApi } from "@/api/orgs";
 import { projectsApi } from "@/api/projects";
 import { useOrganization } from "@/context/OrganizationContext";

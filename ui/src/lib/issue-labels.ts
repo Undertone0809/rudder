@@ -1,4 +1,4 @@
-import type { IssueLabel } from "@rudder/shared";
+import type { IssueLabel } from "@rudderhq/shared";
 
 export const ISSUE_LABEL_COLOR_PALETTE = [
   "#ef4444",

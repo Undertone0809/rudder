@@ -186,7 +186,7 @@ function getMissingModuleSpecifier(err: unknown): string | null {
 function maybeEnableUiDevMiddleware(entrypoint: string): void {
   if (process.env.RUDDER_UI_DEV_MIDDLEWARE !== undefined) return;
   const normalized = entrypoint.replaceAll("\\", "/");
-  if (normalized.endsWith("/server/src/index.ts") || normalized.endsWith("@rudder/server/src/index.ts")) {
+  if (normalized.endsWith("/server/src/index.ts") || normalized.endsWith("@rudderhq/server/src/index.ts")) {
     process.env.RUDDER_UI_DEV_MIDDLEWARE = "true";
   }
 }
@@ -201,17 +201,17 @@ async function importServerEntry(): Promise<StartedServer> {
     return await startServerFromModule(mod, devEntry);
   }
 
-  // Production mode: import the published @rudder/server package
+  // Production mode: import the published @rudderhq/server package
   try {
-    const mod = await import("@rudder/server");
-    return await startServerFromModule(mod, "@rudder/server");
+    const mod = await import("@rudderhq/server");
+    return await startServerFromModule(mod, "@rudderhq/server");
   } catch (err) {
     const missingSpecifier = getMissingModuleSpecifier(err);
-    const missingServerEntrypoint = !missingSpecifier || missingSpecifier === "@rudder/server";
+    const missingServerEntrypoint = !missingSpecifier || missingSpecifier === "@rudderhq/server";
     if (isModuleNotFoundError(err) && missingServerEntrypoint) {
       throw new Error(
         `Could not locate a Rudder server entrypoint.\n` +
-          `Tried: ${devEntry}, @rudder/server\n` +
+          `Tried: ${devEntry}, @rudderhq/server\n` +
           `${formatError(err)}`,
       );
     }

@@ -14,7 +14,7 @@ import type {
   OrganizationPortabilityPreviewResult,
   UpdateOrganizationBranding,
   UpdateOrganizationResourceRequest,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { api } from "./client";
 
 export type OrganizationStats = Record<string, { agentCount: number; issueCount: number }>;

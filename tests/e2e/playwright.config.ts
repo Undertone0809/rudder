@@ -191,7 +191,7 @@ cat > "${E2E_CONFIG}" <<'"'"'EOF'"'"'
 ${e2eConfigJson}
 EOF
 ${CLEAR_LANGFUSE_ENV_COMMAND}
-${SERVER_ENV_PREFIX} pnpm --filter @rudder/server dev'`,
+${SERVER_ENV_PREFIX} pnpm --filter @rudderhq/server dev'`,
     url: `${BASE_URL}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,

@@ -20,7 +20,7 @@ import {
   Collapsible,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
-import type { Agent } from "@rudder/shared";
+import type { Agent } from "@rudderhq/shared";
 
 export function SidebarAgents() {
   const [open, setOpen] = useState(true);

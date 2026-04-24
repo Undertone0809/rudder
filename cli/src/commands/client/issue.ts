@@ -10,7 +10,7 @@ import {
   type IssueDocumentSummary,
   type Issue,
   type IssueComment,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import {
   addCommonClientOptions,
   formatInlineRecord,

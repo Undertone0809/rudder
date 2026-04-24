@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { testEnvironment } from "@rudder/agent-runtime-codex-local/server";
+import { testEnvironment } from "@rudderhq/agent-runtime-codex-local/server";
 
 const itWindows = process.platform === "win32" ? it : it.skip;
 

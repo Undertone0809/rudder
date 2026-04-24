@@ -6,7 +6,7 @@ import { approvalLabel, typeIcon, defaultTypeIcon, ApprovalPayloadRenderer } fro
 import { ApprovalInset, ApprovalPanel } from "./approval-ui";
 import { StatusBadge } from "./StatusBadge";
 import { timeAgo } from "../lib/timeAgo";
-import type { Approval, Agent } from "@rudder/shared";
+import type { Approval, Agent } from "@rudderhq/shared";
 
 export function ApprovalCard({
   approval,

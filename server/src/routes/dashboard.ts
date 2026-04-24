@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import { dashboardService } from "../services/dashboard.js";
 import { assertCompanyAccess } from "./authz.js";
 

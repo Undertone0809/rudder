@@ -562,6 +562,20 @@ export function renderAgentCliReferenceMarkdown(): string {
     );
   }
 
+  lines.push(
+    "",
+    "## Issue Close-Out Signals",
+    "",
+    "Before a successful `todo` or `in_progress` issue run exits, leave one close-out signal with the command that matches the outcome:",
+    "",
+    "- progress remains: `rudder issue comment <issue> --body <text>`",
+    "- work is complete: `rudder issue done <issue> --comment <text>`",
+    "- work is blocked: `rudder issue block <issue> --comment <text>`",
+    "- ownership changes: add an explicit handoff comment before or with the assignee update",
+    "",
+    "If `RUDDER_WAKE_REASON=issue_passive_followup`, the run is close-out governance for the same issue. Inspect current issue state first, then leave a progress comment, completion, blocker, or explicit handoff.",
+  );
+
   lines.push("", "## Compatibility Commands", "");
   for (const capability of AGENT_CLI_CAPABILITIES.filter((entry) => entry.contract === "compat")) {
     lines.push(`- \`${capability.command}\` — ${capability.description}`);

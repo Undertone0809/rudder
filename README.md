@@ -77,7 +77,7 @@ Rudder coordinates agents. It does not force one runtime, one model, one prompt 
 The fastest path starts Rudder Desktop and prepares the matching CLI:
 
 ```bash
-npx @rudder/cli@latest start
+npx @rudderhq/cli@latest start
 ```
 
 After the persistent CLI is available, the direct `rudder` form is the same

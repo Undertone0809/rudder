@@ -1,5 +1,5 @@
 import { Router, type Request } from "express";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import {
   patchInstanceExperimentalSettingsSchema,
   patchInstanceGeneralSettingsSchema,
@@ -9,7 +9,7 @@ import {
   instancePathPickerRequestSchema,
   type PatchInstanceLangfuseSettings,
   type DeploymentMode,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { conflict, forbidden, unprocessable } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {

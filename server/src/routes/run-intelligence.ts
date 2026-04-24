@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Db } from "@rudder/db";
+import type { Db } from "@rudderhq/db";
 import { notFound } from "../errors.js";
 import {
   getObservedRun,

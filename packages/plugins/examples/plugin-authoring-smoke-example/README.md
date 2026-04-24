@@ -19,5 +19,5 @@ pnpm rudder plugin install ./
 
 ## Build Options
 
-- `pnpm build` uses esbuild presets from `@rudder/plugin-sdk/bundlers`.
+- `pnpm build` uses esbuild presets from `@rudderhq/plugin-sdk/bundlers`.
 - `pnpm build:rollup` uses rollup presets from the same SDK.

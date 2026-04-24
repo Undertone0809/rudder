@@ -16,7 +16,7 @@
     {
       "id": 3,
       "prompt": "stable npm latest 已经发布成功，v0.1.0 tag 也有了，但是 desktop-release.yml 在 Windows 打包失败，GitHub Release 里少了 windows exe。现在怎么补？",
-      "expected_output": "A partial-release recovery plan that explicitly says not to republish npm or reuse a different version, reruns desktop-release.yml for v0.1.0, verifies all Desktop assets plus SHASUMS256.txt on the existing GitHub Release, then runs npx @rudder/cli@latest start --no-open.",
+      "expected_output": "A partial-release recovery plan that explicitly says not to republish npm or reuse a different version, reruns desktop-release.yml for v0.1.0, verifies all Desktop assets plus SHASUMS256.txt on the existing GitHub Release, then runs npx @rudderhq/cli@latest start --no-open.",
       "files": []
     },
     {

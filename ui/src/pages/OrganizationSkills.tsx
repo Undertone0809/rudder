@@ -10,7 +10,7 @@ import type {
   OrganizationSkillListItem,
   OrganizationSkillSourceBadge,
   OrganizationSkillUpdateStatus,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";

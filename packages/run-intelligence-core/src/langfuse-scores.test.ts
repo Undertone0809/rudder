@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { HeartbeatRun } from "@rudder/shared";
+import type { HeartbeatRun } from "@rudderhq/shared";
 import { diagnoseRun } from "./diagnosis.js";
 import { buildLangfuseRunScores } from "./langfuse-scores.js";
 import { observedRunFromFilesystem } from "./loaders/rudder.js";

@@ -102,8 +102,8 @@ pnpm build
 
 If full suite is too heavy locally, run at least:
 ```bash
-pnpm --filter @rudder/server test:run -- openclaw-gateway
-pnpm --filter @rudder/server typecheck
-pnpm --filter @rudder/ui typecheck
+pnpm --filter @rudderhq/server test:run -- openclaw-gateway
+pnpm --filter @rudderhq/server typecheck
+pnpm --filter @rudderhq/ui typecheck
 pnpm --filter rudder typecheck
 ```

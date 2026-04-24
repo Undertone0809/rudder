@@ -7,7 +7,7 @@ import type {
   AutomationRunSummary,
   AutomationTrigger,
   AutomationTriggerSecretMaterial,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { activityApi } from "./activity";
 import { api } from "./client";
 

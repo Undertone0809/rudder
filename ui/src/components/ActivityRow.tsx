@@ -3,7 +3,7 @@ import { Identity } from "./Identity";
 import { resolveActivityActorName } from "@/lib/activity-actors";
 import { timeAgo } from "../lib/timeAgo";
 import { cn } from "../lib/utils";
-import { deriveProjectUrlKey, type ActivityEvent, type Agent } from "@rudder/shared";
+import { deriveProjectUrlKey, type ActivityEvent, type Agent } from "@rudderhq/shared";
 
 const ACTION_VERBS: Record<string, string> = {
   "issue.created": "created",

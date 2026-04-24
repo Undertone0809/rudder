@@ -10,7 +10,7 @@ import {
   ensurePostgresDatabase,
   organizationSkills,
   organizations,
-} from "@rudder/db";
+} from "@rudderhq/db";
 import { organizationSkillService } from "../services/organization-skills.js";
 import { organizationService } from "../services/orgs.js";
 

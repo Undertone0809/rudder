@@ -1,7 +1,7 @@
 import { WebSocket } from "ws";
-import { buildObservedRunTrace, diagnoseRun, listOrganizations, listObservedRuns, loadObservedRunDetail } from "@rudder/run-intelligence-core";
-import type { RunExportRow } from "@rudder/run-intelligence-core";
-import type { LiveEvent } from "@rudder/shared";
+import { buildObservedRunTrace, diagnoseRun, listOrganizations, listObservedRuns, loadObservedRunDetail } from "@rudderhq/run-intelligence-core";
+import type { RunExportRow } from "@rudderhq/run-intelligence-core";
+import type { LiveEvent } from "@rudderhq/shared";
 import { RunIntelligenceCache } from "./cache.js";
 
 const BACKFILL_BATCH_SIZE = 400;

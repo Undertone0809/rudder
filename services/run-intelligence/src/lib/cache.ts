@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { buildObservedRunTrace, type ObservedRunDetail, type ObservedRunTrace, type RunDiagnosis, type RunExportRow } from "@rudder/run-intelligence-core";
+import { buildObservedRunTrace, type ObservedRunDetail, type ObservedRunTrace, type RunDiagnosis, type RunExportRow } from "@rudderhq/run-intelligence-core";
 
 export interface CachedRunSummary {
   row: RunExportRow;

@@ -1,4 +1,4 @@
-import type { MessengerThreadSummary } from "@rudder/shared";
+import type { MessengerThreadSummary } from "@rudderhq/shared";
 
 const STORAGE_KEY = "rudder.messengerLastPaths";
 

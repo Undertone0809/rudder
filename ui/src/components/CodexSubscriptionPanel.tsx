@@ -1,4 +1,4 @@
-import type { QuotaWindow } from "@rudder/shared";
+import type { QuotaWindow } from "@rudderhq/shared";
 import { cn, quotaSourceDisplayName } from "@/lib/utils";
 
 interface CodexSubscriptionPanelProps {

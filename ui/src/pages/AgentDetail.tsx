@@ -132,8 +132,8 @@ import {
   type LiveEvent,
   type OrganizationSkillCreateRequest,
   type WorkspaceOperation,
-} from "@rudder/shared";
-import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@rudder/agent-runtime-utils";
+} from "@rudderhq/shared";
+import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@rudderhq/agent-runtime-utils";
 import { agentRouteRef } from "../lib/utils";
 import { heartbeatRunEventText, heartbeatRunEventToTranscriptEntry, mergeTranscriptEntries } from "../lib/run-detail-events";
 import {

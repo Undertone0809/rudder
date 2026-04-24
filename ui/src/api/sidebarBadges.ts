@@ -1,4 +1,4 @@
-import type { SidebarBadges } from "@rudder/shared";
+import type { SidebarBadges } from "@rudderhq/shared";
 import { api } from "./client";
 
 export const sidebarBadgesApi = {

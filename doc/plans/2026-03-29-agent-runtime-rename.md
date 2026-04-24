@@ -27,8 +27,8 @@ This change uses `Agent Runtime` as the product term and `agentRuntime*` / `runt
   - server/UI/CLI registries move from adapter naming to runtime naming
   - heartbeat/auth/import/export/services switch to `agentRuntimeType` and `agentRuntimeConfig`
 - Rename workspace packages and imports:
-  - `@rudder/adapter-utils` -> `@rudder/agent-runtime-utils`
-  - `@rudder/adapter-*` packages -> `@rudder/agent-runtime-*`
+  - `@rudderhq/adapter-utils` -> `@rudderhq/agent-runtime-utils`
+  - `@rudderhq/adapter-*` packages -> `@rudderhq/agent-runtime-*`
   - update package manifests, import paths, build config references, and changelog headers where needed
 - Rename product/UI terminology:
   - section/title labels from `Adapter` to `Agent Runtime`

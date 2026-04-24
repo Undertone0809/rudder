@@ -1,4 +1,4 @@
-import type { InstanceLocale } from "@rudder/shared";
+import type { InstanceLocale } from "@rudderhq/shared";
 
 const zhExactPhrases: Record<string, string> = {
   "About": "关于",

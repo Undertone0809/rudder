@@ -1,4 +1,4 @@
-import type { OrganizationSecret, SecretProviderDescriptor, SecretProvider } from "@rudder/shared";
+import type { OrganizationSecret, SecretProviderDescriptor, SecretProvider } from "@rudderhq/shared";
 import { api } from "./client";
 
 export const secretsApi = {

@@ -7,7 +7,7 @@ import {
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { HelpCircle, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "../lib/utils";
-import { AGENT_ROLE_LABELS } from "@rudder/shared";
+import { AGENT_ROLE_LABELS } from "@rudderhq/shared";
 
 /* ---- Help text for (?) tooltips ---- */
 export const help: Record<string, string> = {

@@ -1,4 +1,4 @@
-# @rudder/plugin-kitchen-sink-example
+# @rudderhq/plugin-kitchen-sink-example
 
 Kitchen Sink is the first-party reference plugin that demonstrates nearly the full currently implemented Rudder plugin surface in one package.
 
@@ -20,7 +20,7 @@ This plugin is for local development, contributor onboarding, and runtime regres
 ## Install
 
 ```sh
-pnpm --filter @rudder/plugin-kitchen-sink-example build
+pnpm --filter @rudderhq/plugin-kitchen-sink-example build
 pnpm rudder plugin install ./packages/plugins/examples/plugin-kitchen-sink-example
 ```
 

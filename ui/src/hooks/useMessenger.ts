@@ -8,7 +8,7 @@ import type {
   MessengerThreadDetail,
   MessengerThreadKind,
   MessengerThreadSummary,
-} from "@rudder/shared";
+} from "@rudderhq/shared";
 import { authApi } from "@/api/auth";
 import { messengerApi } from "@/api/messenger";
 import { useOrganization } from "@/context/OrganizationContext";

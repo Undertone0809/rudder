@@ -11,12 +11,12 @@ const tscCliPath = path.join(rootDir, "node_modules", "typescript", "bin", "tsc"
 
 const buildTargets = [
   {
-    name: "@rudder/shared",
+    name: "@rudderhq/shared",
     output: path.join(rootDir, "packages/shared/dist/index.js"),
     tsconfig: path.join(rootDir, "packages/shared/tsconfig.json"),
   },
   {
-    name: "@rudder/plugin-sdk",
+    name: "@rudderhq/plugin-sdk",
     output: path.join(rootDir, "packages/plugins/sdk/dist/index.js"),
     tsconfig: path.join(rootDir, "packages/plugins/sdk/tsconfig.json"),
   },

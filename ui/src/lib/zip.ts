@@ -1,4 +1,4 @@
-import type { OrganizationPortabilityFileEntry } from "@rudder/shared";
+import type { OrganizationPortabilityFileEntry } from "@rudderhq/shared";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
