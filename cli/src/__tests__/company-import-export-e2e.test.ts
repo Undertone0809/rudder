@@ -483,7 +483,7 @@ describe("rudder org import/export e2e", () => {
       apiBase,
       `/api/orgs/${importedNew.organization.id}/projects`,
     );
-    const importedIssues = await api<Array<{ id: string; title: string; identifier: string }>>(
+    const importedIssues = await api<Array<{ id: string; title: string; identifier: string; description: string | null; parentId: string | null; assigneeAgentId: string | null; projectId: string | null; status: string }>>(
       apiBase,
       `/api/orgs/${importedNew.organization.id}/issues`,
     );
@@ -491,6 +491,19 @@ describe("rudder org import/export e2e", () => {
     expect(importedAgents.map((agent) => agent.name)).toContain(sourceAgent.name);
     expect(importedProjects.map((project) => project.name)).toContain(sourceProject.name);
     expect(importedIssues.map((issue) => issue.title)).toContain(sourceIssue.title);
+
+    const importedIssue = importedIssues.find((issue) => issue.title === sourceIssue.title);
+    expect(importedIssue).toBeDefined();
+    expect(importedIssue?.description).toBe(largeIssueDescription);
+
+    const importedSubIssue = importedIssues.find((issue) => issue.title === sourceSubIssue.title);
+    expect(importedSubIssue).toBeDefined();
+    expect(importedSubIssue?.parentId).toBe(importedIssue?.id);
+
+    const importedAgent = importedAgents.find((agent) => agent.name === sourceAgent.name);
+    expect(importedIssue?.assigneeAgentId).toBe(importedAgent?.id);
+    expect(importedIssue?.projectId).toBe(importedProjects.find((project) => project.name === sourceProject.name)?.id);
+    expect(importedIssue?.status).toBe(sourceIssue.status);
 
     const previewExisting = await runCliJson<{
       errors: string[];
