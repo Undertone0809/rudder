@@ -33,6 +33,7 @@ pnpm desktop:build
 pnpm desktop:dist
 pnpm --filter @rudder/desktop smoke
 node desktop/scripts/smoke.mjs --mode=packaged
+npx @rudder/cli@latest install
 ```
 
 Recommended defaults:
@@ -41,6 +42,7 @@ Recommended defaults:
 - `pnpm dev:watch` starts the watched local `dev` runtime first, then opens the development Desktop shell against that same shared instance
 - `pnpm desktop:verify` is the default contributor validation flow for Desktop work: dev-shell smoke, packaged build, then packaged-app smoke
 - `pnpm prod` builds the packaged Desktop installer for the current platform, verifies the packaged app boots successfully, and then opens it so you can install the local production Desktop app
+- `npx @rudder/cli@latest install` is the public install path: it installs the matching persistent CLI and downloads/opens the matching Desktop installer from the GitHub Release
 
 Low-frequency escape hatches:
 
@@ -193,4 +195,13 @@ Desktop packaging uses Electron + electron-builder and currently produces:
 - Windows: `NSIS .exe`
 - Linux: `.AppImage`
 
-The GitHub Actions desktop workflow builds artifacts on all three operating systems. Tag builds under `desktop/v*` publish a GitHub prerelease with those artifacts attached.
+The GitHub Actions desktop workflow builds artifacts on all three operating systems. Stable tags under `v*` publish Desktop artifacts to the matching stable GitHub Release:
+
+- `Rudder-X.Y.Z-macos-x64.dmg`
+- `Rudder-X.Y.Z-macos-arm64.dmg`
+- `Rudder-X.Y.Z-windows-x64.exe`
+- `Rudder-X.Y.Z-linux-x64.AppImage`
+- `SHASUMS256.txt`
+
+Desktop artifacts are not published to npm. The CLI `install` command resolves
+the appropriate GitHub Release asset for the current platform.

@@ -236,8 +236,9 @@ if [ "$channel" = "canary" ]; then
   set_public_package_version "$TARGET_PUBLISH_VERSION"
   release_info "  ✓ Versioned public workspace to $TARGET_PUBLISH_VERSION"
 else
-  release_info "==> Step 3/7: Using committed workspace semver..."
-  release_info "  ✓ Stable publish will use committed version $TARGET_PUBLISH_VERSION"
+  release_info "==> Step 3/7: Preparing stable publish manifests..."
+  set_public_package_version "$TARGET_PUBLISH_VERSION"
+  release_info "  ✓ Stable publish will use committed version $TARGET_PUBLISH_VERSION with exact internal dependency pins"
 fi
 
 release_info ""
@@ -258,7 +259,7 @@ if [ "$dry_run" = true ]; then
     [ -z "$pkg_dir" ] && continue
     release_info "  --- $pkg_dir ---"
     cd "$REPO_ROOT/$pkg_dir"
-    pnpm publish --dry-run --no-git-checks --tag "$DIST_TAG" 2>&1 | tail -3
+    npm publish --dry-run --tag "$DIST_TAG" --access public 2>&1 | tail -3
   done <<< "$VERSIONED_PACKAGE_INFO"
   release_info "  [dry-run] Would create git tag $tag_name on $CURRENT_SHA"
 else
@@ -267,7 +268,11 @@ else
     [ -z "$pkg_dir" ] && continue
     release_info "  Publishing $pkg_name@$pkg_version"
     cd "$REPO_ROOT/$pkg_dir"
-    pnpm publish --no-git-checks --tag "$DIST_TAG" --access public
+    npm_publish_args=(publish --tag "$DIST_TAG" --access public)
+    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+      npm_publish_args+=(--provenance)
+    fi
+    npm "${npm_publish_args[@]}"
   done <<< "$VERSIONED_PACKAGE_INFO"
   release_info "  ✓ Published all packages under dist-tag $DIST_TAG"
 fi

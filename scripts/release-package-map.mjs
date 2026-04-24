@@ -116,7 +116,7 @@ function setVersion(version) {
     writeFileSync(pkg.pkgPath, `${JSON.stringify(nextPkg, null, 2)}\n`);
   }
 
-  const cliEntryPath = join(repoRoot, "cli/src/index.ts");
+  const cliEntryPath = join(repoRoot, "cli/src/program.ts");
   const cliEntry = readFileSync(cliEntryPath, "utf8");
   const nextCliEntry = cliEntry.replace(
     /\.version\("([^"]+)"\)/,
@@ -124,7 +124,7 @@ function setVersion(version) {
   );
 
   if (cliEntry === nextCliEntry) {
-    throw new Error("failed to rewrite CLI version string in cli/src/index.ts");
+    throw new Error("failed to rewrite CLI version string in cli/src/program.ts");
   }
 
   writeFileSync(cliEntryPath, nextCliEntry);

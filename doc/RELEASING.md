@@ -30,14 +30,15 @@ Important constraints:
 
 ## Release Surfaces
 
-Every stable release has four separate surfaces:
+Every stable release has five separate surfaces:
 
 1. **Verification** — the exact git SHA passes typecheck, tests, and build
-2. **npm** — `rudder` and public workspace packages are published
+2. **npm** — `@rudder/cli` and public workspace packages are published
 3. **GitHub** — the stable release gets a git tag and GitHub Release
-4. **Website / announcements** — the stable changelog is published externally and announced
+4. **Desktop** — macOS, Windows, and Linux installers are attached to the stable GitHub Release
+5. **Website / announcements** — the stable changelog is published externally and announced
 
-A stable release is done only when all four surfaces are handled.
+A stable release is done only when all five surfaces are handled.
 
 Canaries only cover the first two surfaces plus an internal traceability tag.
 
@@ -102,6 +103,17 @@ The workflow:
 - publishes the committed `X.Y.Z` under npm dist-tag `latest`
 - creates git tag `vX.Y.Z`
 - creates or updates the GitHub Release from `releases/vX.Y.Z.md`
+- starts the desktop release workflow for `vX.Y.Z`
+
+Users install stable Rudder with:
+
+```bash
+npx @rudder/cli@latest install
+```
+
+By default this installs the matching persistent `rudder` CLI globally and
+downloads/opens the matching Rudder Desktop installer from the GitHub Release.
+Use `--no-desktop` or `--no-cli` only for targeted maintainer checks.
 
 ## Local Commands
 
@@ -125,6 +137,7 @@ This is mainly for emergency/manual use. The normal path is the GitHub workflow.
 ./scripts/release.sh stable
 git push public-gh refs/tags/v0.1.0
 PUBLISH_REMOTE=public-gh ./scripts/create-github-release.sh 0.1.0
+gh workflow run desktop-release.yml --ref v0.1.0 -f release_tag=v0.1.0
 ```
 
 ## Stable Changelog Workflow
@@ -178,7 +191,8 @@ gh workflow run release-smoke.yml -f rudder_version=latest
 
 Minimum checks:
 
-- `npx @rudder/cli@canary onboard` installs
+- `npx @rudder/cli@latest install --no-open` installs the persistent CLI and downloads the desktop installer
+- `npx @rudder/cli@canary onboard` installs the canary CLI path
 - onboarding completes without crashes
 - authenticated login works with the smoke credentials
 - the browser lands in onboarding on a fresh instance

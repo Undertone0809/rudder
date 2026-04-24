@@ -74,20 +74,16 @@ Rudder coordinates agents. It does not force one runtime, one model, one prompt 
 
 ### Try Rudder
 
-Method 1: Download the [app version](https://github.com/Undertone0809/rudder/releases).
-
-Method 2 Cli:
-
-The fastest path is the CLI quickstart:
+The fastest path installs Rudder Desktop and the matching CLI:
 
 ```bash
-npx rudder onboard --yes
+npx @rudder/cli@latest install
 ```
 
 Start it again later with:
 
 ```bash
-npx rudder run
+rudder run
 ```
 
 ### Develop Rudder

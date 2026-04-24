@@ -10,6 +10,13 @@ const packagingNodeModulesDir = path.join(desktopRoot, "node_modules");
 const hiddenPackagingNodeModulesDir = path.join(desktopRoot, ".node_modules.packaging-hidden");
 const requireFromScript = createRequire(import.meta.url);
 const electronBuilderCliPath = requireFromScript.resolve("electron-builder/cli.js");
+const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
+
+function archFlagFor(arch) {
+  if (arch === "arm64") return "--arm64";
+  if (arch === "x64") return "--x64";
+  return null;
+}
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
@@ -66,7 +73,7 @@ async function main() {
 
   try {
     if (process.platform === "darwin") {
-      const archFlag = process.arch === "arm64" ? "--arm64" : process.arch === "x64" ? "--x64" : null;
+      const archFlag = archFlagFor(targetArch);
       const args = [electronBuilderCliPath, "--mac", "dir"];
       if (archFlag) args.push(archFlag);
 
@@ -75,7 +82,12 @@ async function main() {
       return;
     }
 
-    await run(process.execPath, [electronBuilderCliPath]);
+    const args = [electronBuilderCliPath];
+    if (process.platform === "win32") args.push("--win");
+    if (process.platform === "linux") args.push("--linux");
+    const archFlag = archFlagFor(targetArch);
+    if (archFlag) args.push(archFlag);
+    await run(process.execPath, args);
   } finally {
     await restorePackagingNodeModules(nodeModulesHidden);
   }

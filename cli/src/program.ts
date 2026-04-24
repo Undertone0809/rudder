@@ -3,6 +3,7 @@ import { onboard } from "./commands/onboard.js";
 import { doctor } from "./commands/doctor.js";
 import { envCommand } from "./commands/env.js";
 import { configure } from "./commands/configure.js";
+import { installCommand } from "./commands/install.js";
 import { addAllowedHostname } from "./commands/allowed-hostname.js";
 import { heartbeatRun } from "./commands/heartbeat-run.js";
 import { runCommand } from "./commands/run.js";
@@ -49,6 +50,18 @@ export function createProgram(): Command {
     });
     loadRudderEnvFile(options.config);
   });
+
+  program
+    .command("install")
+    .description("Install Rudder Desktop and the matching persistent CLI")
+    .option("--no-cli", "Skip persistent CLI installation")
+    .option("--no-desktop", "Skip desktop app installation")
+    .option("--version <version>", "Rudder version to install (default: current CLI version)")
+    .option("--repo <owner/repo>", "GitHub repository that hosts desktop releases")
+    .option("--output-dir <path>", "Directory for the downloaded desktop installer")
+    .option("--no-open", "Download the desktop installer without opening it")
+    .option("--dry-run", "Print the install actions without changing the machine", false)
+    .action(installCommand);
 
   program
     .command("onboard")

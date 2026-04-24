@@ -16,7 +16,16 @@ pnpm rudder --help
 First-time install from npm:
 
 ```sh
-npx @rudder/cli onboard --yes
+npx @rudder/cli@latest install
+```
+
+This installs the matching persistent `rudder` CLI globally and downloads/opens
+the matching Rudder Desktop installer from the GitHub Release.
+
+CLI-only first-run setup remains available:
+
+```sh
+npx @rudder/cli@latest onboard --yes
 ```
 
 If you installed the packaged Desktop app, it now also attempts to export a `rudder`
@@ -26,7 +35,7 @@ wrapper; use `pnpm rudder ...` while working from the repo. If no writable PATH 
 is available, fall back to:
 
 ```sh
-npx @rudder/cli onboard --yes
+npx @rudder/cli@latest onboard --yes
 ```
 
 First-time local bootstrap + run:

@@ -4,6 +4,7 @@
 scripts/release*.sh @cryppadotta @devinfoley
 scripts/release-*.mjs @cryppadotta @devinfoley
 scripts/create-github-release.sh @cryppadotta @devinfoley
+scripts/collect-desktop-release-assets.mjs @cryppadotta @devinfoley
 scripts/rollback-latest.sh @cryppadotta @devinfoley
 doc/RELEASING.md @cryppadotta @devinfoley
 doc/PUBLISHING.md @cryppadotta @devinfoley

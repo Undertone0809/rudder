@@ -9,6 +9,15 @@ import {
   isTransientBinaryPath,
   resolvePersistentCliInstallSpec,
 } from "../install.js";
+import {
+  parseChecksumFile,
+  resolveCliInstallSpec,
+  resolveCurrentCliVersion,
+  resolveDesktopAssetTarget,
+  resolveDesktopReleaseTag,
+  selectChecksumAsset,
+  selectDesktopAsset,
+} from "../commands/install.js";
 
 describe("persistent CLI install helpers", () => {
   it("detects npx execution from transient _npx entry paths", () => {
@@ -137,5 +146,85 @@ describe("persistent CLI install helpers", () => {
         stdio: ["inherit", "pipe", "pipe"],
       },
     );
+  });
+});
+
+describe("desktop install command helpers", () => {
+  it("resolves the current CLI version from npm execution metadata", () => {
+    expect(
+      resolveCurrentCliVersion({
+        npm_package_name: "@rudder/cli",
+        npm_package_version: "0.3.1",
+      }),
+    ).toBe("0.3.1");
+  });
+
+  it("pins the persistent CLI install spec to the resolved version", () => {
+    expect(resolveCliInstallSpec("0.3.1", {})).toBe("@rudder/cli@0.3.1");
+  });
+
+  it("maps stable versions to stable GitHub release tags", () => {
+    expect(resolveDesktopReleaseTag("0.3.1")).toBe("v0.3.1");
+  });
+
+  it("rejects prerelease desktop installs until matching desktop releases exist", () => {
+    expect(() => resolveDesktopReleaseTag("0.3.1-canary.2")).toThrow(
+      "Desktop installer lookup requires a stable version",
+    );
+  });
+
+  it("resolves platform installer targets", () => {
+    expect(resolveDesktopAssetTarget("darwin", "arm64")).toEqual({
+      platform: "macos",
+      arch: "arm64",
+      extension: ".dmg",
+    });
+    expect(resolveDesktopAssetTarget("win32", "x64")).toEqual({
+      platform: "windows",
+      arch: "x64",
+      extension: ".exe",
+    });
+    expect(resolveDesktopAssetTarget("linux", "x64")).toEqual({
+      platform: "linux",
+      arch: "x64",
+      extension: ".AppImage",
+    });
+  });
+
+  it("selects the best matching desktop asset by platform and architecture", () => {
+    const assets = [
+      { name: "Rudder-0.3.1-macos-x64.dmg", browser_download_url: "https://example.test/macos-x64" },
+      { name: "Rudder-0.3.1-macos-arm64.dmg", browser_download_url: "https://example.test/macos-arm64" },
+      { name: "Rudder-0.3.1-windows-x64.exe", browser_download_url: "https://example.test/windows" },
+    ];
+
+    expect(selectDesktopAsset(assets, { platform: "macos", arch: "arm64", extension: ".dmg" })?.name).toBe(
+      "Rudder-0.3.1-macos-arm64.dmg",
+    );
+  });
+
+  it("supports legacy macOS DMG names that omit the platform", () => {
+    const assets = [
+      { name: "Rudder-0.3.1-arm64.dmg", browser_download_url: "https://example.test/macos-arm64" },
+      { name: "Rudder-0.3.1-x64.dmg", browser_download_url: "https://example.test/macos-x64" },
+    ];
+
+    expect(selectDesktopAsset(assets, { platform: "macos", arch: "x64", extension: ".dmg" })?.name).toBe(
+      "Rudder-0.3.1-x64.dmg",
+    );
+  });
+
+  it("selects checksum assets and parses checksum files", () => {
+    const assets = [
+      { name: "Rudder-0.3.1-linux-x64.AppImage", browser_download_url: "https://example.test/linux" },
+      { name: "SHASUMS256.txt", browser_download_url: "https://example.test/checksums" },
+    ];
+
+    expect(selectChecksumAsset(assets)?.name).toBe("SHASUMS256.txt");
+    expect(
+      parseChecksumFile(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  Rudder-0.3.1-linux-x64.AppImage\n",
+      ).get("Rudder-0.3.1-linux-x64.AppImage"),
+    ).toBe("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   });
 });

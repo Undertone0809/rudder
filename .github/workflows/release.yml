@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Commit SHA, branch, or tag to promote as stable"
+        required: true
+        default: "main"
+      dry_run:
+        description: "Preview stable publish without publishing"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.ref }}-${{ inputs.source_ref || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: Publish npm canary
+    if: github.event_name == 'push' && github.repository == 'Undertone0809/rudder'
+    runs-on: ubuntu-latest
+    environment: npm-canary
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          npm install --global npm@latest
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B main "$GITHUB_SHA"
+
+      - name: Publish canary
+        id: publish
+        run: |
+          version="$(./scripts/release.sh canary --print-version)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          ./scripts/release.sh canary
+          git push origin "refs/tags/canary/v${version}"
+
+  stable-dry-run:
+    name: Preview stable release
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          npm install --global npm@latest
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Preview stable publish
+        run: ./scripts/release.sh stable --dry-run
+
+  stable:
+    name: Publish stable release
+    if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'
+    runs-on: ubuntu-latest
+    environment: npm-stable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          npm install --global npm@latest
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Publish stable
+        id: publish
+        run: |
+          version="$(./scripts/release.sh stable --print-version)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          ./scripts/release.sh stable
+          git push origin "refs/tags/v${version}"
+          PUBLISH_REMOTE=origin ./scripts/create-github-release.sh "${version}"
+
+      - name: Start desktop release build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run desktop-release.yml --ref "v${{ steps.publish.outputs.version }}" -f release_tag="v${{ steps.publish.outputs.version }}"

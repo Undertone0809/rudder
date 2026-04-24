@@ -10,6 +10,7 @@ This document covers the GitHub and npm setup required for the current Rudder re
 Repo-side files that depend on this setup:
 
 - `.github/workflows/release.yml`
+- `.github/workflows/desktop-release.yml`
 - `.github/CODEOWNERS`
 
 Note:
@@ -25,6 +26,7 @@ Before touching GitHub or npm settings, merge the release automation code so the
 Required files:
 
 - `.github/workflows/release.yml`
+- `.github/workflows/desktop-release.yml`
 - `.github/CODEOWNERS`
 
 ## 2. Configure npm Trusted Publishing
@@ -74,6 +76,7 @@ After the workflows are live:
 2. confirm npm publish succeeds without any `NPM_TOKEN`
 3. run a stable dry-run
 4. run one real stable publish
+5. confirm the desktop release workflow attaches installers to the stable GitHub Release
 
 Only after that should you remove old token-based access.
 
@@ -172,10 +175,12 @@ If `@cryppadotta` is not the right reviewer identity in the public repo, change 
 These files should always trigger code owner review:
 
 - `.github/workflows/release.yml`
+- `.github/workflows/desktop-release.yml`
 - `scripts/release.sh`
 - `scripts/release-lib.sh`
 - `scripts/release-package-map.mjs`
 - `scripts/create-github-release.sh`
+- `scripts/collect-desktop-release-assets.mjs`
 - `scripts/rollback-latest.sh`
 - `doc/RELEASING.md`
 - `doc/PUBLISHING.md`
@@ -229,6 +234,14 @@ After at least one good canary exists:
 8. confirm npm `latest` points to the new stable version
 9. confirm git tag `v0.1.0` exists
 10. confirm the GitHub Release was created
+11. confirm `.github/workflows/desktop-release.yml` runs for `v0.1.0`
+12. confirm the GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets
+
+Install-path check:
+
+```bash
+npx @rudder/cli@latest install --no-open
+```
 
 Implementation note:
 

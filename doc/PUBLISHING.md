@@ -12,6 +12,7 @@ Use these scripts:
 - [`scripts/create-github-release.sh`](../scripts/create-github-release.sh) after pushing a stable tag
 - [`scripts/rollback-latest.sh`](../scripts/rollback-latest.sh) to repoint `latest`
 - [`scripts/build-npm.sh`](../scripts/build-npm.sh) for the CLI packaging build
+- [`scripts/collect-desktop-release-assets.mjs`](../scripts/collect-desktop-release-assets.mjs) to normalize desktop installer asset names for GitHub Releases
 
 Rudder no longer uses release branches or Changesets for publishing.
 
@@ -108,6 +109,17 @@ Stable publishes do not create a release commit. Instead:
 - package versions are read from the chosen source commit
 - packages are published from the chosen source commit
 - git tag `vX.Y.Z` points at that original commit
+- desktop installers are attached to the matching GitHub Release by
+  `.github/workflows/desktop-release.yml`
+
+The primary user install path is:
+
+```bash
+npx @rudder/cli@latest install
+```
+
+The `install` command uses npm for the persistent CLI and GitHub Release assets
+for the desktop app. Desktop binaries are intentionally not published to npm.
 
 ## Trusted publishing
 
@@ -118,6 +130,8 @@ That means:
 - no long-lived `NPM_TOKEN` in repository secrets
 - GitHub Actions obtains short-lived publish credentials
 - trusted publisher rules are configured per workflow file
+- publish jobs use npm CLI for the final `npm publish` step while pnpm remains
+  the workspace build and install tool
 
 See [doc/RELEASE-AUTOMATION-SETUP.md](RELEASE-AUTOMATION-SETUP.md) for the GitHub/npm setup steps.
 
