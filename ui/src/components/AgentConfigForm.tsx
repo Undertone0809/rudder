@@ -662,8 +662,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             </>
           )}
 
-          {isLocal && <uiAdapter.ConfigFields {...adapterFieldProps} />}
-
           {/* Prompt template (create mode only — edit mode shows this in Identity) */}
           {isLocal && isCreate && (
             <>
@@ -710,6 +708,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               onToggle={() => setConfigurationAdvancedOpen(!configurationAdvancedOpen)}
             >
               <div className="space-y-3">
+                <uiAdapter.ConfigFields {...adapterFieldProps} />
+
                 <Field label="Command" hint={help.localCommand}>
                   <DraftInput
                     value={
