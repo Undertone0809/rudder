@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import { createDb, issues } from "../../packages/db/src/index.ts";
+import { E2E_DATABASE_URL } from "./support/e2e-env";
 
-const E2E_DATABASE_URL = process.env.RUDDER_E2E_DATABASE_URL?.trim() || "postgres://rudder:rudder@127.0.0.1:54339/rudder";
 const e2eDb = createDb(E2E_DATABASE_URL);
 
 function formatInput(value: Date): string {

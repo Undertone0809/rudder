@@ -1,10 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
-
-const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
-const E2E_HOME = path.resolve(THIS_DIR, ".tmp/rudder-e2e-home");
-const E2E_CODEX_STUB = path.join(E2E_HOME, "bin", "codex");
+import { E2E_CODEX_STUB } from "./support/e2e-env";
 
 async function createStreamingOrg(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {

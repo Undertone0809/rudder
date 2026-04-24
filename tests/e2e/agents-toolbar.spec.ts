@@ -1,10 +1,9 @@
 import { expect, test } from "@playwright/test";
-
-const BASE_URL = process.env.RUDDER_E2E_BASE_URL ?? "http://127.0.0.1:3190";
+import { E2E_BASE_URL } from "./support/e2e-env";
 
 test.describe("Agents workspace entry", () => {
   test("opens the default agent overview from the rail and keeps only the team navigator in the context column", async ({ page }) => {
-    const orgRes = await page.request.post(`${BASE_URL}/api/orgs`, {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {
         name: `Agents-Toolbar-${Date.now()}`,
       },
@@ -12,7 +11,7 @@ test.describe("Agents workspace entry", () => {
     expect(orgRes.ok()).toBe(true);
     const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
 
-    const engineerRes = await page.request.post(`${BASE_URL}/api/orgs/${organization.id}/agents`, {
+    const engineerRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
       data: {
         name: "Toolbar Agent",
         role: "engineer",
@@ -26,7 +25,7 @@ test.describe("Agents workspace entry", () => {
     expect(engineerRes.ok()).toBe(true);
     const engineer = (await engineerRes.json()) as { id: string };
 
-    const ceoRes = await page.request.post(`${BASE_URL}/api/orgs/${organization.id}/agents`, {
+    const ceoRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
       data: {
         name: "Nia",
         role: "ceo",
@@ -39,12 +38,12 @@ test.describe("Agents workspace entry", () => {
     expect(ceoRes.ok()).toBe(true);
     const ceo = (await ceoRes.json()) as { id: string };
 
-    await page.goto(BASE_URL);
+    await page.goto(E2E_BASE_URL);
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto(`${BASE_URL}/${organization.issuePrefix}/dashboard`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/dashboard`);
     await page.getByTestId("primary-rail").getByRole("link", { name: "Agents" }).click();
 
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/agents/[^/]+/dashboard$`));
@@ -72,11 +71,11 @@ test.describe("Agents workspace entry", () => {
     await expect(promptTemplateHelper).toHaveClass(/text-muted-foreground/);
     await expect(promptTemplateHelper).not.toHaveClass(/text-amber-100/);
 
-    await page.goto(`${BASE_URL}/${organization.issuePrefix}/agents/${ceo.id}/configuration`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${ceo.id}/configuration`);
     await expect(page.getByRole("heading", { name: "Nia", exact: true })).toBeVisible();
     await expect(page.getByTestId("workspace-main-header").getByText("Agents", { exact: true })).toHaveCount(0);
 
-    await page.goto(`${BASE_URL}/${organization.issuePrefix}/agents/${engineer.id}/configuration`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${engineer.id}/configuration`);
     await expect(page.getByRole("heading", { name: "Toolbar Agent", exact: true })).toBeVisible();
   });
 });

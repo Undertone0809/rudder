@@ -185,11 +185,38 @@ When the current repo has worktree-local `.rudder/.env` and `.rudder/config.json
 the same `pnpm dev` entrypoint respects that isolated instance instead of forcing the shared `dev` instance.
 Use that path for a personal staging worktree sandbox.
 
+### Concurrent Codex / Worktree Development
+
+Multiple local Codex threads should not run Rudder from separate checkouts with the default shared `dev` profile.
+Without a worktree-local `.rudder/` config, every checkout uses `~/.rudder/instances/dev`, API port `3100`,
+and embedded PostgreSQL port `54329`.
+
+Before running `pnpm dev` in a second local checkout, initialize an isolated worktree instance:
+
+```sh
+pnpm rudder worktree init
+pnpm dev
+```
+
+This writes `.rudder/.env` and `.rudder/config.json` in that checkout. The dev runner, Desktop shell,
+and CLI use the isolated `RUDDER_HOME`, instance id, server port, and database port automatically.
+If the server has to bind a fallback port because the configured port is busy, the dev runner follows the
+runtime descriptor instead of polling only the requested port.
+
+For a standalone Vite UI process, `pnpm dev:ui` reads the same worktree-local Rudder config and proxies
+`/api` to the running runtime descriptor when one exists, otherwise to the configured server port.
+Use `RUDDER_UI_PROXY_TARGET=http://127.0.0.1:<port>` or `RUDDER_UI_PORT=<port>` only when you need
+an explicit override.
+
+Playwright E2E runs also isolate themselves under `CODEX_THREAD_ID` when Codex provides it. For manual
+parallel E2E runs, set `RUDDER_E2E_RUN_ID=<unique-name>` to get a distinct home directory and port pair.
+
 Useful variants:
 
 ```sh
 pnpm dev:reset   # wipe only dev profile data
 pnpm dev:watch   # Desktop shell + watched dev runtime
+pnpm dev:ui      # standalone Vite UI; worktree-aware API proxy
 pnpm rudder run  # persistent local prod_local instance
 ```
 

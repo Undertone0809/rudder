@@ -1,21 +1,24 @@
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { defineConfig } from "@playwright/test";
+import {
+  E2E_BASE_URL,
+  E2E_BIN_DIR,
+  E2E_CLAUDE_STUB,
+  E2E_CODEX_ERROR_STUB,
+  E2E_CODEX_STUB,
+  E2E_DB_PORT,
+  E2E_HOME,
+  E2E_INSTANCE_ID,
+  E2E_INSTANCE_ROOT,
+  E2E_PORT,
+} from "./support/e2e-env";
 
-const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.RUDDER_E2E_PORT ?? 3190);
-const BASE_URL = process.env.RUDDER_E2E_BASE_URL ?? `http://127.0.0.1:${PORT}`;
+const PORT = E2E_PORT;
+const BASE_URL = E2E_BASE_URL;
 const USE_EXISTING_SERVER = process.env.RUDDER_E2E_USE_EXISTING_SERVER === "1";
-const E2E_HOME = path.resolve(THIS_DIR, ".tmp/rudder-e2e-home");
-const E2E_INSTANCE_ID = "playwright";
-const E2E_INSTANCE_ROOT = path.join(E2E_HOME, "instances", E2E_INSTANCE_ID);
 const E2E_CONFIG = path.join(E2E_INSTANCE_ROOT, "config.json");
 const E2E_DATABASE_URL = process.env.RUDDER_E2E_DATABASE_URL?.trim() || null;
-const E2E_BIN_DIR = path.join(E2E_HOME, "bin");
-const E2E_CODEX_STUB = path.join(E2E_BIN_DIR, "codex");
-const E2E_CLAUDE_STUB = path.join(E2E_BIN_DIR, "claude");
-const E2E_CODEX_ERROR_STUB = path.join(E2E_BIN_DIR, "codex-error");
 
 const e2eConfigJson = JSON.stringify(
   {
@@ -27,7 +30,7 @@ const e2eConfigJson = JSON.stringify(
     database: {
       mode: "embedded-postgres",
       embeddedPostgresDataDir: path.join(E2E_INSTANCE_ROOT, "db"),
-      embeddedPostgresPort: 54339,
+      embeddedPostgresPort: E2E_DB_PORT,
       backup: {
         enabled: true,
         intervalMinutes: 60,
@@ -63,6 +66,11 @@ const SERVER_ENV_PREFIX = [
   E2E_DATABASE_URL ? `DATABASE_URL="${E2E_DATABASE_URL}"` : "",
   `RUDDER_HOME="${E2E_HOME}"`,
   `RUDDER_INSTANCE_ID="${E2E_INSTANCE_ID}"`,
+  `RUDDER_E2E_HOME="${E2E_HOME}"`,
+  `RUDDER_E2E_INSTANCE_ID="${E2E_INSTANCE_ID}"`,
+  `RUDDER_E2E_PORT="${PORT}"`,
+  `RUDDER_E2E_DB_PORT="${E2E_DB_PORT}"`,
+  `RUDDER_E2E_BASE_URL="${BASE_URL}"`,
   "RUDDER_UI_DEV_MIDDLEWARE=true",
 ]
   .filter(Boolean)

@@ -1,11 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
-const E2E_HOME = path.resolve(THIS_DIR, ".tmp/rudder-e2e-home");
-const E2E_INSTANCE_ID = "playwright";
+import { E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
 
 test.use({ serviceWorkers: "block" });
 
