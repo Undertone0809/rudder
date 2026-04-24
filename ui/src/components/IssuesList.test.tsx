@@ -133,7 +133,10 @@ const label = {
   updatedAt: new Date("2026-04-19T08:00:00.000Z"),
 };
 
-function renderIssuesList(onUpdateIssue: (id: string, data: Record<string, unknown>) => void) {
+function renderIssuesList(
+  onUpdateIssue: (id: string, data: Record<string, unknown>) => void,
+  options: { liveIssueIds?: Set<string> } = {},
+) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -153,6 +156,7 @@ function renderIssuesList(onUpdateIssue: (id: string, data: Record<string, unkno
           { id: "agent-1", name: "Alice", role: "engineer", title: null },
           { id: "agent-2", name: "Bob", role: "engineer", title: null },
         ]}
+          liveIssueIds={options.liveIssueIds}
           viewStateKey="test:issues"
           toolbarMode="hidden"
           onUpdateIssue={onUpdateIssue}
@@ -265,6 +269,28 @@ describe("IssuesList", () => {
     expect(openNewIssueMock).toHaveBeenCalledWith({
       status: "in_progress",
     });
+  });
+
+  it("marks live board cards with the Motion V1 hooks", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({ viewMode: "board" }),
+    );
+
+    const onUpdateIssue = vi.fn();
+    const container = renderIssuesList(onUpdateIssue, {
+      liveIssueIds: new Set(["issue-1"]),
+    });
+
+    const card = container.querySelector('[data-testid="kanban-card-RUD-1"]');
+    expect(card).toBeTruthy();
+    expect(card?.classList.contains("motion-kanban-card")).toBe(true);
+    expect(card?.getAttribute("data-live")).toBe("true");
+    expect(card?.querySelector(".motion-live-dot")).toBeTruthy();
+
+    const lane = container.querySelector('[data-testid="kanban-column-todo"]');
+    expect(lane?.classList.contains("motion-kanban-lane")).toBe(true);
+    expect(lane?.getAttribute("data-over")).toBe("false");
   });
 
   it("opens the new issue dialog from an empty board lane with scoped project and status defaults", () => {

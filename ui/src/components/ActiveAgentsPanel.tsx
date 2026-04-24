@@ -91,9 +91,9 @@ function AgentRunCard({
 }) {
   return (
     <div className={cn(
-      "flex h-[320px] flex-col overflow-hidden rounded-[var(--radius-lg)] border",
+      "motion-list-enter flex h-[320px] flex-col overflow-hidden rounded-[var(--radius-lg)] border",
       isActive
-        ? "border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-proposal)_68%,transparent)] shadow-[var(--shadow-md)]"
+        ? "motion-live-surface border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-proposal)_68%,transparent)] shadow-[var(--shadow-md)]"
         : "surface-panel",
     )}>
       <div className="border-b panel-divider px-3 py-3">
@@ -101,8 +101,7 @@ function AgentRunCard({
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               {isActive ? (
-                <span className="relative flex h-2.5 w-2.5 shrink-0">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[color:var(--accent-base)] opacity-70" />
+                <span className="motion-live-dot relative flex h-2.5 w-2.5 shrink-0 text-[color:var(--accent-base)]">
                   <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[color:var(--accent-strong)]" />
                 </span>
               ) : (

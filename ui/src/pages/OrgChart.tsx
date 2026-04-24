@@ -5,7 +5,7 @@ import { agentsApi, type OrgNode } from "../api/agents";
 import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
-import { agentUrl } from "../lib/utils";
+import { agentUrl, cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -137,6 +137,10 @@ const statusDotColor: Record<string, string> = {
 };
 const defaultDotColor = "#a3a3a3";
 
+function isLiveOrgNode(status: string): boolean {
+  return status === "running";
+}
+
 // ── Main component ──────────────────────────────────────────────────────
 
 export function OrgChart() {
@@ -170,6 +174,10 @@ export function OrgChart() {
   const layout = useMemo(() => layoutForest(orgTree ?? []), [orgTree]);
   const allNodes = useMemo(() => flattenLayout(layout), [layout]);
   const edges = useMemo(() => collectEdges(layout), [layout]);
+  const liveNodeIds = useMemo(
+    () => new Set(allNodes.filter((node) => isLiveOrgNode(node.status)).map((node) => node.id)),
+    [allNodes],
+  );
 
   // Compute SVG bounds
   const bounds = useMemo(() => {
@@ -291,7 +299,8 @@ export function OrgChart() {
     </div>
     <div
       ref={containerRef}
-      className="w-full flex-1 min-h-0 overflow-hidden relative bg-muted/20 border border-border rounded-lg"
+      data-panning={dragging ? "true" : "false"}
+      className="motion-org-viewport w-full flex-1 min-h-0 overflow-hidden relative bg-muted/20 border border-border rounded-lg"
       style={{ cursor: dragging ? "grabbing" : "grab" }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -364,17 +373,20 @@ export function OrgChart() {
           height: "100%",
         }}
       >
-        <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+        <g className="motion-org-layer" transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
           {edges.map(({ parent, child }) => {
             const x1 = parent.x + CARD_W / 2;
             const y1 = parent.y + CARD_H;
             const x2 = child.x + CARD_W / 2;
             const y2 = child.y;
             const midY = (y1 + y2) / 2;
+            const edgeActive = liveNodeIds.has(child.id);
 
             return (
               <path
                 key={`${parent.id}-${child.id}`}
+                className="motion-org-edge"
+                data-active={edgeActive ? "true" : "false"}
                 d={`M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`}
                 fill="none"
                 stroke="var(--border)"
@@ -387,26 +399,29 @@ export function OrgChart() {
 
       {/* Card layer */}
       <div
-        className="absolute inset-0"
+        className="motion-org-layer absolute inset-0"
         style={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           transformOrigin: "0 0",
         }}
       >
-        {allNodes.map((node) => {
+        {allNodes.map((node, index) => {
           const agent = agentMap.get(node.id);
           const dotColor = statusDotColor[node.status] ?? defaultDotColor;
+          const nodeLive = liveNodeIds.has(node.id);
 
           return (
             <div
               key={node.id}
               data-org-card
-              className="absolute bg-card border border-border rounded-lg shadow-sm hover:shadow-md hover:border-foreground/20 transition-[box-shadow,border-color] duration-150 cursor-pointer select-none"
+              data-active={nodeLive ? "true" : "false"}
+              className="motion-org-card absolute bg-card border border-border rounded-lg shadow-sm hover:shadow-md hover:border-foreground/20 cursor-pointer select-none"
               style={{
                 left: node.x,
                 top: node.y,
                 width: CARD_W,
                 minHeight: CARD_H,
+                animationDelay: `${Math.min(index, 12) * 18}ms`,
               }}
               onClick={() => navigate(agent ? agentUrl(agent) : `/agents/${node.id}`)}
             >
@@ -417,8 +432,11 @@ export function OrgChart() {
                     <AgentIcon icon={agent?.icon} className="h-4.5 w-4.5 text-foreground/70" />
                   </div>
                   <span
-                    className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card"
-                    style={{ backgroundColor: dotColor }}
+                    className={cn(
+                      "absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card",
+                      nodeLive && "motion-live-dot",
+                    )}
+                    style={{ backgroundColor: dotColor, color: dotColor }}
                   />
                 </div>
                 {/* Name + role + adapter type */}

@@ -1,0 +1,228 @@
+:root {
+  --motion-duration-instant: 100ms;
+  --motion-duration-fast: 150ms;
+  --motion-duration-standard: 220ms;
+  --motion-duration-emphasis: 340ms;
+  --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-exit: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.motion-focus-ring {
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.motion-list-enter {
+  animation: rudder-list-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
+}
+
+.motion-state-flash {
+  animation: rudder-state-flash 820ms var(--motion-ease-enter) both;
+}
+
+.motion-live-surface {
+  position: relative;
+}
+
+.motion-live-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 32%, transparent);
+  opacity: 0.72;
+  animation: rudder-live-surface 2200ms var(--motion-ease-standard) infinite;
+}
+
+.motion-live-dot {
+  position: relative;
+}
+
+.motion-live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  background: color-mix(in oklab, currentColor 40%, transparent);
+  opacity: 0;
+  animation: rudder-live-dot 1800ms var(--motion-ease-standard) infinite;
+}
+
+.motion-kanban-lane {
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.motion-kanban-lane[data-over="true"] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 44%, transparent),
+    0 12px 28px -24px color-mix(in oklab, var(--accent-base) 52%, transparent);
+}
+
+.motion-kanban-card {
+  transition:
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.motion-kanban-card[data-dragging="true"] {
+  opacity: 0.34;
+}
+
+.motion-kanban-card[data-overlay="true"] {
+  transform: rotate(0.4deg) scale(1.015);
+}
+
+.motion-kanban-card[data-live="true"] {
+  animation: rudder-card-live-highlight 2600ms var(--motion-ease-standard) infinite;
+}
+
+.motion-kanban-card[data-just-dropped="true"] {
+  animation: rudder-card-drop-settle var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+}
+
+.motion-org-viewport[data-panning="false"] .motion-org-layer {
+  transition: transform var(--motion-duration-standard) var(--motion-ease-enter);
+}
+
+.motion-org-card {
+  animation: rudder-org-card-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.motion-org-card:hover {
+  transform: translateY(-1px);
+}
+
+.motion-org-card[data-active="true"] {
+  box-shadow:
+    0 12px 32px -26px color-mix(in oklab, var(--accent-base) 64%, transparent),
+    inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 36%, transparent);
+}
+
+.motion-org-edge[data-active="true"] {
+  stroke: color-mix(in oklab, var(--accent-base) 72%, var(--border));
+  stroke-dasharray: 7 9;
+  animation: rudder-org-edge-flow 1400ms linear infinite;
+}
+
+@keyframes rudder-list-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rudder-state-flash {
+  0% {
+    box-shadow: inset 2px 0 0 color-mix(in oklab, var(--accent-base) 78%, transparent);
+    background-color: color-mix(in oklab, var(--accent-soft) 58%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 transparent;
+    background-color: transparent;
+  }
+}
+
+@keyframes rudder-live-surface {
+  0%,
+  100% {
+    opacity: 0.38;
+  }
+  50% {
+    opacity: 0.84;
+  }
+}
+
+@keyframes rudder-live-dot {
+  0% {
+    opacity: 0.42;
+    transform: scale(0.8);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+}
+
+@keyframes rudder-card-live-highlight {
+  0%,
+  100% {
+    border-color: color-mix(in oklab, var(--border-soft) 88%, transparent);
+  }
+  50% {
+    border-color: color-mix(in oklab, var(--accent-base) 54%, var(--border-soft));
+  }
+}
+
+@keyframes rudder-card-drop-settle {
+  0% {
+    transform: translateY(-5px) scale(1.008);
+    box-shadow: 0 18px 38px -30px color-mix(in oklab, var(--accent-base) 58%, transparent);
+  }
+  70% {
+    transform: translateY(1px) scale(1);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    box-shadow: none;
+  }
+}
+
+@keyframes rudder-org-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes rudder-org-edge-flow {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-list-enter,
+  .motion-state-flash,
+  .motion-live-surface::before,
+  .motion-live-dot::after,
+  .motion-kanban-card[data-live="true"],
+  .motion-kanban-card[data-just-dropped="true"],
+  .motion-org-card,
+  .motion-org-edge[data-active="true"] {
+    animation: none !important;
+  }
+
+  .motion-focus-ring,
+  .motion-kanban-lane,
+  .motion-kanban-card,
+  .motion-org-layer,
+  .motion-org-card {
+    transition: none !important;
+  }
+
+  .motion-live-surface::before {
+    opacity: 0.48;
+  }
+}
