@@ -151,6 +151,9 @@ export function instanceSettingsService(db: Db) {
         ...normalizeNotificationSettings(current.notifications),
         ...patch,
       });
+      if (patch.desktopInboxNotifications === true && patch.desktopDockBadge == null) {
+        nextNotifications.desktopDockBadge = true;
+      }
       const now = new Date();
       const [updated] = await db
         .update(instanceSettings)

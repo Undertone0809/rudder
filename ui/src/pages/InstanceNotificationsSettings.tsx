@@ -41,8 +41,6 @@ export function InstanceNotificationsSettings() {
     () => readDesktopNotificationPermission(),
   );
   const [notificationPermissionPending, setNotificationPermissionPending] = useState(false);
-  const [desktopTestNotificationPending, setDesktopTestNotificationPending] = useState(false);
-  const [desktopBadgePreviewPending, setDesktopBadgePreviewPending] = useState(false);
 
   useEffect(() => {
     setBreadcrumbs([
@@ -70,7 +68,6 @@ export function InstanceNotificationsSettings() {
   const toggleMutation = useMutation({
     mutationFn: async (patch: {
       desktopInboxNotifications?: boolean;
-      desktopDockBadge?: boolean;
     }) => instanceSettingsApi.updateNotifications(patch),
     onSuccess: async (nextSettings) => {
       setActionError(null);
@@ -107,45 +104,6 @@ export function InstanceNotificationsSettings() {
     }
   }
 
-  async function handleSendDesktopTestNotification() {
-    const desktopShell = readDesktopShell();
-    if (!desktopShell) return;
-
-    setActionError(null);
-    setDesktopTestNotificationPending(true);
-    try {
-      await desktopShell.showNotification({
-        title: t("notifications.permission.access.testNotificationTitle"),
-        body: t("notifications.permission.access.testNotificationBody"),
-      });
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : t("notifications.permission.requestFailed"));
-    } finally {
-      setDesktopTestNotificationPending(false);
-    }
-  }
-
-  async function handlePreviewDesktopBadge() {
-    const desktopShell = readDesktopShell();
-    if (!desktopShell) return;
-
-    const restoreCount = desktopBootState?.diagnostics?.lastBadgeCount ?? 0;
-    setActionError(null);
-    setDesktopBadgePreviewPending(true);
-    try {
-      await desktopShell.setBadgeCount(3);
-      window.setTimeout(() => {
-        void desktopShell.setBadgeCount(restoreCount).catch((error) => {
-          console.warn("[rudder-ui] failed to restore desktop badge preview count", error);
-        });
-      }, 3000);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : t("notifications.updateFailed"));
-    } finally {
-      setDesktopBadgePreviewPending(false);
-    }
-  }
-
   if (notificationsQuery.isLoading) {
     return <SettingsPageSkeleton dense />;
   }
@@ -167,13 +125,6 @@ export function InstanceNotificationsSettings() {
   const notificationSupported = isDesktopShell
     ? (desktopBootState?.capabilities?.notifications ?? false)
     : notificationPermission !== "unsupported";
-  const badgeSupported = isDesktopShell
-    ? (desktopBootState?.capabilities?.badgeCount ?? false)
-    : false;
-  const lastBadgeCount = desktopBootState?.diagnostics?.lastBadgeCount;
-  const badgeSyncSucceeded = desktopBootState?.diagnostics?.badgeSyncSucceeded;
-  const lastNotificationTitle = desktopBootState?.diagnostics?.lastNotificationTitle;
-  const lastNotificationTriggeredAt = desktopBootState?.diagnostics?.lastNotificationTriggeredAt;
   const desktopAppName = isDevDesktopShell ? "Rudder-dev" : "Rudder";
   const desktopPermissionHelpKey = isDevDesktopShell
     ? "notifications.permission.access.desktopHelp"
@@ -184,16 +135,10 @@ export function InstanceNotificationsSettings() {
         notificationsSupport: notificationSupported
           ? t("notifications.support.available")
           : t("notifications.support.unavailable"),
-        badgeSupport: badgeSupported
-          ? t("notifications.support.available")
-          : t("notifications.support.unavailable"),
       })
     : t("notifications.permission.access.summary", {
         permission: formatDesktopNotificationPermission(notificationPermission),
         notificationsSupport: notificationSupported
-          ? t("notifications.support.available")
-          : t("notifications.support.unavailable"),
-        badgeSupport: badgeSupported
           ? t("notifications.support.available")
           : t("notifications.support.unavailable"),
       });
@@ -239,30 +184,10 @@ export function InstanceNotificationsSettings() {
                   {t("notifications.permission.access.denied.browser")}
                 </div>
               ) : null}
-              {isDevDesktopShell && lastNotificationTitle && lastNotificationTriggeredAt ? (
-                <div className="text-[12px]">
-                  {t("notifications.permission.access.lastTest", {
-                    title: lastNotificationTitle,
-                    timestamp: lastNotificationTriggeredAt,
-                  })}
-                </div>
-              ) : null}
             </div>
           )}
           action={(
             <div className="flex flex-col items-end gap-2">
-              {isDevDesktopShell ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handleSendDesktopTestNotification()}
-                  disabled={desktopTestNotificationPending || !notificationSupported}
-                >
-                  {desktopTestNotificationPending
-                    ? t("notifications.permission.access.testing")
-                    : t("notifications.permission.access.testNotification")}
-                </Button>
-              ) : null}
               {!isDesktopShell && notificationPermission === "default" ? (
                 <Button
                   variant="outline"
@@ -327,57 +252,6 @@ export function InstanceNotificationsSettings() {
                 })
               }
             />
-          )}
-        />
-
-        <SettingsRow
-          title={t("notifications.behavior.badge.title")}
-          description={(
-            <div className="space-y-1">
-              <div>{t("notifications.behavior.badge.description")}</div>
-              {!isDesktopShell ? (
-                <div className="text-[12px]">{t("notifications.behavior.badge.browserOnly")}</div>
-              ) : null}
-              {lastBadgeCount != null && typeof badgeSyncSucceeded === "boolean" ? (
-                <div className="text-[12px]">
-                  {t("notifications.behavior.badge.lastSync", {
-                    count: lastBadgeCount,
-                    result: badgeSyncSucceeded
-                      ? t("notifications.support.accepted")
-                      : t("notifications.support.rejected"),
-                  })}
-                </div>
-              ) : null}
-              {isDevDesktopShell ? (
-                <div className="text-[12px]">{t("notifications.behavior.badge.desktopDebug")}</div>
-              ) : null}
-            </div>
-          )}
-          action={(
-            <div className="flex flex-col items-end gap-2">
-              {isDevDesktopShell ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handlePreviewDesktopBadge()}
-                  disabled={desktopBadgePreviewPending || !badgeSupported}
-                >
-                  {desktopBadgePreviewPending
-                    ? t("notifications.behavior.badge.previewing")
-                    : t("notifications.behavior.badge.preview")}
-                </Button>
-              ) : null}
-              <SettingsToggle
-                checked={settings.desktopDockBadge}
-                aria-label={t("notifications.behavior.badge.toggle")}
-                disabled={toggleMutation.isPending}
-                onClick={() =>
-                  toggleMutation.mutate({
-                    desktopDockBadge: !settings.desktopDockBadge,
-                  })
-                }
-              />
-            </div>
           )}
         />
       </SettingsSection>

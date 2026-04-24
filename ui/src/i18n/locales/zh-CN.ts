@@ -273,13 +273,11 @@ export const zhCN: Messages = {
   "general.appearance.dark.label": "深色",
   "general.appearance.dark.description": "低眩光工作区",
   "notifications.title": "通知",
-  "notifications.description": "管理这个 Rudder 实例的未读 inbox 提醒和 app 图标角标行为。",
+  "notifications.description": "管理这个 Rudder 实例的未读 inbox 提醒。",
   "notifications.loadFailed": "加载通知设置失败。",
   "notifications.updateFailed": "更新通知设置失败。",
   "notifications.support.available": "可用",
   "notifications.support.unavailable": "不可用",
-  "notifications.support.accepted": "已接受",
-  "notifications.support.rejected": "被拒绝",
   "notifications.permission.title": "权限",
   "notifications.permission.description":
     "通知权限由操作系统或浏览器掌控，所以 Rudder 需要同时展示当前状态和修复入口。",
@@ -287,53 +285,35 @@ export const zhCN: Messages = {
   "notifications.permission.openSettingsFailed": "打开通知设置失败。",
   "notifications.permission.access.title": "通知访问权限",
   "notifications.permission.access.summary":
-    "权限：{{permission}}。提醒：{{notificationsSupport}}。角标：{{badgeSupport}}。",
+    "权限：{{permission}}。提醒：{{notificationsSupport}}。",
   "notifications.permission.access.summaryDesktop":
-    "权限：{{permission}}。原生提醒：{{notificationsSupport}}。Dock 角标链路：{{badgeSupport}}。",
+    "权限：{{permission}}。原生提醒：{{notificationsSupport}}。",
   "notifications.permission.access.systemManaged": "由系统管理",
   "notifications.permission.access.default":
-    "Rudder 还没有请求通知权限，因此未读 inbox 提醒和角标更新可能不会出现。",
+    "Rudder 还没有请求通知权限，因此未读 inbox 提醒可能不会出现。",
   "notifications.permission.access.denied.desktop":
-    "通知权限已被操作系统拦截。请在系统通知设置中重新允许 Rudder，才能恢复提醒和 macOS Dock 角标。",
+    "通知权限已被操作系统拦截。请在系统通知设置中重新允许 Rudder，才能恢复 macOS 提醒。",
   "notifications.permission.access.denied.browser":
     "通知权限已被浏览器拦截。请在浏览器站点通知设置中重新允许 Rudder，才能在 `pnpm dev` 里预览 inbox 提醒。",
   "notifications.permission.access.requesting": "请求中...",
   "notifications.permission.access.enable": "开启通知",
-  "notifications.permission.access.testing": "发送中...",
-  "notifications.permission.access.testNotification": "发送测试通知",
-  "notifications.permission.access.testNotificationTitle": "Rudder 通知已开启",
-  "notifications.permission.access.testNotificationBody":
-    "如果你没有看到这条提醒或 macOS 权限弹窗，请打开系统设置并允许 Rudder 的通知。",
   "notifications.permission.access.desktopHelp":
-    "这里能触发原生通知，但真正的允许/阻止状态由 macOS 管理。先发送一次测试通知；如果仍然没有任何反应，就去系统设置里检查 {{appName}}。",
+    "这里能触发原生通知，但真正的允许/阻止状态由 macOS 管理。如果没有弹出通知，请打开系统设置并检查 {{appName}}。",
   "notifications.permission.access.desktopHelpProd":
     "真正的允许/阻止状态由 macOS 管理。如果没有弹出通知，请打开系统设置并检查 {{appName}}。",
-  "notifications.permission.access.lastTest":
-    "最近一次请求的测试/原生通知: \"{{title}}\"，时间 {{timestamp}}。",
   "notifications.permission.access.openSettings": "打开通知设置",
   "notifications.environment.title": "当前环境",
   "notifications.environment.desktop": "当前运行在 Electron 桌面壳中。",
   "notifications.environment.browser": "当前运行在浏览器预览模式中。",
   "notifications.environment.desktopHelp":
-    "这里可以使用原生系统通知来提示未读 inbox 变化，并把角标同步到桌面 app 图标。",
+    "这里可以使用原生系统通知来提示未读 inbox 变化。",
   "notifications.environment.browserHelp":
-    "浏览器模式可以通过 Web Notifications API 预览未读 inbox 提醒，但没有 app 图标可承载角标。",
+    "浏览器模式可以通过 Web Notifications API 预览未读 inbox 提醒。",
   "notifications.behavior.title": "行为",
-  "notifications.behavior.description": "这些开关控制 Rudder 当前支持的两种 inbox 通知表面。",
+  "notifications.behavior.description": "选择 Rudder 是否提示未读 inbox 活动。",
   "notifications.behavior.inbox.title": "Inbox 活动提醒",
   "notifications.behavior.inbox.description": "当未读 inbox 数量增加时显示提醒。",
   "notifications.behavior.inbox.toggle": "切换 inbox 通知",
-  "notifications.behavior.badge.title": "App 图标角标",
-  "notifications.behavior.badge.description":
-    "在 app 图标上显示未读 inbox 数量。macOS 上这仍然依赖于系统授予的通知权限。",
-  "notifications.behavior.badge.browserOnly":
-    "浏览器模式下也会保存这个设置，但角标只会在桌面壳里显示。",
-  "notifications.behavior.badge.lastSync": "最近一次角标同步：{{count}}（{{result}}）。",
-  "notifications.behavior.badge.desktopDebug":
-    "调试桌面壳时，可以用预览操作强制打一个临时 Dock 角标。",
-  "notifications.behavior.badge.preview": "预览角标",
-  "notifications.behavior.badge.previewing": "预览中...",
-  "notifications.behavior.badge.toggle": "切换 app 图标角标",
   "langfuse.title": "Langfuse",
   "langfuse.description": "为这个本地 Rudder 实例配置启动期 Langfuse tracing。修改会写入本地实例 config，并在重启后对新 trace 生效。",
   "langfuse.loadFailed": "加载 Langfuse 设置失败。",

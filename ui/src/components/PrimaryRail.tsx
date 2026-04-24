@@ -148,7 +148,7 @@ export function PrimaryRail({
     async function syncDesktopInboxSignals() {
       const nextCount = Math.max(0, inboxBadge.inbox ?? 0);
       if (desktopShellApi) {
-        await desktopShellApi.setBadgeCount(notificationSettings.desktopDockBadge ? nextCount : 0).catch((error) => {
+        await desktopShellApi.setBadgeCount(notificationSettings.desktopInboxNotifications ? nextCount : 0).catch((error) => {
           console.warn("[rudder-ui] failed to sync desktop dock badge count", error);
         });
       }

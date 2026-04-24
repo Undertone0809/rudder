@@ -327,7 +327,7 @@ test.describe("Settings sidebar", () => {
     await expect(modal.getByRole("button", { name: "Send Feedback" })).toBeVisible();
   });
 
-  test("saves notification settings and explains browser-preview limits", async ({ page }) => {
+  test("saves notification settings and keeps badge controls hidden", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Notifications Settings ${Date.now()}`,
@@ -384,13 +384,14 @@ test.describe("Settings sidebar", () => {
     await expect(modal.getByRole("heading", { name: "Notifications", exact: true })).toBeVisible();
     await expect(modal.getByText("Running in browser preview.")).toBeVisible();
     await expect(
-      modal.getByText("Browser mode can preview unread inbox alerts with the web Notifications API, but it has no app icon surface for a badge."),
+      modal.getByText("Browser mode can preview unread inbox alerts with the web Notifications API."),
     ).toBeVisible();
+    await expect(modal.getByText("App icon badge")).toHaveCount(0);
+    await expect(modal.getByRole("button", { name: "Toggle app icon badge" })).toHaveCount(0);
+    await expect(modal.getByRole("button", { name: "Send test notification" })).toHaveCount(0);
 
-    const inboxToggle = modal.getByRole("button", { name: "Toggle inbox notifications" });
-    const badgeToggle = modal.getByRole("button", { name: "Toggle app icon badge" });
-    await expect(inboxToggle).toHaveAttribute("aria-pressed", "true");
-    await expect(badgeToggle).toHaveAttribute("aria-pressed", "true");
+    const inboxToggle = modal.getByRole("switch", { name: "Toggle inbox notifications" });
+    await expect(inboxToggle).toHaveAttribute("aria-checked", "true");
 
     const saveInboxResponse = page.waitForResponse((response) =>
       response.request().method() === "PATCH"
@@ -399,16 +400,7 @@ test.describe("Settings sidebar", () => {
     );
     await inboxToggle.click();
     await saveInboxResponse;
-    await expect(inboxToggle).toHaveAttribute("aria-pressed", "false");
-
-    const saveBadgeResponse = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().includes("/api/instance/settings/notifications")
-      && response.ok(),
-    );
-    await badgeToggle.click();
-    await saveBadgeResponse;
-    await expect(badgeToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(inboxToggle).toHaveAttribute("aria-checked", "false");
   });
 
   test("saves local Langfuse settings and shows restart-required state", async ({ page }) => {

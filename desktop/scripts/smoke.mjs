@@ -427,6 +427,11 @@ async function verifySettingsOverlayFlow(page, companyId, issuePrefix) {
   await modal.getByRole("heading", { name: "Notifications" }).waitFor({ state: "visible", timeout: 15_000 });
   await modal.getByRole("button", { name: "Open notification settings" }).waitFor({ state: "visible", timeout: 15_000 });
   assert.equal(
+    await modal.getByText("App icon badge").count(),
+    0,
+    "prod-local desktop smoke should not expose the app icon badge settings row",
+  );
+  assert.equal(
     await modal.getByRole("button", { name: "Send test notification" }).count(),
     0,
     "prod-local desktop smoke should not expose the test notification debug action",

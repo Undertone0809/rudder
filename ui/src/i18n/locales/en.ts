@@ -296,13 +296,11 @@ export const en = {
   "general.appearance.dark.description": "Low-glare workspace",
   "notifications.title": "Notifications",
   "notifications.description":
-    "Manage unread inbox alerts and app icon badge behavior for this Rudder instance.",
+    "Manage unread inbox alerts for this Rudder instance.",
   "notifications.loadFailed": "Failed to load notification settings.",
   "notifications.updateFailed": "Failed to update notification settings.",
   "notifications.support.available": "available",
   "notifications.support.unavailable": "unavailable",
-  "notifications.support.accepted": "accepted",
-  "notifications.support.rejected": "rejected",
   "notifications.permission.title": "Permission",
   "notifications.permission.description":
     "Notification permission is owned by the operating system or browser, so Rudder needs to surface both current state and the repair path.",
@@ -310,55 +308,37 @@ export const en = {
   "notifications.permission.openSettingsFailed": "Failed to open notification settings.",
   "notifications.permission.access.title": "Notification access",
   "notifications.permission.access.summary":
-    "Permission: {{permission}}. Alerts: {{notificationsSupport}}. Dock badge: {{badgeSupport}}.",
+    "Permission: {{permission}}. Alerts: {{notificationsSupport}}.",
   "notifications.permission.access.summaryDesktop":
-    "Permission: {{permission}}. Native alerts: {{notificationsSupport}}. Dock badge path: {{badgeSupport}}.",
+    "Permission: {{permission}}. Native alerts: {{notificationsSupport}}.",
   "notifications.permission.access.systemManaged": "System-managed",
   "notifications.permission.access.default":
-    "Rudder has not asked for notification access yet, so unread inbox alerts and badge updates may not appear.",
+    "Rudder has not asked for notification access yet, so unread inbox alerts may not appear.",
   "notifications.permission.access.denied.desktop":
-    "Notification access is blocked by the OS. Re-enable Rudder in system notification settings to restore alerts and Dock badges on macOS.",
+    "Notification access is blocked by the OS. Re-enable Rudder in system notification settings to restore alerts on macOS.",
   "notifications.permission.access.denied.browser":
     "Notification access is blocked by the browser. Re-enable site notifications for Rudder to preview inbox alerts in `pnpm dev`.",
   "notifications.permission.access.requesting": "Requesting...",
   "notifications.permission.access.enable": "Enable notifications",
-  "notifications.permission.access.testing": "Sending...",
-  "notifications.permission.access.testNotification": "Send test notification",
-  "notifications.permission.access.testNotificationTitle": "Rudder notifications are on",
-  "notifications.permission.access.testNotificationBody":
-    "If you do not see this alert or a macOS prompt, open System Settings and allow notifications for Rudder.",
   "notifications.permission.access.desktopHelp":
-    "Electron can trigger native notifications here, but macOS owns the real allow/block state. Use a test notification first; if nothing appears, open system settings and look for {{appName}}.",
+    "Electron can trigger native notifications here, but macOS owns the real allow/block state. If notifications do not appear, open system settings and look for {{appName}}.",
   "notifications.permission.access.desktopHelpProd":
     "macOS owns the real allow/block state. If notifications do not appear, open system settings and look for {{appName}}.",
-  "notifications.permission.access.lastTest":
-    "Last test/native notification requested: \"{{title}}\" at {{timestamp}}.",
   "notifications.permission.access.openSettings": "Open notification settings",
   "notifications.environment.title": "Environment",
   "notifications.environment.desktop": "Running inside the Electron desktop shell.",
   "notifications.environment.browser": "Running in browser preview.",
   "notifications.environment.desktopHelp":
-    "Unread inbox alerts can use native system notifications here, and the app icon badge can sync against the desktop shell.",
+    "Unread inbox alerts can use native system notifications here.",
   "notifications.environment.browserHelp":
-    "Browser mode can preview unread inbox alerts with the web Notifications API, but it has no app icon surface for a badge.",
+    "Browser mode can preview unread inbox alerts with the web Notifications API.",
   "notifications.behavior.title": "Behavior",
   "notifications.behavior.description":
-    "These toggles control the two current inbox-related notification surfaces Rudder supports.",
+    "Choose whether Rudder should surface unread inbox activity.",
   "notifications.behavior.inbox.title": "Inbox activity",
   "notifications.behavior.inbox.description":
     "Show a notification when the unread inbox count increases.",
   "notifications.behavior.inbox.toggle": "Toggle inbox notifications",
-  "notifications.behavior.badge.title": "App icon badge",
-  "notifications.behavior.badge.description":
-    "Show the unread inbox count on the app icon. On macOS, this still depends on notification access granted by the OS.",
-  "notifications.behavior.badge.browserOnly":
-    "This setting is stored in browser mode too, but the badge only renders in the desktop shell.",
-  "notifications.behavior.badge.lastSync": "Last badge sync: {{count}} ({{result}}).",
-  "notifications.behavior.badge.desktopDebug":
-    "Use the preview action to force a temporary Dock badge in the desktop shell while debugging.",
-  "notifications.behavior.badge.preview": "Preview badge",
-  "notifications.behavior.badge.previewing": "Previewing...",
-  "notifications.behavior.badge.toggle": "Toggle app icon badge",
   "langfuse.title": "Langfuse",
   "langfuse.description":
     "Configure bootstrap-time Langfuse tracing for this local Rudder instance. Changes are saved to the local instance config and apply only after restart.",
