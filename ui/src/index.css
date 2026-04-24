@@ -894,6 +894,9 @@
 
 .transcript-modal-content {
   top: 50% !important;
+  translate: 0 0 !important;
+  scale: 1 !important;
+  rotate: 0deg !important;
   transform: translate(-50%, -50%);
   transform-origin: center;
   will-change: opacity, transform, clip-path, border-radius;
