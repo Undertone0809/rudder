@@ -97,6 +97,7 @@ import {
   Search,
   MessageSquare,
   CalendarDays,
+  Maximize2,
 } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -4189,6 +4190,16 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
             </button>
             {sessionOpen && (
               <div className="px-4 pb-3 space-y-1 text-xs">
+                <div className="flex items-start gap-2">
+                  <span className="text-muted-foreground w-12 shrink-0">Run ID</span>
+                  <CopyText
+                    text={run.id}
+                    ariaLabel={`Copy run ID ${run.id.slice(0, 8)}`}
+                    title="Copy run ID"
+                    containerClassName="min-w-0 max-w-full"
+                    className="block min-w-0 break-all text-left font-mono"
+                  />
+                </div>
                 {run.sessionIdBefore && (
                   <div className="flex items-center gap-2">
                     <span className="text-muted-foreground w-12">{sessionChanged ? "Before" : "ID"}</span>
@@ -4294,6 +4305,7 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
   const [isStreamingConnected, setIsStreamingConnected] = useState(false);
   const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("nice");
   const [activeDetailTab, setActiveDetailTab] = useState<RunDetailTab>("transcript");
+  const [transcriptModalOpen, setTranscriptModalOpen] = useState(false);
   const transcriptVisible = activeDetailTab === "transcript";
   const logEndRef = useRef<HTMLDivElement>(null);
   const pendingLogLineRef = useRef("");
@@ -4694,10 +4706,31 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
     adapterInvokePayload?.prompt !== undefined
       ? formatInvocationValueForDisplay(adapterInvokePayload.prompt, censorUsernameInLogs)
       : null;
+  const transcriptEntryLabel = `${transcript.length} ${transcript.length === 1 ? "entry" : "entries"}`;
+  const renderTranscriptModeToggle = () => (
+    <div className="inline-flex rounded-lg border border-border/70 bg-background/70 p-0.5">
+      {(["nice", "raw"] as const).map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          className={cn(
+            "rounded-md px-2.5 py-1 text-[11px] font-medium capitalize transition-colors",
+            transcriptMode === mode
+              ? "bg-accent text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+          onClick={() => setTranscriptMode(mode)}
+        >
+          {mode}
+        </button>
+      ))}
+    </div>
+  );
 
   useEffect(() => {
     setTranscriptMode("nice");
     setActiveDetailTab("transcript");
+    setTranscriptModalOpen(false);
   }, [run.id]);
 
   useEffect(() => {
@@ -4746,25 +4779,19 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
           {transcriptVisible ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground">
-                {transcript.length} {transcript.length === 1 ? "entry" : "entries"}
+                {transcriptEntryLabel}
               </span>
-              <div className="inline-flex rounded-lg border border-border/70 bg-background/70 p-0.5">
-                {(["nice", "raw"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    className={cn(
-                      "rounded-md px-2.5 py-1 text-[11px] font-medium capitalize transition-colors",
-                      transcriptMode === mode
-                        ? "bg-accent text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                    onClick={() => setTranscriptMode(mode)}
-                  >
-                    {mode}
-                  </button>
-                ))}
-              </div>
+              {renderTranscriptModeToggle()}
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="text-muted-foreground"
+                onClick={() => setTranscriptModalOpen(true)}
+                aria-label="Expand transcript"
+                title="Expand transcript"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </Button>
               {isLive && !isFollowing && (
                 <Button
                   variant="ghost"
@@ -4898,6 +4925,49 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
           </div>
         )}
       </div>
+
+      <Dialog open={transcriptModalOpen} onOpenChange={setTranscriptModalOpen}>
+        <DialogContent className="grid h-[min(90dvh,54rem)] max-w-[min(96vw,88rem)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-[min(96vw,88rem)]">
+          <DialogHeader className="border-b border-border/70 px-4 py-3 pr-12 text-left">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <DialogTitle className="text-sm">Transcript</DialogTitle>
+                <DialogDescription className="sr-only">
+                  Expanded transcript for run {run.id}.
+                </DialogDescription>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">{transcriptEntryLabel}</span>
+                {renderTranscriptModeToggle()}
+                {isLive && (
+                  <span className="flex items-center gap-1 text-xs text-cyan-400">
+                    <span className="relative flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-cyan-400 opacity-75" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan-400" />
+                    </span>
+                    Live
+                  </span>
+                )}
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="min-h-0 overflow-y-auto p-3 sm:p-4">
+            <RunTranscriptView
+              entries={transcript}
+              mode={transcriptMode}
+              streaming={isLive}
+              collapseStdout
+              emptyMessage={run.logRef ? "Waiting for transcript..." : "No persisted transcript for this run."}
+              presentation="detail"
+            />
+            {logError && (
+              <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                {logError}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {(run.status === "failed" || run.status === "timed_out") && (
         <div className="rounded-lg border border-red-300 dark:border-red-500/30 bg-red-50 dark:bg-red-950/20 p-3 space-y-2">

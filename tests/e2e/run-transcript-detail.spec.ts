@@ -22,7 +22,7 @@ async function createOrganization(page: Page, name: string) {
 }
 
 test.describe("Run transcript detail", () => {
-  test("renders detail transcripts as timeline-grouped model turns with collapsed tool activity", async ({ page }) => {
+  test("renders detail transcripts as chat-style model turns with collapsed tool activity", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-${Date.now()}`);
 
     await page.goto("/");
@@ -39,6 +39,7 @@ test.describe("Run transcript detail", () => {
 
     const firstTurn = page.locator("section").filter({ hasText: "Model turn 1" });
     await expect(firstTurn).toHaveCount(1);
+    await expect(firstTurn.getByText(/\d{2}:\d{2}:\d{2}/)).toBeVisible();
     await expect(firstTurn).toContainText("Explored 2 files");
     await expect(page.getByText("Read", { exact: true })).toHaveCount(0);
     await expect(page.getByText("doc/GOAL.md", { exact: true })).toHaveCount(0);
@@ -89,6 +90,14 @@ test.describe("Run transcript detail", () => {
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
     await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
     await expect(page.getByText("adapter invocation")).toBeVisible();
+
+    await page.getByRole("button", { name: "Expand transcript" }).click();
+    const transcriptDialog = page.getByRole("dialog", { name: "Transcript" });
+    await expect(transcriptDialog).toBeVisible();
+    await expect(transcriptDialog.getByText("adapter invocation")).toBeVisible();
+    await expect(transcriptDialog.getByRole("button", { name: "raw" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(transcriptDialog).toBeHidden();
 
     await invocationTab.click();
     await expect(invocationTab).toHaveAttribute("data-state", "active");

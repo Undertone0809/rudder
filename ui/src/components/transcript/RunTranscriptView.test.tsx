@@ -314,6 +314,12 @@ describe("RunTranscriptView", () => {
   });
 
   it("keeps errored tool details collapsed by default in detail presentation", () => {
+    const expectedTime = new Date("2026-03-12T00:00:00.000Z").toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <RunTranscriptView
@@ -340,7 +346,11 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Ran pnpm test:run");
+    expect(html).toContain(expectedTime);
+    expect(html).toContain("Tool issue");
     expect(html).toContain("aria-expanded=\"false\"");
+    expect(html).not.toContain("Needs review");
+    expect(html).not.toContain("bg-red-500/[0.04]");
     expect(html).not.toContain("Request");
     expect(html).not.toContain("Response");
     expect(html).not.toContain("sh: vitest: command not found");
@@ -381,7 +391,9 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Command");
+    expect(html).toContain("data-testid=\"command-terminal-detail\"");
+    expect(html).toContain("command failed");
+    expect(html).toContain("response");
     expect(html).toContain("ls -la /Users/zeeland/.vercel 2&gt;/dev/null || true");
     expect(html).toContain("ls: /Users/zeeland/.vercel: Permission denied");
     expect(html).not.toContain("/bin/zsh -lc");
@@ -462,6 +474,12 @@ describe("RunTranscriptView", () => {
   });
 
   it("groups detail transcripts by model turn so repeated reads stay collapsed behind one turn summary", () => {
+    const expectedTime = new Date("2026-03-12T00:00:02.000Z").toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <RunTranscriptView
@@ -518,6 +536,7 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Model turn 1");
+    expect(html).toContain(expectedTime);
     expect(html).toContain("Reviewing the bundled skills before deciding what to change.");
     expect(html).toContain("Explored 2 files");
     expect(html).not.toContain("para-memory-files/SKILL.md");
