@@ -741,15 +741,11 @@ function parseStructuredToolResult(result: string | undefined) {
   };
 }
 
-function formatCommandResult(result: string | undefined, status: TranscriptToolCardEntry["status"]): string | null {
-  if (!result) return status === "running" ? "Waiting for result..." : null;
+function formatCommandTerminalOutput(result: string | undefined): string | null {
+  if (!result) return null;
   const structured = parseStructuredToolResult(result);
   if (structured) {
-    if (structured.body) return structured.body;
-    if (structured.status === "completed") return "Completed";
-    if (structured.status === "failed" || structured.status === "error") {
-      return structured.exitCode ? `Failed with exit code ${structured.exitCode}` : "Failed";
-    }
+    return structured.body || null;
   }
   return result;
 }
@@ -1523,6 +1519,48 @@ function renderTranscriptBlock({
   );
 }
 
+function CommandTerminalDetail({
+  command,
+  output,
+  status,
+  className,
+}: {
+  command: string;
+  output: string | null;
+  status: TranscriptToolCardEntry["status"];
+  className?: string;
+}) {
+  return (
+    <div
+      data-testid="command-terminal-detail"
+      className={cn(
+        "overflow-hidden rounded-xl border border-neutral-800 bg-[#0a0a0a] text-neutral-100 shadow-[0_18px_45px_-28px_rgb(0_0_0/0.75)]",
+        className,
+      )}
+    >
+      <div className="flex h-8 items-center gap-1.5 border-b border-white/10 bg-[#171717] px-3">
+        <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
+        <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
+        <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+      </div>
+      <div className="p-4 font-mono text-[11px] leading-5">
+        <pre className="overflow-x-auto whitespace-pre-wrap break-words text-neutral-100">
+          <span className="select-none text-emerald-400">$ </span>
+          {command}
+        </pre>
+        {output ? (
+          <pre className={cn(
+            "mt-3 overflow-x-auto whitespace-pre-wrap break-words",
+            status === "error" ? "text-red-300" : "text-neutral-200",
+          )}>
+            {output}
+          </pre>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function TranscriptToolCard({
   block,
   density,
@@ -1542,7 +1580,9 @@ function TranscriptToolCard({
       ? "Running"
       : block.status === "error"
         ? "Errored"
-        : "Completed";
+        : isCommand
+          ? null
+          : "Completed";
   const statusTone =
     block.status === "running"
       ? "text-cyan-700 dark:text-cyan-300"
@@ -1553,7 +1593,7 @@ function TranscriptToolCard({
   const command = getToolCommand(block);
   const requestText = command ?? (formatToolPayload(block.input) || "<empty>");
   const responseText = command
-    ? formatCommandResult(block.result, block.status)
+    ? formatCommandTerminalOutput(block.result)
     : block.result
       ? formatToolPayload(block.result)
       : "Waiting for result...";
@@ -1591,9 +1631,11 @@ function TranscriptToolCard({
             <span className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground">
               {semantic.label}
             </span>
-            <span className={cn("text-[10px] font-semibold tracking-[0.05em]", statusTone)}>
-              {statusLabel}
-            </span>
+            {statusLabel ? (
+              <span className={cn("text-[10px] font-semibold tracking-[0.05em]", statusTone)}>
+                {statusLabel}
+              </span>
+            ) : null}
             {duration && (
               <span className="text-[10px] font-medium tracking-[0.04em] text-muted-foreground">
                 {duration}
@@ -1616,29 +1658,33 @@ function TranscriptToolCard({
       </div>
       {open && (
         <div className="mt-3">
-          <div className={detailsClass}>
-            <div className={cn("grid gap-3", compact ? "grid-cols-1" : "lg:grid-cols-2")}>
-              <div>
-                <div className="mb-1 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground">
-                  {command ? "Command" : "Request"}
+          {command ? (
+            <CommandTerminalDetail command={requestText} output={responseText} status={block.status} />
+          ) : (
+            <div className={detailsClass}>
+              <div className={cn("grid gap-3", compact ? "grid-cols-1" : "lg:grid-cols-2")}>
+                <div>
+                  <div className="mb-1 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground">
+                    Request
+                  </div>
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
+                    {requestText}
+                  </pre>
                 </div>
-                <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
-                  {requestText}
-                </pre>
-              </div>
-              <div>
-                <div className="mb-1 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground">
-                  Response
+                <div>
+                  <div className="mb-1 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground">
+                    Response
+                  </div>
+                  <pre className={cn(
+                    "overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px]",
+                    block.status === "error" ? "text-red-700 dark:text-red-300" : "text-foreground/80",
+                  )}>
+                    {responseText ?? "No response"}
+                  </pre>
                 </div>
-                <pre className={cn(
-                  "overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px]",
-                  block.status === "error" ? "text-red-700 dark:text-red-300" : "text-foreground/80",
-                )}>
-                  {responseText ?? "No response"}
-                </pre>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>
@@ -1886,20 +1932,6 @@ function TranscriptStdoutRow({
   );
 }
 
-function formatChatToolSummary(turn: ChatTranscriptTurn): string {
-  const infos: TranscriptToolSemanticInfo[] = [];
-  for (const block of turn.blocks) {
-    if (block.type === "command_group") {
-      infos.push(...block.items.map((item) => describeToolSemanticInfo(item.name, item.input)));
-      continue;
-    }
-    if (block.type === "tool") {
-      infos.push(describeToolSemanticInfo(block.name, block.input));
-    }
-  }
-  return formatSemanticDigest(infos, turn.stdoutCount, { preferDirectSummary: true });
-}
-
 function flattenChatTranscriptActions(blocks: TranscriptBlock[]): ChatTranscriptAction[] {
   const actions: ChatTranscriptAction[] = [];
 
@@ -2033,7 +2065,7 @@ function TranscriptChatToolActionRow({
   const responseText = shouldHideChatToolResult(semantic)
     ? null
     : command
-      ? formatCommandResult(block.result, block.status)
+      ? formatCommandTerminalOutput(block.result)
       : block.result
         ? formatToolPayload(block.result)
         : block.status === "running"
@@ -2053,12 +2085,6 @@ function TranscriptChatToolActionRow({
     : block.status === "running"
       ? "text-cyan-700 dark:text-cyan-300"
       : "text-muted-foreground";
-  const commandStatusLabel =
-    block.status === "error"
-      ? "command failed"
-      : block.status === "running"
-        ? "command running"
-        : "command completed";
 
   return (
     <div className={cn("py-1.5", block.status === "error" && "rounded-lg bg-red-500/[0.04] px-2")}>
@@ -2109,40 +2135,12 @@ function TranscriptChatToolActionRow({
       </button>
       {canExpand && open ? (
         command ? (
-          <div data-testid="command-terminal-detail" className="ml-5 mt-2 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-100 shadow-inner">
-            <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-white/[0.04] px-3 py-1.5 font-mono text-[10px] text-neutral-400">
-              <span className={cn(
-                "h-2 w-2 rounded-full",
-                block.status === "error"
-                  ? "bg-red-400"
-                  : block.status === "running"
-                    ? "bg-cyan-400"
-                    : "bg-emerald-400",
-              )} />
-              <span>{commandStatusLabel}</span>
-              {duration ? <span className="text-neutral-500">{duration}</span> : null}
-            </div>
-            <div className="space-y-3 p-3">
-              <div>
-                <div className="mb-1 font-mono text-[10px] text-neutral-500">command</div>
-                <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-neutral-100">
-                  <span className="select-none text-neutral-500">$ </span>
-                  {requestText}
-                </pre>
-              </div>
-              {responseText ? (
-                <div className="border-t border-white/10 pt-3">
-                  <div className="mb-1 font-mono text-[10px] text-neutral-500">response</div>
-                  <pre className={cn(
-                    "overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5",
-                    block.status === "error" ? "text-red-300" : "text-neutral-200",
-                  )}>
-                    {responseText}
-                  </pre>
-                </div>
-              ) : null}
-            </div>
-          </div>
+          <CommandTerminalDetail
+            command={requestText}
+            output={responseText}
+            status={block.status}
+            className="ml-5 mt-2"
+          />
         ) : (
           <div className="ml-5 mt-2 space-y-2 rounded-lg border border-border/35 bg-muted/10 p-2.5">
             <div>
@@ -2189,6 +2187,171 @@ function TranscriptChatActionRow({
   return <TranscriptChatToolActionRow block={action.entry} density={density} inline={inline} />;
 }
 
+type ChatTranscriptTurnSegment =
+  | {
+      type: "block";
+      key: string;
+      block: TranscriptBlock;
+    }
+  | {
+      type: "actions";
+      key: string;
+      actions: ChatTranscriptAction[];
+    };
+
+function isChatActionBlock(block: TranscriptBlock): boolean {
+  return block.type === "tool" || block.type === "command_group" || block.type === "stdout";
+}
+
+function segmentChatTranscriptBlocks(blocks: TranscriptBlock[]): ChatTranscriptTurnSegment[] {
+  const segments: ChatTranscriptTurnSegment[] = [];
+  let pendingActionBlocks: TranscriptBlock[] = [];
+
+  const flushActions = () => {
+    if (pendingActionBlocks.length === 0) return;
+    const actions = flattenChatTranscriptActions(pendingActionBlocks);
+    if (actions.length > 0) {
+      segments.push({
+        type: "actions",
+        key: `actions-${pendingActionBlocks[0]?.ts ?? segments.length}-${segments.length}`,
+        actions,
+      });
+    }
+    pendingActionBlocks = [];
+  };
+
+  blocks.forEach((block, index) => {
+    if (isChatActionBlock(block)) {
+      pendingActionBlocks.push(block);
+      return;
+    }
+
+    flushActions();
+    segments.push({
+      type: "block",
+      key: `${block.type}-${block.ts}-${index}`,
+      block,
+    });
+  });
+
+  flushActions();
+  return segments;
+}
+
+function formatChatActionSummary(actions: ChatTranscriptAction[]): string {
+  const infos = actions
+    .filter((action): action is Extract<ChatTranscriptAction, { type: "tool" }> => action.type === "tool")
+    .map((action) => describeToolSemanticInfo(action.entry.name, action.entry.input));
+  const stdoutCount = actions.filter((action) => action.type === "stdout").length;
+  return formatSemanticDigest(infos, stdoutCount, { preferDirectSummary: true });
+}
+
+function TranscriptChatActionGroup({
+  actions,
+  density,
+  detailVariant,
+  turnIndex,
+  groupIndex,
+  groupCount,
+}: {
+  actions: ChatTranscriptAction[];
+  density: TranscriptDensity;
+  detailVariant: boolean;
+  turnIndex: number;
+  groupIndex: number;
+  groupCount: number;
+}) {
+  const compact = density === "compact";
+  const singleAction = actions[0];
+  const hasSingleAction = actions.length === 1;
+  const hasError = actions.some((action) => action.type === "tool" && action.entry.status === "error");
+  const hasRunning = actions.some((action) => action.type === "tool" && action.entry.status === "running");
+  const shouldInlineSingleAction = hasSingleAction && singleAction && (!detailVariant || singleAction.type === "stdout");
+  const summary = formatChatActionSummary(actions);
+  const highlightGroupError = hasError && !detailVariant;
+  const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : hasError));
+
+  useEffect(() => {
+    if (!detailVariant && hasError) {
+      setDetailsOpen(true);
+    }
+  }, [detailVariant, hasError]);
+
+  if (shouldInlineSingleAction) {
+    return (
+      <div className="divide-y divide-border/30">
+        <TranscriptChatActionRow
+          action={singleAction}
+          density={density}
+          inline
+        />
+      </div>
+    );
+  }
+
+  const labelSuffix = groupCount > 1 ? ` group ${groupIndex + 1}` : "";
+  const expandedLabel = detailsOpen
+    ? `Collapse tool activity${labelSuffix} for model turn ${turnIndex}`
+    : `Expand tool activity${labelSuffix} for model turn ${turnIndex}`;
+
+  return (
+    <div>
+      <button
+        type="button"
+        className={cn(
+          "flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
+          highlightGroupError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
+        )}
+        onClick={() => setDetailsOpen((value) => !value)}
+        aria-expanded={detailsOpen}
+        aria-label={expandedLabel}
+      >
+        <span className="flex shrink-0 items-center">
+          {actions.slice(0, Math.min(actions.length, 3)).map((_, index) => (
+            <span
+              key={index}
+              className={cn(
+                "inline-flex h-6 w-6 items-center justify-center rounded-full border",
+                index > 0 && "-ml-1.5",
+                highlightGroupError
+                  ? "border-red-500/20 bg-red-500/[0.08] text-red-700 dark:text-red-300"
+                  : hasRunning
+                    ? "border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-700 dark:text-cyan-300"
+                    : "border-border/60 bg-background/80 text-muted-foreground",
+              )}
+            >
+              <TerminalSquare className="h-3.5 w-3.5" />
+            </span>
+          ))}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className={cn(
+            "block break-words text-foreground/82",
+            compact ? "text-xs" : "text-sm",
+          )}>
+            {summary || "Tool details"}
+          </span>
+        </span>
+        <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground">
+          {detailsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </span>
+      </button>
+
+      {detailsOpen ? (
+        <div className="mt-2 divide-y divide-border/30 border-l border-border/35 pl-3">
+          {actions.map((action) => (
+            <TranscriptChatActionRow
+              key={action.key}
+              action={action}
+              density={density}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function TranscriptChatTurn({
   turn,
   density,
@@ -2202,24 +2365,13 @@ function TranscriptChatTurn({
 }) {
   const compact = density === "compact";
   const detailVariant = variant === "detail";
-  const primaryBlocks = turn.blocks.filter((block) => (
-    block.type !== "tool" && block.type !== "command_group" && block.type !== "stdout"
-  ));
   const actions = flattenChatTranscriptActions(turn.blocks);
-  const toolSummary = formatChatToolSummary(turn);
-  const hasSingleAction = actions.length === 1;
   const failedActionCount = actions.filter((action) => action.type === "tool" && action.entry.status === "error").length;
-  const shouldInlineSingleAction = hasSingleAction && (!detailVariant || actions[0]?.type === "stdout");
-  const showPreview = Boolean(turn.preview) && (!detailVariant || primaryBlocks.length > 0 || actions.length === 0);
-  const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : turn.hasError));
+  const segments = segmentChatTranscriptBlocks(turn.blocks);
+  const actionGroupCount = segments.filter((segment) => segment.type === "actions").length;
+  const showPreview = Boolean(turn.preview) && !detailVariant;
   const highlightTurnError = turn.hasError && !detailVariant;
   const showToolIssue = turn.hasError && detailVariant && !turn.hasRunning;
-
-  useEffect(() => {
-    if (!detailVariant && turn.hasError) {
-      setDetailsOpen(true);
-    }
-  }, [detailVariant, turn.hasError]);
 
   return (
     <section
@@ -2274,85 +2426,30 @@ function TranscriptChatTurn({
         </div>
       </div>
 
-      {primaryBlocks.length > 0 ? (
-        <div className="mt-3 space-y-2.5 border-l border-border/35 pl-3">
-          {primaryBlocks.map((block, index) => renderTranscriptBlock({
-            block,
-            index,
-            density,
-            presentation: "chat",
-            collapseStdout: true,
-            thinkingClassName,
-          }))}
-        </div>
-      ) : null}
-
-      {actions.length > 0 ? (
-        <div className="mt-3 border-t border-border/35 pt-3">
-          {shouldInlineSingleAction ? (
-            <div className="divide-y divide-border/30 border-l border-border/35 pl-3">
-              <TranscriptChatActionRow
-                action={actions[0]}
-                density={density}
-                inline
-              />
-            </div>
-          ) : (
-            <>
-              <button
-                type="button"
-                className={cn(
-                  "flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
-                  highlightTurnError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
-                )}
-                onClick={() => setDetailsOpen((value) => !value)}
-                aria-expanded={detailsOpen}
-                aria-label={detailsOpen ? `Collapse tool activity for model turn ${turn.index}` : `Expand tool activity for model turn ${turn.index}`}
-              >
-                <span className="flex shrink-0 items-center">
-                  {actions.slice(0, Math.min(actions.length, 3)).map((_, index) => (
-                    <span
-                      key={index}
-                      className={cn(
-                        "inline-flex h-6 w-6 items-center justify-center rounded-full border",
-                        index > 0 && "-ml-1.5",
-                        highlightTurnError
-                          ? "border-red-500/20 bg-red-500/[0.08] text-red-700 dark:text-red-300"
-                          : turn.hasRunning
-                            ? "border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-700 dark:text-cyan-300"
-                            : "border-border/60 bg-background/80 text-muted-foreground",
-                      )}
-                    >
-                      <TerminalSquare className="h-3.5 w-3.5" />
-                    </span>
-                  ))}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className={cn(
-                    "block break-words text-foreground/82",
-                    compact ? "text-xs" : "text-sm",
-                  )}>
-                    {toolSummary || "Tool details"}
-                  </span>
-                </span>
-                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground">
-                  {detailsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                </span>
-              </button>
-
-              {detailsOpen ? (
-                <div className="mt-2 divide-y divide-border/30 border-l border-border/35 pl-3">
-                  {actions.map((action) => (
-                    <TranscriptChatActionRow
-                      key={action.key}
-                      action={action}
-                      density={density}
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </>
-          )}
+      {segments.length > 0 ? (
+        <div className="mt-3 space-y-3 border-l border-border/35 pl-3">
+          {segments.map((segment, index) => (
+            segment.type === "block"
+              ? renderTranscriptBlock({
+                  block: segment.block,
+                  index,
+                  density,
+                  presentation: "chat",
+                  collapseStdout: true,
+                  thinkingClassName,
+                })
+              : (
+                <TranscriptChatActionGroup
+                  key={segment.key}
+                  actions={segment.actions}
+                  density={density}
+                  detailVariant={detailVariant}
+                  turnIndex={turn.index}
+                  groupIndex={segments.slice(0, index).filter((item) => item.type === "actions").length}
+                  groupCount={actionGroupCount}
+                />
+              )
+          ))}
         </div>
       ) : null}
     </section>

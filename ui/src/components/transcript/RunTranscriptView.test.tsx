@@ -392,14 +392,68 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("data-testid=\"command-terminal-detail\"");
-    expect(html).toContain("command failed");
-    expect(html).toContain("response");
     expect(html).toContain("ls -la /Users/zeeland/.vercel 2&gt;/dev/null || true");
     expect(html).toContain("ls: /Users/zeeland/.vercel: Permission denied");
+    expect(html).not.toContain("command failed");
+    expect(html).not.toContain("command completed");
+    expect(html).not.toContain("command running");
+    expect(html).not.toContain("response");
+    expect(html).not.toContain(">Command<");
+    expect(html).not.toContain(">Response<");
     expect(html).not.toContain("/bin/zsh -lc");
     expect(html).not.toContain("&quot;cwd&quot;");
     expect(html).not.toContain("exit_code");
     expect(html).not.toContain("status: failed");
+  });
+
+  it("keeps model-turn transcript blocks in chronological order", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="detail"
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "I will inspect the directory first.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:02.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-order-1",
+              input: { command: "ls -la /tmp" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:03.000Z",
+              toolUseId: "cmd-order-1",
+              content: "command: ls -la /tmp\nstatus: completed\nexit_code: 0\n\ntotal 8",
+              isError: false,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:04.000Z",
+              text: "The directory inspection is complete.",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    const introIndex = html.indexOf("I will inspect the directory first.");
+    const commandIndex = html.indexOf("Explored /tmp");
+    const finalIndex = html.indexOf("The directory inspection is complete.");
+
+    expect(introIndex).toBeGreaterThanOrEqual(0);
+    expect(commandIndex).toBeGreaterThan(introIndex);
+    expect(finalIndex).toBeGreaterThan(commandIndex);
   });
 
   it("falls back to an implicit model turn for chat transcripts without turn markers", () => {
