@@ -73,6 +73,39 @@ describe("selectPromptTemplate", () => {
     expect(rendered).not.toContain("Current Issue Context");
   });
 
+  it("renders a passive issue follow-up prompt when close-out governance wakes the agent", () => {
+    const context = {
+      wakeReason: "issue_passive_followup",
+      issue: {
+        id: "issue-2",
+        title: "Publish onboarding notes",
+        status: "in_progress",
+        priority: "medium",
+        description: "Write the notes and close out the issue.",
+      },
+      passiveFollowup: {
+        originRunId: "run-origin",
+        previousRunId: "run-prev",
+        attempt: 1,
+        maxAttempts: 2,
+        reason: "missing_closure",
+      },
+    };
+
+    const template = selectPromptTemplate(undefined, context);
+    const rendered = renderTemplate(template, {
+      agent: { id: "agent-3", name: "Builder" },
+      context,
+      issue: context.issue,
+    });
+
+    expect(rendered).toContain("This is a passive issue follow-up");
+    expect(rendered).toContain("The previous run ended without sufficient issue close-out.");
+    expect(rendered).toContain("**Origin Run ID:** run-origin");
+    expect(rendered).toContain("Publish onboarding notes");
+    expect(rendered).toContain("add a progress comment, mark the issue done, block it with a reason, or hand it off");
+  });
+
   it("injects the shared org resources section into default prompts when present", () => {
     const context = {
       rudderWorkspace: {

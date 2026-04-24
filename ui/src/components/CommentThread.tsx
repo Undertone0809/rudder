@@ -28,6 +28,9 @@ interface LinkedRunItem {
   agentId: string;
   createdAt: Date | string;
   startedAt: Date | string | null;
+  invocationSource?: string;
+  triggerDetail?: string | null;
+  contextSnapshot?: Record<string, unknown> | null;
 }
 
 interface CommentReassignment {
@@ -87,6 +90,20 @@ function clearDraft(draftKey: string) {
   } catch {
     // Ignore localStorage failures.
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function passiveFollowupLabel(contextSnapshot: Record<string, unknown> | null | undefined) {
+  const passive = asRecord(asRecord(contextSnapshot)?.passiveFollowup);
+  const attempt = typeof passive?.attempt === "number" ? passive.attempt : null;
+  const maxAttempts = typeof passive?.maxAttempts === "number" ? passive.maxAttempts : null;
+  if (!passive) return null;
+  return attempt && maxAttempts ? `Passive follow-up ${attempt}/${maxAttempts}` : "Passive follow-up";
 }
 
 function parseReassignment(target: string): CommentReassignment | null {
@@ -156,6 +173,7 @@ const TimelineList = memo(function TimelineList({
           const isActive = run.status === "queued" || run.status === "running";
           const transcript = runTranscriptById.get(run.runId) ?? [];
           const hasOutput = runHasOutput(run.runId);
+          const passiveLabel = passiveFollowupLabel(run.contextSnapshot);
           return (
             <div key={`run:${run.runId}`} className="overflow-hidden rounded-sm border border-border bg-accent/20 p-3">
               <div className="mb-3 flex items-start justify-between gap-3">
@@ -180,6 +198,11 @@ const TimelineList = memo(function TimelineList({
                   {run.runId.slice(0, 8)}
                 </Link>
                 <StatusBadge status={run.status} />
+                {passiveLabel && (
+                  <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                    {passiveLabel}
+                  </span>
+                )}
               </div>
               <div className="max-h-56 overflow-y-auto pr-1">
                 <RunTranscriptView

@@ -18,8 +18,18 @@ export interface HeartbeatRunRecoveryContext {
   recoveryMode: HeartbeatRecoveryMode;
 }
 
+export interface HeartbeatRunPassiveFollowupContext {
+  originRunId: string;
+  previousRunId: string;
+  attempt: number;
+  maxAttempts: number;
+  reason: "missing_closure";
+  queuedAt: string;
+}
+
 export interface HeartbeatRunContextSnapshot extends Record<string, unknown> {
   recovery?: HeartbeatRunRecoveryContext;
+  passiveFollowup?: HeartbeatRunPassiveFollowupContext;
 }
 
 export interface HeartbeatRun {

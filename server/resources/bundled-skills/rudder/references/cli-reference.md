@@ -41,6 +41,17 @@ Stable CLI contract for agents using the bundled `rudder` skill. Prefer these co
 | `rudder skill scan-local --org-id <id> [--roots <csv>]` | Scan local roots for skill packages and import new ones. | yes | required | no | attached when available |
 | `rudder skill scan-projects --org-id <id> [--project-ids <csv>] [--workspace-ids <csv>]` | Scan the org workspace and any legacy project workspace records for skill packages and import new ones. | yes | required | no | attached when available |
 
+## Issue Close-Out Signals
+
+Before a successful `todo` or `in_progress` issue run exits, leave one close-out signal with the command that matches the outcome:
+
+- progress remains: `rudder issue comment <issue> --body <text>`
+- work is complete: `rudder issue done <issue> --comment <text>`
+- work is blocked: `rudder issue block <issue> --comment <text>`
+- ownership changes: add an explicit handoff comment before or with the assignee update
+
+If `RUDDER_WAKE_REASON=issue_passive_followup`, the run is close-out governance for the same issue. Inspect current issue state first, then leave a progress comment, completion, blocker, or explicit handoff.
+
 ## Compatibility Commands
 
 - `rudder agent list --org-id <id>` — List agents for an organization.

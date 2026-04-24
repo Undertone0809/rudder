@@ -110,7 +110,9 @@ Control flow (happy path):
 4. Adapter executes, emits status/log/usage events.
 5. Full logs stream to `RunLogStore`; metadata/events are persisted to DB and pushed to websocket subscribers.
 6. Process exits, output parser updates run result + runtime state.
-7. Agent returns to `idle` or `error`; UI updates in real time.
+7. For issue-backed successful runs, close-out governance checks whether the run left a comment, status transition, handoff, or deferred continuation signal.
+8. If close-out is missing and normal timer continuity is not expected soon, Rudder queues a bounded same-agent `issue_passive_followup` run and keeps the issue execution lock on that queued run.
+9. Agent returns to `idle` or `error`; UI updates in real time.
 
 ## 6. Agent Run Protocol (Version `agent-run/v1`)
 
@@ -673,6 +675,16 @@ Recovery retry is explicit run derivation, not a lossy wakeup shortcut.
 3. Issue-backed recovery keeps the prior issue/comment/task context when available.
 4. Recovery prompts must say this is a recovery and must instruct the agent to inspect prior progress and side effects before continuing.
 5. Automatic recovery remains narrow: V1 only auto-retries `process_lost`, and it must stay visible in the run timeline.
+
+## 12.6 Passive issue close-out follow-up
+
+Passive follow-up is issue closure governance, not runtime failure recovery.
+
+1. It only applies after a successful issue-backed run on a `todo` or `in_progress` issue.
+2. Rudder suppresses it when the run added an issue comment, the issue moved out of the trigger statuses, the issue was reassigned, a deferred issue wake exists, or timer heartbeat continuity is expected within `min(2x interval, 15 minutes)`.
+3. When triggered, Rudder queues a same-agent automation run with `agent_wakeup_requests.reason = "issue_passive_followup"` and `heartbeat_runs.contextSnapshot.passiveFollowup`.
+4. The queued run starts after cooldown, carries `originRunId`, `previousRunId`, `attempt`, `maxAttempts`, and `reason: "missing_closure"`, and uses the passive follow-up prompt template.
+5. After two passive follow-up attempts, Rudder stops auto-follow-up and emits `issue.closure_needs_operator_review` activity instead of changing the issue status.
 
 ## 13. API Surface Changes
 

@@ -351,6 +351,31 @@ export const RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.nam
 
 Before doing anything else, inspect what the previous run already completed and any side effects it may have caused. Continue the remaining work from the current state. Avoid blindly re-running the whole task.`;
 
+export const ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). This is a passive issue follow-up, not a fresh assignment and not a failure recovery.
+
+{{context.rudderWorkspace.orgResourcesPrompt}}
+
+## Why You Were Woken
+
+The previous run ended without sufficient issue close-out.
+
+**Origin Run ID:** {{context.passiveFollowup.originRunId}}
+**Previous Run ID:** {{context.passiveFollowup.previousRunId}}
+**Attempt:** {{context.passiveFollowup.attempt}} / {{context.passiveFollowup.maxAttempts}}
+**Reason:** {{context.passiveFollowup.reason}}
+
+## Current Issue Context
+
+**Issue:** {{issue.title}}
+**ID:** {{issue.id}}
+**Status:** {{issue.status}}
+**Priority:** {{issue.priority}}
+
+**Description:**
+{{issue.description}}
+
+Before changing the issue, inspect the current issue state and any side effects from the previous run. Then do exactly one close-out action: add a progress comment, mark the issue done, block it with a reason, or hand it off explicitly with explanation.`;
+
 /**
  * Selects the base heartbeat prompt template used by runtimes before final prompt assembly.
  *
@@ -368,6 +393,9 @@ Before doing anything else, inspect what the previous run already completed and 
  *   "This is a recovery run, not a fresh task ..."
  *   Includes original run id, failure metadata, and a continue-preferred instruction to
  *   inspect prior progress/side effects before resuming.
+ * - passive issue follow-up:
+ *   "This is a passive issue follow-up, not a fresh assignment ..."
+ *   Includes close-out lineage and tells the agent to comment, finish, block, or hand off.
  * - fallback:
  *   Generic "Continue your Rudder work."
  *
@@ -408,6 +436,9 @@ export function selectPromptTemplate(
     return typeof context.issue === "object" && context.issue !== null && !Array.isArray(context.issue)
       ? ISSUE_RECOVERY_PROMPT_TEMPLATE
       : RECOVERY_PROMPT_TEMPLATE;
+  }
+  if (wakeReason === "issue_passive_followup") {
+    return ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE;
   }
   if (wakeSource === "assignment" || wakeReason === "issue_assigned") {
     return ISSUE_ASSIGN_PROMPT_TEMPLATE;
