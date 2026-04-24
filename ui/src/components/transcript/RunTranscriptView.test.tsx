@@ -185,7 +185,10 @@ describe("RunTranscriptView", () => {
             {
               kind: "stdout",
               ts: "2026-03-12T00:00:02.000Z",
-              text: "[rudder] Using Rudder-managed Codex home \"/Users/zeeland/.rudder/instances/dev/codex\" (seeded from \"/Users/zeeland/.codex\").",
+              text:
+                "[rudder] Using Rudder-managed Codex home \"/Users/zeeland/.rudder/instances/dev/codex\" (seeded from \"/Users/zeeland/.codex\").\n"
+                + "[rudder] Realized 4 Rudder-managed Codex skill entries in /Users/zeeland/.rudder/instances/dev/codex/skills\n"
+                + "[rudder] Loaded agent instructions file: /Users/zeeland/.rudder/instances/dev/workspaces/agents/rudder-copilot-system/instructions/AGENTS.md",
             },
           ]}
         />
@@ -194,7 +197,43 @@ describe("RunTranscriptView", () => {
 
     expect(html).toContain("model codex");
     expect(html).not.toContain("Using Rudder-managed Codex home");
+    expect(html).not.toContain("Rudder-managed Codex skill entries");
+    expect(html).not.toContain("Loaded agent instructions file");
     expect(html).not.toContain("1 log");
+  });
+
+  it("renders a single detail-turn log inline instead of behind a log-count disclosure", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="detail"
+          entries={[
+            {
+              kind: "init",
+              ts: "2026-03-12T00:00:00.000Z",
+              model: "codex",
+              sessionId: "session-1",
+            },
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "stdout",
+              ts: "2026-03-12T00:00:02.000Z",
+              text: "Only actionable detail log",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Only actionable detail log");
+    expect(html).not.toContain("1 log");
+    expect(html).not.toContain("Expand output details");
+    expect(html).not.toContain("Expand tool activity");
   });
 
   it("summarizes multi-step tool activity in user-facing language", () => {
@@ -420,5 +459,68 @@ describe("RunTranscriptView", () => {
 
     expect(html).toContain("Searched &quot;transcript&quot; in ui/src/components/transcript");
     expect(html).not.toContain("Searched 1 location");
+  });
+
+  it("groups detail transcripts by model turn so repeated reads stay collapsed behind one turn summary", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="detail"
+          entries={[
+            {
+              kind: "init",
+              ts: "2026-03-12T00:00:00.000Z",
+              model: "codex",
+              sessionId: "session-1",
+            },
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:02.000Z",
+              text: "Reviewing the bundled skills before deciding what to change.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:03.000Z",
+              name: "read_file",
+              toolUseId: "tool-1",
+              input: { path: "server/resources/bundled-skills/para-memory-files/SKILL.md" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:04.000Z",
+              toolUseId: "tool-1",
+              content: "hidden",
+              isError: false,
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:05.000Z",
+              name: "read_file",
+              toolUseId: "tool-2",
+              input: { path: "server/resources/bundled-skills/rudder-create-agent/SKILL.md" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:06.000Z",
+              toolUseId: "tool-2",
+              content: "hidden",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Model turn 1");
+    expect(html).toContain("Reviewing the bundled skills before deciding what to change.");
+    expect(html).toContain("Explored 2 files");
+    expect(html).not.toContain("para-memory-files/SKILL.md");
+    expect(html).not.toContain("rudder-create-agent/SKILL.md");
   });
 });

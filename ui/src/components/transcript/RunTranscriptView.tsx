@@ -176,7 +176,13 @@ function isTurnStartedText(value: string): boolean {
 function filterRoutineStdout(value: string): string {
   return value
     .split(/\r?\n/)
-    .filter((line) => !/^\[rudder\] Using Rudder-managed .+ home ".+"(?: \(seeded from ".+"\))?\.$/.test(line.trim()))
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (/^\[rudder\] Using Rudder-managed .+ home ".+"(?: \(seeded from ".+"\))?\.$/.test(trimmed)) return false;
+      if (/^\[rudder\] Realized \d+ Rudder-managed .+ skill entries in .+$/.test(trimmed)) return false;
+      if (/^\[rudder\] Loaded agent instructions file: .+$/.test(trimmed)) return false;
+      return true;
+    })
     .join("\n")
     .trim();
 }
@@ -2144,25 +2150,30 @@ function TranscriptChatTurn({
   turn,
   density,
   thinkingClassName,
+  variant = "chat",
 }: {
   turn: ChatTranscriptTurn;
   density: TranscriptDensity;
   thinkingClassName?: string;
+  variant?: "chat" | "detail";
 }) {
   const compact = density === "compact";
+  const detailVariant = variant === "detail";
   const primaryBlocks = turn.blocks.filter((block) => (
     block.type !== "tool" && block.type !== "command_group" && block.type !== "stdout"
   ));
   const actions = flattenChatTranscriptActions(turn.blocks);
   const toolSummary = formatChatToolSummary(turn);
   const hasSingleAction = actions.length === 1;
-  const [detailsOpen, setDetailsOpen] = useState(() => turn.hasError);
+  const shouldInlineSingleAction = hasSingleAction && (!detailVariant || actions[0]?.type === "stdout");
+  const showPreview = Boolean(turn.preview) && (!detailVariant || primaryBlocks.length > 0 || actions.length === 0);
+  const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : turn.hasError));
 
   useEffect(() => {
-    if (turn.hasError) {
+    if (!detailVariant && turn.hasError) {
       setDetailsOpen(true);
     }
-  }, [turn.hasError]);
+  }, [detailVariant, turn.hasError]);
 
   return (
     <section
@@ -2198,11 +2209,13 @@ function TranscriptChatTurn({
             ) : (
               <span className="text-[11px] text-muted-foreground">Completed</span>
             )}
-            <span className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground">
-              {formatTranscriptTimestamp(turn.ts)}
-            </span>
+            {!detailVariant ? (
+              <span className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground">
+                {formatTranscriptTimestamp(turn.ts)}
+              </span>
+            ) : null}
           </div>
-          {turn.preview ? (
+          {showPreview ? (
             <p className={cn(
               "mt-2 break-words text-foreground/78",
               compact ? "text-[12px] leading-5" : "text-[13px] leading-6",
@@ -2228,7 +2241,7 @@ function TranscriptChatTurn({
 
       {actions.length > 0 ? (
         <div className="mt-3 border-t border-border/35 pt-3">
-          {hasSingleAction ? (
+          {shouldInlineSingleAction ? (
             <div className="divide-y divide-border/30 border-l border-border/35 pl-3">
               <TranscriptChatActionRow
                 action={actions[0]}
@@ -2535,22 +2548,27 @@ function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTimelineRo
 }
 
 function TranscriptDetailTimeline({
-  blocks,
+  entries,
   density,
   streaming,
   thinkingClassName,
 }: {
-  blocks: TranscriptBlock[];
+  entries: TranscriptEntry[];
   density: TranscriptDensity;
   streaming: boolean;
   thinkingClassName?: string;
 }) {
-  const rows = expandDetailTimelineBlocks(blocks);
+  const { preludeBlocks, turns } = useMemo(
+    () => normalizeChatTranscriptTurns(entries, streaming),
+    [entries, streaming],
+  );
+  const rows = expandDetailTimelineBlocks(preludeBlocks);
+  const totalRows = rows.length + turns.length;
 
   return (
     <div className="space-y-4">
       {rows.map((row, index) => {
-        const isLast = index === rows.length - 1;
+        const isLast = index === totalRows - 1;
 
         return (
           <TranscriptDetailRow
@@ -2592,6 +2610,32 @@ function TranscriptDetailTimeline({
                 presentation="detail"
               />
             )}
+          </TranscriptDetailRow>
+        );
+      })}
+      {turns.map((turn, index) => {
+        const isLast = rows.length + index === totalRows - 1;
+
+        return (
+          <TranscriptDetailRow
+            key={turn.key}
+            ts={turn.ts}
+            label="turn"
+            tone={
+              turn.hasError
+                ? "danger"
+                : turn.hasRunning
+                  ? "accent"
+                  : "success"
+            }
+            last={isLast && !streaming}
+          >
+            <TranscriptChatTurn
+              turn={turn}
+              density={density}
+              thinkingClassName={thinkingClassName}
+              variant="detail"
+            />
           </TranscriptDetailRow>
         );
       })}
@@ -2673,7 +2717,7 @@ export function RunTranscriptView({
     return (
       <div className={cn("space-y-4", className)}>
         <TranscriptDetailTimeline
-          blocks={visibleBlocks}
+          entries={visibleEntries}
           density={density}
           streaming={streaming}
           thinkingClassName={thinkingClassName}
