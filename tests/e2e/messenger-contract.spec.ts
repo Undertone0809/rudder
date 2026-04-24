@@ -598,14 +598,19 @@ test.describe("Messenger unified threads contract", () => {
     await expect(composer).toBeVisible({ timeout: 15_000 });
 
     await page.getByRole("button", { name: "Scope a new feature" }).click();
-    await expect(page.getByText("Example use cases")).toBeVisible();
+    const promptOptions = page.getByTestId("chat-empty-state-prompt-options");
+    await expect(promptOptions).toBeVisible();
+    await expect(promptOptions).toHaveAttribute("data-entered", "true");
+    await expect(promptOptions).toContainText("Example use cases");
+    await expect(promptOptions).toHaveCSS("opacity", "1");
     await expect(page.getByRole("button", { name: "Plan an approval queue for budget overrides" })).toBeVisible();
 
     await page.getByRole("button", { name: "Plan an approval queue for budget overrides" }).click();
     await expect(composer).toContainText("Plan an approval queue for budget overrides");
-    await expect(page.getByRole("button", { name: "Plan an approval queue for budget overrides" })).toHaveCount(0);
+    await expect(promptOptions).toHaveCount(0);
 
     await page.getByRole("button", { name: "Clarify a vague request" }).click();
+    await expect(promptOptions).toHaveAttribute("data-entered", "true");
     await expect(page.getByRole("button", { name: "Turn rough notes into an implementation plan" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Plan an approval queue for budget overrides" })).toHaveCount(0);
   });

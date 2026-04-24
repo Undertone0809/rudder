@@ -1411,6 +1411,7 @@ function ChatWorkspace() {
   const [editForkUserMessageId, setEditForkUserMessageId] = useState<string | null>(null);
   const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null);
   const [expandedEmptyStatePrompt, setExpandedEmptyStatePrompt] = useState<EmptyStatePromptLabel | null>(null);
+  const [emptyStatePromptPanelEntered, setEmptyStatePromptPanelEntered] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerEditorRef = useRef<MarkdownEditorRef>(null);
@@ -2400,6 +2401,7 @@ function ChatWorkspace() {
     : t("chat.emptyState.heading");
   const composerPlaceholder = t("chat.composer.placeholder");
   const expandedPromptGroup = EMPTY_STATE_PROMPT_GROUPS.find((group) => group.label === expandedEmptyStatePrompt) ?? null;
+  const emptyStatePromptOptionsId = "chat-empty-state-prompt-options";
   const sendButtonMode =
     newConversationSendInFlight || (activeSendInFlight && (!activeStream || !activeStream.userMessageId))
       ? "sending"
@@ -2408,6 +2410,20 @@ function ChatWorkspace() {
         : "send";
   const sendButtonDisabled =
     composerUnavailable || sendButtonMode === "sending" || (sendButtonMode === "send" && draft.trim().length === 0);
+
+  useEffect(() => {
+    if (!expandedEmptyStatePrompt) {
+      setEmptyStatePromptPanelEntered(false);
+      return;
+    }
+
+    setEmptyStatePromptPanelEntered(false);
+    const frame = requestAnimationFrame(() => {
+      setEmptyStatePromptPanelEntered(true);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [expandedEmptyStatePrompt]);
 
   const renderComposer = (centered: boolean) => (
     <div
@@ -2953,6 +2969,7 @@ function ChatWorkspace() {
                         key={group.label}
                         type="button"
                         aria-expanded={expanded}
+                        aria-controls={expanded ? emptyStatePromptOptionsId : undefined}
                         onClick={() => toggleEmptyStatePrompt(group.label)}
                         className={cn(
                           "chat-chip inline-flex items-center gap-2 rounded-[calc(var(--radius-sm)+2px)] px-4 py-2 text-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-[color:var(--surface-active)] hover:text-foreground",
@@ -2967,7 +2984,20 @@ function ChatWorkspace() {
                 </div>
 
                 {expandedPromptGroup ? (
-                  <div className="mt-3 w-full max-w-3xl rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-panel)_86%,transparent)] px-3 py-3">
+                  <div
+                    id={emptyStatePromptOptionsId}
+                    data-testid="chat-empty-state-prompt-options"
+                    data-entered={emptyStatePromptPanelEntered ? "true" : "false"}
+                    role="region"
+                    aria-label={`${expandedPromptGroup.label} examples`}
+                    className={cn(
+                      "mt-3 w-full max-w-3xl origin-top rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-panel)_86%,transparent)] px-3 py-3 shadow-[var(--shadow-sm)]",
+                      "transition-[opacity,transform,box-shadow] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+                      emptyStatePromptPanelEntered
+                        ? "translate-y-0 scale-100 opacity-100"
+                        : "-translate-y-1 scale-[0.98] opacity-0",
+                    )}
+                  >
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <p className="text-xs font-medium text-muted-foreground">
                         Example use cases
