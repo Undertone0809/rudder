@@ -301,10 +301,10 @@ test.describe("Workspace shell", () => {
     await expect(page.getByRole("button", { name: "Add Project" })).toBeVisible();
     await expect(sidebar.getByText("Projects", { exact: true })).toBeVisible();
     await expect(sidebar.getByText("Surface hierarchy project", { exact: true })).toBeVisible();
-    const projectSectionToggle = sidebar.getByRole("button", { name: "Projects" });
+    const projectSectionHeader = sidebar.getByTestId("workspace-projects-section");
     const sidebarCreateProjectButton = sidebar.getByRole("button", { name: "New project" });
     await expect(sidebarCreateProjectButton).toHaveCSS("opacity", "0");
-    await projectSectionToggle.hover();
+    await projectSectionHeader.hover();
     await expect(sidebarCreateProjectButton).toHaveCSS("opacity", "1");
     await sidebarCreateProjectButton.click();
     await expect(page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New project") }).first()).toBeVisible();

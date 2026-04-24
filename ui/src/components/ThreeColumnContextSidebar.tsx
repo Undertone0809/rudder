@@ -150,14 +150,35 @@ function ProjectListSection({
   visibleProjects,
   activeProjectRef,
   closeMobileSidebar,
+  onNewProject,
 }: {
   visibleProjects: Array<{ id: string; name: string; description: string | null; urlKey?: string | null }>;
   activeProjectRef: string | null;
   closeMobileSidebar: () => void;
+  onNewProject: () => void;
 }) {
   return (
     <>
-      <SectionLabel>Projects</SectionLabel>
+      <SectionLabel
+        testId="workspace-projects-section"
+        action={(
+          <button
+            type="button"
+            onClick={onNewProject}
+            aria-label="New project"
+            title="Create project"
+            className={cn(
+              "inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground/72 transition-[opacity,background-color,color]",
+              "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,transparent)] hover:text-foreground",
+              "opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100",
+            )}
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        )}
+      >
+        Projects
+      </SectionLabel>
       <nav className="mt-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-3.5">
         {visibleProjects.map((project) => {
           const routeRef = projectRouteRef(project);
@@ -201,7 +222,7 @@ export function ThreeColumnContextSidebar() {
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
   const { pushToast } = useToast();
-  const { openNewAgent } = useDialog();
+  const { openNewAgent, openNewProject } = useDialog();
   const queryClient = useQueryClient();
 
   const { data: session } = useQuery({
@@ -430,6 +451,7 @@ export function ThreeColumnContextSidebar() {
             visibleProjects={visibleProjects}
             activeProjectRef={activeProjectRef}
             closeMobileSidebar={closeMobileSidebar}
+            onNewProject={openNewProject}
           />
         </div>
       </aside>
