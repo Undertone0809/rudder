@@ -4,6 +4,7 @@ import {
   useMemo,
   useState,
   useRef,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -4306,8 +4307,17 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
   const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("nice");
   const [activeDetailTab, setActiveDetailTab] = useState<RunDetailTab>("transcript");
   const [transcriptModalOpen, setTranscriptModalOpen] = useState(false);
+  const [transcriptDialogMotion, setTranscriptDialogMotion] = useState({
+    fromX: "0px",
+    fromY: "-16px",
+    settleX: "0px",
+    settleY: "0px",
+    fromScaleX: "0.96",
+    fromScaleY: "0.96",
+  });
   const transcriptVisible = activeDetailTab === "transcript";
   const logEndRef = useRef<HTMLDivElement>(null);
+  const transcriptExpandButtonRef = useRef<HTMLButtonElement>(null);
   const pendingLogLineRef = useRef("");
   const seenLogChunkKeysRef = useRef<Set<string>>(new Set());
   const scrollContainerRef = useRef<ScrollContainer | null>(null);
@@ -4707,6 +4717,35 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
       ? formatInvocationValueForDisplay(adapterInvokePayload.prompt, censorUsernameInLogs)
       : null;
   const transcriptEntryLabel = `${transcript.length} ${transcript.length === 1 ? "entry" : "entries"}`;
+  const openTranscriptModal = useCallback(() => {
+    const rect = transcriptExpandButtonRef.current?.getBoundingClientRect();
+    if (rect && window.innerWidth > 0 && window.innerHeight > 0) {
+      const rootFontSize = Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+      const finalWidth = Math.min(window.innerWidth - 24, window.innerWidth * 0.96, rootFontSize * 88);
+      const finalHeight = Math.min(window.innerHeight * 0.92, rootFontSize * 54);
+      const buttonCenterX = rect.left + rect.width / 2;
+      const buttonCenterY = rect.top + rect.height / 2;
+      const fromX = Math.round(buttonCenterX - window.innerWidth / 2);
+      const fromY = Math.round(buttonCenterY - window.innerHeight / 2);
+      setTranscriptDialogMotion({
+        fromX: `${fromX}px`,
+        fromY: `${fromY}px`,
+        settleX: `${Math.round(fromX * -0.025)}px`,
+        settleY: `${Math.round(fromY * -0.025)}px`,
+        fromScaleX: `${Math.max(0.035, Math.min(0.18, rect.width / finalWidth)).toFixed(3)}`,
+        fromScaleY: `${Math.max(0.045, Math.min(0.18, rect.height / finalHeight)).toFixed(3)}`,
+      });
+    }
+    setTranscriptModalOpen(true);
+  }, []);
+  const transcriptDialogStyle = {
+    "--transcript-dialog-from-x": transcriptDialogMotion.fromX,
+    "--transcript-dialog-from-y": transcriptDialogMotion.fromY,
+    "--transcript-dialog-settle-x": transcriptDialogMotion.settleX,
+    "--transcript-dialog-settle-y": transcriptDialogMotion.settleY,
+    "--transcript-dialog-from-scale-x": transcriptDialogMotion.fromScaleX,
+    "--transcript-dialog-from-scale-y": transcriptDialogMotion.fromScaleY,
+  } as CSSProperties;
   const renderTranscriptModeToggle = () => (
     <div className="inline-flex rounded-lg border border-border/70 bg-background/70 p-0.5">
       {(["nice", "raw"] as const).map((mode) => (
@@ -4783,14 +4822,16 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
               </span>
               {renderTranscriptModeToggle()}
               <Button
+                ref={transcriptExpandButtonRef}
                 variant="ghost"
-                size="icon-xs"
-                className="text-muted-foreground"
-                onClick={() => setTranscriptModalOpen(true)}
+                size="icon-sm"
+                className="group relative overflow-hidden text-muted-foreground transition-[background-color,border-color,color,box-shadow,transform] duration-200 hover:scale-[1.03] hover:shadow-sm active:scale-95"
+                onClick={openTranscriptModal}
                 aria-label="Expand transcript"
                 title="Expand transcript"
               >
-                <Maximize2 className="h-3.5 w-3.5" />
+                <span className="absolute inset-0 rounded-[inherit] bg-accent/0 transition-colors duration-200 group-hover:bg-accent/70" aria-hidden />
+                <Maximize2 className="relative h-4 w-4 transition-transform duration-200 ease-out group-hover:scale-110" />
               </Button>
               {isLive && !isFollowing && (
                 <Button
@@ -4927,8 +4968,12 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
       </div>
 
       <Dialog open={transcriptModalOpen} onOpenChange={setTranscriptModalOpen}>
-        <DialogContent className="grid h-[min(90dvh,54rem)] max-w-[min(96vw,88rem)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-[min(96vw,88rem)]">
-          <DialogHeader className="border-b border-border/70 px-4 py-3 pr-12 text-left">
+        <DialogContent
+          overlayClassName="transcript-modal-overlay"
+          style={transcriptDialogStyle}
+          className="transcript-modal-content grid h-[min(92dvh,54rem)] max-w-[min(96vw,88rem)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-[min(96vw,88rem)]"
+        >
+          <DialogHeader className="transcript-modal-header border-b border-border/70 px-4 py-3 pr-12 text-left">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <DialogTitle className="text-sm">Transcript</DialogTitle>
@@ -4951,7 +4996,7 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
               </div>
             </div>
           </DialogHeader>
-          <div className="min-h-0 overflow-y-auto p-3 sm:p-4">
+          <div className="transcript-modal-body min-h-0 overflow-y-auto p-3 sm:p-4">
             <RunTranscriptView
               entries={transcript}
               mode={transcriptMode}

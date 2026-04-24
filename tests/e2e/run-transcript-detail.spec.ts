@@ -89,6 +89,8 @@ test.describe("Run transcript detail", () => {
     await page.getByRole("button", { name: "Expand transcript" }).click();
     const transcriptDialog = page.getByRole("dialog", { name: "Transcript" });
     await expect(transcriptDialog).toBeVisible();
+    await expect(transcriptDialog).toHaveClass(/transcript-modal-content/);
+    await expect(page.locator(".transcript-modal-overlay")).toBeVisible();
     await expect(transcriptDialog.getByText("adapter invocation")).toBeVisible();
     await expect(transcriptDialog.getByRole("button", { name: "raw" })).toBeVisible();
     await page.keyboard.press("Escape");

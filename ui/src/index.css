@@ -877,6 +877,144 @@
   transition: max-width 200ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Transcript fullscreen modal: expand from the tab tool button into the large reader. */
+.transcript-modal-overlay {
+  -webkit-backdrop-filter: blur(0);
+  backdrop-filter: blur(0);
+  will-change: opacity, backdrop-filter;
+}
+
+.transcript-modal-overlay[data-state="open"] {
+  animation: transcript-modal-overlay-in 280ms cubic-bezier(0.16, 1, 0.3, 1) both !important;
+}
+
+.transcript-modal-overlay[data-state="closed"] {
+  animation: transcript-modal-overlay-out 180ms cubic-bezier(0.4, 0, 0.2, 1) both !important;
+}
+
+.transcript-modal-content {
+  top: 50% !important;
+  transform: translate(-50%, -50%);
+  transform-origin: center;
+  will-change: opacity, transform, clip-path, border-radius;
+}
+
+.transcript-modal-content[data-state="open"] {
+  animation: transcript-modal-panel-in 360ms cubic-bezier(0.16, 1, 0.3, 1) both !important;
+}
+
+.transcript-modal-content[data-state="closed"] {
+  animation: transcript-modal-panel-out 190ms cubic-bezier(0.4, 0, 0.2, 1) both !important;
+}
+
+.transcript-modal-content[data-state="open"] .transcript-modal-header {
+  animation: transcript-modal-child-in 320ms cubic-bezier(0.16, 1, 0.3, 1) 110ms both;
+}
+
+.transcript-modal-content[data-state="open"] .transcript-modal-body {
+  animation: transcript-modal-child-in 360ms cubic-bezier(0.16, 1, 0.3, 1) 150ms both;
+}
+
+.transcript-modal-content[data-state="open"] [data-slot="dialog-close"] {
+  animation: transcript-modal-child-in 260ms cubic-bezier(0.16, 1, 0.3, 1) 180ms both;
+}
+
+@keyframes transcript-modal-overlay-in {
+  from {
+    opacity: 0;
+    -webkit-backdrop-filter: blur(0);
+    backdrop-filter: blur(0);
+  }
+  to {
+    opacity: 1;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+  }
+}
+
+@keyframes transcript-modal-overlay-out {
+  from {
+    opacity: 1;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+  }
+  to {
+    opacity: 0;
+    -webkit-backdrop-filter: blur(0);
+    backdrop-filter: blur(0);
+  }
+}
+
+@keyframes transcript-modal-panel-in {
+  0% {
+    opacity: 0;
+    border-radius: 0.5rem;
+    clip-path: inset(0 round 0.5rem);
+    filter: blur(2px);
+    transform:
+      translate(-50%, -50%)
+      translate(var(--transcript-dialog-from-x, 0px), var(--transcript-dialog-from-y, -16px))
+      scale(var(--transcript-dialog-from-scale-x, 0.96), var(--transcript-dialog-from-scale-y, 0.96));
+  }
+  48% {
+    opacity: 1;
+    border-radius: 1rem;
+    clip-path: inset(0 round 1rem);
+    filter: blur(0);
+    transform:
+      translate(-50%, -50%)
+      translate(var(--transcript-dialog-settle-x, 0px), var(--transcript-dialog-settle-y, 0px))
+      scale(1.006);
+  }
+  100% {
+    opacity: 1;
+    border-radius: 1rem;
+    clip-path: inset(0 round 1rem);
+    filter: blur(0);
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes transcript-modal-panel-out {
+  0% {
+    opacity: 1;
+    border-radius: 1rem;
+    clip-path: inset(0 round 1rem);
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    border-radius: 0.5rem;
+    clip-path: inset(0 round 0.5rem);
+    transform:
+      translate(-50%, -50%)
+      translate(var(--transcript-dialog-from-x, 0px), var(--transcript-dialog-from-y, -16px))
+      scale(var(--transcript-dialog-from-scale-x, 0.96), var(--transcript-dialog-from-scale-y, 0.96));
+  }
+}
+
+@keyframes transcript-modal-child-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-modal-overlay,
+  .transcript-modal-content,
+  .transcript-modal-header,
+  .transcript-modal-body,
+  .transcript-modal-content [data-slot="dialog-close"] {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 a[draggable="false"],
 button[draggable="false"] {
   -webkit-user-drag: none;
