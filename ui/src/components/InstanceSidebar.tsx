@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
-  Bell,
   Clock3,
   FlaskConical,
   IdCard,
   Info,
   Puzzle,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
 import { Link, NavLink } from "@/lib/router";
@@ -102,7 +102,12 @@ export function InstanceSidebar() {
               {t("common.desktopApp")}
             </div>
             <SettingsNavLink to="/instance/settings/general" label={t("common.general")} icon={SlidersHorizontal} end />
-            <SettingsNavLink to="/instance/settings/notifications" label={t("common.notifications")} icon={Bell} end />
+            <SettingsNavLink
+              to="/instance/settings/notifications"
+              label={t("common.systemPermissions")}
+              icon={ShieldCheck}
+              end
+            />
             <SettingsNavLink to="/instance/settings/about" label={t("common.about")} icon={Info} end />
           </div>
         ) : null}

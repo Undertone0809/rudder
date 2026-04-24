@@ -25,10 +25,6 @@ vi.mock("@/context/ToastContext", () => ({
   useToast: () => ({ pushToast: vi.fn() }),
 }));
 
-vi.mock("@/lib/router", () => ({
-  Link: ({ to, children }: { to: string; children: string }) => <a href={to}>{children}</a>,
-}));
-
 vi.mock("@/context/I18nContext", () => ({
   useI18n: () => ({
     t: (key: string) =>
@@ -54,11 +50,8 @@ vi.mock("@/context/I18nContext", () => ({
         "about.feedback.title": "Send feedback",
         "about.feedback.description": "Feedback section",
         "about.feedback.send": "Send feedback",
-        "about.notifications.description": "Notification settings live on their own page.",
-        "about.notifications.open": "Open notifications",
         "common.systemSettings": "System settings",
         "common.about": "About",
-        "common.notifications": "Notifications",
         "common.unknown": "unknown",
       })[key] ?? key,
   }),
@@ -79,11 +72,10 @@ describe("InstanceAboutSettings", () => {
     expect(html).not.toContain(">Profile<");
   });
 
-  it("links notification management to the notifications settings page", () => {
+  it("does not duplicate the system permissions entry inside actions", () => {
     const html = renderToStaticMarkup(<InstanceAboutSettings />);
 
-    expect(html).toContain("Notifications");
-    expect(html).toContain("Notification settings live on their own page.");
-    expect(html).toContain("Open notifications");
+    expect(html).not.toContain("Notifications");
+    expect(html).not.toContain("Open notifications");
   });
 });

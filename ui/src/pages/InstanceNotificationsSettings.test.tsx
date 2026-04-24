@@ -12,6 +12,7 @@ import { InstanceNotificationsSettings } from "./InstanceNotificationsSettings";
 const desktopShellMock = {
   getBootState: vi.fn(),
   onBootState: vi.fn(),
+  openExternal: vi.fn(),
   openNotificationSettings: vi.fn(),
   setBadgeCount: vi.fn(),
   showNotification: vi.fn(),
@@ -57,6 +58,7 @@ vi.mock("@/context/I18nContext", () => ({
     t: (key: string, vars?: Record<string, string | number>) => {
       const messages: Record<string, string> = {
         "common.systemSettings": "System settings",
+        "common.systemPermissions": "System permissions",
         "common.notifications": "Notifications",
         "settings.eyebrow.system": "System settings",
         "notifications.title": "Notifications",
@@ -92,6 +94,29 @@ vi.mock("@/context/I18nContext", () => ({
         "notifications.behavior.inbox.toggle": "Toggle inbox notifications",
         "notifications.support.available": "available",
         "notifications.support.unavailable": "unavailable",
+        "systemPermissions.title": "System permissions",
+        "systemPermissions.description": "Review OS permissions.",
+        "systemPermissions.section.title": "Permissions",
+        "systemPermissions.section.description": "Open the relevant system pane.",
+        "systemPermissions.status.authorized": "Authorized",
+        "systemPermissions.status.needsAccess": "Needs access",
+        "systemPermissions.status.blocked": "Blocked",
+        "systemPermissions.status.systemManaged": "System managed",
+        "systemPermissions.status.desktopOnly": "Desktop app only",
+        "systemPermissions.status.unavailable": "Unavailable",
+        "systemPermissions.action.openSettings": "Open settings",
+        "systemPermissions.action.desktopOnly": "Desktop only",
+        "systemPermissions.action.browserManaged": "Browser managed",
+        "systemPermissions.openSettingsFailed": "Failed to open system settings.",
+        "systemPermissions.permission.fullDiskAccess.title": "Full Disk Access",
+        "systemPermissions.permission.fullDiskAccess.description": "Read local project files.",
+        "systemPermissions.permission.accessibility.title": "Accessibility",
+        "systemPermissions.permission.accessibility.description": "Observe and control app UI.",
+        "systemPermissions.permission.automation.title": "Automation",
+        "systemPermissions.permission.automation.description": "Coordinate macOS automation.",
+        "systemPermissions.permission.notifications.title": "Notifications",
+        "systemPermissions.permission.notifications.description": "Surface inbox activity.",
+        "systemPermissions.permission.notifications.inboxLabel": "Inbox activity alerts",
       };
       return (messages[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, name) => String(vars?.[name] ?? ""));
     },
@@ -116,6 +141,7 @@ afterEach(() => {
   desktopShellValue = null;
   desktopShellMock.getBootState.mockReset();
   desktopShellMock.onBootState.mockReset();
+  desktopShellMock.openExternal.mockReset();
   desktopShellMock.openNotificationSettings.mockReset();
   desktopShellMock.setBadgeCount.mockReset();
   desktopShellMock.showNotification.mockReset();
@@ -141,21 +167,25 @@ function renderPage() {
 }
 
 describe("InstanceNotificationsSettings", () => {
-  it("explains browser preview behavior and shows the inbox notification control", async () => {
+  it("renders system permissions with notifications as one permission row", async () => {
     const container = renderPage();
 
     await act(async () => {
       await Promise.resolve();
     });
 
+    expect(container.textContent).toContain("System permissions");
+    expect(container.textContent).toContain("Full Disk Access");
+    expect(container.textContent).toContain("Accessibility");
+    expect(container.textContent).toContain("Automation");
     expect(container.textContent).toContain("Notifications");
-    expect(container.textContent).toContain("Running in browser preview.");
-    expect(container.textContent).toContain("Browser mode can preview alerts.");
-    expect(container.textContent).toContain("Inbox activity");
+    expect(container.textContent).toContain("Inbox activity alerts");
+    expect(container.textContent).toContain("Desktop app only");
+    expect(container.textContent).not.toContain("Running in browser preview.");
     expect(container.textContent).not.toContain("App icon badge");
   });
 
-  it("shows desktop system-settings action instead of browser permission action in the desktop shell", async () => {
+  it("shows desktop system-settings actions instead of browser permission action in the desktop shell", async () => {
     desktopShellValue = desktopShellMock;
     desktopShellMock.onBootState.mockReturnValue(() => {});
     desktopShellMock.getBootState.mockResolvedValue({
@@ -180,9 +210,10 @@ describe("InstanceNotificationsSettings", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Running inside the desktop shell.");
-    expect(container.textContent).toContain("Desktop help for Rudder-dev.");
-    expect(container.textContent).toContain("Open notification settings");
+    expect(container.textContent).toContain("System permissions");
+    expect(container.textContent).toContain("Full Disk Access");
+    expect(container.textContent).toContain("System managed");
+    expect(container.textContent).toContain("Open settings");
     expect(container.textContent).not.toContain("Send test notification");
     expect(container.textContent).not.toContain("Preview badge");
     expect(container.textContent).not.toContain("Last notification Rudder notifications are on at 2026-04-22T09:30:00.000Z.");
@@ -214,9 +245,8 @@ describe("InstanceNotificationsSettings", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Running inside the desktop shell.");
-    expect(container.textContent).toContain("Production desktop help for Rudder.");
-    expect(container.textContent).toContain("Open notification settings");
+    expect(container.textContent).toContain("System permissions");
+    expect(container.textContent).toContain("Open settings");
     expect(container.textContent).not.toContain("Send test notification");
     expect(container.textContent).not.toContain("Preview badge");
     expect(container.textContent).not.toContain("Last notification Rudder notifications are on at 2026-04-22T09:30:00.000Z.");

@@ -14,6 +14,7 @@ export const en = {
   "common.integrations": "Integrations",
   "common.profile": "Profile",
   "common.general": "General",
+  "common.systemPermissions": "Permissions",
   "common.notifications": "Notifications",
   "common.langfuse": "Langfuse",
   "common.about": "About",
@@ -339,6 +340,35 @@ export const en = {
   "notifications.behavior.inbox.description":
     "Show a notification when the unread inbox count increases.",
   "notifications.behavior.inbox.toggle": "Toggle inbox notifications",
+  "systemPermissions.title": "System permissions",
+  "systemPermissions.description":
+    "Manage OS permissions for local automation, file access, and inbox alerts.",
+  "systemPermissions.section.title": "Permissions",
+  "systemPermissions.section.description":
+    "Rudder opens the matching system pane when possible. The OS remains the source of truth.",
+  "systemPermissions.status.authorized": "Authorized",
+  "systemPermissions.status.needsAccess": "Needs access",
+  "systemPermissions.status.blocked": "Blocked",
+  "systemPermissions.status.systemManaged": "System managed",
+  "systemPermissions.status.desktopOnly": "Desktop app only",
+  "systemPermissions.status.unavailable": "Unavailable",
+  "systemPermissions.action.openSettings": "Open settings",
+  "systemPermissions.action.desktopOnly": "Desktop only",
+  "systemPermissions.action.browserManaged": "Browser managed",
+  "systemPermissions.openSettingsFailed": "Failed to open system settings.",
+  "systemPermissions.permission.fullDiskAccess.title": "Full Disk Access",
+  "systemPermissions.permission.fullDiskAccess.description":
+    "Read local project files and workspace metadata when broader filesystem access is needed.",
+  "systemPermissions.permission.accessibility.title": "Accessibility",
+  "systemPermissions.permission.accessibility.description":
+    "Let Rudder-driven desktop automation observe and control app UI when needed.",
+  "systemPermissions.permission.automation.title": "Automation",
+  "systemPermissions.permission.automation.description":
+    "Coordinate approved macOS automation between local apps and tools.",
+  "systemPermissions.permission.notifications.title": "Notifications",
+  "systemPermissions.permission.notifications.description":
+    "Surface inbox activity through system or browser notifications.",
+  "systemPermissions.permission.notifications.inboxLabel": "Inbox activity alerts",
   "langfuse.title": "Langfuse",
   "langfuse.description":
     "Configure bootstrap-time Langfuse tracing for this local Rudder instance. Changes are saved to the local instance config and apply only after restart.",

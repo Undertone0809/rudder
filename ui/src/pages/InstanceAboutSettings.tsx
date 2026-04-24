@@ -13,14 +13,12 @@ import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/context/ToastContext";
 import type { TranslationKey } from "@/i18n/locales/en";
-import { Link } from "@/lib/router";
 import { queryKeys } from "@/lib/queryKeys";
 import {
   readDesktopShell,
   type DesktopBootState,
   type DesktopUpdateCheckResult,
 } from "@/lib/desktop-shell";
-import { INSTANCE_SETTINGS_NOTIFICATIONS_PATH } from "@/lib/instance-settings";
 
 const RELEASES_URL = "https://github.com/Undertone0809/rudder/releases";
 const FEEDBACK_MAILTO = "mailto:zeeland4work@gmail.com";
@@ -296,18 +294,6 @@ export function InstanceAboutSettings() {
         title={t("about.actions.title")}
         description={t("about.actions.description")}
       >
-        <SettingsRow
-          title={t("common.notifications")}
-          description={t("about.notifications.description")}
-          action={(
-            <Button variant="outline" size="sm" asChild>
-              <Link to={INSTANCE_SETTINGS_NOTIFICATIONS_PATH}>
-                {t("about.notifications.open")}
-              </Link>
-            </Button>
-          )}
-        />
-
         <SettingsRow
           title={t("about.updates.title")}
           description={(

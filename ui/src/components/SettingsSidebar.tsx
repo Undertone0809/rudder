@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ActivitySquare,
   ArrowLeft,
-  Bell,
   Building2,
   Check,
   Clock3,
@@ -11,6 +10,7 @@ import {
   Info,
   Puzzle,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
 import { Link, NavLink, useLocation, useNavigate } from "@/lib/router";
@@ -152,8 +152,8 @@ export function SettingsSidebar({
               <SidebarNavItem
                 to="/instance/settings/notifications"
                 state={overlayState}
-                label={t("common.notifications")}
-                icon={Bell}
+                label={t("common.systemPermissions")}
+                icon={ShieldCheck}
                 end
                 variant={modalVariant ? "compact" : "default"}
               />

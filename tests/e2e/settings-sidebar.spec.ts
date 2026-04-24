@@ -327,10 +327,10 @@ test.describe("Settings sidebar", () => {
     await expect(modal.getByRole("button", { name: "Send Feedback" })).toBeVisible();
   });
 
-  test("saves notification settings and keeps badge controls hidden", async ({ page }) => {
+  test("shows system permissions and keeps notification debug controls hidden", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
-        name: `Notifications Settings ${Date.now()}`,
+        name: `System Permissions Settings ${Date.now()}`,
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -381,11 +381,11 @@ test.describe("Settings sidebar", () => {
 
     await sidebar.locator('a[href$="/instance/settings/notifications"]').click();
     await expect(page).toHaveURL(/\/instance\/settings\/notifications$/);
-    await expect(modal.getByRole("heading", { name: "Notifications", exact: true })).toBeVisible();
-    await expect(modal.getByText("Running in browser preview.")).toBeVisible();
-    await expect(
-      modal.getByText("Browser mode can preview unread inbox alerts with the web Notifications API."),
-    ).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "System permissions", exact: true })).toBeVisible();
+    await expect(modal.getByText("Full Disk Access")).toBeVisible();
+    await expect(modal.getByText("Accessibility")).toBeVisible();
+    await expect(modal.getByText("Automation")).toBeVisible();
+    await expect(modal.getByText("Notifications")).toBeVisible();
     await expect(modal.getByText("App icon badge")).toHaveCount(0);
     await expect(modal.getByRole("button", { name: "Toggle app icon badge" })).toHaveCount(0);
     await expect(modal.getByRole("button", { name: "Send test notification" })).toHaveCount(0);
