@@ -173,6 +173,14 @@ function isTurnStartedText(value: string): boolean {
   return compactWhitespace(value).toLowerCase() === "turn started";
 }
 
+function filterRoutineStdout(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .filter((line) => !/^\[rudder\] Using Rudder-managed .+ home ".+"(?: \(seeded from ".+"\))?\.$/.test(line.trim()))
+    .join("\n")
+    .trim();
+}
+
 function formatTranscriptTimestamp(ts: string): string {
   const date = new Date(ts);
   if (Number.isNaN(date.getTime())) return "";
@@ -1186,25 +1194,30 @@ export function normalizeTranscript(entries: TranscriptEntry[], streaming: boole
       continue;
     }
 
+    const filteredStdout = filterRoutineStdout(entry.text);
+    if (!filteredStdout) {
+      continue;
+    }
+
     const activeCommandBlock = [...blocks].reverse().find(
       (block): block is Extract<TranscriptBlock, { type: "tool" }> =>
         block.type === "tool" && block.status === "running" && isCommandTool(block.name, block.input),
     );
     if (activeCommandBlock) {
       activeCommandBlock.result = activeCommandBlock.result
-        ? `${activeCommandBlock.result}${activeCommandBlock.result.endsWith("\n") || entry.text.startsWith("\n") ? entry.text : `\n${entry.text}`}`
-        : entry.text;
+        ? `${activeCommandBlock.result}${activeCommandBlock.result.endsWith("\n") || filteredStdout.startsWith("\n") ? filteredStdout : `\n${filteredStdout}`}`
+        : filteredStdout;
       continue;
     }
 
     if (previous?.type === "stdout") {
-      previous.text += previous.text.endsWith("\n") || entry.text.startsWith("\n") ? entry.text : `\n${entry.text}`;
+      previous.text += previous.text.endsWith("\n") || filteredStdout.startsWith("\n") ? filteredStdout : `\n${filteredStdout}`;
       previous.ts = entry.ts;
     } else {
       blocks.push({
         type: "stdout",
         ts: entry.ts,
-        text: entry.text,
+        text: filteredStdout,
       });
     }
   }
@@ -1944,12 +1957,30 @@ function shouldHideChatToolResult(semantic: TranscriptToolSemanticInfo): boolean
 function TranscriptChatStdoutActionRow({
   block,
   density,
+  inline = false,
 }: {
   block: Extract<TranscriptBlock, { type: "stdout" }>;
   density: TranscriptDensity;
+  inline?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(inline);
   const preview = truncate(compactWhitespace(block.text), density === "compact" ? 80 : 120) || "Output";
+
+  if (inline) {
+    return (
+      <div className="py-1.5">
+        <div className="flex w-full items-start gap-2 text-left">
+          <TerminalSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <pre className={cn(
+            "min-w-0 flex-1 whitespace-pre-wrap break-words font-mono text-foreground/80",
+            density === "compact" ? "text-[11px] leading-5" : "text-xs leading-6",
+          )}>
+            {block.text}
+          </pre>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="py-1.5">
@@ -1983,9 +2014,11 @@ function TranscriptChatStdoutActionRow({
 function TranscriptChatToolActionRow({
   block,
   density,
+  inline = false,
 }: {
   block: TranscriptToolCardEntry;
   density: TranscriptDensity;
+  inline?: boolean;
 }) {
   const semantic = describeToolSemanticInfo(block.name, block.input);
   const isCommand = isCommandTool(block.name, block.input);
@@ -2001,7 +2034,7 @@ function TranscriptChatToolActionRow({
           ? "Waiting for result..."
           : null;
   const canExpand = Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
-  const [open, setOpen] = useState(block.status === "error");
+  const [open, setOpen] = useState(inline || block.status === "error");
   const duration = formatTranscriptDuration(block.ts, block.endTs);
   const statusText =
     block.status === "error"
@@ -2021,12 +2054,13 @@ function TranscriptChatToolActionRow({
         type="button"
         className="flex w-full items-start gap-2 text-left"
         onClick={() => {
+          if (inline) return;
           if (!canExpand) return;
           setOpen((value) => !value);
         }}
-        aria-expanded={canExpand ? open : undefined}
+        aria-expanded={canExpand && !inline ? open : undefined}
         aria-label={
-          canExpand
+          canExpand && !inline
             ? open
               ? `Collapse ${isCommand ? "command" : "tool"} details`
               : `Expand ${isCommand ? "command" : "tool"} details`
@@ -2055,7 +2089,7 @@ function TranscriptChatToolActionRow({
             {statusText}
           </span>
         ) : null}
-        {canExpand ? (
+        {canExpand && !inline ? (
           <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground">
             {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </span>
@@ -2093,15 +2127,17 @@ function TranscriptChatToolActionRow({
 function TranscriptChatActionRow({
   action,
   density,
+  inline = false,
 }: {
   action: ChatTranscriptAction;
   density: TranscriptDensity;
+  inline?: boolean;
 }) {
   if (action.type === "stdout") {
-    return <TranscriptChatStdoutActionRow block={action.entry} density={density} />;
+    return <TranscriptChatStdoutActionRow block={action.entry} density={density} inline={inline} />;
   }
 
-  return <TranscriptChatToolActionRow block={action.entry} density={density} />;
+  return <TranscriptChatToolActionRow block={action.entry} density={density} inline={inline} />;
 }
 
 function TranscriptChatTurn({
@@ -2119,6 +2155,7 @@ function TranscriptChatTurn({
   ));
   const actions = flattenChatTranscriptActions(turn.blocks);
   const toolSummary = formatChatToolSummary(turn);
+  const hasSingleAction = actions.length === 1;
   const [detailsOpen, setDetailsOpen] = useState(() => turn.hasError);
 
   useEffect(() => {
@@ -2191,58 +2228,70 @@ function TranscriptChatTurn({
 
       {actions.length > 0 ? (
         <div className="mt-3 border-t border-border/35 pt-3">
-          <button
-            type="button"
-            className={cn(
-              "flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
-              turn.hasError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
-            )}
-            onClick={() => setDetailsOpen((value) => !value)}
-            aria-expanded={detailsOpen}
-            aria-label={detailsOpen ? `Collapse tool activity for model turn ${turn.index}` : `Expand tool activity for model turn ${turn.index}`}
-          >
-            <span className="flex shrink-0 items-center">
-              {actions.slice(0, Math.min(actions.length, 3)).map((_, index) => (
-                <span
-                  key={index}
-                  className={cn(
-                    "inline-flex h-6 w-6 items-center justify-center rounded-full border",
-                    index > 0 && "-ml-1.5",
-                    turn.hasError
-                      ? "border-red-500/20 bg-red-500/[0.08] text-red-700 dark:text-red-300"
-                      : turn.hasRunning
-                        ? "border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-700 dark:text-cyan-300"
-                        : "border-border/60 bg-background/80 text-muted-foreground",
-                  )}
-                >
-                  <TerminalSquare className="h-3.5 w-3.5" />
-                </span>
-              ))}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className={cn(
-                "block break-words text-foreground/82",
-                compact ? "text-xs" : "text-sm",
-              )}>
-                {toolSummary || "Tool details"}
-              </span>
-            </span>
-            <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground">
-              {detailsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-            </span>
-          </button>
-
-          {detailsOpen ? (
-            <div className="mt-2 divide-y divide-border/30 border-l border-border/35 pl-3">
-              {actions.map((action) => (
-                <TranscriptChatActionRow
-                  key={action.key}
-                  action={action}
-                  density={density}
-                />
-              ))}
+          {hasSingleAction ? (
+            <div className="divide-y divide-border/30 border-l border-border/35 pl-3">
+              <TranscriptChatActionRow
+                action={actions[0]}
+                density={density}
+                inline
+              />
             </div>
-          ) : null}
+          ) : (
+            <>
+              <button
+                type="button"
+                className={cn(
+                  "flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
+                  turn.hasError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
+                )}
+                onClick={() => setDetailsOpen((value) => !value)}
+                aria-expanded={detailsOpen}
+                aria-label={detailsOpen ? `Collapse tool activity for model turn ${turn.index}` : `Expand tool activity for model turn ${turn.index}`}
+              >
+                <span className="flex shrink-0 items-center">
+                  {actions.slice(0, Math.min(actions.length, 3)).map((_, index) => (
+                    <span
+                      key={index}
+                      className={cn(
+                        "inline-flex h-6 w-6 items-center justify-center rounded-full border",
+                        index > 0 && "-ml-1.5",
+                        turn.hasError
+                          ? "border-red-500/20 bg-red-500/[0.08] text-red-700 dark:text-red-300"
+                          : turn.hasRunning
+                            ? "border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-700 dark:text-cyan-300"
+                            : "border-border/60 bg-background/80 text-muted-foreground",
+                      )}
+                    >
+                      <TerminalSquare className="h-3.5 w-3.5" />
+                    </span>
+                  ))}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={cn(
+                    "block break-words text-foreground/82",
+                    compact ? "text-xs" : "text-sm",
+                  )}>
+                    {toolSummary || "Tool details"}
+                  </span>
+                </span>
+                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-muted-foreground">
+                  {detailsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                </span>
+              </button>
+
+              {detailsOpen ? (
+                <div className="mt-2 divide-y divide-border/30 border-l border-border/35 pl-3">
+                  {actions.map((action) => (
+                    <TranscriptChatActionRow
+                      key={action.key}
+                      action={action}
+                      density={density}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
       ) : null}
     </section>

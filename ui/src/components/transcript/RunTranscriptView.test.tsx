@@ -131,6 +131,72 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("Activity details");
   });
 
+  it("renders a single chat log inline instead of behind a log-count disclosure", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "init",
+              ts: "2026-03-12T00:00:00.000Z",
+              model: "codex",
+              sessionId: "session-1",
+            },
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "stdout",
+              ts: "2026-03-12T00:00:02.000Z",
+              text: "Only actionable log",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Only actionable log");
+    expect(html).not.toContain("1 log");
+    expect(html).not.toContain("Expand output details");
+  });
+
+  it("filters routine Rudder-managed runtime home logs from nice transcript views", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "init",
+              ts: "2026-03-12T00:00:00.000Z",
+              model: "codex",
+              sessionId: "session-1",
+            },
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "stdout",
+              ts: "2026-03-12T00:00:02.000Z",
+              text: "[rudder] Using Rudder-managed Codex home \"/Users/zeeland/.rudder/instances/dev/codex\" (seeded from \"/Users/zeeland/.codex\").",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("model codex");
+    expect(html).not.toContain("Using Rudder-managed Codex home");
+    expect(html).not.toContain("1 log");
+  });
+
   it("summarizes multi-step tool activity in user-facing language", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
