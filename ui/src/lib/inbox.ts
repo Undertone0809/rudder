@@ -5,6 +5,7 @@ import type {
   HeartbeatRun,
   Issue,
   JoinRequest,
+  MessengerThreadSummary,
 } from "@rudder/shared";
 
 export const RECENT_ISSUES_LIMIT = 100;
@@ -44,6 +45,11 @@ export interface InboxBadgeData {
   unreadTouchedIssues: number;
   chatAttention: number;
   alerts: number;
+}
+
+export interface InboxNotificationContent {
+  title: string;
+  body?: string;
 }
 
 export function loadDismissedInboxItems(): Set<string> {
@@ -271,5 +277,63 @@ export function computeInboxBadgeData({
     unreadTouchedIssues,
     chatAttention,
     alerts,
+  };
+}
+
+function cleanNotificationText(value: string | null | undefined): string | null {
+  const normalized = value
+    ?.replace(/(^|\n)\s{0,3}#{1,6}\s+/g, "$1")
+    .replace(/[*_`~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || null;
+}
+
+function truncateNotificationText(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  return `${value.slice(0, Math.max(0, limit - 1)).trimEnd()}...`;
+}
+
+function compareMessengerThreadActivity(a: MessengerThreadSummary, b: MessengerThreadSummary): number {
+  const aTime = normalizeTimestamp(a.latestActivityAt);
+  const bTime = normalizeTimestamp(b.latestActivityAt);
+  if (aTime !== bTime) return bTime - aTime;
+  return a.title.localeCompare(b.title);
+}
+
+export function getInboxNotificationContent({
+  unreadCount,
+  messengerThreads,
+}: {
+  unreadCount: number;
+  messengerThreads: MessengerThreadSummary[];
+}): InboxNotificationContent {
+  const normalizedUnreadCount = Math.max(0, Math.floor(unreadCount));
+  const fallbackBody = normalizedUnreadCount === 1
+    ? "You have 1 unread inbox item."
+    : `You have ${normalizedUnreadCount} unread inbox items.`;
+  const fallback = {
+    title: "New inbox activity",
+    body: fallbackBody,
+  };
+
+  const latestUnreadThread = [...messengerThreads]
+    .filter((thread) => (thread.unreadCount ?? 0) > 0)
+    .sort(compareMessengerThreadActivity)[0];
+
+  if (!latestUnreadThread) return fallback;
+
+  const title = cleanNotificationText(latestUnreadThread.title) ?? fallback.title;
+  const preview = cleanNotificationText(latestUnreadThread.preview);
+  const subtitle = cleanNotificationText(latestUnreadThread.subtitle);
+  const body = preview && preview !== title
+    ? preview
+    : subtitle && subtitle !== title
+      ? subtitle
+      : fallback.body;
+
+  return {
+    title: truncateNotificationText(title, 80),
+    body: truncateNotificationText(body, 160),
   };
 }

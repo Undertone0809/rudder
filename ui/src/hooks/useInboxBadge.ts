@@ -11,6 +11,7 @@ import { chatsApi } from "../api/chats";
 import { queryKeys } from "../lib/queryKeys";
 import {
   computeInboxBadgeData,
+  getInboxNotificationContent,
   getRecentTouchedIssues,
   loadDismissedInboxItems,
   saveDismissedInboxItems,
@@ -127,7 +128,13 @@ export function useInboxBadge(orgId: string | null | undefined) {
 
   return useMemo(() => {
     if (messengerThreads.length === 0) {
-      return legacyBadge;
+      return {
+        ...legacyBadge,
+        notificationContent: getInboxNotificationContent({
+          unreadCount: legacyBadge.inbox,
+          messengerThreads,
+        }),
+      };
     }
 
     const threadsByKind = new Map(messengerThreads.map((thread) => [thread.kind, thread]));
@@ -140,9 +147,11 @@ export function useInboxBadge(orgId: string | null | undefined) {
         : 0;
     const alertCount = (threadsByKind.get("budget-alerts")?.unreadCount ?? 0) + aggregateAgentErrorAlert;
 
+    const inbox = unreadCount + aggregateAgentErrorAlert;
+
     return {
       ...legacyBadge,
-      inbox: unreadCount + aggregateAgentErrorAlert,
+      inbox,
       approvals: threadsByKind.get("approvals")?.unreadCount ?? 0,
       failedRuns: threadsByKind.get("failed-runs")?.unreadCount ?? 0,
       joinRequests: threadsByKind.get("join-requests")?.unreadCount ?? 0,
@@ -151,6 +160,10 @@ export function useInboxBadge(orgId: string | null | undefined) {
         .filter((thread) => thread.kind === "chat" && thread.needsAttention)
         .reduce((sum, thread) => sum + Math.max(1, thread.unreadCount ?? 0), 0),
       alerts: alertCount,
+      notificationContent: getInboxNotificationContent({
+        unreadCount: inbox,
+        messengerThreads,
+      }),
     };
   }, [dashboard?.agents.error, dismissed, legacyBadge, messengerThreads]);
 }

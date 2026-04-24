@@ -1,11 +1,19 @@
 // @vitest-environment node
 
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Approval, DashboardSummary, HeartbeatRun, Issue, JoinRequest } from "@rudder/shared";
+import type {
+  Approval,
+  DashboardSummary,
+  HeartbeatRun,
+  Issue,
+  JoinRequest,
+  MessengerThreadSummary,
+} from "@rudder/shared";
 import {
   computeInboxBadgeData,
   getApprovalsForTab,
   getInboxWorkItems,
+  getInboxNotificationContent,
   getRecentTouchedIssues,
   getUnreadTouchedIssues,
   loadLastInboxTab,
@@ -164,6 +172,22 @@ function makeIssue(id: string, isUnreadForMe: boolean): Issue {
     myLastTouchAt: new Date("2026-03-11T00:00:00.000Z"),
     lastExternalCommentAt: new Date("2026-03-11T01:00:00.000Z"),
     isUnreadForMe,
+  };
+}
+
+function makeThreadSummary(
+  overrides: Partial<MessengerThreadSummary> & Pick<MessengerThreadSummary, "threadKey" | "title">,
+): MessengerThreadSummary {
+  return {
+    kind: "issues",
+    subtitle: null,
+    preview: null,
+    latestActivityAt: null,
+    lastReadAt: null,
+    unreadCount: 0,
+    needsAttention: false,
+    href: "/messenger/issues",
+    ...overrides,
   };
 }
 
@@ -355,5 +379,45 @@ describe("inbox helpers", () => {
   it("maps legacy new-tab storage to recent", () => {
     localStorage.setItem("rudder:inbox:last-tab", "new");
     expect(loadLastInboxTab()).toBe("recent");
+  });
+
+  it("builds desktop notification copy from the latest unread Messenger thread", () => {
+    const content = getInboxNotificationContent({
+      unreadCount: 2,
+      messengerThreads: [
+        makeThreadSummary({
+          threadKey: "read-latest",
+          title: "Read latest",
+          preview: "This should not be used",
+          latestActivityAt: new Date("2026-03-11T05:00:00.000Z"),
+        }),
+        makeThreadSummary({
+          threadKey: "older-unread",
+          title: "Older unread",
+          preview: "Older preview",
+          latestActivityAt: new Date("2026-03-11T03:00:00.000Z"),
+          unreadCount: 1,
+        }),
+        makeThreadSummary({
+          threadKey: "issues",
+          title: "Issues",
+          preview: "## Update\nReview the hiring plan",
+          latestActivityAt: new Date("2026-03-11T04:00:00.000Z"),
+          unreadCount: 1,
+        }),
+      ],
+    });
+
+    expect(content).toEqual({
+      title: "Issues",
+      body: "Update Review the hiring plan",
+    });
+  });
+
+  it("falls back to unread-count notification copy without unread Messenger threads", () => {
+    expect(getInboxNotificationContent({ unreadCount: 1, messengerThreads: [] })).toEqual({
+      title: "New inbox activity",
+      body: "You have 1 unread inbox item.",
+    });
   });
 });

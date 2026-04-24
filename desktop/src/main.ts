@@ -1218,6 +1218,7 @@ function registerIpc(): void {
       title,
       body,
       silent: false,
+      ...(desktopWindowIcon ? { icon: desktopWindowIcon } : {}),
     });
     updateBootState({
       stage: currentBootState.stage,

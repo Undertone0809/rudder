@@ -47,6 +47,8 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   desktopDockBadge: true,
 };
 
+const RUDDER_NOTIFICATION_ICON = "/rudder-logo.png";
+
 const railUtilityButtonClass = [
   "h-9 w-9 translate-x-1 rounded-lg border shadow-[0_6px_18px_-16px_rgba(15,23,42,0.55)] backdrop-blur-[22px]",
   "border-[color:color-mix(in_oklab,var(--sidebar-border)_76%,white)]",
@@ -172,20 +174,21 @@ export function PrimaryRail({
         && nextCount > previousCount
         && notificationSettings.desktopInboxNotifications
       ) {
-        const body = nextCount === 1
-          ? "You have 1 unread inbox item."
-          : `You have ${nextCount} unread inbox items.`;
+        const { title, body } = inboxBadge.notificationContent;
 
         if (desktopShellApi) {
           await desktopShellApi.showNotification({
-            title: "New inbox activity",
+            title,
             body,
           }).catch((error) => {
             console.warn("[rudder-ui] failed to trigger desktop inbox notification", error);
           });
         } else if (browserPermission === "granted" && typeof Notification !== "undefined") {
           try {
-            const notification = new Notification("New inbox activity", { body });
+            const notification = new Notification(title, {
+              body,
+              icon: RUDDER_NOTIFICATION_ICON,
+            });
             notification.onclick = () => window.focus();
           } catch (error) {
             console.warn("[rudder-ui] failed to trigger browser inbox notification", error);
@@ -201,6 +204,7 @@ export function PrimaryRail({
     };
   }, [
     inboxBadge.inbox,
+    inboxBadge.notificationContent,
     notificationsSettingsQuery.data,
     notificationsSettingsQuery.isLoading,
   ]);
