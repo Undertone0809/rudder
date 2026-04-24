@@ -11,11 +11,9 @@ import {
   resolveAgentMemoryDir,
   resolveAgentSkillsDir,
   resolveDefaultAgentWorkspaceDir,
-  resolveLegacyProjectArtifactsDir,
   resolveOrganizationAgentsDir,
   resolveOrganizationPlansDir,
   resolveOrganizationSkillsDir,
-  resolveOrganizationWorkspaceRoot,
 } from "../home-paths.js";
 
 async function makeTempDir(prefix: string): Promise<string> {
@@ -135,7 +133,7 @@ describe("home paths", () => {
     await expect(fs.readFile(path.join(olderLegacyWorkspace, "old.txt"), "utf8")).resolves.toBe("legacy workspace\n");
   });
 
-  it("archives live legacy project storage under the org workspace and removes the retired root", async () => {
+  it("removes the retired legacy projects root without preserving live org contents", async () => {
     const rudderHome = await makeTempDir("rudder-home-paths-legacy-projects-");
     cleanupDirs.add(rudderHome);
     process.env.RUDDER_HOME = rudderHome;
@@ -159,14 +157,8 @@ describe("home paths", () => {
 
     const result = await pruneOrphanedOrganizationStorage([orgId]);
 
-    expect(result.removedLegacyProjectDirNames).toEqual(["orphan-org"]);
-    expect(result.archivedLegacyProjectDirNames).toEqual([orgId]);
+    expect(result.removedLegacyProjectDirNames).toEqual([orgId, "orphan-org"]);
     expect(result.removedLegacyProjectsRoot).toBe(true);
     await expect(fs.stat(legacyProjectsRoot)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.readFile(
-      path.join(resolveLegacyProjectArtifactsDir(orgId), "project-1", "_default", "plans", "2026-04-19-plan.md"),
-      "utf8",
-    )).resolves.toBe("# Legacy plan\n");
-    await expect(fs.stat(resolveOrganizationWorkspaceRoot(orgId))).resolves.toBeDefined();
   });
 });

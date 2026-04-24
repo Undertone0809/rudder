@@ -7,8 +7,6 @@ const DEFAULT_INSTANCE_ID = "default";
 const INSTANCE_ID_RE = /^[a-zA-Z0-9_-]+$/;
 const PATH_SEGMENT_RE = /^[a-zA-Z0-9_-]+$/;
 const FRIENDLY_PATH_SEGMENT_RE = /[^a-zA-Z0-9._-]+/g;
-const LEGACY_PROJECT_ARTIFACTS_DIR_NAME = "legacy-project-artifacts";
-const IGNORED_LEGACY_STORAGE_ENTRIES = new Set([".DS_Store"]);
 
 function expandHomePrefix(value: string): string {
   if (value === "~") return os.homedir();
@@ -118,10 +116,6 @@ export function resolveOrganizationAgentsDir(orgId: string): string {
   return path.resolve(resolveOrganizationWorkspaceRoot(orgId), "agents");
 }
 
-export function resolveLegacyProjectArtifactsDir(orgId: string): string {
-  return path.resolve(resolveOrganizationWorkspaceRoot(orgId), LEGACY_PROJECT_ARTIFACTS_DIR_NAME);
-}
-
 export function resolveManagedOrganizationCodebaseDir(input: {
   orgId: string;
   repoName?: string | null;
@@ -224,104 +218,11 @@ async function listDirectoryNames(rootPath: string): Promise<string[]> {
   }
 }
 
-async function listDirectoryEntries(rootPath: string): Promise<Array<{ name: string; path: string }>> {
+async function directoryExists(rootPath: string): Promise<boolean> {
   try {
-    const entries = await fs.readdir(rootPath, { withFileTypes: true });
-    return entries
-      .map((entry) => ({ name: entry.name, path: path.resolve(rootPath, entry.name) }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    return (await fs.stat(rootPath)).isDirectory();
   } catch (error) {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-}
-
-async function pathExists(targetPath: string): Promise<boolean> {
-  return fs.stat(targetPath).then(() => true).catch((error) => {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  });
-}
-
-async function allocateAvailableDestination(parentPath: string, entryName: string): Promise<string> {
-  const extension = path.extname(entryName);
-  const basename = extension ? entryName.slice(0, -extension.length) : entryName;
-  let candidate = path.resolve(parentPath, entryName);
-  if (!(await pathExists(candidate))) return candidate;
-
-  for (let suffix = 2; suffix < 10_000; suffix += 1) {
-    candidate = path.resolve(parentPath, `${basename}-${suffix}${extension}`);
-    if (!(await pathExists(candidate))) return candidate;
-  }
-
-  throw new Error(`Unable to allocate archive path for legacy project artifact '${entryName}'.`);
-}
-
-async function movePath(sourcePath: string, destinationPath: string): Promise<void> {
-  await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-  try {
-    await fs.rename(sourcePath, destinationPath);
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "EXDEV") {
-      await fs.cp(sourcePath, destinationPath, { recursive: true, force: false, errorOnExist: true });
-      await fs.rm(sourcePath, { recursive: true, force: true });
-      return;
-    }
-    throw error;
-  }
-}
-
-async function archiveLegacyProjectStorageForLiveOrg(orgId: string, legacyOrgRootPath: string): Promise<number> {
-  const entries = await listDirectoryEntries(legacyOrgRootPath);
-  const entriesToMove = entries.filter((entry) => !IGNORED_LEGACY_STORAGE_ENTRIES.has(entry.name));
-  await Promise.all(
-    entries
-      .filter((entry) => IGNORED_LEGACY_STORAGE_ENTRIES.has(entry.name))
-      .map((entry) => fs.rm(entry.path, { recursive: true, force: true })),
-  );
-
-  if (entriesToMove.length === 0) {
-    await fs.rm(legacyOrgRootPath, { recursive: true, force: true });
-    return 0;
-  }
-
-  const archiveRoot = resolveLegacyProjectArtifactsDir(orgId);
-  await ensureOrganizationWorkspaceLayout(orgId);
-  await fs.mkdir(archiveRoot, { recursive: true });
-
-  let movedEntryCount = 0;
-  for (const entry of entriesToMove) {
-    const destinationPath = await allocateAvailableDestination(archiveRoot, entry.name);
-    await movePath(entry.path, destinationPath);
-    movedEntryCount += 1;
-  }
-
-  await fs.rm(legacyOrgRootPath, { recursive: true, force: true });
-  return movedEntryCount;
-}
-
-async function removeIgnoredRootEntries(rootPath: string): Promise<void> {
-  await Promise.all(
-    Array.from(IGNORED_LEGACY_STORAGE_ENTRIES).map((entryName) =>
-      fs.rm(path.resolve(rootPath, entryName), { recursive: true, force: true })),
-  );
-}
-
-async function removeDirectoryIfEmpty(rootPath: string): Promise<boolean> {
-  try {
-    await fs.rmdir(rootPath);
-    return true;
-  } catch (error) {
-    if (
-      typeof error === "object"
-      && error !== null
-      && "code" in error
-      && (error.code === "ENOENT" || error.code === "ENOTEMPTY")
-    ) {
       return false;
     }
     throw error;
@@ -333,7 +234,6 @@ export async function pruneOrphanedOrganizationStorage(
 ): Promise<{
   removedOrganizationDirNames: string[];
   removedLegacyProjectDirNames: string[];
-  archivedLegacyProjectDirNames: string[];
   removedLegacyProjectsRoot: boolean;
 }> {
   const liveOrgIdSet = new Set(liveOrgIds.map((orgId) => validatePathSegment(orgId, "org id")));
@@ -341,37 +241,23 @@ export async function pruneOrphanedOrganizationStorage(
   const legacyProjectsRoot = path.resolve(resolveRudderInstanceRoot(), "projects");
   const organizationDirNames = await listDirectoryNames(organizationRoot);
   const legacyProjectDirNames = await listDirectoryNames(legacyProjectsRoot);
+  const legacyProjectsRootExists = await directoryExists(legacyProjectsRoot);
 
   const removedOrganizationDirNames = organizationDirNames.filter((dirName) => !liveOrgIdSet.has(dirName));
-  const removedLegacyProjectDirNames: string[] = [];
-  const archivedLegacyProjectDirNames: string[] = [];
+  const removedLegacyProjectDirNames = legacyProjectDirNames;
 
   await Promise.all([
     ...removedOrganizationDirNames.map((dirName) =>
       fs.rm(path.resolve(organizationRoot, dirName), { recursive: true, force: true })),
+    ...(legacyProjectsRootExists
+      ? [fs.rm(legacyProjectsRoot, { recursive: true, force: true })]
+      : []),
   ]);
-
-  for (const dirName of legacyProjectDirNames) {
-    const legacyOrgRootPath = path.resolve(legacyProjectsRoot, dirName);
-    if (!liveOrgIdSet.has(dirName)) {
-      await fs.rm(legacyOrgRootPath, { recursive: true, force: true });
-      removedLegacyProjectDirNames.push(dirName);
-      continue;
-    }
-
-    // Top-level `instances/<id>/projects` is retired. Preserve any old live-org
-    // artifacts under that org's managed workspace, then remove the legacy path.
-    const movedEntryCount = await archiveLegacyProjectStorageForLiveOrg(dirName, legacyOrgRootPath);
-    if (movedEntryCount > 0) archivedLegacyProjectDirNames.push(dirName);
-  }
-  await removeIgnoredRootEntries(legacyProjectsRoot);
-  const removedLegacyProjectsRoot = await removeDirectoryIfEmpty(legacyProjectsRoot);
 
   return {
     removedOrganizationDirNames,
     removedLegacyProjectDirNames,
-    archivedLegacyProjectDirNames,
-    removedLegacyProjectsRoot,
+    removedLegacyProjectsRoot: legacyProjectsRootExists,
   };
 }
 
