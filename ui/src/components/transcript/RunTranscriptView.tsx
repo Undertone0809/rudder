@@ -2406,7 +2406,7 @@ function TranscriptDetailRow({
   children,
 }: {
   ts: string;
-  label: string;
+  label?: string | null;
   tone: DetailTimelineTone;
   last?: boolean;
   children: ReactNode;
@@ -2421,12 +2421,14 @@ function TranscriptDetailRow({
         </div>
         <div className="mt-2 flex items-center gap-2">
           <span className={cn("h-2 w-2 shrink-0 rounded-full", styles.dot)} />
-          <span className={cn(
-            "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]",
-            styles.badge,
-          )}>
-            {label}
-          </span>
+          {label ? (
+            <span className={cn(
+              "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]",
+              styles.badge,
+            )}>
+              {label}
+            </span>
+          ) : null}
         </div>
         {!last && <div className="absolute left-[0.35rem] top-7 bottom-[-1.25rem] w-px bg-border/60" />}
       </div>
@@ -2620,7 +2622,7 @@ function TranscriptDetailTimeline({
           <TranscriptDetailRow
             key={turn.key}
             ts={turn.ts}
-            label="turn"
+            label={null}
             tone={
               turn.hasError
                 ? "danger"

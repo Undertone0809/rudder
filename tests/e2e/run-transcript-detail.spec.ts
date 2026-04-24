@@ -22,7 +22,7 @@ async function createOrganization(page: Page, name: string) {
 }
 
 test.describe("Run transcript detail", () => {
-  test("renders semantic timeline rows and expandable tool details", async ({ page }) => {
+  test("renders detail transcripts as timeline-grouped model turns with collapsed tool activity", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-${Date.now()}`);
 
     await page.goto("/");
@@ -37,21 +37,15 @@ test.describe("Run transcript detail", () => {
     await page.getByRole("button", { name: "Show settled state" }).click();
     await expect(page.getByRole("button", { name: "Show streaming state" })).toBeVisible({ timeout: 15_000 });
 
-    await expect(page.getByText("Read", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Grep", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Script", { exact: true }).first()).toBeVisible();
+    const firstTurn = page.locator("section").filter({ hasText: "Model turn 1" });
+    await expect(firstTurn).toHaveCount(1);
+    await expect(firstTurn).toContainText("Explored 2 files");
+    await expect(page.getByText("Read", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("doc/GOAL.md", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("doc/SPEC-implementation.md", { exact: true })).toHaveCount(0);
 
-    const failedCommandRow = page.locator("section").filter({ hasText: "Ran pnpm test:run" }).first();
-    await expect(failedCommandRow).toBeVisible();
-    await expect(failedCommandRow.getByText("sh: vitest: command not found")).toHaveCount(0);
-    await expect(failedCommandRow.getByRole("button", { name: "Expand command details" })).toBeVisible();
-
-    await page.getByRole("button", { name: "Expand tool details" }).first().click();
-    await expect(page.getByText("Input", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Result", { exact: true }).first()).toBeVisible();
-
-    await failedCommandRow.getByRole("button", { name: "Expand command details" }).click();
-    await expect(failedCommandRow.getByText("sh: vitest: command not found")).toBeVisible();
+    await firstTurn.getByRole("button", { name: "Expand tool activity for model turn 1" }).click();
+    await expect(firstTurn.getByRole("button", { name: "Expand command details" })).toHaveCount(2);
 
     await page.screenshot({
       path: "tests/e2e/test-results/run-transcript-detail-expanded.png",
