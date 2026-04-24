@@ -683,13 +683,17 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   if (
     prunedOrganizationStorage.removedOrganizationDirNames.length > 0
     || prunedOrganizationStorage.removedLegacyProjectDirNames.length > 0
+    || prunedOrganizationStorage.archivedLegacyProjectDirNames.length > 0
+    || prunedOrganizationStorage.removedLegacyProjectsRoot
   ) {
     logger.warn(
       {
         removedOrganizationDirNames: prunedOrganizationStorage.removedOrganizationDirNames,
         removedLegacyProjectDirNames: prunedOrganizationStorage.removedLegacyProjectDirNames,
+        archivedLegacyProjectDirNames: prunedOrganizationStorage.archivedLegacyProjectDirNames,
+        removedLegacyProjectsRoot: prunedOrganizationStorage.removedLegacyProjectsRoot,
       },
-      "pruned orphaned organization storage on startup",
+      "reconciled local organization storage on startup",
     );
   }
 

@@ -6,13 +6,16 @@ import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
 import {
   ensureAgentWorkspaceLayout,
   ensureOrganizationWorkspaceLayout,
+  pruneOrphanedOrganizationStorage,
   resolveAgentInstructionsDir,
   resolveAgentMemoryDir,
   resolveAgentSkillsDir,
   resolveDefaultAgentWorkspaceDir,
+  resolveLegacyProjectArtifactsDir,
   resolveOrganizationAgentsDir,
   resolveOrganizationPlansDir,
   resolveOrganizationSkillsDir,
+  resolveOrganizationWorkspaceRoot,
 } from "../home-paths.js";
 
 async function makeTempDir(prefix: string): Promise<string> {
@@ -130,5 +133,40 @@ describe("home paths", () => {
     await expect(fs.readFile(path.join(currentLegacyWorkspace, "notes.txt"), "utf8")).resolves.toBe("legacy org-scoped root\n");
     await expect(fs.readFile(path.join(legacyInstructions, "AGENTS.md"), "utf8")).resolves.toBe("# Legacy Agent\n");
     await expect(fs.readFile(path.join(olderLegacyWorkspace, "old.txt"), "utf8")).resolves.toBe("legacy workspace\n");
+  });
+
+  it("archives live legacy project storage under the org workspace and removes the retired root", async () => {
+    const rudderHome = await makeTempDir("rudder-home-paths-legacy-projects-");
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const legacyProjectsRoot = path.join(rudderHome, "instances", "test-instance", "projects");
+    const legacyLiveOrgRoot = path.join(legacyProjectsRoot, orgId);
+    const legacyPlanPath = path.join(
+      legacyLiveOrgRoot,
+      "project-1",
+      "_default",
+      "plans",
+      "2026-04-19-plan.md",
+    );
+    const legacyOrphanRoot = path.join(legacyProjectsRoot, "orphan-org");
+    await fs.mkdir(path.dirname(legacyPlanPath), { recursive: true });
+    await fs.writeFile(legacyPlanPath, "# Legacy plan\n", "utf8");
+    await fs.mkdir(legacyOrphanRoot, { recursive: true });
+    await fs.writeFile(path.join(legacyOrphanRoot, "old.txt"), "orphan\n", "utf8");
+    await fs.writeFile(path.join(legacyProjectsRoot, ".DS_Store"), "", "utf8");
+
+    const result = await pruneOrphanedOrganizationStorage([orgId]);
+
+    expect(result.removedLegacyProjectDirNames).toEqual(["orphan-org"]);
+    expect(result.archivedLegacyProjectDirNames).toEqual([orgId]);
+    expect(result.removedLegacyProjectsRoot).toBe(true);
+    await expect(fs.stat(legacyProjectsRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(
+      path.join(resolveLegacyProjectArtifactsDir(orgId), "project-1", "_default", "plans", "2026-04-19-plan.md"),
+      "utf8",
+    )).resolves.toBe("# Legacy plan\n");
+    await expect(fs.stat(resolveOrganizationWorkspaceRoot(orgId))).resolves.toBeDefined();
   });
 });
