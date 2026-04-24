@@ -2053,6 +2053,12 @@ function TranscriptChatToolActionRow({
     : block.status === "running"
       ? "text-cyan-700 dark:text-cyan-300"
       : "text-muted-foreground";
+  const commandStatusLabel =
+    block.status === "error"
+      ? "command failed"
+      : block.status === "running"
+        ? "command running"
+        : "command completed";
 
   return (
     <div className={cn("py-1.5", block.status === "error" && "rounded-lg bg-red-500/[0.04] px-2")}>
@@ -2102,29 +2108,66 @@ function TranscriptChatToolActionRow({
         ) : null}
       </button>
       {canExpand && open ? (
-        <div className="ml-5 mt-2 space-y-2 rounded-lg border border-border/35 bg-muted/10 p-2.5">
-          <div>
-            <div className="mb-1 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground">
-              {command ? "Command" : "Input"}
+        command ? (
+          <div data-testid="command-terminal-detail" className="ml-5 mt-2 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950 text-neutral-100 shadow-inner">
+            <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-white/[0.04] px-3 py-1.5 font-mono text-[10px] text-neutral-400">
+              <span className={cn(
+                "h-2 w-2 rounded-full",
+                block.status === "error"
+                  ? "bg-red-400"
+                  : block.status === "running"
+                    ? "bg-cyan-400"
+                    : "bg-emerald-400",
+              )} />
+              <span>{commandStatusLabel}</span>
+              {duration ? <span className="text-neutral-500">{duration}</span> : null}
             </div>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
-              {requestText}
-            </pre>
-          </div>
-          {responseText ? (
-            <div>
-              <div className="mb-1 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground">
-                Response
+            <div className="space-y-3 p-3">
+              <div>
+                <div className="mb-1 font-mono text-[10px] text-neutral-500">command</div>
+                <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-neutral-100">
+                  <span className="select-none text-neutral-500">$ </span>
+                  {requestText}
+                </pre>
               </div>
-              <pre className={cn(
-                "overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px]",
-                block.status === "error" ? "text-red-700 dark:text-red-300" : "text-foreground/80",
-              )}>
-                {responseText}
+              {responseText ? (
+                <div className="border-t border-white/10 pt-3">
+                  <div className="mb-1 font-mono text-[10px] text-neutral-500">response</div>
+                  <pre className={cn(
+                    "overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5",
+                    block.status === "error" ? "text-red-300" : "text-neutral-200",
+                  )}>
+                    {responseText}
+                  </pre>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <div className="ml-5 mt-2 space-y-2 rounded-lg border border-border/35 bg-muted/10 p-2.5">
+            <div>
+              <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
+                Input
+              </div>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/80">
+                {requestText}
               </pre>
             </div>
-          ) : null}
-        </div>
+            {responseText ? (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold text-muted-foreground">
+                  Response
+                </div>
+                <pre className={cn(
+                  "overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px]",
+                  block.status === "error" ? "text-red-700 dark:text-red-300" : "text-foreground/80",
+                )}>
+                  {responseText}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+        )
       ) : null}
     </div>
   );
@@ -2165,9 +2208,12 @@ function TranscriptChatTurn({
   const actions = flattenChatTranscriptActions(turn.blocks);
   const toolSummary = formatChatToolSummary(turn);
   const hasSingleAction = actions.length === 1;
+  const failedActionCount = actions.filter((action) => action.type === "tool" && action.entry.status === "error").length;
   const shouldInlineSingleAction = hasSingleAction && (!detailVariant || actions[0]?.type === "stdout");
   const showPreview = Boolean(turn.preview) && (!detailVariant || primaryBlocks.length > 0 || actions.length === 0);
   const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : turn.hasError));
+  const highlightTurnError = turn.hasError && !detailVariant;
+  const showToolIssue = turn.hasError && detailVariant && !turn.hasRunning;
 
   useEffect(() => {
     if (!detailVariant && turn.hasError) {
@@ -2179,7 +2225,7 @@ function TranscriptChatTurn({
     <section
       className={cn(
         "rounded-[18px] border px-3.5 py-3",
-        turn.hasError
+        highlightTurnError
           ? "border-red-500/20 bg-red-500/[0.04]"
           : turn.hasRunning
             ? "border-cyan-500/20 bg-cyan-500/[0.035]"
@@ -2191,7 +2237,7 @@ function TranscriptChatTurn({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className={cn(
               "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]",
-              turn.hasError
+              highlightTurnError
                 ? "border-red-500/20 bg-red-500/[0.08] text-red-700 dark:text-red-300"
                 : turn.hasRunning
                   ? "border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-700 dark:text-cyan-300"
@@ -2204,16 +2250,18 @@ function TranscriptChatTurn({
                 <Loader2 className="h-3 w-3 animate-spin" />
                 Running
               </span>
-            ) : turn.hasError ? (
+            ) : highlightTurnError ? (
               <span className="text-[11px] text-red-700 dark:text-red-300">Needs review</span>
+            ) : showToolIssue ? (
+              <span className="text-[11px] text-muted-foreground">
+                {failedActionCount > 1 ? `${failedActionCount} tool issues` : "Tool issue"}
+              </span>
             ) : (
               <span className="text-[11px] text-muted-foreground">Completed</span>
             )}
-            {!detailVariant ? (
-              <span className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground">
-                {formatTranscriptTimestamp(turn.ts)}
-              </span>
-            ) : null}
+            <span className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground">
+              {formatTranscriptTimestamp(turn.ts)}
+            </span>
           </div>
           {showPreview ? (
             <p className={cn(
@@ -2255,7 +2303,7 @@ function TranscriptChatTurn({
                 type="button"
                 className={cn(
                   "flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
-                  turn.hasError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
+                  highlightTurnError ? "hover:bg-red-500/[0.05]" : "hover:bg-muted/10",
                 )}
                 onClick={() => setDetailsOpen((value) => !value)}
                 aria-expanded={detailsOpen}
@@ -2268,7 +2316,7 @@ function TranscriptChatTurn({
                       className={cn(
                         "inline-flex h-6 w-6 items-center justify-center rounded-full border",
                         index > 0 && "-ml-1.5",
-                        turn.hasError
+                        highlightTurnError
                           ? "border-red-500/20 bg-red-500/[0.08] text-red-700 dark:text-red-300"
                           : turn.hasRunning
                             ? "border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-700 dark:text-cyan-300"
@@ -2367,32 +2415,27 @@ interface DetailTimelineRow {
     | Extract<TranscriptBlock, { type: "stdout" }>;
 }
 
-function detailToneClasses(tone: DetailTimelineTone): { dot: string; badge: string } {
+function detailToneClasses(tone: DetailTimelineTone): { badge: string } {
   switch (tone) {
     case "accent":
       return {
-        dot: "bg-cyan-500",
         badge: "border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-700 dark:text-cyan-300",
       };
     case "success":
       return {
-        dot: "bg-emerald-500",
         badge: "border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-700 dark:text-emerald-300",
       };
     case "warning":
       return {
-        dot: "bg-amber-500",
         badge: "border-amber-500/20 bg-amber-500/[0.08] text-amber-700 dark:text-amber-300",
       };
     case "danger":
       return {
-        dot: "bg-red-500",
         badge: "border-red-500/20 bg-red-500/[0.08] text-red-700 dark:text-red-300",
       };
     case "neutral":
     default:
       return {
-        dot: "bg-muted-foreground/60",
         badge: "border-border/60 bg-background/70 text-muted-foreground",
       };
   }
@@ -2402,39 +2445,31 @@ function TranscriptDetailRow({
   ts,
   label,
   tone,
-  last,
   children,
 }: {
   ts: string;
   label?: string | null;
   tone: DetailTimelineTone;
-  last?: boolean;
   children: ReactNode;
 }) {
   const styles = detailToneClasses(tone);
 
   return (
-    <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-4">
-      <div className="relative min-w-0 pt-1 pr-2">
-        <div className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground">
+    <div className="rounded-xl border border-border/50 bg-background/35 px-3 py-2.5">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        {label ? (
+          <span className={cn(
+            "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]",
+            styles.badge,
+          )}>
+            {label}
+          </span>
+        ) : null}
+        <span className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground">
           {formatTranscriptTimestamp(ts)}
-        </div>
-        <div className="mt-2 flex items-center gap-2">
-          <span className={cn("h-2 w-2 shrink-0 rounded-full", styles.dot)} />
-          {label ? (
-            <span className={cn(
-              "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]",
-              styles.badge,
-            )}>
-              {label}
-            </span>
-          ) : null}
-        </div>
-        {!last && <div className="absolute left-[0.35rem] top-7 bottom-[-1.25rem] w-px bg-border/60" />}
+        </span>
       </div>
-      <div className="min-w-0">
-        {children}
-      </div>
+      {children}
     </div>
   );
 }
@@ -2565,20 +2600,16 @@ function TranscriptDetailTimeline({
     [entries, streaming],
   );
   const rows = expandDetailTimelineBlocks(preludeBlocks);
-  const totalRows = rows.length + turns.length;
 
   return (
-    <div className="space-y-4">
-      {rows.map((row, index) => {
-        const isLast = index === totalRows - 1;
-
+    <div className="space-y-3">
+      {rows.map((row) => {
         return (
           <TranscriptDetailRow
             key={row.key}
             ts={row.ts}
             label={row.label}
             tone={row.tone}
-            last={isLast && !streaming}
           >
             {row.block.type === "message" && (
               <TranscriptMessageBlock
@@ -2616,21 +2647,10 @@ function TranscriptDetailTimeline({
         );
       })}
       {turns.map((turn, index) => {
-        const isLast = rows.length + index === totalRows - 1;
-
         return (
-          <TranscriptDetailRow
+          <div
             key={turn.key}
-            ts={turn.ts}
-            label={null}
-            tone={
-              turn.hasError
-                ? "danger"
-                : turn.hasRunning
-                  ? "accent"
-                  : "success"
-            }
-            last={isLast && !streaming}
+            className={cn(index === turns.length - 1 && streaming && "animate-in fade-in slide-in-from-bottom-1 duration-300")}
           >
             <TranscriptChatTurn
               turn={turn}
@@ -2638,7 +2658,7 @@ function TranscriptDetailTimeline({
               thinkingClassName={thinkingClassName}
               variant="detail"
             />
-          </TranscriptDetailRow>
+          </div>
         );
       })}
     </div>

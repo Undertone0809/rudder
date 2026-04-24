@@ -6,6 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 import {
+  readLocalRuntimeDescriptor,
   gracefullyStopRuntime,
   probeLocalRuntime,
   withRuntimeStartLock,
@@ -92,11 +93,11 @@ const { env, localEnvName } = resolveDevScriptEnvironment({
 
 if (mode === "dev") {
   env.RUDDER_DEV_SERVER_STATUS_FILE = devServerStatusFilePath;
-  delete env.RUDDER_UI_DEV_MIDDLEWARE;
+  env.RUDDER_UI_DEV_MIDDLEWARE ??= "true";
 }
 
 if (mode === "watch") {
-  env.RUDDER_UI_DEV_MIDDLEWARE = "true";
+  env.RUDDER_UI_DEV_MIDDLEWARE ??= "true";
   env.RUDDER_MIGRATION_PROMPT ??= "never";
   env.RUDDER_MIGRATION_AUTO_APPLY ??= "true";
 }
@@ -438,13 +439,40 @@ async function scanForBackendChanges() {
   }
 }
 
-async function getDevHealthPayload() {
-  const serverPort = env.PORT ?? process.env.PORT ?? "3100";
-  const response = await fetch(`http://127.0.0.1:${serverPort}/api/health`);
+async function fetchHealthPayload(apiUrl) {
+  const response = await fetch(`${String(apiUrl).replace(/\/+$/, "")}/api/health`);
   if (!response.ok) {
     throw new Error(`Health request failed (${response.status})`);
   }
   return await response.json();
+}
+
+async function getDevHealthPayload() {
+  const descriptor = await readLocalRuntimeDescriptor(env.RUDDER_INSTANCE_ID);
+  if (
+    descriptor?.apiUrl
+    && descriptor.ownerKind === "dev_runner"
+    && descriptor.instanceId === env.RUDDER_INSTANCE_ID
+    && descriptor.localEnv === env.RUDDER_LOCAL_ENV
+  ) {
+    try {
+      const health = await fetchHealthPayload(descriptor.apiUrl);
+      if (
+        health?.status === "ok"
+        && health?.instanceId === env.RUDDER_INSTANCE_ID
+        && health?.localEnv === env.RUDDER_LOCAL_ENV
+        && health?.runtimeOwnerKind === "dev_runner"
+      ) {
+        return health;
+      }
+    } catch {
+      // The descriptor is written only after listen succeeds, but it can still
+      // briefly point at a process that is shutting down during takeover.
+    }
+  }
+
+  const serverPort = env.PORT ?? process.env.PORT ?? "3100";
+  return await fetchHealthPayload(`http://127.0.0.1:${serverPort}`);
 }
 
 async function waitForChildHealthReady() {

@@ -1,11 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { E2E_CODEX_STUB, E2E_ROOT } from "./support/e2e-env";
 
-const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
-const E2E_HOME = path.resolve(THIS_DIR, ".tmp/rudder-e2e-home");
-const E2E_CODEX_STUB = path.join(E2E_HOME, "bin", "codex");
-const E2E_CODEX_IGNORE_TERM_STUB = path.resolve(THIS_DIR, "fixtures", "codex-ignore-term");
+const E2E_CODEX_IGNORE_TERM_STUB = path.resolve(E2E_ROOT, "fixtures", "codex-ignore-term");
 
 async function expectTranscriptBetweenUserAndAssistant(page: Page) {
   const userBubble = page.getByTestId("chat-user-message-bubble").last();

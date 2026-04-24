@@ -1,13 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs/promises";
-
-const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
-const E2E_HOME = path.resolve(THIS_DIR, ".tmp/rudder-e2e-home");
-const E2E_CODEX_STUB = path.join(E2E_HOME, "bin", "codex");
-const E2E_CLAUDE_STUB = path.join(E2E_HOME, "bin", "claude");
-const E2E_INSTANCE_ID = "playwright";
+import { E2E_CLAUDE_STUB, E2E_CODEX_STUB, E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
 
 async function resolveSingleAgentWorkspaceRoot(orgId: string) {
   const agentsRoot = path.join(

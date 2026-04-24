@@ -1,13 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
 import { createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
+import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
-const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
-const E2E_HOME = path.resolve(THIS_DIR, ".tmp/rudder-e2e-home");
-const E2E_CODEX_STUB = path.join(E2E_HOME, "bin", "codex");
-const E2E_DATABASE_URL = process.env.RUDDER_E2E_DATABASE_URL?.trim() || "postgres://rudder:rudder@127.0.0.1:54339/rudder";
 const e2eDb = createDb(E2E_DATABASE_URL);
 
 async function createOrganization(page: Page, name: string) {

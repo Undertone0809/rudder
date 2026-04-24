@@ -1,11 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { promises as fs } from "node:fs";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
-
-const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
-const E2E_HOME = path.resolve(THIS_DIR, ".tmp/rudder-e2e-home");
-const E2E_BIN_DIR = path.join(E2E_HOME, "bin");
+import { E2E_BIN_DIR } from "./support/e2e-env";
 
 async function writeProposalStub(
   name: string,
