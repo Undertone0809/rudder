@@ -80,10 +80,11 @@ The fastest path starts Rudder Desktop and prepares the matching CLI:
 npx @rudder/cli@latest start
 ```
 
-Start it again later with:
+After the persistent CLI is available, the direct `rudder` form is the same
+command surface:
 
 ```bash
-rudder run
+rudder start
 ```
 
 ### Develop Rudder

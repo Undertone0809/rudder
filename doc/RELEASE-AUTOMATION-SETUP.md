@@ -243,6 +243,12 @@ Start-path check:
 npx @rudder/cli@latest start --no-open
 ```
 
+After the persistent CLI has been prepared, the equivalent direct check is:
+
+```bash
+rudder start --no-open
+```
+
 Implementation note:
 
 - the GitHub Actions stable workflow calls `create-github-release.sh` with `PUBLISH_REMOTE=origin`

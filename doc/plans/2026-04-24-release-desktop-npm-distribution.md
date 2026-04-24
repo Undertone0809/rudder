@@ -46,6 +46,10 @@ npx @rudder/cli@latest start
 
 By default, `start` checks for newer CLI releases, prepares the matching
 persistent CLI, and starts the matching desktop path for the current platform.
+After the persistent CLI exists, `rudder start` is equivalent to
+`npx @rudder/cli@latest start`; more generally, the npm form
+`npx @rudder/cli@latest <command>` and the direct form `rudder <command>` are
+the same CLI surface when they resolve to the same version.
 
 ## Decisions
 
@@ -54,6 +58,8 @@ persistent CLI, and starts the matching desktop path for the current platform.
 - Make `rudder start` the operator-friendly launch command.
 - `npx @rudder/cli@latest start` prepares both the desktop app and the same
   CLI version globally unless explicitly skipped.
+- Document `npx @rudder/cli@latest <command>` as the first-run npm form and
+  `rudder <command>` as the equivalent persistent CLI form.
 - `start` checks npm for a newer `@rudder/cli` stable release and prints a
   non-blocking update reminder when one exists.
 - Use the currently running CLI package version to select the desktop release

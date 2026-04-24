@@ -42,7 +42,10 @@ Recommended defaults:
 - `pnpm dev:watch` starts the watched local `dev` runtime first, then opens the development Desktop shell against that same shared instance
 - `pnpm desktop:verify` is the default contributor validation flow for Desktop work: dev-shell smoke, packaged build, then packaged-app smoke
 - `pnpm prod` builds the packaged Desktop installer for the current platform, verifies the packaged app boots successfully, and then opens it so you can install the local production Desktop app
-- `npx @rudder/cli@latest start` is the public start path: it checks for newer CLI releases, prepares the matching persistent CLI, and downloads/opens the matching Desktop installer from the GitHub Release when needed
+- `npx @rudder/cli@latest start` is the public first-run form; after the
+  persistent CLI exists, `rudder start` is the equivalent direct form. Both
+  check for newer CLI releases and download/open the matching Desktop installer
+  from the GitHub Release when needed.
 
 Low-frequency escape hatches:
 

@@ -114,6 +114,10 @@ npx @rudder/cli@latest start
 By default this checks for newer Rudder CLI releases, prepares the matching
 persistent `rudder` CLI globally, and downloads/opens the matching Rudder
 Desktop installer from the GitHub Release when needed.
+After the persistent CLI exists, `rudder start` is equivalent to the `npx`
+command above. More generally, `npx @rudder/cli@latest <command>` and
+`rudder <command>` are the same CLI surface when they resolve to the same
+version; the `npx` form is mainly the first-run and explicit dist-tag form.
 Use `--no-desktop` or `--no-cli` only for targeted maintainer checks.
 
 ## Local Commands

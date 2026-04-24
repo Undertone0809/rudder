@@ -23,6 +23,20 @@ This checks for newer Rudder CLI releases, prepares the matching persistent
 `rudder` CLI, and starts the matching Rudder Desktop path by downloading/opening
 the current-platform installer from the GitHub Release when needed.
 
+Invocation forms are equivalent once they resolve to the same CLI version:
+
+```sh
+npx @rudder/cli@latest start
+rudder start
+
+npx @rudder/cli@latest onboard --yes
+rudder onboard --yes
+```
+
+Use `npx @rudder/cli@latest ...` for the first run or when explicitly selecting
+an npm dist-tag/version. Use `rudder ...` after the persistent CLI exists. The
+command behavior is the same; only binary resolution differs.
+
 CLI-only first-run setup remains available:
 
 ```sh

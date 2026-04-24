@@ -122,6 +122,10 @@ The `start` command checks npm for newer CLI releases, uses npm for the
 persistent CLI, and uses GitHub Release assets for the desktop app. Desktop
 binaries are intentionally not published to npm.
 
+`npx @rudder/cli@latest <command>` and `rudder <command>` are the same command
+surface once they resolve to the same CLI version. Public docs use the `npx`
+form for first-run setup; installed users can run `rudder start` directly.
+
 ## Trusted publishing
 
 The intended CI model is npm trusted publishing through GitHub OIDC.
