@@ -400,7 +400,7 @@ describe("rudder org import/export e2e", () => {
 
     const largeIssueDescription = `Round-trip the organization package through the CLI.\n\n${"portable-data ".repeat(100)}`;
 
-    const sourceIssue = await api<{ id: string; title: string; identifier: string }>(
+    const sourceIssue = await api<{ id: string; title: string; identifier: string; status: string }>(
       apiBase,
       `/api/orgs/${sourceOrganization.id}/issues`,
       {
