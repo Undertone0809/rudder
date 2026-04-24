@@ -490,6 +490,15 @@ function redactPathValue<T>(value: T, censorUsernameInLogs: boolean): T {
   return redactHomePathUserSegmentsInValue(value, { enabled: censorUsernameInLogs });
 }
 
+function formatInvocationValueForDisplay(value: unknown, censorUsernameInLogs: boolean): string {
+  if (typeof value === "string") return redactPathText(value, censorUsernameInLogs);
+  try {
+    return JSON.stringify(redactPathValue(value, censorUsernameInLogs), null, 2);
+  } catch {
+    return redactPathText(String(value), censorUsernameInLogs);
+  }
+}
+
 function shouldRedactSecretValue(key: string, value: unknown): boolean {
   if (SECRET_ENV_KEY_RE.test(key)) return true;
   if (typeof value !== "string") return false;
@@ -4650,6 +4659,10 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
     return mergeTranscriptEntries(logTranscript, eventTranscript);
   }, [adapter, censorUsernameInLogs, events, logLines]);
   const hasInvocationTab = Boolean(adapterInvokePayload);
+  const invocationPromptText =
+    adapterInvokePayload?.prompt !== undefined
+      ? formatInvocationValueForDisplay(adapterInvokePayload.prompt, censorUsernameInLogs)
+      : null;
 
   useEffect(() => {
     setTranscriptMode("nice");
@@ -4808,14 +4821,24 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
                   </ul>
                 </div>
               )}
-              {adapterInvokePayload?.prompt !== undefined && (
+              {invocationPromptText !== null && (
                 <div>
                   <div className="mb-1 text-xs text-muted-foreground">Prompt</div>
-                  <pre className="rounded-md bg-neutral-100 p-2 text-xs whitespace-pre-wrap overflow-x-auto dark:bg-neutral-950">
-                    {typeof adapterInvokePayload.prompt === "string"
-                      ? redactPathText(adapterInvokePayload.prompt, censorUsernameInLogs)
-                      : JSON.stringify(redactPathValue(adapterInvokePayload.prompt, censorUsernameInLogs), null, 2)}
-                  </pre>
+                  <div className="relative">
+                    <CopyText
+                      text={invocationPromptText}
+                      ariaLabel="Copy invocation prompt"
+                      title="Copy prompt"
+                      containerClassName="absolute right-2 top-2"
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-background/80 text-muted-foreground shadow-sm hover:bg-muted/80 hover:text-foreground"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </CopyText>
+                    <pre
+                      data-testid="invocation-prompt"
+                      className="rounded-md bg-neutral-100 p-2 pr-11 text-xs whitespace-pre-wrap overflow-x-auto dark:bg-neutral-950"
+                    >{invocationPromptText}</pre>
+                  </div>
                 </div>
               )}
               {adapterInvokePayload?.context !== undefined && (

@@ -59,7 +59,7 @@ test.describe("Run transcript detail", () => {
     });
   });
 
-  test("merges transcript and invocation into one card with tabs on the real run detail page", async ({ page }) => {
+  test("merges transcript and invocation into one card with tabs on the real run detail page", async ({ page, baseURL }) => {
     const organization = await createOrganization(page, `Run-Detail-Agent-${Date.now()}`);
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -104,6 +104,19 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByText(/^Events \(\d+\)$/)).toBeVisible();
     await expect(page.getByText("adapter invocation")).toBeVisible();
     await expect(page.getByRole("button", { name: "nice" })).toBeHidden();
+
+    const promptBlock = page.getByTestId("invocation-prompt");
+    await expect(promptBlock).toBeVisible();
+    const promptText = await promptBlock.textContent();
+    expect(promptText?.trim()).toBeTruthy();
+
+    if (baseURL) {
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
+    }
+    await page.getByRole("button", { name: "Copy invocation prompt" }).click();
+    await expect
+      .poll(async () => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(promptText);
 
     await invocationTab.hover();
     await expect(page.getByText("Exact adapter invoke payload")).toBeVisible();
