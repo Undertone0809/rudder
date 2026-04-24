@@ -75,6 +75,8 @@ describe("instance settings routes", () => {
     mockInstanceSettingsService.getNotifications.mockResolvedValue({
       desktopInboxNotifications: true,
       desktopDockBadge: true,
+      desktopIssueNotifications: true,
+      desktopChatNotifications: true,
     });
     mockInstanceSettingsService.getExperimental.mockResolvedValue({
       autoRestartDevServerWhenIdle: false,
@@ -91,6 +93,8 @@ describe("instance settings routes", () => {
       notifications: {
         desktopInboxNotifications: false,
         desktopDockBadge: true,
+        desktopIssueNotifications: false,
+        desktopChatNotifications: true,
       },
     });
     mockInstanceSettingsService.updateExperimental.mockResolvedValue({
@@ -229,15 +233,17 @@ describe("instance settings routes", () => {
     expect(getRes.body).toEqual({
       desktopInboxNotifications: true,
       desktopDockBadge: true,
+      desktopIssueNotifications: true,
+      desktopChatNotifications: true,
     });
 
     const patchRes = await request(app)
       .patch("/api/instance/settings/notifications")
-      .send({ desktopInboxNotifications: false });
+      .send({ desktopIssueNotifications: false });
 
     expect(patchRes.status).toBe(200);
     expect(mockInstanceSettingsService.updateNotifications).toHaveBeenCalledWith({
-      desktopInboxNotifications: false,
+      desktopIssueNotifications: false,
     });
     expect(mockLogActivity).toHaveBeenCalledTimes(2);
   });

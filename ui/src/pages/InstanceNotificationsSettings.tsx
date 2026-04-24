@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Accessibility,
   Bell,
+  ClipboardList,
   CircleAlert,
   HardDrive,
+  MessagesSquare,
   ShieldCheck,
   Workflow,
   type LucideIcon,
@@ -36,16 +38,27 @@ import {
 const DEFAULT_NOTIFICATION_SETTINGS = {
   desktopInboxNotifications: true,
   desktopDockBadge: true,
+  desktopIssueNotifications: true,
+  desktopChatNotifications: true,
 };
 
 type PermissionStatusTone = "ok" | "warn" | "muted";
 
 type SystemPermissionDefinition = {
-  id: "fullDiskAccess" | "accessibility" | "automation" | "notifications";
+  id: "fullDiskAccess" | "accessibility" | "automation";
   icon: LucideIcon;
   titleKey: TranslationKey;
   descriptionKey: TranslationKey;
   macSettingsUrl?: string;
+};
+
+type NotificationPreferenceDefinition = {
+  id: "issue" | "chat";
+  icon: LucideIcon;
+  titleKey: TranslationKey;
+  descriptionKey: TranslationKey;
+  toggleKey: "desktopIssueNotifications" | "desktopChatNotifications";
+  toggleLabelKey: TranslationKey;
 };
 
 const SYSTEM_PERMISSIONS: SystemPermissionDefinition[] = [
@@ -70,11 +83,24 @@ const SYSTEM_PERMISSIONS: SystemPermissionDefinition[] = [
     descriptionKey: "systemPermissions.permission.automation.description",
     macSettingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
   },
+];
+
+const NOTIFICATION_PREFERENCES: NotificationPreferenceDefinition[] = [
   {
-    id: "notifications",
-    icon: Bell,
-    titleKey: "systemPermissions.permission.notifications.title",
-    descriptionKey: "systemPermissions.permission.notifications.description",
+    id: "issue",
+    icon: ClipboardList,
+    titleKey: "systemPermissions.notifications.issue.title",
+    descriptionKey: "systemPermissions.notifications.issue.description",
+    toggleKey: "desktopIssueNotifications",
+    toggleLabelKey: "systemPermissions.notifications.issue.toggle",
+  },
+  {
+    id: "chat",
+    icon: MessagesSquare,
+    titleKey: "systemPermissions.notifications.chat.title",
+    descriptionKey: "systemPermissions.notifications.chat.description",
+    toggleKey: "desktopChatNotifications",
+    toggleLabelKey: "systemPermissions.notifications.chat.toggle",
   },
 ];
 
@@ -117,6 +143,63 @@ function PermissionStatusBadge({
   );
 }
 
+function PermissionIcon({
+  icon: Icon,
+  compact = false,
+}: {
+  icon: LucideIcon;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-[calc(var(--radius-md)-4px)] border border-border/70 bg-[color:color-mix(in_oklab,var(--surface-inset)_88%,transparent)] text-muted-foreground",
+        compact ? "h-7 w-7" : "mt-0.5 h-8 w-8",
+      )}
+    >
+      <Icon className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
+    </div>
+  );
+}
+
+function NotificationPreferenceControl({
+  icon: Icon,
+  title,
+  description,
+  checked,
+  ariaLabel,
+  disabled,
+  onToggle,
+  className,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  checked: boolean;
+  ariaLabel: string;
+  disabled: boolean;
+  onToggle: () => void;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex min-w-0 items-center justify-between gap-4 py-2.5", className)}>
+      <div className="flex min-w-0 items-center gap-2.5">
+        <PermissionIcon icon={Icon} compact />
+        <div className="min-w-0">
+          <h4 className="text-[13px] font-medium text-foreground">{title}</h4>
+          <p className="text-[13px] leading-5 text-muted-foreground">{description}</p>
+        </div>
+      </div>
+      <SettingsToggle
+        checked={checked}
+        aria-label={ariaLabel}
+        disabled={disabled}
+        onClick={onToggle}
+      />
+    </div>
+  );
+}
+
 export function InstanceNotificationsSettings() {
   const { t } = useI18n();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -154,6 +237,8 @@ export function InstanceNotificationsSettings() {
   const toggleMutation = useMutation({
     mutationFn: async (patch: {
       desktopInboxNotifications?: boolean;
+      desktopIssueNotifications?: boolean;
+      desktopChatNotifications?: boolean;
     }) => instanceSettingsApi.updateNotifications(patch),
     onSuccess: async (nextSettings) => {
       setActionError(null);
@@ -217,11 +302,25 @@ export function InstanceNotificationsSettings() {
   }
 
   const settings = notificationsQuery.data ?? DEFAULT_NOTIFICATION_SETTINGS;
+  const issueNotificationsEnabled =
+    settings.desktopIssueNotifications ?? settings.desktopInboxNotifications ?? true;
+  const chatNotificationsEnabled = settings.desktopChatNotifications ?? true;
   const desktopShell = readDesktopShell();
   const isDesktopShell = desktopShell !== null;
   const notificationSupported = isDesktopShell
     ? (desktopBootState?.capabilities?.notifications ?? false)
     : notificationPermission !== "unsupported";
+  const notificationStatus: { labelKey: TranslationKey; tone: PermissionStatusTone } = isDesktopShell
+    ? {
+      labelKey: notificationSupported
+        ? "systemPermissions.status.systemManaged"
+        : "systemPermissions.status.unavailable",
+      tone: notificationSupported ? "muted" : "warn",
+    }
+    : getBrowserNotificationStatus(notificationPermission);
+  const showBrowserNotificationRequest = !isDesktopShell && notificationPermission === "default";
+  const showDesktopNotificationSettings = isDesktopShell;
+  const showBrowserManagedNotice = !isDesktopShell && notificationPermission !== "default";
 
   return (
     <div className="mx-auto max-w-4xl space-y-7 px-1 pb-6">
@@ -244,35 +343,10 @@ export function InstanceNotificationsSettings() {
       >
         <div className="overflow-hidden rounded-[var(--radius-md)] border border-border/70 bg-card/45">
           {SYSTEM_PERMISSIONS.map((permission) => {
-            const Icon = permission.icon;
-            const isNotificationPermission = permission.id === "notifications";
-            const browserNotificationStatus = getBrowserNotificationStatus(notificationPermission);
-            const status: { labelKey: TranslationKey; tone: PermissionStatusTone } = isNotificationPermission
-              ? isDesktopShell
-                ? {
-                  labelKey: notificationSupported
-                    ? "systemPermissions.status.systemManaged"
-                    : "systemPermissions.status.unavailable",
-                  tone: notificationSupported ? "muted" as const : "warn" as const,
-                }
-                : browserNotificationStatus
-              : isDesktopShell
-                ? { labelKey: "systemPermissions.status.systemManaged", tone: "muted" as const }
-                : { labelKey: "systemPermissions.status.desktopOnly", tone: "muted" as const };
-            const showSystemSettingsAction = !isNotificationPermission
-              && isDesktopShell
-              && Boolean(permission.macSettingsUrl);
-            const showBrowserNotificationRequest = isNotificationPermission
-              && !isDesktopShell
-              && notificationPermission === "default";
-            const showDesktopNotificationSettings = isNotificationPermission && isDesktopShell;
-            const showBrowserManagedNotice = isNotificationPermission
-              && !isDesktopShell
-              && notificationPermission !== "default";
-            const hasAction = showSystemSettingsAction
-              || showBrowserNotificationRequest
-              || showDesktopNotificationSettings
-              || showBrowserManagedNotice;
+            const status: { labelKey: TranslationKey; tone: PermissionStatusTone } = isDesktopShell
+              ? { labelKey: "systemPermissions.status.systemManaged", tone: "muted" }
+              : { labelKey: "systemPermissions.status.desktopOnly", tone: "muted" };
+            const showSystemSettingsAction = isDesktopShell && Boolean(permission.macSettingsUrl);
 
             return (
               <div
@@ -280,9 +354,7 @@ export function InstanceNotificationsSettings() {
                 className="grid gap-3 border-t border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] px-4 py-3.5 first:border-t-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
               >
                 <div className="flex min-w-0 items-start gap-3">
-                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/70 bg-[color:color-mix(in_oklab,var(--surface-inset)_88%,transparent)] text-muted-foreground">
-                    <Icon className="h-4 w-4" />
-                  </div>
+                  <PermissionIcon icon={permission.icon} />
                   <div className="min-w-0 space-y-0.5">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-[14px] font-medium text-foreground">{t(permission.titleKey)}</h3>
@@ -293,72 +365,114 @@ export function InstanceNotificationsSettings() {
                     <p className="max-w-2xl text-[13px] leading-5 text-muted-foreground">
                       {t(permission.descriptionKey)}
                     </p>
-                    {isNotificationPermission ? (
-                      <div className="pt-1">
-                        <div className="flex flex-wrap items-center gap-3 text-[12px] text-muted-foreground">
-                          <span>{t("systemPermissions.permission.notifications.inboxLabel")}</span>
-                          <SettingsToggle
-                            checked={settings.desktopInboxNotifications}
-                            aria-label={t("notifications.behavior.inbox.toggle")}
-                            disabled={toggleMutation.isPending}
-                            onClick={() =>
-                              toggleMutation.mutate({
-                                desktopInboxNotifications: !settings.desktopInboxNotifications,
-                              })
-                            }
-                          />
-                        </div>
-                      </div>
-                    ) : null}
                   </div>
                 </div>
 
-                {hasAction ? (
+                {showSystemSettingsAction ? (
                   <div className="flex items-center justify-start gap-2 sm:justify-end">
-                    {showSystemSettingsAction ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handleOpenSystemPermissionSettings(permission.macSettingsUrl!)}
-                      >
-                        {t("systemPermissions.action.openSettings")}
-                      </Button>
-                    ) : null}
-
-                    {showBrowserNotificationRequest ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handleRequestNotificationPermission()}
-                        disabled={notificationPermissionPending}
-                      >
-                        {notificationPermissionPending
-                          ? t("notifications.permission.access.requesting")
-                          : t("notifications.permission.access.enable")}
-                      </Button>
-                    ) : null}
-
-                    {showDesktopNotificationSettings ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handleOpenNotificationSettings()}
-                      >
-                        {t("systemPermissions.action.openSettings")}
-                      </Button>
-                    ) : null}
-
-                    {showBrowserManagedNotice ? (
-                      <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-                        <CircleAlert className="h-3.5 w-3.5" />
-                        {t("systemPermissions.action.browserManaged")}
-                      </div>
-                    ) : null}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleOpenSystemPermissionSettings(permission.macSettingsUrl!)}
+                    >
+                      {t("systemPermissions.action.openSettings")}
+                    </Button>
                   </div>
                 ) : null}
               </div>
             );
           })}
+
+          <div className="border-t border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] px-4 py-3.5">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+              <div className="flex min-w-0 items-start gap-3">
+                <PermissionIcon icon={Bell} />
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-[14px] font-medium text-foreground">
+                      {t("systemPermissions.permission.notifications.title")}
+                    </h3>
+                    <PermissionStatusBadge tone={notificationStatus.tone}>
+                      {t(notificationStatus.labelKey)}
+                    </PermissionStatusBadge>
+                  </div>
+                  <p className="max-w-2xl text-[13px] leading-5 text-muted-foreground">
+                    {t("systemPermissions.permission.notifications.description")}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-start gap-2 sm:justify-end">
+                {showBrowserNotificationRequest ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleRequestNotificationPermission()}
+                    disabled={notificationPermissionPending}
+                  >
+                    {notificationPermissionPending
+                      ? t("notifications.permission.access.requesting")
+                      : t("notifications.permission.access.enable")}
+                  </Button>
+                ) : null}
+
+                {showDesktopNotificationSettings ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleOpenNotificationSettings()}
+                  >
+                    {t("systemPermissions.action.openSettings")}
+                  </Button>
+                ) : null}
+
+                {showBrowserManagedNotice ? (
+                  <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                    <CircleAlert className="h-3.5 w-3.5" />
+                    {t("systemPermissions.action.browserManaged")}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="mt-3 border-t border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] pt-2 sm:ml-11">
+              <div className="grid md:grid-cols-2 md:divide-x md:divide-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)]">
+                {NOTIFICATION_PREFERENCES.map((preference, index) => {
+                  const checked = preference.toggleKey === "desktopIssueNotifications"
+                    ? issueNotificationsEnabled
+                    : chatNotificationsEnabled;
+
+                  return (
+                    <NotificationPreferenceControl
+                      key={preference.id}
+                      icon={preference.icon}
+                      title={t(preference.titleKey)}
+                      description={t(preference.descriptionKey)}
+                      checked={checked}
+                      ariaLabel={t(preference.toggleLabelKey)}
+                      disabled={toggleMutation.isPending}
+                      className={cn(
+                        index === 0
+                          ? "border-b border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] md:border-b-0 md:pr-4"
+                          : "md:pl-4",
+                      )}
+                      onToggle={() => {
+                        const nextChecked = !checked;
+                        toggleMutation.mutate(
+                          preference.toggleKey === "desktopIssueNotifications"
+                            ? {
+                              desktopIssueNotifications: nextChecked,
+                              desktopInboxNotifications: nextChecked,
+                            }
+                            : { desktopChatNotifications: nextChecked },
+                        );
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       </SettingsSection>
     </div>

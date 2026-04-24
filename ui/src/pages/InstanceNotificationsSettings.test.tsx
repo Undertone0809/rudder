@@ -28,6 +28,8 @@ vi.mock("@tanstack/react-query", () => ({
         data: {
           desktopInboxNotifications: true,
           desktopDockBadge: true,
+          desktopIssueNotifications: true,
+          desktopChatNotifications: true,
         },
         isLoading: false,
         error: null,
@@ -115,8 +117,18 @@ vi.mock("@/context/I18nContext", () => ({
         "systemPermissions.permission.automation.title": "Automation",
         "systemPermissions.permission.automation.description": "Coordinate macOS automation.",
         "systemPermissions.permission.notifications.title": "Notifications",
-        "systemPermissions.permission.notifications.description": "Surface inbox activity.",
+        "systemPermissions.permission.notifications.description": "System notification access for Rudder alerts.",
         "systemPermissions.permission.notifications.inboxLabel": "Inbox activity alerts",
+        "systemPermissions.notifications.title": "Notifications",
+        "systemPermissions.notifications.description": "Choose notification types.",
+        "systemPermissions.notifications.system.title": "System notification access",
+        "systemPermissions.notifications.system.description": "Open the OS notification pane.",
+        "systemPermissions.notifications.issue.title": "Issue notifications",
+        "systemPermissions.notifications.issue.description": "Notify about issue activity.",
+        "systemPermissions.notifications.issue.toggle": "Toggle issue notifications",
+        "systemPermissions.notifications.chat.title": "Chat notifications",
+        "systemPermissions.notifications.chat.description": "Notify about chat replies.",
+        "systemPermissions.notifications.chat.toggle": "Toggle chat notifications",
       };
       return (messages[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, name) => String(vars?.[name] ?? ""));
     },
@@ -167,7 +179,7 @@ function renderPage() {
 }
 
 describe("InstanceNotificationsSettings", () => {
-  it("renders system permissions with notifications as one permission row", async () => {
+  it("separates system permissions from notification preferences", async () => {
     const container = renderPage();
 
     await act(async () => {
@@ -179,10 +191,19 @@ describe("InstanceNotificationsSettings", () => {
     expect(container.textContent).toContain("Accessibility");
     expect(container.textContent).toContain("Automation");
     expect(container.textContent).toContain("Notifications");
-    expect(container.textContent).toContain("Inbox activity alerts");
+    expect(container.textContent).toContain("System notification access");
+    expect(container.textContent).toContain("Issue notifications");
+    expect(container.textContent).toContain("Chat notifications");
+    expect(container.textContent).not.toContain("Inbox activity alerts");
     expect(container.textContent).toContain("Desktop app only");
     expect(container.textContent).not.toContain("Running in browser preview.");
     expect(container.textContent).not.toContain("App icon badge");
+    expect(
+      container.querySelector('button[role="switch"][aria-label="Toggle issue notifications"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(
+      container.querySelector('button[role="switch"][aria-label="Toggle chat notifications"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
   });
 
   it("shows desktop system-settings actions instead of browser permission action in the desktop shell", async () => {

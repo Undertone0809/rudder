@@ -429,6 +429,9 @@ async function verifySettingsOverlayFlow(page, companyId, issuePrefix) {
   await modal.getByText("Accessibility").waitFor({ state: "visible", timeout: 15_000 });
   await modal.getByText("Automation").waitFor({ state: "visible", timeout: 15_000 });
   await modal.getByText("Notifications").waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByText("System notification access").waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByText("Issue notifications").waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByText("Chat notifications").waitFor({ state: "visible", timeout: 15_000 });
   await modal.getByRole("button", { name: "Open settings" }).first().waitFor({ state: "visible", timeout: 15_000 });
   assert.equal(
     await modal.getByText("App icon badge").count(),

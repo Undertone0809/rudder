@@ -38,14 +38,20 @@ export function normalizeInstanceLocale(raw: unknown): InstanceLocale {
 function normalizeNotificationSettings(raw: unknown): InstanceNotificationSettings {
   const parsed = instanceNotificationSettingsSchema.safeParse(raw ?? {});
   if (parsed.success) {
+    const desktopIssueNotifications =
+      parsed.data.desktopIssueNotifications ?? parsed.data.desktopInboxNotifications ?? true;
     return {
-      desktopInboxNotifications: parsed.data.desktopInboxNotifications ?? true,
+      desktopInboxNotifications: desktopIssueNotifications,
       desktopDockBadge: parsed.data.desktopDockBadge ?? true,
+      desktopIssueNotifications,
+      desktopChatNotifications: parsed.data.desktopChatNotifications ?? true,
     };
   }
   return {
     desktopInboxNotifications: true,
     desktopDockBadge: true,
+    desktopIssueNotifications: true,
+    desktopChatNotifications: true,
   };
 }
 
@@ -151,7 +157,15 @@ export function instanceSettingsService(db: Db) {
         ...normalizeNotificationSettings(current.notifications),
         ...patch,
       });
-      if (patch.desktopInboxNotifications === true && patch.desktopDockBadge == null) {
+      if (patch.desktopIssueNotifications != null) {
+        nextNotifications.desktopInboxNotifications = nextNotifications.desktopIssueNotifications;
+      } else if (patch.desktopInboxNotifications != null) {
+        nextNotifications.desktopIssueNotifications = nextNotifications.desktopInboxNotifications;
+      }
+      if (
+        (patch.desktopInboxNotifications === true || patch.desktopIssueNotifications === true)
+        && patch.desktopDockBadge == null
+      ) {
         nextNotifications.desktopDockBadge = true;
       }
       const now = new Date();

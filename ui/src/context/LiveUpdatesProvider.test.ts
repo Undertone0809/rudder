@@ -114,3 +114,79 @@ describe("LiveUpdatesProvider visible issue toast suppression", () => {
     ).toBe(true);
   });
 });
+
+describe("LiveUpdatesProvider notification preferences", () => {
+  function createQueryClientStub() {
+    return {
+      invalidateQueries: () => {},
+      getQueryData: () => undefined,
+    };
+  }
+
+  it("does not push issue activity toasts when issue notifications are disabled", () => {
+    const toasts: unknown[] = [];
+
+    __liveUpdatesTestUtils.handleLiveEvent(
+      createQueryClientStub() as never,
+      "organization-1",
+      "/ORG/dashboard",
+      {
+        type: "activity.logged",
+        orgId: "organization-1",
+        payload: {
+          entityType: "issue",
+          entityId: "issue-1",
+          action: "issue.created",
+          actorType: "user",
+          actorId: "user-2",
+          details: {
+            identifier: "ORG-1",
+            title: "New issue",
+          },
+        },
+      } as never,
+      (toast) => {
+        toasts.push(toast);
+        return "toast-1";
+      },
+      { cooldownHits: new Map(), suppressUntil: 0 },
+      { userId: "user-1", agentId: null },
+      { issueNotifications: false, chatNotifications: true },
+    );
+
+    expect(toasts).toEqual([]);
+  });
+
+  it("does not push chat toasts when chat notifications are disabled", () => {
+    const toasts: unknown[] = [];
+
+    __liveUpdatesTestUtils.handleLiveEvent(
+      createQueryClientStub() as never,
+      "organization-1",
+      "/ORG/dashboard",
+      {
+        type: "activity.logged",
+        orgId: "organization-1",
+        payload: {
+          entityType: "chat",
+          entityId: "chat-1",
+          action: "chat.message_added",
+          details: {
+            role: "assistant",
+            preview: "I drafted the issue.",
+            messageId: "message-1",
+          },
+        },
+      } as never,
+      (toast) => {
+        toasts.push(toast);
+        return "toast-1";
+      },
+      { cooldownHits: new Map(), suppressUntil: 0 },
+      { userId: "user-1", agentId: null },
+      { issueNotifications: true, chatNotifications: false },
+    );
+
+    expect(toasts).toEqual([]);
+  });
+});

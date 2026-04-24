@@ -367,8 +367,22 @@ export const en = {
     "Coordinate approved macOS automation between local apps and tools.",
   "systemPermissions.permission.notifications.title": "Notifications",
   "systemPermissions.permission.notifications.description":
-    "Surface inbox activity through system or browser notifications.",
+    "System notification access for Rudder alerts. Issue and chat notifications are controlled below.",
   "systemPermissions.permission.notifications.inboxLabel": "Inbox activity alerts",
+  "systemPermissions.notifications.title": "Notifications",
+  "systemPermissions.notifications.description":
+    "Choose which Rudder events should notify you after system notification access is available.",
+  "systemPermissions.notifications.system.title": "System notification access",
+  "systemPermissions.notifications.system.description":
+    "Open the OS notification pane if Rudder alerts are blocked or missing.",
+  "systemPermissions.notifications.issue.title": "Issue notifications",
+  "systemPermissions.notifications.issue.description":
+    "Notify when issues are created, updated, commented on, or reopen.",
+  "systemPermissions.notifications.issue.toggle": "Toggle issue notifications",
+  "systemPermissions.notifications.chat.title": "Chat notifications",
+  "systemPermissions.notifications.chat.description":
+    "Notify when assistant chats reply or propose an issue or action.",
+  "systemPermissions.notifications.chat.toggle": "Toggle chat notifications",
   "langfuse.title": "Langfuse",
   "langfuse.description":
     "Configure bootstrap-time Langfuse tracing for this local Rudder instance. Changes are saved to the local instance config and apply only after restart.",

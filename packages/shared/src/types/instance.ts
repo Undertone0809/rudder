@@ -8,6 +8,8 @@ export interface InstanceGeneralSettings {
 export interface InstanceNotificationSettings {
   desktopInboxNotifications: boolean;
   desktopDockBadge: boolean;
+  desktopIssueNotifications: boolean;
+  desktopChatNotifications: boolean;
 }
 
 export interface InstanceLangfuseSettings {
