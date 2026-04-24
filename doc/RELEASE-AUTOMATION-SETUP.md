@@ -212,7 +212,7 @@ After setup:
 5. confirm npm now shows a new `canary` release
 6. confirm a git tag named `canary/v0.1.0-canary.N` was pushed
 
-Install-path check:
+Start-path check:
 
 ```bash
 npx @rudder/cli@canary onboard
@@ -237,10 +237,10 @@ After at least one good canary exists:
 11. confirm `.github/workflows/desktop-release.yml` runs for `v0.1.0`
 12. confirm the GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets
 
-Install-path check:
+Start-path check:
 
 ```bash
-npx @rudder/cli@latest install --no-open
+npx @rudder/cli@latest start --no-open
 ```
 
 Implementation note:

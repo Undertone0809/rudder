@@ -74,10 +74,10 @@ Rudder coordinates agents. It does not force one runtime, one model, one prompt 
 
 ### Try Rudder
 
-The fastest path installs Rudder Desktop and the matching CLI:
+The fastest path starts Rudder Desktop and prepares the matching CLI:
 
 ```bash
-npx @rudder/cli@latest install
+npx @rudder/cli@latest start
 ```
 
 Start it again later with:

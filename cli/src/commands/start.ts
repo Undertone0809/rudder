@@ -35,7 +35,7 @@ interface GithubRelease {
   assets: GithubReleaseAsset[];
 }
 
-interface InstallCommandOptions {
+interface StartCommandOptions {
   cli?: boolean;
   desktop?: boolean;
   version?: string;
@@ -43,9 +43,11 @@ interface InstallCommandOptions {
   outputDir?: string;
   open?: boolean;
   dryRun?: boolean;
+  versionCheck?: boolean;
 }
 
 const STABLE_SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
+const CLI_REGISTRY_LATEST_URL = "https://registry.npmjs.org/@rudder%2fcli/latest";
 
 export function resolveCurrentCliVersion(env: NodeJS.ProcessEnv = process.env): string {
   const envPackageName = env.npm_package_name?.trim();
@@ -74,6 +76,47 @@ export function resolveCurrentCliVersion(env: NodeJS.ProcessEnv = process.env): 
 export function resolveCliInstallSpec(version: string, env: NodeJS.ProcessEnv = process.env): string {
   if (version && version !== "latest") return `${CLI_NPM_PACKAGE_NAME}@${version}`;
   return resolvePersistentCliInstallSpec(env);
+}
+
+export function compareStableSemver(a: string, b: string): number {
+  const aMatch = a.match(/^([0-9]+)\.([0-9]+)\.([0-9]+)$/);
+  const bMatch = b.match(/^([0-9]+)\.([0-9]+)\.([0-9]+)$/);
+  if (!aMatch || !bMatch) return 0;
+
+  for (let index = 1; index <= 3; index += 1) {
+    const diff = Number(aMatch[index]) - Number(bMatch[index]);
+    if (diff !== 0) return diff;
+  }
+
+  return 0;
+}
+
+async function fetchLatestCliVersion(): Promise<string | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2_000);
+
+  try {
+    const response = await fetch(CLI_REGISTRY_LATEST_URL, {
+      signal: controller.signal,
+      headers: { "User-Agent": "rudder-cli-version-check" },
+    });
+    if (!response.ok) return null;
+    const parsed = (await response.json()) as { version?: string };
+    return parsed.version?.trim() || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function getCliUpdateNotice(currentVersion: string): Promise<string | null> {
+  if (!STABLE_SEMVER_RE.test(currentVersion)) return null;
+  const latestVersion = await fetchLatestCliVersion();
+  if (!latestVersion || !STABLE_SEMVER_RE.test(latestVersion)) return null;
+  if (compareStableSemver(latestVersion, currentVersion) <= 0) return null;
+
+  return `Rudder ${latestVersion} is available. Update with ${pc.cyan(`npx ${CLI_NPM_PACKAGE_NAME}@latest start`)}.`;
 }
 
 export function resolveDesktopReleaseTag(version: string): string {
@@ -232,7 +275,7 @@ function openInstaller(installerPath: string, target: DesktopAssetTarget): void 
   spawnSync("xdg-open", [installerPath], { stdio: "inherit" });
 }
 
-export async function installCommand(opts: InstallCommandOptions): Promise<void> {
+export async function startCommand(opts: StartCommandOptions): Promise<void> {
   const installCli = opts.cli !== false;
   const installDesktop = opts.desktop !== false;
   const repo = opts.repo?.trim() || DEFAULT_DESKTOP_RELEASE_REPO;
@@ -240,15 +283,20 @@ export async function installCommand(opts: InstallCommandOptions): Promise<void>
   const dryRun = opts.dryRun === true;
 
   if (!installCli && !installDesktop) {
-    throw new Error("Nothing to install. Remove --no-cli or --no-desktop.");
+    throw new Error("Nothing to start. Remove --no-cli or --no-desktop.");
   }
 
-  p.intro(pc.bgCyan(pc.black(" rudder install ")));
+  p.intro(pc.bgCyan(pc.black(" rudder start ")));
+
+  if (opts.versionCheck !== false) {
+    const updateNotice = await getCliUpdateNotice(version);
+    if (updateNotice) p.log.warn(updateNotice);
+  }
 
   if (installCli) {
     const installSpec = resolveCliInstallSpec(version);
     const command = `npm install --global ${installSpec}`;
-    p.log.step("Installing persistent CLI");
+    p.log.step("Preparing persistent CLI");
     if (dryRun) {
       p.log.message(`[dry-run] ${command}`);
     } else {
@@ -269,12 +317,12 @@ export async function installCommand(opts: InstallCommandOptions): Promise<void>
       ? path.resolve(opts.outputDir)
       : await mkdtemp(path.join(tmpdir(), "rudder-desktop-installer."));
 
-    p.log.step("Installing desktop app");
+    p.log.step("Starting desktop app");
     p.log.message(`Release: ${pc.cyan(`${repo}@${tag}`)}`);
     p.log.message(`Target: ${pc.cyan(`${target.platform}/${target.arch}`)}`);
 
     if (dryRun) {
-      p.log.message(`[dry-run] Would resolve and download the matching desktop installer to ${outputDir}`);
+      p.log.message(`[dry-run] Would resolve and download/open the matching desktop installer to ${outputDir}`);
       p.outro(pc.green("Dry run complete."));
       return;
     }
@@ -303,5 +351,5 @@ export async function installCommand(opts: InstallCommandOptions): Promise<void>
     }
   }
 
-  p.outro(pc.green("Rudder install complete."));
+  p.outro(pc.green("Rudder start complete."));
 }

@@ -16,11 +16,12 @@ pnpm rudder --help
 First-time install from npm:
 
 ```sh
-npx @rudder/cli@latest install
+npx @rudder/cli@latest start
 ```
 
-This installs the matching persistent `rudder` CLI globally and downloads/opens
-the matching Rudder Desktop installer from the GitHub Release.
+This checks for newer Rudder CLI releases, prepares the matching persistent
+`rudder` CLI, and starts the matching Rudder Desktop path by downloading/opening
+the current-platform installer from the GitHub Release when needed.
 
 CLI-only first-run setup remains available:
 

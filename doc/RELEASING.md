@@ -108,11 +108,12 @@ The workflow:
 Users install stable Rudder with:
 
 ```bash
-npx @rudder/cli@latest install
+npx @rudder/cli@latest start
 ```
 
-By default this installs the matching persistent `rudder` CLI globally and
-downloads/opens the matching Rudder Desktop installer from the GitHub Release.
+By default this checks for newer Rudder CLI releases, prepares the matching
+persistent `rudder` CLI globally, and downloads/opens the matching Rudder
+Desktop installer from the GitHub Release when needed.
 Use `--no-desktop` or `--no-cli` only for targeted maintainer checks.
 
 ## Local Commands
@@ -191,7 +192,7 @@ gh workflow run release-smoke.yml -f rudder_version=latest
 
 Minimum checks:
 
-- `npx @rudder/cli@latest install --no-open` installs the persistent CLI and downloads the desktop installer
+- `npx @rudder/cli@latest start --no-open` prepares the persistent CLI and downloads the desktop installer
 - `npx @rudder/cli@canary onboard` installs the canary CLI path
 - onboarding completes without crashes
 - authenticated login works with the smoke credentials

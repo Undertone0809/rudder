@@ -33,7 +33,7 @@ pnpm desktop:build
 pnpm desktop:dist
 pnpm --filter @rudder/desktop smoke
 node desktop/scripts/smoke.mjs --mode=packaged
-npx @rudder/cli@latest install
+npx @rudder/cli@latest start
 ```
 
 Recommended defaults:
@@ -42,7 +42,7 @@ Recommended defaults:
 - `pnpm dev:watch` starts the watched local `dev` runtime first, then opens the development Desktop shell against that same shared instance
 - `pnpm desktop:verify` is the default contributor validation flow for Desktop work: dev-shell smoke, packaged build, then packaged-app smoke
 - `pnpm prod` builds the packaged Desktop installer for the current platform, verifies the packaged app boots successfully, and then opens it so you can install the local production Desktop app
-- `npx @rudder/cli@latest install` is the public install path: it installs the matching persistent CLI and downloads/opens the matching Desktop installer from the GitHub Release
+- `npx @rudder/cli@latest start` is the public start path: it checks for newer CLI releases, prepares the matching persistent CLI, and downloads/opens the matching Desktop installer from the GitHub Release when needed
 
 Low-frequency escape hatches:
 
@@ -203,5 +203,6 @@ The GitHub Actions desktop workflow builds artifacts on all three operating syst
 - `Rudder-X.Y.Z-linux-x64.AppImage`
 - `SHASUMS256.txt`
 
-Desktop artifacts are not published to npm. The CLI `install` command resolves
-the appropriate GitHub Release asset for the current platform.
+Desktop artifacts are not published to npm. The CLI `start` command resolves
+the appropriate GitHub Release asset for the current platform and reminds users
+when a newer CLI version is available.

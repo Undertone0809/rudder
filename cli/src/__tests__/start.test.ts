@@ -10,6 +10,8 @@ import {
   resolvePersistentCliInstallSpec,
 } from "../install.js";
 import {
+  compareStableSemver,
+  getCliUpdateNotice,
   parseChecksumFile,
   resolveCliInstallSpec,
   resolveCurrentCliVersion,
@@ -17,7 +19,7 @@ import {
   resolveDesktopReleaseTag,
   selectChecksumAsset,
   selectDesktopAsset,
-} from "../commands/install.js";
+} from "../commands/start.js";
 
 describe("persistent CLI install helpers", () => {
   it("detects npx execution from transient _npx entry paths", () => {
@@ -149,7 +151,7 @@ describe("persistent CLI install helpers", () => {
   });
 });
 
-describe("desktop install command helpers", () => {
+describe("desktop start command helpers", () => {
   it("resolves the current CLI version from npm execution metadata", () => {
     expect(
       resolveCurrentCliVersion({
@@ -167,7 +169,7 @@ describe("desktop install command helpers", () => {
     expect(resolveDesktopReleaseTag("0.3.1")).toBe("v0.3.1");
   });
 
-  it("rejects prerelease desktop installs until matching desktop releases exist", () => {
+  it("rejects prerelease desktop starts until matching desktop releases exist", () => {
     expect(() => resolveDesktopReleaseTag("0.3.1-canary.2")).toThrow(
       "Desktop installer lookup requires a stable version",
     );
@@ -226,5 +228,39 @@ describe("desktop install command helpers", () => {
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  Rudder-0.3.1-linux-x64.AppImage\n",
       ).get("Rudder-0.3.1-linux-x64.AppImage"),
     ).toBe("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  });
+
+  it("compares stable semver versions", () => {
+    expect(compareStableSemver("0.3.2", "0.3.1")).toBeGreaterThan(0);
+    expect(compareStableSemver("0.3.1", "0.3.1")).toBe(0);
+    expect(compareStableSemver("0.3.0", "0.3.1")).toBeLessThan(0);
+  });
+
+  it("reports a non-blocking update notice when npm latest is newer", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: "0.3.2" }),
+    })) as never;
+
+    try {
+      await expect(getCliUpdateNotice("0.3.1")).resolves.toContain("Rudder 0.3.2 is available");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("does not report an update notice when npm latest is not newer", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: "0.3.1" }),
+    })) as never;
+
+    try {
+      await expect(getCliUpdateNotice("0.3.1")).resolves.toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

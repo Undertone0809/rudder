@@ -115,11 +115,12 @@ Stable publishes do not create a release commit. Instead:
 The primary user install path is:
 
 ```bash
-npx @rudder/cli@latest install
+npx @rudder/cli@latest start
 ```
 
-The `install` command uses npm for the persistent CLI and GitHub Release assets
-for the desktop app. Desktop binaries are intentionally not published to npm.
+The `start` command checks npm for newer CLI releases, uses npm for the
+persistent CLI, and uses GitHub Release assets for the desktop app. Desktop
+binaries are intentionally not published to npm.
 
 ## Trusted publishing
 
