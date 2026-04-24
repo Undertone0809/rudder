@@ -155,9 +155,9 @@ export const en = {
   "organizationSettings.workspace.shared.title": "Shared organization workspace",
   "organizationSettings.workspace.shared.description":
     "This path is system-managed per organization and cannot be changed. Use Workspaces to browse shared files, plans, and skill packages.",
-  "organizationSettings.workspace.rootPath.label": "Root path",
+  "organizationSettings.workspace.rootPath.label": "Workspace root",
   "organizationSettings.workspace.rootPath.hint":
-    "Every project and agent in this organization shares this workspace root.",
+    "System-managed for this organization.",
   "organizationSettings.workspace.rootPath.loading": "Loading...",
   "organizationSettings.workspace.usage.label": "Usage",
   "organizationSettings.workspace.usage.hint":

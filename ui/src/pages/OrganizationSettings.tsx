@@ -634,35 +634,15 @@ export function OrganizationSettings() {
           {t("organizationSettings.section.workspace")}
         </div>
         <div className="space-y-3 rounded-md border border-border px-4 py-4">
-          <div className="rounded-md border border-border/70 bg-card/40 px-3 py-3">
-            <div className="space-y-1">
-              <div className="text-sm font-medium">{t("organizationSettings.workspace.shared.title")}</div>
-              <p className="text-sm text-muted-foreground">
-                {t("organizationSettings.workspace.shared.description")}
-              </p>
-            </div>
-          </div>
-
           <Field
             label={t("organizationSettings.workspace.rootPath.label")}
             hint={t("organizationSettings.workspace.rootPath.hint")}
           >
-            <div className="rounded-md border border-border bg-muted/20 px-2.5 py-2 text-sm font-mono text-muted-foreground">
+            <div
+              className="overflow-x-auto whitespace-nowrap rounded-md border border-border bg-muted/20 px-2.5 py-2 text-sm font-mono text-muted-foreground"
+              title={workspaceRootQuery.data?.rootPath ?? undefined}
+            >
               {workspaceRootQuery.data?.rootPath ?? t("organizationSettings.workspace.rootPath.loading")}
-            </div>
-          </Field>
-
-          <Field
-            label={t("organizationSettings.workspace.usage.label")}
-            hint={t("organizationSettings.workspace.usage.hint")}
-          >
-            <div className="space-y-2 rounded-md border border-border bg-muted/20 px-2.5 py-2 text-sm text-muted-foreground">
-              <div>
-                {t("organizationSettings.workspace.usage.resources")}
-              </div>
-              <div>
-                {t("organizationSettings.workspace.usage.workspaces")}
-              </div>
             </div>
           </Field>
 
