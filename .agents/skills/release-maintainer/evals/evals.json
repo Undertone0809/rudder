@@ -1,0 +1,29 @@
+{
+  "skill_name": "release-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我准备发 Rudder 0.1.0 stable。现在 repo 里 release workflow 已经在分支上了，但我不确定 npm trusted publishing、release notes、desktop assets 这几步应该怎么排。请告诉我现在具体要做什么。",
+      "expected_output": "A concrete stable release checklist that starts with merging workflow changes to main, verifying public package version 0.1.0, creating releases/v0.1.0.md, configuring GitHub environments and npm trusted publishing, running the Release workflow dry-run then real publish, and verifying npm latest, tag, GitHub Release, Desktop assets, and npx/rudder start smoke checks.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Canary 发出去了，但是 smoke 挂了。我能不能直接手动发 stable 然后再补修？",
+      "expected_output": "A release-safety answer that says not to promote stable from a failing canary, instructs fixing forward on main, waiting for the next canary, rerunning smoke, and only then doing stable dry-run/approval.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "stable npm latest 已经发布成功，v0.1.0 tag 也有了，但是 desktop-release.yml 在 Windows 打包失败，GitHub Release 里少了 windows exe。现在怎么补？",
+      "expected_output": "A partial-release recovery plan that explicitly says not to republish npm or reuse a different version, reruns desktop-release.yml for v0.1.0, verifies all Desktop assets plus SHASUMS256.txt on the existing GitHub Release, then runs npx @rudder/cli@latest start --no-open.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "下一个版本我要从 0.1.0 bump 到 0.1.1。帮我列出应该改哪些文件、跑哪些命令、什么时候 commit。",
+      "expected_output": "A version-bump workflow using node scripts/release-package-map.mjs set-version 0.1.1, validation with pnpm -r typecheck, pnpm test:run, pnpm build, release notes creation, scoped commit, and later GitHub Actions stable release flow.",
+      "files": []
+    }
+  ]
+}
