@@ -36,6 +36,7 @@ If `RUDDER_APPROVAL_ID` is set:
 - Never retry a 409 -- that task belongs to someone else.
 - Use `rudder issue context "<issue-id-or-identifier>" --json` to load compact context.
 - Do the work. Use `rudder issue comment`, `rudder issue done`, or `rudder issue block` to communicate outcome.
+- If `RUDDER_WAKE_REASON=issue_passive_followup`, treat the wake as close-out governance, not a fresh assignment: inspect state and leave a progress comment, completion, blocker, or explicit handoff.
 
 ## 6. Delegation
 
@@ -54,6 +55,7 @@ If `RUDDER_APPROVAL_ID` is set:
 ## 8. Exit
 
 - Comment on any in_progress work before exiting.
+- A successful `todo` or `in_progress` issue run without a close-out signal can trigger a same-agent passive follow-up.
 - If no assignments and no valid mention-handoff, exit cleanly.
 
 ---

@@ -73,6 +73,8 @@ const ACTION_LABELS: Record<string, string> = {
   "issue.checked_out": "checked out the issue",
   "issue.released": "released the issue",
   "issue.comment_added": "added a comment",
+  "issue.passive_followup_queued": "queued passive follow-up",
+  "issue.closure_needs_operator_review": "needs operator review for close-out",
   "issue.attachment_added": "added an attachment",
   "issue.attachment_removed": "removed an attachment",
   "issue.document_created": "created a document",
@@ -199,6 +201,19 @@ function formatAction(action: string, details?: Record<string, unknown> | null):
     const key = typeof details.key === "string" ? details.key : "document";
     const title = typeof details.title === "string" && details.title ? ` (${details.title})` : "";
     return `${ACTION_LABELS[action] ?? action} ${key}${title}`;
+  }
+  if (action === "issue.passive_followup_queued" && details) {
+    const attempt = typeof details.attempt === "number" ? details.attempt : null;
+    const maxAttempts = typeof details.maxAttempts === "number" ? details.maxAttempts : null;
+    const followupRunId = typeof details.followupRunId === "string" ? details.followupRunId : null;
+    const attemptLabel = attempt && maxAttempts ? ` (${attempt}/${maxAttempts})` : "";
+    return `queued passive follow-up${attemptLabel}${followupRunId ? ` as run ${followupRunId.slice(0, 8)}` : ""}`;
+  }
+  if (action === "issue.closure_needs_operator_review" && details) {
+    const attempts = typeof details.attempts === "number" ? details.attempts : null;
+    return attempts
+      ? `stopped passive follow-up after ${attempts} attempts; operator review needed`
+      : "stopped passive follow-up; operator review needed";
   }
   return ACTION_LABELS[action] ?? action.replace(/[._]/g, " ");
 }

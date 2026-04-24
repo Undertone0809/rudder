@@ -16,6 +16,7 @@ import {
   agentRuntimeState,
   agentTaskSessions,
   agentWakeupRequests,
+  activityLog,
   heartbeatRunEvents,
   heartbeatRuns,
   issueComments,
@@ -77,6 +78,7 @@ import {
   resolveExecutionWorkspaceMode,
 } from "../execution-workspace-policy.js";
 import { instanceSettingsService } from "../instance-settings.js";
+import { logActivity } from "../activity-log.js";
 import { redactCurrentUserText, redactCurrentUserValue } from "../../log-redaction.js";
 import {
   hasSessionCompactionThresholds,
@@ -101,6 +103,15 @@ const ORPHANED_PROCESS_KILL_WAIT_MS = 500;
 const ORPHANED_PROCESS_POLL_INTERVAL_MS = 100;
 const startLocksByAgent = new Map<string, Promise<void>>();
 const MAX_RECOVERY_CHAIN_DEPTH = 8;
+const ISSUE_PASSIVE_FOLLOWUP_REASON = "issue_passive_followup";
+const ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE = "passive_issue_followup";
+const ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON = "missing_closure";
+const ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS = 2;
+const ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT = new Map<number, number>([
+  [1, 2 * 60 * 1000],
+  [2, 5 * 60 * 1000],
+]);
+const ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS = 15 * 60 * 1000;
 const SESSIONED_LOCAL_ADAPTERS = new Set([
   "claude_local",
   "codex_local",
@@ -920,6 +931,132 @@ function buildRecoveryContextSnapshot(input: {
     retryOfRunId: run.id,
     retryReason: failureKind,
     recovery,
+  };
+}
+
+type PassiveFollowupIssueRow = Pick<
+  typeof issues.$inferSelect,
+  "id" | "orgId" | "title" | "description" | "status" | "priority" | "projectId" | "assigneeAgentId"
+>;
+
+type PassiveFollowupContext = {
+  originRunId: string;
+  previousRunId: string | null;
+  attempt: number;
+  maxAttempts: number;
+  reason: typeof ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON;
+  queuedAt: string | null;
+};
+
+type PassiveIssueClosureOutcome =
+  | { kind: "none"; reason: string }
+  | {
+      kind: "queued";
+      run: typeof heartbeatRuns.$inferSelect;
+      issue: PassiveFollowupIssueRow;
+      originRunId: string;
+      previousRunId: string;
+      attempt: number;
+      requestedAt: Date;
+    }
+  | {
+      kind: "operator_review";
+      issue: PassiveFollowupIssueRow;
+      originRunId: string;
+      previousRunId: string;
+      attempts: number;
+      reason: typeof ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON;
+    };
+
+function normalizePassiveFollowupContext(raw: unknown): PassiveFollowupContext | null {
+  const parsed = parseObject(raw);
+  const originRunId = readNonEmptyString(parsed.originRunId);
+  if (!originRunId) return null;
+  const attempt = Math.max(0, Math.floor(asNumber(parsed.attempt, 0)));
+  return {
+    originRunId,
+    previousRunId: readNonEmptyString(parsed.previousRunId),
+    attempt,
+    maxAttempts: Math.max(1, Math.floor(asNumber(parsed.maxAttempts, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS))),
+    reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+    queuedAt: readNonEmptyString(parsed.queuedAt),
+  };
+}
+
+function passiveFollowupCooldownMs(attempt: number) {
+  return ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT.get(attempt) ?? 5 * 60 * 1000;
+}
+
+function isAgentEligibleForTimerContinuation(agent: typeof agents.$inferSelect) {
+  return (
+    agent.status !== "paused" &&
+    agent.status !== "terminated" &&
+    agent.status !== "pending_approval"
+  );
+}
+
+function hasCredibleTimerContinuation(input: {
+  agent: typeof agents.$inferSelect;
+  policy: { enabled: boolean; intervalSec: number };
+  run: typeof heartbeatRuns.$inferSelect;
+  now: Date;
+}) {
+  if (!input.policy.enabled || input.policy.intervalSec <= 0) return false;
+  if (!isAgentEligibleForTimerContinuation(input.agent)) return false;
+
+  const intervalMs = input.policy.intervalSec * 1000;
+  const nearTermWindowMs = Math.min(
+    intervalMs * 2,
+    ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS,
+  );
+  const lastHeartbeatMs = input.agent.lastHeartbeatAt
+    ? new Date(input.agent.lastHeartbeatAt).getTime()
+    : new Date(input.agent.createdAt).getTime();
+  const runFinishedMs = input.run.finishedAt
+    ? new Date(input.run.finishedAt).getTime()
+    : input.now.getTime();
+  const baselineMs = Math.max(lastHeartbeatMs, runFinishedMs);
+  const nextTimerMs = baselineMs + intervalMs;
+  return Math.max(0, nextTimerMs - input.now.getTime()) <= nearTermWindowMs;
+}
+
+function buildPassiveFollowupContextSnapshot(input: {
+  run: typeof heartbeatRuns.$inferSelect;
+  issue: PassiveFollowupIssueRow;
+  originRunId: string;
+  attempt: number;
+  now: Date;
+}) {
+  const baseContext = { ...parseObject(input.run.contextSnapshot) };
+  delete baseContext.recovery;
+  delete baseContext.retryOfRunId;
+  delete baseContext.retryReason;
+
+  const taskKey = deriveTaskKey(baseContext, { issueId: input.issue.id }) ?? input.issue.id;
+  return {
+    ...baseContext,
+    issueId: input.issue.id,
+    taskId: input.issue.id,
+    taskKey,
+    projectId: readNonEmptyString(baseContext.projectId) ?? input.issue.projectId ?? undefined,
+    wakeReason: ISSUE_PASSIVE_FOLLOWUP_REASON,
+    wakeSource: ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE,
+    wakeTriggerDetail: "system",
+    issue: {
+      id: input.issue.id,
+      title: input.issue.title,
+      description: input.issue.description,
+      status: input.issue.status,
+      priority: input.issue.priority,
+    },
+    passiveFollowup: {
+      originRunId: input.originRunId,
+      previousRunId: input.run.id,
+      attempt: input.attempt,
+      maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+      reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+      queuedAt: input.now.toISOString(),
+    },
   };
 }
 
@@ -2072,6 +2209,203 @@ export function heartbeatService(db: Db) {
     };
   }
 
+  async function runHasIssueClosureComment(tx: any, run: typeof heartbeatRuns.$inferSelect, issueId: string) {
+    const commentActivity = await tx
+      .select({ id: activityLog.id })
+      .from(activityLog)
+      .where(
+        and(
+          eq(activityLog.orgId, run.orgId),
+          eq(activityLog.action, "issue.comment_added"),
+          eq(activityLog.entityType, "issue"),
+          eq(activityLog.entityId, issueId),
+          eq(activityLog.runId, run.id),
+        ),
+      )
+      .limit(1)
+      .then((rows: Array<{ id: string }>) => rows[0] ?? null);
+    return Boolean(commentActivity);
+  }
+
+  async function issueHasDeferredWake(tx: any, orgId: string, issueId: string) {
+    const deferred = await tx
+      .select({ id: agentWakeupRequests.id })
+      .from(agentWakeupRequests)
+      .where(
+        and(
+          eq(agentWakeupRequests.orgId, orgId),
+          eq(agentWakeupRequests.status, "deferred_issue_execution"),
+          sql`${agentWakeupRequests.payload} ->> 'issueId' = ${issueId}`,
+        ),
+      )
+      .limit(1)
+      .then((rows: Array<{ id: string }>) => rows[0] ?? null);
+    return Boolean(deferred);
+  }
+
+  async function passiveFollowupAlreadyRecorded(tx: any, runId: string) {
+    const idempotencyKey = `${ISSUE_PASSIVE_FOLLOWUP_REASON}:${runId}`;
+    const existingWake = await tx
+      .select({ id: agentWakeupRequests.id })
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.idempotencyKey, idempotencyKey))
+      .limit(1)
+      .then((rows: Array<{ id: string }>) => rows[0] ?? null);
+    if (existingWake) return true;
+
+    const existingReview = await tx
+      .select({ id: activityLog.id })
+      .from(activityLog)
+      .where(
+        and(
+          eq(activityLog.runId, runId),
+          eq(activityLog.action, "issue.closure_needs_operator_review"),
+        ),
+      )
+      .limit(1)
+      .then((rows: Array<{ id: string }>) => rows[0] ?? null);
+    return Boolean(existingReview);
+  }
+
+  async function evaluatePassiveIssueClosureForLockedIssue(input: {
+    tx: any;
+    run: typeof heartbeatRuns.$inferSelect;
+    issue: PassiveFollowupIssueRow;
+    now: Date;
+  }): Promise<PassiveIssueClosureOutcome> {
+    const { tx, run, issue, now } = input;
+    const context = parseObject(run.contextSnapshot);
+    const runIssueId = readNonEmptyString(context.issueId);
+    if (!runIssueId || runIssueId !== issue.id) return { kind: "none", reason: "run_not_issue_backed" };
+    if (run.status !== "succeeded") return { kind: "none", reason: "run_not_successful" };
+    if (issue.status !== "todo" && issue.status !== "in_progress") {
+      return { kind: "none", reason: "issue_has_closure_status" };
+    }
+    if (issue.assigneeAgentId !== run.agentId) {
+      return { kind: "none", reason: "issue_no_longer_assigned_to_run_agent" };
+    }
+
+    if (await runHasIssueClosureComment(tx, run, issue.id)) {
+      return { kind: "none", reason: "run_authored_issue_comment" };
+    }
+    if (await issueHasDeferredWake(tx, issue.orgId, issue.id)) {
+      return { kind: "none", reason: "deferred_issue_wake_exists" };
+    }
+    if (await passiveFollowupAlreadyRecorded(tx, run.id)) {
+      return { kind: "none", reason: "passive_followup_already_recorded" };
+    }
+
+    const agent = await tx
+      .select()
+      .from(agents)
+      .where(eq(agents.id, run.agentId))
+      .then((rows: Array<typeof agents.$inferSelect>) => rows[0] ?? null);
+    if (!agent || agent.orgId !== run.orgId) {
+      return { kind: "none", reason: "agent_not_found" };
+    }
+
+    const policy = parseHeartbeatPolicy(agent);
+    if (hasCredibleTimerContinuation({ agent, policy, run, now })) {
+      return { kind: "none", reason: "timer_continuity_expected" };
+    }
+
+    const passiveContext = normalizePassiveFollowupContext(context.passiveFollowup);
+    const currentAttempt = passiveContext?.attempt ?? 0;
+    const originRunId = passiveContext?.originRunId ?? run.id;
+    if (currentAttempt >= ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS) {
+      return {
+        kind: "operator_review",
+        issue,
+        originRunId,
+        previousRunId: run.id,
+        attempts: currentAttempt,
+        reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+      };
+    }
+
+    const nextAttempt = currentAttempt + 1;
+    const requestedAt = new Date(now.getTime() + passiveFollowupCooldownMs(nextAttempt));
+    const contextSnapshot = buildPassiveFollowupContextSnapshot({
+      run,
+      issue,
+      originRunId,
+      attempt: nextAttempt,
+      now,
+    });
+    const taskKey = deriveTaskKey(contextSnapshot, { issueId: issue.id });
+    const sessionBefore = await resolveSessionBeforeForWakeup(agent, taskKey);
+    const requestPayload = {
+      issueId: issue.id,
+      originRunId,
+      previousRunId: run.id,
+      attempt: nextAttempt,
+      reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+    };
+
+    const wakeupRequest = await tx
+      .insert(agentWakeupRequests)
+      .values({
+        orgId: run.orgId,
+        agentId: run.agentId,
+        source: "automation",
+        triggerDetail: "system",
+        reason: ISSUE_PASSIVE_FOLLOWUP_REASON,
+        payload: requestPayload,
+        status: "queued",
+        requestedByActorType: "system",
+        requestedByActorId: "issue_closure_governance",
+        idempotencyKey: `${ISSUE_PASSIVE_FOLLOWUP_REASON}:${run.id}`,
+        requestedAt,
+        updatedAt: now,
+      })
+      .returning()
+      .then((rows: Array<typeof agentWakeupRequests.$inferSelect>) => rows[0]);
+
+    const followupRun = await tx
+      .insert(heartbeatRuns)
+      .values({
+        orgId: run.orgId,
+        agentId: run.agentId,
+        invocationSource: "automation",
+        triggerDetail: "system",
+        status: "queued",
+        wakeupRequestId: wakeupRequest.id,
+        contextSnapshot,
+        sessionIdBefore: sessionBefore,
+        updatedAt: now,
+      })
+      .returning()
+      .then((rows: Array<typeof heartbeatRuns.$inferSelect>) => rows[0]);
+
+    await tx
+      .update(agentWakeupRequests)
+      .set({
+        runId: followupRun.id,
+        updatedAt: now,
+      })
+      .where(eq(agentWakeupRequests.id, wakeupRequest.id));
+
+    await tx
+      .update(issues)
+      .set({
+        executionRunId: followupRun.id,
+        executionAgentNameKey: normalizeAgentNameKey(agent.name),
+        executionLockedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(issues.id, issue.id));
+
+    return {
+      kind: "queued",
+      run: followupRun,
+      issue,
+      originRunId,
+      previousRunId: run.id,
+      attempt: nextAttempt,
+      requestedAt,
+    };
+  }
+
   async function countRunningRunsForAgent(agentId: string) {
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)` })
@@ -2082,6 +2416,16 @@ export function heartbeatService(db: Db) {
 
   async function claimQueuedRun(run: typeof heartbeatRuns.$inferSelect) {
     if (run.status !== "queued") return run;
+    if (run.wakeupRequestId) {
+      const wakeup = await db
+        .select({ requestedAt: agentWakeupRequests.requestedAt })
+        .from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.id, run.wakeupRequestId))
+        .then((rows) => rows[0] ?? null);
+      if (wakeup && new Date(wakeup.requestedAt).getTime() > Date.now()) {
+        return null;
+      }
+    }
     const agent = await getAgent(run.agentId);
     if (!agent) {
       await cancelRunInternal(run.id, "Cancelled because the agent no longer exists");
@@ -2382,7 +2726,21 @@ export function heartbeatService(db: Db) {
       const queuedRuns = await db
         .select()
         .from(heartbeatRuns)
-        .where(and(eq(heartbeatRuns.agentId, agentId), eq(heartbeatRuns.status, "queued")))
+        .where(
+          and(
+            eq(heartbeatRuns.agentId, agentId),
+            eq(heartbeatRuns.status, "queued"),
+            sql`(
+              ${heartbeatRuns.wakeupRequestId} is null
+              or exists (
+                select 1
+                from ${agentWakeupRequests}
+                where ${agentWakeupRequests.id} = ${heartbeatRuns.wakeupRequestId}
+                  and ${agentWakeupRequests.requestedAt} <= now()
+              )
+            )`,
+          ),
+        )
         .orderBy(asc(heartbeatRuns.createdAt))
         .limit(availableSlots);
       if (queuedRuns.length === 0) return [];
@@ -3458,7 +3816,7 @@ export function heartbeatService(db: Db) {
   }
 
   async function releaseIssueExecutionAndPromote(run: typeof heartbeatRuns.$inferSelect) {
-    const promotedRun = await db.transaction(async (tx) => {
+    const outcome = await db.transaction(async (tx) => {
       await tx.execute(
         sql`select id from issues where org_id = ${run.orgId} and execution_run_id = ${run.id} for update`,
       );
@@ -3467,12 +3825,29 @@ export function heartbeatService(db: Db) {
         .select({
           id: issues.id,
           orgId: issues.orgId,
+          title: issues.title,
+          description: issues.description,
+          status: issues.status,
+          priority: issues.priority,
+          projectId: issues.projectId,
+          assigneeAgentId: issues.assigneeAgentId,
         })
         .from(issues)
         .where(and(eq(issues.orgId, run.orgId), eq(issues.executionRunId, run.id)))
         .then((rows) => rows[0] ?? null);
 
-      if (!issue) return;
+      if (!issue) return { promotedRun: null, passiveClosure: null };
+
+      const passiveClosure = await evaluatePassiveIssueClosureForLockedIssue({
+        tx,
+        run,
+        issue,
+        now: new Date(),
+      });
+
+      if (passiveClosure.kind === "queued") {
+        return { promotedRun: passiveClosure.run, passiveClosure };
+      }
 
       await tx
         .update(issues)
@@ -3499,7 +3874,7 @@ export function heartbeatService(db: Db) {
           .limit(1)
           .then((rows) => rows[0] ?? null);
 
-        if (!deferred) return null;
+        if (!deferred) return { promotedRun: null, passiveClosure };
 
         const deferredAgent = await tx
           .select()
@@ -3590,10 +3965,101 @@ export function heartbeatService(db: Db) {
           })
           .where(eq(issues.id, issue.id));
 
-        return newRun;
+        return { promotedRun: newRun, passiveClosure };
       }
     });
 
+    const passiveClosure = outcome.passiveClosure;
+    if (passiveClosure?.kind === "queued") {
+      await appendRunEvent(run, await nextRunEventSeq(run.id), {
+        eventType: "issue.passive_followup_queued",
+        stream: "system",
+        level: "warn",
+        message: `Queued passive issue follow-up ${passiveClosure.run.id}`,
+        payload: {
+          issueId: passiveClosure.issue.id,
+          followupRunId: passiveClosure.run.id,
+          originRunId: passiveClosure.originRunId,
+          previousRunId: passiveClosure.previousRunId,
+          attempt: passiveClosure.attempt,
+          maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+          reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+          requestedAt: passiveClosure.requestedAt.toISOString(),
+        },
+      });
+      await appendRunEvent(passiveClosure.run, await nextRunEventSeq(passiveClosure.run.id), {
+        eventType: "issue.passive_followup_queued",
+        stream: "system",
+        level: "warn",
+        message: `Passive follow-up queued because run ${run.id} ended without issue close-out`,
+        payload: {
+          issueId: passiveClosure.issue.id,
+          originRunId: passiveClosure.originRunId,
+          previousRunId: passiveClosure.previousRunId,
+          attempt: passiveClosure.attempt,
+          maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+          reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+          requestedAt: passiveClosure.requestedAt.toISOString(),
+        },
+      });
+      await logActivity(db, {
+        orgId: passiveClosure.issue.orgId,
+        actorType: "system",
+        actorId: "issue_closure_governance",
+        action: "issue.passive_followup_queued",
+        entityType: "issue",
+        entityId: passiveClosure.issue.id,
+        agentId: run.agentId,
+        runId: run.id,
+        details: {
+          issueId: passiveClosure.issue.id,
+          issueTitle: passiveClosure.issue.title,
+          followupRunId: passiveClosure.run.id,
+          originRunId: passiveClosure.originRunId,
+          previousRunId: passiveClosure.previousRunId,
+          attempt: passiveClosure.attempt,
+          maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+          reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+          requestedAt: passiveClosure.requestedAt.toISOString(),
+        },
+      });
+    } else if (passiveClosure?.kind === "operator_review") {
+      await appendRunEvent(run, await nextRunEventSeq(run.id), {
+        eventType: "issue.closure_needs_operator_review",
+        stream: "system",
+        level: "warn",
+        message: "Passive issue follow-up stopped and needs operator review",
+        payload: {
+          issueId: passiveClosure.issue.id,
+          originRunId: passiveClosure.originRunId,
+          previousRunId: passiveClosure.previousRunId,
+          attempts: passiveClosure.attempts,
+          maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+          reason: passiveClosure.reason,
+        },
+      });
+      await logActivity(db, {
+        orgId: passiveClosure.issue.orgId,
+        actorType: "system",
+        actorId: "issue_closure_governance",
+        action: "issue.closure_needs_operator_review",
+        entityType: "issue",
+        entityId: passiveClosure.issue.id,
+        agentId: run.agentId,
+        runId: run.id,
+        details: {
+          issueId: passiveClosure.issue.id,
+          issueTitle: passiveClosure.issue.title,
+          originRunId: passiveClosure.originRunId,
+          previousRunId: passiveClosure.previousRunId,
+          attempts: passiveClosure.attempts,
+          maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+          reason: passiveClosure.reason,
+        },
+      });
+    }
+
+    const promotedRun = outcome.promotedRun;
     if (!promotedRun) return;
 
     publishLiveEvent({

@@ -39,6 +39,7 @@ These decisions close open questions from `SPEC.md` for V1.
 | Communication | Issues remain the execution surface; Messenger is the board communication shell that unifies chat conversations and inbox-style attention streams |
 | Task ownership | Single assignee; atomic checkout required for `in_progress` transition |
 | Recovery | No automatic reassignment; work recovery stays explicit/auditable; visible same-agent recovery retry is allowed |
+| Issue close-out | Successful issue-backed runs must leave a close-out signal or Rudder may queue bounded same-agent passive follow-up |
 | Agent adapters | Built-in `process` and `http` adapters |
 | Auth | Mode-dependent human auth (`local_trusted` implicit board in current code; authenticated mode uses sessions), API keys for agents |
 | Budget period | Monthly UTC calendar window |
@@ -438,6 +439,13 @@ Side effects:
 - entering `done` sets `completed_at`
 - entering `cancelled` sets `cancelled_at`
 
+Issue-backed run close-out:
+
+- a successful run on a `todo` or `in_progress` issue is expected to leave one closure signal before exit
+- closure signals are a run-attributed issue comment, moving the issue out of `todo` / `in_progress`, reassignment, or an existing deferred issue wake
+- if no closure signal exists and near-term timer heartbeat continuity is not credible, Rudder queues a same-agent `issue_passive_followup` wake after a short cooldown
+- passive follow-up is bounded to two attempts; after that Rudder emits `issue.closure_needs_operator_review` without mutating the issue workflow status
+
 ## 8.3 Approval Status
 
 - `pending -> approved | rejected | cancelled`
@@ -511,6 +519,7 @@ All endpoints are under `/api` and return JSON.
 - `POST /agents/:agentId/terminate`
 - `POST /agents/:agentId/keys` (create API key)
 - `POST /agents/:agentId/heartbeat/invoke`
+- `issue_passive_followup` is an internal same-agent wake reason created by issue close-out governance, not a public reassignment surface
 
 ## 10.4 Tasks (Issues)
 

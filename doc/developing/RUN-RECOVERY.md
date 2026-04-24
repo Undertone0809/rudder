@@ -20,6 +20,8 @@ Recovery must not silently:
 - hide the failure
 - create a brand-new task interpretation when prior work already exists
 
+Passive issue close-out follow-up is separate from recovery. It is created after a successful issue-backed run that left no comment, status transition, handoff, or deferred continuation signal. Those runs use `contextSnapshot.passiveFollowup` and `agent_wakeup_requests.reason = "issue_passive_followup"`, not `contextSnapshot.recovery`.
+
 ## 2. Recovery Contract
 
 Manual retry and automatic `process_lost` retry share the same contract.
@@ -96,6 +98,8 @@ V1 still does not do:
 - automatic reassignment
 - automatic issue release
 - automatic issue status rollback
+
+Missing issue close-out is not treated as a failed-run recovery case. Rudder may queue a bounded same-agent passive follow-up for `missing_closure`, but that prompt asks the agent to close, comment, block, or hand off the issue rather than resume a failed runtime.
 
 ## 6. Case Library
 
@@ -175,6 +179,20 @@ Expected behavior:
 Coverage:
 
 - automated: `packages/agent-runtime-utils/src/server-utils.test.ts`
+
+### Case: successful issue run exits without close-out
+
+Expected behavior:
+
+- no recovery metadata is attached because the run succeeded
+- if timer continuity is not credible, Rudder queues `issue_passive_followup`
+- after max passive attempts, Rudder emits `issue.closure_needs_operator_review`
+
+Coverage:
+
+- automated: `server/src/__tests__/heartbeat-passive-issue-closeout.test.ts`
+- automated: `packages/agent-runtime-utils/src/server-utils.test.ts`
+- e2e: `tests/e2e/issue-passive-followup.spec.ts`
 
 ## 7. Debugging Checklist
 

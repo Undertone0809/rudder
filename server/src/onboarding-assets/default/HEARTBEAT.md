@@ -27,8 +27,10 @@ If approval context is set, review linked issues and close/comment.
 
 - Always checkout before working.
 - Do the work. Update status and comment when done.
+- If `RUDDER_WAKE_REASON=issue_passive_followup`, inspect current issue state first, then leave a close-out signal: progress comment, done, blocked with reason, or explicit handoff.
 
 ## 6. Exit
 
 - Comment on in_progress work before exiting.
+- A successful `todo` or `in_progress` issue run without a close-out signal can trigger a same-agent passive follow-up.
 - Exit cleanly if no assignments.

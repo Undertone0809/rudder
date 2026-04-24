@@ -4003,6 +4003,13 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
   const recoveryFailureSummary = asNonEmptyString(recoveryContext?.failureSummary);
   const recoveryTrigger = asNonEmptyString(recoveryContext?.recoveryTrigger);
   const recoveryMode = asNonEmptyString(recoveryContext?.recoveryMode);
+  const passiveFollowupContext = asRecord(asRecord(run.contextSnapshot)?.passiveFollowup);
+  const passiveFollowupOriginRunId = asNonEmptyString(passiveFollowupContext?.originRunId);
+  const passiveFollowupPreviousRunId = asNonEmptyString(passiveFollowupContext?.previousRunId);
+  const passiveFollowupReason = asNonEmptyString(passiveFollowupContext?.reason);
+  const passiveFollowupAttempt = typeof passiveFollowupContext?.attempt === "number" ? passiveFollowupContext.attempt : null;
+  const passiveFollowupMaxAttempts =
+    typeof passiveFollowupContext?.maxAttempts === "number" ? passiveFollowupContext.maxAttempts : null;
 
   return (
     <div className="space-y-4 min-w-0">
@@ -4148,6 +4155,35 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
                 {(recoveryFailureKind || recoveryFailureSummary) && (
                   <div className="text-muted-foreground">
                     {[recoveryFailureKind, recoveryFailureSummary].filter(Boolean).join(": ")}
+                  </div>
+                )}
+              </div>
+            )}
+            {passiveFollowupOriginRunId && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs space-y-1">
+                <div className="font-medium text-foreground">Passive follow-up</div>
+                <div className="text-muted-foreground">
+                  Origin run{" "}
+                  <Link className="underline underline-offset-2" to={`/agents/${run.agentId}/runs/${passiveFollowupOriginRunId}`}>
+                    {passiveFollowupOriginRunId}
+                  </Link>
+                </div>
+                {passiveFollowupPreviousRunId && (
+                  <div className="text-muted-foreground">
+                    Previous run{" "}
+                    <Link className="underline underline-offset-2" to={`/agents/${run.agentId}/runs/${passiveFollowupPreviousRunId}`}>
+                      {passiveFollowupPreviousRunId}
+                    </Link>
+                  </div>
+                )}
+                {(passiveFollowupAttempt || passiveFollowupReason) && (
+                  <div className="text-muted-foreground">
+                    {[
+                      passiveFollowupAttempt && passiveFollowupMaxAttempts
+                        ? `attempt ${passiveFollowupAttempt}/${passiveFollowupMaxAttempts}`
+                        : null,
+                      passiveFollowupReason,
+                    ].filter(Boolean).join(" · ")}
                   </div>
                 )}
               </div>
