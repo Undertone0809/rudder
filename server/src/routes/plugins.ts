@@ -131,6 +131,14 @@ const BUNDLED_PLUGIN_EXAMPLES: AvailablePluginExample[] = [
     localPath: "packages/plugins/examples/plugin-kitchen-sink-example",
     tag: "example",
   },
+  {
+    packageName: "@rudder/plugin-linear",
+    pluginKey: "rudder.linear",
+    displayName: "Linear",
+    description: "Import-first Linear connector for Rudder issues.",
+    localPath: "packages/plugins/examples/plugin-linear",
+    tag: "example",
+  },
 ];
 
 function listBundledPluginExamples(): AvailablePluginExample[] {
