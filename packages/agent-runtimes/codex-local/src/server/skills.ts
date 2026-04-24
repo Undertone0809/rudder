@@ -16,6 +16,7 @@ const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 async function buildCodexSkillSnapshot(
   orgId: string,
+  agentId: string,
   config: Record<string, unknown>,
 ): Promise<AgentRuntimeSkillSnapshot> {
   const availableEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
@@ -34,7 +35,7 @@ async function buildCodexSkillSnapshot(
       ? path.resolve(envConfig.CODEX_HOME.trim())
       : null;
   const skillsHome = path.join(
-    configuredCodexHome ?? resolveManagedCodexHomeDir({ ...process.env, ...stringEnv }, orgId),
+    configuredCodexHome ?? resolveManagedCodexHomeDir({ ...process.env, ...stringEnv }, orgId, agentId),
     "skills",
   );
   const installed = await readInstalledSkillTargets(skillsHome);
@@ -55,7 +56,7 @@ async function buildCodexSkillSnapshot(
 }
 
 export async function listCodexSkills(ctx: AgentRuntimeSkillContext): Promise<AgentRuntimeSkillSnapshot> {
-  return buildCodexSkillSnapshot(ctx.orgId, ctx.config);
+  return buildCodexSkillSnapshot(ctx.orgId, ctx.agentId, ctx.config);
 }
 
 export async function syncCodexSkills(
@@ -82,13 +83,13 @@ export async function syncCodexSkills(
   };
   await realizeManagedCodexSkillEntries(
     sourceEnv,
-    configuredCodexHome ?? resolveManagedCodexHomeDir(sourceEnv, ctx.orgId),
+    configuredCodexHome ?? resolveManagedCodexHomeDir(sourceEnv, ctx.orgId, ctx.agentId),
     availableEntries
       .filter((entry) => desiredSkills.includes(entry.key))
       .map((entry) => entry.source),
     async () => {},
   ).catch(() => {});
-  return buildCodexSkillSnapshot(ctx.orgId, ctx.config);
+  return buildCodexSkillSnapshot(ctx.orgId, ctx.agentId, ctx.config);
 }
 
 export function resolveCodexDesiredSkillNames(

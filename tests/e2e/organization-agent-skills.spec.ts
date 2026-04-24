@@ -754,6 +754,8 @@ test.describe("Organization and agent skills", () => {
       "organizations",
       organization.id,
       "codex-home",
+      "agents",
+      agent.id,
     );
     const staleSystemSkill = path.join(managedCodexHome, "skills", ".system", "imagegen", "SKILL.md");
     await fs.mkdir(path.dirname(staleSystemSkill), { recursive: true });

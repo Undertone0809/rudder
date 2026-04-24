@@ -17,6 +17,27 @@ const MANAGED_CODEX_HOME_PRUNE_TARGETS = [
   path.join(".tmp", "plugins.sha"),
   path.join(".tmp", "app-server-remote-plugin-sync-v1"),
 ] as const;
+const codexHomeMutationLocks = new Map<string, Promise<void>>();
+
+async function withCodexHomeMutationLock<T>(codexHome: string, fn: () => Promise<T>): Promise<T> {
+  const key = path.resolve(codexHome);
+  const previous = codexHomeMutationLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const marker = previous.then(() => current, () => current);
+  codexHomeMutationLocks.set(key, marker);
+  await previous.catch(() => undefined);
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (codexHomeMutationLocks.get(key) === marker) {
+      codexHomeMutationLocks.delete(key);
+    }
+  }
+}
 
 function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -40,9 +61,22 @@ function isWorktreeMode(env: NodeJS.ProcessEnv): boolean {
 export function resolveManagedCodexHomeDir(
   env: NodeJS.ProcessEnv,
   orgId?: string,
+  agentId?: string,
 ): string {
   const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
   const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
+  if (orgId && agentId) {
+    return path.resolve(
+      rudderHome,
+      "instances",
+      instanceId,
+      "organizations",
+      orgId,
+      "codex-home",
+      "agents",
+      agentId,
+    );
+  }
   return orgId
     ? path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "codex-home")
     : path.resolve(rudderHome, "instances", instanceId, "codex-home");
@@ -439,30 +473,33 @@ export async function prepareManagedCodexHome(
   env: NodeJS.ProcessEnv,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId?: string,
+  agentId?: string,
 ): Promise<string> {
-  const targetHome = resolveManagedCodexHomeDir(env, orgId);
+  const targetHome = resolveManagedCodexHomeDir(env, orgId, agentId);
 
   const sourceHome = resolveSharedCodexHomeDir(env);
   if (path.resolve(sourceHome) === path.resolve(targetHome)) return targetHome;
 
-  await fs.mkdir(targetHome, { recursive: true });
-  await pruneManagedCodexPluginSurface(targetHome, onLog);
+  await withCodexHomeMutationLock(targetHome, async () => {
+    await fs.mkdir(targetHome, { recursive: true });
+    await pruneManagedCodexPluginSurface(targetHome, onLog);
 
-  for (const name of SYMLINKED_SHARED_FILES) {
-    const source = path.join(sourceHome, name);
-    if (!(await pathExists(source))) continue;
-    await ensureSymlink(path.join(targetHome, name), source);
-  }
-
-  for (const name of COPIED_SHARED_FILES) {
-    const source = path.join(sourceHome, name);
-    if (!(await pathExists(source))) continue;
-    if (name === "config.toml") {
-      await syncManagedCodexConfigToml(path.join(targetHome, name), source, onLog);
-      continue;
+    for (const name of SYMLINKED_SHARED_FILES) {
+      const source = path.join(sourceHome, name);
+      if (!(await pathExists(source))) continue;
+      await ensureSymlink(path.join(targetHome, name), source);
     }
-    await ensureCopiedFile(path.join(targetHome, name), source);
-  }
+
+    for (const name of COPIED_SHARED_FILES) {
+      const source = path.join(sourceHome, name);
+      if (!(await pathExists(source))) continue;
+      if (name === "config.toml") {
+        await syncManagedCodexConfigToml(path.join(targetHome, name), source, onLog);
+        continue;
+      }
+      await ensureCopiedFile(path.join(targetHome, name), source);
+    }
+  });
 
   await onLog(
     "stdout",
@@ -540,9 +577,11 @@ export async function realizeManagedCodexSkillEntries(
   skillSources: string[],
   onLog: AgentRuntimeExecutionContext["onLog"],
 ): Promise<void> {
-  const sourceHome = resolveSharedCodexHomeDir(env);
-  const sourceConfig = path.join(sourceHome, "config.toml");
-  const targetConfig = path.join(codexHome, "config.toml");
-  await syncManagedCodexConfigToml(targetConfig, sourceConfig, onLog);
-  await syncManagedCodexSkillsHome(codexHome, skillSources, onLog);
+  await withCodexHomeMutationLock(codexHome, async () => {
+    const sourceHome = resolveSharedCodexHomeDir(env);
+    const sourceConfig = path.join(sourceHome, "config.toml");
+    const targetConfig = path.join(codexHome, "config.toml");
+    await syncManagedCodexConfigToml(targetConfig, sourceConfig, onLog);
+    await syncManagedCodexSkillsHome(codexHome, skillSources, onLog);
+  });
 }

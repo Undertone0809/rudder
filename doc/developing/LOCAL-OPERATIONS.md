@@ -66,9 +66,9 @@ When a local agent run has no resolved project/session workspace, Rudder falls b
 
 This path honors `RUDDER_HOME` and `RUDDER_INSTANCE_ID` in non-default setups.
 
-For `codex_local`, Rudder also manages a per-organization Codex home under the instance root and seeds it from the shared Codex login/config home (`$CODEX_HOME` or `~/.codex`):
+For `codex_local`, Rudder also manages a per-agent Codex home under the instance root and seeds it from the shared Codex login/config home (`$CODEX_HOME` or `~/.codex`):
 
-- `~/.rudder/instances/default/organizations/<org-id>/codex-home`
+- `~/.rudder/instances/default/organizations/<org-id>/codex-home/agents/<agent-id>`
 
 ## Quick Health Checks
 

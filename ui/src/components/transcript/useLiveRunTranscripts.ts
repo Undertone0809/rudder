@@ -9,6 +9,10 @@ import { queryKeys } from "../../lib/queryKeys";
 const LOG_POLL_INTERVAL_MS = 2000;
 const LOG_READ_LIMIT_BYTES = 256_000;
 
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
 interface UseLiveRunTranscriptsOptions {
   runs: LiveRunForIssue[];
   orgId?: string | null;
@@ -148,8 +152,12 @@ export function useLiveRunTranscripts({
           logOffsetByRunRef.current.set(run.id, result.nextOffset);
           return;
         }
+        if (result.endOffset !== undefined) {
+          logOffsetByRunRef.current.set(run.id, result.endOffset);
+          return;
+        }
         if (result.content.length > 0) {
-          logOffsetByRunRef.current.set(run.id, offset + result.content.length);
+          logOffsetByRunRef.current.set(run.id, offset + utf8ByteLength(result.content));
         }
       } catch {
         // Ignore log read errors while output is initializing.
@@ -207,6 +215,7 @@ export function useLiveRunTranscripts({
         if (!runById.has(runId)) return;
 
         if (event.type === "heartbeat.run.log") {
+          if (payload["truncated"] === true) return;
           const chunk = readString(payload["chunk"]);
           if (!chunk) return;
           const ts = readString(payload["ts"]) ?? event.createdAt;

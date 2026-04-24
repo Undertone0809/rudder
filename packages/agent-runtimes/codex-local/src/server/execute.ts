@@ -186,8 +186,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   };
   const preparedManagedCodexHome =
-    configuredCodexHome ? null : await prepareManagedCodexHome(sourceEnv, onLog, agent.orgId);
-  const defaultCodexHome = resolveManagedCodexHomeDir(sourceEnv, agent.orgId);
+    configuredCodexHome ? null : await prepareManagedCodexHome(sourceEnv, onLog, agent.orgId, agent.id);
+  const defaultCodexHome = resolveManagedCodexHomeDir(sourceEnv, agent.orgId, agent.id);
   const effectiveCodexHome = configuredCodexHome ?? preparedManagedCodexHome ?? defaultCodexHome;
   await fs.mkdir(effectiveCodexHome, { recursive: true });
   const isolatedHome = agentHome || path.join(effectiveCodexHome, "home");

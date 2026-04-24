@@ -253,7 +253,7 @@ export async function heartbeatRun(opts: HeartbeatRunOptions): Promise<void> {
       break;
     }
 
-    const logResult = await api.get<{ content: string; nextOffset?: number }>(
+    const logResult = await api.get<{ content: string; endOffset?: number; nextOffset?: number }>(
       `/api/heartbeat-runs/${activeRunId}/log?offset=${logOffset}&limitBytes=16384`,
       { ignoreNotFound: true },
     );
@@ -266,6 +266,8 @@ export async function heartbeatRun(opts: HeartbeatRunOptions): Promise<void> {
       }
       if (typeof logResult.nextOffset === "number") {
         logOffset = logResult.nextOffset;
+      } else if (typeof logResult.endOffset === "number") {
+        logOffset = logResult.endOffset;
       } else if (logResult.content) {
         logOffset += Buffer.byteLength(logResult.content, "utf8");
       }

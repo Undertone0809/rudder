@@ -18,6 +18,8 @@ export interface WorkspaceOperationLogReadOptions {
 
 export interface WorkspaceOperationLogReadResult {
   content: string;
+  endOffset: number;
+  eof: boolean;
   nextOffset?: number;
 }
 
@@ -61,10 +63,13 @@ function createLocalFileWorkspaceOperationLogStore(basePath: string): WorkspaceO
     if (!stat) throw notFound("Workspace operation log not found");
 
     const start = Math.max(0, Math.min(offset, stat.size));
+    if (stat.size === 0 || start >= stat.size) {
+      return { content: "", endOffset: start, eof: true };
+    }
     const end = Math.max(start, Math.min(start + limitBytes - 1, stat.size - 1));
 
     if (start > end) {
-      return { content: "", nextOffset: start };
+      return { content: "", endOffset: start, eof: true };
     }
 
     const chunks: Buffer[] = [];
@@ -78,8 +83,10 @@ function createLocalFileWorkspaceOperationLogStore(basePath: string): WorkspaceO
     });
 
     const content = Buffer.concat(chunks).toString("utf8");
-    const nextOffset = end + 1 < stat.size ? end + 1 : undefined;
-    return { content, nextOffset };
+    const endOffset = end + 1;
+    const eof = endOffset >= stat.size;
+    const nextOffset = eof ? undefined : endOffset;
+    return { content, endOffset, eof, nextOffset };
   }
 
   async function sha256File(filePath: string): Promise<string> {

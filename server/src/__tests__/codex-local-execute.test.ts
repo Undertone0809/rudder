@@ -92,6 +92,24 @@ type LogEntry = {
   chunk: string;
 };
 
+function managedCodexHomePath(input: {
+  rudderHome: string;
+  instanceId?: string;
+  orgId?: string;
+  agentId?: string;
+}): string {
+  return path.join(
+    input.rudderHome,
+    "instances",
+    input.instanceId ?? "default",
+    "organizations",
+    input.orgId ?? "organization-1",
+    "codex-home",
+    "agents",
+    input.agentId ?? "agent-1",
+  );
+}
+
 describe("codex execute", () => {
   it("uses a Rudder-managed CODEX_HOME outside worktree mode while preserving shared auth and config", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-default-"));
@@ -100,14 +118,7 @@ describe("codex execute", () => {
     const capturePath = path.join(root, "capture.json");
     const sharedCodexHome = path.join(root, "shared-codex-home");
     const paperclipHome = path.join(root, "rudder-home");
-    const managedCodexHome = path.join(
-      paperclipHome,
-      "instances",
-      "default",
-      "organizations",
-      "organization-1",
-      "codex-home",
-    );
+    const managedCodexHome = managedCodexHomePath({ rudderHome: paperclipHome });
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(sharedCodexHome, { recursive: true });
     await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
@@ -218,6 +229,106 @@ describe("codex execute", () => {
     }
   });
 
+  it("isolates managed CODEX_HOME per agent inside the same organization", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-agent-isolation-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const firstCapturePath = path.join(root, "capture-agent-1.json");
+    const secondCapturePath = path.join(root, "capture-agent-2.json");
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const paperclipHome = path.join(root, "rudder-home");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
+    await fs.writeFile(path.join(sharedCodexHome, "config.toml"), 'model = "codex-mini-latest"\n', "utf8");
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousPaperclipHome = process.env.RUDDER_HOME;
+    const previousPaperclipInstanceId = process.env.RUDDER_INSTANCE_ID;
+    const previousPaperclipInWorktree = process.env.RUDDER_IN_WORKTREE;
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.HOME = root;
+    process.env.RUDDER_HOME = paperclipHome;
+    delete process.env.RUDDER_INSTANCE_ID;
+    delete process.env.RUDDER_IN_WORKTREE;
+    process.env.CODEX_HOME = sharedCodexHome;
+
+    try {
+      const baseRuntime = {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      };
+      const baseConfig = {
+        command: commandPath,
+        cwd: workspace,
+        promptTemplate: "Follow the rudder heartbeat.",
+      };
+
+      const [firstResult, secondResult] = await Promise.all([
+        execute({
+          runId: "run-agent-1",
+          agent: {
+            id: "agent-1",
+            orgId: "organization-1",
+            name: "Codex Coder 1",
+            agentRuntimeType: "codex_local",
+            agentRuntimeConfig: {},
+          },
+          runtime: baseRuntime,
+          config: {
+            ...baseConfig,
+            env: { RUDDER_TEST_CAPTURE_PATH: firstCapturePath },
+          },
+          context: {},
+          authToken: "run-jwt-token",
+          onLog: async () => {},
+        }),
+        execute({
+          runId: "run-agent-2",
+          agent: {
+            id: "agent-2",
+            orgId: "organization-1",
+            name: "Codex Coder 2",
+            agentRuntimeType: "codex_local",
+            agentRuntimeConfig: {},
+          },
+          runtime: baseRuntime,
+          config: {
+            ...baseConfig,
+            env: { RUDDER_TEST_CAPTURE_PATH: secondCapturePath },
+          },
+          context: {},
+          authToken: "run-jwt-token",
+          onLog: async () => {},
+        }),
+      ]);
+
+      expect(firstResult.exitCode).toBe(0);
+      expect(secondResult.exitCode).toBe(0);
+
+      const firstCapture = JSON.parse(await fs.readFile(firstCapturePath, "utf8")) as CapturePayload;
+      const secondCapture = JSON.parse(await fs.readFile(secondCapturePath, "utf8")) as CapturePayload;
+      expect(firstCapture.codexHome).toBe(managedCodexHomePath({ rudderHome: paperclipHome, agentId: "agent-1" }));
+      expect(secondCapture.codexHome).toBe(managedCodexHomePath({ rudderHome: paperclipHome, agentId: "agent-2" }));
+      expect(firstCapture.codexHome).not.toBe(secondCapture.codexHome);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousPaperclipHome === undefined) delete process.env.RUDDER_HOME;
+      else process.env.RUDDER_HOME = previousPaperclipHome;
+      if (previousPaperclipInstanceId === undefined) delete process.env.RUDDER_INSTANCE_ID;
+      else process.env.RUDDER_INSTANCE_ID = previousPaperclipInstanceId;
+      if (previousPaperclipInWorktree === undefined) delete process.env.RUDDER_IN_WORKTREE;
+      else process.env.RUDDER_IN_WORKTREE = previousPaperclipInWorktree;
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("removes inherited Codex [[skills.config]] entries from the managed config before invocation", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-sanitize-"));
     const workspace = path.join(root, "workspace");
@@ -225,14 +336,7 @@ describe("codex execute", () => {
     const capturePath = path.join(root, "capture.json");
     const sharedCodexHome = path.join(root, "shared-codex-home");
     const paperclipHome = path.join(root, "rudder-home");
-    const managedCodexHome = path.join(
-      paperclipHome,
-      "instances",
-      "default",
-      "organizations",
-      "organization-1",
-      "codex-home",
-    );
+    const managedCodexHome = managedCodexHomePath({ rudderHome: paperclipHome });
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(sharedCodexHome, { recursive: true });
     await fs.mkdir(managedCodexHome, { recursive: true });
@@ -346,14 +450,7 @@ describe("codex execute", () => {
     const capturePath = path.join(root, "capture.json");
     const sharedCodexHome = path.join(root, "shared-codex-home");
     const paperclipHome = path.join(root, "rudder-home");
-    const managedCodexHome = path.join(
-      paperclipHome,
-      "instances",
-      "default",
-      "organizations",
-      "organization-1",
-      "codex-home",
-    );
+    const managedCodexHome = managedCodexHomePath({ rudderHome: paperclipHome });
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(sharedCodexHome, { recursive: true });
     await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
@@ -462,14 +559,7 @@ describe("codex execute", () => {
     const capturePath = path.join(root, "capture.json");
     const sharedCodexHome = path.join(root, "shared-codex-home");
     const paperclipHome = path.join(root, "rudder-home");
-    const managedCodexHome = path.join(
-      paperclipHome,
-      "instances",
-      "default",
-      "organizations",
-      "organization-1",
-      "codex-home",
-    );
+    const managedCodexHome = managedCodexHomePath({ rudderHome: paperclipHome });
     const managedPluginSkill = path.join(
       managedCodexHome,
       "plugins",
@@ -760,14 +850,10 @@ describe("codex execute", () => {
     const capturePath = path.join(root, "capture.json");
     const sharedCodexHome = path.join(root, "shared-codex-home");
     const paperclipHome = path.join(root, "rudder-home");
-    const isolatedCodexHome = path.join(
-      paperclipHome,
-      "instances",
-      "worktree-1",
-      "organizations",
-      "organization-1",
-      "codex-home",
-    );
+    const isolatedCodexHome = managedCodexHomePath({
+      rudderHome: paperclipHome,
+      instanceId: "worktree-1",
+    });
     const workspaceSkill = path.join(workspace, ".agents", "skills", "rudder");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(sharedCodexHome, { recursive: true });
@@ -1131,14 +1217,7 @@ describe("codex execute", () => {
     const capturePath = path.join(root, "capture.json");
     const sharedCodexHome = path.join(root, "shared-codex-home");
     const paperclipHome = path.join(root, "rudder-home");
-    const managedCodexHome = path.join(
-      paperclipHome,
-      "instances",
-      "default",
-      "organizations",
-      "organization-1",
-      "codex-home",
-    );
+    const managedCodexHome = managedCodexHomePath({ rudderHome: paperclipHome });
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(sharedCodexHome, { recursive: true });
     await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
@@ -1234,14 +1313,7 @@ describe("codex execute", () => {
     const capturePath = path.join(root, "capture.json");
     const sharedCodexHome = path.join(root, "shared-codex-home");
     const paperclipHome = path.join(root, "rudder-home");
-    const managedCodexHome = path.join(
-      paperclipHome,
-      "instances",
-      "default",
-      "organizations",
-      "organization-1",
-      "codex-home",
-    );
+    const managedCodexHome = managedCodexHomePath({ rudderHome: paperclipHome });
     const staleManagedSkill = path.join(managedCodexHome, "skills", "stale-skill", "SKILL.md");
     const staleSystemSkill = path.join(managedCodexHome, "skills", ".system", "imagegen", "SKILL.md");
     const agentHome = path.join(root, "agent-home");

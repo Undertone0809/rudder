@@ -654,6 +654,14 @@ function runMetrics(run: HeartbeatRun) {
 
 type RunLogChunk = { ts: string; stream: "stdout" | "stderr" | "system"; chunk: string };
 
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+function runLogChunkDedupeKey(chunk: RunLogChunk): string {
+  return `${chunk.ts}\u0000${chunk.stream}\u0000${chunk.chunk}`;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -4277,7 +4285,7 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
 function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeType: string }) {
   type RunDetailTab = "transcript" | "invocation";
   const [events, setEvents] = useState<HeartbeatRunEvent[]>([]);
-  const [logLines, setLogLines] = useState<Array<{ ts: string; stream: "stdout" | "stderr" | "system"; chunk: string }>>([]);
+  const [logLines, setLogLines] = useState<RunLogChunk[]>([]);
   const [loading, setLoading] = useState(true);
   const [logLoading, setLogLoading] = useState(!!run.logRef);
   const [logError, setLogError] = useState<string | null>(null);
@@ -4289,6 +4297,7 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
   const transcriptVisible = activeDetailTab === "transcript";
   const logEndRef = useRef<HTMLDivElement>(null);
   const pendingLogLineRef = useRef("");
+  const seenLogChunkKeysRef = useRef<Set<string>>(new Set());
   const scrollContainerRef = useRef<ScrollContainer | null>(null);
   const isFollowingRef = useRef(false);
   const lastMetricsRef = useRef<{ scrollHeight: number; distanceFromBottom: number }>({
@@ -4316,7 +4325,7 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
       pendingLogLineRef.current = "";
     }
 
-    const parsed: Array<{ ts: string; stream: "stdout" | "stderr" | "system"; chunk: string }> = [];
+    const parsed: RunLogChunk[] = [];
     for (const line of split) {
       const trimmed = line.trim();
       if (!trimmed) continue;
@@ -4334,8 +4343,26 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
     }
 
     if (parsed.length > 0) {
-      setLogLines((prev) => [...prev, ...parsed]);
+      appendLogChunks(parsed);
     }
+  }
+
+  function appendLogChunks(chunks: RunLogChunk[]) {
+    if (chunks.length === 0) return;
+    setLogLines((prev) => {
+      const nextChunks: RunLogChunk[] = [];
+      for (const chunk of chunks) {
+        const key = runLogChunkDedupeKey(chunk);
+        if (seenLogChunkKeysRef.current.has(key)) continue;
+        seenLogChunkKeysRef.current.add(key);
+        nextChunks.push(chunk);
+      }
+      if (nextChunks.length === 0) return prev;
+      if (seenLogChunkKeysRef.current.size > 12000) {
+        seenLogChunkKeysRef.current = new Set(nextChunks.map(runLogChunkDedupeKey));
+      }
+      return [...prev, ...nextChunks];
+    });
   }
 
   // Fetch events
@@ -4436,6 +4463,7 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
   useEffect(() => {
     let cancelled = false;
     pendingLogLineRef.current = "";
+    seenLogChunkKeysRef.current.clear();
     setLogLines([]);
     setLogOffset(0);
     setLogError(null);
@@ -4461,7 +4489,7 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
           const result = await heartbeatsApi.log(run.id, offset, first ? firstLimit : 256_000);
           if (cancelled) break;
           appendLogContent(result.content, result.nextOffset === undefined);
-          const next = result.nextOffset ?? offset + result.content.length;
+          const next = result.nextOffset ?? result.endOffset ?? offset + utf8ByteLength(result.content);
           setLogOffset(next);
           offset = next;
           first = false;
@@ -4514,8 +4542,10 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
         }
         if (result.nextOffset !== undefined) {
           setLogOffset(result.nextOffset);
+        } else if (result.endOffset !== undefined) {
+          setLogOffset(result.endOffset);
         } else if (result.content.length > 0) {
-          setLogOffset((prev) => prev + result.content.length);
+          setLogOffset((prev) => prev + utf8ByteLength(result.content));
         }
       } catch (err) {
         if (isRunLogUnavailable(err)) return;
@@ -4565,12 +4595,13 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
         if (!payload || eventRunId !== run.id) return;
 
         if (event.type === "heartbeat.run.log") {
+          if (payload.truncated === true) return;
           const chunk = typeof payload.chunk === "string" ? payload.chunk : "";
           if (!chunk) return;
           const streamRaw = asNonEmptyString(payload.stream);
           const stream = streamRaw === "stderr" || streamRaw === "system" ? streamRaw : "stdout";
           const ts = asNonEmptyString((payload as Record<string, unknown>).ts) ?? event.createdAt;
-          setLogLines((prev) => [...prev, { ts, stream, chunk }]);
+          appendLogChunks([{ ts, stream, chunk }]);
           return;
         }
 

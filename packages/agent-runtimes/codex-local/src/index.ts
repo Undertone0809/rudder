@@ -44,7 +44,7 @@ Notes:
 - Codex exec automatically applies repo-scoped AGENTS.md instructions from the active workspace. Rudder cannot suppress that discovery in exec mode, so repo AGENTS.md files may still apply even when you only configured an explicit instructionsFilePath.
 - Agent enabled-skill state is controlled only by Rudder's bundled skills plus the selections saved on the agent's Skills page.
 - The codex_local adapter does not materialize skills into repo-scoped ".agents/skills"; it realizes selected skills by linking them into the Rudder-managed \`CODEX_HOME/skills\` directory that Codex discovers at runtime.
-- Unless explicitly overridden in adapter config, Rudder runs Codex with a per-organization managed CODEX_HOME under the active Rudder instance and seeds auth/config from the shared Codex home (the CODEX_HOME env var, when set, or ~/.codex).
+- Unless explicitly overridden in adapter config, Rudder runs Codex with a per-agent managed CODEX_HOME under the active Rudder instance and seeds auth/config from the shared Codex home (the CODEX_HOME env var, when set, or ~/.codex).
 - Rudder also isolates the child process HOME/USERPROFILE away from the operator's real home so Codex does not auto-discover unrelated global skills from ~/.agents/skills during agent runs.
 - Some model/tool combinations reject certain effort levels (for example minimal with web search enabled).
 - When Rudder realizes a workspace/runtime for a run, it injects RUDDER_WORKSPACE_* and RUDDER_RUNTIME_* env vars for agent-side tooling.
