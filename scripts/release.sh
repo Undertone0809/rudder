@@ -5,6 +5,15 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=./release-lib.sh
 . "$REPO_ROOT/scripts/release-lib.sh"
 CLI_DIR="$REPO_ROOT/cli"
+BUNDLED_SKILLS_DIR="$REPO_ROOT/server/resources/bundled-skills"
+PUBLISH_SKILLS_PACKAGE_DIRS=(
+  "server"
+  "packages/agent-runtimes/claude-local"
+  "packages/agent-runtimes/codex-local"
+  "packages/agent-runtimes/cursor-local"
+  "packages/agent-runtimes/gemini-local"
+  "packages/agent-runtimes/opencode-local"
+)
 
 channel=""
 dry_run=false
@@ -46,7 +55,7 @@ restore_publish_artifacts() {
   rm -f "$CLI_DIR/README.md"
   rm -rf "$REPO_ROOT/server/ui-dist"
 
-  for pkg_dir in server packages/agent-runtimes/claude-local packages/agent-runtimes/codex-local; do
+  for pkg_dir in "${PUBLISH_SKILLS_PACKAGE_DIRS[@]}"; do
     rm -rf "$REPO_ROOT/$pkg_dir/skills"
   done
 }
@@ -224,9 +233,10 @@ release_info "==> Step 2/7: Building workspace artifacts..."
 cd "$REPO_ROOT"
 pnpm build
 bash "$REPO_ROOT/scripts/prepare-server-ui-dist.sh"
-for pkg_dir in server packages/agent-runtimes/claude-local packages/agent-runtimes/codex-local; do
+[ -d "$BUNDLED_SKILLS_DIR" ] || release_fail "bundled skills directory is missing: $BUNDLED_SKILLS_DIR"
+for pkg_dir in "${PUBLISH_SKILLS_PACKAGE_DIRS[@]}"; do
   rm -rf "$REPO_ROOT/$pkg_dir/skills"
-  cp -r "$REPO_ROOT/skills" "$REPO_ROOT/$pkg_dir/skills"
+  cp -R "$BUNDLED_SKILLS_DIR" "$REPO_ROOT/$pkg_dir/skills"
 done
 release_info "  ✓ Workspace build complete"
 

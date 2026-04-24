@@ -54,6 +54,26 @@ describe("rudder skill utils", () => {
     expect(entries[0]?.description).toBe("Core Rudder coordination skill.");
   });
 
+  it("falls back to packaged skills beside a runtime package dist directory", async () => {
+    const root = await makeTempDir("rudder-package-skills-");
+    cleanupDirs.add(root);
+
+    const moduleDir = path.join(root, "packages", "agent-runtimes", "codex-local", "dist", "server");
+    await fs.mkdir(moduleDir, { recursive: true });
+    await fs.mkdir(path.join(root, "packages", "agent-runtimes", "codex-local", "skills", "rudder"), { recursive: true });
+    await fs.writeFile(
+      path.join(root, "packages", "agent-runtimes", "codex-local", "skills", "rudder", "SKILL.md"),
+      "---\nname: rudder\ndescription: Packaged Rudder skill.\n---\n",
+      "utf8",
+    );
+
+    const entries = await listRudderSkillEntries(moduleDir);
+
+    expect(entries.map((entry) => entry.key)).toEqual(["rudder/rudder"]);
+    expect(entries[0]?.source).toBe(path.join(root, "packages", "agent-runtimes", "codex-local", "skills", "rudder"));
+    expect(entries[0]?.description).toBe("Packaged Rudder skill.");
+  });
+
   it("removes stale maintainer-only symlinks from a shared skills home", async () => {
     const root = await makeTempDir("rudder-skill-cleanup-");
     cleanupDirs.add(root);

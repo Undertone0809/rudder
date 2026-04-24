@@ -55,6 +55,7 @@ export const MAX_EXCERPT_BYTES = 32 * 1024;
 const SENSITIVE_ENV_KEY = /(key|token|secret|password|passwd|authorization|cookie)/i;
 const RUDDER_SKILL_ROOT_RELATIVE_CANDIDATES = [
   "../../server/resources/bundled-skills",
+  "../../skills",
   "../../../../../server/resources/bundled-skills",
 ];
 
