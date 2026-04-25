@@ -22,6 +22,10 @@ export type ParsedMentionChip =
 
 const iconMaskCache = new Map<string, string>();
 
+export function stripMentionChipLabelPrefix(label: string): string {
+  return label.replace(/^@(?=\S)/, "");
+}
+
 export function parseMentionChipHref(href: string): ParsedMentionChip | null {
   const agent = parseAgentMentionHref(href);
   if (agent) {
@@ -74,6 +78,11 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
 
 export function applyMentionChipDecoration(element: HTMLElement, mention: ParsedMentionChip) {
   clearMentionChipDecoration(element);
+  const visibleLabel = element.textContent ?? "";
+  const normalizedLabel = stripMentionChipLabelPrefix(visibleLabel);
+  if (normalizedLabel !== visibleLabel) {
+    element.textContent = normalizedLabel;
+  }
   element.dataset.mentionKind = mention.kind;
   element.setAttribute("contenteditable", "false");
   element.classList.add("rudder-mention-chip", `rudder-mention-chip--${mention.kind}`);

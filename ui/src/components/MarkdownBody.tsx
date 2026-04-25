@@ -3,7 +3,7 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
-import { mentionChipInlineStyle, parseMentionChipHref } from "../lib/mention-chips";
+import { mentionChipInlineStyle, parseMentionChipHref, stripMentionChipLabelPrefix } from "../lib/mention-chips";
 import { parseSkillReference } from "../lib/skill-reference";
 
 interface MarkdownBodyProps {
@@ -105,6 +105,7 @@ export function MarkdownBody({ children, className, resolveImageSrc }: MarkdownB
     a: ({ href, children: linkChildren }) => {
       const parsed = href ? parseMentionChipHref(href) : null;
       if (parsed) {
+        const mentionLabel = stripMentionChipLabelPrefix(flattenText(linkChildren));
         const targetHref = parsed.kind === "project"
           ? `/projects/${parsed.projectId}`
           : parsed.kind === "issue"
@@ -121,7 +122,7 @@ export function MarkdownBody({ children, className, resolveImageSrc }: MarkdownB
             data-mention-kind={parsed.kind}
             style={mentionChipInlineStyle(parsed)}
           >
-            {linkChildren}
+            {mentionLabel}
           </a>
         );
       }

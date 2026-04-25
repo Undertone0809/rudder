@@ -42,9 +42,13 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/agents/agent-123"');
     expect(html).toContain('data-mention-kind="agent"');
     expect(html).toContain("--rudder-mention-icon-mask");
+    expect(html).toContain(">CodexCoder</a>");
+    expect(html).not.toContain(">@CodexCoder</a>");
     expect(html).toContain('href="/projects/project-456"');
     expect(html).toContain('data-mention-kind="project"');
     expect(html).toContain("--rudder-mention-project-color:#336699");
+    expect(html).toContain(">Rudder App</a>");
+    expect(html).not.toContain(">@Rudder App</a>");
   });
 
   it("renders issue mentions as chips that link to the issue route", () => {
@@ -58,6 +62,8 @@ describe("MarkdownBody", () => {
 
     expect(html).toContain('href="/issues/PAP-123"');
     expect(html).toContain('data-mention-kind="issue"');
+    expect(html).toContain(">PAP-123 auth flow</a>");
+    expect(html).not.toContain(">@PAP-123 auth flow</a>");
   });
 
   it("renders skill references as non-interactive tokens instead of links", () => {

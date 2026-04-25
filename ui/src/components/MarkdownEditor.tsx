@@ -34,7 +34,12 @@ import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AgentIcon } from "./AgentIconPicker";
-import { applyMentionChipDecoration, clearMentionChipDecoration, parseMentionChipHref } from "../lib/mention-chips";
+import {
+  applyMentionChipDecoration,
+  clearMentionChipDecoration,
+  parseMentionChipHref,
+  stripMentionChipLabelPrefix,
+} from "../lib/mention-chips";
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
 import { mentionDeletionPlugin } from "../lib/mention-deletion";
 import {
@@ -382,13 +387,13 @@ function mentionMarkdown(option: MentionOption): string {
     return `[${option.skillRefLabel}](${option.skillMarkdownTarget}) `;
   }
   if (option.kind === "issue" && option.issueId) {
-    return `[@${option.name}](${buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null)}) `;
+    return `[${option.name}](${buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null)}) `;
   }
   if (option.kind === "project" && option.projectId) {
-    return `[@${option.name}](${buildProjectMentionHref(option.projectId, option.projectColor ?? null)}) `;
+    return `[${option.name}](${buildProjectMentionHref(option.projectId, option.projectColor ?? null)}) `;
   }
   const agentId = option.agentId ?? option.id.replace(/^agent:/, "");
-  return `[@${option.name}](${buildAgentMentionHref(agentId, option.agentIcon ?? null)}) `;
+  return `[${option.name}](${buildAgentMentionHref(agentId, option.agentIcon ?? null)}) `;
 }
 
 /** Replace `@<query>` in the markdown string with the selected mention token. */
@@ -821,7 +826,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                   .filter((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement)
                   .filter((link) => {
                     const href = link.getAttribute("href") ?? "";
-                    return href === mentionHref && link.textContent === `@${option.name}`;
+                    return href === mentionHref && stripMentionChipLabelPrefix(link.textContent ?? "") === option.name;
                   });
               })();
           const containerRect = containerRef.current?.getBoundingClientRect();
