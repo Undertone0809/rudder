@@ -174,6 +174,29 @@ function buildOperatorProfilePromptSection(profile: OperatorProfileSettings | nu
   ].join("\n");
 }
 
+function buildSelectedProjectPromptSection(contextLinks: ChatContextLink[]) {
+  const projectLink = contextLinks.find((link) => link.entityType === "project");
+  if (!projectLink) return null;
+
+  const lines = [
+    "Selected project context:",
+    `- Project ID: ${projectLink.entityId}`,
+  ];
+  if (projectLink.entity?.label) {
+    lines.push(`- Name: ${projectLink.entity.label}`);
+  }
+  if (projectLink.entity?.status) {
+    lines.push(`- Status: ${projectLink.entity.status}`);
+  }
+  if (projectLink.entity?.subtitle) {
+    lines.push(`- Description: ${projectLink.entity.subtitle}`);
+  }
+  lines.push(
+    "Use this as the default project for issue proposals and project-scoped reasoning unless the user explicitly chooses another project.",
+  );
+  return lines.join("\n");
+}
+
 function buildChatSpeakerPromptSection(runtimeSource: ResolvedChatRuntimeSource) {
   const name = runtimeSource.descriptor.sourceLabel;
   if (runtimeSource.descriptor.sourceType === "agent") {
@@ -334,6 +357,7 @@ function buildConversationPrompt(
   orgResourcesPrompt: string,
 ) {
   const operatorProfileSection = buildOperatorProfilePromptSection(input.operatorProfile);
+  const selectedProjectSection = buildSelectedProjectPromptSection(input.contextLinks);
   /**
    * Chat prompt assembly stays compositional on purpose.
    *
@@ -348,6 +372,7 @@ function buildConversationPrompt(
    */
   return [
     systemPrompt(runtimeSource, input.conversation, resultSentinel),
+    ...(selectedProjectSection ? [selectedProjectSection] : []),
     ...(orgResourcesPrompt ? [orgResourcesPrompt] : []),
     ...(operatorProfileSection ? [operatorProfileSection] : []),
     "Conversation input:",

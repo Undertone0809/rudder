@@ -20,6 +20,7 @@ const mockChatService = vi.hoisted(() => ({
   addMessage: vi.fn(),
   addUserChatMessage: vi.fn(),
   addContextLink: vi.fn(),
+  setProjectContextLink: vi.fn(),
   createAttachment: vi.fn(),
   convertToIssue: vi.fn(),
   resolve: vi.fn(),
@@ -211,6 +212,74 @@ describe("chat routes", () => {
         issueCreationMode: "manual_approval",
         planMode: false,
         contextLinks: [],
+      }),
+    );
+  });
+
+  it("updates a chat project context after validating organization ownership", async () => {
+    const conversation = createConversation();
+    const updatedConversation = createConversation({
+      contextLinks: [{
+        id: "context-project-1",
+        orgId: "organization-1",
+        conversationId: "chat-1",
+        entityType: "project",
+        entityId: "10000000-0000-4000-8000-000000000010",
+        metadata: null,
+        entity: null,
+        createdAt: new Date("2026-03-26T08:00:00.000Z"),
+        updatedAt: new Date("2026-03-26T08:00:00.000Z"),
+      }],
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockProjectService.getById.mockResolvedValue({
+      id: "10000000-0000-4000-8000-000000000010",
+      orgId: "organization-1",
+    });
+    mockChatService.setProjectContextLink.mockResolvedValue(updatedConversation);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/project-context")
+      .send({ projectId: "10000000-0000-4000-8000-000000000010" });
+
+    expect(res.status).toBe(200);
+    expect(mockProjectService.getById).toHaveBeenCalledWith("10000000-0000-4000-8000-000000000010");
+    expect(mockChatService.setProjectContextLink).toHaveBeenCalledWith(
+      "chat-1",
+      "organization-1",
+      "10000000-0000-4000-8000-000000000010",
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "chat.project_context_updated",
+        details: { projectId: "10000000-0000-4000-8000-000000000010" },
+      }),
+    );
+  });
+
+  it("clears a chat project context without project ownership lookup", async () => {
+    const conversation = createConversation();
+    const updatedConversation = createConversation({ contextLinks: [] });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.setProjectContextLink.mockResolvedValue(updatedConversation);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/project-context")
+      .send({ projectId: null });
+
+    expect(res.status).toBe(200);
+    expect(mockProjectService.getById).not.toHaveBeenCalled();
+    expect(mockChatService.setProjectContextLink).toHaveBeenCalledWith(
+      "chat-1",
+      "organization-1",
+      null,
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "chat.project_context_updated",
+        details: { projectId: null },
       }),
     );
   });

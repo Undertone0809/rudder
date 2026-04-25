@@ -979,6 +979,39 @@ export function chatService(db: Db) {
       return resolved.find((row) => row.entityType === input.entityType && row.entityId === input.entityId) ?? null;
   }
 
+  async function setProjectContextLink(
+    conversationId: string,
+    orgId: string,
+    projectId: string | null,
+  ) {
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(chatContextLinks)
+        .where(
+          and(
+            eq(chatContextLinks.orgId, orgId),
+            eq(chatContextLinks.conversationId, conversationId),
+            eq(chatContextLinks.entityType, "project"),
+          ),
+        );
+
+      if (projectId) {
+        await tx
+          .insert(chatContextLinks)
+          .values({
+            orgId,
+            conversationId,
+            entityType: "project",
+            entityId: projectId,
+            metadata: null,
+          })
+          .onConflictDoNothing();
+      }
+    });
+
+    return getById(conversationId);
+  }
+
   async function createAttachment(input: {
       orgId: string;
       conversationId: string;
@@ -1479,6 +1512,7 @@ export function chatService(db: Db) {
     addMessage,
     addUserChatMessage,
     addContextLink,
+    setProjectContextLink,
     createAttachment,
     convertToIssue,
     getMessage,
