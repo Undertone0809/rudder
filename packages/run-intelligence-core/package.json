@@ -1,7 +1,16 @@
 {
   "name": "@rudderhq/run-intelligence-core",
   "version": "0.1.0",
-  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://github.com/Undertone0809/rudder",
+  "bugs": {
+    "url": "https://github.com/Undertone0809/rudder/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Undertone0809/rudder",
+    "directory": "packages/run-intelligence-core"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
