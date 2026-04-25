@@ -1414,6 +1414,7 @@ function ChatWorkspace() {
   const [emptyStatePromptPanelEntered, setEmptyStatePromptPanelEntered] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const composerEditorRef = useRef<MarkdownEditorRef>(null);
   const streamAbortControllersRef = useRef<Record<string, AbortController>>({});
   const stopRequestedChatIdsRef = useRef<Set<string>>(new Set());
@@ -2434,6 +2435,7 @@ function ChatWorkspace() {
 
   const renderComposer = (centered: boolean) => (
     <div
+      ref={composerSurfaceRef}
       className={cn(
         "chat-composer rounded-[var(--radius-lg)] p-3 transition-all duration-300",
         centered ? "mx-auto w-full max-w-3xl" : "w-full",
@@ -2445,6 +2447,8 @@ function ChatWorkspace() {
           value={draft}
           onChange={setDraft}
           mentions={mentionOptions}
+          mentionMenuAnchorRef={composerSurfaceRef}
+          mentionMenuPlacement="container"
           submitShortcut="enter"
           className="rounded-[var(--radius-md)] bg-transparent"
           contentClassName="min-h-[88px] bg-transparent text-[15px] leading-7 text-foreground"

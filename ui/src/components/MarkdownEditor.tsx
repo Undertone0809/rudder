@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -77,6 +78,9 @@ interface MarkdownEditorProps {
   bordered?: boolean;
   /** List of mentionable entities. Enables @-mention autocomplete. */
   mentions?: MentionOption[];
+  /** Optional surface used to align the mention menu for larger composer UIs. */
+  mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
+  mentionMenuPlacement?: "caret" | "container";
   /** Called according to submitShortcut. */
   onSubmit?: () => void;
   submitShortcut?: "mod-enter" | "enter";
@@ -135,13 +139,22 @@ interface MentionState {
 
 const MENTION_MENU_MIN_WIDTH = 180;
 const MENTION_MENU_MAX_HEIGHT = 200;
+const MENTION_PANEL_MAX_HEIGHT = 360;
 const MENTION_MENU_VIEWPORT_PADDING = 12;
 const MENTION_MENU_OFFSET = 4;
+const MENTION_PANEL_OFFSET = 10;
 
 export interface MentionMenuAnchor {
   viewportTop: number;
   viewportBottom: number;
   viewportLeft: number;
+}
+
+export interface MentionMenuContainerAnchor {
+  viewportTop: number;
+  viewportBottom: number;
+  viewportLeft: number;
+  viewportRight: number;
 }
 
 interface ImagePreviewState {
@@ -293,6 +306,73 @@ export function getMentionMenuPositionForViewport(
   } as const;
 }
 
+export function getMentionPanelPositionForViewport(
+  state: MentionMenuContainerAnchor,
+  viewportWidth: number,
+  viewportHeight: number,
+) {
+  const availableWidth = Math.max(
+    MENTION_MENU_MIN_WIDTH,
+    viewportWidth - MENTION_MENU_VIEWPORT_PADDING * 2,
+  );
+  const desiredWidth = clamp(
+    state.viewportRight - state.viewportLeft,
+    MENTION_MENU_MIN_WIDTH,
+    availableWidth,
+  );
+  const left = clamp(
+    state.viewportLeft,
+    MENTION_MENU_VIEWPORT_PADDING,
+    viewportWidth - MENTION_MENU_VIEWPORT_PADDING - desiredWidth,
+  );
+  const availableBelow = Math.max(
+    0,
+    viewportHeight - state.viewportBottom - MENTION_MENU_VIEWPORT_PADDING - MENTION_PANEL_OFFSET,
+  );
+  const availableAbove = Math.max(
+    0,
+    state.viewportTop - MENTION_MENU_VIEWPORT_PADDING - MENTION_PANEL_OFFSET,
+  );
+  const openUpward = availableAbove >= 128 || availableAbove >= availableBelow;
+  const maxHeight = Math.max(
+    128,
+    Math.min(
+      MENTION_PANEL_MAX_HEIGHT,
+      openUpward ? availableAbove : availableBelow,
+    ),
+  );
+
+  if (openUpward) {
+    return {
+      left,
+      width: desiredWidth,
+      bottom: viewportHeight - state.viewportTop + MENTION_PANEL_OFFSET,
+      maxHeight,
+    } as const;
+  }
+
+  return {
+    left,
+    width: desiredWidth,
+    top: state.viewportBottom + MENTION_PANEL_OFFSET,
+    maxHeight,
+  } as const;
+}
+
+function getMentionPanelPosition(anchor: HTMLElement) {
+  const rect = anchor.getBoundingClientRect();
+  return getMentionPanelPositionForViewport(
+    {
+      viewportTop: rect.top,
+      viewportBottom: rect.bottom,
+      viewportLeft: rect.left,
+      viewportRight: rect.right,
+    },
+    window.innerWidth,
+    window.innerHeight,
+  );
+}
+
 function getMentionMenuPosition(state: MentionState) {
   return getMentionMenuPositionForViewport(state, window.innerWidth, window.innerHeight);
 }
@@ -332,6 +412,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
   imageUploadHandler,
   bordered = true,
   mentions,
+  mentionMenuAnchorRef,
+  mentionMenuPlacement = "caret",
   onSubmit,
   submitShortcut = "mod-enter",
 }: MarkdownEditorProps, forwardedRef) {
@@ -382,9 +464,36 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       .slice(0, 8);
   }, [mentionState?.query, mentions]);
   const mentionMenuPosition = useMemo(
-    () => (mentionState ? getMentionMenuPosition(mentionState) : null),
-    [mentionState],
+    () => {
+      if (!mentionState) return null;
+      if (mentionMenuPlacement === "container") {
+        const anchor = mentionMenuAnchorRef?.current ?? containerRef.current;
+        if (anchor) return getMentionPanelPosition(anchor);
+      }
+      return getMentionMenuPosition(mentionState);
+    },
+    [mentionMenuAnchorRef, mentionMenuPlacement, mentionState],
   );
+  const groupedMentionOptions = useMemo(() => {
+    const labelForKind = (kind: MentionOption["kind"]) => {
+      if (kind === "skill") return "Skills";
+      if (kind === "project") return "Projects";
+      if (kind === "issue") return "Issues";
+      return "Agents";
+    };
+
+    const groups: Array<{ label: string; options: MentionOption[] }> = [];
+    for (const option of filteredMentions) {
+      const label = labelForKind(option.kind);
+      const existing = groups.find((group) => group.label === label);
+      if (existing) {
+        existing.options.push(option);
+      } else {
+        groups.push({ label, options: [option] });
+      }
+    }
+    return groups;
+  }, [filteredMentions]);
 
   const focusEditorAtEnd = useCallback(() => {
     ref.current?.focus(undefined, { defaultSelection: "rootEnd" });
@@ -932,63 +1041,87 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         ? createPortal(
             <div
               data-testid="markdown-mention-menu"
-              className="fixed z-50 min-w-[180px] overflow-y-auto rounded-md border border-border bg-popover shadow-md"
+              className={cn(
+                "fixed z-50 overflow-y-auto border border-border bg-popover shadow-md",
+                mentionMenuPlacement === "container"
+                  ? "rounded-[var(--radius-lg)] p-1.5 shadow-[var(--shadow-lg)]"
+                  : "min-w-[180px] rounded-md",
+              )}
               style={mentionMenuPosition}
             >
-              {filteredMentions.map((option, i) => (
-                <button
-                  key={option.id}
-                  data-testid={`markdown-mention-option-${option.id}`}
-                  className={cn(
-                    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/50",
-                    i === mentionIndex && "bg-accent",
-                  )}
-                  onMouseDown={(e) => {
-                    e.preventDefault(); // prevent blur
-                    selectMention(option);
-                  }}
-                  onMouseEnter={() => setMentionIndex(i)}
-                >
-                  {option.kind === "skill" ? (
-                    <Sparkles className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  ) : option.kind === "project" && option.projectId ? (
-                    <span
-                      className="inline-flex h-2 w-2 rounded-full border border-border/50"
-                      style={{ backgroundColor: option.projectColor ?? "#64748b" }}
-                    />
-                  ) : option.kind === "issue" && option.issueId ? (
-                    <CircleDot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <AgentIcon
-                      icon={option.agentIcon}
-                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate">{option.name}</div>
-                    {option.kind === "skill" && option.skillDisplayName ? (
-                      <div className="truncate text-[11px] text-muted-foreground">
-                        {option.skillDisplayName}
+              {(() => {
+                let optionIndex = 0;
+                return groupedMentionOptions.map((group) => (
+                  <div key={group.label} className="py-0.5">
+                    {mentionMenuPlacement === "container" ? (
+                      <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                        {group.label}
                       </div>
                     ) : null}
+                    {group.options.map((option) => {
+                      const i = optionIndex;
+                      optionIndex += 1;
+                      return (
+                        <button
+                          key={option.id}
+                          data-testid={`markdown-mention-option-${option.id}`}
+                          className={cn(
+                            "flex w-full items-center gap-2 text-left text-sm transition-colors hover:bg-accent/50",
+                            mentionMenuPlacement === "container"
+                              ? "rounded-[var(--radius-md)] px-3 py-2"
+                              : "px-3 py-1.5",
+                            i === mentionIndex && "bg-accent",
+                          )}
+                          onMouseDown={(e) => {
+                            e.preventDefault(); // prevent blur
+                            selectMention(option);
+                          }}
+                          onMouseEnter={() => setMentionIndex(i)}
+                        >
+                          {option.kind === "skill" ? (
+                            <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          ) : option.kind === "project" && option.projectId ? (
+                            <span
+                              className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full border border-border/50"
+                              style={{ backgroundColor: option.projectColor ?? "#64748b" }}
+                            />
+                          ) : option.kind === "issue" && option.issueId ? (
+                            <CircleDot className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          ) : (
+                            <AgentIcon
+                              icon={option.agentIcon}
+                              className="h-4 w-4 shrink-0 text-muted-foreground"
+                            />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-medium text-foreground">{option.name}</div>
+                            {option.kind === "skill" && option.skillDisplayName ? (
+                              <div className="truncate text-[11px] text-muted-foreground">
+                                {option.skillDisplayName}
+                              </div>
+                            ) : null}
+                          </div>
+                          {option.kind === "issue" && option.issueId && (
+                            <span className="ml-auto text-[11px] text-muted-foreground">
+                              Issue
+                            </span>
+                          )}
+                          {option.kind === "project" && option.projectId && (
+                            <span className="ml-auto text-[11px] text-muted-foreground">
+                              Project
+                            </span>
+                          )}
+                          {option.kind === "skill" && (
+                            <span className="ml-auto text-[11px] text-muted-foreground">
+                              Skill
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
-                  {option.kind === "issue" && option.issueId && (
-                    <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Issue
-                    </span>
-                  )}
-                  {option.kind === "project" && option.projectId && (
-                    <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Project
-                    </span>
-                  )}
-                  {option.kind === "skill" && (
-                    <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Skill
-                    </span>
-                  )}
-                </button>
-              ))}
+                ));
+              })()}
             </div>,
             document.body,
           )
