@@ -2402,6 +2402,13 @@ function ChatWorkspace() {
   const composerPlaceholder = t("chat.composer.placeholder");
   const expandedPromptGroup = EMPTY_STATE_PROMPT_GROUPS.find((group) => group.label === expandedEmptyStatePrompt) ?? null;
   const emptyStatePromptOptionsId = "chat-empty-state-prompt-options";
+  const emptyStatePromptOriginX = expandedEmptyStatePrompt === "Scope a new feature"
+    ? "22%"
+    : expandedEmptyStatePrompt === "Clarify a vague request"
+      ? "50%"
+      : expandedEmptyStatePrompt === "Turn a chat into an issue"
+        ? "78%"
+        : "50%";
   const sendButtonMode =
     newConversationSendInFlight || (activeSendInFlight && (!activeStream || !activeStream.userMessageId))
       ? "sending"
@@ -2985,18 +2992,14 @@ function ChatWorkspace() {
 
                 {expandedPromptGroup ? (
                   <div
+                    key={expandedPromptGroup.label}
                     id={emptyStatePromptOptionsId}
                     data-testid="chat-empty-state-prompt-options"
                     data-entered={emptyStatePromptPanelEntered ? "true" : "false"}
                     role="region"
                     aria-label={`${expandedPromptGroup.label} examples`}
-                    className={cn(
-                      "mt-3 w-full max-w-3xl origin-top rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-panel)_86%,transparent)] px-3 py-3 shadow-[var(--shadow-sm)]",
-                      "transition-[opacity,transform,box-shadow] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
-                      emptyStatePromptPanelEntered
-                        ? "translate-y-0 scale-100 opacity-100"
-                        : "-translate-y-1 scale-[0.98] opacity-0",
-                    )}
+                    style={{ "--chat-options-origin-x": emptyStatePromptOriginX } as React.CSSProperties}
+                    className="motion-chat-options-pop mt-3 w-full max-w-3xl rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-panel)_86%,transparent)] px-3 py-3 shadow-[var(--shadow-sm)]"
                   >
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <p className="text-xs font-medium text-muted-foreground">
@@ -3009,6 +3012,7 @@ function ChatWorkspace() {
                         <button
                           key={example}
                           type="button"
+                          data-chat-option
                           onClick={() => applyEmptyStateExample(example)}
                           className="rounded-[calc(var(--radius-sm)+2px)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_72%,transparent)] px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:border-[color:var(--border-strong)] hover:bg-[color:var(--surface-active)] hover:text-foreground"
                         >

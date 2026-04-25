@@ -9,6 +9,16 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-live-surface::before");
     expect(motionCss).toContain('.motion-kanban-card[data-live="true"]');
     expect(motionCss).toContain('.motion-org-edge[data-active="true"]');
+    expect(motionCss).toContain(".motion-chat-options-pop");
     expect(motionCss).toContain("animation: none !important");
+  });
+
+  it("defines a visible pop animation for chat option disclosure", () => {
+    expect(motionCss).toContain("@keyframes rudder-chat-options-pop");
+    expect(motionCss).toContain("var(--chat-options-origin-x");
+    expect(motionCss).toContain("scale(0.82)");
+    expect(motionCss).toContain("scale(1.035)");
+    expect(motionCss).toContain("@keyframes rudder-chat-option-enter");
+    expect(motionCss).toContain("[data-chat-option]:nth-child(2)");
   });
 });

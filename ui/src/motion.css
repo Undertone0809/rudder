@@ -117,6 +117,30 @@
   animation: rudder-org-edge-flow 1400ms linear infinite;
 }
 
+.motion-chat-options-pop {
+  transform-origin: var(--chat-options-origin-x, 50%) top;
+  animation: rudder-chat-options-pop 560ms var(--motion-ease-enter) both;
+  will-change: opacity, transform, clip-path, box-shadow;
+}
+
+.motion-chat-options-pop [data-chat-option] {
+  opacity: 0;
+  transform: translateY(12px) scale(0.96);
+  animation: rudder-chat-option-enter 320ms var(--motion-ease-enter) both;
+}
+
+.motion-chat-options-pop [data-chat-option]:nth-child(2) {
+  animation-delay: 80ms;
+}
+
+.motion-chat-options-pop [data-chat-option]:nth-child(3) {
+  animation-delay: 150ms;
+}
+
+.motion-chat-options-pop [data-chat-option]:nth-child(4) {
+  animation-delay: 220ms;
+}
+
 @keyframes rudder-list-enter {
   from {
     opacity: 0;
@@ -202,6 +226,40 @@
   }
 }
 
+@keyframes rudder-chat-options-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(-26px) scale(0.82);
+    clip-path: inset(0 34% 100% 34% round var(--radius-lg));
+    box-shadow: 0 8px 20px -24px color-mix(in oklab, var(--accent-base) 46%, transparent);
+  }
+  48% {
+    opacity: 1;
+    transform: translateY(5px) scale(1.035);
+    clip-path: inset(0 0 0 0 round var(--radius-lg));
+    box-shadow: 0 22px 54px -30px color-mix(in oklab, var(--accent-base) 54%, transparent);
+  }
+  72% {
+    opacity: 1;
+    transform: translateY(-1px) scale(0.992);
+    clip-path: inset(0 0 0 0 round var(--radius-lg));
+    box-shadow: 0 16px 42px -32px color-mix(in oklab, var(--accent-base) 44%, transparent);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    clip-path: inset(0 0 0 0 round var(--radius-lg));
+    box-shadow: var(--shadow-sm);
+  }
+}
+
+@keyframes rudder-chat-option-enter {
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .motion-list-enter,
   .motion-state-flash,
@@ -210,7 +268,9 @@
   .motion-kanban-card[data-live="true"],
   .motion-kanban-card[data-just-dropped="true"],
   .motion-org-card,
-  .motion-org-edge[data-active="true"] {
+  .motion-org-edge[data-active="true"],
+  .motion-chat-options-pop,
+  .motion-chat-options-pop [data-chat-option] {
     animation: none !important;
   }
 
@@ -224,5 +284,12 @@
 
   .motion-live-surface::before {
     opacity: 0.48;
+  }
+
+  .motion-chat-options-pop,
+  .motion-chat-options-pop [data-chat-option] {
+    opacity: 1 !important;
+    transform: none !important;
+    clip-path: none !important;
   }
 }

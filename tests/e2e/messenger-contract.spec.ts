@@ -601,8 +601,23 @@ test.describe("Messenger unified threads contract", () => {
     const promptOptions = page.getByTestId("chat-empty-state-prompt-options");
     await expect(promptOptions).toBeVisible();
     await expect(promptOptions).toHaveAttribute("data-entered", "true");
+    await expect(promptOptions).toHaveClass(/motion-chat-options-pop/);
+    await expect(promptOptions).toHaveAttribute("style", /--chat-options-origin-x:\s*22%/);
     await expect(promptOptions).toContainText("Example use cases");
     await expect(promptOptions).toHaveCSS("opacity", "1");
+    await expect(page.getByRole("button", { name: "Plan an approval queue for budget overrides" })).toBeVisible();
+
+    await promptOptions.evaluate((element) => {
+      element.setAttribute("data-test-remount-marker", "scope");
+    });
+    await page.getByRole("button", { name: "Turn a chat into an issue" }).click();
+    await expect(promptOptions).toHaveAttribute("style", /--chat-options-origin-x:\s*78%/);
+    await expect(promptOptions).not.toHaveAttribute("data-test-remount-marker", "scope");
+    await expect(page.getByRole("button", { name: "Extract the next shippable task from this discussion" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Plan an approval queue for budget overrides" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Scope a new feature" }).click();
+    await expect(promptOptions).toHaveAttribute("style", /--chat-options-origin-x:\s*22%/);
     await expect(page.getByRole("button", { name: "Plan an approval queue for budget overrides" })).toBeVisible();
 
     await page.getByRole("button", { name: "Plan an approval queue for budget overrides" }).click();
