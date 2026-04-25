@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "@/lib/router";
 import { X } from "lucide-react";
 import { useToast, type ToastItem, type ToastTone } from "../context/ToastContext";
@@ -66,11 +67,11 @@ export function ToastViewport() {
 
   if (toasts.length === 0) return null;
 
-  return (
+  const viewport = (
     <aside
       aria-live="polite"
       aria-atomic="false"
-      className="pointer-events-none fixed bottom-3 left-3 z-[120] w-full max-w-sm px-1"
+      className="pointer-events-none fixed bottom-3 left-3 z-[1000] w-full max-w-sm px-1"
     >
       <ol className="flex w-full flex-col-reverse gap-2">
         {toasts.map((toast) => (
@@ -83,4 +84,7 @@ export function ToastViewport() {
       </ol>
     </aside>
   );
+
+  if (typeof document === "undefined") return viewport;
+  return createPortal(viewport, document.body);
 }

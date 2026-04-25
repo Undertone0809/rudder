@@ -65,19 +65,19 @@ describe("DevRestartBanner", () => {
   });
 
   it("shows one warning toast when restart becomes required", async () => {
-    const { container } = renderWithToasts(baseDevServer);
+    renderWithToasts(baseDevServer);
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Restart required");
-    expect(container.textContent).toContain("Restart pnpm dev after the active work is safe to interrupt.");
-    expect(container.textContent).toContain("Changed: server/src/services/messenger.ts.");
+    expect(document.body.textContent).toContain("Restart required");
+    expect(document.body.textContent).toContain("Restart pnpm dev after the active work is safe to interrupt.");
+    expect(document.body.textContent).toContain("Changed: server/src/services/messenger.ts.");
   });
 
   it("describes env-file drift explicitly when .env changed after boot", async () => {
-    const { container } = renderWithToasts({
+    renderWithToasts({
       ...baseDevServer,
       envFileChanged: true,
       changedPathsSample: [".env"],
@@ -87,12 +87,12 @@ describe("DevRestartBanner", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Environment configuration changed since this server booted.");
-    expect(container.textContent).toContain("Changed: .env.");
+    expect(document.body.textContent).toContain("Environment configuration changed since this server booted.");
+    expect(document.body.textContent).toContain("Changed: .env.");
   });
 
   it("does not enqueue duplicate toasts for the same stale state", async () => {
-    const { container, root } = renderWithToasts(baseDevServer);
+    const { root } = renderWithToasts(baseDevServer);
 
     await act(async () => {
       await Promise.resolve();
@@ -111,7 +111,7 @@ describe("DevRestartBanner", () => {
       await Promise.resolve();
     });
 
-    const text = container.textContent ?? "";
+    const text = document.body.textContent ?? "";
     expect(text.match(/Restart required/g)?.length ?? 0).toBe(1);
   });
 });
