@@ -2,6 +2,7 @@ import type { CreateConfigValues } from "@rudder/agent-runtime-utils";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
+  DEFAULT_CODEX_LOCAL_SEARCH,
 } from "../index.js";
 
 function parseCommaArgs(value: string): string[] {
@@ -84,7 +85,10 @@ export function buildCodexLocalConfig(v: CreateConfigValues): Record<string, unk
     }
   }
   if (Object.keys(env).length > 0) ac.env = env;
-  ac.search = v.search;
+  ac.search =
+    typeof v.search === "boolean"
+      ? v.search
+      : DEFAULT_CODEX_LOCAL_SEARCH;
   ac.dangerouslyBypassApprovalsAndSandbox =
     typeof v.dangerouslyBypassSandbox === "boolean"
       ? v.dangerouslyBypassSandbox

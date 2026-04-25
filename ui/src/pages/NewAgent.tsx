@@ -24,6 +24,7 @@ import { ReportsToPicker } from "../components/ReportsToPicker";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
+  DEFAULT_CODEX_LOCAL_SEARCH,
 } from "@rudder/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudder/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudder/agent-runtime-gemini-local";
@@ -50,6 +51,7 @@ function createValuesForAdapterType(
   const nextValues: CreateConfigValues = { ...defaults, agentRuntimeType };
   if (agentRuntimeType === "codex_local") {
     nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
+    nextValues.search = DEFAULT_CODEX_LOCAL_SEARCH;
     nextValues.dangerouslyBypassSandbox =
       DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
   } else if (agentRuntimeType === "gemini_local") {

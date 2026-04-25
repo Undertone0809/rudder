@@ -20,7 +20,6 @@ test.describe("Agent configuration advanced options", () => {
           command: "codex",
           model: "gpt-5.5",
           modelReasoningEffort: "",
-          search: false,
         },
       },
     });
@@ -54,5 +53,6 @@ test.describe("Agent configuration advanced options", () => {
     await expect(page.getByText("Command", { exact: true })).toBeVisible();
     await expect(page.getByText("Environment variables", { exact: true })).toBeVisible();
     await expect(page.getByText("Bypass sandbox", { exact: true })).toBeVisible();
+    await expect(page.getByRole("switch", { name: "Enable search", exact: true })).toBeChecked();
   });
 });

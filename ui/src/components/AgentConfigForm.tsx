@@ -14,6 +14,7 @@ import { assetsApi } from "../api/assets";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
+  DEFAULT_CODEX_LOCAL_SEARCH,
 } from "@rudder/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudder/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudder/agent-runtime-gemini-local";
@@ -562,6 +563,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     const nextValues: CreateConfigValues = { ...defaults, agentRuntimeType: t };
                     if (t === "codex_local") {
                       nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
+                      nextValues.search = DEFAULT_CODEX_LOCAL_SEARCH;
                       nextValues.dangerouslyBypassSandbox =
                         DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
                     } else if (t === "gemini_local") {
@@ -593,6 +595,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                         mode: "",
                         ...(t === "codex_local"
                           ? {
+                              search: DEFAULT_CODEX_LOCAL_SEARCH,
                               dangerouslyBypassApprovalsAndSandbox:
                                 DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
                             }
