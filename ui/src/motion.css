@@ -155,6 +155,18 @@
   --motion-context-item-gap: 0.25rem;
 }
 
+.motion-context-nav--agent-list {
+  --motion-context-item-height: 2.5rem;
+}
+
+.motion-context-nav--project-card-list {
+  --motion-context-item-height: 3.625rem;
+}
+
+.motion-context-nav--messenger-thread-list {
+  --motion-context-item-height: 3.75rem;
+}
+
 .motion-context-active-indicator {
   position: absolute;
   top: 0;

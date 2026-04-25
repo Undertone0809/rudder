@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -127,10 +127,46 @@ function ThreadAvatar({
   );
 }
 
+function activeContextStyle(activeIndex: number): CSSProperties | undefined {
+  return activeIndex >= 0
+    ? ({ "--motion-context-active-index": activeIndex } as CSSProperties)
+    : undefined;
+}
+
+function SlidingThreadNav({
+  activeIndex,
+  children,
+  scrollRef,
+}: {
+  activeIndex: number;
+  children: ReactNode;
+  scrollRef: Ref<HTMLElement>;
+}) {
+  return (
+    <nav
+      ref={scrollRef}
+      className="scrollbar-auto-hide motion-context-nav motion-context-nav--messenger-thread-list mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
+      style={activeContextStyle(activeIndex)}
+      data-active-index={activeIndex >= 0 ? activeIndex : undefined}
+      aria-label="Messenger threads"
+    >
+      {activeIndex >= 0 ? (
+        <span
+          data-testid="messenger-sidebar-active-indicator"
+          className="motion-context-active-indicator"
+          aria-hidden="true"
+        />
+      ) : null}
+      {children}
+    </nav>
+  );
+}
+
 function ChatThreadRow({
   conversation,
   href,
   active,
+  slidingActiveIndicator = false,
   renaming,
   renameDraft,
   onRenameDraftChange,
@@ -144,6 +180,7 @@ function ChatThreadRow({
   conversation: ChatConversation;
   href: string;
   active: boolean;
+  slidingActiveIndicator?: boolean;
   renaming: boolean;
   renameDraft: string;
   onRenameDraftChange: (value: string) => void;
@@ -161,10 +198,14 @@ function ChatThreadRow({
     <div
       data-testid={`messenger-thread-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
       className={cn(
-        "group relative mx-1.5 flex items-start gap-3 rounded-[calc(var(--radius-md)-2px)] border px-3 py-2.5 transition-[background-color,border-color,color]",
-        active
-          ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
-          : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
+        "group relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-start gap-3 rounded-[calc(var(--radius-md)-2px)] border px-3 py-2.5 transition-[background-color,border-color,color]",
+        slidingActiveIndicator
+          ? active
+            ? "chat-conversation-active border-transparent"
+            : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)]"
+          : active
+            ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
+            : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
       )}
     >
       <ThreadAvatar
@@ -282,10 +323,12 @@ function ChatThreadRow({
 function ThreadRow({
   thread,
   active,
+  slidingActiveIndicator = false,
   onSelect,
 }: {
   thread: ReturnType<typeof useMessengerModel>["threadSummaries"][number];
   active: boolean;
+  slidingActiveIndicator?: boolean;
   onSelect: (href: string) => void;
 }) {
   const Icon = threadIcon(thread.kind);
@@ -295,10 +338,14 @@ function ThreadRow({
       onClick={() => onSelect(thread.href)}
       data-testid={`messenger-thread-${sanitizeThreadKey(thread.threadKey)}`}
       className={cn(
-        "mx-1.5 flex items-start gap-3 rounded-[calc(var(--radius-md)-2px)] border px-3 py-2.5 transition-[background-color,border-color,color]",
-        active
-          ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
-          : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
+        "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-start gap-3 rounded-[calc(var(--radius-md)-2px)] border px-3 py-2.5 transition-[background-color,border-color,color]",
+        slidingActiveIndicator
+          ? active
+            ? "chat-conversation-active border-transparent"
+            : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)]"
+          : active
+            ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))]"
+            : "border-transparent hover:border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
       )}
     >
       <ThreadAvatar
@@ -377,6 +424,11 @@ export function MessengerContextSidebar() {
     () => model.threadSummaries.find((thread) => thread.threadKey === activeThreadKey) ?? null,
     [activeThreadKey, model.threadSummaries],
   );
+  const activeThreadIndex = useMemo(() => {
+    if (route.kind === "chat" && !route.conversationId) return 0;
+    const threadIndex = model.threadSummaries.findIndex((thread) => thread.threadKey === activeThreadKey);
+    return threadIndex >= 0 ? threadIndex + 1 : -1;
+  }, [activeThreadKey, model.threadSummaries, route]);
   const activeThreadDetailReady = useMemo(() => {
     if (route.kind === "issues") return !!model.issueThreadDetail;
     if (route.kind === "approvals") return !!model.approvalThreadDetail;
@@ -506,18 +558,15 @@ export function MessengerContextSidebar() {
     >
       <ContextColumnHeader title="Messenger" description="Threads sorted by latest activity" />
       <div className="px-3.5 pt-3.5 text-[10px] font-semibold tracking-[0.08em] text-muted-foreground/72">Threads</div>
-      <nav
-        ref={sidebarScrollRef}
-        className="scrollbar-auto-hide mt-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-3.5"
-      >
+      <SlidingThreadNav activeIndex={activeThreadIndex} scrollRef={sidebarScrollRef}>
         <Link
           to="/messenger/chat"
           onClick={() => handleMessengerEntrySelect("/messenger/chat")}
           className={cn(
-            "mx-1.5 flex items-center gap-3 rounded-[calc(var(--radius-md)-2px)] border border-transparent px-3 py-2.5 text-sm transition-[background-color,border-color,color]",
+            "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-md)-2px)] border border-transparent px-3 py-2.5 text-sm transition-[background-color,border-color,color]",
             route.kind === "chat" && !route.conversationId
-              ? "chat-conversation-active border-[color:var(--border-strong)] bg-[color:color-mix(in_oklab,var(--surface-active)_90%,var(--surface-elevated))] font-medium text-foreground"
-              : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground",
+              ? "chat-conversation-active border-transparent font-medium text-foreground"
+              : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
           )}
         >
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)+1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_88%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-active)_82%,transparent)] text-[color:var(--accent-strong)]">
@@ -546,6 +595,7 @@ export function MessengerContextSidebar() {
                 conversation={conversation}
                 href={thread.href}
                 active={active}
+                slidingActiveIndicator
                 renaming={renamingConversationId === conversation.id}
                 renameDraft={renameDraft}
                 onRenameDraftChange={setRenameDraft}
@@ -572,9 +622,17 @@ export function MessengerContextSidebar() {
             );
           }
 
-          return <ThreadRow key={thread.threadKey} thread={thread} active={active} onSelect={handleMessengerEntrySelect} />;
+          return (
+            <ThreadRow
+              key={thread.threadKey}
+              thread={thread}
+              active={active}
+              slidingActiveIndicator
+              onSelect={handleMessengerEntrySelect}
+            />
+          );
         })}
-      </nav>
+      </SlidingThreadNav>
     </aside>
   );
 }
