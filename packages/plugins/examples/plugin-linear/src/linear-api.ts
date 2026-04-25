@@ -120,7 +120,7 @@ type GraphQLFetcher = (query: string, variables?: Record<string, unknown>) => Pr
 
 export type LinearApiClient = {
   getViewer(): Promise<{ id: string; name: string; email?: string | null }>;
-  getCatalog(allowedTeamIds: string[]): Promise<LinearCatalog>;
+  getCatalog(allowedTeamIds?: string[]): Promise<LinearCatalog>;
   listIssues(filters: LinearIssueListFilters, limit: number, after?: string): Promise<LinearIssueConnection>;
   getIssue(issueId: string): Promise<LinearIssueSummary | null>;
 };
@@ -209,9 +209,9 @@ function createFixtureClient(): LinearApiClient {
       return { id: "viewer-fixture", name: "Fixture Viewer", email: "fixture@example.com" };
     },
     async getCatalog(allowedTeamIds) {
-      const allowed = new Set(allowedTeamIds);
+      const allowed = allowedTeamIds?.length ? new Set(allowedTeamIds) : null;
       return {
-        teams: FIXTURE_TEAMS.filter((team) => allowed.has(team.id)),
+        teams: allowed ? FIXTURE_TEAMS.filter((team) => allowed.has(team.id)) : FIXTURE_TEAMS,
         projects: FIXTURE_PROJECTS,
         users: FIXTURE_USERS,
       };
@@ -276,14 +276,15 @@ export function createLinearApiClient(
       return data.viewer;
     },
     async getCatalog(allowedTeamIds) {
+      const hasTeamFilter = Boolean(allowedTeamIds?.length);
       const data = await postGraphQL<{
         teams: { nodes: Array<Record<string, any>> };
         projects: { nodes: Array<Record<string, any>> };
         users: { nodes: Array<Record<string, any>> };
       }>(
         fetcher,
-        `query LinearCatalog($teamIds: [String!]) {
-          teams(filter: { id: { in: $teamIds } }, first: 50) {
+        `query LinearCatalog${hasTeamFilter ? "($teamIds: [String!])" : ""} {
+          teams${hasTeamFilter ? "(filter: { id: { in: $teamIds } }, first: 50)" : "(first: 50)"} {
             nodes {
               id
               key
@@ -312,7 +313,7 @@ export function createLinearApiClient(
             }
           }
         }`,
-        { teamIds: allowedTeamIds },
+        hasTeamFilter ? { teamIds: allowedTeamIds } : undefined,
       );
 
       return {

@@ -46,25 +46,25 @@ const manifest: PaperclipPluginManifestV1 = {
     properties: {
       apiTokenSecretRef: {
         type: "string",
-        title: "Linear API Token Secret Ref",
+        title: "Linear token secret",
         format: "secret-ref",
         minLength: 1,
       },
       organizationMappings: {
         type: "array",
-        title: "Organization Mappings",
+        title: "Rudder organization mappings",
         items: {
           type: "object",
           required: ["orgId", "teamMappings"],
           properties: {
             orgId: {
               type: "string",
-              title: "Organization ID",
+              title: "Rudder organization id",
               minLength: 1,
             },
             teamMappings: {
               type: "array",
-              title: "Allowed Linear Teams",
+              title: "Allowed Linear teams",
               minItems: 1,
               items: {
                 type: "object",
@@ -72,32 +72,32 @@ const manifest: PaperclipPluginManifestV1 = {
                 properties: {
                   teamId: {
                     type: "string",
-                    title: "Linear Team ID",
+                    title: "Linear team id",
                     minLength: 1,
                   },
                   teamName: {
                     type: "string",
-                    title: "Linear Team Name",
+                    title: "Linear team name",
                   },
                   stateMappings: {
                     type: "array",
-                    title: "State Mappings",
+                    title: "State mappings",
                     items: {
                       type: "object",
                       required: ["linearStateId", "rudderStatus"],
                       properties: {
                         linearStateId: {
                           type: "string",
-                          title: "Linear State ID",
+                          title: "Linear state id",
                           minLength: 1,
                         },
                         linearStateName: {
                           type: "string",
-                          title: "Linear State Name",
+                          title: "Linear state name",
                         },
                         rudderStatus: {
                           type: "string",
-                          title: "Rudder Status",
+                          title: "Rudder status",
                           enum: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
                         },
                       },
@@ -123,7 +123,7 @@ const manifest: PaperclipPluginManifestV1 = {
       {
         type: "settingsPage",
         id: SLOT_IDS.settingsPage,
-        displayName: "Linear Settings",
+        displayName: "Linear settings",
         exportName: EXPORT_NAMES.settingsPage,
       },
       {

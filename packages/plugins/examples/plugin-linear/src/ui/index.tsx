@@ -14,19 +14,28 @@ import {
   type PluginPageProps,
   type PluginSettingsPageProps,
 } from "@rudder/plugin-sdk/ui";
-import { ACTION_KEYS, DATA_KEYS, LINEAR_IMPORT_ALL_LIMIT, LINEAR_PAGE_SIZE, RUDDER_STATUS_OPTIONS } from "../constants.js";
+import {
+  ACTION_KEYS,
+  DATA_KEYS,
+  LINEAR_IMPORT_ALL_LIMIT,
+  LINEAR_PAGE_SIZE,
+  LINEAR_TOKEN_SETTINGS_URL,
+  RUDDER_STATUS_OPTIONS,
+} from "../constants.js";
 import type {
   ImportLinearIssuesActionResult,
   IssueLinkData,
   LinearIssueRow,
+  LinearCatalogData,
   LinearOrganizationMapping,
   LinearPluginConfig,
+  LinearStateSummary,
   LinearStateMapping,
   LinearTeamMapping,
   LinearIssuesData,
   PageBootstrapData,
+  SettingsCatalogData,
   SettingsBootstrapData,
-  LinearCatalogData,
 } from "../types.js";
 
 const layoutStyles: Record<string, CSSProperties> = {
@@ -69,7 +78,6 @@ const layoutStyles: Record<string, CSSProperties> = {
     fontSize: 12,
     fontWeight: 700,
     color: "var(--muted-foreground, rgba(15, 23, 42, 0.66))",
-    textTransform: "uppercase",
     letterSpacing: 0,
   },
   input: {
@@ -139,7 +147,6 @@ const layoutStyles: Record<string, CSSProperties> = {
     textAlign: "left",
     fontSize: 12,
     letterSpacing: 0,
-    textTransform: "uppercase",
     color: "var(--muted-foreground, rgba(15, 23, 42, 0.62))",
     padding: "10px 12px",
     borderBottom: "1px solid var(--border, rgba(15, 23, 42, 0.1))",
@@ -163,12 +170,18 @@ const layoutStyles: Record<string, CSSProperties> = {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     fontSize: 12,
   },
+  helpText: {
+    fontSize: 13,
+    lineHeight: 1.5,
+    color: "var(--muted-foreground, rgba(15, 23, 42, 0.68))",
+  },
 };
 
 function normalizeConfig(config: LinearPluginConfig | null | undefined): LinearPluginConfig {
   return {
     apiTokenSecretRef: config?.apiTokenSecretRef ?? "",
     organizationMappings: Array.isArray(config?.organizationMappings) ? config.organizationMappings : [],
+    ...(config?.fixtureMode === true ? { fixtureMode: true } : {}),
   };
 }
 
@@ -228,9 +241,56 @@ function emptyStateMapping(): LinearStateMapping {
   };
 }
 
+function formatRudderStatus(status: LinearStateMapping["rudderStatus"]): string {
+  return status.replaceAll("_", " ");
+}
+
+function inferRudderStatus(state: LinearStateSummary): LinearStateMapping["rudderStatus"] {
+  const type = (state.type ?? "").toLowerCase();
+  const name = state.name.toLowerCase();
+  if (type.includes("completed") || name.includes("done") || name.includes("complete")) return "done";
+  if (type.includes("cancel") || name.includes("cancel")) return "cancelled";
+  if (name.includes("review")) return "in_review";
+  if (type.includes("backlog") || type.includes("triage") || name.includes("backlog") || name.includes("triage")) return "backlog";
+  if (type.includes("started") || type.includes("unstarted") || name.includes("progress") || name.includes("todo")) return "todo";
+  return "backlog";
+}
+
+function buildMappingFromCatalog(orgId: string, catalog: SettingsCatalogData): LinearOrganizationMapping {
+  return {
+    orgId,
+    teamMappings: catalog.teams.map((team) => ({
+      teamId: team.id,
+      teamName: team.name,
+      stateMappings: team.states.map((state) => ({
+        linearStateId: state.id,
+        linearStateName: state.name,
+        rudderStatus: inferRudderStatus(state),
+      })),
+    })),
+  };
+}
+
+function countMappedStates(mapping: LinearOrganizationMapping | null | undefined): number {
+  return mapping?.teamMappings.reduce((sum, team) => sum + team.stateMappings.length, 0) ?? 0;
+}
+
+function summarizeMapping(mapping: LinearOrganizationMapping | null | undefined): string {
+  if (!mapping) return "No Linear workspace loaded yet.";
+  const teamCount = mapping.teamMappings.length;
+  const stateCount = countMappedStates(mapping);
+  return `${teamCount} team${teamCount === 1 ? "" : "s"} and ${stateCount} workflow state${stateCount === 1 ? "" : "s"} ready.`;
+}
+
+function isMissingSettingsCatalogHandler(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /No data handler registered/i.test(message) && /settings-catalog/i.test(message);
+}
+
 function prepareConfigForSubmit(config: LinearPluginConfig): LinearPluginConfig {
   return {
     apiTokenSecretRef: config.apiTokenSecretRef?.trim() ?? "",
+    ...(config.fixtureMode === true ? { fixtureMode: true } : {}),
     organizationMappings: config.organizationMappings
       .map((mapping) => ({
         orgId: mapping.orgId.trim(),
@@ -404,7 +464,7 @@ export function LinearPluginPage({ context }: PluginPageProps) {
   return (
     <div style={layoutStyles.shell}>
       <section style={layoutStyles.card}>
-        <h1 style={layoutStyles.title}>Linear Intake</h1>
+        <h1 style={layoutStyles.title}>Linear intake</h1>
         <p style={layoutStyles.subtitle}>
           Import Linear issues into a chosen Rudder project. This page is the bulk workspace; the issue tab is the linked detail view.
         </p>
@@ -425,7 +485,7 @@ export function LinearPluginPage({ context }: PluginPageProps) {
           <section style={layoutStyles.card}>
             <div style={layoutStyles.row}>
               <div style={layoutStyles.field}>
-                <label style={layoutStyles.label} htmlFor="target-project">Target Rudder Project</label>
+                <label style={layoutStyles.label} htmlFor="target-project">Target Rudder project</label>
                 <select
                   id="target-project"
                   data-testid="linear-target-project"
@@ -440,7 +500,7 @@ export function LinearPluginPage({ context }: PluginPageProps) {
                 </select>
               </div>
               <div style={layoutStyles.field}>
-                <label style={layoutStyles.label} htmlFor="linear-team-filter">Linear Team</label>
+                <label style={layoutStyles.label} htmlFor="linear-team-filter">Linear team</label>
                 <select
                   id="linear-team-filter"
                   style={layoutStyles.select}
@@ -454,7 +514,7 @@ export function LinearPluginPage({ context }: PluginPageProps) {
                 </select>
               </div>
               <div style={layoutStyles.field}>
-                <label style={layoutStyles.label} htmlFor="linear-state-filter">Workflow State</label>
+                <label style={layoutStyles.label} htmlFor="linear-state-filter">Workflow state</label>
                 <select
                   id="linear-state-filter"
                   style={layoutStyles.select}
@@ -468,7 +528,7 @@ export function LinearPluginPage({ context }: PluginPageProps) {
                 </select>
               </div>
               <div style={layoutStyles.field}>
-                <label style={layoutStyles.label} htmlFor="linear-project-filter">Linear Project</label>
+                <label style={layoutStyles.label} htmlFor="linear-project-filter">Linear project</label>
                 <select
                   id="linear-project-filter"
                   style={layoutStyles.select}
@@ -727,7 +787,7 @@ export function LinearIssueTab({ context }: PluginDetailTabProps) {
   return (
     <div style={layoutStyles.shell}>
       <section style={layoutStyles.card}>
-        <h2 style={{ marginTop: 0 }}>Linked Linear Issue</h2>
+        <h2 style={{ marginTop: 0 }}>Linked Linear issue</h2>
         <p style={layoutStyles.subtitle}>
           {link.linearIdentifier} maps to this Rudder issue.
         </p>
@@ -766,40 +826,154 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
   const toast = usePluginToast();
   const bootstrap = usePluginData<SettingsBootstrapData>(DATA_KEYS.settingsBootstrap);
   const [draft, setDraft] = useState<LinearPluginConfig>(normalizeConfig(null));
-  const [testing, setTesting] = useState(false);
+  const [selectedOrgId, setSelectedOrgId] = useState("");
+  const [tokenInput, setTokenInput] = useState("");
+  const [connecting, setConnecting] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!bootstrap.data) return;
-    setDraft(normalizeConfig(bootstrap.data.config));
+    const nextDraft = normalizeConfig(bootstrap.data.config);
+    const firstOrganizationId = bootstrap.data.organizations[0]?.id ?? "";
+    setDraft(nextDraft);
+    setSelectedOrgId((current) =>
+      current || nextDraft.organizationMappings[0]?.orgId || firstOrganizationId,
+    );
   }, [bootstrap.data]);
 
   const pluginId = getPluginIdFromLocation();
+  const selectedMapping = draft.organizationMappings.find((mapping) => mapping.orgId === selectedOrgId) ?? null;
 
-  async function testConfig() {
+  async function savePluginConfig(config: LinearPluginConfig) {
+    if (!pluginId) throw new Error("Unable to resolve plugin id");
+    return await apiFetch(`/api/plugins/${encodeURIComponent(pluginId)}/config`, {
+      method: "POST",
+      body: JSON.stringify({ configJson: prepareConfigForSubmit(config) }),
+    });
+  }
+
+  async function fetchPluginData<T>(key: string, orgId: string, params: Record<string, unknown> = {}): Promise<T> {
+    if (!pluginId) throw new Error("Unable to resolve plugin id");
+    const payload = await apiFetch<{ data: T }>(`/api/plugins/${encodeURIComponent(pluginId)}/data/${key}`, {
+      method: "POST",
+      body: JSON.stringify({
+        orgId,
+        params: {
+          orgId,
+          ...params,
+        },
+      }),
+    });
+    return payload.data;
+  }
+
+  async function fetchSettingsCatalogWithRetry(orgId: string): Promise<SettingsCatalogData> {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        return await fetchPluginData<SettingsCatalogData>(DATA_KEYS.settingsCatalog, orgId);
+      } catch (error) {
+        if (isMissingSettingsCatalogHandler(error)) throw error;
+        lastError = error;
+        await new Promise((resolve) => window.setTimeout(resolve, 350 + attempt * 250));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  async function refreshPluginRuntime() {
+    if (!pluginId) throw new Error("Unable to resolve plugin id");
+    await apiFetch(`/api/plugins/${encodeURIComponent(pluginId)}/disable`, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Refresh Linear plugin after settings update" }),
+    });
+    await apiFetch(`/api/plugins/${encodeURIComponent(pluginId)}/enable`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  async function fetchSettingsCatalog(orgId: string): Promise<SettingsCatalogData> {
+    try {
+      return await fetchSettingsCatalogWithRetry(orgId);
+    } catch (error) {
+      if (!isMissingSettingsCatalogHandler(error)) throw error;
+      await refreshPluginRuntime();
+      return await fetchSettingsCatalogWithRetry(orgId);
+    }
+  }
+
+  async function connectLinear() {
+    const orgId = selectedOrgId || bootstrap.data?.organizations[0]?.id || "";
+    if (!orgId) {
+      toast({ title: "Choose a Rudder organization", tone: "warn" });
+      return;
+    }
     if (!pluginId) {
       toast({ title: "Unable to resolve plugin id", tone: "error" });
       return;
     }
-    setTesting(true);
+
+    setConnecting(true);
     try {
-      const result = await apiFetch<{ valid: boolean; message?: string }>(`/api/plugins/${encodeURIComponent(pluginId)}/config/test`, {
-        method: "POST",
-        body: JSON.stringify({ configJson: prepareConfigForSubmit(draft) }),
+      let apiTokenSecretRef = draft.apiTokenSecretRef?.trim() ?? "";
+      const trimmedToken = tokenInput.trim();
+      if (trimmedToken) {
+        const secret = await apiFetch<{ id: string }>(`/api/orgs/${encodeURIComponent(orgId)}/secrets`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: "Linear token",
+            value: trimmedToken,
+            description: "Used by the Linear plugin to read issues for import.",
+          }),
+        });
+        apiTokenSecretRef = secret.id;
+      }
+      if (!apiTokenSecretRef) {
+        toast({
+          title: "Paste a Linear token",
+          body: "Create one in Linear, paste it here, then connect.",
+          tone: "warn",
+        });
+        return;
+      }
+
+      const seedConfig = {
+        ...draft,
+        apiTokenSecretRef,
+        organizationMappings: draft.organizationMappings,
+      };
+      await savePluginConfig(seedConfig);
+
+      const catalog = await fetchSettingsCatalog(orgId);
+      if (catalog.teams.length === 0) {
+        throw new Error("Linear returned no teams for this token.");
+      }
+      const generatedMapping = buildMappingFromCatalog(orgId, catalog);
+      const nextConfig = prepareConfigForSubmit({
+        ...seedConfig,
+        organizationMappings: [
+          ...draft.organizationMappings.filter((mapping) => mapping.orgId !== orgId),
+          generatedMapping,
+        ],
       });
+      await savePluginConfig(nextConfig);
+      setDraft(nextConfig);
+      setTokenInput("");
+      bootstrap.refresh();
       toast({
-        title: result.valid ? "Linear configuration looks valid" : "Linear configuration needs changes",
-        body: result.message,
-        tone: result.valid ? "success" : "warn",
+        title: "Linear is ready",
+        body: summarizeMapping(generatedMapping),
+        tone: "success",
       });
     } catch (error) {
       toast({
-        title: "Config test failed",
+        title: "Linear connection failed",
         body: error instanceof Error ? error.message : String(error),
         tone: "error",
       });
     } finally {
-      setTesting(false);
+      setConnecting(false);
     }
   }
 
@@ -810,18 +984,15 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
     }
     setSaving(true);
     try {
-      await apiFetch(`/api/plugins/${encodeURIComponent(pluginId)}/config`, {
-        method: "POST",
-        body: JSON.stringify({ configJson: prepareConfigForSubmit(draft) }),
-      });
+      await savePluginConfig(draft);
       bootstrap.refresh();
       toast({
-        title: "Linear configuration saved",
+        title: "Linear settings saved",
         tone: "success",
       });
     } catch (error) {
       toast({
-        title: "Failed to save Linear configuration",
+        title: "Failed to save Linear settings",
         body: error instanceof Error ? error.message : String(error),
         tone: "error",
       });
@@ -833,63 +1004,27 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
   return (
     <div style={layoutStyles.shell}>
       <section style={layoutStyles.card}>
-        <h2 style={{ marginTop: 0 }}>Linear plugin settings</h2>
+        <h2 style={{ marginTop: 0 }}>Linear</h2>
         <p style={layoutStyles.subtitle}>
-          Configure the Linear API token, per-organization team allow-list, and state mappings used during import.
+          Paste a Linear token once. Rudder will read your teams and workflow states, then prepare the import settings automatically.
         </p>
         {bootstrap.data?.fixtureMode ? (
           <div style={{ marginTop: 12, ...layoutStyles.warning }}>
-            Fixture mode is enabled in this environment. Linear API reads are served from deterministic test data.
+            Fixture mode is enabled in this environment. Linear reads use deterministic test data.
           </div>
         ) : null}
       </section>
 
       <section style={layoutStyles.card}>
-        <div style={layoutStyles.field}>
-          <label style={layoutStyles.label} htmlFor="linear-token-ref">Linear API Token Secret Ref</label>
-          <input
-            id="linear-token-ref"
-            data-testid="linear-token-ref"
-            style={layoutStyles.input}
-            value={draft.apiTokenSecretRef ?? ""}
-            onChange={(event) => setDraft((current) => ({ ...current, apiTokenSecretRef: event.target.value }))}
-            placeholder="secret id or external ref"
-          />
-        </div>
-      </section>
-
-      {(draft.organizationMappings ?? []).map((mapping, orgIndex) => (
-        <section key={`org-${orgIndex}`} style={layoutStyles.card}>
-          <div style={{ ...layoutStyles.row, justifyContent: "space-between" }}>
-            <h3 style={{ margin: 0 }}>Organization mapping #{orgIndex + 1}</h3>
-            <button
-              type="button"
-              style={layoutStyles.subtleButton}
-              onClick={() => {
-                setDraft((current) => ({
-                  ...current,
-                  organizationMappings: current.organizationMappings.filter((_, index) => index !== orgIndex),
-                }));
-              }}
-            >
-              Remove organization mapping
-            </button>
-          </div>
-
-          <div style={{ ...layoutStyles.field, marginTop: 12 }}>
-            <label style={layoutStyles.label}>Rudder Organization</label>
+        <div style={layoutStyles.row}>
+          <div style={layoutStyles.field}>
+            <label style={layoutStyles.label} htmlFor="linear-rudder-org">Rudder organization</label>
             <select
+              id="linear-rudder-org"
+              data-testid="linear-rudder-org"
               style={layoutStyles.select}
-              value={mapping.orgId}
-              onChange={(event) => {
-                const value = event.target.value;
-                setDraft((current) => ({
-                  ...current,
-                  organizationMappings: current.organizationMappings.map((entry, index) =>
-                    index === orgIndex ? { ...entry, orgId: value } : entry,
-                  ),
-                }));
-              }}
+              value={selectedOrgId}
+              onChange={(event) => setSelectedOrgId(event.target.value)}
             >
               <option value="">Choose an organization</option>
               {(bootstrap.data?.organizations ?? []).map((organization: SettingsBootstrapData["organizations"][number]) => (
@@ -899,170 +1034,94 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
               ))}
             </select>
           </div>
+          <div style={{ ...layoutStyles.field, flex: "2 1 280px" }}>
+            <label style={layoutStyles.label} htmlFor="linear-token">Linear token</label>
+            <input
+              id="linear-token"
+              data-testid="linear-token-input"
+              style={layoutStyles.input}
+              type="password"
+              autoComplete="off"
+              value={tokenInput}
+              onChange={(event) => setTokenInput(event.target.value)}
+              placeholder={draft.apiTokenSecretRef ? "Token saved. Paste a new token to replace it." : "Paste a Linear token"}
+            />
+            <div style={layoutStyles.helpText}>
+              <a href={LINEAR_TOKEN_SETTINGS_URL} target="_blank" rel="noreferrer">
+                Create a Linear token
+              </a>
+              {" "}and paste it here.
+            </div>
+          </div>
+        </div>
+        <div style={{ ...layoutStyles.row, marginTop: 14 }}>
+          <button
+            type="button"
+            style={layoutStyles.primaryButton}
+            data-testid="linear-connect"
+            onClick={() => void connectLinear()}
+            disabled={connecting}
+          >
+            {connecting ? "Connecting…" : draft.apiTokenSecretRef ? "Refresh from Linear" : "Connect Linear"}
+          </button>
+          <span style={layoutStyles.helpText}>{summarizeMapping(selectedMapping)}</span>
+        </div>
+      </section>
 
-          <div style={{ display: "grid", gap: 16, marginTop: 16 }}>
-            {mapping.teamMappings.map((team, teamIndex) => (
-              <div key={`team-${teamIndex}`} style={{ borderTop: "1px solid rgba(15, 23, 42, 0.08)", paddingTop: 16 }}>
-                <div style={{ ...layoutStyles.row, justifyContent: "space-between" }}>
-                  <strong>Linear team #{teamIndex + 1}</strong>
-                  <button
-                    type="button"
-                    style={layoutStyles.subtleButton}
-                    onClick={() => {
-                      setDraft((current) => ({
-                        ...current,
-                        organizationMappings: current.organizationMappings.map((entry, index) => {
-                          if (index !== orgIndex) return entry;
-                          return {
-                            ...entry,
-                            teamMappings: entry.teamMappings.filter((_, nestedIndex) => nestedIndex !== teamIndex),
-                          };
-                        }),
-                      }));
-                    }}
-                  >
-                    Remove team
-                  </button>
-                </div>
+      <section style={layoutStyles.card}>
+        <details>
+          <summary style={{ cursor: "pointer", fontWeight: 700 }}>Advanced mapping</summary>
+          <p style={layoutStyles.subtitle}>
+            Rudder fills this from Linear. Change it only if you want to limit teams or override status mapping.
+          </p>
 
-                <div style={{ ...layoutStyles.row, marginTop: 12 }}>
-                  <div style={layoutStyles.field}>
-                    <label style={layoutStyles.label}>Linear Team ID</label>
-                    <input
-                      style={layoutStyles.input}
-                      value={team.teamId}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        setDraft((current) => ({
-                          ...current,
-                          organizationMappings: current.organizationMappings.map((entry, index) => {
-                            if (index !== orgIndex) return entry;
-                            return {
-                              ...entry,
-                              teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) =>
-                                nestedIndex === teamIndex ? { ...nestedTeam, teamId: value } : nestedTeam,
-                              ),
-                            };
-                          }),
-                        }));
-                      }}
-                    />
-                  </div>
-                  <div style={layoutStyles.field}>
-                    <label style={layoutStyles.label}>Linear Team Name</label>
-                    <input
-                      style={layoutStyles.input}
-                      value={team.teamName ?? ""}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        setDraft((current) => ({
-                          ...current,
-                          organizationMappings: current.organizationMappings.map((entry, index) => {
-                            if (index !== orgIndex) return entry;
-                            return {
-                              ...entry,
-                              teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) =>
-                                nestedIndex === teamIndex ? { ...nestedTeam, teamName: value } : nestedTeam,
-                              ),
-                            };
-                          }),
-                        }));
-                      }}
-                    />
-                  </div>
-                </div>
+          {(draft.organizationMappings ?? []).map((mapping, orgIndex) => (
+            <div key={`org-${orgIndex}`} style={{ borderTop: "1px solid rgba(15, 23, 42, 0.08)", marginTop: 16, paddingTop: 16 }}>
+              <div style={{ ...layoutStyles.row, justifyContent: "space-between" }}>
+                <h3 style={{ margin: 0 }}>Rudder organization #{orgIndex + 1}</h3>
+                <button
+                  type="button"
+                  style={layoutStyles.subtleButton}
+                  onClick={() => {
+                    setDraft((current) => ({
+                      ...current,
+                      organizationMappings: current.organizationMappings.filter((_, index) => index !== orgIndex),
+                    }));
+                  }}
+                >
+                  Remove organization
+                </button>
+              </div>
 
-                <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-                  {team.stateMappings.map((stateMapping, stateIndex) => (
-                    <div key={`state-${stateIndex}`} style={{ ...layoutStyles.row, alignItems: "flex-end" }}>
-                      <div style={layoutStyles.field}>
-                        <label style={layoutStyles.label}>Linear State ID</label>
-                        <input
-                          style={layoutStyles.input}
-                          value={stateMapping.linearStateId}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            setDraft((current) => ({
-                              ...current,
-                              organizationMappings: current.organizationMappings.map((entry, index) => {
-                                if (index !== orgIndex) return entry;
-                                return {
-                                  ...entry,
-                                  teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) => {
-                                    if (nestedIndex !== teamIndex) return nestedTeam;
-                                    return {
-                                      ...nestedTeam,
-                                      stateMappings: nestedTeam.stateMappings.map((nestedState, nestedStateIndex) =>
-                                        nestedStateIndex === stateIndex ? { ...nestedState, linearStateId: value } : nestedState,
-                                      ),
-                                    };
-                                  }),
-                                };
-                              }),
-                            }));
-                          }}
-                        />
-                      </div>
-                      <div style={layoutStyles.field}>
-                        <label style={layoutStyles.label}>Linear State Name</label>
-                        <input
-                          style={layoutStyles.input}
-                          value={stateMapping.linearStateName ?? ""}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            setDraft((current) => ({
-                              ...current,
-                              organizationMappings: current.organizationMappings.map((entry, index) => {
-                                if (index !== orgIndex) return entry;
-                                return {
-                                  ...entry,
-                                  teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) => {
-                                    if (nestedIndex !== teamIndex) return nestedTeam;
-                                    return {
-                                      ...nestedTeam,
-                                      stateMappings: nestedTeam.stateMappings.map((nestedState, nestedStateIndex) =>
-                                        nestedStateIndex === stateIndex ? { ...nestedState, linearStateName: value } : nestedState,
-                                      ),
-                                    };
-                                  }),
-                                };
-                              }),
-                            }));
-                          }}
-                        />
-                      </div>
-                      <div style={layoutStyles.field}>
-                        <label style={layoutStyles.label}>Rudder Status</label>
-                        <select
-                          style={layoutStyles.select}
-                          value={stateMapping.rudderStatus}
-                          onChange={(event) => {
-                            const value = event.target.value as LinearStateMapping["rudderStatus"];
-                            setDraft((current) => ({
-                              ...current,
-                              organizationMappings: current.organizationMappings.map((entry, index) => {
-                                if (index !== orgIndex) return entry;
-                                return {
-                                  ...entry,
-                                  teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) => {
-                                    if (nestedIndex !== teamIndex) return nestedTeam;
-                                    return {
-                                      ...nestedTeam,
-                                      stateMappings: nestedTeam.stateMappings.map((nestedState, nestedStateIndex) =>
-                                        nestedStateIndex === stateIndex ? { ...nestedState, rudderStatus: value } : nestedState,
-                                      ),
-                                    };
-                                  }),
-                                };
-                              }),
-                            }));
-                          }}
-                        >
-                          {RUDDER_STATUS_OPTIONS.map((status) => (
-                            <option key={status} value={status}>{status}</option>
-                          ))}
-                        </select>
-                      </div>
+              <div style={{ ...layoutStyles.field, marginTop: 12 }}>
+                <label style={layoutStyles.label}>Rudder organization</label>
+                <select
+                  style={layoutStyles.select}
+                  value={mapping.orgId}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setDraft((current) => ({
+                      ...current,
+                      organizationMappings: current.organizationMappings.map((entry, index) =>
+                        index === orgIndex ? { ...entry, orgId: value } : entry,
+                      ),
+                    }));
+                  }}
+                >
+                  <option value="">Choose an organization</option>
+                  {(bootstrap.data?.organizations ?? []).map((organization: SettingsBootstrapData["organizations"][number]) => (
+                    <option key={organization.id} value={organization.id}>
+                      {organization.name} ({organization.issuePrefix})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "grid", gap: 16, marginTop: 16 }}>
+                {mapping.teamMappings.map((team, teamIndex) => (
+                  <div key={`team-${teamIndex}`} style={{ borderTop: "1px solid rgba(15, 23, 42, 0.08)", paddingTop: 16 }}>
+                    <div style={{ ...layoutStyles.row, justifyContent: "space-between" }}>
+                      <strong>{team.teamName || `Linear team #${teamIndex + 1}`}</strong>
                       <button
                         type="button"
                         style={layoutStyles.subtleButton}
@@ -1073,92 +1132,247 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
                               if (index !== orgIndex) return entry;
                               return {
                                 ...entry,
-                                teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) => {
-                                  if (nestedIndex !== teamIndex) return nestedTeam;
-                                  return {
-                                    ...nestedTeam,
-                                    stateMappings: nestedTeam.stateMappings.filter((_, nestedStateIndex) => nestedStateIndex !== stateIndex),
-                                  };
-                                }),
+                                teamMappings: entry.teamMappings.filter((_, nestedIndex) => nestedIndex !== teamIndex),
                               };
                             }),
                           }));
                         }}
                       >
-                        Remove state
+                        Remove team
                       </button>
                     </div>
-                  ))}
-                </div>
 
-                <div style={{ marginTop: 12 }}>
-                  <button
-                    type="button"
-                    style={layoutStyles.button}
-                    onClick={() => {
-                      setDraft((current) => ({
-                        ...current,
-                        organizationMappings: current.organizationMappings.map((entry, index) => {
-                          if (index !== orgIndex) return entry;
-                          return {
-                            ...entry,
-                            teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) =>
-                              nestedIndex === teamIndex
-                                ? { ...nestedTeam, stateMappings: [...nestedTeam.stateMappings, emptyStateMapping()] }
-                                : nestedTeam,
-                            ),
-                          };
-                        }),
-                      }));
-                    }}
-                  >
-                    Add state mapping
-                  </button>
-                </div>
+                    <div style={{ ...layoutStyles.row, marginTop: 12 }}>
+                      <div style={layoutStyles.field}>
+                        <label style={layoutStyles.label}>Linear team id</label>
+                        <input
+                          style={layoutStyles.input}
+                          value={team.teamId}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setDraft((current) => ({
+                              ...current,
+                              organizationMappings: current.organizationMappings.map((entry, index) => {
+                                if (index !== orgIndex) return entry;
+                                return {
+                                  ...entry,
+                                  teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) =>
+                                    nestedIndex === teamIndex ? { ...nestedTeam, teamId: value } : nestedTeam,
+                                  ),
+                                };
+                              }),
+                            }));
+                          }}
+                        />
+                      </div>
+                      <div style={layoutStyles.field}>
+                        <label style={layoutStyles.label}>Linear team name</label>
+                        <input
+                          style={layoutStyles.input}
+                          value={team.teamName ?? ""}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setDraft((current) => ({
+                              ...current,
+                              organizationMappings: current.organizationMappings.map((entry, index) => {
+                                if (index !== orgIndex) return entry;
+                                return {
+                                  ...entry,
+                                  teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) =>
+                                    nestedIndex === teamIndex ? { ...nestedTeam, teamName: value } : nestedTeam,
+                                  ),
+                                };
+                              }),
+                            }));
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+                      {team.stateMappings.map((stateMapping, stateIndex) => (
+                        <div key={`state-${stateIndex}`} style={{ ...layoutStyles.row, alignItems: "flex-end" }}>
+                          <div style={layoutStyles.field}>
+                            <label style={layoutStyles.label}>Linear state id</label>
+                            <input
+                              style={layoutStyles.input}
+                              value={stateMapping.linearStateId}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setDraft((current) => ({
+                                  ...current,
+                                  organizationMappings: current.organizationMappings.map((entry, index) => {
+                                    if (index !== orgIndex) return entry;
+                                    return {
+                                      ...entry,
+                                      teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) => {
+                                        if (nestedIndex !== teamIndex) return nestedTeam;
+                                        return {
+                                          ...nestedTeam,
+                                          stateMappings: nestedTeam.stateMappings.map((nestedState, nestedStateIndex) =>
+                                            nestedStateIndex === stateIndex ? { ...nestedState, linearStateId: value } : nestedState,
+                                          ),
+                                        };
+                                      }),
+                                    };
+                                  }),
+                                }));
+                              }}
+                            />
+                          </div>
+                          <div style={layoutStyles.field}>
+                            <label style={layoutStyles.label}>Linear state name</label>
+                            <input
+                              style={layoutStyles.input}
+                              value={stateMapping.linearStateName ?? ""}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setDraft((current) => ({
+                                  ...current,
+                                  organizationMappings: current.organizationMappings.map((entry, index) => {
+                                    if (index !== orgIndex) return entry;
+                                    return {
+                                      ...entry,
+                                      teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) => {
+                                        if (nestedIndex !== teamIndex) return nestedTeam;
+                                        return {
+                                          ...nestedTeam,
+                                          stateMappings: nestedTeam.stateMappings.map((nestedState, nestedStateIndex) =>
+                                            nestedStateIndex === stateIndex ? { ...nestedState, linearStateName: value } : nestedState,
+                                          ),
+                                        };
+                                      }),
+                                    };
+                                  }),
+                                }));
+                              }}
+                            />
+                          </div>
+                          <div style={layoutStyles.field}>
+                            <label style={layoutStyles.label}>Rudder status</label>
+                            <select
+                              style={layoutStyles.select}
+                              value={stateMapping.rudderStatus}
+                              onChange={(event) => {
+                                const value = event.target.value as LinearStateMapping["rudderStatus"];
+                                setDraft((current) => ({
+                                  ...current,
+                                  organizationMappings: current.organizationMappings.map((entry, index) => {
+                                    if (index !== orgIndex) return entry;
+                                    return {
+                                      ...entry,
+                                      teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) => {
+                                        if (nestedIndex !== teamIndex) return nestedTeam;
+                                        return {
+                                          ...nestedTeam,
+                                          stateMappings: nestedTeam.stateMappings.map((nestedState, nestedStateIndex) =>
+                                            nestedStateIndex === stateIndex ? { ...nestedState, rudderStatus: value } : nestedState,
+                                          ),
+                                        };
+                                      }),
+                                    };
+                                  }),
+                                }));
+                              }}
+                            >
+                              {RUDDER_STATUS_OPTIONS.map((status) => (
+                                <option key={status} value={status}>{formatRudderStatus(status)}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            style={layoutStyles.subtleButton}
+                            onClick={() => {
+                              setDraft((current) => ({
+                                ...current,
+                                organizationMappings: current.organizationMappings.map((entry, index) => {
+                                  if (index !== orgIndex) return entry;
+                                  return {
+                                    ...entry,
+                                    teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) => {
+                                      if (nestedIndex !== teamIndex) return nestedTeam;
+                                      return {
+                                        ...nestedTeam,
+                                        stateMappings: nestedTeam.stateMappings.filter((_, nestedStateIndex) => nestedStateIndex !== stateIndex),
+                                      };
+                                    }),
+                                  };
+                                }),
+                              }));
+                            }}
+                          >
+                            Remove state
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ marginTop: 12 }}>
+                      <button
+                        type="button"
+                        style={layoutStyles.button}
+                        onClick={() => {
+                          setDraft((current) => ({
+                            ...current,
+                            organizationMappings: current.organizationMappings.map((entry, index) => {
+                              if (index !== orgIndex) return entry;
+                              return {
+                                ...entry,
+                                teamMappings: entry.teamMappings.map((nestedTeam, nestedIndex) =>
+                                  nestedIndex === teamIndex
+                                    ? { ...nestedTeam, stateMappings: [...nestedTeam.stateMappings, emptyStateMapping()] }
+                                    : nestedTeam,
+                                ),
+                              };
+                            }),
+                          }));
+                        }}
+                      >
+                        Add state mapping
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
 
-          <div style={{ marginTop: 16 }}>
+              <div style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  style={layoutStyles.button}
+                  onClick={() => {
+                    setDraft((current) => ({
+                      ...current,
+                      organizationMappings: current.organizationMappings.map((entry, index) =>
+                        index === orgIndex
+                          ? { ...entry, teamMappings: [...entry.teamMappings, emptyTeamMapping()] }
+                          : entry,
+                      ),
+                    }));
+                  }}
+                >
+                  Add team mapping
+                </button>
+              </div>
+            </div>
+          ))}
+
+          <div style={{ ...layoutStyles.row, marginTop: 16 }}>
             <button
               type="button"
               style={layoutStyles.button}
-              onClick={() => {
-                setDraft((current) => ({
-                  ...current,
-                  organizationMappings: current.organizationMappings.map((entry, index) =>
-                    index === orgIndex
-                      ? { ...entry, teamMappings: [...entry.teamMappings, emptyTeamMapping()] }
-                      : entry,
-                  ),
-                }));
-              }}
+              onClick={() => setDraft((current) => ({
+                ...current,
+                organizationMappings: [...current.organizationMappings, emptyOrgMapping()],
+              }))}
             >
-              Add team mapping
+              Add organization mapping
+            </button>
+            <button type="button" style={layoutStyles.primaryButton} onClick={() => void saveConfig()} disabled={saving}>
+              {saving ? "Saving…" : "Save advanced changes"}
             </button>
           </div>
-        </section>
-      ))}
-
-      <section style={layoutStyles.card}>
-        <div style={layoutStyles.row}>
-          <button
-            type="button"
-            style={layoutStyles.button}
-            onClick={() => setDraft((current) => ({
-              ...current,
-              organizationMappings: [...current.organizationMappings, emptyOrgMapping()],
-            }))}
-          >
-            Add organization mapping
-          </button>
-          <button type="button" style={layoutStyles.button} onClick={() => void testConfig()} disabled={testing}>
-            {testing ? "Testing…" : "Test connection"}
-          </button>
-          <button type="button" style={layoutStyles.primaryButton} onClick={() => void saveConfig()} disabled={saving}>
-            {saving ? "Saving…" : "Save settings"}
-          </button>
-        </div>
+        </details>
       </section>
     </div>
   );

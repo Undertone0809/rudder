@@ -25,6 +25,7 @@ import type {
   LinearPluginConfig,
   LinearTeamMapping,
   PageBootstrapData,
+  SettingsCatalogData,
   SettingsBootstrapData,
 } from "./types.js";
 
@@ -93,13 +94,23 @@ function sanitizeFilters(
 async function resolveLinearClient(ctx: PluginContext, orgId: string) {
   const config = await getConfig(ctx);
   const mapping = getOrgMapping(config, orgId);
-  if (!config.apiTokenSecretRef) throw new Error("Linear API token secret ref is not configured");
-  if (!mapping) throw new Error("No Linear organization mapping is configured for this Rudder organization");
+  if (!config.apiTokenSecretRef) throw new Error("Add a Linear token in plugin settings.");
+  if (!mapping) throw new Error("Connect Linear for this Rudder organization before importing issues.");
   const token = await ctx.secrets.resolve(config.apiTokenSecretRef);
   const client = createLinearApiClient(token, adaptHostFetch(ctx.http.fetch), {
     fixtureMode: config.fixtureMode === true,
   });
   return { client, config, mapping };
+}
+
+async function resolveLinearSettingsClient(ctx: PluginContext) {
+  const config = await getConfig(ctx);
+  if (!config.apiTokenSecretRef) throw new Error("Add a Linear token first.");
+  const token = await ctx.secrets.resolve(config.apiTokenSecretRef);
+  const client = createLinearApiClient(token, adaptHostFetch(ctx.http.fetch), {
+    fixtureMode: config.fixtureMode === true,
+  });
+  return { client, config };
 }
 
 async function listAllLinearLinks(ctx: PluginContext): Promise<LinearLinkState[]> {
@@ -216,6 +227,16 @@ async function buildSettingsBootstrap(ctx: PluginContext): Promise<SettingsBoots
   };
 }
 
+async function buildSettingsCatalog(ctx: PluginContext, params: Record<string, unknown>): Promise<SettingsCatalogData> {
+  const { client } = await resolveLinearSettingsClient(ctx);
+  const orgId = typeof params.orgId === "string" && params.orgId ? params.orgId : null;
+  const catalog = await client.getCatalog();
+  return {
+    orgId,
+    ...catalog,
+  };
+}
+
 async function buildPageBootstrap(ctx: PluginContext, orgId: string): Promise<PageBootstrapData> {
   const config = await getConfig(ctx);
   const mapping = getOrgMapping(config, orgId);
@@ -223,7 +244,7 @@ async function buildPageBootstrap(ctx: PluginContext, orgId: string): Promise<Pa
   if (!config.apiTokenSecretRef) {
     return {
       configured: false,
-      message: "Set a Linear API token secret ref before importing issues.",
+      message: "Connect Linear in plugin settings before importing issues.",
       projects,
       teamMappings: [],
     };
@@ -231,7 +252,7 @@ async function buildPageBootstrap(ctx: PluginContext, orgId: string): Promise<Pa
   if (!mapping) {
     return {
       configured: false,
-      message: "Add an organization mapping for this Rudder organization before importing issues.",
+      message: "Refresh Linear settings for this Rudder organization before importing issues.",
       projects,
       teamMappings: [],
     };
@@ -404,7 +425,7 @@ async function validateConfig(ctx: PluginContext, config: LinearPluginConfig): P
     errors.push("apiTokenSecretRef is required.");
   }
   if (!Array.isArray(config.organizationMappings) || config.organizationMappings.length === 0) {
-    errors.push("At least one organization mapping is required.");
+    warnings.push("No Rudder organization has been prepared for import yet. Use Refresh from Linear in settings.");
   }
 
   const seenOrgs = new Set<string>();
@@ -469,6 +490,10 @@ const plugin = definePlugin({
 
     ctx.data.register(DATA_KEYS.pageBootstrap, async (params: Record<string, unknown>) => {
       return await buildPageBootstrap(ctx, requireOrgId(params));
+    });
+
+    ctx.data.register(DATA_KEYS.settingsCatalog, async (params: Record<string, unknown>) => {
+      return await buildSettingsCatalog(ctx, params);
     });
 
     ctx.data.register(DATA_KEYS.catalog, async (params: Record<string, unknown>) => {

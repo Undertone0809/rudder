@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestHarness } from "@rudder/plugin-sdk/testing";
 import manifest from "../src/manifest.js";
 import plugin, { buildIssueDescription, normalizeConfig, resolveMappedStatus } from "../src/worker.js";
-import { ACTION_KEYS, ENTITY_TYPE_LINEAR_ISSUE_LINK } from "../src/constants.js";
+import { ACTION_KEYS, DATA_KEYS, ENTITY_TYPE_LINEAR_ISSUE_LINK } from "../src/constants.js";
 import { buildLinearIssuesFilter } from "../src/linear-api.js";
-import type { ImportLinearIssuesActionResult, LinearOrganizationMapping } from "../src/types.js";
+import type { ImportLinearIssuesActionResult, LinearOrganizationMapping, SettingsCatalogData } from "../src/types.js";
 
 const orgId = "org-linear";
 const projectId = "project-linear";
@@ -26,6 +26,29 @@ describe("@rudder/plugin-linear worker", () => {
         return makeJsonResponse({
           data: {
             viewer: { id: "viewer-1", name: "Test Viewer", email: "viewer@example.com" },
+          },
+        });
+      }
+      if (body.query?.includes("LinearCatalog")) {
+        return makeJsonResponse({
+          data: {
+            teams: {
+              nodes: [
+                {
+                  id: "team-eng",
+                  key: "ENG",
+                  name: "Engineering",
+                  states: {
+                    nodes: [
+                      { id: "state-backlog", name: "Backlog", type: "backlog" },
+                      { id: "state-done", name: "Done", type: "completed" },
+                    ],
+                  },
+                },
+              ],
+            },
+            projects: { nodes: [{ id: "linear-project", name: "Roadmap" }] },
+            users: { nodes: [{ id: "user-1", name: "Amy Zhang", email: "amy@example.com", active: true }] },
           },
         });
       }
@@ -180,6 +203,27 @@ describe("@rudder/plugin-linear worker", () => {
       fallback: true,
     });
     expect(buildIssueDescription(issue)).toContain("Linear URL: https://linear.app/example/issue/ENG-109");
+  });
+
+  it("loads the Linear catalog for token-first settings before mappings exist", async () => {
+    const harness = createTestHarness({
+      manifest,
+      config: normalizeConfig({
+        apiTokenSecretRef: "linear-token",
+        organizationMappings: [],
+      }),
+    });
+
+    await plugin.definition.setup(harness.ctx);
+
+    const catalog = await harness.getData<SettingsCatalogData>(DATA_KEYS.settingsCatalog, { orgId });
+    expect(catalog.teams).toEqual([
+      expect.objectContaining({
+        id: "team-eng",
+        name: "Engineering",
+      }),
+    ]);
+    expect(catalog.projects).toContainEqual(expect.objectContaining({ id: "linear-project" }));
   });
 
   it("imports selected issues, skips duplicates, and reports fallback statuses", async () => {

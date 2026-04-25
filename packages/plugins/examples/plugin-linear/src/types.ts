@@ -125,6 +125,10 @@ export type LinearCatalogData = LinearCatalog & {
   orgId: string;
 };
 
+export type SettingsCatalogData = LinearCatalog & {
+  orgId: string | null;
+};
+
 export type LinearIssueRow = LinearIssueSummary & {
   imported: boolean;
   importedRudderIssueId: string | null;

@@ -42,6 +42,7 @@ function makeIssueTabProps(): PluginDetailTabProps {
 
 let container: HTMLDivElement;
 let root: Root | null = null;
+const originalFetch = globalThis.fetch;
 
 function render(element: ReactNode) {
   act(() => {
@@ -72,9 +73,26 @@ function click(element: HTMLElement) {
   });
 }
 
+async function clickAsync(element: HTMLElement) {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
+async function flushAsync(turns = 8) {
+  await act(async () => {
+    for (let index = 0; index < turns; index += 1) {
+      await Promise.resolve();
+    }
+  });
+}
+
 function changeValue(element: HTMLInputElement | HTMLSelectElement, value: string) {
   act(() => {
-    element.value = value;
+    const proto = element instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLSelectElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    setter?.call(element, value);
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
   });
@@ -94,6 +112,7 @@ describe("@rudder/plugin-linear UI", () => {
       importedIssues: [],
       duplicateIssueIds: [],
     }));
+    globalThis.fetch = vi.fn(async () => new Response("{}", { status: 200 })) as typeof fetch;
     window.history.replaceState({}, "", "/instance/settings/plugins/plugin-linear");
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -101,6 +120,7 @@ describe("@rudder/plugin-linear UI", () => {
 
   afterEach(() => {
     cleanup();
+    globalThis.fetch = originalFetch;
   });
 
   it("requires a target project before import and shows imported deep links", () => {
@@ -202,7 +222,7 @@ describe("@rudder/plugin-linear UI", () => {
     expect(importSelected?.disabled).toBe(false);
   });
 
-  it("renders the custom settings page instead of an empty placeholder", () => {
+  it("renders the token-first settings page instead of exposing raw mappings", () => {
     mockedUsePluginData.mockReturnValue({
       data: {
         config: {
@@ -236,11 +256,208 @@ describe("@rudder/plugin-linear UI", () => {
 
     render(<LinearPluginSettingsPage {...makePageProps()} />);
 
-    expect(container.textContent).toContain("Linear plugin settings");
-    expect(container.querySelector<HTMLInputElement>("[data-testid='linear-token-ref']")?.value).toBe("linear-api-token");
-    const inputValues = [...container.querySelectorAll<HTMLInputElement>("input")].map((input) => input.value);
-    expect(inputValues).toContain("Engineering");
-    expect(container.textContent).toContain("Save settings");
+    expect(container.textContent).toContain("Paste a Linear token once");
+    expect(container.textContent).not.toContain("Secret Ref");
+    expect(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")?.value).toBe("");
+    expect(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")?.placeholder).toContain("Token saved");
+    expect(findLink("Create a Linear token")?.getAttribute("href")).toBe("https://linear.app/settings/account/security");
+    expect(container.textContent).toContain("1 team and 1 workflow state ready");
+    expect(container.querySelector<HTMLDetailsElement>("details")?.open).toBe(false);
+    expect(container.textContent).toContain("Save advanced changes");
+  });
+
+  it("creates a secret and fills mappings from Linear catalog", async () => {
+    const refresh = vi.fn();
+    mockedUsePluginData.mockReturnValue({
+      data: {
+        config: {
+          apiTokenSecretRef: "",
+          organizationMappings: [],
+        },
+        organizations: [{ id: "org-1", name: "Acme", issuePrefix: "ACME" }],
+        fixtureMode: false,
+      },
+      loading: false,
+      error: null,
+      refresh,
+    });
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/orgs/org-1/secrets")) {
+        return new Response(JSON.stringify({ id: "secret-1" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/config")) {
+        return new Response(JSON.stringify({ id: "config-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/data/settings-catalog")) {
+        return new Response(JSON.stringify({
+          data: {
+            orgId: "org-1",
+            teams: [
+              {
+                id: "team-1",
+                key: "ENG",
+                name: "Engineering",
+                states: [
+                  { id: "state-backlog", name: "Backlog", type: "backlog" },
+                  { id: "state-done", name: "Done", type: "completed" },
+                ],
+              },
+            ],
+            projects: [],
+            users: [],
+          },
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    render(<LinearPluginSettingsPage {...makePageProps()} />);
+
+    changeValue(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")!, "lin_api_test");
+    await clickAsync(container.querySelector<HTMLButtonElement>("[data-testid='linear-connect']")!);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/orgs/org-1/secrets",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+    const finalConfigCall = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"))
+      .at(-1);
+    const finalBody = JSON.parse(String((finalConfigCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
+    expect(finalBody.configJson).toMatchObject({
+      apiTokenSecretRef: "secret-1",
+      organizationMappings: [
+        {
+          orgId: "org-1",
+          teamMappings: [
+            {
+              teamId: "team-1",
+              teamName: "Engineering",
+              stateMappings: [
+                { linearStateId: "state-backlog", rudderStatus: "backlog" },
+                { linearStateId: "state-done", rudderStatus: "done" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("refreshes a stale plugin worker when the settings catalog handler is missing", async () => {
+    const refresh = vi.fn();
+    mockedUsePluginData.mockReturnValue({
+      data: {
+        config: {
+          apiTokenSecretRef: "",
+          organizationMappings: [],
+        },
+        organizations: [{ id: "org-1", name: "Acme", issuePrefix: "ACME" }],
+        fixtureMode: false,
+      },
+      loading: false,
+      error: null,
+      refresh,
+    });
+
+    let catalogAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/orgs/org-1/secrets")) {
+        return new Response(JSON.stringify({ id: "secret-1" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/config")) {
+        return new Response(JSON.stringify({ id: "config-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/data/settings-catalog")) {
+        catalogAttempts += 1;
+        if (catalogAttempts === 1) {
+          return new Response(JSON.stringify({
+            message: "No data handler registered for key \"settings-catalog\"",
+          }), {
+            status: 502,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({
+          data: {
+            orgId: "org-1",
+            teams: [
+              {
+                id: "team-1",
+                key: "ENG",
+                name: "Engineering",
+                states: [{ id: "state-done", name: "Done", type: "completed" }],
+              },
+            ],
+            projects: [],
+            users: [],
+          },
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/disable")) {
+        return new Response(JSON.stringify({ id: "plugin-linear", status: "disabled" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/enable")) {
+        return new Response(JSON.stringify({ id: "plugin-linear", status: "ready" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    render(<LinearPluginSettingsPage {...makePageProps()} />);
+
+    changeValue(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")!, "lin_api_test");
+    await clickAsync(container.querySelector<HTMLButtonElement>("[data-testid='linear-connect']")!);
+    await flushAsync();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/plugins/plugin-linear/disable",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/plugins/plugin-linear/enable",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const finalConfigCall = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"))
+      .at(-1);
+    const finalBody = JSON.parse(String((finalConfigCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
+    expect(finalBody.configJson.organizationMappings[0].teamMappings[0].stateMappings[0]).toMatchObject({
+      linearStateId: "state-done",
+      rudderStatus: "done",
+    });
+    expect(refresh).toHaveBeenCalled();
   });
 
   it("shows the unlinked issue state with a deep link back to the plugin page", () => {

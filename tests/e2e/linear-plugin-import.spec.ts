@@ -73,7 +73,7 @@ async function createLinearFixtureOrg(request: APIRequestContext) {
 
   const secretRes = await request.post(`/api/orgs/${organization.id}/secrets`, {
     data: {
-      name: "Linear API Token",
+      name: "Linear token",
       value: "linear-fixture-token",
     },
   });
@@ -155,6 +155,23 @@ async function configureLinearPlugin(
   expect(configRes.ok()).toBe(true);
 }
 
+async function configureLinearTokenOnly(
+  request: APIRequestContext,
+  plugin: PluginRecord,
+  secret: SecretRecord,
+) {
+  const configRes = await request.post(`/api/plugins/${plugin.id}/config`, {
+    data: {
+      configJson: {
+        apiTokenSecretRef: secret.id,
+        fixtureMode: true,
+        organizationMappings: [],
+      },
+    },
+  });
+  expect(configRes.ok()).toBe(true);
+}
+
 async function pluginData<T>(
   request: APIRequestContext,
   plugin: PluginRecord,
@@ -225,6 +242,16 @@ test.describe("Linear plugin import workflow", () => {
   test("imports Linear issues through the host/plugin bridge", async ({ request }) => {
     const { organization, project, secret } = await createLinearFixtureOrg(request);
     const plugin = await installLinearPlugin(request);
+    await configureLinearTokenOnly(request, plugin, secret);
+
+    const settingsCatalog = await pluginData<{
+      teams: Array<{ id: string; name: string }>;
+      projects: Array<{ id: string; name: string }>;
+      users: Array<{ id: string; name: string }>;
+    }>(request, plugin, "settings-catalog", organization);
+    expect(settingsCatalog.teams).toContainEqual(expect.objectContaining({ id: "team-eng", name: "Engineering" }));
+    expect(settingsCatalog.projects).toContainEqual(expect.objectContaining({ id: "proj-roadmap", name: "Roadmap" }));
+
     await configureLinearPlugin(request, plugin, organization, secret);
     await waitForLinearPageData(request, plugin, organization);
 
