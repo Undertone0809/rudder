@@ -72,6 +72,12 @@ import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import { queryKeys } from "@/lib/queryKeys";
 import {
+  formatChatProcessDuration,
+  lastTranscriptAtMs,
+  resolvePersistedChatProcessEndedAt,
+  resolvePersistedChatProcessStartedAt,
+} from "@/lib/chat-process-duration";
+import {
   readChatScopedFlag,
   readChatScopedState,
   setChatFlagState,
@@ -1181,41 +1187,16 @@ function ChatMessagesLoadingState() {
   );
 }
 
-function formatChatProcessDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "0s";
-  if (ms < 1000) return "under 1s";
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
-}
-
-function lastTranscriptAtMs(entries: TranscriptEntry[]): number {
-  let max = 0;
-  for (const e of entries) {
-    const t = Date.parse(e.ts);
-    if (Number.isFinite(t) && t > max) max = t;
-  }
-  return max > 0 ? max : Date.now();
-}
-
-function transcriptStartedAt(entries: TranscriptEntry[], fallback: Date): Date {
-  for (const entry of entries) {
-    const ts = Date.parse(entry.ts);
-    if (Number.isFinite(ts)) return new Date(ts);
-  }
-  return fallback;
-}
-
 function StreamTranscriptItem({
   entries,
   state,
   streamStartedAt,
+  streamEndedAt,
 }: {
   entries: TranscriptEntry[];
   state: StreamDraftState | ChatMessage["status"];
   streamStartedAt: Date;
+  streamEndedAt?: Date | null;
 }) {
   const streamingActive = state === "streaming" || state === "finalizing";
   const [processOpen, setProcessOpen] = useState(() => streamingActive);
@@ -1237,9 +1218,10 @@ function StreamTranscriptItem({
 
   const durationMs = useMemo(() => {
     const start = streamStartedAt.getTime();
-    const end = streamingActive ? Date.now() : lastTranscriptAtMs(entries);
+    const explicitEnd = streamEndedAt?.getTime() ?? 0;
+    const end = streamingActive ? Date.now() : Math.max(lastTranscriptAtMs(entries), explicitEnd);
     return Math.max(0, end - start);
-  }, [streamStartedAt, streamingActive, entries, tick]);
+  }, [streamStartedAt, streamEndedAt, streamingActive, entries, tick]);
 
   if (entries.length === 0) return null;
 
@@ -2872,6 +2854,12 @@ function ChatWorkspace() {
                               && (message.role === "assistant"
                                 || message.kind === "issue_proposal"
                                 || message.kind === "operation_proposal");
+                            const persistedProcessStartedAt = shouldRenderPersistedTranscript
+                              ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript)
+                              : null;
+                            const persistedProcessEndedAt = shouldRenderPersistedTranscript
+                              ? resolvePersistedChatProcessEndedAt(message, persistedTranscript)
+                              : null;
 
                             return (
                               <Fragment key={message.id}>
@@ -2879,10 +2867,8 @@ function ChatWorkspace() {
                                   <StreamTranscriptItem
                                     entries={persistedTranscript}
                                     state={message.status}
-                                    streamStartedAt={transcriptStartedAt(
-                                      persistedTranscript,
-                                      new Date(message.createdAt),
-                                    )}
+                                    streamStartedAt={persistedProcessStartedAt!}
+                                    streamEndedAt={persistedProcessEndedAt}
                                   />
                                 ) : null}
                                 <ChatMessageItem
