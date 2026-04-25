@@ -11,10 +11,11 @@ This first version focuses on:
 
 Configuration is token-first by design. The operator should paste a Linear
 token and choose the Rudder organization; Rudder then reads teams and workflow
-states from Linear and fills the mapping automatically. Raw ids and status
-overrides belong behind the advanced mapping disclosure, never in the default
-setup path. Settings labels should use normal sentence/title casing rather than
-normal sentence casing rather than all-uppercase treatment.
+states from Linear automatically. The default setup path exposes team choices
+and optional status rules using Linear names only. Raw ids and implementation
+mapping language should not appear in the user-facing setup path. Settings
+labels should use normal sentence/title casing rather than all-uppercase
+treatment.
 
 It intentionally does not implement bidirectional sync, comments, webhooks, or status pushback.
 

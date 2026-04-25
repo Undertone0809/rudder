@@ -52,14 +52,14 @@ const manifest: PaperclipPluginManifestV1 = {
       },
       organizationMappings: {
         type: "array",
-        title: "Rudder organization mappings",
+        title: "Rudder organization import setup",
         items: {
           type: "object",
           required: ["orgId", "teamMappings"],
           properties: {
             orgId: {
               type: "string",
-              title: "Rudder organization id",
+              title: "Rudder organization",
               minLength: 1,
             },
             teamMappings: {
@@ -72,7 +72,7 @@ const manifest: PaperclipPluginManifestV1 = {
                 properties: {
                   teamId: {
                     type: "string",
-                    title: "Linear team id",
+                    title: "Linear team",
                     minLength: 1,
                   },
                   teamName: {
@@ -81,19 +81,19 @@ const manifest: PaperclipPluginManifestV1 = {
                   },
                   stateMappings: {
                     type: "array",
-                    title: "State mappings",
+                    title: "Status rules",
                     items: {
                       type: "object",
                       required: ["linearStateId", "rudderStatus"],
                       properties: {
                         linearStateId: {
                           type: "string",
-                          title: "Linear state id",
+                          title: "Linear status",
                           minLength: 1,
                         },
                         linearStateName: {
                           type: "string",
-                          title: "Linear state name",
+                          title: "Linear status name",
                         },
                         rudderStatus: {
                           type: "string",

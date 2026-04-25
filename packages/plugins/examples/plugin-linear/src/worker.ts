@@ -422,7 +422,7 @@ async function validateConfig(ctx: PluginContext, config: LinearPluginConfig): P
   const warnings: string[] = [];
 
   if (!config.apiTokenSecretRef?.trim()) {
-    errors.push("apiTokenSecretRef is required.");
+    errors.push("Linear token is required.");
   }
   if (!Array.isArray(config.organizationMappings) || config.organizationMappings.length === 0) {
     warnings.push("No Rudder organization has been prepared for import yet. Use Refresh from Linear in settings.");
@@ -431,31 +431,31 @@ async function validateConfig(ctx: PluginContext, config: LinearPluginConfig): P
   const seenOrgs = new Set<string>();
   for (const mapping of config.organizationMappings ?? []) {
     if (!mapping.orgId) {
-      errors.push("Each organization mapping requires an orgId.");
+      errors.push("Each Rudder organization setup must choose an organization.");
       continue;
     }
     if (seenOrgs.has(mapping.orgId)) {
-      errors.push(`Duplicate organization mapping: ${mapping.orgId}`);
+      errors.push(`This Rudder organization is configured more than once: ${mapping.orgId}`);
     }
     seenOrgs.add(mapping.orgId);
     const seenTeams = new Set<string>();
     if (!Array.isArray(mapping.teamMappings) || mapping.teamMappings.length === 0) {
-      errors.push(`Organization ${mapping.orgId} must include at least one team mapping.`);
+      errors.push(`Organization ${mapping.orgId} must include at least one Linear team.`);
       continue;
     }
     for (const team of mapping.teamMappings) {
       if (!team.teamId?.trim()) {
-        errors.push(`Organization ${mapping.orgId} has a team mapping with no teamId.`);
+        errors.push(`Organization ${mapping.orgId} has a Linear team choice with no team.`);
         continue;
       }
       if (seenTeams.has(team.teamId)) {
-        errors.push(`Linear team ${team.teamId} is mapped more than once.`);
+        errors.push(`Linear team ${team.teamName ?? team.teamId} is selected more than once.`);
       }
       seenTeams.add(team.teamId);
       for (const stateMapping of team.stateMappings ?? []) {
         if (stateMapping.rudderStatus === "in_progress") {
           warnings.push(
-            `Linear team ${team.teamId} maps a state to in_progress. Imports stay unassigned in v1, so those issues are downgraded to todo.`,
+            `Linear team ${team.teamName ?? team.teamId} has a status rule that imports as in progress. Imports stay unassigned in v1, so those issues are downgraded to todo.`,
           );
         }
       }
