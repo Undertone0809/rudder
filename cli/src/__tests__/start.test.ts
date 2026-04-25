@@ -169,9 +169,13 @@ describe("desktop start command helpers", () => {
     expect(resolveDesktopReleaseTag("0.3.1")).toBe("v0.3.1");
   });
 
-  it("rejects prerelease desktop starts until matching desktop releases exist", () => {
-    expect(() => resolveDesktopReleaseTag("0.3.1-canary.2")).toThrow(
-      "Desktop installer lookup requires a stable version",
+  it("maps canary versions to canary GitHub release tags", () => {
+    expect(resolveDesktopReleaseTag("0.3.1-canary.2")).toBe("canary/v0.3.1-canary.2");
+  });
+
+  it("rejects unsupported prerelease desktop starts", () => {
+    expect(() => resolveDesktopReleaseTag("0.3.1-beta.2")).toThrow(
+      "Desktop installer lookup requires a release version",
     );
   });
 

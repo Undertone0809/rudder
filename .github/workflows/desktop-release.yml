@@ -9,6 +9,7 @@ on:
   push:
     tags:
       - "v*"
+      - "canary/v*"
 
 permissions:
   contents: write
@@ -68,7 +69,8 @@ jobs:
         id: collect
         run: |
           tag="${{ inputs.release_tag || github.ref_name }}"
-          version="${tag#v}"
+          version="${tag##*/}"
+          version="${version#v}"
           node scripts/collect-desktop-release-assets.mjs \
             --version "${version}" \
             --platform "${{ matrix.platform }}" \

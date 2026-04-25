@@ -47,7 +47,8 @@ interface StartCommandOptions {
 }
 
 const STABLE_SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
-const CLI_REGISTRY_LATEST_URL = "https://registry.npmjs.org/@rudder%2fcli/latest";
+const CANARY_SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+-canary\.[0-9]+$/;
+const CLI_REGISTRY_LATEST_URL = "https://registry.npmjs.org/@rudderhq%2fcli/latest";
 
 export function resolveCurrentCliVersion(env: NodeJS.ProcessEnv = process.env): string {
   const envPackageName = env.npm_package_name?.trim();
@@ -121,12 +122,12 @@ export async function getCliUpdateNotice(currentVersion: string): Promise<string
 
 export function resolveDesktopReleaseTag(version: string): string {
   if (!version || version === "latest") return "latest";
-  if (!STABLE_SEMVER_RE.test(version)) {
-    throw new Error(
-      `Desktop installer lookup requires a stable version like 0.1.0. Received ${version}.`,
-    );
-  }
-  return `v${version}`;
+  if (STABLE_SEMVER_RE.test(version)) return `v${version}`;
+  if (CANARY_SEMVER_RE.test(version)) return `canary/v${version}`;
+
+  throw new Error(
+    `Desktop installer lookup requires a release version like 0.1.0 or 0.1.0-canary.0. Received ${version}.`,
+  );
 }
 
 export function resolveDesktopAssetTarget(
