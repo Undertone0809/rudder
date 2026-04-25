@@ -129,16 +129,54 @@ function getDesktopSystemPermissionStatus(status: DesktopSystemPermissionStatus 
   switch (status) {
     case "authorized":
       return { labelKey: "systemPermissions.status.authorized", tone: "ok" };
-    case "needs_access":
-      return { labelKey: "systemPermissions.status.needsAccess", tone: "warn" };
-    case "per_app":
-      return { labelKey: "systemPermissions.status.perApp", tone: "muted" };
     case "unsupported":
       return { labelKey: "systemPermissions.status.unavailable", tone: "muted" };
+    case "needs_access":
+    case "per_app":
     case "unknown":
-      return { labelKey: "systemPermissions.status.unknown", tone: "muted" };
     default:
-      return { labelKey: "systemPermissions.status.checking", tone: "muted" };
+      return { labelKey: "systemPermissions.status.needsAccess", tone: "warn" };
+  }
+}
+
+function hasResolvedSystemPermissions(statuses: DesktopSystemPermissions | null): boolean {
+  if (!statuses) return false;
+  return SYSTEM_PERMISSIONS.some((permission) => statuses[permission.id] !== undefined);
+}
+
+function resolveDesktopSystemPermissionStatuses(
+  statuses: DesktopSystemPermissions | null,
+  desktopShell: ReturnType<typeof readDesktopShell>,
+): DesktopSystemPermissions {
+  if (hasResolvedSystemPermissions(statuses)) return statuses!;
+  if (desktopShell) {
+    return {
+      fullDiskAccess: "needs_access",
+      accessibility: "needs_access",
+      automation: "needs_access",
+    };
+  }
+  return {};
+}
+
+function getSystemPermissionStatus(
+  permission: SystemPermissionDefinition,
+  isDesktopShell: boolean,
+  statuses: DesktopSystemPermissions,
+): {
+  labelKey: TranslationKey;
+  tone: PermissionStatusTone;
+} {
+  if (!isDesktopShell) {
+    return { labelKey: "systemPermissions.status.desktopOnly", tone: "muted" };
+  }
+  switch (permission.id) {
+    case "fullDiskAccess":
+    case "accessibility":
+    case "automation":
+      return getDesktopSystemPermissionStatus(statuses[permission.id]);
+    default:
+      return { labelKey: "systemPermissions.status.needsAccess", tone: "warn" };
   }
 }
 
@@ -359,6 +397,10 @@ export function InstanceNotificationsSettings() {
   const showBrowserNotificationRequest = !isDesktopShell && notificationPermission === "default";
   const showDesktopNotificationSettings = isDesktopShell;
   const showBrowserManagedNotice = !isDesktopShell && notificationPermission !== "default";
+  const resolvedSystemPermissionStatuses = resolveDesktopSystemPermissionStatuses(
+    systemPermissionStatuses,
+    desktopShell,
+  );
 
   return (
     <div className="mx-auto max-w-4xl space-y-7 px-1 pb-6">
@@ -381,9 +423,7 @@ export function InstanceNotificationsSettings() {
       >
         <div className="overflow-hidden rounded-[var(--radius-md)] border border-border/70 bg-card/45">
           {SYSTEM_PERMISSIONS.map((permission) => {
-            const status: { labelKey: TranslationKey; tone: PermissionStatusTone } = isDesktopShell
-              ? getDesktopSystemPermissionStatus(systemPermissionStatuses?.[permission.id])
-              : { labelKey: "systemPermissions.status.desktopOnly", tone: "muted" };
+            const status = getSystemPermissionStatus(permission, isDesktopShell, resolvedSystemPermissionStatuses);
             const showSystemSettingsAction = isDesktopShell && Boolean(permission.macSettingsUrl);
 
             return (

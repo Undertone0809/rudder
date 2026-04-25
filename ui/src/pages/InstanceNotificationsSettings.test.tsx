@@ -250,7 +250,9 @@ describe("InstanceNotificationsSettings", () => {
     expect(container.textContent).toContain("Accessibility");
     expect(container.textContent).toContain("Authorized");
     expect(container.textContent).toContain("Automation");
-    expect(container.textContent).toContain("Per app");
+    expect(container.textContent).not.toContain("Checking");
+    expect(container.textContent).not.toContain("Per app");
+    expect(container.textContent).not.toContain("Unknown");
     expect(container.textContent).not.toContain("System managed");
     expect(container.textContent).toContain("Open settings");
     expect(container.textContent).not.toContain("Send test notification");
@@ -296,12 +298,41 @@ describe("InstanceNotificationsSettings", () => {
 
     expect(container.textContent).toContain("System permissions");
     expect(container.textContent).toContain("Authorized");
-    expect(container.textContent).toContain("Per app");
+    expect(container.textContent).toContain("Needs access");
+    expect(container.textContent).not.toContain("Checking");
+    expect(container.textContent).not.toContain("Per app");
+    expect(container.textContent).not.toContain("Unknown");
     expect(container.textContent).not.toContain("System managed");
     expect(container.textContent).toContain("Open settings");
     expect(container.textContent).not.toContain("Send test notification");
     expect(container.textContent).not.toContain("Preview badge");
     expect(container.textContent).not.toContain("Last notification Rudder notifications are on at 2026-04-22T09:30:00.000Z.");
     expect(container.textContent).not.toContain("Enable notifications");
+  });
+
+  it("does not leave legacy desktop shells stuck in checking state", async () => {
+    desktopShellValue = desktopShellMock;
+    desktopShellMock.onBootState.mockReturnValue(() => {});
+    desktopShellMock.getSystemPermissions.mockResolvedValue({});
+    desktopShellMock.getBootState.mockResolvedValue({
+      capabilities: {
+        notifications: true,
+        badgeCount: true,
+      },
+    });
+
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Full Disk Access");
+    expect(container.textContent).toContain("Accessibility");
+    expect(container.textContent).toContain("Automation");
+    expect(container.textContent).toContain("Needs access");
+    expect(container.textContent).not.toContain("Checking");
+    expect(container.textContent).not.toContain("Per app");
+    expect(container.textContent).not.toContain("Unknown");
   });
 });

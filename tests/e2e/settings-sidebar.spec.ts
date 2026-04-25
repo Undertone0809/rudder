@@ -397,6 +397,9 @@ test.describe("Settings sidebar", () => {
     await expect(modal.getByText("System notification access")).toBeVisible();
     await expect(modal.getByText("Issue notifications")).toBeVisible();
     await expect(modal.getByText("Chat notifications")).toBeVisible();
+    await expect(modal.getByText("Checking")).toHaveCount(0);
+    await expect(modal.getByText("Per app")).toHaveCount(0);
+    await expect(modal.getByText("Unknown")).toHaveCount(0);
     await expect(modal.getByText("System managed")).toHaveCount(0);
     await expect(modal.getByText("App icon badge")).toHaveCount(0);
     await expect(modal.getByRole("button", { name: "Toggle app icon badge" })).toHaveCount(0);
