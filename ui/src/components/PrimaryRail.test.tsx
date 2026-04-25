@@ -29,6 +29,7 @@ const mockState = vi.hoisted(() => ({
   },
   navigate: vi.fn(),
   requestPermission: vi.fn(),
+  pathname: "/dashboard",
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -102,7 +103,7 @@ vi.mock("@/lib/router", () => ({
       {children}
     </a>
   ),
-  useLocation: () => ({ pathname: "/dashboard" }),
+  useLocation: () => ({ pathname: mockState.pathname }),
   useNavigate: () => mockState.navigate,
 }));
 
@@ -140,6 +141,7 @@ beforeEach(() => {
       body: "4 unread items",
     },
   };
+  mockState.pathname = "/dashboard";
 });
 
 afterEach(() => {
@@ -184,5 +186,27 @@ describe("PrimaryRail desktop inbox signals", () => {
     await renderPrimaryRail();
 
     expect(mockState.desktopShell.setBadgeCount).toHaveBeenCalledWith(0);
+  });
+});
+
+describe("PrimaryRail active motion indicator", () => {
+  it("positions the rail indicator on the active dashboard item", async () => {
+    await renderPrimaryRail();
+
+    const nav = document.querySelector(".motion-rail-nav");
+    const indicator = document.querySelector('[data-testid="primary-rail-active-indicator"]');
+
+    expect(nav?.getAttribute("data-active-index")).toBe("1");
+    expect(indicator).not.toBeNull();
+  });
+
+  it("moves the rail indicator to issue routes", async () => {
+    mockState.pathname = "/issues/RUD-123";
+
+    await renderPrimaryRail();
+
+    const nav = document.querySelector(".motion-rail-nav");
+
+    expect(nav?.getAttribute("data-active-index")).toBe("4");
   });
 });

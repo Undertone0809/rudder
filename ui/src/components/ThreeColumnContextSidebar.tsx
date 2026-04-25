@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -112,20 +112,27 @@ function ContextItem({
   icon: Icon,
   label,
   active,
+  slidingActiveIndicator = false,
 }: {
   to: string;
   icon: typeof UserRound;
   label: string;
   active?: boolean;
+  slidingActiveIndicator?: boolean;
 }) {
   return (
     <Link
       to={to}
       className={cn(
-        "mx-1.5 flex items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
-        active
-          ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
-          : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground",
+        "relative z-10 mx-1.5 flex items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+        slidingActiveIndicator && "min-h-[var(--motion-context-item-height)]",
+        slidingActiveIndicator
+          ? active
+            ? "font-medium text-foreground"
+            : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
+          : active
+            ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
+            : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground",
       )}
     >
       <Icon className="h-4 w-4 shrink-0" />
@@ -287,6 +294,40 @@ export function ThreeColumnContextSidebar() {
     () => resolveRecentIssues(recentIssueIds, allIssues ?? []),
     [allIssues, recentIssueIds],
   );
+  const issueContextItems = [
+    {
+      key: "all",
+      to: "/issues",
+      icon: Circle,
+      label: "All Issues",
+      active: scope === "" && !selectedProjectId,
+    },
+    {
+      key: "assigned",
+      to: `/issues${currentUserId ? "?scope=assigned" : ""}`,
+      icon: UserRound,
+      label: "Assigned to Me",
+      active: scope === "assigned",
+    },
+    {
+      key: "starred",
+      to: "/issues?scope=starred",
+      icon: Star,
+      label: `Starred${starredIssueRefs.length > 0 ? ` (${starredIssueRefs.length})` : ""}`,
+      active: scope === "starred",
+    },
+    {
+      key: "recent",
+      to: `/issues${currentUserId ? "?scope=recent" : ""}`,
+      icon: Clock3,
+      label: `Recently Viewed${recentIssueRefs.length > 0 ? ` (${recentIssueRefs.length})` : ""}`,
+      active: scope === "recent",
+    },
+  ];
+  const activeIssueContextIndex = issueContextItems.findIndex((item) => item.active);
+  const activeIssueContextStyle = activeIssueContextIndex >= 0
+    ? ({ "--motion-context-active-index": activeIssueContextIndex } as CSSProperties)
+    : undefined;
 
   useEffect(() => {
     setRecentIssueIds(readRecentIssueIds(selectedOrganizationId));
@@ -372,32 +413,30 @@ export function ThreeColumnContextSidebar() {
       >
         <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
         <SectionLabel>Issues</SectionLabel>
-        <div className="mt-2 space-y-1">
-          <ContextItem
-            to="/issues"
-            icon={Circle}
-            label="All Issues"
-            active={scope === "" && !selectedProjectId}
-          />
-          <ContextItem
-            to={`/issues${currentUserId ? "?scope=assigned" : ""}`}
-            icon={UserRound}
-            label="Assigned to Me"
-            active={scope === "assigned"}
-          />
-          <ContextItem
-            to="/issues?scope=starred"
-            icon={Star}
-            label={`Starred${starredIssueRefs.length > 0 ? ` (${starredIssueRefs.length})` : ""}`}
-            active={scope === "starred"}
-          />
-          <ContextItem
-            to={`/issues${currentUserId ? "?scope=recent" : ""}`}
-            icon={Clock3}
-            label={`Recently Viewed${recentIssueRefs.length > 0 ? ` (${recentIssueRefs.length})` : ""}`}
-            active={scope === "recent"}
-          />
-        </div>
+        <nav
+          className="motion-context-nav mt-2"
+          style={activeIssueContextStyle}
+          data-active-index={activeIssueContextIndex >= 0 ? activeIssueContextIndex : undefined}
+          aria-label="Issue views"
+        >
+          {activeIssueContextIndex >= 0 ? (
+            <span
+              data-testid="issue-sidebar-active-indicator"
+              className="motion-context-active-indicator"
+              aria-hidden="true"
+            />
+          ) : null}
+          {issueContextItems.map((item) => (
+            <ContextItem
+              key={item.key}
+              to={item.to}
+              icon={item.icon}
+              label={item.label}
+              active={item.active}
+              slidingActiveIndicator
+            />
+          ))}
+        </nav>
 
         <SectionLabel>Projects</SectionLabel>
         <nav className="mt-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-3.5">

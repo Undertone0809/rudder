@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   useEffect,
   useRef,
 } from "react";
@@ -49,6 +50,17 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
 
 const RUDDER_NOTIFICATION_ICON = "/rudder-logo.png";
 
+type RailItem = {
+  key: string;
+  to: string;
+  label: string;
+  icon: typeof Inbox;
+  badge?: number;
+  badgeTone?: "default" | "danger";
+  badgeTestId?: string;
+  active: boolean;
+};
+
 const railUtilityButtonClass = [
   "h-9 w-9 translate-x-1 rounded-lg border shadow-[0_6px_18px_-16px_rgba(15,23,42,0.55)] backdrop-blur-[22px]",
   "border-[color:color-mix(in_oklab,var(--sidebar-border)_76%,white)]",
@@ -77,11 +89,12 @@ function RailNavItem({
   return (
     <NavLink
       to={to}
+      aria-current={active ? "page" : undefined}
       className={({ isActive }) =>
         cn(
-          "relative flex min-h-[56px] w-[66px] translate-x-1 flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
+          "relative z-10 flex min-h-[56px] w-[66px] translate-x-1 flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
           (active ?? isActive)
-            ? "bg-[#43584f]/88 text-[#def4eb] dark:bg-[#43584f]/88 dark:text-[#def4eb]"
+            ? "text-[#def4eb] dark:text-[#def4eb]"
             : [
               "text-[color:color-mix(in_oklab,var(--sidebar-foreground)_86%,var(--sidebar))]",
               "hover:bg-[color:color-mix(in_oklab,var(--sidebar)_58%,white)]",
@@ -136,6 +149,57 @@ export function PrimaryRail({
   const requestedNotificationPermissionRef = useRef(false);
   const orgGroupActive = /^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const issueEntryPath = readRememberedIssueNavigationPath(selectedOrganizationId);
+  const railItems: RailItem[] = [
+    {
+      key: "messenger",
+      to: "/messenger",
+      label: "Messenger",
+      icon: MessageSquare,
+      badge: inboxBadge.inbox,
+      badgeTone: "danger",
+      badgeTestId: "rail-badge-messenger",
+      active: /^\/(?:messenger|chat)(?:\/|$)/.test(relativePath),
+    },
+    {
+      key: "dashboard",
+      to: "/dashboard",
+      label: "Dashboard",
+      icon: LayoutDashboard,
+      active: /^\/dashboard(?:\/|$)/.test(relativePath),
+    },
+    {
+      key: "agents",
+      to: "/agents",
+      label: "Agents",
+      icon: Bot,
+      active: /^\/agents(?:\/|$)/.test(relativePath),
+    },
+    {
+      key: "organization",
+      to: "/org",
+      label: "Organization",
+      icon: Network,
+      active: orgGroupActive,
+    },
+    {
+      key: "issues",
+      to: issueEntryPath,
+      label: "Issue",
+      icon: CircleCheckBig,
+      active: /^\/issues(?:\/|$)/.test(relativePath),
+    },
+    {
+      key: "automations",
+      to: "/automations",
+      label: "Auto",
+      icon: Repeat,
+      active: /^\/automations(?:\/|$)/.test(relativePath),
+    },
+  ];
+  const activeRailIndex = railItems.findIndex((item) => item.active);
+  const activeRailStyle = activeRailIndex >= 0
+    ? ({ "--motion-rail-active-index": activeRailIndex } as CSSProperties)
+    : undefined;
 
   useEffect(() => {
     if (notificationsSettingsQuery.isLoading) return;
@@ -268,20 +332,31 @@ export function PrimaryRail({
         </DropdownMenu>
       </div>
 
-      <nav className="mt-2.5 flex w-full flex-1 flex-col items-center gap-0.5">
-        <RailNavItem
-          to="/messenger"
-          label="Messenger"
-          icon={MessageSquare}
-          badge={inboxBadge.inbox}
-          badgeTone="danger"
-          badgeTestId="rail-badge-messenger"
-        />
-        <RailNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} />
-        <RailNavItem to="/agents" label="Agents" icon={Bot} />
-        <RailNavItem to="/org" label="Organization" icon={Network} active={orgGroupActive} />
-        <RailNavItem to={issueEntryPath} label="Issue" icon={CircleCheckBig} />
-        <RailNavItem to="/automations" label="Auto" icon={Repeat} />
+      <nav
+        className="motion-rail-nav mt-2.5 flex w-full flex-1 flex-col items-center gap-0.5"
+        style={activeRailStyle}
+        data-active-index={activeRailIndex >= 0 ? activeRailIndex : undefined}
+        aria-label="Primary navigation"
+      >
+        {activeRailIndex >= 0 ? (
+          <span
+            data-testid="primary-rail-active-indicator"
+            className="motion-rail-active-indicator"
+            aria-hidden="true"
+          />
+        ) : null}
+        {railItems.map((item) => (
+          <RailNavItem
+            key={item.key}
+            to={item.to}
+            label={item.label}
+            icon={item.icon}
+            badge={item.badge}
+            badgeTone={item.badgeTone}
+            badgeTestId={item.badgeTestId}
+            active={item.active}
+          />
+        ))}
       </nav>
 
       <Button
