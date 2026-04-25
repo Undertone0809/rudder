@@ -59,6 +59,7 @@
       "!**/node_modules/@electron/**/*"
     ],
     "mac": {
+      "identity": null,
       "icon": "build/icon.icns",
       "target": [
         "dmg"
