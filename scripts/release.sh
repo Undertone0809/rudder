@@ -13,6 +13,7 @@ PUBLISH_SKILLS_PACKAGE_DIRS=(
   "packages/agent-runtimes/cursor-local"
   "packages/agent-runtimes/gemini-local"
   "packages/agent-runtimes/opencode-local"
+  "packages/agent-runtimes/pi-local"
 )
 
 channel=""
