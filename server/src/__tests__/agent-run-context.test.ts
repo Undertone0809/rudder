@@ -85,7 +85,7 @@ describe("agentRunContextService buildSceneContext", () => {
     }));
   });
 
-  it("omits the org resource section when the org catalog is empty", async () => {
+  it("omits the resources prompt when the selected project has no attached resources", async () => {
     mockListOrganizationResources.mockResolvedValue([]);
     mockListProjectResourceAttachments.mockResolvedValue([]);
 
@@ -113,10 +113,13 @@ describe("agentRunContextService buildSceneContext", () => {
     });
 
     expect(context.rudderWorkspace.orgResourcesPrompt).toBe("");
+    expect(context.rudderWorkspace.resourcesPrompt).toBe("");
     expect(context.rudderOrganizationResources).toEqual([]);
+    expect(mockListOrganizationResources).not.toHaveBeenCalled();
+    expect(mockListProjectResourceAttachments).toHaveBeenCalledWith(expect.anything(), "organization-1", "project-1");
   });
 
-  it("injects structured org resources into the agent run prompt", async () => {
+  it("does not inject structured org catalog resources into the agent run prompt by default", async () => {
     mockListOrganizationResources.mockResolvedValue([
       {
         id: "resource-1",
@@ -155,15 +158,10 @@ describe("agentRunContextService buildSceneContext", () => {
       runtimeConfig: {},
     });
 
-    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("## Organization Resources");
-    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Rudder repo");
-    expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Main monorepo checkout");
-    expect(context.rudderOrganizationResources).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        name: "Rudder repo",
-        locator: "~/projects/rudder",
-      }),
-    ]));
+    expect(context.rudderWorkspace.orgResourcesPrompt).toBe("");
+    expect(context.rudderWorkspace.resourcesPrompt).toBe("");
+    expect(context.rudderOrganizationResources).toEqual([]);
+    expect(mockListOrganizationResources).not.toHaveBeenCalled();
   });
 
   it("injects attached project resources into the compiled run prompt", async () => {
@@ -217,8 +215,10 @@ describe("agentRunContextService buildSceneContext", () => {
     });
 
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("## Project Resources");
+    expect(context.rudderWorkspace.resourcesPrompt).toContain("## Project Resources");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("[working_set] Rudder repo");
     expect(context.rudderWorkspace.orgResourcesPrompt).toContain("Work here first");
+    expect(context.rudderOrganizationResources).toEqual([]);
     expect(context.rudderProjectResources).toEqual(expect.arrayContaining([
       expect.objectContaining({
         projectId: "project-1",
@@ -227,6 +227,7 @@ describe("agentRunContextService buildSceneContext", () => {
         }),
       }),
     ]));
+    expect(mockListOrganizationResources).not.toHaveBeenCalled();
   });
 });
 
