@@ -95,14 +95,24 @@ async function main() {
   const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
   const productName = packageJson.build?.productName ?? packageJson.productName ?? packageJson.name;
   const version = packageJson.version;
-  const arch = process.arch;
+  const arch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
 
-  const appPath = path.join(releaseDir, `mac-${arch}`, `${productName}.app`);
+  const appPathCandidates = [
+    path.join(releaseDir, `mac-${arch}`, `${productName}.app`),
+    path.join(releaseDir, "mac", `${productName}.app`),
+  ];
+  let appPath;
+  for (const candidate of appPathCandidates) {
+    if (await exists(candidate)) {
+      appPath = candidate;
+      break;
+    }
+  }
   const outputPath = path.join(releaseDir, `${productName}-${version}-${arch}.dmg`);
   const blockmapPath = `${outputPath}.blockmap`;
 
-  if (!(await exists(appPath))) {
-    throw new Error(`packaged app not found: ${appPath}`);
+  if (!appPath) {
+    throw new Error(`packaged app not found in: ${appPathCandidates.join(", ")}`);
   }
 
   const stageDir = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-dmg-stage."));
