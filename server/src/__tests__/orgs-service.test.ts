@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
+  activityLog,
   agentConfigRevisions,
   agents,
   applyPendingMigrations,
@@ -17,6 +18,7 @@ import {
   executionWorkspaces,
   issueDocuments,
   issues,
+  heartbeatRuns,
   labels,
   organizationSkills,
   organizations,
@@ -124,6 +126,7 @@ describe("organization service", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(activityLog);
     await db.delete(workspaceOperations);
     await db.delete(workspaceRuntimeServices);
     await db.delete(executionWorkspaces);
@@ -133,6 +136,7 @@ describe("organization service", () => {
     await db.delete(issues);
     await db.delete(projectWorkspaces);
     await db.delete(projects);
+    await db.delete(heartbeatRuns);
     await db.delete(agentConfigRevisions);
     await db.delete(organizationSkills);
     await db.delete(budgetPolicies);
@@ -230,6 +234,7 @@ describe("organization service", () => {
     const executionWorkspaceId = randomUUID();
     const workspaceOperationId = randomUUID();
     const runtimeServiceId = randomUUID();
+    const heartbeatRunId = randomUUID();
 
     await db.insert(organizations).values({
       id: orgId,
@@ -260,6 +265,29 @@ describe("organization service", () => {
       changedKeys: ["runtimeConfig"],
       beforeConfig: { runtimeConfig: {} },
       afterConfig: { runtimeConfig: { mode: "seeded" } },
+    });
+
+    await db.insert(heartbeatRuns).values({
+      id: heartbeatRunId,
+      orgId,
+      agentId,
+      invocationSource: "manual",
+      status: "succeeded",
+      startedAt: new Date("2026-04-25T12:00:00.000Z"),
+      finishedAt: new Date("2026-04-25T12:00:01.000Z"),
+    });
+
+    await db.insert(activityLog).values({
+      id: randomUUID(),
+      orgId,
+      actorType: "agent",
+      actorId: agentId,
+      agentId,
+      runId: heartbeatRunId,
+      action: "heartbeat.completed",
+      entityType: "heartbeat_run",
+      entityId: heartbeatRunId,
+      details: { status: "succeeded" },
     });
 
     await db.insert(projects).values({

@@ -4,6 +4,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
+import { useToast } from "../context/ToastContext";
 import { organizationsApi } from "../api/orgs";
 import { queryKeys } from "../lib/queryKeys";
 import { formatCents, relativeTime } from "../lib/utils";
@@ -42,6 +43,7 @@ export function Organizations() {
   const { openOnboarding } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { t } = useI18n();
+  const { pushToast } = useToast();
   const queryClient = useQueryClient();
 
   const { data: stats } = useQuery({
@@ -65,10 +67,23 @@ export function Organizations() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => organizationsApi.remove(id),
-    onSuccess: () => {
+    onSuccess: (_, id) => {
+      const deletedOrganization = organizations.find((organization) => organization.id === id);
       queryClient.invalidateQueries({ queryKey: queryKeys.organizations.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.organizations.stats });
       setConfirmDeleteId(null);
+      pushToast({
+        title: "Organization deleted",
+        body: deletedOrganization?.name,
+        tone: "success",
+      });
+    },
+    onError: (err) => {
+      pushToast({
+        title: "Failed to delete organization",
+        body: err instanceof Error ? err.message : "Try again or check the server logs.",
+        tone: "error",
+      });
     },
   });
 
@@ -194,6 +209,7 @@ export function Organizations() {
                       <Button
                         variant="ghost"
                         size="icon-xs"
+                        aria-label={`Rename ${organization.name}`}
                         className="text-muted-foreground opacity-0 group-hover:opacity-100"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -218,6 +234,7 @@ export function Organizations() {
                       <Button
                         variant="ghost"
                         size="icon-xs"
+                        aria-label={`Open actions for ${organization.name}`}
                         className="text-muted-foreground opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100"
                       >
                         <MoreHorizontal className="h-4 w-4" />
@@ -279,7 +296,11 @@ export function Organizations() {
                   onClick={(e) => e.stopPropagation()}
                 >
                   <p className="text-sm text-destructive font-medium">
-                    Delete this organization and all its data? This cannot be undone.
+                    {deleteMutation.isError
+                      ? deleteMutation.error instanceof Error
+                        ? deleteMutation.error.message
+                        : "Failed to delete organization."
+                      : "Delete this organization and all its data? This cannot be undone."}
                   </p>
                   <div className="flex items-center gap-2 ml-4 shrink-0">
                     <Button
