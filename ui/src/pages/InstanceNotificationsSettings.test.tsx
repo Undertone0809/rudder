@@ -11,6 +11,7 @@ import { InstanceNotificationsSettings } from "./InstanceNotificationsSettings";
 
 const desktopShellMock = {
   getBootState: vi.fn(),
+  getSystemPermissions: vi.fn(),
   onBootState: vi.fn(),
   openExternal: vi.fn(),
   openNotificationSettings: vi.fn(),
@@ -76,7 +77,6 @@ vi.mock("@/context/I18nContext", () => ({
           "Permission: {{permission}}. Alerts: {{notificationsSupport}}.",
         "notifications.permission.access.summaryDesktop":
           "Permission: {{permission}}. Native alerts: {{notificationsSupport}}.",
-        "notifications.permission.access.systemManaged": "System-managed",
         "notifications.permission.access.default": "Rudder has not asked for access yet.",
         "notifications.permission.access.denied.browser": "Browser denied.",
         "notifications.permission.access.requesting": "Requesting...",
@@ -103,8 +103,10 @@ vi.mock("@/context/I18nContext", () => ({
         "systemPermissions.status.authorized": "Authorized",
         "systemPermissions.status.needsAccess": "Needs access",
         "systemPermissions.status.blocked": "Blocked",
-        "systemPermissions.status.systemManaged": "System managed",
+        "systemPermissions.status.checking": "Checking",
         "systemPermissions.status.desktopOnly": "Desktop app only",
+        "systemPermissions.status.perApp": "Per app",
+        "systemPermissions.status.unknown": "Unknown",
         "systemPermissions.status.unavailable": "Unavailable",
         "systemPermissions.action.openSettings": "Open settings",
         "systemPermissions.action.desktopOnly": "Desktop only",
@@ -115,7 +117,7 @@ vi.mock("@/context/I18nContext", () => ({
         "systemPermissions.permission.accessibility.title": "Accessibility",
         "systemPermissions.permission.accessibility.description": "Observe and control app UI.",
         "systemPermissions.permission.automation.title": "Automation",
-        "systemPermissions.permission.automation.description": "Coordinate macOS automation.",
+        "systemPermissions.permission.automation.description": "macOS grants Automation per target app.",
         "systemPermissions.permission.notifications.title": "Notifications",
         "systemPermissions.permission.notifications.description": "System notification access for Rudder alerts.",
         "systemPermissions.permission.notifications.inboxLabel": "Inbox activity alerts",
@@ -152,6 +154,7 @@ afterEach(() => {
   cleanupFn = null;
   desktopShellValue = null;
   desktopShellMock.getBootState.mockReset();
+  desktopShellMock.getSystemPermissions.mockReset();
   desktopShellMock.onBootState.mockReset();
   desktopShellMock.openExternal.mockReset();
   desktopShellMock.openNotificationSettings.mockReset();
@@ -209,10 +212,20 @@ describe("InstanceNotificationsSettings", () => {
   it("shows desktop system-settings actions instead of browser permission action in the desktop shell", async () => {
     desktopShellValue = desktopShellMock;
     desktopShellMock.onBootState.mockReturnValue(() => {});
+    desktopShellMock.getSystemPermissions.mockResolvedValue({
+      fullDiskAccess: "needs_access",
+      accessibility: "authorized",
+      automation: "per_app",
+    });
     desktopShellMock.getBootState.mockResolvedValue({
       capabilities: {
         notifications: true,
         badgeCount: true,
+      },
+      permissions: {
+        fullDiskAccess: "needs_access",
+        accessibility: "authorized",
+        automation: "per_app",
       },
       diagnostics: {
         lastBadgeCount: 2,
@@ -233,7 +246,12 @@ describe("InstanceNotificationsSettings", () => {
 
     expect(container.textContent).toContain("System permissions");
     expect(container.textContent).toContain("Full Disk Access");
-    expect(container.textContent).toContain("System managed");
+    expect(container.textContent).toContain("Needs access");
+    expect(container.textContent).toContain("Accessibility");
+    expect(container.textContent).toContain("Authorized");
+    expect(container.textContent).toContain("Automation");
+    expect(container.textContent).toContain("Per app");
+    expect(container.textContent).not.toContain("System managed");
     expect(container.textContent).toContain("Open settings");
     expect(container.textContent).not.toContain("Send test notification");
     expect(container.textContent).not.toContain("Preview badge");
@@ -244,10 +262,20 @@ describe("InstanceNotificationsSettings", () => {
   it("hides desktop debug actions outside the dev desktop shell", async () => {
     desktopShellValue = desktopShellMock;
     desktopShellMock.onBootState.mockReturnValue(() => {});
+    desktopShellMock.getSystemPermissions.mockResolvedValue({
+      fullDiskAccess: "authorized",
+      accessibility: "authorized",
+      automation: "per_app",
+    });
     desktopShellMock.getBootState.mockResolvedValue({
       capabilities: {
         notifications: true,
         badgeCount: true,
+      },
+      permissions: {
+        fullDiskAccess: "authorized",
+        accessibility: "authorized",
+        automation: "per_app",
       },
       diagnostics: {
         lastBadgeCount: 2,
@@ -267,6 +295,9 @@ describe("InstanceNotificationsSettings", () => {
     });
 
     expect(container.textContent).toContain("System permissions");
+    expect(container.textContent).toContain("Authorized");
+    expect(container.textContent).toContain("Per app");
+    expect(container.textContent).not.toContain("System managed");
     expect(container.textContent).toContain("Open settings");
     expect(container.textContent).not.toContain("Send test notification");
     expect(container.textContent).not.toContain("Preview badge");

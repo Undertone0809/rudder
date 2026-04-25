@@ -434,6 +434,11 @@ async function verifySettingsOverlayFlow(page, companyId, issuePrefix) {
   await modal.getByText("Chat notifications").waitFor({ state: "visible", timeout: 15_000 });
   await modal.getByRole("button", { name: "Open settings" }).first().waitFor({ state: "visible", timeout: 15_000 });
   assert.equal(
+    await modal.getByText("System managed").count(),
+    0,
+    "prod-local desktop smoke should show concrete permission status instead of System managed",
+  );
+  assert.equal(
     await modal.getByText("App icon badge").count(),
     0,
     "prod-local desktop smoke should not expose the app icon badge settings row",

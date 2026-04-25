@@ -289,7 +289,6 @@ export const zhCN: Messages = {
     "权限：{{permission}}。提醒：{{notificationsSupport}}。",
   "notifications.permission.access.summaryDesktop":
     "权限：{{permission}}。原生提醒：{{notificationsSupport}}。",
-  "notifications.permission.access.systemManaged": "由系统管理",
   "notifications.permission.access.default":
     "Rudder 还没有请求通知权限，因此未读 inbox 提醒可能不会出现。",
   "notifications.permission.access.denied.desktop":
@@ -322,8 +321,10 @@ export const zhCN: Messages = {
   "systemPermissions.status.authorized": "已授权",
   "systemPermissions.status.needsAccess": "需要授权",
   "systemPermissions.status.blocked": "已阻止",
-  "systemPermissions.status.systemManaged": "由系统管理",
+  "systemPermissions.status.checking": "检查中",
   "systemPermissions.status.desktopOnly": "仅桌面应用",
+  "systemPermissions.status.perApp": "按应用授权",
+  "systemPermissions.status.unknown": "未知",
   "systemPermissions.status.unavailable": "不可用",
   "systemPermissions.action.openSettings": "打开设置",
   "systemPermissions.action.desktopOnly": "仅桌面可用",
@@ -334,7 +335,7 @@ export const zhCN: Messages = {
   "systemPermissions.permission.accessibility.title": "辅助功能",
   "systemPermissions.permission.accessibility.description": "让 Rudder 驱动的桌面自动化在需要时观察并控制应用界面。",
   "systemPermissions.permission.automation.title": "自动化",
-  "systemPermissions.permission.automation.description": "协调获批的 macOS 本地应用和工具自动化。",
+  "systemPermissions.permission.automation.description": "macOS 会按目标应用分别授权自动化；可打开此面板查看具体应用条目。",
   "systemPermissions.permission.notifications.title": "通知",
   "systemPermissions.permission.notifications.description": "Rudder 通知的系统访问权限。Issue 和 chat 通知可以在下方分别控制。",
   "systemPermissions.permission.notifications.inboxLabel": "Inbox 活动提醒",

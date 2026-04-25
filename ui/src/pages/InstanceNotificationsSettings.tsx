@@ -33,6 +33,8 @@ import {
 import {
   readDesktopShell,
   type DesktopBootState,
+  type DesktopSystemPermissionStatus,
+  type DesktopSystemPermissions,
 } from "@/lib/desktop-shell";
 
 const DEFAULT_NOTIFICATION_SETTINGS = {
@@ -117,6 +119,26 @@ function getBrowserNotificationStatus(permission: DesktopNotificationPermissionS
       return { labelKey: "systemPermissions.status.needsAccess", tone: "warn" };
     default:
       return { labelKey: "systemPermissions.status.unavailable", tone: "muted" };
+  }
+}
+
+function getDesktopSystemPermissionStatus(status: DesktopSystemPermissionStatus | undefined): {
+  labelKey: TranslationKey;
+  tone: PermissionStatusTone;
+} {
+  switch (status) {
+    case "authorized":
+      return { labelKey: "systemPermissions.status.authorized", tone: "ok" };
+    case "needs_access":
+      return { labelKey: "systemPermissions.status.needsAccess", tone: "warn" };
+    case "per_app":
+      return { labelKey: "systemPermissions.status.perApp", tone: "muted" };
+    case "unsupported":
+      return { labelKey: "systemPermissions.status.unavailable", tone: "muted" };
+    case "unknown":
+      return { labelKey: "systemPermissions.status.unknown", tone: "muted" };
+    default:
+      return { labelKey: "systemPermissions.status.checking", tone: "muted" };
   }
 }
 
@@ -206,6 +228,7 @@ export function InstanceNotificationsSettings() {
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
   const [desktopBootState, setDesktopBootState] = useState<DesktopBootState | null>(null);
+  const [systemPermissionStatuses, setSystemPermissionStatuses] = useState<DesktopSystemPermissions | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<DesktopNotificationPermissionState>(
     () => readDesktopNotificationPermission(),
   );
@@ -223,9 +246,29 @@ export function InstanceNotificationsSettings() {
     setNotificationPermission(readDesktopNotificationPermission());
     if (!desktopShell) return undefined;
 
-    const unsubscribe = desktopShell.onBootState(setDesktopBootState);
-    void desktopShell.getBootState().then(setDesktopBootState).catch(() => setDesktopBootState(null));
-    return unsubscribe;
+    const applyBootState = (nextBootState: DesktopBootState) => {
+      setDesktopBootState(nextBootState);
+      if (nextBootState.permissions) setSystemPermissionStatuses(nextBootState.permissions);
+    };
+    const refreshSystemPermissions = () => {
+      if (typeof desktopShell.getSystemPermissions !== "function") {
+        setSystemPermissionStatuses(null);
+        return;
+      }
+      void desktopShell
+        .getSystemPermissions()
+        .then(setSystemPermissionStatuses)
+        .catch(() => setSystemPermissionStatuses(null));
+    };
+
+    const unsubscribe = desktopShell.onBootState(applyBootState);
+    void desktopShell.getBootState().then(applyBootState).catch(() => setDesktopBootState(null));
+    refreshSystemPermissions();
+    window.addEventListener("focus", refreshSystemPermissions);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("focus", refreshSystemPermissions);
+    };
   }, []);
 
   const notificationsQuery = useQuery({
@@ -310,14 +353,9 @@ export function InstanceNotificationsSettings() {
   const notificationSupported = isDesktopShell
     ? (desktopBootState?.capabilities?.notifications ?? false)
     : notificationPermission !== "unsupported";
-  const notificationStatus: { labelKey: TranslationKey; tone: PermissionStatusTone } = isDesktopShell
-    ? {
-      labelKey: notificationSupported
-        ? "systemPermissions.status.systemManaged"
-        : "systemPermissions.status.unavailable",
-      tone: notificationSupported ? "muted" : "warn",
-    }
-    : getBrowserNotificationStatus(notificationPermission);
+  const notificationStatus: { labelKey: TranslationKey; tone: PermissionStatusTone } = notificationSupported
+    ? getBrowserNotificationStatus(notificationPermission)
+    : { labelKey: "systemPermissions.status.unavailable", tone: "warn" };
   const showBrowserNotificationRequest = !isDesktopShell && notificationPermission === "default";
   const showDesktopNotificationSettings = isDesktopShell;
   const showBrowserManagedNotice = !isDesktopShell && notificationPermission !== "default";
@@ -344,7 +382,7 @@ export function InstanceNotificationsSettings() {
         <div className="overflow-hidden rounded-[var(--radius-md)] border border-border/70 bg-card/45">
           {SYSTEM_PERMISSIONS.map((permission) => {
             const status: { labelKey: TranslationKey; tone: PermissionStatusTone } = isDesktopShell
-              ? { labelKey: "systemPermissions.status.systemManaged", tone: "muted" }
+              ? getDesktopSystemPermissionStatus(systemPermissionStatuses?.[permission.id])
               : { labelKey: "systemPermissions.status.desktopOnly", tone: "muted" };
             const showSystemSettingsAction = isDesktopShell && Boolean(permission.macSettingsUrl);
 

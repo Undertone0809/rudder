@@ -312,7 +312,6 @@ export const en = {
     "Permission: {{permission}}. Alerts: {{notificationsSupport}}.",
   "notifications.permission.access.summaryDesktop":
     "Permission: {{permission}}. Native alerts: {{notificationsSupport}}.",
-  "notifications.permission.access.systemManaged": "System-managed",
   "notifications.permission.access.default":
     "Rudder has not asked for notification access yet, so unread inbox alerts may not appear.",
   "notifications.permission.access.denied.desktop":
@@ -349,8 +348,10 @@ export const en = {
   "systemPermissions.status.authorized": "Authorized",
   "systemPermissions.status.needsAccess": "Needs access",
   "systemPermissions.status.blocked": "Blocked",
-  "systemPermissions.status.systemManaged": "System managed",
+  "systemPermissions.status.checking": "Checking",
   "systemPermissions.status.desktopOnly": "Desktop app only",
+  "systemPermissions.status.perApp": "Per app",
+  "systemPermissions.status.unknown": "Unknown",
   "systemPermissions.status.unavailable": "Unavailable",
   "systemPermissions.action.openSettings": "Open settings",
   "systemPermissions.action.desktopOnly": "Desktop only",
@@ -364,7 +365,7 @@ export const en = {
     "Let Rudder-driven desktop automation observe and control app UI when needed.",
   "systemPermissions.permission.automation.title": "Automation",
   "systemPermissions.permission.automation.description":
-    "Coordinate approved macOS automation between local apps and tools.",
+    "macOS grants Automation per target app; open this pane to review the app-specific entries.",
   "systemPermissions.permission.notifications.title": "Notifications",
   "systemPermissions.permission.notifications.description":
     "System notification access for Rudder alerts. Issue and chat notifications are controlled below.",
