@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   ChevronRight,
+  CirclePause,
   Clock3,
   Copy,
   Play,
@@ -532,54 +533,6 @@ export function AutomationDetail() {
     },
   });
 
-  useEffect(() => {
-    if (!selectedOrganizationId || !automation) {
-      setHeaderActions(null);
-      return;
-    }
-
-    const isArchived = automation.status === "archived";
-    setHeaderActions(
-      <>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-muted-foreground hover:text-destructive"
-          disabled={deleteAutomation.isPending || isArchived}
-          onClick={() => {
-            const confirmed = window.confirm(
-              `Delete "${automation.title}"? It will be archived and stop new runs.`,
-            );
-            if (!confirmed) return;
-            deleteAutomation.mutate();
-          }}
-        >
-          <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-          {deleteAutomation.isPending ? "Deleting..." : "Delete"}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={runAutomation.isPending || isArchived}
-          onClick={() => runAutomation.mutate()}
-        >
-          <Play className="mr-1.5 h-3.5 w-3.5" />
-          {runAutomation.isPending ? "Starting..." : "Run now"}
-        </Button>
-      </>,
-    );
-
-    return () => setHeaderActions(null);
-  }, [
-    automation?.id,
-    automation?.status,
-    automation?.title,
-    deleteAutomation.isPending,
-    runAutomation.isPending,
-    selectedOrganizationId,
-    setHeaderActions,
-  ]);
-
   const updateAutomationStatus = useMutation({
     mutationFn: (status: string) => automationsApi.update(automationId!, { status }),
     onSuccess: async (_data, status) => {
@@ -601,6 +554,75 @@ export function AutomationDetail() {
       });
     },
   });
+
+  useEffect(() => {
+    if (!selectedOrganizationId || !automation) {
+      setHeaderActions(null);
+      return;
+    }
+
+    const isArchived = automation.status === "archived";
+    const isEnabled = automation.status === "active";
+    const statusActionLabel = isArchived ? "Archived" : isEnabled ? "Pause automation" : "Enable automation";
+    const StatusIcon = updateAutomationStatus.isPending ? RefreshCw : isEnabled ? CirclePause : Repeat;
+
+    setHeaderActions(
+      <>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={statusActionLabel}
+          title={statusActionLabel}
+          disabled={updateAutomationStatus.isPending || isArchived}
+          onClick={() => updateAutomationStatus.mutate(isEnabled ? "paused" : "active")}
+        >
+          <StatusIcon className={updateAutomationStatus.isPending ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="text-muted-foreground hover:text-destructive"
+          aria-label="Delete automation"
+          title="Delete automation"
+          disabled={deleteAutomation.isPending || isArchived}
+          onClick={() => {
+            const confirmed = window.confirm(
+              `Delete "${automation.title}"? It will be archived and stop new runs.`,
+            );
+            if (!confirmed) return;
+            deleteAutomation.mutate();
+          }}
+        >
+          {deleteAutomation.isPending ? (
+            <RefreshCw className="h-4 w-4 animate-spin" />
+          ) : (
+            <Trash2 className="h-4 w-4" />
+          )}
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          className="min-w-[92px] border-white/70 bg-white px-3 text-black shadow-none hover:bg-white/90"
+          disabled={runAutomation.isPending || isArchived}
+          onClick={() => runAutomation.mutate()}
+        >
+          <Play className="h-3.5 w-3.5" />
+          {runAutomation.isPending ? "Starting..." : "Run now"}
+        </Button>
+      </>,
+    );
+
+    return () => setHeaderActions(null);
+  }, [
+    automation?.id,
+    automation?.status,
+    automation?.title,
+    deleteAutomation.isPending,
+    runAutomation.isPending,
+    selectedOrganizationId,
+    setHeaderActions,
+    updateAutomationStatus.isPending,
+  ]);
 
   const createTrigger = useMutation({
     mutationFn: async (): Promise<AutomationTriggerResponse> => {
@@ -783,6 +805,7 @@ export function AutomationDetail() {
     })[0] ?? automation.triggers[0] ?? null;
   const latestRun = automationRuns?.[0] ?? automation.recentRuns[0] ?? null;
   const activeIssueLabel = automation.activeIssue?.identifier ?? automation.activeIssue?.id.slice(0, 8) ?? null;
+  const canCreateTrigger = newTrigger.kind !== "schedule" || newTrigger.cronExpression.trim().length > 0;
 
   return (
     <div className="pb-8" data-testid="automation-detail-shell">
@@ -864,6 +887,14 @@ export function AutomationDetail() {
               data-testid="automation-add-trigger-card"
               className="space-y-3 rounded-md border border-border/70 bg-muted/20 p-3"
             >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-muted-foreground">
+                  Add at least one trigger so the automation has a clear way to start work.
+                </p>
+                <Badge variant="outline" className="text-muted-foreground">
+                  Triggers autosave after edits
+                </Badge>
+              </div>
               <div className="grid gap-3 lg:grid-cols-[150px_minmax(0,1fr)]">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Kind</Label>
@@ -913,7 +944,7 @@ export function AutomationDetail() {
                 )}
               </div>
               <div className="flex justify-end">
-                <Button size="sm" onClick={() => createTrigger.mutate()} disabled={createTrigger.isPending}>
+                <Button size="sm" onClick={() => createTrigger.mutate()} disabled={createTrigger.isPending || !canCreateTrigger}>
                   {createTrigger.isPending ? "Adding..." : "Add trigger"}
                 </Button>
               </div>
@@ -968,9 +999,9 @@ export function AutomationDetail() {
           </section>
         </main>
 
-        <aside className="space-y-8 border-t border-border/70 pt-5 lg:border-l lg:border-t-0 lg:pl-7 lg:pr-2 lg:pt-8">
+        <aside className="space-y-8 border-t border-border/70 pt-5 lg:sticky lg:top-24 lg:self-start lg:border-l lg:border-t-0 lg:pl-7 lg:pr-2 lg:pt-8">
           <SidebarSection title="Status">
-            <SidebarRow label="Status">
+            <SidebarRow label="State">
               <div className="flex items-center justify-end gap-2">
                 <span className={automationLabelClassName}>{automationLabel}</span>
                 <ToggleSwitch

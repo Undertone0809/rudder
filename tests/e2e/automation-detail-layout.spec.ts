@@ -70,17 +70,22 @@ test.describe("Automation detail layout", () => {
     const shell = page.getByTestId("automation-detail-shell");
     const addTriggerCard = page.getByTestId("automation-add-trigger-card");
     const triggersList = page.getByTestId("automation-triggers-list");
-    const deleteButton = headerActions.getByRole("button", { name: "Delete" });
+    const statusButton = headerActions.getByRole("button", { name: "Pause automation" });
+    const deleteButton = headerActions.getByRole("button", { name: "Delete automation" });
     const runButton = headerActions.getByRole("button", { name: "Run now" });
 
     await expect(headerActions).toBeVisible();
     await expect(shell).toBeVisible();
     await expect(addTriggerCard).toBeVisible();
     await expect(triggersList).toBeVisible();
+    await expect(statusButton).toBeVisible();
     await expect(deleteButton).toBeVisible();
     await expect(runButton).toBeVisible();
+    await expect(page.getByRole("button", { name: "Run now" })).toHaveCount(1);
     await expect(page.getByRole("button", { name: /^Save$/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
+    await expect(page.getByText(/Automatic triggers/)).toHaveCount(0);
+    await expect(page.getByText(/Changes save automatically/)).toHaveCount(0);
     await expect(addTriggerCard.getByRole("button", { name: "Add trigger" })).toBeVisible();
 
     const assigneeSelector = page.getByRole("button", { name: /Automation Layout Agent/ });
@@ -107,6 +112,7 @@ test.describe("Automation detail layout", () => {
     const viewport = page.viewportSize();
     const shellBox = await shell.boundingBox();
     const headerActionsBox = await headerActions.boundingBox();
+    const statusButtonBox = await statusButton.boundingBox();
     const deleteButtonBox = await deleteButton.boundingBox();
     const runButtonBox = await runButton.boundingBox();
     const addTriggerBox = await addTriggerCard.boundingBox();
@@ -115,11 +121,13 @@ test.describe("Automation detail layout", () => {
     expect(viewport).not.toBeNull();
     expect(shellBox).not.toBeNull();
     expect(headerActionsBox).not.toBeNull();
+    expect(statusButtonBox).not.toBeNull();
     expect(deleteButtonBox).not.toBeNull();
     expect(runButtonBox).not.toBeNull();
     expect(addTriggerBox).not.toBeNull();
     expect(triggersListBox).not.toBeNull();
 
+    expect(statusButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
     expect(deleteButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
     expect(runButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
     expect(runButtonBox!.x).toBeGreaterThan(deleteButtonBox!.x);
