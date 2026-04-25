@@ -303,14 +303,14 @@ function KanbanCard({
       data-live={isLive ? "true" : "false"}
       data-just-dropped={justDropped ? "true" : "false"}
       className={cn(
-        "motion-kanban-card rounded-[calc(var(--radius-sm)-1px)] border bg-card p-2.5 cursor-grab active:cursor-grabbing",
+        "motion-kanban-card overflow-hidden rounded-[calc(var(--radius-sm)-1px)] border bg-card p-2.5 cursor-grab active:cursor-grabbing",
         isDragging && !isOverlay ? "opacity-30" : "",
         isOverlay ? "shadow-lg ring-1 ring-primary/20" : "hover:shadow-sm",
       )}
     >
       <Link
         to={`/issues/${issue.identifier ?? issue.id}`}
-        className="block no-underline text-inherit"
+        className="block min-w-0 no-underline text-inherit"
         onClick={(e) => {
           // Prevent navigation during drag
           if (isDragging) e.preventDefault();
@@ -332,19 +332,23 @@ function KanbanCard({
         ) : null}
         <p className="text-sm leading-snug line-clamp-2 mb-2">{issue.title}</p>
         {(showPriority || showAssignee) && (
-          <div className="flex items-center gap-2">
+          <div data-slot="kanban-card-metadata" className="flex min-w-0 items-center gap-2 overflow-hidden">
             {showPriority ? <PriorityIcon priority={issue.priority} /> : null}
             {showAssignee && issue.assigneeAgentId ? (
               agent ? (
-                <Identity name={formatChatAgentLabel(agent)} size="xs" />
+                <Identity
+                  name={formatChatAgentLabel(agent)}
+                  size="xs"
+                  className="min-w-0 flex-1 text-muted-foreground"
+                />
               ) : (
-                <span className="text-xs text-muted-foreground font-mono">
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground font-mono">
                   {issue.assigneeAgentId.slice(0, 8)}
                 </span>
               )
             ) : null}
             {showAssignee && issue.assigneeUserId ? (
-              <span className="inline-flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+              <span className="inline-flex min-w-0 flex-1 items-center gap-1 text-xs text-muted-foreground">
                 <User className="h-3 w-3 shrink-0" />
                 <span className="truncate">
                   {formatAssigneeUserLabel(issue.assigneeUserId, currentUserId) ?? "User"}
