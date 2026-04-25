@@ -51,15 +51,14 @@ async function rewritePublishedManifest(packageDir) {
 }
 
 async function normalizeSelfReference(packageDir) {
-  const selfReferencePath = path.join(
-    packageDir,
-    "node_modules",
-    ".pnpm",
-    "node_modules",
-    "@rudder",
-    "server",
-  );
-  await fs.rm(selfReferencePath, { force: true });
+  const selfReferencePaths = [
+    path.join(packageDir, "node_modules", ".pnpm", "node_modules", "@rudderhq", "server"),
+    path.join(packageDir, "node_modules", ".pnpm", "node_modules", "@rudder", "server"),
+    path.join(packageDir, "node_modules", "@rudderhq", "server"),
+    path.join(packageDir, "node_modules", "@rudder", "server"),
+  ];
+
+  await Promise.all(selfReferencePaths.map((selfReferencePath) => fs.rm(selfReferencePath, { force: true })));
 }
 
 async function main() {

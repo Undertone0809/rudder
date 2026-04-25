@@ -4,8 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Stable release tag to attach desktop artifacts to, for example v0.1.0"
+        description: "Release tag to attach desktop artifacts to, for example v0.1.0 or canary/v0.1.0-canary.1"
         required: true
+      source_ref:
+        description: "Optional source ref to build from when recovering an existing release tag"
+        required: false
   push:
     tags:
       - "v*"
@@ -46,7 +49,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.release_tag || github.ref_name }}
+          ref: ${{ inputs.source_ref || inputs.release_tag || github.ref_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -91,7 +94,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.release_tag || github.ref_name }}
+          ref: ${{ inputs.source_ref || inputs.release_tag || github.ref_name }}
 
       - uses: actions/download-artifact@v4
         with:

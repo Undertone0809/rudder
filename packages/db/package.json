@@ -35,7 +35,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc && mkdir -p dist/migrations && cp -R src/migrations/. dist/migrations/",
+    "build": "node ../../scripts/build-tsc-copy-assets.mjs --clean dist --copy src/migrations dist/migrations",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "generate": "tsc -p tsconfig.json && drizzle-kit generate",

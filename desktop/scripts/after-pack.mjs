@@ -155,12 +155,16 @@ export default async function afterPack(context) {
     : path.join(context.appOutDir, "resources");
   const appNodeModulesDir = path.join(resourcesDir, "app", "node_modules");
   const rudderPackagesDir = path.join(appNodeModulesDir, "@rudder");
-  const packagedServerRudderPackagesDir = path.join(resourcesDir, "server-package", "node_modules", "@rudder");
+  const packagedServerRudderPackagesDirs = [
+    path.join(resourcesDir, "server-package", "node_modules", "@rudderhq"),
+    path.join(resourcesDir, "server-package", "node_modules", "@rudder"),
+  ];
 
   await copyOptionalDependencies(appDir, appNodeModulesDir);
   await copyPackagedServerBundle(projectDir, resourcesDir);
 
-  if (await exists(packagedServerRudderPackagesDir)) {
+  for (const packagedServerRudderPackagesDir of packagedServerRudderPackagesDirs) {
+    if (!(await exists(packagedServerRudderPackagesDir))) continue;
     const entries = await fs.readdir(packagedServerRudderPackagesDir, { withFileTypes: true });
     await Promise.all(
       entries
