@@ -63,7 +63,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build desktop installer
+      - name: Build desktop portable asset
         env:
           RUDDER_DESKTOP_TARGET_ARCH: ${{ matrix.arch }}
         run: |

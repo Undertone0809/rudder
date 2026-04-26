@@ -58,8 +58,9 @@ export function createProgram(): Command {
     .option("--no-desktop", "Skip desktop app installation")
     .option("--version <version>", "Rudder version to start (default: current CLI version)")
     .option("--repo <owner/repo>", "GitHub repository that hosts desktop releases")
-    .option("--output-dir <path>", "Directory for the downloaded desktop installer")
-    .option("--no-open", "Download the desktop installer without opening it")
+    .option("--output-dir <path>", "Directory for downloaded desktop release assets")
+    .option("--desktop-install-dir <path>", "Directory for the portable Desktop install")
+    .option("--no-open", "Install Desktop without launching it")
     .option("--no-version-check", "Skip checking npm for a newer Rudder CLI version")
     .option("--dry-run", "Print the start actions without changing the machine", false)
     .action(startCommand);

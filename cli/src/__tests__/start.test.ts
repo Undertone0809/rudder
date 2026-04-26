@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   CLI_NPM_PACKAGE_NAME,
@@ -10,12 +13,20 @@ import {
   resolvePersistentCliInstallSpec,
 } from "../install.js";
 import {
+  assertChecksumMatch,
+  buildForceQuitCommand,
+  buildLinuxDesktopEntry,
   compareStableSemver,
   getCliUpdateNotice,
+  isInstalledDesktopCurrent,
+  isPersistentCliVersionCurrent,
   parseChecksumFile,
+  resolveAssetChecksum,
   resolveCliInstallSpec,
   resolveCurrentCliVersion,
   resolveDesktopAssetTarget,
+  resolveDefaultDesktopInstallRoot,
+  resolveDesktopInstallPaths,
   resolveDesktopReleaseTag,
   selectChecksumAsset,
   selectDesktopAsset,
@@ -175,48 +186,54 @@ describe("desktop start command helpers", () => {
 
   it("rejects unsupported prerelease desktop starts", () => {
     expect(() => resolveDesktopReleaseTag("0.3.1-beta.2")).toThrow(
-      "Desktop installer lookup requires a release version",
+      "Desktop release lookup requires a release version",
     );
   });
 
-  it("resolves platform installer targets", () => {
+  it("resolves platform portable asset targets", () => {
     expect(resolveDesktopAssetTarget("darwin", "arm64")).toEqual({
       platform: "macos",
       arch: "arm64",
-      extension: ".dmg",
+      extension: ".zip",
     });
     expect(resolveDesktopAssetTarget("win32", "x64")).toEqual({
       platform: "windows",
       arch: "x64",
-      extension: ".exe",
+      extension: ".zip",
+    });
+    expect(resolveDesktopAssetTarget("win32", "arm64")).toEqual({
+      platform: "windows",
+      arch: "x64",
+      extension: ".zip",
     });
     expect(resolveDesktopAssetTarget("linux", "x64")).toEqual({
       platform: "linux",
       arch: "x64",
       extension: ".AppImage",
     });
+    expect(() => resolveDesktopAssetTarget("linux", "arm64")).toThrow("does not publish portable assets");
   });
 
   it("selects the best matching desktop asset by platform and architecture", () => {
     const assets = [
-      { name: "Rudder-0.3.1-macos-x64.dmg", browser_download_url: "https://example.test/macos-x64" },
-      { name: "Rudder-0.3.1-macos-arm64.dmg", browser_download_url: "https://example.test/macos-arm64" },
-      { name: "Rudder-0.3.1-windows-x64.exe", browser_download_url: "https://example.test/windows" },
+      { name: "Rudder-0.3.1-macos-x64-portable.zip", browser_download_url: "https://example.test/macos-x64" },
+      { name: "Rudder-0.3.1-macos-arm64-portable.zip", browser_download_url: "https://example.test/macos-arm64" },
+      { name: "Rudder-0.3.1-windows-x64-portable.zip", browser_download_url: "https://example.test/windows" },
     ];
 
-    expect(selectDesktopAsset(assets, { platform: "macos", arch: "arm64", extension: ".dmg" })?.name).toBe(
-      "Rudder-0.3.1-macos-arm64.dmg",
+    expect(selectDesktopAsset(assets, { platform: "macos", arch: "arm64", extension: ".zip" })?.name).toBe(
+      "Rudder-0.3.1-macos-arm64-portable.zip",
     );
   });
 
-  it("supports legacy macOS DMG names that omit the platform", () => {
+  it("supports legacy macOS zip names that omit the platform", () => {
     const assets = [
-      { name: "Rudder-0.3.1-arm64.dmg", browser_download_url: "https://example.test/macos-arm64" },
-      { name: "Rudder-0.3.1-x64.dmg", browser_download_url: "https://example.test/macos-x64" },
+      { name: "Rudder-0.3.1-arm64.zip", browser_download_url: "https://example.test/macos-arm64" },
+      { name: "Rudder-0.3.1-x64.zip", browser_download_url: "https://example.test/macos-x64" },
     ];
 
-    expect(selectDesktopAsset(assets, { platform: "macos", arch: "x64", extension: ".dmg" })?.name).toBe(
-      "Rudder-0.3.1-x64.dmg",
+    expect(selectDesktopAsset(assets, { platform: "macos", arch: "x64", extension: ".zip" })?.name).toBe(
+      "Rudder-0.3.1-x64.zip",
     );
   });
 
@@ -227,17 +244,101 @@ describe("desktop start command helpers", () => {
     ];
 
     expect(selectChecksumAsset(assets)?.name).toBe("SHASUMS256.txt");
-    expect(
-      parseChecksumFile(
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  Rudder-0.3.1-linux-x64.AppImage\n",
-      ).get("Rudder-0.3.1-linux-x64.AppImage"),
-    ).toBe("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const checksums = parseChecksumFile(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  Rudder-0.3.1-linux-x64.AppImage\n",
+    );
+    expect(resolveAssetChecksum(checksums, "Rudder-0.3.1-linux-x64.AppImage")).toBe(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    expect(() => resolveAssetChecksum(checksums, "Rudder-0.3.1-macos-arm64-portable.zip")).toThrow(
+      "checksums do not include",
+    );
   });
 
   it("compares stable semver versions", () => {
     expect(compareStableSemver("0.3.2", "0.3.1")).toBeGreaterThan(0);
     expect(compareStableSemver("0.3.1", "0.3.1")).toBe(0);
     expect(compareStableSemver("0.3.0", "0.3.1")).toBeLessThan(0);
+  });
+
+  it("checks whether the global CLI is already the requested version", () => {
+    expect(isPersistentCliVersionCurrent("0.3.1", "0.3.1")).toBe(true);
+    expect(isPersistentCliVersionCurrent("0.3.1", "0.3.0")).toBe(false);
+    expect(isPersistentCliVersionCurrent("latest", "0.3.1")).toBe(false);
+  });
+
+  it("checks whether installed desktop metadata already matches the release asset", () => {
+    expect(
+      isInstalledDesktopCurrent(
+        {
+          version: 1,
+          releaseTag: "v0.3.1",
+          assetName: "Rudder-0.3.1-macos-arm64-portable.zip",
+          assetChecksum: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          installedAt: "2026-04-27T00:00:00.000Z",
+        },
+        "v0.3.1",
+        "Rudder-0.3.1-macos-arm64-portable.zip",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ),
+    ).toBe(true);
+    expect(
+      isInstalledDesktopCurrent(
+        {
+          version: 1,
+          releaseTag: "v0.3.1",
+          assetName: "Rudder-0.3.1-macos-arm64-portable.zip",
+          assetChecksum: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          installedAt: "2026-04-27T00:00:00.000Z",
+        },
+        "v0.3.1",
+        "Rudder-0.3.1-macos-arm64-portable.zip",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      ),
+    ).toBe(false);
+  });
+
+  it("resolves per-user portable install paths", () => {
+    const macTarget = { platform: "macos" as const, arch: "arm64" as const, extension: ".zip" as const };
+    expect(resolveDefaultDesktopInstallRoot(macTarget, {}, "/Users/test")).toBe("/Users/test/Applications");
+    expect(resolveDesktopInstallPaths(macTarget, "/Users/test/Applications")).toMatchObject({
+      appPath: "/Users/test/Applications/Rudder.app",
+      executablePath: "/Users/test/Applications/Rudder.app/Contents/MacOS/Rudder",
+    });
+
+    const winTarget = { platform: "windows" as const, arch: "x64" as const, extension: ".zip" as const };
+    expect(resolveDefaultDesktopInstallRoot(winTarget, { LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local" }, "C:\\Users\\test")).toBe(
+      path.join("C:\\Users\\test\\AppData\\Local", "Programs", "Rudder"),
+    );
+  });
+
+  it("validates checksum matches and mismatches", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-checksum-test."));
+    const filePath = path.join(dir, "Rudder-test.zip");
+    await writeFile(filePath, "portable");
+    try {
+      expect(assertChecksumMatch(filePath, "01e782826ae5182220bd6158f883d01ceb1bce659dc020e7c511f802a9aa7737")).toBe(
+        "01e782826ae5182220bd6158f883d01ceb1bce659dc020e7c511f802a9aa7737",
+      );
+      expect(() => assertChecksumMatch(filePath, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toThrow(
+        "Checksum mismatch",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("builds Windows force-quit fallback commands", () => {
+    expect(buildForceQuitCommand({ platform: "windows", arch: "x64", extension: ".zip" })).toEqual({
+      command: "taskkill.exe",
+      args: ["/IM", "Rudder.exe", "/T", "/F"],
+    });
+  });
+
+  it("builds Linux desktop entries for the AppImage", () => {
+    expect(buildLinuxDesktopEntry("/home/test/.local/share/rudder/Rudder.AppImage")).toContain(
+      'Exec="/home/test/.local/share/rudder/Rudder.AppImage"',
+    );
   });
 
   it("reports a non-blocking update notice when npm latest is newer", async () => {

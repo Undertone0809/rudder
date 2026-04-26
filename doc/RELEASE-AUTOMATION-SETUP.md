@@ -83,9 +83,23 @@ After the workflows are live:
 2. confirm npm publish succeeds without any `NPM_TOKEN`
 3. run a stable dry-run
 4. run one real stable publish
-5. confirm the desktop release workflow attaches installers to the stable GitHub Release
+5. confirm the desktop release workflow attaches portable assets to the stable GitHub Release
 
 Only after that should you remove old token-based access.
+
+### 2.4. Desktop portable assets
+
+The Desktop workflow publishes checksum-verified portable assets:
+
+- macOS `.zip` containing `Rudder.app`
+- Windows `.zip` containing the unpacked Electron app
+- Linux `.AppImage`
+- `SHASUMS256.txt`
+
+The current Desktop channel is an unsigned portable alpha. Apple Developer ID,
+notarization, and Windows code-signing reputation are intentionally deferred;
+when those credentials exist, signed installer assets can be added as a separate
+release path without changing npm publishing.
 
 Temporary fallback:
 

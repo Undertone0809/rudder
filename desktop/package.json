@@ -62,14 +62,14 @@
       "identity": null,
       "icon": "build/icon.icns",
       "target": [
-        "dmg"
+        "dir"
       ],
       "category": "public.app-category.developer-tools"
     },
     "win": {
       "icon": "build/icon.ico",
       "target": [
-        "nsis"
+        "dir"
       ]
     },
     "linux": {

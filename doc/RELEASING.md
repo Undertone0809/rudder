@@ -7,7 +7,7 @@ The release model is now commit-driven:
 1. Every push to `main` publishes a canary automatically, except explicit release-infra maintenance commits marked `[skip release]`.
 2. Stable releases are manually promoted from a chosen tested commit or canary tag.
 3. Stable release notes live in `releases/vX.Y.Z.md`.
-4. Stable releases get user-facing GitHub Releases; canaries may get prerelease GitHub Releases for Desktop installer assets.
+4. Stable releases get user-facing GitHub Releases; canaries may get prerelease GitHub Releases for Desktop portable assets.
 
 ## Versioning Model
 
@@ -35,12 +35,12 @@ Every stable release has five separate surfaces:
 1. **Verification** — the exact git SHA passes typecheck, tests, and build
 2. **npm** — `@rudderhq/cli` and public workspace packages are published
 3. **GitHub** — the stable release gets a git tag and GitHub Release
-4. **Desktop** — macOS, Windows, and Linux installers are attached to the stable GitHub Release
+4. **Desktop** — macOS, Windows, and Linux portable assets are attached to the stable GitHub Release
 5. **Website / announcements** — the stable changelog is published externally and announced
 
 A stable release is done only when all five surfaces are handled.
 
-Canaries cover verification, npm, a traceability tag, and Desktop installer assets.
+Canaries cover verification, npm, a traceability tag, and Desktop portable assets.
 
 ## Core Invariants
 
@@ -48,7 +48,7 @@ Canaries cover verification, npm, a traceability tag, and Desktop installer asse
 - stables publish from an explicitly chosen source ref
 - tags point at the original source commit, not a generated release commit
 - stable notes are always `releases/vX.Y.Z.md`
-- canary GitHub Releases are only for traceability and Desktop installer assets
+- canary GitHub Releases are only for traceability and Desktop portable assets
 - canaries never require changelog generation
 
 ## TL;DR
@@ -119,7 +119,7 @@ npx @rudderhq/cli@latest start
 
 By default this checks for newer Rudder CLI releases, prepares the matching
 persistent `rudder` CLI globally, and downloads/opens the matching Rudder
-Desktop installer from the GitHub Release when needed.
+Desktop portable app from the GitHub Release when needed.
 After the persistent CLI exists, `rudder start` is equivalent to the `npx`
 command above. More generally, `npx @rudderhq/cli@latest <command>` and
 `rudder <command>` are the same CLI surface when they resolve to the same
@@ -202,7 +202,7 @@ gh workflow run release-smoke.yml -f rudder_version=latest
 
 Minimum checks:
 
-- `npx @rudderhq/cli@latest start --no-open` prepares the persistent CLI and downloads the desktop installer
+- `npx @rudderhq/cli@latest start --no-open` prepares the persistent CLI and installs the checksum-verified portable desktop app
 - `npx @rudderhq/cli@canary onboard` installs the canary CLI path
 - onboarding completes without crashes
 - authenticated login works with the smoke credentials

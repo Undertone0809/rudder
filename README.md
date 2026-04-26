@@ -74,7 +74,8 @@ Rudder coordinates agents. It does not force one runtime, one model, one prompt 
 
 ### Try Rudder
 
-The fastest path starts Rudder Desktop and prepares the matching CLI:
+The fastest path installs the per-user portable Rudder Desktop app and prepares
+the matching persistent CLI:
 
 ```bash
 npx @rudderhq/cli@latest start

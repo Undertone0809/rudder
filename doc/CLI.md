@@ -20,8 +20,9 @@ npx @rudderhq/cli@latest start
 ```
 
 This checks for newer Rudder CLI releases, prepares the matching persistent
-`rudder` CLI, and starts the matching Rudder Desktop path by downloading/opening
-the current-platform installer from the GitHub Release when needed.
+`rudder` CLI, and installs the matching per-user portable Rudder Desktop app
+from GitHub Release assets when needed. Desktop assets are checksum-verified
+before installation.
 
 Invocation forms are equivalent once they resolve to the same CLI version:
 
@@ -43,11 +44,11 @@ CLI-only first-run setup remains available:
 npx @rudderhq/cli@latest onboard --yes
 ```
 
-If you installed the packaged Desktop app, it now also attempts to export a `rudder`
-command on first launch by writing a small wrapper script that routes back through the
-installed Desktop executable. Development Desktop runs do not install or manage this
-wrapper; use `pnpm rudder ...` while working from the repo. If no writable PATH directory
-is available, fall back to:
+Packaged Desktop also attempts to export a `rudder` command on first launch by
+writing a small wrapper script that routes back through the installed Desktop
+executable. Development Desktop runs do not install or manage this wrapper; use
+`pnpm rudder ...` while working from the repo. If no writable PATH directory is
+available, fall back to:
 
 ```sh
 npx @rudderhq/cli@latest onboard --yes

@@ -41,18 +41,18 @@ Recommended defaults:
 - `pnpm dev` starts the non-watch local `dev` runtime first, then opens the development Desktop shell against that same shared instance
 - `pnpm dev:watch` starts the watched local `dev` runtime first, then opens the development Desktop shell against that same shared instance
 - `pnpm desktop:verify` is the default contributor validation flow for Desktop work: dev-shell smoke, packaged build, then packaged-app smoke
-- `pnpm prod` builds the packaged Desktop installer for the current platform, verifies the packaged app boots successfully, and then opens it so you can install the local production Desktop app
+- `pnpm prod` builds the packaged portable Desktop artifact for the current platform, verifies the packaged app boots successfully, and then opens the local app artifact
 - `npx @rudderhq/cli@latest start` is the public first-run form; after the
   persistent CLI exists, `rudder start` is the equivalent direct form. Both
-  check for newer CLI releases and download/open the matching Desktop installer
-  from the GitHub Release when needed.
+  check for newer CLI releases and install/launch the matching portable Desktop
+  asset from the GitHub Release when needed.
 
 Low-frequency escape hatches:
 
 - `RUDDER_DESKTOP_RESIDENT_SHELL=1 pnpm dev:watch` keeps the shared `dev` profile but forces resident tray/menu lifecycle for local debugging
 - `pnpm --filter @rudderhq/desktop dev` runs only the development Desktop shell
 - `pnpm rudder run` is the persistent local `prod_local` runtime entrypoint that packaged Desktop attaches to
-- `pnpm desktop:dist` builds installer artifacts without opening them
+- `pnpm desktop:dist` builds portable release artifacts without opening them
 
 Smoke scenarios:
 
@@ -172,11 +172,11 @@ Use this validation split when changing Desktop behavior:
 
 - Development-shell changes:
   - `pnpm --filter @rudderhq/desktop smoke`
-- Packaged boot, local prod startup, installer, icons, startup migrations, or shared-instance path changes:
+- Packaged boot, local prod startup, portable artifacts, icons, startup migrations, or shared-instance path changes:
   - `pnpm desktop:verify`
 
 Do not rely on `pnpm prod` alone during development.
-`pnpm prod` is a convenience wrapper that opens the installer after validation.
+`pnpm prod` is a convenience wrapper that opens the local packaged app after validation.
 The contributor workflow should validate first, then open artifacts only after the packaged smoke path passes.
 
 ## Reset
@@ -194,18 +194,21 @@ The startup failure screen exposes the active instance path for the current run.
 
 Desktop packaging uses Electron + electron-builder and currently produces:
 
-- macOS: `.dmg`
-- Windows: `NSIS .exe`
+- macOS: portable `.zip` containing `Rudder.app`
+- Windows: portable `.zip` containing the unpacked Electron app
 - Linux: `.AppImage`
 
-The GitHub Actions desktop workflow builds artifacts on all three operating systems. Stable tags under `v*` publish Desktop artifacts to the matching stable GitHub Release:
+The GitHub Actions desktop workflow builds artifacts on all three operating systems. Stable tags under `v*` and canary tags under `canary/v*` publish Desktop artifacts to the matching GitHub Release:
 
-- `Rudder-X.Y.Z-macos-x64.dmg`
-- `Rudder-X.Y.Z-macos-arm64.dmg`
-- `Rudder-X.Y.Z-windows-x64.exe`
+- `Rudder-X.Y.Z-macos-x64-portable.zip`
+- `Rudder-X.Y.Z-macos-arm64-portable.zip`
+- `Rudder-X.Y.Z-windows-x64-portable.zip`
 - `Rudder-X.Y.Z-linux-x64.AppImage`
 - `SHASUMS256.txt`
 
 Desktop artifacts are not published to npm. The CLI `start` command resolves
-the appropriate GitHub Release asset for the current platform and reminds users
-when a newer CLI version is available.
+the appropriate GitHub Release asset for the current platform, verifies
+`SHASUMS256.txt`, installs the app into a per-user location, and launches it.
+The current Desktop channel is an unsigned portable alpha; signed/notarized
+installer distribution can be restored after Apple and Windows code signing are
+available.
