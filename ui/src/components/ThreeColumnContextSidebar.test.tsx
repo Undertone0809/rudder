@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import type { ReactNode } from "react";
+import type { MouseEventHandler, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ISSUE_AUTOSAVE_STORAGE_KEY, ISSUE_DRAFTS_STORAGE_KEY } from "@/lib/new-issue-dialog";
@@ -90,6 +90,31 @@ vi.mock("@/components/MessengerContextSidebar", () => ({
   MessengerContextSidebar: () => null,
 }));
 
+vi.mock("@/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuContent: ({ children, ...props }: { children: ReactNode }) => <div {...props}>{children}</div>,
+  DropdownMenuItem: ({
+    children,
+    onContextMenu,
+    onSelect,
+    ...props
+  }: {
+    children: ReactNode;
+    onContextMenu?: MouseEventHandler<HTMLButtonElement>;
+    onSelect?: (event: Event) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={(event) => onSelect?.(event.nativeEvent)}
+      onContextMenu={onContextMenu}
+      {...props}
+    >
+      {children}
+    </button>
+  ),
+  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
 let cleanupFn: (() => void) | null = null;
 
 beforeEach(() => {
@@ -160,12 +185,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector("[data-testid='issue-draft-sidebar-entry']")).toBeNull();
   });
 
-  it("shows saved draft issues in the issues sidebar and opens the latest draft", () => {
-    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([
-      { ...savedDraft, id: "draft-2", title: "Newer draft", updatedAt: "2026-04-26T11:00:00.000Z" },
-      savedDraft,
-    ]));
-
+  function renderSidebar() {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -174,6 +194,33 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     act(() => {
       root.render(<ThreeColumnContextSidebar />);
     });
+  }
+
+  it("opens a single saved draft issue directly from the issues sidebar", () => {
+    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([savedDraft]));
+
+    renderSidebar();
+
+    const draftEntry = document.querySelector("[data-testid='issue-draft-sidebar-entry']") as HTMLButtonElement | null;
+    expect(draftEntry?.textContent).toContain("Draft Issues");
+    expect(draftEntry?.textContent).not.toContain("Draft Issues (");
+    expect(draftEntry?.textContent).toContain("Recovered draft issue");
+
+    act(() => {
+      draftEntry?.click();
+    });
+
+    expect(mockState.openNewIssue).toHaveBeenCalledWith({ draftId: "draft-1" });
+    expect(mockState.setSidebarOpen).toHaveBeenCalledWith(false);
+  });
+
+  it("shows multiple saved draft issues in a picker menu and opens the selected draft", () => {
+    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([
+      { ...savedDraft, id: "draft-2", title: "Newer draft", updatedAt: "2026-04-26T11:00:00.000Z" },
+      savedDraft,
+    ]));
+
+    renderSidebar();
 
     const draftEntry = document.querySelector("[data-testid='issue-draft-sidebar-entry']") as HTMLButtonElement | null;
     expect(draftEntry?.textContent).toContain("Draft Issues (2)");
@@ -182,8 +229,48 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     act(() => {
       draftEntry?.click();
     });
+    expect(mockState.openNewIssue).not.toHaveBeenCalled();
 
-    expect(mockState.openNewIssue).toHaveBeenCalledWith({ draftId: "draft-2" });
+    const menuItems = Array.from(document.querySelectorAll("[data-testid='issue-draft-menu-item']")) as HTMLButtonElement[];
+    expect(menuItems).toHaveLength(2);
+    expect(menuItems[0]?.textContent).toContain("Newer draft");
+    expect(menuItems[1]?.textContent).toContain("Recovered draft issue");
+
+    act(() => {
+      menuItems[1]?.click();
+    });
+
+    expect(mockState.openNewIssue).toHaveBeenCalledWith({ draftId: "draft-1" });
     expect(mockState.setSidebarOpen).toHaveBeenCalledWith(false);
+  });
+
+  it("deletes draft issues from the sidebar with right-click", () => {
+    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([
+      { ...savedDraft, id: "draft-2", title: "Newer draft", updatedAt: "2026-04-26T11:00:00.000Z" },
+      savedDraft,
+    ]));
+
+    renderSidebar();
+
+    const menuItems = Array.from(document.querySelectorAll("[data-testid='issue-draft-menu-item']")) as HTMLButtonElement[];
+    act(() => {
+      menuItems[0]?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+
+    const storedDraftsAfterMenuDelete = JSON.parse(
+      window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY) ?? "[]",
+    ) as Array<{ id: string }>;
+    expect(storedDraftsAfterMenuDelete.map((draft) => draft.id)).toEqual(["draft-1"]);
+
+    const draftEntry = document.querySelector("[data-testid='issue-draft-sidebar-entry']") as HTMLButtonElement | null;
+    act(() => {
+      draftEntry?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+
+    const storedDraftsAfterSingleDelete = JSON.parse(
+      window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY) ?? "[]",
+    ) as Array<{ id: string }>;
+    expect(storedDraftsAfterSingleDelete).toEqual([]);
+    expect(document.querySelector("[data-testid='issue-draft-sidebar-entry']")).toBeNull();
   });
 });

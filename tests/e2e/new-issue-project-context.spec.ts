@@ -124,4 +124,72 @@ test.describe("New issue project context", () => {
     await expect(dialog).toBeVisible();
     await expect(dialog.getByPlaceholder("Issue title")).toHaveValue("Recovered draft issue");
   });
+
+  test("opens a picker for multiple saved issue drafts", async ({ page }) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: {
+        name: `New-Issue-Draft-Picker-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await page.goto(E2E_BASE_URL);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem("rudder:issue-drafts", JSON.stringify([
+        {
+          id: "draft-newer-e2e",
+          orgId,
+          title: "Newer draft issue",
+          description: "This draft should be listed first.",
+          status: "backlog",
+          priority: "high",
+          labelIds: [],
+          assigneeValue: "",
+          projectId: "",
+          projectWorkspaceId: "",
+          assigneeModelOverride: "",
+          assigneeThinkingEffort: "",
+          assigneeChrome: false,
+          executionWorkspaceMode: "shared_workspace",
+          selectedExecutionWorkspaceId: "",
+          createdAt: "2026-04-26T10:00:00.000Z",
+          updatedAt: "2026-04-26T11:00:00.000Z",
+        },
+        {
+          id: "draft-older-e2e",
+          orgId,
+          title: "Older draft issue",
+          description: "This is the draft the user selects.",
+          status: "todo",
+          priority: "medium",
+          labelIds: [],
+          assigneeValue: "",
+          projectId: "",
+          projectWorkspaceId: "",
+          assigneeModelOverride: "",
+          assigneeThinkingEffort: "",
+          assigneeChrome: false,
+          executionWorkspaceMode: "shared_workspace",
+          selectedExecutionWorkspaceId: "",
+          createdAt: "2026-04-26T09:00:00.000Z",
+          updatedAt: "2026-04-26T09:00:00.000Z",
+        },
+      ]));
+    }, organization.id);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`);
+
+    await expect(page.getByTestId("issue-draft-sidebar-entry")).toContainText("Draft Issues (2)");
+    await page.getByTestId("issue-draft-sidebar-entry").click();
+
+    const selectedDraft = page.getByTestId("issue-draft-menu-item").filter({ hasText: "Older draft issue" });
+    await expect(selectedDraft).toBeVisible();
+    await selectedDraft.click();
+
+    const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByPlaceholder("Issue title")).toHaveValue("Older draft issue");
+  });
 });
