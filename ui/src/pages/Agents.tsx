@@ -1,22 +1,43 @@
 import { useState, useEffect, useMemo } from "react";
 import { Link, useNavigate, useLocation } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi, type OrgNode } from "../api/agents";
+import { chatsApi } from "../api/chats";
 import { heartbeatsApi } from "../api/heartbeats";
 import { useOrganization } from "../context/OrganizationContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
+import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { StatusBadge } from "../components/StatusBadge";
 import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
-import { EntityRow } from "../components/EntityRow";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { relativeTime, cn, agentRouteRef, agentUrl } from "../lib/utils";
 import { PageTabBar } from "../components/PageTabBar";
 import { Tabs } from "@/components/ui/tabs";
-import { Bot, List, GitBranch, SlidersHorizontal } from "lucide-react";
+import {
+  Bot,
+  Copy,
+  GitBranch,
+  HeartPulse,
+  List,
+  Loader2,
+  MessageSquare,
+  MoreHorizontal,
+  Pause,
+  Play,
+  Plus,
+  SlidersHorizontal,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { AGENT_ROLE_LABELS, type Agent } from "@rudderhq/shared";
 
 const adapterLabels: Record<string, string> = {
@@ -63,11 +84,13 @@ function filterOrgTree(nodes: OrgNode[], tab: FilterTab, showTerminated: boolean
 
 export function Agents() {
   const { selectedOrganizationId } = useOrganization();
-  const { openNewAgent } = useDialog();
+  const { openNewAgent, openNewIssue } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
   const navigate = useNavigate();
   const location = useLocation();
   const { isMobile } = useSidebar();
+  const queryClient = useQueryClient();
+  const { pushToast } = useToast();
   const pathSegment = location.pathname.split("/").pop() ?? "all";
   const tab: FilterTab = (pathSegment === "all" || pathSegment === "active" || pathSegment === "paused" || pathSegment === "error") ? pathSegment : "all";
   const [view, setView] = useState<"list" | "org">("org");
@@ -223,51 +246,15 @@ export function Agents() {
         <div className="border border-border">
           {filtered.map((agent) => {
             return (
-              <EntityRow
+              <AgentListRow
                 key={agent.id}
-                title={agent.name}
-                subtitle={`${roleLabels[agent.role] ?? agent.role}${agent.title ? ` - ${agent.title}` : ""}`}
-                to={agentUrl(agent)}
-                leading={
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span
-                      className={`absolute inline-flex h-full w-full rounded-full ${agentStatusDot[agent.status] ?? agentStatusDotDefault}`}
-                    />
-                  </span>
-                }
-                trailing={
-                  <div className="flex items-center gap-3">
-                    <span className="sm:hidden">
-                      {liveRunByAgent.has(agent.id) ? (
-                        <LiveRunIndicator
-                          agentRef={agentRouteRef(agent)}
-                          runId={liveRunByAgent.get(agent.id)!.runId}
-                          liveCount={liveRunByAgent.get(agent.id)!.liveCount}
-                        />
-                      ) : (
-                        <StatusBadge status={agent.status} />
-                      )}
-                    </span>
-                    <div className="hidden sm:flex items-center gap-3">
-                      {liveRunByAgent.has(agent.id) && (
-                        <LiveRunIndicator
-                          agentRef={agentRouteRef(agent)}
-                          runId={liveRunByAgent.get(agent.id)!.runId}
-                          liveCount={liveRunByAgent.get(agent.id)!.liveCount}
-                        />
-                      )}
-                      <span className="text-xs text-muted-foreground font-mono w-14 text-right">
-                        {adapterLabels[agent.agentRuntimeType] ?? agent.agentRuntimeType}
-                      </span>
-                      <span className="text-xs text-muted-foreground w-16 text-right">
-                        {agent.lastHeartbeatAt ? relativeTime(agent.lastHeartbeatAt) : "—"}
-                      </span>
-                      <span className="w-20 flex justify-end">
-                        <StatusBadge status={agent.status} />
-                      </span>
-                    </div>
-                  </div>
-                }
+                agent={agent}
+                liveRun={liveRunByAgent.get(agent.id) ?? null}
+                orgId={selectedOrganizationId}
+                onCreateTask={() => openNewIssue({ assigneeAgentId: agent.id })}
+                queryClient={queryClient}
+                navigate={navigate}
+                pushToast={pushToast}
               />
             );
           })}
@@ -284,7 +271,18 @@ export function Agents() {
       {effectiveView === "org" && filteredOrg.length > 0 && (
         <div className="border border-border py-1">
           {filteredOrg.map((node) => (
-            <OrgTreeNode key={node.id} node={node} depth={0} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+            <OrgTreeNode
+              key={node.id}
+              node={node}
+              depth={0}
+              agentMap={agentMap}
+              liveRunByAgent={liveRunByAgent}
+              orgId={selectedOrganizationId}
+              onCreateTask={(agentId) => openNewIssue({ assigneeAgentId: agentId })}
+              queryClient={queryClient}
+              navigate={navigate}
+              pushToast={pushToast}
+            />
           ))}
         </div>
       )}
@@ -304,77 +302,338 @@ export function Agents() {
   );
 }
 
+function AgentListRow({
+  agent,
+  liveRun,
+  orgId,
+  onCreateTask,
+  queryClient,
+  navigate,
+  pushToast,
+}: {
+  agent: Agent;
+  liveRun: { runId: string; liveCount: number } | null;
+  orgId: string;
+  onCreateTask: () => void;
+  queryClient: ReturnType<typeof useQueryClient>;
+  navigate: ReturnType<typeof useNavigate>;
+  pushToast: ReturnType<typeof useToast>["pushToast"];
+}) {
+  return (
+    <div
+      data-testid={`agent-row-${agent.id}`}
+      className="group/agent-row flex items-center gap-3 border-b panel-divider px-4 py-3 text-sm transition-[background-color,border-color,box-shadow] hover:bg-[color:color-mix(in_oklab,var(--surface-active)_58%,transparent)]"
+    >
+      <Link
+        to={agentUrl(agent)}
+        className="flex min-w-0 flex-1 items-center gap-3 no-underline text-inherit"
+      >
+        <span className="relative flex h-2.5 w-2.5 shrink-0">
+          <span
+            className={`absolute inline-flex h-full w-full rounded-full ${agentStatusDot[agent.status] ?? agentStatusDotDefault}`}
+          />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate font-medium text-foreground">{agent.name}</span>
+          </div>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {roleLabels[agent.role] ?? agent.role}
+            {agent.title ? ` - ${agent.title}` : ""}
+          </p>
+        </div>
+      </Link>
+      <AgentRowMetadata agent={agent} liveRun={liveRun} />
+      <AgentRowActionsMenu
+        agent={agent}
+        orgId={orgId}
+        onCreateTask={onCreateTask}
+        queryClient={queryClient}
+        navigate={navigate}
+        pushToast={pushToast}
+      />
+    </div>
+  );
+}
+
+function AgentRowMetadata({
+  agent,
+  liveRun,
+}: {
+  agent: Agent;
+  liveRun: { runId: string; liveCount: number } | null;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-3">
+      <span className="sm:hidden">
+        {liveRun ? (
+          <LiveRunIndicator
+            agentRef={agentRouteRef(agent)}
+            runId={liveRun.runId}
+            liveCount={liveRun.liveCount}
+          />
+        ) : (
+          <StatusBadge status={agent.status} />
+        )}
+      </span>
+      <div className="hidden sm:flex items-center gap-3">
+        {liveRun && (
+          <LiveRunIndicator
+            agentRef={agentRouteRef(agent)}
+            runId={liveRun.runId}
+            liveCount={liveRun.liveCount}
+          />
+        )}
+        <span className="text-xs text-muted-foreground font-mono w-14 text-right">
+          {adapterLabels[agent.agentRuntimeType] ?? agent.agentRuntimeType}
+        </span>
+        <span className="text-xs text-muted-foreground w-16 text-right">
+          {agent.lastHeartbeatAt ? relativeTime(agent.lastHeartbeatAt) : "—"}
+        </span>
+        <span className="w-20 flex justify-end">
+          <StatusBadge status={agent.status} />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function AgentRowActionsMenu({
+  agent,
+  orgId,
+  onCreateTask,
+  queryClient,
+  navigate,
+  pushToast,
+}: {
+  agent: Agent;
+  orgId: string;
+  onCreateTask: () => void;
+  queryClient: ReturnType<typeof useQueryClient>;
+  navigate: ReturnType<typeof useNavigate>;
+  pushToast: ReturnType<typeof useToast>["pushToast"];
+}) {
+  const [open, setOpen] = useState(false);
+  const isTerminated = agent.status === "terminated";
+  const isPaused = agent.status === "paused";
+
+  const invalidateAgentData = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(orgId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.org(orgId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(orgId) }),
+    ]);
+  };
+
+  const chatMutation = useMutation({
+    mutationFn: () =>
+      chatsApi.create(orgId, {
+        title: `Chat with ${agent.name}`,
+        preferredAgentId: agent.id,
+        contextLinks: [{ entityType: "agent", entityId: agent.id }],
+      }),
+    onSuccess: async (conversation) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(orgId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
+      ]);
+      navigate(`/messenger/chat/${conversation.id}`);
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to open chat",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
+
+  const heartbeatMutation = useMutation({
+    mutationFn: () => agentsApi.invoke(agent.id, orgId),
+    onSuccess: async (run) => {
+      await invalidateAgentData();
+      pushToast({
+        title: "Heartbeat started",
+        tone: "success",
+        action: {
+          label: "Open run",
+          href: `/agents/${agentRouteRef(agent)}/runs/${run.id}`,
+        },
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to run heartbeat",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
+
+  const pauseResumeMutation = useMutation({
+    mutationFn: () => isPaused ? agentsApi.resume(agent.id, orgId) : agentsApi.pause(agent.id, orgId),
+    onSuccess: async () => {
+      await invalidateAgentData();
+      pushToast({
+        title: isPaused ? "Agent resumed" : "Agent paused",
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: isPaused ? "Failed to resume agent" : "Failed to pause agent",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
+
+  const handleCopyName = async () => {
+    try {
+      await navigator.clipboard.writeText(agent.name);
+      pushToast({ title: "Copied agent name", tone: "success" });
+    } catch (error) {
+      pushToast({
+        title: "Failed to copy agent name",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    }
+  };
+
+  const isBusy = chatMutation.isPending || heartbeatMutation.isPending || pauseResumeMutation.isPending;
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`More actions for ${agent.name}`}
+          data-testid={`agent-row-actions-${agent.id}`}
+          className={cn(
+            "flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color,opacity] hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            open || isBusy
+              ? "opacity-100"
+              : "opacity-100 md:opacity-0 md:group-hover/agent-row:opacity-100 md:group-focus-within/agent-row:opacity-100",
+          )}
+          onClick={(event) => {
+            event.stopPropagation();
+          }}
+        >
+          {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreHorizontal className="h-3.5 w-3.5" />}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="surface-overlay w-48 text-foreground">
+        <DropdownMenuItem onSelect={onCreateTask}>
+          <Plus className="h-4 w-4" />
+          Create task
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => chatMutation.mutate()} disabled={chatMutation.isPending || isTerminated}>
+          <MessageSquare className="h-4 w-4" />
+          Chat with agent
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => heartbeatMutation.mutate()} disabled={heartbeatMutation.isPending || isTerminated}>
+          <HeartPulse className="h-4 w-4" />
+          Run heartbeat
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={() => pauseResumeMutation.mutate()}
+          disabled={pauseResumeMutation.isPending || isTerminated}
+        >
+          {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+          {isPaused ? "Resume agent" : "Pause agent"}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => void handleCopyName()}>
+          <Copy className="h-4 w-4" />
+          Copy agent name
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function OrgTreeNode({
   node,
   depth,
   agentMap,
   liveRunByAgent,
+  orgId,
+  onCreateTask,
+  queryClient,
+  navigate,
+  pushToast,
 }: {
   node: OrgNode;
   depth: number;
   agentMap: Map<string, Agent>;
   liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
+  orgId: string;
+  onCreateTask: (agentId: string) => void;
+  queryClient: ReturnType<typeof useQueryClient>;
+  navigate: ReturnType<typeof useNavigate>;
+  pushToast: ReturnType<typeof useToast>["pushToast"];
 }) {
   const agent = agentMap.get(node.id);
 
   const statusColor = agentStatusDot[node.status] ?? agentStatusDotDefault;
+  const liveRun = liveRunByAgent.get(node.id) ?? null;
 
   return (
     <div style={{ paddingLeft: depth * 24 }}>
-      <Link
-        to={agent ? agentUrl(agent) : `/agents/${node.id}`}
-        className="flex items-center gap-3 px-3 py-2 hover:bg-accent/30 transition-colors w-full text-left no-underline text-inherit"
+      <div
+        data-testid={`agent-row-${node.id}`}
+        className="group/agent-row flex items-center gap-3 px-3 py-2 hover:bg-accent/30 transition-colors w-full text-left"
       >
-        <span className="relative flex h-2.5 w-2.5 shrink-0">
-          <span className={`absolute inline-flex h-full w-full rounded-full ${statusColor}`} />
-        </span>
-        <div className="flex-1 min-w-0">
-          <span className="text-sm font-medium">{node.name}</span>
-          <span className="text-xs text-muted-foreground ml-2">
-            {roleLabels[node.role] ?? node.role}
-            {agent?.title ? ` - ${agent.title}` : ""}
+        <Link
+          to={agent ? agentUrl(agent) : `/agents/${node.id}`}
+          className="flex min-w-0 flex-1 items-center gap-3 no-underline text-inherit"
+        >
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className={`absolute inline-flex h-full w-full rounded-full ${statusColor}`} />
           </span>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          <span className="sm:hidden">
-            {liveRunByAgent.has(node.id) ? (
-              <LiveRunIndicator
-                agentRef={agent ? agentRouteRef(agent) : node.id}
-                runId={liveRunByAgent.get(node.id)!.runId}
-                liveCount={liveRunByAgent.get(node.id)!.liveCount}
-              />
-            ) : (
-              <StatusBadge status={node.status} />
-            )}
-          </span>
-          <div className="hidden sm:flex items-center gap-3">
-            {liveRunByAgent.has(node.id) && (
-              <LiveRunIndicator
-                agentRef={agent ? agentRouteRef(agent) : node.id}
-                runId={liveRunByAgent.get(node.id)!.runId}
-                liveCount={liveRunByAgent.get(node.id)!.liveCount}
-              />
-            )}
-            {agent && (
-              <>
-                <span className="text-xs text-muted-foreground font-mono w-14 text-right">
-                  {adapterLabels[agent.agentRuntimeType] ?? agent.agentRuntimeType}
-                </span>
-                <span className="text-xs text-muted-foreground w-16 text-right">
-                  {agent.lastHeartbeatAt ? relativeTime(agent.lastHeartbeatAt) : "—"}
-                </span>
-              </>
-            )}
-            <span className="w-20 flex justify-end">
-              <StatusBadge status={node.status} />
+          <div className="min-w-0 flex-1">
+            <span className="text-sm font-medium">{node.name}</span>
+            <span className="text-xs text-muted-foreground ml-2">
+              {roleLabels[node.role] ?? node.role}
+              {agent?.title ? ` - ${agent.title}` : ""}
             </span>
           </div>
-        </div>
-      </Link>
+        </Link>
+        {agent ? (
+          <AgentRowMetadata agent={agent} liveRun={liveRun} />
+        ) : (
+          <span className="w-20 flex shrink-0 justify-end">
+            <StatusBadge status={node.status} />
+          </span>
+        )}
+        {agent && (
+          <AgentRowActionsMenu
+            agent={agent}
+            orgId={orgId}
+            onCreateTask={() => onCreateTask(agent.id)}
+            queryClient={queryClient}
+            navigate={navigate}
+            pushToast={pushToast}
+          />
+        )}
+      </div>
       {node.reports && node.reports.length > 0 && (
         <div className="border-l border-border/50 ml-4">
           {node.reports.map((child) => (
-            <OrgTreeNode key={child.id} node={child} depth={depth + 1} agentMap={agentMap} liveRunByAgent={liveRunByAgent} />
+            <OrgTreeNode
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              agentMap={agentMap}
+              liveRunByAgent={liveRunByAgent}
+              orgId={orgId}
+              onCreateTask={onCreateTask}
+              queryClient={queryClient}
+              navigate={navigate}
+              pushToast={pushToast}
+            />
           ))}
         </div>
       )}
