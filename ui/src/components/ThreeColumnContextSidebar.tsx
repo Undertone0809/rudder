@@ -46,6 +46,7 @@ import {
   summarizeIssueDrafts,
 } from "@/lib/new-issue-dialog";
 import { AgentIcon } from "@/components/AgentIconPicker";
+import { AgentActionsMenu } from "@/components/AgentActionsMenu";
 import { MessengerContextSidebar } from "@/components/MessengerContextSidebar";
 import {
   DropdownMenu,
@@ -998,23 +999,36 @@ export function ThreeColumnContextSidebar() {
           const liveCount = liveCountByAgent.get(agent.id) ?? 0;
           const active = activeAgentRef === agent.urlKey || activeAgentRef === agent.id;
           return (
-            <Link
+            <div
               key={agent.id}
-              to={agentUrl(agent)}
-              onClick={closeMobileSidebar}
+              data-testid={`agent-sidebar-row-${agent.id}`}
               className={cn(
-                "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] px-3.5 py-2.5 text-sm transition-colors",
+                "group/agent-sidebar-row relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center rounded-[calc(var(--radius-sm)-1px)] text-sm transition-colors",
                 active
                   ? "font-medium text-foreground"
                   : "text-foreground/80 hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)]",
               )}
             >
-              <AgentIcon icon={agent.icon} className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="flex-1 truncate" title={formatSidebarAgentLabel(agent)}>
-                {formatSidebarAgentLabel(agent)}
-              </span>
-              {liveCount > 0 ? <SidebarLiveCount count={liveCount} /> : null}
-            </Link>
+              <Link
+                to={agentUrl(agent)}
+                onClick={closeMobileSidebar}
+                className="flex min-w-0 flex-1 items-center gap-3 self-stretch py-2.5 pl-3.5 pr-1 no-underline text-inherit"
+              >
+                <AgentIcon icon={agent.icon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="flex-1 truncate" title={formatSidebarAgentLabel(agent)}>
+                  {formatSidebarAgentLabel(agent)}
+                </span>
+                {liveCount > 0 ? <SidebarLiveCount count={liveCount} /> : null}
+              </Link>
+              <AgentActionsMenu
+                agent={agent}
+                orgId={selectedOrganizationId ?? agent.orgId}
+                triggerTestId={`agent-sidebar-actions-${agent.id}`}
+                triggerClassName="mr-2 h-6 w-6"
+                visibilityClassName="opacity-100 md:opacity-0 md:group-hover/agent-sidebar-row:opacity-100 md:group-focus-within/agent-sidebar-row:opacity-100"
+                onActionComplete={closeMobileSidebar}
+              />
+            </div>
           );
         })}
       </SlidingContextNav>

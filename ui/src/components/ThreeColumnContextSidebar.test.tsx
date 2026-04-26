@@ -18,12 +18,41 @@ const mockState = vi.hoisted(() => ({
   setSidebarOpen: vi.fn(),
   pathname: "/RUD/issues",
   search: "",
+  relativePath: "/issues",
 }));
+
+const sidebarAgent = {
+  id: "agent-1",
+  orgId: "org-1",
+  name: "Penelope",
+  urlKey: "penelope",
+  role: "ceo",
+  title: "CEO",
+  icon: null,
+  status: "idle",
+  reportsTo: null,
+  capabilities: null,
+  agentRuntimeType: "codex_local",
+  agentRuntimeConfig: {},
+  runtimeConfig: {},
+  budgetMonthlyCents: 0,
+  spentMonthlyCents: 0,
+  pauseReason: null,
+  pausedAt: null,
+  permissions: { canCreateAgents: true, canAssignTasks: true },
+  lastHeartbeatAt: null,
+  metadata: null,
+  createdAt: new Date("2026-04-26T10:00:00.000Z"),
+  updatedAt: new Date("2026-04-26T10:00:00.000Z"),
+};
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
     if (queryKey[0] === "auth") {
       return { data: { user: { id: "user-1" } }, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "agents" && queryKey[1] === "org-1") {
+      return { data: [sidebarAgent], isLoading: false, error: null };
     }
     return { data: [], isLoading: false, error: null };
   },
@@ -52,7 +81,7 @@ vi.mock("@/lib/router", () => ({
 }));
 
 vi.mock("@/lib/organization-routes", () => ({
-  toOrganizationRelativePath: () => "/issues",
+  toOrganizationRelativePath: () => mockState.relativePath,
 }));
 
 vi.mock("@/context/OrganizationContext", () => ({
@@ -115,6 +144,7 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
       {children}
     </div>
   ),
+  DropdownMenuSeparator: () => <hr />,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
@@ -127,6 +157,9 @@ beforeEach(() => {
   mockState.openNewIssue.mockReset();
   mockState.pushToast.mockReset();
   mockState.setSidebarOpen.mockReset();
+  mockState.pathname = "/RUD/issues";
+  mockState.search = "";
+  mockState.relativePath = "/issues";
   vi.stubGlobal("confirm", mockState.confirm);
 });
 
@@ -141,6 +174,17 @@ afterEach(() => {
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
 });
+
+function renderSidebar() {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  cleanupFn = () => root.unmount();
+
+  act(() => {
+    root.render(<ThreeColumnContextSidebar />);
+  });
+}
 
 describe("ThreeColumnContextSidebar issue draft recovery", () => {
   const savedDraft = {
@@ -192,17 +236,6 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     expect(document.querySelector("[data-testid='issue-draft-sidebar-entry']")).toBeNull();
   });
-
-  function renderSidebar() {
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    cleanupFn = () => root.unmount();
-
-    act(() => {
-      root.render(<ThreeColumnContextSidebar />);
-    });
-  }
 
   it("opens a single saved draft issue directly from the issues sidebar", () => {
     window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([savedDraft]));
@@ -303,5 +336,25 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(storedDrafts.map((draft) => draft.id)).toEqual(["draft-1"]);
     expect(document.querySelector("[data-testid='issue-draft-sidebar-entry']")).not.toBeNull();
     expect(mockState.pushToast).not.toHaveBeenCalled();
+  });
+});
+
+describe("ThreeColumnContextSidebar agent actions", () => {
+  it("shows the agent row action menu in the agent detail sidebar", () => {
+    mockState.pathname = "/RUD/agents/penelope/dashboard";
+    mockState.relativePath = "/agents/penelope/dashboard";
+
+    renderSidebar();
+
+    const row = document.querySelector("[data-testid='agent-sidebar-row-agent-1']") as HTMLElement | null;
+    expect(row?.textContent).toContain("Penelope (CEO)");
+
+    const actions = document.querySelector("[data-testid='agent-sidebar-actions-agent-1']") as HTMLButtonElement | null;
+    expect(actions?.getAttribute("aria-label")).toBe("More actions for Penelope");
+    expect(document.body.textContent).toContain("Create task");
+    expect(document.body.textContent).toContain("Chat with agent");
+    expect(document.body.textContent).toContain("Run heartbeat");
+    expect(document.body.textContent).toContain("Pause agent");
+    expect(document.body.textContent).toContain("Copy agent name");
   });
 });

@@ -1,14 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
 import { Link, useNavigate, useLocation } from "@/lib/router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { agentsApi, type OrgNode } from "../api/agents";
-import { chatsApi } from "../api/chats";
 import { heartbeatsApi } from "../api/heartbeats";
 import { useOrganization } from "../context/OrganizationContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
-import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { StatusBadge } from "../components/StatusBadge";
 import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
@@ -17,27 +15,8 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { relativeTime, cn, agentRouteRef, agentUrl } from "../lib/utils";
 import { PageTabBar } from "../components/PageTabBar";
 import { Tabs } from "@/components/ui/tabs";
-import {
-  Bot,
-  Copy,
-  GitBranch,
-  HeartPulse,
-  List,
-  Loader2,
-  MessageSquare,
-  MoreHorizontal,
-  Pause,
-  Play,
-  Plus,
-  SlidersHorizontal,
-} from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Bot, GitBranch, List, SlidersHorizontal } from "lucide-react";
+import { AgentActionsMenu } from "@/components/AgentActionsMenu";
 import { AGENT_ROLE_LABELS, type Agent } from "@rudderhq/shared";
 
 const adapterLabels: Record<string, string> = {
@@ -84,13 +63,11 @@ function filterOrgTree(nodes: OrgNode[], tab: FilterTab, showTerminated: boolean
 
 export function Agents() {
   const { selectedOrganizationId } = useOrganization();
-  const { openNewAgent, openNewIssue } = useDialog();
+  const { openNewAgent } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
   const navigate = useNavigate();
   const location = useLocation();
   const { isMobile } = useSidebar();
-  const queryClient = useQueryClient();
-  const { pushToast } = useToast();
   const pathSegment = location.pathname.split("/").pop() ?? "all";
   const tab: FilterTab = (pathSegment === "all" || pathSegment === "active" || pathSegment === "paused" || pathSegment === "error") ? pathSegment : "all";
   const [view, setView] = useState<"list" | "org">("org");
@@ -251,10 +228,6 @@ export function Agents() {
                 agent={agent}
                 liveRun={liveRunByAgent.get(agent.id) ?? null}
                 orgId={selectedOrganizationId}
-                onCreateTask={() => openNewIssue({ assigneeAgentId: agent.id })}
-                queryClient={queryClient}
-                navigate={navigate}
-                pushToast={pushToast}
               />
             );
           })}
@@ -278,10 +251,6 @@ export function Agents() {
               agentMap={agentMap}
               liveRunByAgent={liveRunByAgent}
               orgId={selectedOrganizationId}
-              onCreateTask={(agentId) => openNewIssue({ assigneeAgentId: agentId })}
-              queryClient={queryClient}
-              navigate={navigate}
-              pushToast={pushToast}
             />
           ))}
         </div>
@@ -306,18 +275,10 @@ function AgentListRow({
   agent,
   liveRun,
   orgId,
-  onCreateTask,
-  queryClient,
-  navigate,
-  pushToast,
 }: {
   agent: Agent;
   liveRun: { runId: string; liveCount: number } | null;
   orgId: string;
-  onCreateTask: () => void;
-  queryClient: ReturnType<typeof useQueryClient>;
-  navigate: ReturnType<typeof useNavigate>;
-  pushToast: ReturnType<typeof useToast>["pushToast"];
 }) {
   return (
     <div
@@ -344,13 +305,9 @@ function AgentListRow({
         </div>
       </Link>
       <AgentRowMetadata agent={agent} liveRun={liveRun} />
-      <AgentRowActionsMenu
+      <AgentActionsMenu
         agent={agent}
         orgId={orgId}
-        onCreateTask={onCreateTask}
-        queryClient={queryClient}
-        navigate={navigate}
-        pushToast={pushToast}
       />
     </div>
   );
@@ -398,182 +355,18 @@ function AgentRowMetadata({
   );
 }
 
-function AgentRowActionsMenu({
-  agent,
-  orgId,
-  onCreateTask,
-  queryClient,
-  navigate,
-  pushToast,
-}: {
-  agent: Agent;
-  orgId: string;
-  onCreateTask: () => void;
-  queryClient: ReturnType<typeof useQueryClient>;
-  navigate: ReturnType<typeof useNavigate>;
-  pushToast: ReturnType<typeof useToast>["pushToast"];
-}) {
-  const [open, setOpen] = useState(false);
-  const isTerminated = agent.status === "terminated";
-  const isPaused = agent.status === "paused";
-
-  const invalidateAgentData = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(orgId) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.org(orgId) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(orgId) }),
-    ]);
-  };
-
-  const chatMutation = useMutation({
-    mutationFn: () =>
-      chatsApi.create(orgId, {
-        title: `Chat with ${agent.name}`,
-        preferredAgentId: agent.id,
-        contextLinks: [{ entityType: "agent", entityId: agent.id }],
-      }),
-    onSuccess: async (conversation) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(orgId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
-      ]);
-      navigate(`/messenger/chat/${conversation.id}`);
-    },
-    onError: (error) => {
-      pushToast({
-        title: "Failed to open chat",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    },
-  });
-
-  const heartbeatMutation = useMutation({
-    mutationFn: () => agentsApi.invoke(agent.id, orgId),
-    onSuccess: async (run) => {
-      await invalidateAgentData();
-      pushToast({
-        title: "Heartbeat started",
-        tone: "success",
-        action: {
-          label: "Open run",
-          href: `/agents/${agentRouteRef(agent)}/runs/${run.id}`,
-        },
-      });
-    },
-    onError: (error) => {
-      pushToast({
-        title: "Failed to run heartbeat",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    },
-  });
-
-  const pauseResumeMutation = useMutation({
-    mutationFn: () => isPaused ? agentsApi.resume(agent.id, orgId) : agentsApi.pause(agent.id, orgId),
-    onSuccess: async () => {
-      await invalidateAgentData();
-      pushToast({
-        title: isPaused ? "Agent resumed" : "Agent paused",
-        tone: "success",
-      });
-    },
-    onError: (error) => {
-      pushToast({
-        title: isPaused ? "Failed to resume agent" : "Failed to pause agent",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    },
-  });
-
-  const handleCopyName = async () => {
-    try {
-      await navigator.clipboard.writeText(agent.name);
-      pushToast({ title: "Copied agent name", tone: "success" });
-    } catch (error) {
-      pushToast({
-        title: "Failed to copy agent name",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    }
-  };
-
-  const isBusy = chatMutation.isPending || heartbeatMutation.isPending || pauseResumeMutation.isPending;
-
-  return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={`More actions for ${agent.name}`}
-          data-testid={`agent-row-actions-${agent.id}`}
-          className={cn(
-            "flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color,opacity] hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            open || isBusy
-              ? "opacity-100"
-              : "opacity-100 md:opacity-0 md:group-hover/agent-row:opacity-100 md:group-focus-within/agent-row:opacity-100",
-          )}
-          onClick={(event) => {
-            event.stopPropagation();
-          }}
-        >
-          {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreHorizontal className="h-3.5 w-3.5" />}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="surface-overlay w-48 text-foreground">
-        <DropdownMenuItem onSelect={onCreateTask}>
-          <Plus className="h-4 w-4" />
-          Create task
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => chatMutation.mutate()} disabled={chatMutation.isPending || isTerminated}>
-          <MessageSquare className="h-4 w-4" />
-          Chat with agent
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => heartbeatMutation.mutate()} disabled={heartbeatMutation.isPending || isTerminated}>
-          <HeartPulse className="h-4 w-4" />
-          Run heartbeat
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onSelect={() => pauseResumeMutation.mutate()}
-          disabled={pauseResumeMutation.isPending || isTerminated}
-        >
-          {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-          {isPaused ? "Resume agent" : "Pause agent"}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void handleCopyName()}>
-          <Copy className="h-4 w-4" />
-          Copy agent name
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
 function OrgTreeNode({
   node,
   depth,
   agentMap,
   liveRunByAgent,
   orgId,
-  onCreateTask,
-  queryClient,
-  navigate,
-  pushToast,
 }: {
   node: OrgNode;
   depth: number;
   agentMap: Map<string, Agent>;
   liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
   orgId: string;
-  onCreateTask: (agentId: string) => void;
-  queryClient: ReturnType<typeof useQueryClient>;
-  navigate: ReturnType<typeof useNavigate>;
-  pushToast: ReturnType<typeof useToast>["pushToast"];
 }) {
   const agent = agentMap.get(node.id);
 
@@ -609,13 +402,9 @@ function OrgTreeNode({
           </span>
         )}
         {agent && (
-          <AgentRowActionsMenu
+          <AgentActionsMenu
             agent={agent}
             orgId={orgId}
-            onCreateTask={() => onCreateTask(agent.id)}
-            queryClient={queryClient}
-            navigate={navigate}
-            pushToast={pushToast}
           />
         )}
       </div>
@@ -629,10 +418,6 @@ function OrgTreeNode({
               agentMap={agentMap}
               liveRunByAgent={liveRunByAgent}
               orgId={orgId}
-              onCreateTask={onCreateTask}
-              queryClient={queryClient}
-              navigate={navigate}
-              pushToast={pushToast}
             />
           ))}
         </div>

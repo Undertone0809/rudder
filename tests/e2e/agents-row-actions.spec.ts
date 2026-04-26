@@ -47,6 +47,22 @@ test.describe("Agents row actions", () => {
     await expect(page.getByRole("menuitem", { name: "Pause agent" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Copy agent name" })).toBeVisible();
 
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/${agent.id}/dashboard`);
+    const sidebarRow = page.getByTestId(`agent-sidebar-row-${agent.id}`);
+    const sidebarActions = page.getByTestId(`agent-sidebar-actions-${agent.id}`);
+    await expect(sidebarRow).toContainText("Row Action Agent");
+    await sidebarRow.hover();
+    await sidebarActions.click();
+    await expect(page.getByRole("menuitem", { name: "Create task" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Chat with agent" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Run heartbeat" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Pause agent" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Copy agent name" })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/all`);
+    await row.hover();
+    await actions.click();
     await page.getByRole("menuitem", { name: "Create task" }).click();
     await expect(page.getByText("New issue", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Row Action Agent (Founding Engineer)" })).toBeVisible();
