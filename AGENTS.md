@@ -119,20 +119,11 @@ Notes:
 
 ## 5. Core Engineering Rules
 
-1. Start feature work in an isolated git worktree and branch.
-
-   For new feature development, create a fresh worktree and a new branch before editing code. Do not develop new features directly on `main` or inside an existing dirty worktree. Use the repository branch prefix unless the task asks for another name:
-
-   ```sh
-   git worktree add -b zeelandc/<short-feature-name> ../rudder-oss-<short-feature-name> main
-   cd ../rudder-oss-<short-feature-name>
-   ```
-
-2. Keep changes organization-scoped.
+1. Keep changes organization-scoped.
 
    Every domain entity should be scoped to an organization and organization boundaries must be enforced in routes/services.
 
-3. Keep contracts synchronized.
+2. Keep contracts synchronized.
 
    If you change schema/API behavior, update all impacted layers:
 
@@ -141,7 +132,7 @@ Notes:
    - `server` routes/services
    - `ui` API clients and pages
 
-4. Preserve control-plane invariants.
+3. Preserve control-plane invariants.
 
    - Single-assignee task model
    - Atomic issue checkout semantics
@@ -149,21 +140,21 @@ Notes:
    - Budget hard-stop auto-pause behavior
    - Activity logging for mutating actions
 
-5. Do not replace strategic docs wholesale unless asked.
+4. Do not replace strategic docs wholesale unless asked.
 
    Prefer additive updates. Keep `doc/SPEC.md` and `doc/SPEC-implementation.md` aligned.
 
-6. Keep bundled skill docs synchronized.
+5. Keep bundled skill docs synchronized.
 
    If you change a built-in Rudder skill under `server/resources/bundled-skills/<slug>/`, update the sibling `references/` docs and any contributor-facing docs that describe the bundled-skill location or behavior when they are affected. Do not leave `SKILL.md` content on a newer API contract than the docs that point to it.
 
-7. Keep plan docs dated and centralized.
+6. Keep plan docs dated and centralized.
 
    New plan documents belong in `doc/plans/` and should use `YYYY-MM-DD-slug.md` filenames. Plan docs must be written in English.
    When using plan mode, write the plan in `doc/plans/` before starting implementation work.
    New plan docs should start with the standard YAML frontmatter described in `doc/DEVELOPING.md`, use the most specific supported `kind`, and choose `area` / `entities` using `doc/plans/_taxonomy.md` plus relevant prior plans.
 
-8. Require end-to-end coverage for feature work.
+7. Require end-to-end coverage for feature work.
 
    Any shipped feature or user-visible workflow change must add or update automated E2E coverage for the path being introduced or changed.
    If no suitable E2E suite exists yet for that area, create it as part of the feature work.
