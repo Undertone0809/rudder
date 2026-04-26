@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Notification, app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, systemPreferences } from "electron";
-import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electron";
+import type { BrowserWindowConstructorOptions, ContextMenuParams, MenuItemConstructorOptions, OpenDialogOptions } from "electron";
 import { createBootScreenHtml } from "./boot-screen.js";
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
@@ -86,6 +86,18 @@ type ServerModule = {
 type CliModule = {
   runCli(argv?: string[]): Promise<number>;
 };
+
+type ContextMenuIconName =
+  | "copy"
+  | "cut"
+  | "external"
+  | "image"
+  | "link"
+  | "paste"
+  | "redo"
+  | "reload"
+  | "selectAll"
+  | "undo";
 
 type LocalEnvProfile = {
   name: "dev" | "prod_local" | "e2e";
@@ -480,6 +492,193 @@ function createDesktopWebPreferences(preloadPath: string): Electron.WebPreferenc
   };
 }
 
+const CONTEXT_MENU_ICON_PATHS: Record<ContextMenuIconName, string> = {
+  copy: '<rect x="6" y="6" width="8" height="8" rx="1.5" /><path d="M3 10V4.5A1.5 1.5 0 0 1 4.5 3H10" />',
+  cut: '<path d="M4 4l8 8" /><path d="M12 4L4 12" /><circle cx="4" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" />',
+  external: '<path d="M6 4H4.5A1.5 1.5 0 0 0 3 5.5v6A1.5 1.5 0 0 0 4.5 13h6A1.5 1.5 0 0 0 12 11.5V10" /><path d="M9 3h4v4" /><path d="M8 8l5-5" />',
+  image: '<rect x="2.5" y="3" width="11" height="10" rx="1.5" /><circle cx="6" cy="6" r="1" /><path d="M3 11l3-3 2 2 2-2 3 3" />',
+  link: '<path d="M6.5 9.5l3-3" /><path d="M7 5.2l.8-.8a2.4 2.4 0 0 1 3.4 3.4l-.8.8" /><path d="M9 10.8l-.8.8a2.4 2.4 0 0 1-3.4-3.4l.8-.8" />',
+  paste: '<path d="M6 3h4l1 2H5l1-2z" /><path d="M5 5H4.5A1.5 1.5 0 0 0 3 6.5v6A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5v-6A1.5 1.5 0 0 0 11.5 5H11" />',
+  redo: '<path d="M10 4h3v3" /><path d="M13 4.5A5 5 0 1 0 14 8" />',
+  reload: '<path d="M13 8a5 5 0 1 1-1.5-3.55" /><path d="M11.5 2.5v3h3" />',
+  selectAll: '<rect x="3" y="3" width="10" height="10" rx="1.5" /><path d="M6 6h4" /><path d="M6 8h4" /><path d="M6 10h3" />',
+  undo: '<path d="M6 4H3v3" /><path d="M3 4.5A5 5 0 1 1 2 8" />',
+};
+
+const contextMenuIconCache = new Map<string, Electron.NativeImage>();
+
+function createContextMenuIcon(name: ContextMenuIconName): Electron.NativeImage {
+  const tone = currentAppearance === "dark" ? "dark" : "light";
+  const cacheKey = `${name}:${tone}:${process.platform}`;
+  const cached = contextMenuIconCache.get(cacheKey);
+  if (cached) return cached;
+
+  const stroke = tone === "dark" ? "#f4f4f5" : "#27272a";
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="${stroke}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">`,
+    CONTEXT_MENU_ICON_PATHS[name],
+    "</svg>",
+  ].join("");
+  const icon = nativeImage.createFromDataURL(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+  icon.setTemplateImage(process.platform === "darwin");
+  contextMenuIconCache.set(cacheKey, icon);
+  return icon;
+}
+
+function addContextMenuSeparator(items: MenuItemConstructorOptions[]): void {
+  if (items.length === 0 || items[items.length - 1]?.type === "separator") return;
+  items.push({ type: "separator" });
+}
+
+function normalizeContextMenuUrl(value: string | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+function buildDesktopContextMenu(
+  window: BrowserWindow,
+  params: ContextMenuParams,
+): MenuItemConstructorOptions[] {
+  const items: MenuItemConstructorOptions[] = [];
+  const editFlags = params.editFlags;
+  const linkUrl = normalizeContextMenuUrl(params.linkURL);
+  const sourceUrl = normalizeContextMenuUrl(params.srcURL);
+  const hasSelection = params.selectionText.trim().length > 0;
+
+  if (linkUrl) {
+    items.push(
+      {
+        label: "Open Link in Browser",
+        icon: createContextMenuIcon("external"),
+        click: () => {
+          void shell.openExternal(linkUrl);
+        },
+      },
+      {
+        label: "Copy Link",
+        icon: createContextMenuIcon("link"),
+        click: () => {
+          clipboard.writeText(linkUrl);
+        },
+      },
+    );
+  }
+
+  if (sourceUrl && params.mediaType === "image" && sourceUrl !== linkUrl) {
+    addContextMenuSeparator(items);
+    items.push(
+      {
+        label: "Open Image in Browser",
+        icon: createContextMenuIcon("image"),
+        click: () => {
+          void shell.openExternal(sourceUrl);
+        },
+      },
+      {
+        label: "Copy Image Address",
+        icon: createContextMenuIcon("link"),
+        click: () => {
+          clipboard.writeText(sourceUrl);
+        },
+      },
+    );
+  }
+
+  if (params.isEditable) {
+    addContextMenuSeparator(items);
+    items.push(
+      {
+        label: "Undo",
+        icon: createContextMenuIcon("undo"),
+        enabled: editFlags.canUndo,
+        click: () => window.webContents.undo(),
+      },
+      {
+        label: "Redo",
+        icon: createContextMenuIcon("redo"),
+        enabled: editFlags.canRedo,
+        click: () => window.webContents.redo(),
+      },
+    );
+    addContextMenuSeparator(items);
+    items.push(
+      {
+        label: "Cut",
+        icon: createContextMenuIcon("cut"),
+        enabled: editFlags.canCut,
+        click: () => window.webContents.cut(),
+      },
+      {
+        label: "Copy",
+        icon: createContextMenuIcon("copy"),
+        enabled: editFlags.canCopy,
+        click: () => window.webContents.copy(),
+      },
+      {
+        label: "Paste",
+        icon: createContextMenuIcon("paste"),
+        enabled: editFlags.canPaste,
+        click: () => window.webContents.paste(),
+      },
+    );
+    addContextMenuSeparator(items);
+    items.push({
+      label: "Select All",
+      icon: createContextMenuIcon("selectAll"),
+      enabled: editFlags.canSelectAll,
+      click: () => window.webContents.selectAll(),
+    });
+  } else if (hasSelection) {
+    addContextMenuSeparator(items);
+    items.push(
+      {
+        label: "Copy",
+        icon: createContextMenuIcon("copy"),
+        click: () => window.webContents.copy(),
+      },
+      {
+        label: "Select All",
+        icon: createContextMenuIcon("selectAll"),
+        click: () => window.webContents.selectAll(),
+      },
+    );
+  } else {
+    addContextMenuSeparator(items);
+    items.push({
+      label: "Select All",
+      icon: createContextMenuIcon("selectAll"),
+      click: () => window.webContents.selectAll(),
+    });
+  }
+
+  if (!params.isEditable) {
+    addContextMenuSeparator(items);
+    items.push({
+      label: "Reload",
+      icon: createContextMenuIcon("reload"),
+      click: () => window.webContents.reload(),
+    });
+  }
+
+  while (items[items.length - 1]?.type === "separator") {
+    items.pop();
+  }
+
+  return items;
+}
+
+function registerDesktopContextMenu(window: BrowserWindow): void {
+  window.webContents.on("context-menu", (_event, params) => {
+    const template = buildDesktopContextMenu(window, params);
+    if (template.length === 0) return;
+    Menu.buildFromTemplate(template).popup({
+      window,
+      x: params.x,
+      y: params.y,
+    });
+  });
+}
+
 function applyDesktopAppearance(appearance: DesktopAppearance): void {
   currentAppearance = appearance;
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -634,6 +833,7 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   window.once("ready-to-show", () => {
     window.show();
   });
+  registerDesktopContextMenu(window);
 
   window.on("close", (event) => {
     if (!shouldHideToResidentShell() || quitRequested || quitting) return;
