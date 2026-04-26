@@ -102,17 +102,18 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
     ...props
   }: {
     children: ReactNode;
-    onContextMenu?: MouseEventHandler<HTMLButtonElement>;
+    onContextMenu?: MouseEventHandler<HTMLDivElement>;
     onSelect?: (event: Event) => void;
   }) => (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={(event) => onSelect?.(event.nativeEvent)}
       onContextMenu={onContextMenu}
       {...props}
     >
       {children}
-    </button>
+    </div>
   ),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
@@ -208,13 +209,14 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     renderSidebar();
 
-    const draftEntry = document.querySelector("[data-testid='issue-draft-sidebar-entry']") as HTMLButtonElement | null;
+    const draftEntry = document.querySelector("[data-testid='issue-draft-sidebar-entry']") as HTMLElement | null;
     expect(draftEntry?.textContent).toContain("Draft Issues");
     expect(draftEntry?.textContent).not.toContain("Draft Issues (");
     expect(draftEntry?.textContent).toContain("Recovered draft issue");
 
+    const openButton = document.querySelector("[data-testid='issue-draft-open-button']") as HTMLButtonElement | null;
     act(() => {
-      draftEntry?.click();
+      openButton?.click();
     });
 
     expect(mockState.openNewIssue).toHaveBeenCalledWith({ draftId: "draft-1" });
@@ -251,7 +253,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(mockState.setSidebarOpen).toHaveBeenCalledWith(false);
   });
 
-  it("deletes draft issues from the sidebar with right-click", () => {
+  it("deletes draft issues from the sidebar with visible delete buttons", () => {
     window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([
       { ...savedDraft, id: "draft-2", title: "Newer draft", updatedAt: "2026-04-26T11:00:00.000Z" },
       savedDraft,
@@ -259,9 +261,9 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     renderSidebar();
 
-    const menuItems = Array.from(document.querySelectorAll("[data-testid='issue-draft-menu-item']")) as HTMLButtonElement[];
+    const deleteButtons = Array.from(document.querySelectorAll("[data-testid='issue-draft-delete-button']")) as HTMLButtonElement[];
     act(() => {
-      menuItems[0]?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      deleteButtons[0]?.click();
     });
     expect(mockState.confirm).toHaveBeenCalledWith('Delete draft issue "Newer draft"? This cannot be undone.');
     expect(mockState.pushToast).toHaveBeenCalledWith({ title: "Draft issue deleted", tone: "success" });
@@ -271,9 +273,9 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     ) as Array<{ id: string }>;
     expect(storedDraftsAfterMenuDelete.map((draft) => draft.id)).toEqual(["draft-1"]);
 
-    const draftEntry = document.querySelector("[data-testid='issue-draft-sidebar-entry']") as HTMLButtonElement | null;
+    const singleDeleteButton = document.querySelector("[data-testid='issue-draft-delete-button']") as HTMLButtonElement | null;
     act(() => {
-      draftEntry?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      singleDeleteButton?.click();
     });
     expect(mockState.confirm).toHaveBeenCalledWith('Delete draft issue "Recovered draft issue"? This cannot be undone.');
 
@@ -284,15 +286,15 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector("[data-testid='issue-draft-sidebar-entry']")).toBeNull();
   });
 
-  it("keeps a draft issue when right-click deletion is cancelled", () => {
+  it("keeps a draft issue when visible deletion is cancelled", () => {
     mockState.confirm.mockReturnValue(false);
     window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([savedDraft]));
 
     renderSidebar();
 
-    const draftEntry = document.querySelector("[data-testid='issue-draft-sidebar-entry']") as HTMLButtonElement | null;
+    const deleteButton = document.querySelector("[data-testid='issue-draft-delete-button']") as HTMLButtonElement | null;
     act(() => {
-      draftEntry?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      deleteButton?.click();
     });
 
     const storedDrafts = JSON.parse(

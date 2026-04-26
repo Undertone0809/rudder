@@ -19,6 +19,7 @@ import {
   Plus,
   Star,
   Target,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
@@ -508,23 +509,21 @@ export function ThreeColumnContextSidebar() {
         <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
         <SectionLabel>Issues</SectionLabel>
         {issueDraftSummaries.length === 1 ? (
-          <button
-            type="button"
+          <div
             data-testid="issue-draft-sidebar-entry"
-            title="Right-click to delete draft"
-            onClick={() => {
-              openIssueDraft(issueDraftSummaries[0]?.id);
-            }}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              removeIssueDraft(issueDraftSummaries[0]?.id, issueDraftSummaries[0]?.title);
-            }}
             className={cn(
-              "mx-1.5 mt-2 rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] px-3 py-2 text-left transition-[background-color,border-color,color]",
+              "mx-1.5 mt-2 flex items-center rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] text-left transition-[background-color,border-color,color]",
               "bg-[color:color-mix(in_oklab,var(--surface-proposal)_64%,transparent)] text-foreground hover:border-[color:var(--border-strong)] hover:bg-[color:color-mix(in_oklab,var(--surface-proposal)_86%,transparent)]",
             )}
           >
-            <div className="flex items-center gap-3">
+            <button
+              type="button"
+              data-testid="issue-draft-open-button"
+              onClick={() => {
+                openIssueDraft(issueDraftSummaries[0]?.id);
+              }}
+              className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left"
+            >
               <PencilLine className="h-4 w-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium">
@@ -534,8 +533,22 @@ export function ThreeColumnContextSidebar() {
                   {issueDraftSummaries[0]?.title}
                 </div>
               </div>
-            </div>
-          </button>
+            </button>
+            <button
+              type="button"
+              data-testid="issue-draft-delete-button"
+              aria-label={`Delete draft ${issueDraftSummaries[0]?.title ?? "Untitled issue draft"}`}
+              onClick={() => {
+                removeIssueDraft(issueDraftSummaries[0]?.id, issueDraftSummaries[0]?.title);
+              }}
+              className={cn(
+                "mr-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground transition-colors",
+                "hover:bg-[color:color-mix(in_oklab,var(--destructive)_16%,transparent)] hover:text-destructive",
+              )}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
         ) : issueDraftSummaries.length > 1 ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -566,25 +579,41 @@ export function ThreeColumnContextSidebar() {
                 <DropdownMenuItem
                   key={draft.id}
                   data-testid="issue-draft-menu-item"
-                  title="Right-click to delete draft"
                   onSelect={(event) => {
                     event.preventDefault();
                     openIssueDraft(draft.id);
                   }}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    removeIssueDraft(draft.id, draft.title);
-                  }}
-                  className="items-start gap-3 py-2"
+                  className="group/draft items-center gap-3 py-2"
                 >
-                  <PencilLine className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-foreground">{draft.title}</div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {draft.description || `${draft.status} / ${draft.priority}`}
+                  <div className="flex min-w-0 flex-1 items-start gap-3">
+                    <PencilLine className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-foreground">{draft.title}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {draft.description || `${draft.status} / ${draft.priority}`}
+                      </div>
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    data-testid="issue-draft-delete-button"
+                    aria-label={`Delete draft ${draft.title}`}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      removeIssueDraft(draft.id, draft.title);
+                    }}
+                    className={cn(
+                      "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground transition-colors",
+                      "hover:bg-[color:color-mix(in_oklab,var(--destructive)_16%,transparent)] hover:text-destructive",
+                    )}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>

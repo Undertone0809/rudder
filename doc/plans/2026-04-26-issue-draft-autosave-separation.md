@@ -52,8 +52,8 @@ behavior unclear.
 - Clicking the sidebar Draft Issues entry opens a single saved draft directly.
 - When multiple saved drafts exist, clicking the sidebar Draft Issues entry opens
   an animated picker menu and the user chooses which draft to reopen.
-- Right-clicking a saved draft entry asks for confirmation before deleting that
-  saved draft.
+- Clicking a saved draft entry's visible delete button asks for confirmation
+  before deleting that saved draft.
 - Creating an issue clears the active autosave and any opened saved draft.
 
 ## Implementation Plan
@@ -65,8 +65,8 @@ behavior unclear.
 3. Update the Issues sidebar to show `Draft Issues` only when explicit saved
    drafts exist, including count and latest title.
 4. Add the draft sidebar picker behavior: one draft opens directly, multiple
-   drafts open a dropdown menu, and right-click asks for confirmation before
-   deleting a saved draft.
+   drafts open a dropdown menu, and a visible delete button asks for
+   confirmation before deleting a saved draft.
 5. Update focused unit/component tests and the existing E2E spec fixture to use
    the explicit draft collection and cover the multi-draft picker.
 6. Run targeted UI tests, typecheck, and build before committing.
