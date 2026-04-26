@@ -122,13 +122,18 @@ Use this when the user is preparing release automation for the first time.
 2. Confirm npm package existence for every public package:
    `node scripts/release-package-map.mjs list`.
 3. If packages already exist, configure npm trusted publishing for each package
-   with repository `Undertone0809/rudder` and workflow `.github/workflows/release.yml`.
+   with owner `Undertone0809`, repository `rudder`, and workflow filename
+   `release.yml`. npm expects only the workflow filename, not the
+   `.github/workflows/` path.
 4. If packages do not exist, explain that a bootstrap publish is needed before
    trusted publishing can be attached to those package names.
 5. Configure GitHub environments:
    - `npm-canary`: no reviewer, selected branch `main`.
    - `npm-stable`: maintainer approval, selected branch `main`.
-6. Keep long-lived `NPM_TOKEN` out of the steady-state workflow once trusted
+6. If trusted publishing is not ready, add an environment secret named
+   `NPM_TOKEN` to both release environments as a temporary fallback, using an
+   npm automation token with publish access to the `@rudderhq` packages.
+7. Keep long-lived `NPM_TOKEN` out of the steady-state workflow once trusted
    publishing is verified.
 
 ### First-Time npm Bootstrap

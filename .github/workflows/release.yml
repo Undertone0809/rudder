@@ -38,6 +38,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: "https://registry.npmjs.org"
 
       - name: Enable pnpm
         run: |
@@ -56,6 +57,8 @@ jobs:
 
       - name: Publish canary
         id: publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           version="$(./scripts/release.sh canary --print-version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -75,6 +78,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: "https://registry.npmjs.org"
 
       - name: Enable pnpm
         run: |
@@ -102,6 +106,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: "https://registry.npmjs.org"
 
       - name: Enable pnpm
         run: |
@@ -119,6 +124,8 @@ jobs:
 
       - name: Publish stable
         id: publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           version="$(./scripts/release.sh stable --print-version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"

@@ -45,7 +45,7 @@ For each package:
 
 1. open npm as an owner of the package
 2. go to the package settings / publishing access area
-3. add a trusted publisher for the GitHub repository `rudder/rudder`
+3. add a trusted publisher for the GitHub repository `Undertone0809/rudder`
 
 ### 2.2. Add one trusted publisher entry per package
 
@@ -53,11 +53,12 @@ npm currently allows one trusted publisher configuration per package.
 
 Configure:
 
-- workflow: `.github/workflows/release.yml`
+- workflow filename: `release.yml`
 
 Repository:
 
-- `rudder/rudder`
+- owner or organization: `Undertone0809`
+- repository: `rudder`
 
 Environment name:
 
@@ -67,6 +68,7 @@ Why:
 
 - the single `release.yml` workflow handles both canary and stable publishing
 - GitHub environments `npm-canary` and `npm-stable` still enforce different approval rules on the GitHub side
+- npm asks for only the workflow filename, not `.github/workflows/release.yml`
 
 ### 2.3. Verify trusted publishing before removing old auth
 
@@ -79,6 +81,14 @@ After the workflows are live:
 5. confirm the desktop release workflow attaches installers to the stable GitHub Release
 
 Only after that should you remove old token-based access.
+
+Temporary fallback:
+
+- If trusted publishing is not configured yet, add an environment secret named
+  `NPM_TOKEN` to both `npm-canary` and `npm-stable`.
+- Use a granular npm automation token with publish access to the `@rudderhq`
+  packages.
+- Remove the token once trusted publishing has been verified.
 
 ## 3. Remove Legacy npm Tokens
 

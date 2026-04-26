@@ -290,7 +290,12 @@ require_npm_publish_auth() {
   fi
 
   if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-    release_info "  ✓ npm publish auth will be provided by GitHub Actions trusted publishing"
+    if [ -n "${NODE_AUTH_TOKEN:-${NPM_TOKEN:-}}" ]; then
+      release_info "  ✓ npm publish auth will use the GitHub Actions NPM_TOKEN fallback"
+    else
+      release_info "  ✓ npm publish auth will be provided by GitHub Actions trusted publishing"
+      release_info "    If publish fails with ENEEDAUTH, configure npm trusted publishing for repository Undertone0809/rudder and workflow filename release.yml, or add an npm automation token as the NPM_TOKEN environment secret."
+    fi
     return
   fi
 
