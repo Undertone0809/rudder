@@ -121,53 +121,53 @@ Notes:
 
 1. Start feature work in an isolated git worktree and branch.
 
-For new feature development, create a fresh worktree and a new branch before editing code. Do not develop new features directly on `main` or inside an existing dirty worktree. Use the repository branch prefix unless the task asks for another name:
+   For new feature development, create a fresh worktree and a new branch before editing code. Do not develop new features directly on `main` or inside an existing dirty worktree. Use the repository branch prefix unless the task asks for another name:
 
-```sh
-git worktree add -b zeelandc/<short-feature-name> ../rudder-oss-<short-feature-name> main
-cd ../rudder-oss-<short-feature-name>
-```
+   ```sh
+   git worktree add -b zeelandc/<short-feature-name> ../rudder-oss-<short-feature-name> main
+   cd ../rudder-oss-<short-feature-name>
+   ```
 
-1. Keep changes organization-scoped.
+2. Keep changes organization-scoped.
 
-Every domain entity should be scoped to a organization and organization boundaries must be enforced in routes/services.
+   Every domain entity should be scoped to an organization and organization boundaries must be enforced in routes/services.
 
-1. Keep contracts synchronized.
+3. Keep contracts synchronized.
 
-If you change schema/API behavior, update all impacted layers:
+   If you change schema/API behavior, update all impacted layers:
 
-- `packages/db` schema and exports
-- `packages/shared` types/constants/validators
-- `server` routes/services
-- `ui` API clients and pages
+   - `packages/db` schema and exports
+   - `packages/shared` types/constants/validators
+   - `server` routes/services
+   - `ui` API clients and pages
 
-1. Preserve control-plane invariants.
+4. Preserve control-plane invariants.
 
-- Single-assignee task model
-- Atomic issue checkout semantics
-- Approval gates for governed actions
-- Budget hard-stop auto-pause behavior
-- Activity logging for mutating actions
+   - Single-assignee task model
+   - Atomic issue checkout semantics
+   - Approval gates for governed actions
+   - Budget hard-stop auto-pause behavior
+   - Activity logging for mutating actions
 
-1. Do not replace strategic docs wholesale unless asked.
+5. Do not replace strategic docs wholesale unless asked.
 
-Prefer additive updates. Keep `doc/SPEC.md` and `doc/SPEC-implementation.md` aligned.
+   Prefer additive updates. Keep `doc/SPEC.md` and `doc/SPEC-implementation.md` aligned.
 
-1. Keep bundled skill docs synchronized.
+6. Keep bundled skill docs synchronized.
 
-If you change a built-in Rudder skill under `server/resources/bundled-skills/<slug>/`, update the sibling `references/` docs and any contributor-facing docs that describe the bundled-skill location or behavior when they are affected. Do not leave `SKILL.md` content on a newer API contract than the docs that point to it.
+   If you change a built-in Rudder skill under `server/resources/bundled-skills/<slug>/`, update the sibling `references/` docs and any contributor-facing docs that describe the bundled-skill location or behavior when they are affected. Do not leave `SKILL.md` content on a newer API contract than the docs that point to it.
 
-1. Keep plan docs dated and centralized.
+7. Keep plan docs dated and centralized.
 
-New plan documents belong in `doc/plans/` and should use `YYYY-MM-DD-slug.md` filenames. Plan docs must be written in English.
-When using plan mode, write the plan in `doc/plans/` before starting implementation work.
-New plan docs should start with the standard YAML frontmatter described in `doc/DEVELOPING.md`, use the most specific supported `kind`, and choose `area` / `entities` using `doc/plans/_taxonomy.md` plus relevant prior plans.
+   New plan documents belong in `doc/plans/` and should use `YYYY-MM-DD-slug.md` filenames. Plan docs must be written in English.
+   When using plan mode, write the plan in `doc/plans/` before starting implementation work.
+   New plan docs should start with the standard YAML frontmatter described in `doc/DEVELOPING.md`, use the most specific supported `kind`, and choose `area` / `entities` using `doc/plans/_taxonomy.md` plus relevant prior plans.
 
-1. Require end-to-end coverage for feature work.
+8. Require end-to-end coverage for feature work.
 
-Any shipped feature or user-visible workflow change must add or update automated E2E coverage for the path being introduced or changed.
-If no suitable E2E suite exists yet for that area, create it as part of the feature work.
-Do not treat unit, integration, or smoke coverage as a substitute unless the user explicitly approves that exception.
+   Any shipped feature or user-visible workflow change must add or update automated E2E coverage for the path being introduced or changed.
+   If no suitable E2E suite exists yet for that area, create it as part of the feature work.
+   Do not treat unit, integration, or smoke coverage as a substitute unless the user explicitly approves that exception.
 
 ## 6. Database Change Workflow
 
@@ -177,15 +177,15 @@ When changing data model:
 2. Ensure new tables are exported from `packages/db/src/schema/index.ts`
 3. Generate migration:
 
-```sh
-pnpm db:generate
-```
+   ```sh
+   pnpm db:generate
+   ```
 
-1. Validate compile:
+4. Validate compile:
 
-```sh
-pnpm -r typecheck
-```
+   ```sh
+   pnpm -r typecheck
+   ```
 
 Notes:
 
@@ -248,8 +248,8 @@ A change is done when all are true:
 2. Typecheck, tests, and build pass
 3. Contracts are synced across db/shared/server/ui
 4. Docs updated when behavior or commands change
-5. Git commit rules
+5. Git commit rules are followed:
 
-- After completing a feature, small functionality, test change, or bug fix, and after the necessary validation passes, default to running `git commit` and `git push` to the current remote branch.
-- Continue using the repository's Conventional Commit format for commit messages (for example `feat:`, `fix:`, `test:`, `chore:`, `pref:`).
-- If there are unrelated dirty changes in the working tree, default to committing only the files changed for the current task instead of asking for confirmation. YOU MUST COMMIT AFTER YOU WORK.
+   - After completing a feature, small functionality, test change, or bug fix, and after the necessary validation passes, default to running `git commit` and `git push` to the current remote branch.
+   - Continue using the repository's Conventional Commit format for commit messages (for example `feat:`, `fix:`, `test:`, `chore:`, `pref:`).
+   - If there are unrelated dirty changes in the working tree, default to committing only the files changed for the current task instead of asking for confirmation. YOU MUST COMMIT AFTER YOU WORK.
