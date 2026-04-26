@@ -168,6 +168,13 @@ export function PrimaryRail({
       active: /^\/dashboard(?:\/|$)/.test(relativePath),
     },
     {
+      key: "issues",
+      to: issueEntryPath,
+      label: "Issue",
+      icon: CircleCheckBig,
+      active: /^\/issues(?:\/|$)/.test(relativePath),
+    },
+    {
       key: "agents",
       to: "/agents",
       label: "Agents",
@@ -180,13 +187,6 @@ export function PrimaryRail({
       label: "Organization",
       icon: Network,
       active: orgGroupActive,
-    },
-    {
-      key: "issues",
-      to: issueEntryPath,
-      label: "Issue",
-      icon: CircleCheckBig,
-      active: /^\/issues(?:\/|$)/.test(relativePath),
     },
     {
       key: "automations",
