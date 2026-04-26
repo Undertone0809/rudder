@@ -693,6 +693,40 @@
     color: var(--ink-base);
   }
 
+  .project-context-menu-item {
+    color: var(--ink-base);
+    transition-property: background-color, color, border-color;
+    transition-duration: 140ms;
+  }
+
+  .project-context-menu-item[data-highlighted],
+  .project-context-menu-item:focus {
+    background: color-mix(in oklab, var(--surface-active) 70%, transparent);
+    color: var(--ink-strong);
+  }
+
+  .project-context-menu-item[data-state="checked"] {
+    background: color-mix(in oklab, var(--surface-active) 78%, transparent);
+    color: var(--ink-strong);
+  }
+
+  .project-context-swatch,
+  .project-context-empty-swatch {
+    border-radius: 999px;
+    display: inline-flex;
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, white 18%, transparent);
+  }
+
+  .project-context-swatch {
+    background: color-mix(in oklab, var(--project-context-color, var(--accent-base)) 64%, var(--surface-elevated));
+    border: 1px solid color-mix(in oklab, var(--project-context-color, var(--accent-base)) 42%, var(--border-base));
+  }
+
+  .project-context-empty-swatch {
+    background: color-mix(in oklab, var(--surface-active) 88%, var(--surface-elevated));
+    border: 1px solid color-mix(in oklab, var(--border-base) 88%, transparent);
+  }
+
   .chat-badge-ready {
     border: 1px solid color-mix(in oklab, var(--accent-base) 22%, var(--border-base));
     background: color-mix(in oklab, var(--surface-proposal) 82%, var(--surface-elevated));

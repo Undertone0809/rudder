@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
@@ -192,6 +192,12 @@ function projectContextId(conversation: ChatConversation | null | undefined) {
 
 function projectDisplayName(project: Project | null | undefined) {
   return project?.name?.trim() || "Unknown project";
+}
+
+function projectContextSwatchStyle(color: string | null | undefined): CSSProperties {
+  return {
+    "--project-context-color": color?.trim() || "var(--accent-base)",
+  } as CSSProperties;
 }
 
 function inferAttachmentExtension(contentType: string) {
@@ -2572,9 +2578,9 @@ function ChatWorkspace() {
               <DropdownMenuRadioItem
                 value={NO_PROJECT_ID}
                 hideIndicator
-                className="rounded-[var(--radius-md)] py-2 pr-2 leading-5"
+                className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
               >
-                <span className="mr-2 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border border-[color:var(--border-soft)]" />
+                <span className="project-context-empty-swatch mr-2 h-3 w-3 shrink-0" aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate">No project</span>
               </DropdownMenuRadioItem>
               {visibleProjects.length > 0 ? (
@@ -2585,11 +2591,11 @@ function ChatWorkspace() {
                       key={project.id}
                       value={project.id}
                       hideIndicator
-                      className="rounded-[var(--radius-md)] py-2 pr-2 leading-5"
+                      className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
                     >
                       <span
-                        className="mr-2 h-3.5 w-3.5 shrink-0 rounded-sm border border-black/10"
-                        style={{ backgroundColor: project.color ?? "var(--muted-foreground)" }}
+                        className="project-context-swatch mr-2 h-3 w-3 shrink-0"
+                        style={projectContextSwatchStyle(project.color)}
                         aria-hidden="true"
                       />
                       <span className="min-w-0 flex-1">

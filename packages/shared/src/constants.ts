@@ -231,16 +231,16 @@ export const PAUSE_REASONS = ["manual", "budget", "system"] as const;
 export type PauseReason = (typeof PAUSE_REASONS)[number];
 
 export const PROJECT_COLORS = [
-  "#6366f1", // indigo
-  "#8b5cf6", // violet
-  "#ec4899", // pink
-  "#ef4444", // red
-  "#f97316", // orange
-  "#eab308", // yellow
-  "#22c55e", // green
-  "#14b8a6", // teal
-  "#06b6d4", // cyan
-  "#3b82f6", // blue
+  "#4f46e5", // indigo
+  "#7c3aed", // violet
+  "#db2777", // pink
+  "#dc2626", // red
+  "#ea580c", // orange
+  "#ca8a04", // yellow
+  "#16a34a", // green
+  "#0d9488", // teal
+  "#0891b2", // cyan
+  "#2563eb", // blue
 ] as const;
 
 export const APPROVAL_TYPES = [
