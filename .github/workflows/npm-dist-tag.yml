@@ -1,0 +1,45 @@
+name: npm Dist Tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Published npm version to point the dist-tag at"
+        required: true
+      tag:
+        description: "npm dist-tag to update"
+        required: true
+        default: "latest"
+      dry_run:
+        description: "Preview without changing npm dist-tags"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  promote:
+    name: Promote npm dist-tag
+    if: github.repository == 'Undertone0809/rudder'
+    runs-on: ubuntu-latest
+    environment: npm-canary
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Promote dist-tag
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          args=(--version "${{ inputs.version }}" --tag "${{ inputs.tag }}")
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          node scripts/promote-npm-dist-tag.mjs "${args[@]}"

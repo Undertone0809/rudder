@@ -64,6 +64,7 @@ jobs:
           version="$(./scripts/release.sh canary --print-version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           ./scripts/release.sh canary
+          node scripts/promote-npm-dist-tag.mjs --version "$version" --tag latest --only-if-no-stable
           git push origin "refs/tags/canary/v${version}"
 
       - name: Start desktop release build

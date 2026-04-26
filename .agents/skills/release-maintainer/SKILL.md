@@ -53,10 +53,11 @@ cannot be safely inferred.
   commit.
 - A stable release is not done until verification, npm, GitHub Release, Desktop
   assets, and public notes/announcement are all handled.
-- A first public canary may temporarily be the default `latest` install path if
-  there is no stable release yet and the user explicitly wants
-  `npx @rudderhq/cli start` to work immediately. Call this out as a bootstrap
-  exception, not the normal canary policy.
+- Pre-stable public canaries may temporarily be the default `latest` install
+  path if there is no stable npm version yet and the user explicitly wants
+  `npx @rudderhq/cli@latest start` or bare `npx @rudderhq/cli start` to work
+  immediately. Call this out as an alpha/bootstrap exception, not the normal
+  canary policy.
 - Release-maintenance commits that should not publish another canary must
   include `[skip release]`, then be verified as skipped in `release.yml`.
 - If a normal `main` push is already running while you make release-maintenance
@@ -172,10 +173,11 @@ node scripts/release-package-map.mjs list
 4. Publish all public packages in release-package-map order using the chosen
    version and dist-tag. Do not retry a package/version that npm already
    accepted; continue by verifying and repairing tags/releases instead.
-5. For a first public canary where no stable exists and the user wants bare
-   `npx @rudderhq/cli start`, move both `canary` and `latest` to the same
-   canary version across every public package. For ordinary later canaries, only
-   `canary` should move.
+5. For a pre-stable public canary where no stable npm version exists and the
+   user wants `npx @rudderhq/cli@latest start` or bare `npx @rudderhq/cli start`
+   to work, move both `canary` and `latest` to the same canary version across
+   every public package. After the first stable release exists, ordinary
+   canaries should only move `canary`.
 6. Immediately verify all dist-tags across the whole package set with a script,
    not just `@rudderhq/cli`.
 
@@ -225,8 +227,11 @@ process.exit(failed ? 1 : 0);
 NODE
 ```
 
-4. Confirm tag `canary/vX.Y.Z-canary.N` exists locally and remotely.
-5. Confirm `desktop-release.yml` ran for the canary tag. If it did not, dispatch
+4. If no stable npm version exists yet, confirm npm `latest` also points at the
+   same canary for every public package. If it does not, run the `npm Dist Tag`
+   workflow for that version and verify again.
+5. Confirm tag `canary/vX.Y.Z-canary.N` exists locally and remotely.
+6. Confirm `desktop-release.yml` ran for the canary tag. If it did not, dispatch
    it explicitly; do not rely on the tag push to trigger it:
 
 ```bash
@@ -236,7 +241,7 @@ gh workflow run desktop-release.yml \
   -f source_ref=main
 ```
 
-6. Verify the canary GitHub Release uses the clean display title
+7. Verify the canary GitHub Release uses the clean display title
    `vX.Y.Z-canary.N`, is prerelease, and has all Desktop assets:
 
 ```bash
@@ -254,7 +259,7 @@ Expected canary Desktop assets:
 - `Rudder-X.Y.Z-canary.N-windows-x64-portable.zip`
 - `SHASUMS256.txt`
 
-7. Smoke test the actual start path with isolated HOME and npm cache:
+8. Smoke test the actual start path with isolated HOME and npm cache:
 
 ```bash
 tmp_home="$(mktemp -d /tmp/rudder-cli-smoke-canary.XXXXXX)"
@@ -265,6 +270,16 @@ HOME="$tmp_home" npm_config_cache="$tmp_cache" npm_config_yes=true \
 
 If canary smoke fails, do not promote stable. Fix forward on `main`, wait for
 the next canary, and smoke again.
+
+For pre-stable alpha releases, also smoke the user-facing `latest` path after
+confirming the `latest` dist-tag moved:
+
+```bash
+tmp_home="$(mktemp -d /tmp/rudder-cli-smoke-latest.XXXXXX)"
+tmp_cache="$(mktemp -d /tmp/rudder-npm-cache-latest.XXXXXX)"
+HOME="$tmp_home" npm_config_cache="$tmp_cache" npm_config_yes=true \
+  npx --prefer-online --yes @rudderhq/cli@latest start --dry-run --no-open
+```
 
 ### Stable Release
 

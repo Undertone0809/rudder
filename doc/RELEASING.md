@@ -62,6 +62,8 @@ It:
 - verifies the pushed commit
 - derives the next canary prerelease from the committed semver
 - publishes under npm dist-tag `canary`
+- while no stable npm version exists yet, also points npm dist-tag `latest` at
+  the same canary so the alpha `npx @rudderhq/cli@latest start` path works
 - creates a git tag `canary/vX.Y.Z-canary.N`
 - starts the Desktop release workflow for `canary/vX.Y.Z-canary.N`
 - creates or updates the canary GitHub Release with display title `vX.Y.Z-canary.N`
@@ -116,6 +118,11 @@ Users install stable Rudder with:
 ```bash
 npx @rudderhq/cli@latest start
 ```
+
+During the pre-stable alpha period, `latest` may temporarily point at the newest
+canary so the same first-run command keeps working before a real stable exists.
+After the first stable npm version is published, `latest` returns to stable-only
+semantics and canaries remain on `@canary`.
 
 By default this checks for newer Rudder CLI releases, prepares the matching
 persistent `rudder` CLI globally, and downloads/opens the matching Rudder
