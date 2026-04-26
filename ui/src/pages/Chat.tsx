@@ -9,6 +9,7 @@ import {
   ChevronRight,
   CircleHelp,
   Copy,
+  Folder,
   Loader2,
   Paperclip,
   Pencil,
@@ -27,6 +28,7 @@ import {
   type ChatOperationProposalDecisionStatus,
   type ChatPrimaryIssueSummary,
   type MessengerThreadSummary,
+  type Project,
 } from "@rudderhq/shared";
 import type { TranscriptEntry } from "@/agent-runtimes";
 import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
@@ -71,6 +73,12 @@ import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import { queryKeys } from "@/lib/queryKeys";
+import {
+  formatChatProcessDuration,
+  lastTranscriptAtMs,
+  resolvePersistedChatProcessEndedAt,
+  resolvePersistedChatProcessStartedAt,
+} from "@/lib/chat-process-duration";
 import {
   readChatScopedFlag,
   readChatScopedState,
@@ -146,7 +154,45 @@ const EMPTY_STATE_PROMPT_GROUPS = [
   },
 ] as const;
 
+const NO_PROJECT_ID = "__none__";
+const CHAT_LAST_PROJECT_STORAGE_KEY = "rudder.chatLastProjectByOrg";
+
 type EmptyStatePromptLabel = (typeof EMPTY_STATE_PROMPT_GROUPS)[number]["label"];
+
+function readRememberedChatProjectId(orgId: string): string | null | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.localStorage.getItem(CHAT_LAST_PROJECT_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return undefined;
+    const value = (parsed as Record<string, unknown>)[orgId];
+    return typeof value === "string" ? value : value === null ? null : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function rememberChatProjectId(orgId: string, projectId: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(CHAT_LAST_PROJECT_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const next = parsed && typeof parsed === "object" ? parsed as Record<string, string | null> : {};
+    next[orgId] = projectId;
+    window.localStorage.setItem(CHAT_LAST_PROJECT_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore storage failures; project context still persists on saved conversations.
+  }
+}
+
+function projectContextId(conversation: ChatConversation | null | undefined) {
+  return conversation?.contextLinks.find((link) => link.entityType === "project")?.entityId ?? null;
+}
+
+function projectDisplayName(project: Project | null | undefined) {
+  return project?.name?.trim() || "Unknown project";
+}
 
 function inferAttachmentExtension(contentType: string) {
   const normalized = contentType.trim().toLowerCase();
@@ -1181,41 +1227,16 @@ function ChatMessagesLoadingState() {
   );
 }
 
-function formatChatProcessDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "0s";
-  if (ms < 1000) return "under 1s";
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
-}
-
-function lastTranscriptAtMs(entries: TranscriptEntry[]): number {
-  let max = 0;
-  for (const e of entries) {
-    const t = Date.parse(e.ts);
-    if (Number.isFinite(t) && t > max) max = t;
-  }
-  return max > 0 ? max : Date.now();
-}
-
-function transcriptStartedAt(entries: TranscriptEntry[], fallback: Date): Date {
-  for (const entry of entries) {
-    const ts = Date.parse(entry.ts);
-    if (Number.isFinite(ts)) return new Date(ts);
-  }
-  return fallback;
-}
-
 function StreamTranscriptItem({
   entries,
   state,
   streamStartedAt,
+  streamEndedAt,
 }: {
   entries: TranscriptEntry[];
   state: StreamDraftState | ChatMessage["status"];
   streamStartedAt: Date;
+  streamEndedAt?: Date | null;
 }) {
   const streamingActive = state === "streaming" || state === "finalizing";
   const [processOpen, setProcessOpen] = useState(() => streamingActive);
@@ -1237,9 +1258,10 @@ function StreamTranscriptItem({
 
   const durationMs = useMemo(() => {
     const start = streamStartedAt.getTime();
-    const end = streamingActive ? Date.now() : lastTranscriptAtMs(entries);
+    const explicitEnd = streamEndedAt?.getTime() ?? 0;
+    const end = streamingActive ? Date.now() : Math.max(lastTranscriptAtMs(entries), explicitEnd);
     return Math.max(0, end - start);
-  }, [streamStartedAt, streamingActive, entries, tick]);
+  }, [streamStartedAt, streamEndedAt, streamingActive, entries, tick]);
 
   if (entries.length === 0) return null;
 
@@ -1402,17 +1424,21 @@ function ChatWorkspace() {
   const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false);
   const [streamDrafts, setStreamDrafts] = useState<Record<string, StreamDraft>>({});
   const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>("__none__");
+  const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
   const [draftPlanMode, setDraftPlanMode] = useState(false);
   const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({});
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [skillMenuOpen, setSkillMenuOpen] = useState(false);
   const [skillSearchQuery, setSkillSearchQuery] = useState("");
   const [editForkUserMessageId, setEditForkUserMessageId] = useState<string | null>(null);
   const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null);
   const [expandedEmptyStatePrompt, setExpandedEmptyStatePrompt] = useState<EmptyStatePromptLabel | null>(null);
+  const [emptyStatePromptPanelEntered, setEmptyStatePromptPanelEntered] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const composerEditorRef = useRef<MarkdownEditorRef>(null);
   const streamAbortControllersRef = useRef<Record<string, AbortController>>({});
   const stopRequestedChatIdsRef = useRef<Set<string>>(new Set());
@@ -1421,6 +1447,7 @@ function ChatWorkspace() {
   const chatSendLocksRef = useRef<Record<string, true>>({});
   const lastAppliedPrefillRef = useRef<string | null>(null);
   const lastAppliedAgentPrefillRef = useRef<string | null>(null);
+  const projectDefaultInitializedRef = useRef(false);
   const { isMobile } = useSidebar();
   const chatMessagesScrollRef = useScrollbarActivityRef();
   const pendingPrefill = searchParams.get("prefill")?.trim() ?? "";
@@ -1518,6 +1545,10 @@ function ChatWorkspace() {
     queryFn: () => projectsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
+  const visibleProjects = useMemo(
+    () => (projects ?? []).filter((project) => !project.archivedAt),
+    [projects],
+  );
 
   const { data: issues, error: issuesError } = useQuery({
     queryKey: queryKeys.issues.list(selectedOrganizationId ?? "__none__"),
@@ -1575,6 +1606,8 @@ function ChatWorkspace() {
     ?? conversationsQuery.data?.find((conversation) => conversation.id === conversationId)
     ?? null;
   const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId;
+  const selectedConversationProjectId = projectContextId(selectedConversation);
+  const activeProjectId = selectedConversation ? (selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId;
   const activePlanMode = selectedConversation?.planMode ?? draftPlanMode;
   const activeSkillAgentId = activeAgentId === "__none__" ? null : activeAgentId;
   const activeSkillAgent = activeSkillAgentId
@@ -1644,6 +1677,33 @@ function ChatWorkspace() {
     selectedConversation?.preferredAgentId,
     selectedConversation?.planMode,
   ]);
+
+  useEffect(() => {
+    if (!selectedOrganizationId || !selectedConversation) return;
+    const projectId = projectContextId(selectedConversation);
+    setDraftProjectId(projectId ?? NO_PROJECT_ID);
+    rememberChatProjectId(selectedOrganizationId, projectId);
+  }, [
+    selectedOrganizationId,
+    selectedConversation?.id,
+    selectedConversation?.contextLinks,
+  ]);
+
+  useEffect(() => {
+    if (!selectedOrganizationId || selectedConversation || projectDefaultInitializedRef.current) return;
+    if (!projects) return;
+    projectDefaultInitializedRef.current = true;
+
+    const rememberedProjectId = readRememberedChatProjectId(selectedOrganizationId);
+    if (
+      rememberedProjectId
+      && visibleProjects.some((project) => project.id === rememberedProjectId)
+    ) {
+      setDraftProjectId(rememberedProjectId);
+      return;
+    }
+    setDraftProjectId(NO_PROJECT_ID);
+  }, [projects, selectedConversation, selectedOrganizationId, visibleProjects]);
 
   useEffect(() => {
     if (!selectedOrganizationId) return;
@@ -1805,6 +1865,26 @@ function ChatWorkspace() {
     },
   });
 
+  const updateProjectContextMutation = useMutation({
+    mutationFn: ({ chatId, projectId }: { chatId: string; projectId: string | null }) =>
+      chatsApi.setProjectContext(chatId, projectId),
+    onSuccess: async (conversation) => {
+      if (selectedOrganizationId) {
+        rememberChatProjectId(selectedOrganizationId, projectContextId(conversation));
+      }
+      upsertConversation(conversation);
+      upsertMessengerThreadSummary(conversation);
+      await refreshChat(conversation.id);
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to update project context",
+        body: error instanceof Error ? error.message : "Try again.",
+        tone: "error",
+      });
+    },
+  });
+
   const markConversationReadMutation = useMutation({
     mutationFn: (chatId: string) => chatsApi.markRead(chatId),
     onSuccess: async (_result, chatId) => {
@@ -1937,6 +2017,9 @@ function ChatWorkspace() {
           preferredAgentId: draftPreferredAgentId === "__none__" ? null : draftPreferredAgentId,
           issueCreationMode: "manual_approval",
           planMode: draftPlanMode,
+          contextLinks: draftProjectId === NO_PROJECT_ID
+            ? []
+            : [{ entityType: "project", entityId: draftProjectId }],
         });
         const startedAt = new Date();
         conversation = upsertOptimisticConversation(createdConversation, body, startedAt);
@@ -2217,6 +2300,15 @@ function ChatWorkspace() {
           const activeAgent = (agents ?? []).find((agent) => agent.id === activeAgentId);
           return activeAgent ? formatChatAgentLabel(activeAgent) : "Unknown agent";
         })();
+  const activeProjectContextLink = selectedConversation?.contextLinks.find((link) => link.entityType === "project") ?? null;
+  const activeProject = activeProjectId === NO_PROJECT_ID
+    ? null
+    : visibleProjects.find((project) => project.id === activeProjectId) ?? null;
+  const projectPillLabel = activeProject
+    ? projectDisplayName(activeProject)
+    : activeProjectId === NO_PROJECT_ID
+      ? "No project"
+      : activeProjectContextLink?.entity?.label ?? "Unknown project";
 
   const availableChatSkills = useMemo(
     () => buildChatSkillOptions({
@@ -2313,6 +2405,21 @@ function ChatWorkspace() {
     }
   };
 
+  const applyProjectContext = (value: string) => {
+    const projectId = value === NO_PROJECT_ID ? null : value;
+    setDraftProjectId(value);
+    setProjectMenuOpen(false);
+    if (selectedOrganizationId) {
+      rememberChatProjectId(selectedOrganizationId, projectId);
+    }
+    if (selectedConversation) {
+      updateProjectContextMutation.mutate({
+        chatId: selectedConversation.id,
+        projectId,
+      });
+    }
+  };
+
   const applyPlanMode = (value: boolean) => {
     setDraftPlanMode(value);
     if (selectedConversation) {
@@ -2400,6 +2507,14 @@ function ChatWorkspace() {
     : t("chat.emptyState.heading");
   const composerPlaceholder = t("chat.composer.placeholder");
   const expandedPromptGroup = EMPTY_STATE_PROMPT_GROUPS.find((group) => group.label === expandedEmptyStatePrompt) ?? null;
+  const emptyStatePromptOptionsId = "chat-empty-state-prompt-options";
+  const emptyStatePromptOriginX = expandedEmptyStatePrompt === "Scope a new feature"
+    ? "22%"
+    : expandedEmptyStatePrompt === "Clarify a vague request"
+      ? "50%"
+      : expandedEmptyStatePrompt === "Turn a chat into an issue"
+        ? "78%"
+        : "50%";
   const sendButtonMode =
     newConversationSendInFlight || (activeSendInFlight && (!activeStream || !activeStream.userMessageId))
       ? "sending"
@@ -2409,19 +2524,97 @@ function ChatWorkspace() {
   const sendButtonDisabled =
     composerUnavailable || sendButtonMode === "sending" || (sendButtonMode === "send" && draft.trim().length === 0);
 
+  useEffect(() => {
+    if (!expandedEmptyStatePrompt) {
+      setEmptyStatePromptPanelEntered(false);
+      return;
+    }
+
+    setEmptyStatePromptPanelEntered(false);
+    const frame = requestAnimationFrame(() => {
+      setEmptyStatePromptPanelEntered(true);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [expandedEmptyStatePrompt]);
+
   const renderComposer = (centered: boolean) => (
     <div
+      ref={composerSurfaceRef}
       className={cn(
         "chat-composer rounded-[var(--radius-lg)] p-3 transition-all duration-300",
         centered ? "mx-auto w-full max-w-3xl" : "w-full",
       )}
     >
+      <div className="mb-1.5 flex min-w-0 items-center gap-1 px-1">
+        <DropdownMenu open={projectMenuOpen} onOpenChange={setProjectMenuOpen}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              data-testid="chat-project-selector"
+              aria-label={`Project context: ${projectPillLabel}`}
+              className="inline-flex max-w-[min(100%,18rem)] min-w-0 items-center gap-1.5 rounded-[calc(var(--radius-sm)+2px)] px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground data-[state=open]:bg-[color:var(--surface-active)] data-[state=open]:text-foreground"
+            >
+              <Folder className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 truncate">{projectPillLabel}</span>
+              <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            sideOffset={6}
+            className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1 text-foreground"
+          >
+            <DropdownMenuLabel className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+              Project context
+            </DropdownMenuLabel>
+            <DropdownMenuRadioGroup value={activeProjectId} onValueChange={applyProjectContext}>
+              <DropdownMenuRadioItem
+                value={NO_PROJECT_ID}
+                hideIndicator
+                className="rounded-[var(--radius-md)] py-2 pr-2 leading-5"
+              >
+                <span className="mr-2 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border border-[color:var(--border-soft)]" />
+                <span className="min-w-0 flex-1 truncate">No project</span>
+              </DropdownMenuRadioItem>
+              {visibleProjects.length > 0 ? (
+                <>
+                  <DropdownMenuSeparator className="panel-divider" />
+                  {visibleProjects.map((project) => (
+                    <DropdownMenuRadioItem
+                      key={project.id}
+                      value={project.id}
+                      hideIndicator
+                      className="rounded-[var(--radius-md)] py-2 pr-2 leading-5"
+                    >
+                      <span
+                        className="mr-2 h-3.5 w-3.5 shrink-0 rounded-sm border border-black/10"
+                        style={{ backgroundColor: project.color ?? "var(--muted-foreground)" }}
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{projectDisplayName(project)}</span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {project.resources.length} resources
+                        </span>
+                      </span>
+                    </DropdownMenuRadioItem>
+                  ))}
+                </>
+              ) : null}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       <div onPasteCapture={handleComposerPasteCapture}>
         <MarkdownEditor
           ref={composerEditorRef}
           value={draft}
           onChange={setDraft}
           mentions={mentionOptions}
+          mentionMenuAnchorRef={composerSurfaceRef}
+          mentionMenuPlacement="container"
           submitShortcut="enter"
           className="rounded-[var(--radius-md)] bg-transparent"
           contentClassName="min-h-[88px] bg-transparent text-[15px] leading-7 text-foreground"
@@ -2845,6 +3038,12 @@ function ChatWorkspace() {
                               && (message.role === "assistant"
                                 || message.kind === "issue_proposal"
                                 || message.kind === "operation_proposal");
+                            const persistedProcessStartedAt = shouldRenderPersistedTranscript
+                              ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript)
+                              : null;
+                            const persistedProcessEndedAt = shouldRenderPersistedTranscript
+                              ? resolvePersistedChatProcessEndedAt(message, persistedTranscript)
+                              : null;
 
                             return (
                               <Fragment key={message.id}>
@@ -2852,10 +3051,8 @@ function ChatWorkspace() {
                                   <StreamTranscriptItem
                                     entries={persistedTranscript}
                                     state={message.status}
-                                    streamStartedAt={transcriptStartedAt(
-                                      persistedTranscript,
-                                      new Date(message.createdAt),
-                                    )}
+                                    streamStartedAt={persistedProcessStartedAt!}
+                                    streamEndedAt={persistedProcessEndedAt}
                                   />
                                 ) : null}
                                 <ChatMessageItem
@@ -2953,6 +3150,7 @@ function ChatWorkspace() {
                         key={group.label}
                         type="button"
                         aria-expanded={expanded}
+                        aria-controls={expanded ? emptyStatePromptOptionsId : undefined}
                         onClick={() => toggleEmptyStatePrompt(group.label)}
                         className={cn(
                           "chat-chip inline-flex items-center gap-2 rounded-[calc(var(--radius-sm)+2px)] px-4 py-2 text-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-[color:var(--surface-active)] hover:text-foreground",
@@ -2967,7 +3165,16 @@ function ChatWorkspace() {
                 </div>
 
                 {expandedPromptGroup ? (
-                  <div className="mt-3 w-full max-w-3xl rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-panel)_86%,transparent)] px-3 py-3">
+                  <div
+                    key={expandedPromptGroup.label}
+                    id={emptyStatePromptOptionsId}
+                    data-testid="chat-empty-state-prompt-options"
+                    data-entered={emptyStatePromptPanelEntered ? "true" : "false"}
+                    role="region"
+                    aria-label={`${expandedPromptGroup.label} examples`}
+                    style={{ "--chat-options-origin-x": emptyStatePromptOriginX } as React.CSSProperties}
+                    className="motion-chat-options-pop mt-3 w-full max-w-3xl rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-panel)_86%,transparent)] px-3 py-3 shadow-[var(--shadow-sm)]"
+                  >
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <p className="text-xs font-medium text-muted-foreground">
                         Example use cases
@@ -2979,6 +3186,7 @@ function ChatWorkspace() {
                         <button
                           key={example}
                           type="button"
+                          data-chat-option
                           onClick={() => applyEmptyStateExample(example)}
                           className="rounded-[calc(var(--radius-sm)+2px)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_72%,transparent)] px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:border-[color:var(--border-strong)] hover:bg-[color:var(--surface-active)] hover:text-foreground"
                         >

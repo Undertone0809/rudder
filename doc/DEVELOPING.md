@@ -55,7 +55,10 @@ Prompt authoring rule of thumb:
 
 - routing metadata can say "use when" because its job is discovery
 - runtime prompts should prefer base prompt + conditional injections
-- examples of conditional injections: `planMode`, recovery mode, operator profile, org resources, wake-source-specific context
+- examples of conditional injections: `planMode`, recovery mode, operator profile, selected project context, project-attached resources, wake-source-specific context
+- do not inject the full organization resource catalog by default; project-attached
+  resources are the default run/chat context, while org resources stay queryable
+  through the control plane when an agent needs broader background
 
 ## Plan Docs
 

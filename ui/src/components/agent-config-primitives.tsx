@@ -193,14 +193,25 @@ export function CollapsibleSection({
   return (
     <div className={cn(bordered && "border-t border-border")}>
       <button
+        type="button"
+        aria-expanded={open}
         className="flex items-center gap-2 w-full px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-accent/30 transition-colors"
         onClick={onToggle}
       >
-        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        {open ? <ChevronDown className="h-3 w-3 transition-transform" /> : <ChevronRight className="h-3 w-3 transition-transform" />}
         {icon}
         {title}
       </button>
-      {open && <div className="px-4 pb-3">{children}</div>}
+      <div
+        aria-hidden={!open}
+        inert={!open ? true : undefined}
+        className={cn(
+          "overflow-hidden transition-[max-height,opacity] duration-200 ease-out",
+          open ? "max-h-[2000px] opacity-100 visible" : "max-h-0 opacity-0 invisible",
+        )}
+      >
+        <div className="px-4 pb-3">{children}</div>
+      </div>
     </div>
   );
 }

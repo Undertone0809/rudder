@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -112,25 +112,70 @@ function ContextItem({
   icon: Icon,
   label,
   active,
+  slidingActiveIndicator = false,
 }: {
   to: string;
   icon: typeof UserRound;
   label: string;
   active?: boolean;
+  slidingActiveIndicator?: boolean;
 }) {
   return (
     <Link
       to={to}
       className={cn(
-        "mx-1.5 flex items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
-        active
-          ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
-          : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground",
+        "relative z-10 mx-1.5 flex items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+        slidingActiveIndicator && "min-h-[var(--motion-context-item-height)]",
+        slidingActiveIndicator
+          ? active
+            ? "font-medium text-foreground"
+            : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
+          : active
+            ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
+            : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground",
       )}
     >
       <Icon className="h-4 w-4 shrink-0" />
       <span className="truncate">{label}</span>
     </Link>
+  );
+}
+
+function activeContextStyle(activeIndex: number): CSSProperties | undefined {
+  return activeIndex >= 0
+    ? ({ "--motion-context-active-index": activeIndex } as CSSProperties)
+    : undefined;
+}
+
+function SlidingContextNav({
+  activeIndex,
+  ariaLabel,
+  className,
+  indicatorTestId,
+  children,
+}: {
+  activeIndex: number;
+  ariaLabel: string;
+  className?: string;
+  indicatorTestId?: string;
+  children: ReactNode;
+}) {
+  return (
+    <nav
+      className={cn("motion-context-nav", className)}
+      style={activeContextStyle(activeIndex)}
+      data-active-index={activeIndex >= 0 ? activeIndex : undefined}
+      aria-label={ariaLabel}
+    >
+      {activeIndex >= 0 ? (
+        <span
+          data-testid={indicatorTestId}
+          className="motion-context-active-indicator"
+          aria-hidden="true"
+        />
+      ) : null}
+      {children}
+    </nav>
   );
 }
 
@@ -150,27 +195,56 @@ function ProjectListSection({
   visibleProjects,
   activeProjectRef,
   closeMobileSidebar,
+  onNewProject,
 }: {
   visibleProjects: Array<{ id: string; name: string; description: string | null; urlKey?: string | null }>;
   activeProjectRef: string | null;
   closeMobileSidebar: () => void;
+  onNewProject: () => void;
 }) {
+  const activeProjectIndex = visibleProjects.findIndex((project) => activeProjectRef === projectRouteRef(project));
+
   return (
     <>
-      <SectionLabel>Projects</SectionLabel>
-      <nav className="mt-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-3.5">
+      <SectionLabel
+        testId="workspace-projects-section"
+        action={(
+          <button
+            type="button"
+            onClick={onNewProject}
+            aria-label="New project"
+            title="Create project"
+            className={cn(
+              "inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground/72 transition-[opacity,background-color,color]",
+              "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,transparent)] hover:text-foreground",
+              "opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100",
+            )}
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        )}
+      >
+        Projects
+      </SectionLabel>
+      <SlidingContextNav
+        activeIndex={activeProjectIndex}
+        ariaLabel="Project workspaces"
+        className="motion-context-nav--project-card-list mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
+        indicatorTestId="project-sidebar-active-indicator"
+      >
         {visibleProjects.map((project) => {
           const routeRef = projectRouteRef(project);
+          const active = activeProjectRef === routeRef;
           return (
             <Link
               key={project.id}
               to={`/projects/${routeRef}/configuration`}
               onClick={closeMobileSidebar}
               className={cn(
-                "mx-1.5 rounded-[calc(var(--radius-sm)-1px)] px-3.5 py-2.5 transition-colors",
-                activeProjectRef === routeRef
-                  ? "bg-[color:color-mix(in_oklab,var(--surface-active)_88%,var(--surface-elevated))]"
-                  : "hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
+                "relative z-10 mx-1.5 min-h-[var(--motion-context-item-height)] rounded-[calc(var(--radius-sm)-1px)] px-3.5 py-2.5 transition-colors",
+                active
+                  ? "font-medium text-foreground"
+                  : "text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)]",
               )}
             >
               <div className="flex items-center gap-2">
@@ -183,7 +257,7 @@ function ProjectListSection({
             </Link>
           );
         })}
-      </nav>
+      </SlidingContextNav>
     </>
   );
 }
@@ -201,7 +275,7 @@ export function ThreeColumnContextSidebar() {
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
   const { pushToast } = useToast();
-  const { openNewAgent } = useDialog();
+  const { openNewAgent, openNewProject } = useDialog();
   const queryClient = useQueryClient();
 
   const { data: session } = useQuery({
@@ -266,6 +340,53 @@ export function ThreeColumnContextSidebar() {
     () => resolveRecentIssues(recentIssueIds, allIssues ?? []),
     [allIssues, recentIssueIds],
   );
+  const issueContextItems = [
+    {
+      key: "all",
+      to: "/issues",
+      icon: Circle,
+      label: "All Issues",
+      active: scope === "" && !selectedProjectId,
+    },
+    {
+      key: "assigned",
+      to: `/issues${currentUserId ? "?scope=assigned" : ""}`,
+      icon: UserRound,
+      label: "Assigned to Me",
+      active: scope === "assigned",
+    },
+    {
+      key: "starred",
+      to: "/issues?scope=starred",
+      icon: Star,
+      label: `Starred${starredIssueRefs.length > 0 ? ` (${starredIssueRefs.length})` : ""}`,
+      active: scope === "starred",
+    },
+    {
+      key: "recent",
+      to: `/issues${currentUserId ? "?scope=recent" : ""}`,
+      icon: Clock3,
+      label: `Recently Viewed${recentIssueRefs.length > 0 ? ` (${recentIssueRefs.length})` : ""}`,
+      active: scope === "recent",
+    },
+  ];
+  const activeIssueContextIndex = issueContextItems.findIndex((item) => item.active);
+  const issueProjectActiveIndex = visibleProjects.findIndex((project) => {
+    const routeRef = projectRouteRef(project);
+    return selectedProjectId === project.id || activeProjectRef === routeRef;
+  });
+  const orgContextItems = [
+    { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
+    { key: "resources", to: "/resources", icon: Boxes, label: "Resources", active: /^\/resources(?:\/|$)/.test(relativePath) },
+    { key: "heartbeats", to: "/heartbeats", icon: Clock3, label: "Heartbeats", active: /^\/heartbeats(?:\/|$)/.test(relativePath) },
+    { key: "workspaces", to: "/workspaces", icon: FolderTree, label: "Workspaces", active: /^\/workspaces(?:\/|$)/.test(relativePath) },
+    { key: "goals", to: "/goals", icon: Target, label: "Goals", active: /^\/goals(?:\/|$)/.test(relativePath) },
+    { key: "skills", to: "/skills", icon: Boxes, label: "Skills", active: /^\/skills(?:\/|$)/.test(relativePath) },
+    { key: "costs", to: "/costs", icon: DollarSign, label: "Costs", active: /^\/costs(?:\/|$)/.test(relativePath) },
+    { key: "activity", to: "/activity", icon: History, label: "Activity", active: /^\/activity(?:\/|$)/.test(relativePath) },
+  ];
+  const activeOrgContextIndex = orgContextItems.findIndex((item) => item.active);
+  const activeAgentIndex = visibleAgents.findIndex((agent) => activeAgentRef === agent.urlKey || activeAgentRef === agent.id);
 
   useEffect(() => {
     setRecentIssueIds(readRecentIssueIds(selectedOrganizationId));
@@ -351,47 +472,44 @@ export function ThreeColumnContextSidebar() {
       >
         <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
         <SectionLabel>Issues</SectionLabel>
-        <div className="mt-2 space-y-1">
-          <ContextItem
-            to="/issues"
-            icon={Circle}
-            label="All Issues"
-            active={scope === "" && !selectedProjectId}
-          />
-          <ContextItem
-            to={`/issues${currentUserId ? "?scope=assigned" : ""}`}
-            icon={UserRound}
-            label="Assigned to Me"
-            active={scope === "assigned"}
-          />
-          <ContextItem
-            to="/issues?scope=starred"
-            icon={Star}
-            label={`Starred${starredIssueRefs.length > 0 ? ` (${starredIssueRefs.length})` : ""}`}
-            active={scope === "starred"}
-          />
-          <ContextItem
-            to={`/issues${currentUserId ? "?scope=recent" : ""}`}
-            icon={Clock3}
-            label={`Recently Viewed${recentIssueRefs.length > 0 ? ` (${recentIssueRefs.length})` : ""}`}
-            active={scope === "recent"}
-          />
-        </div>
+        <SlidingContextNav
+          activeIndex={activeIssueContextIndex}
+          ariaLabel="Issue views"
+          className="mt-2"
+          indicatorTestId="issue-sidebar-active-indicator"
+        >
+          {issueContextItems.map((item) => (
+            <ContextItem
+              key={item.key}
+              to={item.to}
+              icon={item.icon}
+              label={item.label}
+              active={item.active}
+              slidingActiveIndicator
+            />
+          ))}
+        </SlidingContextNav>
 
         <SectionLabel>Projects</SectionLabel>
-        <nav className="mt-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-3.5">
+        <SlidingContextNav
+          activeIndex={issueProjectActiveIndex}
+          ariaLabel="Issue project slices"
+          className="mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
+          indicatorTestId="issue-project-sidebar-active-indicator"
+        >
           {visibleProjects.map((project) => {
             const routeRef = projectRouteRef(project);
+            const active = selectedProjectId === project.id || activeProjectRef === routeRef;
             return (
               <Link
                 key={project.id}
                 to={`/issues?projectId=${project.id}`}
                 onClick={closeMobileSidebar}
                 className={cn(
-                  "flex items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
-                  (selectedProjectId === project.id || activeProjectRef === routeRef)
-                    ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
-                    : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground",
+                  "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                  active
+                    ? "font-medium text-foreground"
+                    : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
                 )}
               >
                 <Circle
@@ -402,7 +520,7 @@ export function ThreeColumnContextSidebar() {
               </Link>
             );
           })}
-        </nav>
+        </SlidingContextNav>
       </aside>
     );
   }
@@ -416,20 +534,28 @@ export function ThreeColumnContextSidebar() {
         <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
         <div className="flex min-h-0 flex-1 flex-col">
           <SectionLabel>Org</SectionLabel>
-          <div className="mt-2 space-y-1 px-1.5">
-            <ContextItem to="/org" icon={Network} label="Structure" active={/^\/org(?:\/|$)/.test(relativePath)} />
-            <ContextItem to="/resources" icon={Boxes} label="Resources" active={/^\/resources(?:\/|$)/.test(relativePath)} />
-            <ContextItem to="/heartbeats" icon={Clock3} label="Heartbeats" active={/^\/heartbeats(?:\/|$)/.test(relativePath)} />
-            <ContextItem to="/workspaces" icon={FolderTree} label="Workspaces" active={/^\/workspaces(?:\/|$)/.test(relativePath)} />
-            <ContextItem to="/goals" icon={Target} label="Goals" active={/^\/goals(?:\/|$)/.test(relativePath)} />
-            <ContextItem to="/skills" icon={Boxes} label="Skills" active={/^\/skills(?:\/|$)/.test(relativePath)} />
-            <ContextItem to="/costs" icon={DollarSign} label="Costs" active={/^\/costs(?:\/|$)/.test(relativePath)} />
-            <ContextItem to="/activity" icon={History} label="Activity" active={/^\/activity(?:\/|$)/.test(relativePath)} />
-          </div>
+          <SlidingContextNav
+            activeIndex={activeOrgContextIndex}
+            ariaLabel="Organization workspaces"
+            className="mt-2"
+            indicatorTestId="org-sidebar-active-indicator"
+          >
+            {orgContextItems.map((item) => (
+              <ContextItem
+                key={item.key}
+                to={item.to}
+                icon={item.icon}
+                label={item.label}
+                active={item.active}
+                slidingActiveIndicator
+              />
+            ))}
+          </SlidingContextNav>
           <ProjectListSection
             visibleProjects={visibleProjects}
             activeProjectRef={activeProjectRef}
             closeMobileSidebar={closeMobileSidebar}
+            onNewProject={openNewProject}
           />
         </div>
       </aside>
@@ -715,19 +841,25 @@ export function ThreeColumnContextSidebar() {
       >
         Team
       </SectionLabel>
-      <nav className="mt-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-3.5">
+      <SlidingContextNav
+        activeIndex={activeAgentIndex}
+        ariaLabel="Agent team"
+        className="motion-context-nav--agent-list mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
+        indicatorTestId="agent-sidebar-active-indicator"
+      >
         {visibleAgents.map((agent) => {
           const liveCount = liveCountByAgent.get(agent.id) ?? 0;
+          const active = activeAgentRef === agent.urlKey || activeAgentRef === agent.id;
           return (
             <Link
               key={agent.id}
               to={agentUrl(agent)}
               onClick={closeMobileSidebar}
               className={cn(
-                "mx-1.5 flex items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] px-3.5 py-2.5 text-sm transition-colors",
-                activeAgentRef === agent.urlKey || activeAgentRef === agent.id
-                  ? "bg-[color:color-mix(in_oklab,var(--surface-active)_88%,var(--surface-elevated))] font-medium text-foreground"
-                  : "text-foreground/80 hover:bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)]",
+                "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] px-3.5 py-2.5 text-sm transition-colors",
+                active
+                  ? "font-medium text-foreground"
+                  : "text-foreground/80 hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)]",
               )}
             >
               <AgentIcon icon={agent.icon} className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -738,7 +870,7 @@ export function ThreeColumnContextSidebar() {
             </Link>
           );
         })}
-      </nav>
+      </SlidingContextNav>
     </aside>
   );
 }

@@ -218,31 +218,46 @@ async function listDirectoryNames(rootPath: string): Promise<string[]> {
   }
 }
 
+async function directoryExists(rootPath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(rootPath)).isDirectory();
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
 export async function pruneOrphanedOrganizationStorage(
   liveOrgIds: readonly string[],
 ): Promise<{
   removedOrganizationDirNames: string[];
   removedLegacyProjectDirNames: string[];
+  removedLegacyProjectsRoot: boolean;
 }> {
   const liveOrgIdSet = new Set(liveOrgIds.map((orgId) => validatePathSegment(orgId, "org id")));
   const organizationRoot = path.resolve(resolveRudderInstanceRoot(), "organizations");
   const legacyProjectsRoot = path.resolve(resolveRudderInstanceRoot(), "projects");
   const organizationDirNames = await listDirectoryNames(organizationRoot);
   const legacyProjectDirNames = await listDirectoryNames(legacyProjectsRoot);
+  const legacyProjectsRootExists = await directoryExists(legacyProjectsRoot);
 
   const removedOrganizationDirNames = organizationDirNames.filter((dirName) => !liveOrgIdSet.has(dirName));
-  const removedLegacyProjectDirNames = legacyProjectDirNames.filter((dirName) => !liveOrgIdSet.has(dirName));
+  const removedLegacyProjectDirNames = legacyProjectDirNames;
 
   await Promise.all([
     ...removedOrganizationDirNames.map((dirName) =>
       fs.rm(path.resolve(organizationRoot, dirName), { recursive: true, force: true })),
-    ...removedLegacyProjectDirNames.map((dirName) =>
-      fs.rm(path.resolve(legacyProjectsRoot, dirName), { recursive: true, force: true })),
+    ...(legacyProjectsRootExists
+      ? [fs.rm(legacyProjectsRoot, { recursive: true, force: true })]
+      : []),
   ]);
 
   return {
     removedOrganizationDirNames,
     removedLegacyProjectDirNames,
+    removedLegacyProjectsRoot: legacyProjectsRootExists,
   };
 }
 

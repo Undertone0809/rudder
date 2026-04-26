@@ -581,6 +581,7 @@ export interface WorkerToHostMethods {
       parentId?: string;
       title: string;
       description?: string;
+      status?: string;
       priority?: string;
       assigneeAgentId?: string;
     },

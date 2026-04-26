@@ -1,0 +1,370 @@
+:root {
+  --motion-duration-instant: 100ms;
+  --motion-duration-fast: 150ms;
+  --motion-duration-standard: 220ms;
+  --motion-duration-emphasis: 340ms;
+  --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-exit: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.motion-focus-ring {
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.motion-list-enter {
+  animation: rudder-list-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
+}
+
+.motion-state-flash {
+  animation: rudder-state-flash 820ms var(--motion-ease-enter) both;
+}
+
+.motion-live-surface {
+  position: relative;
+}
+
+.motion-live-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 32%, transparent);
+  opacity: 0.72;
+  animation: rudder-live-surface 2200ms var(--motion-ease-standard) infinite;
+}
+
+.motion-live-dot {
+  position: relative;
+}
+
+.motion-live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  background: color-mix(in oklab, currentColor 40%, transparent);
+  opacity: 0;
+  animation: rudder-live-dot 1800ms var(--motion-ease-standard) infinite;
+}
+
+.motion-kanban-lane {
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.motion-kanban-lane[data-over="true"] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 44%, transparent),
+    0 12px 28px -24px color-mix(in oklab, var(--accent-base) 52%, transparent);
+}
+
+.motion-kanban-card {
+  transition:
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.motion-kanban-card[data-dragging="true"] {
+  opacity: 0.34;
+}
+
+.motion-kanban-card[data-overlay="true"] {
+  transform: rotate(0.4deg) scale(1.015);
+}
+
+.motion-kanban-card[data-live="true"] {
+  animation: rudder-card-live-highlight 2600ms var(--motion-ease-standard) infinite;
+}
+
+.motion-kanban-card[data-just-dropped="true"] {
+  animation: rudder-card-drop-settle var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+}
+
+.motion-org-viewport[data-panning="false"] .motion-org-layer {
+  transition: transform var(--motion-duration-standard) var(--motion-ease-enter);
+}
+
+.motion-org-card {
+  animation: rudder-org-card-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.motion-org-card:hover {
+  transform: translateY(-1px);
+}
+
+.motion-org-card[data-active="true"] {
+  box-shadow:
+    0 12px 32px -26px color-mix(in oklab, var(--accent-base) 64%, transparent),
+    inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 36%, transparent);
+}
+
+.motion-org-edge[data-active="true"] {
+  stroke: color-mix(in oklab, var(--accent-base) 72%, var(--border));
+  stroke-dasharray: 7 9;
+  animation: rudder-org-edge-flow 1400ms linear infinite;
+}
+
+.motion-rail-nav {
+  position: relative;
+  --motion-rail-item-height: 56px;
+  --motion-rail-item-gap: 0.125rem;
+}
+
+.motion-rail-active-indicator {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 0;
+  width: 66px;
+  height: var(--motion-rail-item-height);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+  background: rgb(67 88 79 / 0.88);
+  box-shadow:
+    inset 0 0 0 1px rgb(222 244 235 / 0.1),
+    0 10px 24px -20px rgb(15 23 42 / 0.76);
+  transform: translate(
+    calc(-50% + 0.25rem),
+    calc(var(--motion-rail-active-index) * (var(--motion-rail-item-height) + var(--motion-rail-item-gap)))
+  );
+  transition:
+    transform var(--motion-duration-standard) var(--motion-ease-enter),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard);
+  will-change: transform;
+}
+
+.motion-context-nav {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  --motion-context-item-height: 2.375rem;
+  --motion-context-item-gap: 0.25rem;
+}
+
+.motion-context-nav--agent-list {
+  --motion-context-item-height: 2.5rem;
+}
+
+.motion-context-nav--project-card-list {
+  --motion-context-item-height: 3.625rem;
+}
+
+.motion-context-nav--messenger-thread-list {
+  --motion-context-item-height: 3.75rem;
+}
+
+.motion-context-active-indicator {
+  position: absolute;
+  top: 0;
+  left: 0.375rem;
+  right: 0.375rem;
+  z-index: 0;
+  height: var(--motion-context-item-height);
+  border: 1px solid color-mix(in oklab, var(--border-soft) 72%, transparent);
+  border-radius: calc(var(--radius-sm) - 1px);
+  pointer-events: none;
+  background: color-mix(in oklab, var(--surface-elevated) 92%, var(--surface-active));
+  box-shadow: 0 10px 24px -22px color-mix(in oklab, var(--accent-base) 42%, transparent);
+  transform: translateY(
+    calc(var(--motion-context-active-index) * (var(--motion-context-item-height) + var(--motion-context-item-gap)))
+  );
+  transition:
+    transform var(--motion-duration-standard) var(--motion-ease-enter),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard);
+  will-change: transform;
+}
+
+.motion-chat-options-pop {
+  transform-origin: var(--chat-options-origin-x, 50%) top;
+  animation: rudder-chat-options-pop 560ms var(--motion-ease-enter) both;
+  will-change: opacity, transform, clip-path, box-shadow;
+}
+
+.motion-chat-options-pop [data-chat-option] {
+  opacity: 0;
+  transform: translateY(12px) scale(0.96);
+  animation: rudder-chat-option-enter 320ms var(--motion-ease-enter) both;
+}
+
+.motion-chat-options-pop [data-chat-option]:nth-child(2) {
+  animation-delay: 80ms;
+}
+
+.motion-chat-options-pop [data-chat-option]:nth-child(3) {
+  animation-delay: 150ms;
+}
+
+.motion-chat-options-pop [data-chat-option]:nth-child(4) {
+  animation-delay: 220ms;
+}
+
+@keyframes rudder-list-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rudder-state-flash {
+  0% {
+    box-shadow: inset 2px 0 0 color-mix(in oklab, var(--accent-base) 78%, transparent);
+    background-color: color-mix(in oklab, var(--accent-soft) 58%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 transparent;
+    background-color: transparent;
+  }
+}
+
+@keyframes rudder-live-surface {
+  0%,
+  100% {
+    opacity: 0.38;
+  }
+  50% {
+    opacity: 0.84;
+  }
+}
+
+@keyframes rudder-live-dot {
+  0% {
+    opacity: 0.42;
+    transform: scale(0.8);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+}
+
+@keyframes rudder-card-live-highlight {
+  0%,
+  100% {
+    border-color: color-mix(in oklab, var(--border-soft) 88%, transparent);
+  }
+  50% {
+    border-color: color-mix(in oklab, var(--accent-base) 54%, var(--border-soft));
+  }
+}
+
+@keyframes rudder-card-drop-settle {
+  0% {
+    transform: translateY(-5px) scale(1.008);
+    box-shadow: 0 18px 38px -30px color-mix(in oklab, var(--accent-base) 58%, transparent);
+  }
+  70% {
+    transform: translateY(1px) scale(1);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    box-shadow: none;
+  }
+}
+
+@keyframes rudder-org-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes rudder-org-edge-flow {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+@keyframes rudder-chat-options-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(-26px) scale(0.82);
+    clip-path: inset(0 34% 100% 34% round var(--radius-lg));
+    box-shadow: 0 8px 20px -24px color-mix(in oklab, var(--accent-base) 46%, transparent);
+  }
+  48% {
+    opacity: 1;
+    transform: translateY(5px) scale(1.035);
+    clip-path: inset(0 0 0 0 round var(--radius-lg));
+    box-shadow: 0 22px 54px -30px color-mix(in oklab, var(--accent-base) 54%, transparent);
+  }
+  72% {
+    opacity: 1;
+    transform: translateY(-1px) scale(0.992);
+    clip-path: inset(0 0 0 0 round var(--radius-lg));
+    box-shadow: 0 16px 42px -32px color-mix(in oklab, var(--accent-base) 44%, transparent);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    clip-path: inset(0 0 0 0 round var(--radius-lg));
+    box-shadow: var(--shadow-sm);
+  }
+}
+
+@keyframes rudder-chat-option-enter {
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-list-enter,
+  .motion-state-flash,
+  .motion-live-surface::before,
+  .motion-live-dot::after,
+  .motion-kanban-card[data-live="true"],
+  .motion-kanban-card[data-just-dropped="true"],
+  .motion-org-card,
+  .motion-org-edge[data-active="true"],
+  .motion-chat-options-pop,
+  .motion-chat-options-pop [data-chat-option] {
+    animation: none !important;
+  }
+
+  .motion-focus-ring,
+  .motion-kanban-lane,
+  .motion-kanban-card,
+  .motion-org-layer,
+  .motion-org-card,
+  .motion-rail-active-indicator,
+  .motion-context-active-indicator {
+    transition: none !important;
+  }
+
+  .motion-live-surface::before {
+    opacity: 0.48;
+  }
+
+  .motion-chat-options-pop,
+  .motion-chat-options-pop [data-chat-option] {
+    opacity: 1 !important;
+    transform: none !important;
+    clip-path: none !important;
+  }
+}

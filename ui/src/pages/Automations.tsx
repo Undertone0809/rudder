@@ -67,7 +67,7 @@ function nextAutomationStatus(currentStatus: string, enabled: boolean) {
 
 export function Automations() {
   const { selectedOrganizationId } = useOrganization();
-  const { setBreadcrumbs } = useBreadcrumbs();
+  const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { pushToast } = useToast();
@@ -92,6 +92,22 @@ export function Automations() {
   useEffect(() => {
     setBreadcrumbs([{ label: "Automations" }]);
   }, [setBreadcrumbs]);
+
+  useEffect(() => {
+    if (!selectedOrganizationId) {
+      setHeaderActions(null);
+      return;
+    }
+
+    setHeaderActions(
+      <Button type="button" size="sm" className="px-4" onClick={() => setComposerOpen(true)}>
+        <Plus className="mr-1.5 h-3.5 w-3.5" />
+        Create automation
+      </Button>,
+    );
+
+    return () => setHeaderActions(null);
+  }, [selectedOrganizationId, setHeaderActions]);
 
   const { data: automations, isLoading, error } = useQuery({
     queryKey: queryKeys.automations.list(selectedOrganizationId!),
@@ -231,13 +247,6 @@ export function Automations() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <Button onClick={() => setComposerOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create automation
-        </Button>
-      </div>
-
       <Dialog
         open={composerOpen}
         onOpenChange={(open) => {

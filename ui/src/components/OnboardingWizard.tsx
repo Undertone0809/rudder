@@ -29,7 +29,8 @@ import { defaultCreateValues } from "./agent-config-defaults";
 import { parseOnboardingGoalInput } from "../lib/onboarding-goal";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL
+  DEFAULT_CODEX_LOCAL_MODEL,
+  DEFAULT_CODEX_LOCAL_SEARCH
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
@@ -556,6 +557,10 @@ export function OnboardingWizard() {
       command,
       args,
       url,
+      search:
+        agentRuntimeType === "codex_local"
+          ? DEFAULT_CODEX_LOCAL_SEARCH
+          : defaultCreateValues.search,
       dangerouslySkipPermissions: agentRuntimeType === "claude_local",
       dangerouslyBypassSandbox:
         agentRuntimeType === "codex_local"

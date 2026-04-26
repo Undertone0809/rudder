@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { readDesktopCapabilities, type DesktopCapabilities } from "./desktop-capabilities.js";
+import type { DesktopSystemPermissions } from "./system-permissions.js";
 
 type BootState = {
   stage: string;
@@ -7,6 +8,7 @@ type BootState = {
   detail?: string;
   error?: string;
   capabilities?: DesktopCapabilities;
+  permissions?: DesktopSystemPermissions;
   diagnostics?: {
     lastBadgeCount?: number;
     badgeSyncSucceeded?: boolean;
@@ -102,6 +104,8 @@ contextBridge.exposeInMainWorld("desktopShell", {
   restart: () => ipcRenderer.invoke("desktop:restart"),
   getAppVersion: () => ipcRenderer.invoke("desktop:get-app-version") as Promise<string>,
   checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates") as Promise<DesktopUpdateCheckResult>,
+  getSystemPermissions: () =>
+    ipcRenderer.invoke("desktop:get-system-permissions") as Promise<DesktopSystemPermissions>,
   sendFeedback: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
   openExternal: (target: string) => ipcRenderer.invoke("desktop:open-external", target) as Promise<void>,
   openNotificationSettings: () =>
@@ -124,6 +128,7 @@ declare global {
       restart(): Promise<void>;
       getAppVersion(): Promise<string>;
       checkForUpdates(): Promise<DesktopUpdateCheckResult>;
+      getSystemPermissions(): Promise<DesktopSystemPermissions>;
       sendFeedback(): Promise<void>;
       openExternal(target: string): Promise<void>;
       openNotificationSettings(): Promise<OpenNotificationSettingsResult>;

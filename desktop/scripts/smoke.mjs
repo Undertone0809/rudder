@@ -424,8 +424,30 @@ async function verifySettingsOverlayFlow(page, companyId, issuePrefix) {
 
   await sidebar.locator('a[href$="/instance/settings/notifications"]').click();
   await page.waitForURL(/\/instance\/settings\/notifications$/, { timeout: 15_000 });
-  await modal.getByRole("heading", { name: "Notifications" }).waitFor({ state: "visible", timeout: 15_000 });
-  await modal.getByRole("button", { name: "Open notification settings" }).waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByRole("heading", { name: "System permissions" }).waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByRole("heading", { name: "Full Disk Access", exact: true }).waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByRole("heading", { name: "Accessibility", exact: true }).waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByRole("heading", { name: "Automation", exact: true }).waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByRole("heading", { name: "Notifications", exact: true }).waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByText("System notification access").waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByRole("heading", { name: "Issue notifications", exact: true }).waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByRole("heading", { name: "Chat notifications", exact: true }).waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByRole("button", { name: "Open settings" }).first().waitFor({ state: "visible", timeout: 15_000 });
+  assert.equal(
+    await modal.getByText("Checking").count(),
+    0,
+    "prod-local desktop smoke should not leave permission status stuck in Checking",
+  );
+  assert.equal(
+    await modal.getByText("System managed").count(),
+    0,
+    "prod-local desktop smoke should show concrete permission status instead of System managed",
+  );
+  assert.equal(
+    await modal.getByText("App icon badge").count(),
+    0,
+    "prod-local desktop smoke should not expose the app icon badge settings row",
+  );
   assert.equal(
     await modal.getByRole("button", { name: "Send test notification" }).count(),
     0,

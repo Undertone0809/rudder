@@ -12,6 +12,8 @@ export const patchInstanceGeneralSettingsSchema = instanceGeneralSettingsSchema.
 export const instanceNotificationSettingsSchema = z.object({
   desktopInboxNotifications: z.boolean().default(true),
   desktopDockBadge: z.boolean().default(true),
+  desktopIssueNotifications: z.boolean().default(true),
+  desktopChatNotifications: z.boolean().default(true),
 }).strict();
 
 export const patchInstanceNotificationSettingsSchema = instanceNotificationSettingsSchema.partial();

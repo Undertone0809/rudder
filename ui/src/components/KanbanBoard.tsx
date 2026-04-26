@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@/lib/router";
 import {
   DndContext,
@@ -140,6 +140,7 @@ function KanbanColumn({
   currentUserId,
   displayProperties = ["identifier", "priority", "assignee"],
   liveIssueIds,
+  recentlyDroppedIssueIds,
   projects,
   onCreateIssue,
 }: {
@@ -149,6 +150,7 @@ function KanbanColumn({
   currentUserId?: string | null;
   displayProperties?: IssueDisplayProperty[];
   liveIssueIds?: Set<string>;
+  recentlyDroppedIssueIds?: Set<string>;
   projects?: ProjectOption[];
   onCreateIssue?: (status: string) => void;
 }) {
@@ -176,9 +178,10 @@ function KanbanColumn({
       </div>
       <div
         data-testid={`kanban-column-${status}`}
+        data-over={isOver ? "true" : "false"}
         ref={setColumnRefs}
         className={cn(
-          "scrollbar-auto-hide flex-1 min-h-[120px] overflow-y-auto rounded-[calc(var(--radius-sm)-1px)] border p-1.5 space-y-1.5 transition-colors",
+          "motion-kanban-lane scrollbar-auto-hide flex-1 min-h-[120px] overflow-y-auto rounded-[calc(var(--radius-sm)-1px)] border p-1.5 space-y-1.5",
           isOver ? laneTone.over : laneTone.base,
         )}
       >
@@ -194,6 +197,7 @@ function KanbanColumn({
               currentUserId={currentUserId}
               displayProperties={displayProperties}
               isLive={liveIssueIds?.has(issue.id)}
+              justDropped={recentlyDroppedIssueIds?.has(issue.id)}
               projects={projects}
             />
           ))}
@@ -219,8 +223,9 @@ function HiddenKanbanStatus({
     <div
       ref={setNodeRef}
       data-testid={`kanban-hidden-column-${status}`}
+      data-over={isOver ? "true" : "false"}
       className={cn(
-        "flex items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] border px-2 py-2 transition-colors",
+        "motion-kanban-lane flex items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] border px-2 py-2",
         isOver ? laneTone.over : laneTone.base,
       )}
     >
@@ -245,6 +250,7 @@ function KanbanCard({
   displayProperties = ["identifier", "priority", "assignee"],
   isLive,
   isOverlay,
+  justDropped,
   projects,
 }: {
   issue: Issue;
@@ -253,6 +259,7 @@ function KanbanCard({
   displayProperties?: IssueDisplayProperty[];
   isLive?: boolean;
   isOverlay?: boolean;
+  justDropped?: boolean;
   projects?: ProjectOption[];
 }) {
   const {
@@ -290,15 +297,20 @@ function KanbanCard({
       style={style}
       {...attributes}
       {...listeners}
+      data-testid={`kanban-card-${issue.identifier ?? issue.id}`}
+      data-dragging={isDragging && !isOverlay ? "true" : "false"}
+      data-overlay={isOverlay ? "true" : "false"}
+      data-live={isLive ? "true" : "false"}
+      data-just-dropped={justDropped ? "true" : "false"}
       className={cn(
-        "rounded-[calc(var(--radius-sm)-1px)] border bg-card p-2.5 cursor-grab active:cursor-grabbing transition-shadow",
+        "motion-kanban-card overflow-hidden rounded-[calc(var(--radius-sm)-1px)] border bg-card p-2.5 cursor-grab active:cursor-grabbing",
         isDragging && !isOverlay ? "opacity-30" : "",
         isOverlay ? "shadow-lg ring-1 ring-primary/20" : "hover:shadow-sm",
       )}
     >
       <Link
         to={`/issues/${issue.identifier ?? issue.id}`}
-        className="block no-underline text-inherit"
+        className="block min-w-0 no-underline text-inherit"
         onClick={(e) => {
           // Prevent navigation during drag
           if (isDragging) e.preventDefault();
@@ -312,8 +324,7 @@ function KanbanCard({
               </span>
             ) : null}
             {isLive && (
-              <span className="relative flex h-2 w-2 shrink-0 mt-0.5">
-                <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+              <span className="motion-live-dot relative flex h-2 w-2 shrink-0 mt-0.5 text-blue-500">
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
               </span>
             )}
@@ -321,19 +332,23 @@ function KanbanCard({
         ) : null}
         <p className="text-sm leading-snug line-clamp-2 mb-2">{issue.title}</p>
         {(showPriority || showAssignee) && (
-          <div className="flex items-center gap-2">
+          <div data-slot="kanban-card-metadata" className="flex min-w-0 items-center gap-2 overflow-hidden">
             {showPriority ? <PriorityIcon priority={issue.priority} /> : null}
             {showAssignee && issue.assigneeAgentId ? (
               agent ? (
-                <Identity name={formatChatAgentLabel(agent)} size="xs" />
+                <Identity
+                  name={formatChatAgentLabel(agent)}
+                  size="xs"
+                  className="min-w-0 flex-1 text-muted-foreground"
+                />
               ) : (
-                <span className="text-xs text-muted-foreground font-mono">
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground font-mono">
                   {issue.assigneeAgentId.slice(0, 8)}
                 </span>
               )
             ) : null}
             {showAssignee && issue.assigneeUserId ? (
-              <span className="inline-flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+              <span className="inline-flex min-w-0 flex-1 items-center gap-1 text-xs text-muted-foreground">
                 <User className="h-3 w-3 shrink-0" />
                 <span className="truncate">
                   {formatAssigneeUserLabel(issue.assigneeUserId, currentUserId) ?? "User"}
@@ -404,7 +419,9 @@ export function KanbanBoard({
   onUpdateIssue,
 }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [recentlyDroppedIssueIds, setRecentlyDroppedIssueIds] = useState<Set<string>>(new Set());
   const boardScrollRef = useScrollbarActivityRef();
+  const dropTimersRef = useRef<number[]>([]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -437,6 +454,13 @@ export function KanbanBoard({
     [activeId, issues]
   );
 
+  useEffect(() => {
+    return () => {
+      for (const timer of dropTimersRef.current) window.clearTimeout(timer);
+      dropTimersRef.current = [];
+    };
+  }, []);
+
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string);
   }
@@ -465,6 +489,20 @@ export function KanbanBoard({
     }
 
     if (targetStatus && targetStatus !== issue.status) {
+      setRecentlyDroppedIssueIds((prev) => {
+        const next = new Set(prev);
+        next.add(issueId);
+        return next;
+      });
+      const timer = window.setTimeout(() => {
+        setRecentlyDroppedIssueIds((prev) => {
+          const next = new Set(prev);
+          next.delete(issueId);
+          return next;
+        });
+        dropTimersRef.current = dropTimersRef.current.filter((candidate) => candidate !== timer);
+      }, 520);
+      dropTimersRef.current.push(timer);
       onUpdateIssue(issueId, { status: targetStatus });
     }
   }
@@ -495,6 +533,7 @@ export function KanbanBoard({
                 currentUserId={currentUserId}
                 displayProperties={displayProperties}
                 liveIssueIds={liveIssueIds}
+                recentlyDroppedIssueIds={recentlyDroppedIssueIds}
                 projects={projects}
                 onCreateIssue={onCreateIssue}
               />

@@ -2,12 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { Notification, app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
+import { Notification, app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, systemPreferences } from "electron";
 import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electron";
 import { createBootScreenHtml } from "./boot-screen.js";
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
+import { resolveDesktopSystemPermissions, type DesktopSystemPermissions } from "./system-permissions.js";
 import {
   applyThemePreferenceToNativeTheme,
   resolveAppearanceForThemePreference,
@@ -23,6 +24,7 @@ type BootState = {
   detail?: string;
   error?: string;
   capabilities?: DesktopCapabilities;
+  permissions?: DesktopSystemPermissions;
   diagnostics?: {
     lastBadgeCount?: number;
     badgeSyncSucceeded?: boolean;
@@ -376,6 +378,12 @@ function applyDesktopAppIdentity(profile: LocalEnvProfile): string {
 const initialProfile = resolveDesktopLocalEnvProfile();
 const APP_NAME = applyDesktopAppIdentity(initialProfile);
 const desktopCapabilities = resolveDesktopCapabilities();
+function readCurrentDesktopSystemPermissions(): DesktopSystemPermissions {
+  return resolveDesktopSystemPermissions({
+    isAccessibilityTrusted: () => systemPreferences.isTrustedAccessibilityClient(false),
+  });
+}
+
 const residentShellEnabled = resolveDesktopResidentShellEnabled();
 const DESKTOP_WINDOW_BACKGROUND: Record<DesktopAppearance, string> = {
   light: process.platform === "darwin" ? "#f6f4f1" : "#f1f0ef",
@@ -406,6 +414,7 @@ let currentBootState: BootState = {
   message: "Resolving shared local Rudder instance…",
   detail: "Preparing the embedded database and board UI.",
   capabilities: desktopCapabilities,
+  permissions: readCurrentDesktopSystemPermissions(),
   paths: initialPaths,
   runtime: {
     localEnv: initialProfile.name,
@@ -568,6 +577,7 @@ function updateBootState(nextState: Partial<BootState> & Pick<BootState, "stage"
     ...currentBootState,
     ...nextState,
     capabilities: nextState.capabilities ?? currentBootState.capabilities,
+    permissions: nextState.permissions ?? currentBootState.permissions,
     runtime: {
       ...currentBootState.runtime,
       ...nextState.runtime,
@@ -577,6 +587,18 @@ function updateBootState(nextState: Partial<BootState> & Pick<BootState, "stage"
     mainWindow.webContents.send("desktop:boot-state", currentBootState);
   }
   updateResidentShellMenu();
+}
+
+function refreshDesktopSystemPermissions(): DesktopSystemPermissions {
+  const permissions = readCurrentDesktopSystemPermissions();
+  currentBootState = {
+    ...currentBootState,
+    permissions,
+  };
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("desktop:boot-state", currentBootState);
+  }
+  return permissions;
 }
 
 async function loadBootScreen(): Promise<void> {
@@ -1144,7 +1166,11 @@ async function beginQuitFlow(): Promise<void> {
 }
 
 function registerIpc(): void {
-  ipcMain.handle("desktop:get-boot-state", async () => currentBootState);
+  ipcMain.handle("desktop:get-boot-state", async () => {
+    refreshDesktopSystemPermissions();
+    return currentBootState;
+  });
+  ipcMain.handle("desktop:get-system-permissions", async () => refreshDesktopSystemPermissions());
   ipcMain.handle("desktop:get-app-version", async () => app.getVersion());
   ipcMain.handle("desktop:open-path", async (_event, targetPath: string) => {
     await shell.openPath(targetPath);
@@ -1368,6 +1394,10 @@ if (desktopCliArgv) {
 
   app.on("activate", () => {
     showMainWindow();
+  });
+
+  app.on("browser-window-focus", () => {
+    refreshDesktopSystemPermissions();
   });
 
   app.on("window-all-closed", () => {

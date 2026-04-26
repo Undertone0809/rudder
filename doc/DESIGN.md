@@ -424,12 +424,62 @@ Prefer:
 - quick fades
 - subtle panel transitions
 - immediate hover and press feedback
+- state-change highlights for live runs, new rows, moved issues, and review decisions
+- visible continuity when an object moves between known states or surfaces
 
 Avoid:
 
 - dramatic spring motion
 - delayed reactions
 - ornamental animation on operational surfaces
+- continuous animation on anything that is not live, running, unread, or safety-critical
+
+### 14.1 Motion V1 Defaults
+
+Use motion only when it improves one of these jobs:
+
+- confirms an operator action completed
+- reveals that data changed while the user was watching
+- preserves spatial continuity during navigation, resizing, drag, or expansion
+- distinguishes live work from historical records
+- calls attention to an approval, warning, or intervention need
+
+Default timing:
+
+- micro feedback: `100-160ms`
+- list, row, and card entry: `180-240ms`
+- panels, drawers, and modals: `220-360ms`
+- continuous live indicators: slow enough to scan, usually `1400-2600ms`
+
+Default easing:
+
+- entering or settling: `cubic-bezier(0.16, 1, 0.3, 1)`
+- normal state changes: `cubic-bezier(0.2, 0, 0, 1)`
+- exiting: `cubic-bezier(0.4, 0, 0.2, 1)`
+
+### 14.2 Product Placement
+
+High-value Rudder motion belongs on:
+
+- live agent runs and transcript updates
+- issue board drag/drop, status changes, and active issue indicators
+- middle-column active navigation indicators in three-column workspaces
+- Organization Structure active-state and work-flow hints
+- proposal, approval, and budget decision state changes
+- toast and inline feedback after mutating actions
+
+Low-value motion should be removed or avoided on:
+
+- static metric cards
+- normal hover states that already have color or border feedback
+- background decoration
+- dense tables where animation slows scanning
+
+### 14.3 Accessibility
+
+All non-essential motion must respect `prefers-reduced-motion`.
+Reduced-motion mode may keep color, border, icon, and text feedback, but should
+remove movement, pulsing, and repeated animation.
 
 ## 15. Review Rubric
 

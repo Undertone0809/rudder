@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell } from "lucide-react";
+import {
+  Accessibility,
+  Bell,
+  ClipboardList,
+  CircleAlert,
+  HardDrive,
+  MessagesSquare,
+  ShieldCheck,
+  Workflow,
+  type LucideIcon,
+} from "lucide-react";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import {
-  SettingsDivider,
   SettingsPageHeader,
-  SettingsRow,
   SettingsSection,
   SettingsToggle,
 } from "@/components/settings/SettingsScaffold";
@@ -13,10 +21,11 @@ import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton
 import { Button } from "@/components/ui/button";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useI18n } from "@/context/I18nContext";
+import type { TranslationKey } from "@/i18n/locales/en";
+import { cn } from "@/lib/utils";
 import { queryKeys } from "@/lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import {
-  formatDesktopNotificationPermission,
   readDesktopNotificationPermission,
   requestDesktopNotificationPermission,
   type DesktopNotificationPermissionState,
@@ -24,12 +33,232 @@ import {
 import {
   readDesktopShell,
   type DesktopBootState,
+  type DesktopSystemPermissionStatus,
+  type DesktopSystemPermissions,
 } from "@/lib/desktop-shell";
 
 const DEFAULT_NOTIFICATION_SETTINGS = {
   desktopInboxNotifications: true,
   desktopDockBadge: true,
+  desktopIssueNotifications: true,
+  desktopChatNotifications: true,
 };
+
+type PermissionStatusTone = "ok" | "warn" | "muted";
+
+type SystemPermissionDefinition = {
+  id: "fullDiskAccess" | "accessibility" | "automation";
+  icon: LucideIcon;
+  titleKey: TranslationKey;
+  descriptionKey: TranslationKey;
+  macSettingsUrl?: string;
+};
+
+type NotificationPreferenceDefinition = {
+  id: "issue" | "chat";
+  icon: LucideIcon;
+  titleKey: TranslationKey;
+  descriptionKey: TranslationKey;
+  toggleKey: "desktopIssueNotifications" | "desktopChatNotifications";
+  toggleLabelKey: TranslationKey;
+};
+
+const SYSTEM_PERMISSIONS: SystemPermissionDefinition[] = [
+  {
+    id: "fullDiskAccess",
+    icon: HardDrive,
+    titleKey: "systemPermissions.permission.fullDiskAccess.title",
+    descriptionKey: "systemPermissions.permission.fullDiskAccess.description",
+    macSettingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+  },
+  {
+    id: "accessibility",
+    icon: Accessibility,
+    titleKey: "systemPermissions.permission.accessibility.title",
+    descriptionKey: "systemPermissions.permission.accessibility.description",
+    macSettingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+  },
+  {
+    id: "automation",
+    icon: Workflow,
+    titleKey: "systemPermissions.permission.automation.title",
+    descriptionKey: "systemPermissions.permission.automation.description",
+    macSettingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+  },
+];
+
+const NOTIFICATION_PREFERENCES: NotificationPreferenceDefinition[] = [
+  {
+    id: "issue",
+    icon: ClipboardList,
+    titleKey: "systemPermissions.notifications.issue.title",
+    descriptionKey: "systemPermissions.notifications.issue.description",
+    toggleKey: "desktopIssueNotifications",
+    toggleLabelKey: "systemPermissions.notifications.issue.toggle",
+  },
+  {
+    id: "chat",
+    icon: MessagesSquare,
+    titleKey: "systemPermissions.notifications.chat.title",
+    descriptionKey: "systemPermissions.notifications.chat.description",
+    toggleKey: "desktopChatNotifications",
+    toggleLabelKey: "systemPermissions.notifications.chat.toggle",
+  },
+];
+
+function getBrowserNotificationStatus(permission: DesktopNotificationPermissionState): {
+  labelKey: TranslationKey;
+  tone: PermissionStatusTone;
+} {
+  switch (permission) {
+    case "granted":
+      return { labelKey: "systemPermissions.status.authorized", tone: "ok" };
+    case "denied":
+      return { labelKey: "systemPermissions.status.blocked", tone: "warn" };
+    case "default":
+      return { labelKey: "systemPermissions.status.needsAccess", tone: "warn" };
+    default:
+      return { labelKey: "systemPermissions.status.unavailable", tone: "muted" };
+  }
+}
+
+function getDesktopSystemPermissionStatus(status: DesktopSystemPermissionStatus | undefined): {
+  labelKey: TranslationKey;
+  tone: PermissionStatusTone;
+} {
+  switch (status) {
+    case "authorized":
+      return { labelKey: "systemPermissions.status.authorized", tone: "ok" };
+    case "unsupported":
+      return { labelKey: "systemPermissions.status.unavailable", tone: "muted" };
+    case "needs_access":
+    case "per_app":
+    case "unknown":
+    default:
+      return { labelKey: "systemPermissions.status.needsAccess", tone: "warn" };
+  }
+}
+
+function hasResolvedSystemPermissions(statuses: DesktopSystemPermissions | null): boolean {
+  if (!statuses) return false;
+  return SYSTEM_PERMISSIONS.some((permission) => statuses[permission.id] !== undefined);
+}
+
+function resolveDesktopSystemPermissionStatuses(
+  statuses: DesktopSystemPermissions | null,
+  desktopShell: ReturnType<typeof readDesktopShell>,
+): DesktopSystemPermissions {
+  if (hasResolvedSystemPermissions(statuses)) return statuses!;
+  if (desktopShell) {
+    return {
+      fullDiskAccess: "needs_access",
+      accessibility: "needs_access",
+      automation: "needs_access",
+    };
+  }
+  return {};
+}
+
+function getSystemPermissionStatus(
+  permission: SystemPermissionDefinition,
+  isDesktopShell: boolean,
+  statuses: DesktopSystemPermissions,
+): {
+  labelKey: TranslationKey;
+  tone: PermissionStatusTone;
+} {
+  if (!isDesktopShell) {
+    return { labelKey: "systemPermissions.status.desktopOnly", tone: "muted" };
+  }
+  switch (permission.id) {
+    case "fullDiskAccess":
+    case "accessibility":
+    case "automation":
+      return getDesktopSystemPermissionStatus(statuses[permission.id]);
+    default:
+      return { labelKey: "systemPermissions.status.needsAccess", tone: "warn" };
+  }
+}
+
+function PermissionStatusBadge({
+  children,
+  tone,
+}: {
+  children: string;
+  tone: PermissionStatusTone;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-[calc(var(--radius-sm)-1px)] border px-2 py-0.5 text-[11px] font-medium",
+        tone === "ok"
+          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+          : tone === "warn"
+            ? "border-amber-500/32 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+            : "border-border/80 bg-muted/40 text-muted-foreground",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function PermissionIcon({
+  icon: Icon,
+  compact = false,
+}: {
+  icon: LucideIcon;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-[calc(var(--radius-md)-4px)] border border-border/70 bg-[color:color-mix(in_oklab,var(--surface-inset)_88%,transparent)] text-muted-foreground",
+        compact ? "h-7 w-7" : "mt-0.5 h-8 w-8",
+      )}
+    >
+      <Icon className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
+    </div>
+  );
+}
+
+function NotificationPreferenceControl({
+  icon: Icon,
+  title,
+  description,
+  checked,
+  ariaLabel,
+  disabled,
+  onToggle,
+  className,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  checked: boolean;
+  ariaLabel: string;
+  disabled: boolean;
+  onToggle: () => void;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex min-w-0 items-center justify-between gap-4 py-2.5", className)}>
+      <div className="flex min-w-0 items-center gap-2.5">
+        <PermissionIcon icon={Icon} compact />
+        <div className="min-w-0">
+          <h4 className="text-[13px] font-medium text-foreground">{title}</h4>
+          <p className="text-[13px] leading-5 text-muted-foreground">{description}</p>
+        </div>
+      </div>
+      <SettingsToggle
+        checked={checked}
+        aria-label={ariaLabel}
+        disabled={disabled}
+        onClick={onToggle}
+      />
+    </div>
+  );
+}
 
 export function InstanceNotificationsSettings() {
   const { t } = useI18n();
@@ -37,17 +266,16 @@ export function InstanceNotificationsSettings() {
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
   const [desktopBootState, setDesktopBootState] = useState<DesktopBootState | null>(null);
+  const [systemPermissionStatuses, setSystemPermissionStatuses] = useState<DesktopSystemPermissions | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<DesktopNotificationPermissionState>(
     () => readDesktopNotificationPermission(),
   );
   const [notificationPermissionPending, setNotificationPermissionPending] = useState(false);
-  const [desktopTestNotificationPending, setDesktopTestNotificationPending] = useState(false);
-  const [desktopBadgePreviewPending, setDesktopBadgePreviewPending] = useState(false);
 
   useEffect(() => {
     setBreadcrumbs([
       { label: t("common.systemSettings") },
-      { label: t("common.notifications") },
+      { label: t("common.systemPermissions") },
     ]);
   }, [setBreadcrumbs, t]);
 
@@ -56,9 +284,29 @@ export function InstanceNotificationsSettings() {
     setNotificationPermission(readDesktopNotificationPermission());
     if (!desktopShell) return undefined;
 
-    const unsubscribe = desktopShell.onBootState(setDesktopBootState);
-    void desktopShell.getBootState().then(setDesktopBootState).catch(() => setDesktopBootState(null));
-    return unsubscribe;
+    const applyBootState = (nextBootState: DesktopBootState) => {
+      setDesktopBootState(nextBootState);
+      if (nextBootState.permissions) setSystemPermissionStatuses(nextBootState.permissions);
+    };
+    const refreshSystemPermissions = () => {
+      if (typeof desktopShell.getSystemPermissions !== "function") {
+        setSystemPermissionStatuses(null);
+        return;
+      }
+      void desktopShell
+        .getSystemPermissions()
+        .then(setSystemPermissionStatuses)
+        .catch(() => setSystemPermissionStatuses(null));
+    };
+
+    const unsubscribe = desktopShell.onBootState(applyBootState);
+    void desktopShell.getBootState().then(applyBootState).catch(() => setDesktopBootState(null));
+    refreshSystemPermissions();
+    window.addEventListener("focus", refreshSystemPermissions);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("focus", refreshSystemPermissions);
+    };
   }, []);
 
   const notificationsQuery = useQuery({
@@ -70,7 +318,8 @@ export function InstanceNotificationsSettings() {
   const toggleMutation = useMutation({
     mutationFn: async (patch: {
       desktopInboxNotifications?: boolean;
-      desktopDockBadge?: boolean;
+      desktopIssueNotifications?: boolean;
+      desktopChatNotifications?: boolean;
     }) => instanceSettingsApi.updateNotifications(patch),
     onSuccess: async (nextSettings) => {
       setActionError(null);
@@ -107,42 +356,15 @@ export function InstanceNotificationsSettings() {
     }
   }
 
-  async function handleSendDesktopTestNotification() {
+  async function handleOpenSystemPermissionSettings(targetUrl: string) {
     const desktopShell = readDesktopShell();
     if (!desktopShell) return;
 
     setActionError(null);
-    setDesktopTestNotificationPending(true);
     try {
-      await desktopShell.showNotification({
-        title: t("notifications.permission.access.testNotificationTitle"),
-        body: t("notifications.permission.access.testNotificationBody"),
-      });
+      await desktopShell.openExternal(targetUrl);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : t("notifications.permission.requestFailed"));
-    } finally {
-      setDesktopTestNotificationPending(false);
-    }
-  }
-
-  async function handlePreviewDesktopBadge() {
-    const desktopShell = readDesktopShell();
-    if (!desktopShell) return;
-
-    const restoreCount = desktopBootState?.diagnostics?.lastBadgeCount ?? 0;
-    setActionError(null);
-    setDesktopBadgePreviewPending(true);
-    try {
-      await desktopShell.setBadgeCount(3);
-      window.setTimeout(() => {
-        void desktopShell.setBadgeCount(restoreCount).catch((error) => {
-          console.warn("[rudder-ui] failed to restore desktop badge preview count", error);
-        });
-      }, 3000);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : t("notifications.updateFailed"));
-    } finally {
-      setDesktopBadgePreviewPending(false);
+      setActionError(error instanceof Error ? error.message : t("systemPermissions.openSettingsFailed"));
     }
   }
 
@@ -161,50 +383,32 @@ export function InstanceNotificationsSettings() {
   }
 
   const settings = notificationsQuery.data ?? DEFAULT_NOTIFICATION_SETTINGS;
+  const issueNotificationsEnabled =
+    settings.desktopIssueNotifications ?? settings.desktopInboxNotifications ?? true;
+  const chatNotificationsEnabled = settings.desktopChatNotifications ?? true;
   const desktopShell = readDesktopShell();
   const isDesktopShell = desktopShell !== null;
-  const isDevDesktopShell = isDesktopShell && desktopBootState?.runtime?.localEnv === "dev";
   const notificationSupported = isDesktopShell
     ? (desktopBootState?.capabilities?.notifications ?? false)
     : notificationPermission !== "unsupported";
-  const badgeSupported = isDesktopShell
-    ? (desktopBootState?.capabilities?.badgeCount ?? false)
-    : false;
-  const lastBadgeCount = desktopBootState?.diagnostics?.lastBadgeCount;
-  const badgeSyncSucceeded = desktopBootState?.diagnostics?.badgeSyncSucceeded;
-  const lastNotificationTitle = desktopBootState?.diagnostics?.lastNotificationTitle;
-  const lastNotificationTriggeredAt = desktopBootState?.diagnostics?.lastNotificationTriggeredAt;
-  const desktopAppName = isDevDesktopShell ? "Rudder-dev" : "Rudder";
-  const desktopPermissionHelpKey = isDevDesktopShell
-    ? "notifications.permission.access.desktopHelp"
-    : "notifications.permission.access.desktopHelpProd";
-  const permissionSummary = isDesktopShell
-    ? t("notifications.permission.access.summaryDesktop", {
-        permission: t("notifications.permission.access.systemManaged"),
-        notificationsSupport: notificationSupported
-          ? t("notifications.support.available")
-          : t("notifications.support.unavailable"),
-        badgeSupport: badgeSupported
-          ? t("notifications.support.available")
-          : t("notifications.support.unavailable"),
-      })
-    : t("notifications.permission.access.summary", {
-        permission: formatDesktopNotificationPermission(notificationPermission),
-        notificationsSupport: notificationSupported
-          ? t("notifications.support.available")
-          : t("notifications.support.unavailable"),
-        badgeSupport: badgeSupported
-          ? t("notifications.support.available")
-          : t("notifications.support.unavailable"),
-      });
+  const notificationStatus: { labelKey: TranslationKey; tone: PermissionStatusTone } = notificationSupported
+    ? getBrowserNotificationStatus(notificationPermission)
+    : { labelKey: "systemPermissions.status.unavailable", tone: "warn" };
+  const showBrowserNotificationRequest = !isDesktopShell && notificationPermission === "default";
+  const showDesktopNotificationSettings = isDesktopShell;
+  const showBrowserManagedNotice = !isDesktopShell && notificationPermission !== "default";
+  const resolvedSystemPermissionStatuses = resolveDesktopSystemPermissionStatuses(
+    systemPermissionStatuses,
+    desktopShell,
+  );
 
   return (
     <div className="mx-auto max-w-4xl space-y-7 px-1 pb-6">
       <SettingsPageHeader
         eyebrow={t("settings.eyebrow.system")}
-        icon={Bell}
-        title={t("notifications.title")}
-        description={t("notifications.description")}
+        icon={ShieldCheck}
+        title={t("systemPermissions.title")}
+        description={t("systemPermissions.description")}
       />
 
       {actionError ? (
@@ -213,173 +417,141 @@ export function InstanceNotificationsSettings() {
         </div>
       ) : null}
 
-      <SettingsDivider />
-
       <SettingsSection
-        title={t("notifications.permission.title")}
-        description={t("notifications.permission.description")}
+        title={t("systemPermissions.section.title")}
+        description={t("systemPermissions.section.description")}
       >
-        <SettingsRow
-          title={t("notifications.permission.access.title")}
-          description={(
-            <div className="space-y-1">
-              <div>{permissionSummary}</div>
-              {isDesktopShell ? (
-                <div className="text-[12px]">
-                  {t(desktopPermissionHelpKey, {
-                    appName: desktopAppName,
-                  })}
-                </div>
-              ) : null}
-              {!isDesktopShell && notificationPermission === "default" ? (
-                <div className="text-[12px]">{t("notifications.permission.access.default")}</div>
-              ) : null}
-              {!isDesktopShell && notificationPermission === "denied" ? (
-                <div className="text-[12px]">
-                  {t("notifications.permission.access.denied.browser")}
-                </div>
-              ) : null}
-              {isDevDesktopShell && lastNotificationTitle && lastNotificationTriggeredAt ? (
-                <div className="text-[12px]">
-                  {t("notifications.permission.access.lastTest", {
-                    title: lastNotificationTitle,
-                    timestamp: lastNotificationTriggeredAt,
-                  })}
-                </div>
-              ) : null}
-            </div>
-          )}
-          action={(
-            <div className="flex flex-col items-end gap-2">
-              {isDevDesktopShell ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handleSendDesktopTestNotification()}
-                  disabled={desktopTestNotificationPending || !notificationSupported}
-                >
-                  {desktopTestNotificationPending
-                    ? t("notifications.permission.access.testing")
-                    : t("notifications.permission.access.testNotification")}
-                </Button>
-              ) : null}
-              {!isDesktopShell && notificationPermission === "default" ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handleRequestNotificationPermission()}
-                  disabled={notificationPermissionPending}
-                >
-                  {notificationPermissionPending
-                    ? t("notifications.permission.access.requesting")
-                    : t("notifications.permission.access.enable")}
-                </Button>
-              ) : null}
-              {isDesktopShell ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handleOpenNotificationSettings()}
-                >
-                  {t("notifications.permission.access.openSettings")}
-                </Button>
-              ) : null}
-            </div>
-          )}
-        />
+        <div className="overflow-hidden rounded-[var(--radius-md)] border border-border/70 bg-card/45">
+          {SYSTEM_PERMISSIONS.map((permission) => {
+            const status = getSystemPermissionStatus(permission, isDesktopShell, resolvedSystemPermissionStatuses);
+            const showSystemSettingsAction = isDesktopShell && Boolean(permission.macSettingsUrl);
 
-        <SettingsRow
-          title={t("notifications.environment.title")}
-          description={(
-            <div className="space-y-1">
-              <div>
-                {isDesktopShell
-                  ? t("notifications.environment.desktop")
-                  : t("notifications.environment.browser")}
+            return (
+              <div
+                key={permission.id}
+                className="grid gap-3 border-t border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] px-4 py-3.5 first:border-t-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+              >
+                <div className="flex min-w-0 items-start gap-3">
+                  <PermissionIcon icon={permission.icon} />
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-[14px] font-medium text-foreground">{t(permission.titleKey)}</h3>
+                      <PermissionStatusBadge tone={status.tone}>
+                        {t(status.labelKey)}
+                      </PermissionStatusBadge>
+                    </div>
+                    <p className="max-w-2xl text-[13px] leading-5 text-muted-foreground">
+                      {t(permission.descriptionKey)}
+                    </p>
+                  </div>
+                </div>
+
+                {showSystemSettingsAction ? (
+                  <div className="flex items-center justify-start gap-2 sm:justify-end">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleOpenSystemPermissionSettings(permission.macSettingsUrl!)}
+                    >
+                      {t("systemPermissions.action.openSettings")}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
-              <div className="text-[12px]">
-                {isDesktopShell
-                  ? t("notifications.environment.desktopHelp")
-                  : t("notifications.environment.browserHelp")}
+            );
+          })}
+
+          <div className="border-t border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] px-4 py-3.5">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+              <div className="flex min-w-0 items-start gap-3">
+                <PermissionIcon icon={Bell} />
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-[14px] font-medium text-foreground">
+                      {t("systemPermissions.permission.notifications.title")}
+                    </h3>
+                    <PermissionStatusBadge tone={notificationStatus.tone}>
+                      {t(notificationStatus.labelKey)}
+                    </PermissionStatusBadge>
+                  </div>
+                  <p className="max-w-2xl text-[13px] leading-5 text-muted-foreground">
+                    {t("systemPermissions.permission.notifications.description")}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-start gap-2 sm:justify-end">
+                {showBrowserNotificationRequest ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleRequestNotificationPermission()}
+                    disabled={notificationPermissionPending}
+                  >
+                    {notificationPermissionPending
+                      ? t("notifications.permission.access.requesting")
+                      : t("notifications.permission.access.enable")}
+                  </Button>
+                ) : null}
+
+                {showDesktopNotificationSettings ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleOpenNotificationSettings()}
+                  >
+                    {t("systemPermissions.action.openSettings")}
+                  </Button>
+                ) : null}
+
+                {showBrowserManagedNotice ? (
+                  <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                    <CircleAlert className="h-3.5 w-3.5" />
+                    {t("systemPermissions.action.browserManaged")}
+                  </div>
+                ) : null}
               </div>
             </div>
-          )}
-        />
-      </SettingsSection>
 
-      <SettingsDivider />
+            <div className="mt-3 border-t border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] pt-2 sm:ml-11">
+              <div className="grid md:grid-cols-2 md:divide-x md:divide-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)]">
+                {NOTIFICATION_PREFERENCES.map((preference, index) => {
+                  const checked = preference.toggleKey === "desktopIssueNotifications"
+                    ? issueNotificationsEnabled
+                    : chatNotificationsEnabled;
 
-      <SettingsSection
-        title={t("notifications.behavior.title")}
-        description={t("notifications.behavior.description")}
-      >
-        <SettingsRow
-          title={t("notifications.behavior.inbox.title")}
-          description={t("notifications.behavior.inbox.description")}
-          action={(
-            <SettingsToggle
-              checked={settings.desktopInboxNotifications}
-              aria-label={t("notifications.behavior.inbox.toggle")}
-              disabled={toggleMutation.isPending}
-              onClick={() =>
-                toggleMutation.mutate({
-                  desktopInboxNotifications: !settings.desktopInboxNotifications,
-                })
-              }
-            />
-          )}
-        />
-
-        <SettingsRow
-          title={t("notifications.behavior.badge.title")}
-          description={(
-            <div className="space-y-1">
-              <div>{t("notifications.behavior.badge.description")}</div>
-              {!isDesktopShell ? (
-                <div className="text-[12px]">{t("notifications.behavior.badge.browserOnly")}</div>
-              ) : null}
-              {lastBadgeCount != null && typeof badgeSyncSucceeded === "boolean" ? (
-                <div className="text-[12px]">
-                  {t("notifications.behavior.badge.lastSync", {
-                    count: lastBadgeCount,
-                    result: badgeSyncSucceeded
-                      ? t("notifications.support.accepted")
-                      : t("notifications.support.rejected"),
-                  })}
-                </div>
-              ) : null}
-              {isDevDesktopShell ? (
-                <div className="text-[12px]">{t("notifications.behavior.badge.desktopDebug")}</div>
-              ) : null}
+                  return (
+                    <NotificationPreferenceControl
+                      key={preference.id}
+                      icon={preference.icon}
+                      title={t(preference.titleKey)}
+                      description={t(preference.descriptionKey)}
+                      checked={checked}
+                      ariaLabel={t(preference.toggleLabelKey)}
+                      disabled={toggleMutation.isPending}
+                      className={cn(
+                        index === 0
+                          ? "border-b border-[color:color-mix(in_oklab,var(--border-soft)_82%,transparent)] md:border-b-0 md:pr-4"
+                          : "md:pl-4",
+                      )}
+                      onToggle={() => {
+                        const nextChecked = !checked;
+                        toggleMutation.mutate(
+                          preference.toggleKey === "desktopIssueNotifications"
+                            ? {
+                              desktopIssueNotifications: nextChecked,
+                              desktopInboxNotifications: nextChecked,
+                            }
+                            : { desktopChatNotifications: nextChecked },
+                        );
+                      }}
+                    />
+                  );
+                })}
+              </div>
             </div>
-          )}
-          action={(
-            <div className="flex flex-col items-end gap-2">
-              {isDevDesktopShell ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handlePreviewDesktopBadge()}
-                  disabled={desktopBadgePreviewPending || !badgeSupported}
-                >
-                  {desktopBadgePreviewPending
-                    ? t("notifications.behavior.badge.previewing")
-                    : t("notifications.behavior.badge.preview")}
-                </Button>
-              ) : null}
-              <SettingsToggle
-                checked={settings.desktopDockBadge}
-                aria-label={t("notifications.behavior.badge.toggle")}
-                disabled={toggleMutation.isPending}
-                onClick={() =>
-                  toggleMutation.mutate({
-                    desktopDockBadge: !settings.desktopDockBadge,
-                  })
-                }
-              />
-            </div>
-          )}
-        />
+          </div>
+        </div>
       </SettingsSection>
     </div>
   );

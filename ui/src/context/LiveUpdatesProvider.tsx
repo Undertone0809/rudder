@@ -4,6 +4,7 @@ import type { Agent, Issue, LiveEvent } from "@rudderhq/shared";
 import type { RunForIssue } from "../api/activity";
 import type { ActiveRunForIssue, LiveRunForIssue } from "../api/heartbeats";
 import { authApi } from "../api/auth";
+import { instanceSettingsApi } from "@/api/instanceSettings";
 import { resolveBoardActorLabel } from "@/lib/activity-actors";
 import { useOrganization } from "./OrganizationContext";
 import type { ToastInput } from "./ToastContext";
@@ -11,10 +12,16 @@ import { useToast } from "./ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { toOrganizationRelativePath } from "../lib/organization-routes";
 import { useLocation } from "../lib/router";
+import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 
 const TOAST_COOLDOWN_WINDOW_MS = 10_000;
 const TOAST_COOLDOWN_MAX = 3;
 const RECONNECT_SUPPRESS_MS = 2000;
+
+interface LiveNotificationPreferences {
+  issueNotifications: boolean;
+  chatNotifications: boolean;
+}
 
 function readString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
@@ -700,6 +707,7 @@ function handleLiveEvent(
   pushToast: (toast: ToastInput) => string | null,
   gate: ToastGate,
   currentActor: { userId: string | null; agentId: string | null },
+  notificationPreferences: LiveNotificationPreferences,
 ) {
   if (event.orgId !== expectedCompanyId) return;
 
@@ -747,8 +755,10 @@ function handleLiveEvent(
     invalidateActivityQueries(queryClient, expectedCompanyId, payload);
     const action = readString(payload.action);
     const toast =
-      buildActivityToast(queryClient, expectedCompanyId, payload, currentActor) ??
-      buildChatToast(payload) ??
+      (notificationPreferences.issueNotifications
+        ? buildActivityToast(queryClient, expectedCompanyId, payload, currentActor)
+        : null) ??
+      (notificationPreferences.chatNotifications ? buildChatToast(payload) : null) ??
       buildJoinRequestToast(payload);
     if (
       toast &&
@@ -761,6 +771,7 @@ function handleLiveEvent(
 }
 
 export const __liveUpdatesTestUtils = {
+  handleLiveEvent,
   invalidateActivityQueries,
   shouldSuppressActivityToastForVisibleIssue,
   shouldSuppressChatToastForVisibleConversation,
@@ -780,7 +791,19 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     queryFn: () => authApi.getSession(),
     retry: false,
   });
+  const { data: notificationSettings } = useQuery({
+    queryKey: queryKeys.instance.notificationSettings,
+    queryFn: () => instanceSettingsApi.getNotifications(),
+    staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
+  });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  const notificationPreferences: LiveNotificationPreferences = {
+    issueNotifications:
+      notificationSettings?.desktopIssueNotifications
+      ?? notificationSettings?.desktopInboxNotifications
+      ?? true,
+    chatNotifications: notificationSettings?.desktopChatNotifications ?? true,
+  };
 
   useEffect(() => {
     pathnameRef.current = location.pathname;
@@ -833,7 +856,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
           handleLiveEvent(queryClient, selectedOrganizationId, pathnameRef.current, parsed, pushToast, gateRef.current, {
             userId: currentUserId,
             agentId: null,
-          });
+          }, notificationPreferences);
         } catch {
           // Ignore non-JSON payloads.
         }
@@ -862,7 +885,14 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
         socket.close(1000, "provider_unmount");
       }
     };
-  }, [queryClient, selectedOrganizationId, pushToast, currentUserId]);
+  }, [
+    queryClient,
+    selectedOrganizationId,
+    pushToast,
+    currentUserId,
+    notificationPreferences.issueNotifications,
+    notificationPreferences.chatNotifications,
+  ]);
 
   return <>{children}</>;
 }

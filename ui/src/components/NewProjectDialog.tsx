@@ -53,6 +53,9 @@ const projectStatuses = [
   { value: "cancelled", label: "Cancelled" },
 ];
 
+const resourceControlClass =
+  "w-full rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_98%,transparent)] px-2.5 py-1.5 text-sm shadow-none outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50";
+
 type DraftAttachedResource = {
   kind: "existing";
   resourceId: string;
@@ -255,7 +258,7 @@ export function NewProjectDialog() {
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             {selectedOrganization && (
-              <span className="bg-muted px-1.5 py-0.5 rounded text-xs font-medium">
+              <span className="rounded-[calc(var(--radius-sm)-1px)] bg-muted px-1.5 py-0.5 text-xs font-medium">
                 {selectedOrganization.name.slice(0, 3).toUpperCase()}
               </span>
             )}
@@ -314,21 +317,21 @@ export function NewProjectDialog() {
         </div>
 
         <div className="border-t border-border px-4 py-3 space-y-3">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-1">
               <div className="text-sm font-medium">Resources</div>
               <p className="text-xs text-muted-foreground">
                 Attach the codebases, docs, URLs, and external systems agents should use for this project.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
               <Popover open={resourcePickerOpen} onOpenChange={setResourcePickerOpen}>
                 <PopoverTrigger asChild>
                   <Button
                     type="button"
                     variant="outline"
                     size="xs"
-                    className="h-7 px-2"
+                    className="h-7 rounded-[calc(var(--radius-sm)-1px)] px-2"
                     disabled={!selectedOrganizationId || (organizationResources ?? []).length === 0 || availableResources.length === 0}
                   >
                     <Link2 className="mr-1.5 h-3 w-3" />
@@ -345,7 +348,7 @@ export function NewProjectDialog() {
                       <button
                         key={resource.id}
                         type="button"
-                        className="w-full rounded px-2 py-2 text-left hover:bg-accent/50"
+                        className="w-full rounded-[calc(var(--radius-sm)-1px)] px-2 py-2 text-left hover:bg-accent/50"
                         onClick={() => addExistingResource(resource)}
                       >
                         <div className="text-xs font-medium">{resource.name}</div>
@@ -362,7 +365,7 @@ export function NewProjectDialog() {
                 type="button"
                 variant="outline"
                 size="xs"
-                className="h-7 px-2"
+                className="h-7 rounded-[calc(var(--radius-sm)-1px)] px-2"
                 onClick={() => setResourceDrafts((current) => [...current, createInlineResourceDraft()])}
               >
                 <Plus className="mr-1.5 h-3 w-3" />
@@ -372,7 +375,7 @@ export function NewProjectDialog() {
           </div>
 
           {resourceDrafts.length === 0 ? (
-            <div className="rounded-md border border-dashed border-border/80 px-3 py-3 text-xs text-muted-foreground">
+            <div className="rounded-[var(--radius-sm)] border border-dashed border-border/80 px-3 py-3 text-xs text-muted-foreground">
               No project-specific resources yet. You can still create the project now and attach resources later.
             </div>
           ) : (
@@ -384,7 +387,10 @@ export function NewProjectDialog() {
                   : null;
 
                 return (
-                  <div key={key} className="rounded-md border border-border/80 bg-card px-3 py-3 space-y-3">
+                  <div
+                    key={key}
+                    className="space-y-3 rounded-[var(--radius-sm)] border border-border/80 bg-[color:color-mix(in_oklab,var(--surface-inset)_52%,var(--surface-elevated))] px-3 py-3"
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="space-y-0.5 min-w-0">
                         <div className="flex items-center gap-2 text-sm font-medium">
@@ -429,7 +435,7 @@ export function NewProjectDialog() {
                               ...(current as DraftInlineResource),
                               name: event.target.value,
                             }))}
-                            className="w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none"
+                            className={resourceControlClass}
                             placeholder="Rudder repo"
                           />
                         </label>
@@ -441,7 +447,7 @@ export function NewProjectDialog() {
                               ...(current as DraftInlineResource),
                               resourceKind: event.target.value as OrganizationResourceKind,
                             }))}
-                            className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none"
+                            className={cn(resourceControlClass, "h-8")}
                           >
                             {organizationResourceKindOptions.map((option) => (
                               <option key={option.value} value={option.value}>{option.label}</option>
@@ -465,8 +471,8 @@ export function NewProjectDialog() {
                                 name: draft.name.trim() ? draft.name : suggestResourceNameFromLocator(locator),
                               };
                             })}
-                            inputClassName="h-9 rounded border-border bg-transparent px-2 py-1.5 text-sm"
-                            buttonClassName="h-9"
+                            inputClassName={cn(resourceControlClass, "h-8")}
+                            buttonClassName="h-8 rounded-[calc(var(--radius-sm)-1px)]"
                           />
                         </label>
                         <label className="space-y-1 md:col-span-2">
@@ -477,7 +483,7 @@ export function NewProjectDialog() {
                               ...(current as DraftInlineResource),
                               description: event.target.value,
                             }))}
-                            className="min-h-[72px] w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none"
+                            className={cn(resourceControlClass, "min-h-[72px] resize-y py-2")}
                             placeholder="What this resource contains and when agents should use it."
                           />
                         </label>
@@ -493,7 +499,7 @@ export function NewProjectDialog() {
                             ...current,
                             role: event.target.value as ProjectResourceAttachmentRole,
                           }))}
-                          className="w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none"
+                          className={cn(resourceControlClass, "h-8")}
                         >
                           {projectResourceRoleOptions.map((option) => (
                             <option key={option.value} value={option.value}>{option.label}</option>
@@ -508,7 +514,7 @@ export function NewProjectDialog() {
                             ...current,
                             note: event.target.value,
                           }))}
-                          className="w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm outline-none"
+                          className={resourceControlClass}
                           placeholder="Optional guidance specific to this project"
                         />
                       </label>
@@ -541,7 +547,7 @@ export function NewProjectDialog() {
                 <button
                   key={s.value}
                   className={cn(
-                    "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
+                    "flex w-full items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-1.5 text-xs hover:bg-accent/50",
                     s.value === status && "bg-accent"
                   )}
                   onClick={() => { setStatus(s.value); setStatusOpen(false); }}
@@ -555,7 +561,7 @@ export function NewProjectDialog() {
           {selectedGoals.map((goal) => (
             <span
               key={goal.id}
-              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs"
+              className="inline-flex items-center gap-1 rounded-[calc(var(--radius-sm)-1px)] border border-border px-2 py-1 text-xs"
             >
               <Target className="h-3 w-3 text-muted-foreground" />
               <span className="max-w-[160px] truncate">{goal.title}</span>
@@ -573,7 +579,7 @@ export function NewProjectDialog() {
           <Popover open={goalOpen} onOpenChange={setGoalOpen}>
             <PopoverTrigger asChild>
               <button
-                className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors disabled:opacity-60"
+                className="inline-flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-border px-2 py-1 text-xs transition-colors hover:bg-accent/50 disabled:opacity-60"
                 disabled={selectedGoals.length > 0 && availableGoals.length === 0}
               >
                 {selectedGoals.length > 0 ? <Plus className="h-3 w-3 text-muted-foreground" /> : <Target className="h-3 w-3 text-muted-foreground" />}
@@ -583,7 +589,7 @@ export function NewProjectDialog() {
             <PopoverContent className="w-56 p-1" align="start">
               {selectedGoals.length === 0 && (
                 <button
-                  className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground"
+                  className="flex w-full items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent/50"
                   onClick={() => setGoalOpen(false)}
                 >
                   No goal
@@ -592,7 +598,7 @@ export function NewProjectDialog() {
               {availableGoals.map((g) => (
                 <button
                   key={g.id}
-                  className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 truncate"
+                  className="flex w-full items-center gap-2 truncate rounded-[calc(var(--radius-sm)-1px)] px-2 py-1.5 text-xs hover:bg-accent/50"
                   onClick={() => {
                     setGoalIds((prev) => [...prev, g.id]);
                     setGoalOpen(false);
@@ -609,7 +615,7 @@ export function NewProjectDialog() {
             </PopoverContent>
           </Popover>
 
-          <div className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs">
+          <div className="inline-flex items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] border border-border px-2 py-1 text-xs">
             <Calendar className="h-3 w-3 text-muted-foreground" />
             <input
               type="date"

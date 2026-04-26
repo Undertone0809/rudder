@@ -14,6 +14,7 @@ import { assetsApi } from "../api/assets";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
+  DEFAULT_CODEX_LOCAL_SEARCH,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
@@ -342,6 +343,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   };
 
   // Section toggle state — advanced always starts collapsed
+  const [configurationAdvancedOpen, setConfigurationAdvancedOpen] = useState(false);
   const [runPolicyAdvancedOpen, setRunPolicyAdvancedOpen] = useState(false);
   // Popover states
   const [modelOpen, setModelOpen] = useState(false);
@@ -561,6 +563,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     const nextValues: CreateConfigValues = { ...defaults, agentRuntimeType: t };
                     if (t === "codex_local") {
                       nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
+                      nextValues.search = DEFAULT_CODEX_LOCAL_SEARCH;
                       nextValues.dangerouslyBypassSandbox =
                         DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
                     } else if (t === "gemini_local") {
@@ -592,6 +595,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                         mode: "",
                         ...(t === "codex_local"
                           ? {
+                              search: DEFAULT_CODEX_LOCAL_SEARCH,
                               dangerouslyBypassApprovalsAndSandbox:
                                 DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
                             }
@@ -614,6 +618,51 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
 
           {testEnvironment.data && (
             <AdapterEnvironmentResult result={testEnvironment.data} />
+          )}
+
+          <ModelDropdown
+            models={models}
+            value={currentModelId}
+            onChange={(v) =>
+              isCreate
+                ? set!({ model: v })
+                : mark("agentRuntimeConfig", "model", v || undefined)
+            }
+            open={modelOpen}
+            onOpenChange={setModelOpen}
+            allowDefault={agentRuntimeType !== "opencode_local"}
+            required={agentRuntimeType === "opencode_local"}
+            groupByProvider={agentRuntimeType === "opencode_local"}
+          />
+          {fetchedModelsError && (
+            <p className="text-xs text-destructive">
+              {fetchedModelsError instanceof Error
+                ? fetchedModelsError.message
+                : "Failed to load runtime models."}
+            </p>
+          )}
+
+          {showThinkingEffort && (
+            <>
+              <ThinkingEffortDropdown
+                value={currentThinkingEffort}
+                options={thinkingEffortOptions}
+                onChange={(v) =>
+                  isCreate
+                    ? set!({ thinkingEffort: v })
+                    : mark("agentRuntimeConfig", thinkingEffortKey, v || undefined)
+                }
+                open={thinkingEffortOpen}
+                onOpenChange={setThinkingEffortOpen}
+              />
+              {agentRuntimeType === "codex_local" &&
+                codexSearchEnabled &&
+                currentThinkingEffort === "minimal" && (
+                  <p className={cn("text-xs", semanticTextToneClasses.warn)}>
+                    Codex may reject `minimal` thinking when search is enabled.
+                  </p>
+                )}
+            </>
           )}
 
           {/* Prompt template (create mode only — edit mode shows this in Identity) */}
@@ -642,7 +691,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
           )}
 
           {/* Adapter-specific fields */}
-          <uiAdapter.ConfigFields {...adapterFieldProps} />
+          {!isLocal && <uiAdapter.ConfigFields {...adapterFieldProps} />}
         </div>
 
       </div>
@@ -654,184 +703,151 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             ? <h3 className="text-sm font-medium mb-3">Permissions &amp; Configuration</h3>
             : <div className="px-4 py-2 text-xs font-medium text-muted-foreground">Permissions &amp; Configuration</div>
           }
-          <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
-              <Field label="Command" hint={help.localCommand}>
-                <DraftInput
-                  value={
-                    isCreate
-                      ? val!.command
-                      : eff("agentRuntimeConfig", "command", String(config.command ?? ""))
-                  }
-                  onCommit={(v) =>
-                    isCreate
-                      ? set!({ command: v })
-                      : mark("agentRuntimeConfig", "command", v || undefined)
-                  }
-                  immediate
-                  className={inputClass}
-                  placeholder={
-                    agentRuntimeType === "codex_local"
-                      ? "codex"
-                      : agentRuntimeType === "gemini_local"
-                        ? "gemini"
-                        : agentRuntimeType === "pi_local"
-                          ? "pi"
-                        : agentRuntimeType === "cursor"
-                          ? "agent"
-                        : agentRuntimeType === "opencode_local"
-                          ? "opencode"
-                          : "claude"
-                  }
-                />
-              </Field>
+          <div className={cn(cards ? "border border-border rounded-lg overflow-hidden" : "pb-3")}>
+            <CollapsibleSection
+              title="Advanced options"
+              bordered
+              open={configurationAdvancedOpen}
+              onToggle={() => setConfigurationAdvancedOpen(!configurationAdvancedOpen)}
+            >
+              <div className="space-y-3">
+                <uiAdapter.ConfigFields {...adapterFieldProps} />
 
-              <ModelDropdown
-                models={models}
-                value={currentModelId}
-                onChange={(v) =>
-                  isCreate
-                    ? set!({ model: v })
-                    : mark("agentRuntimeConfig", "model", v || undefined)
-                }
-                open={modelOpen}
-                onOpenChange={setModelOpen}
-                allowDefault={agentRuntimeType !== "opencode_local"}
-                required={agentRuntimeType === "opencode_local"}
-                groupByProvider={agentRuntimeType === "opencode_local"}
-              />
-              {fetchedModelsError && (
-                <p className="text-xs text-destructive">
-                  {fetchedModelsError instanceof Error
-                    ? fetchedModelsError.message
-                    : "Failed to load runtime models."}
-                </p>
-              )}
-
-              {showThinkingEffort && (
-                <>
-                  <ThinkingEffortDropdown
-                    value={currentThinkingEffort}
-                    options={thinkingEffortOptions}
-                    onChange={(v) =>
+                <Field label="Command" hint={help.localCommand}>
+                  <DraftInput
+                    value={
                       isCreate
-                        ? set!({ thinkingEffort: v })
-                        : mark("agentRuntimeConfig", thinkingEffortKey, v || undefined)
+                        ? val!.command
+                        : eff("agentRuntimeConfig", "command", String(config.command ?? ""))
                     }
-                    open={thinkingEffortOpen}
-                    onOpenChange={setThinkingEffortOpen}
+                    onCommit={(v) =>
+                      isCreate
+                        ? set!({ command: v })
+                        : mark("agentRuntimeConfig", "command", v || undefined)
+                    }
+                    immediate
+                    className={inputClass}
+                    placeholder={
+                      agentRuntimeType === "codex_local"
+                        ? "codex"
+                        : agentRuntimeType === "gemini_local"
+                          ? "gemini"
+                          : agentRuntimeType === "pi_local"
+                            ? "pi"
+                            : agentRuntimeType === "cursor"
+                              ? "agent"
+                              : agentRuntimeType === "opencode_local"
+                                ? "opencode"
+                                : "claude"
+                    }
                   />
-                  {agentRuntimeType === "codex_local" &&
-                    codexSearchEnabled &&
-                    currentThinkingEffort === "minimal" && (
-                      <p className={cn("text-xs", semanticTextToneClasses.warn)}>
-                        Codex may reject `minimal` thinking when search is enabled.
-                      </p>
-                    )}
-                </>
-              )}
-              {!isCreate && typeof config.bootstrapPromptTemplate === "string" && config.bootstrapPromptTemplate && (
-                <>
-                  <Field label="Bootstrap prompt (legacy)" hint={help.bootstrapPrompt}>
-                    <MarkdownEditor
-                      value={eff(
-                        "agentRuntimeConfig",
-                        "bootstrapPromptTemplate",
-                        String(config.bootstrapPromptTemplate ?? ""),
-                      )}
-                      onChange={(v) =>
-                        mark("agentRuntimeConfig", "bootstrapPromptTemplate", v || undefined)
-                      }
-                      placeholder="Optional initial setup prompt for the first run"
-                      contentClassName="min-h-[44px] text-sm font-mono"
-                      imageUploadHandler={async (file) => {
-                        const namespace = `agents/${props.agent.id}/bootstrap-prompt`;
-                        const asset = await uploadMarkdownImage.mutateAsync({ file, namespace });
-                        return asset.contentPath;
-                      }}
-                    />
-                  </Field>
-                  <div
-                    className={cn(
-                      "rounded-md border px-3 py-2 text-xs",
-                      semanticNoticeToneClasses.warn,
-                    )}
-                  >
-                    Bootstrap prompt is legacy and will be removed in a future release. Consider moving this content into the agent&apos;s prompt template or instructions file instead.
-                  </div>
-                </>
-              )}
-              {agentRuntimeType === "claude_local" && (
-                <ClaudeLocalAdvancedFields {...adapterFieldProps} />
-              )}
+                </Field>
 
-              <Field label="Extra args (comma-separated)" hint={help.extraArgs}>
-                <DraftInput
-                  value={
-                    isCreate
-                      ? val!.extraArgs
-                      : eff("agentRuntimeConfig", "extraArgs", formatArgList(config.extraArgs))
-                  }
-                  onCommit={(v) =>
-                    isCreate
-                      ? set!({ extraArgs: v })
-                      : mark("agentRuntimeConfig", "extraArgs", v ? parseCommaArgs(v) : undefined)
-                  }
-                  immediate
-                  className={inputClass}
-                  placeholder="e.g. --verbose, --foo=bar"
-                />
-              </Field>
-
-              <Field label="Environment variables" hint={help.envVars}>
-                <EnvVarEditor
-                  value={
-                    isCreate
-                      ? ((val!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>)
-                      : ((eff("agentRuntimeConfig", "env", (config.env ?? EMPTY_ENV) as Record<string, EnvBinding>))
-                      )
-                  }
-                  secrets={availableSecrets}
-                  onCreateSecret={async (name, value) => {
-                    const created = await createSecret.mutateAsync({ name, value });
-                    return created;
-                  }}
-                  onChange={(env) =>
-                    isCreate
-                      ? set!({ envBindings: env ?? {}, envVars: "" })
-                      : mark("agentRuntimeConfig", "env", env)
-                  }
-                />
-              </Field>
-
-              {/* Edit-only: timeout + grace period */}
-              {!isCreate && (
-                <>
-                  <Field label="Timeout (sec)" hint={help.timeoutSec}>
-                    <DraftNumberInput
-                      value={eff(
-                        "agentRuntimeConfig",
-                        "timeoutSec",
-                        Number(config.timeoutSec ?? 0),
+                {!isCreate && typeof config.bootstrapPromptTemplate === "string" && config.bootstrapPromptTemplate && (
+                  <>
+                    <Field label="Bootstrap prompt (legacy)" hint={help.bootstrapPrompt}>
+                      <MarkdownEditor
+                        value={eff(
+                          "agentRuntimeConfig",
+                          "bootstrapPromptTemplate",
+                          String(config.bootstrapPromptTemplate ?? ""),
+                        )}
+                        onChange={(v) =>
+                          mark("agentRuntimeConfig", "bootstrapPromptTemplate", v || undefined)
+                        }
+                        placeholder="Optional initial setup prompt for the first run"
+                        contentClassName="min-h-[44px] text-sm font-mono"
+                        imageUploadHandler={async (file) => {
+                          const namespace = `agents/${props.agent.id}/bootstrap-prompt`;
+                          const asset = await uploadMarkdownImage.mutateAsync({ file, namespace });
+                          return asset.contentPath;
+                        }}
+                      />
+                    </Field>
+                    <div
+                      className={cn(
+                        "rounded-md border px-3 py-2 text-xs",
+                        semanticNoticeToneClasses.warn,
                       )}
-                      onCommit={(v) => mark("agentRuntimeConfig", "timeoutSec", v)}
-                      immediate
-                      className={inputClass}
-                    />
-                  </Field>
-                  <Field label="Interrupt grace period (sec)" hint={help.graceSec}>
-                    <DraftNumberInput
-                      value={eff(
-                        "agentRuntimeConfig",
-                        "graceSec",
-                        Number(config.graceSec ?? 15),
-                      )}
-                      onCommit={(v) => mark("agentRuntimeConfig", "graceSec", v)}
-                      immediate
-                      className={inputClass}
-                    />
-                  </Field>
-                </>
-              )}
+                    >
+                      Bootstrap prompt is legacy and will be removed in a future release. Consider moving this content into the agent&apos;s prompt template or instructions file instead.
+                    </div>
+                  </>
+                )}
+                {agentRuntimeType === "claude_local" && (
+                  <ClaudeLocalAdvancedFields {...adapterFieldProps} />
+                )}
+
+                <Field label="Extra args (comma-separated)" hint={help.extraArgs}>
+                  <DraftInput
+                    value={
+                      isCreate
+                        ? val!.extraArgs
+                        : eff("agentRuntimeConfig", "extraArgs", formatArgList(config.extraArgs))
+                    }
+                    onCommit={(v) =>
+                      isCreate
+                        ? set!({ extraArgs: v })
+                        : mark("agentRuntimeConfig", "extraArgs", v ? parseCommaArgs(v) : undefined)
+                    }
+                    immediate
+                    className={inputClass}
+                    placeholder="e.g. --verbose, --foo=bar"
+                  />
+                </Field>
+
+                <Field label="Environment variables" hint={help.envVars}>
+                  <EnvVarEditor
+                    value={
+                      isCreate
+                        ? ((val!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>)
+                        : ((eff("agentRuntimeConfig", "env", (config.env ?? EMPTY_ENV) as Record<string, EnvBinding>))
+                        )
+                    }
+                    secrets={availableSecrets}
+                    onCreateSecret={async (name, value) => {
+                      const created = await createSecret.mutateAsync({ name, value });
+                      return created;
+                    }}
+                    onChange={(env) =>
+                      isCreate
+                        ? set!({ envBindings: env ?? {}, envVars: "" })
+                        : mark("agentRuntimeConfig", "env", env)
+                    }
+                  />
+                </Field>
+
+                {/* Edit-only: timeout + grace period */}
+                {!isCreate && (
+                  <>
+                    <Field label="Timeout (sec)" hint={help.timeoutSec}>
+                      <DraftNumberInput
+                        value={eff(
+                          "agentRuntimeConfig",
+                          "timeoutSec",
+                          Number(config.timeoutSec ?? 0),
+                        )}
+                        onCommit={(v) => mark("agentRuntimeConfig", "timeoutSec", v)}
+                        immediate
+                        className={inputClass}
+                      />
+                    </Field>
+                    <Field label="Interrupt grace period (sec)" hint={help.graceSec}>
+                      <DraftNumberInput
+                        value={eff(
+                          "agentRuntimeConfig",
+                          "graceSec",
+                          Number(config.graceSec ?? 15),
+                        )}
+                        onCommit={(v) => mark("agentRuntimeConfig", "graceSec", v)}
+                        immediate
+                        className={inputClass}
+                      />
+                    </Field>
+                  </>
+                )}
+              </div>
+            </CollapsibleSection>
           </div>
         </div>
       )}

@@ -51,6 +51,7 @@ import { runClaudeLogin } from "@rudderhq/agent-runtime-claude-local/server";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
+  DEFAULT_CODEX_LOCAL_SEARCH,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
@@ -431,6 +432,9 @@ export function agentRoutes(db: Db) {
         typeof next.dangerouslyBypassSandbox === "boolean";
       if (!hasBypassFlag) {
         next.dangerouslyBypassApprovalsAndSandbox = DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
+      }
+      if (typeof next.search !== "boolean") {
+        next.search = DEFAULT_CODEX_LOCAL_SEARCH;
       }
       return ensureGatewayDeviceKey(agentRuntimeType, next);
     }

@@ -9,6 +9,7 @@ import { MessengerContextSidebar } from "./MessengerContextSidebar";
 const invalidateQueries = vi.fn();
 
 let messengerModel: any;
+let messengerRoute: any;
 
 vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
@@ -47,7 +48,7 @@ vi.mock("@/context/SidebarContext", () => ({
 vi.mock("@/hooks/useMessenger", () => ({
   useMessengerModel: () => messengerModel,
   messengerThreadKindLabel: (kind: string) => kind,
-  resolveMessengerRoute: () => ({ kind: "root" }),
+  resolveMessengerRoute: () => messengerRoute,
 }));
 
 function baseModel() {
@@ -90,6 +91,7 @@ describe("MessengerContextSidebar", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-11T10:00:00.000Z"));
     messengerModel = baseModel();
+    messengerRoute = { kind: "root" };
     invalidateQueries.mockReset();
   });
 
@@ -104,5 +106,15 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain("20m ago");
     expect(html).not.toContain(`title="${exactLabel}"`);
     expect(html).not.toContain(`aria-label="${exactLabel}"`);
+  });
+
+  it("renders a sliding active indicator for the selected thread row", () => {
+    messengerRoute = { kind: "chat", conversationId: "chat-1" };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain("motion-context-nav--messenger-thread-list");
+    expect(html).toContain('data-active-index="1"');
+    expect(html).toContain('data-testid="messenger-sidebar-active-indicator"');
   });
 });

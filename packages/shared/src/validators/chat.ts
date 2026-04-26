@@ -30,6 +30,10 @@ export const createChatConversationSchema = z.object({
   contextLinks: z.array(createChatContextLinkSchema).optional().default([]),
 });
 
+export const setChatProjectContextSchema = z.object({
+  projectId: z.string().uuid().optional().nullable(),
+});
+
 export const updateChatConversationSchema = createChatConversationSchema
   .partial()
   .extend({
@@ -88,6 +92,7 @@ export type ChatMessageStatus = z.infer<typeof chatMessageStatusSchema>;
 export type ChatContextEntityType = z.infer<typeof chatContextEntityTypeSchema>;
 export type CreateChatContextLink = z.infer<typeof createChatContextLinkSchema>;
 export type CreateChatConversation = z.infer<typeof createChatConversationSchema>;
+export type SetChatProjectContext = z.infer<typeof setChatProjectContextSchema>;
 export type UpdateChatConversation = z.infer<typeof updateChatConversationSchema>;
 export type AddChatMessage = z.infer<typeof addChatMessageSchema>;
 export type CreateChatAttachmentMetadata = z.infer<typeof createChatAttachmentMetadataSchema>;

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatConversation, ChatMessage } from "@rudderhq/shared";
+import type { ChatContextLink, ChatConversation, ChatMessage } from "@rudderhq/shared";
 
 const mockAdapter = vi.hoisted(() => ({
   execute: vi.fn(),
@@ -144,6 +144,29 @@ function makeMessages(): ChatMessage[] {
     createdAt: now,
     updatedAt: now,
   }];
+}
+
+function makeProjectContextLink(): ChatContextLink {
+  const now = new Date("2026-03-29T08:00:00.000Z");
+  return {
+    id: "context-project-1",
+    orgId: "organization-1",
+    conversationId: "chat-1",
+    entityType: "project",
+    entityId: "project-1",
+    metadata: null,
+    entity: {
+      type: "project",
+      id: "project-1",
+      label: "Launch Ops",
+      subtitle: "Coordinate the launch workflow.",
+      identifier: null,
+      status: "in_progress",
+      href: "/projects/project-1",
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 describe("chatAssistantService operator profile prompt injection", () => {
@@ -308,6 +331,42 @@ describe("chatAssistantService operator profile prompt injection", () => {
     const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
     expect(prompt).toContain("## Organization Resources");
     expect(prompt).toContain("Main codebase: ~/projects/rudder");
+  });
+
+  it("injects selected project context and project resources into chat prompts", async () => {
+    const projectContextLink = makeProjectContextLink();
+    mockRunContextService.buildSceneContext.mockResolvedValueOnce({
+      rudderScene: "chat",
+      rudderWorkspace: {
+        cwd: process.cwd(),
+        source: "project_primary",
+        projectId: "project-1",
+        orgResourcesPrompt: "## Project Resources\n\n- [primary] Launch playbook",
+      },
+      rudderWorkspaces: [],
+    });
+
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation({ contextLinks: [projectContextLink] }),
+      messages: makeMessages(),
+      contextLinks: [projectContextLink],
+      operatorProfile: null,
+    });
+
+    expect(mockRunContextService.resolveWorkspaceForRun).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ projectId: "project-1" }),
+      null,
+    );
+    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    expect(prompt).toContain("Selected project context:");
+    expect(prompt).toContain("- Project ID: project-1");
+    expect(prompt).toContain("- Name: Launch Ops");
+    expect(prompt).toContain("- Description: Coordinate the launch workflow.");
+    expect(prompt).toContain("## Project Resources");
+    expect(prompt).toContain("[primary] Launch playbook");
   });
 
   it("forwards adapter invocation metadata to the caller during streaming", async () => {

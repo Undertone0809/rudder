@@ -339,6 +339,7 @@ export function organizationService(db: Db) {
       db.transaction(async (tx) => {
         // Delete from child tables in dependency order
         await tx.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.orgId, id));
+        await tx.delete(activityLog).where(eq(activityLog.orgId, id));
         await tx.delete(workspaceOperations).where(eq(workspaceOperations.orgId, id));
         await tx.delete(workspaceRuntimeServices).where(eq(workspaceRuntimeServices.orgId, id));
         await tx.delete(executionWorkspaces).where(eq(executionWorkspaces.orgId, id));
@@ -380,7 +381,6 @@ export function organizationService(db: Db) {
         await tx.delete(goals).where(eq(goals.orgId, id));
         await tx.delete(projects).where(eq(projects.orgId, id));
         await tx.delete(agents).where(eq(agents.orgId, id));
-        await tx.delete(activityLog).where(eq(activityLog.orgId, id));
         const rows = await tx
           .delete(organizations)
           .where(eq(organizations.id, id))

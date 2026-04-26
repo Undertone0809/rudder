@@ -2,6 +2,7 @@ export const type = "codex_local";
 export const label = "Codex (local)";
 export const DEFAULT_CODEX_LOCAL_MODEL = "gpt-5.5";
 export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = true;
+export const DEFAULT_CODEX_LOCAL_SEARCH = true;
 
 export const models = [
   { id: DEFAULT_CODEX_LOCAL_MODEL, label: DEFAULT_CODEX_LOCAL_MODEL },
@@ -26,7 +27,7 @@ Core fields:
 - model (string, optional): Codex model id
 - modelReasoningEffort (string, optional): reasoning effort override (minimal|low|medium|high) passed via -c model_reasoning_effort=...
 - promptTemplate (string, optional): run prompt template
-- search (boolean, optional): run codex with --search
+- search (boolean, optional, defaults to true on new Codex agents): run codex with --search
 - dangerouslyBypassApprovalsAndSandbox (boolean, optional): run with bypass flag
 - command (string, optional): defaults to "codex"
 - extraArgs (string[], optional): additional CLI args

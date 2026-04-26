@@ -3,7 +3,11 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getMentionMenuPositionForViewport, MarkdownEditor } from "./MarkdownEditor";
+import {
+  getMentionMenuPositionForViewport,
+  getMentionPanelPositionForViewport,
+  MarkdownEditor,
+} from "./MarkdownEditor";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -164,6 +168,27 @@ describe("MarkdownEditor", () => {
       maxWidth: 1256,
     });
     expect("bottom" in position).toBe(false);
+  });
+
+  it("anchors the wide mention panel above the composer surface", () => {
+    const position = getMentionPanelPositionForViewport(
+      {
+        viewportTop: 520,
+        viewportBottom: 672,
+        viewportLeft: 420,
+        viewportRight: 1180,
+      },
+      1280,
+      720,
+    );
+
+    expect(position).toMatchObject({
+      left: 420,
+      width: 760,
+      bottom: 210,
+      maxHeight: 360,
+    });
+    expect("top" in position).toBe(false);
   });
 
   it("opens an image preview dialog when an inline image is double-clicked", () => {

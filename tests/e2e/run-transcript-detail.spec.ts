@@ -89,6 +89,23 @@ test.describe("Run transcript detail", () => {
     await page.getByRole("button", { name: "Expand transcript" }).click();
     const transcriptDialog = page.getByRole("dialog", { name: "Transcript" });
     await expect(transcriptDialog).toBeVisible();
+    await expect(transcriptDialog).toHaveClass(/transcript-modal-content/);
+    await expect(page.locator(".transcript-modal-overlay")).toBeVisible();
+    await page.waitForFunction(() => {
+      const dialog = document.querySelector(".transcript-modal-content");
+      if (!dialog) return false;
+      return dialog
+        .getAnimations()
+        .every((animation) => animation.playState === "finished" || animation.playState === "idle");
+    });
+    const transcriptDialogBox = await transcriptDialog.boundingBox();
+    const viewport = page.viewportSize();
+    expect(transcriptDialogBox).not.toBeNull();
+    expect(viewport).not.toBeNull();
+    expect(transcriptDialogBox!.x).toBeGreaterThanOrEqual(0);
+    expect(transcriptDialogBox!.y).toBeGreaterThanOrEqual(0);
+    expect(transcriptDialogBox!.x + transcriptDialogBox!.width).toBeLessThanOrEqual(viewport!.width);
+    expect(transcriptDialogBox!.y + transcriptDialogBox!.height).toBeLessThanOrEqual(viewport!.height);
     await expect(transcriptDialog.getByText("adapter invocation")).toBeVisible();
     await expect(transcriptDialog.getByRole("button", { name: "raw" })).toBeVisible();
     await page.keyboard.press("Escape");

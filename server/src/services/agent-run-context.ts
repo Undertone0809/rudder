@@ -5,7 +5,7 @@ import { and, asc, eq } from "drizzle-orm";
 import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
 import type { Db } from "@rudderhq/db";
 import { agents, issues, projectWorkspaces } from "@rudderhq/db";
-import type { AgentRuntimeType, OrganizationResource, ProjectResourceAttachment } from "@rudderhq/shared";
+import type { AgentRuntimeType, ProjectResourceAttachment } from "@rudderhq/shared";
 import { parseObject } from "../agent-runtimes/utils.js";
 import {
   ensureAgentWorkspaceLayout,
@@ -15,7 +15,7 @@ import {
 import { deriveUniqueAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { agentService, deduplicateAgentName } from "./agents.js";
 import { organizationSkillService } from "./organization-skills.js";
-import { listOrganizationResources, listProjectResourceAttachments } from "./resource-catalog.js";
+import { listProjectResourceAttachments } from "./resource-catalog.js";
 import { secretService } from "./secrets.js";
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 const COPILOT_ROW_NAME = "Rudder Copilot (system)";
@@ -133,28 +133,7 @@ function buildCopilotInstructions() {
   ].join("\n");
 }
 
-function buildOrganizationResourcesPrompt(resources: OrganizationResource[]) {
-  if (resources.length === 0) return "";
-  return [
-    "## Organization Resources",
-    "",
-    "Shared references from the organization resource catalog. Use them when choosing where to work and which materials matter.",
-    "",
-    ...resources.flatMap((resource) => {
-      const lines = [
-        `- ${resource.name}`,
-        `  - Kind: ${labelForResourceKind(resource.kind)}`,
-        `  - Locator: \`${resource.locator}\``,
-      ];
-      if (resource.description?.trim()) {
-        lines.push(`  - Description: ${resource.description.trim()}`);
-      }
-      return [...lines, ""];
-    }),
-  ].join("\n").trim();
-}
-
-function labelForResourceKind(kind: OrganizationResource["kind"]) {
+function labelForResourceKind(kind: ProjectResourceAttachment["resource"]["kind"]) {
   return kind.replace(/_/g, " ");
 }
 
@@ -180,15 +159,8 @@ function buildProjectResourcesPrompt(resources: ProjectResourceAttachment[]) {
   ].join("\n").trim();
 }
 
-function buildCompiledResourcesPrompt(input: {
-  organizationResources: OrganizationResource[];
-  projectResources: ProjectResourceAttachment[];
-}) {
-  const sections = [
-    buildProjectResourcesPrompt(input.projectResources),
-    buildOrganizationResourcesPrompt(input.organizationResources),
-  ].filter((section): section is string => section.trim().length > 0);
-  return sections.join("\n\n");
+function buildCompiledResourcesPrompt(projectResources: ProjectResourceAttachment[]) {
+  return buildProjectResourcesPrompt(projectResources);
 }
 
 function buildCopilotRuntimeConfig(input: {
@@ -546,16 +518,10 @@ export function agentRunContextService(db: Db) {
       ?? (input.resolvedWorkspace.source === "project_primary" ? "shared_workspace" : "agent_default");
 
     const executionWorkspaceCwd = input.executionWorkspace?.cwd ?? input.resolvedWorkspace.cwd;
-    const organizationResources = typeof (db as Partial<Db>).select === "function"
-      ? await listOrganizationResources(db, input.agent.orgId)
-      : [];
     const projectResources = workspaceProjectId && typeof (db as Partial<Db>).select === "function"
       ? await listProjectResourceAttachments(db, input.agent.orgId, workspaceProjectId)
       : [];
-    const compiledResourcesPrompt = buildCompiledResourcesPrompt({
-      organizationResources,
-      projectResources,
-    });
+    const compiledResourcesPrompt = buildCompiledResourcesPrompt(projectResources);
     const rudderWorkspace = {
       cwd: executionWorkspaceCwd,
       source: workspaceSource,
@@ -578,6 +544,7 @@ export function agentRunContextService(db: Db) {
       orgAgentsDir: organizationWorkspace.agentsDir,
       orgSkillsDir: organizationWorkspace.skillsDir,
       orgPlansDir: organizationWorkspace.plansDir,
+      resourcesPrompt: compiledResourcesPrompt,
       orgResourcesPrompt: compiledResourcesPrompt,
     } satisfies Record<string, unknown>;
 
@@ -586,7 +553,7 @@ export function agentRunContextService(db: Db) {
       rudderWorkspace,
       rudderResourcesPrompt: compiledResourcesPrompt,
       rudderResources: projectResources,
-      rudderOrganizationResources: organizationResources,
+      rudderOrganizationResources: [],
       rudderProjectResources: projectResources,
       rudderOrgNotes: "",
       rudderWorkspaces: input.resolvedWorkspace.workspaceHints,

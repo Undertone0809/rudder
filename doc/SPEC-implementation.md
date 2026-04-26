@@ -687,6 +687,44 @@ Behavior:
 - `thin`: send IDs and pointers only; agent fetches context via API
 - `fat`: include current assignments, goal summary, budget snapshot, and recent comments
 
+## 11.4.1 Instruction And Resource Loading
+
+Rudder separates stable instructions from dynamic run context.
+
+Stable instruction inputs:
+
+- agent runtime config and adapter-owned defaults
+- managed or explicit `AGENTS.md` / `instructionsFilePath` content when the
+  selected runtime supports file-based instructions
+- enabled Rudder skills resolved for the agent/runtime
+- scene-level invariant rules for `heartbeat` or `chat`
+
+Dynamic context inputs:
+
+- wake-source payloads such as assignment, mention/comment, recovery, and
+  passive close-out metadata
+- selected chat project metadata when a conversation is project-linked
+- issue/project/goal summaries and compact heartbeat context fetched through
+  the CLI/API
+- project resource attachments for the resolved `projectId`
+
+Resource loading contract:
+
+- Organization Resources are an org-wide catalog. They are queryable by agents
+  through organization-scoped APIs, but they are not injected into every
+  instruction or prompt by default.
+- Project Resources are project attachments to org resources. When a heartbeat
+  or chat run resolves a `projectId`, Rudder loads only that project's
+  attachments into the runtime context and prompt resource block.
+- Runs without project context receive no resource prompt by default.
+- `context.rudderWorkspace.orgResourcesPrompt` remains as a legacy runtime
+  template field, but its current value is the compiled project-attached
+  resources prompt. New code should prefer `context.rudderWorkspace.resourcesPrompt`
+  or structured `context.rudderProjectResources`.
+
+This policy keeps org-wide knowledge discoverable without paying the token and
+relevance cost of loading the whole org catalog into every agent run.
+
 ## 11.5 Scheduler Rules
 
 Per-agent schedule fields in `adapter_config`:

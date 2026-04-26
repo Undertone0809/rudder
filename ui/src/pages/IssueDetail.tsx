@@ -1453,6 +1453,7 @@ export function IssueDetail() {
               slot={activePluginTab.slot}
               context={{
                 orgId: issue.orgId,
+                orgPrefix: currentOrganization?.issuePrefix ?? null,
                 projectId: issue.projectId ?? null,
                 entityId: issue.id,
                 entityType: "issue",

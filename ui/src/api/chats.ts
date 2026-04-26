@@ -130,6 +130,8 @@ export const chatsApi = {
       metadata?: Record<string, unknown> | null;
     },
   ) => api.post<ChatContextLink>(`/chats/${chatId}/context-links`, data),
+  setProjectContext: (chatId: string, projectId: string | null) =>
+    api.post<ChatConversation>(`/chats/${chatId}/project-context`, { projectId }),
   convertToIssue: (
     chatId: string,
     data?: {

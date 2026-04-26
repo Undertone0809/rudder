@@ -592,6 +592,7 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             parentId: input.parentId,
             title: input.title,
             description: input.description,
+            status: input.status,
             priority: input.priority,
             assigneeAgentId: input.assigneeAgentId,
           });
@@ -951,11 +952,15 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
   }
 
   async function handleConfigChanged(params: ConfigChangedParams): Promise<void> {
-    currentConfig = params.config;
-
-    if (plugin.definition.onConfigChanged) {
-      await plugin.definition.onConfigChanged(params.config);
+    if (!plugin.definition.onConfigChanged) {
+      throw Object.assign(
+        new Error("configChanged is not implemented by this plugin"),
+        { code: PLUGIN_RPC_ERROR_CODES.METHOD_NOT_IMPLEMENTED },
+      );
     }
+
+    currentConfig = params.config;
+    await plugin.definition.onConfigChanged(params.config);
   }
 
   async function handleOnEvent(params: OnEventParams): Promise<void> {

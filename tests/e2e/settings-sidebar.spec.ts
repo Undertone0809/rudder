@@ -327,10 +327,10 @@ test.describe("Settings sidebar", () => {
     await expect(modal.getByRole("button", { name: "Send Feedback" })).toBeVisible();
   });
 
-  test("saves notification settings and explains browser-preview limits", async ({ page }) => {
+  test("shows system permissions and keeps notification debug controls hidden", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
-        name: `Notifications Settings ${Date.now()}`,
+        name: `System Permissions Settings ${Date.now()}`,
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -339,6 +339,8 @@ test.describe("Settings sidebar", () => {
     const notificationState = {
       desktopInboxNotifications: true,
       desktopDockBadge: true,
+      desktopIssueNotifications: true,
+      desktopChatNotifications: true,
     };
 
     await page.route("**/api/instance/settings/notifications", async (route) => {
@@ -355,10 +357,16 @@ test.describe("Settings sidebar", () => {
         const patch = route.request().postDataJSON() as {
           desktopInboxNotifications?: boolean;
           desktopDockBadge?: boolean;
+          desktopIssueNotifications?: boolean;
+          desktopChatNotifications?: boolean;
         };
 
+        notificationState.desktopIssueNotifications =
+          patch.desktopIssueNotifications ?? patch.desktopInboxNotifications ?? notificationState.desktopIssueNotifications;
+        notificationState.desktopChatNotifications =
+          patch.desktopChatNotifications ?? notificationState.desktopChatNotifications;
         notificationState.desktopInboxNotifications =
-          patch.desktopInboxNotifications ?? notificationState.desktopInboxNotifications;
+          patch.desktopInboxNotifications ?? patch.desktopIssueNotifications ?? notificationState.desktopInboxNotifications;
         notificationState.desktopDockBadge =
           patch.desktopDockBadge ?? notificationState.desktopDockBadge;
 
@@ -381,34 +389,35 @@ test.describe("Settings sidebar", () => {
 
     await sidebar.locator('a[href$="/instance/settings/notifications"]').click();
     await expect(page).toHaveURL(/\/instance\/settings\/notifications$/);
-    await expect(modal.getByRole("heading", { name: "Notifications", exact: true })).toBeVisible();
-    await expect(modal.getByText("Running in browser preview.")).toBeVisible();
-    await expect(
-      modal.getByText("Browser mode can preview unread inbox alerts with the web Notifications API, but it has no app icon surface for a badge."),
-    ).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "System permissions", exact: true })).toBeVisible();
+    await expect(modal.getByText("Full Disk Access")).toBeVisible();
+    await expect(modal.getByText("Accessibility")).toBeVisible();
+    await expect(modal.getByText("Automation")).toBeVisible();
+    await expect(modal.getByText("Notifications")).toBeVisible();
+    await expect(modal.getByText("System notification access")).toBeVisible();
+    await expect(modal.getByText("Issue notifications")).toBeVisible();
+    await expect(modal.getByText("Chat notifications")).toBeVisible();
+    await expect(modal.getByText("Checking")).toHaveCount(0);
+    await expect(modal.getByText("Per app")).toHaveCount(0);
+    await expect(modal.getByText("Unknown")).toHaveCount(0);
+    await expect(modal.getByText("System managed")).toHaveCount(0);
+    await expect(modal.getByText("App icon badge")).toHaveCount(0);
+    await expect(modal.getByRole("button", { name: "Toggle app icon badge" })).toHaveCount(0);
+    await expect(modal.getByRole("button", { name: "Send test notification" })).toHaveCount(0);
 
-    const inboxToggle = modal.getByRole("button", { name: "Toggle inbox notifications" });
-    const badgeToggle = modal.getByRole("button", { name: "Toggle app icon badge" });
-    await expect(inboxToggle).toHaveAttribute("aria-pressed", "true");
-    await expect(badgeToggle).toHaveAttribute("aria-pressed", "true");
+    const issueToggle = modal.getByRole("switch", { name: "Toggle issue notifications" });
+    const chatToggle = modal.getByRole("switch", { name: "Toggle chat notifications" });
+    await expect(issueToggle).toHaveAttribute("aria-checked", "true");
+    await expect(chatToggle).toHaveAttribute("aria-checked", "true");
 
-    const saveInboxResponse = page.waitForResponse((response) =>
+    const saveIssueResponse = page.waitForResponse((response) =>
       response.request().method() === "PATCH"
       && response.url().includes("/api/instance/settings/notifications")
       && response.ok(),
     );
-    await inboxToggle.click();
-    await saveInboxResponse;
-    await expect(inboxToggle).toHaveAttribute("aria-pressed", "false");
-
-    const saveBadgeResponse = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().includes("/api/instance/settings/notifications")
-      && response.ok(),
-    );
-    await badgeToggle.click();
-    await saveBadgeResponse;
-    await expect(badgeToggle).toHaveAttribute("aria-pressed", "false");
+    await issueToggle.click();
+    await saveIssueResponse;
+    await expect(issueToggle).toHaveAttribute("aria-checked", "false");
   });
 
   test("saves local Langfuse settings and shows restart-required state", async ({ page }) => {

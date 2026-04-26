@@ -1,8 +1,22 @@
+export type DesktopSystemPermissionStatus =
+  | "authorized"
+  | "needs_access"
+  | "per_app"
+  | "unknown"
+  | "unsupported";
+
+export type DesktopSystemPermissions = {
+  fullDiskAccess?: DesktopSystemPermissionStatus;
+  accessibility?: DesktopSystemPermissionStatus;
+  automation?: DesktopSystemPermissionStatus;
+};
+
 export type DesktopBootState = {
   capabilities?: {
     badgeCount?: boolean;
     notifications?: boolean;
   };
+  permissions?: DesktopSystemPermissions;
   diagnostics?: {
     lastBadgeCount?: number;
     badgeSyncSucceeded?: boolean;
@@ -62,6 +76,7 @@ export type DesktopShellApi = {
   restart(): Promise<void>;
   getAppVersion(): Promise<string>;
   checkForUpdates(): Promise<DesktopUpdateCheckResult>;
+  getSystemPermissions?(): Promise<DesktopSystemPermissions>;
   sendFeedback(): Promise<void>;
   openExternal(target: string): Promise<void>;
   openNotificationSettings(): Promise<OpenNotificationSettingsResult>;

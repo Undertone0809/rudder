@@ -11,7 +11,9 @@ import { InstanceNotificationsSettings } from "./InstanceNotificationsSettings";
 
 const desktopShellMock = {
   getBootState: vi.fn(),
+  getSystemPermissions: vi.fn(),
   onBootState: vi.fn(),
+  openExternal: vi.fn(),
   openNotificationSettings: vi.fn(),
   setBadgeCount: vi.fn(),
   showNotification: vi.fn(),
@@ -27,6 +29,8 @@ vi.mock("@tanstack/react-query", () => ({
         data: {
           desktopInboxNotifications: true,
           desktopDockBadge: true,
+          desktopIssueNotifications: true,
+          desktopChatNotifications: true,
         },
         isLoading: false,
         error: null,
@@ -57,10 +61,11 @@ vi.mock("@/context/I18nContext", () => ({
     t: (key: string, vars?: Record<string, string | number>) => {
       const messages: Record<string, string> = {
         "common.systemSettings": "System settings",
+        "common.systemPermissions": "System permissions",
         "common.notifications": "Notifications",
         "settings.eyebrow.system": "System settings",
         "notifications.title": "Notifications",
-        "notifications.description": "Manage inbox alerts and app icon badges.",
+        "notifications.description": "Manage inbox alerts.",
         "notifications.loadFailed": "Failed to load notification settings.",
         "notifications.updateFailed": "Failed to save notification settings.",
         "notifications.permission.requestFailed": "Failed to request notifications.",
@@ -69,44 +74,63 @@ vi.mock("@/context/I18nContext", () => ({
         "notifications.permission.description": "Desktop access and repair actions.",
         "notifications.permission.access.title": "Notification access",
         "notifications.permission.access.summary":
-          "Permission: {{permission}}. Alerts: {{notificationsSupport}}. Badge: {{badgeSupport}}.",
+          "Permission: {{permission}}. Alerts: {{notificationsSupport}}.",
         "notifications.permission.access.summaryDesktop":
-          "Permission: {{permission}}. Native alerts: {{notificationsSupport}}. Badge path: {{badgeSupport}}.",
-        "notifications.permission.access.systemManaged": "System-managed",
+          "Permission: {{permission}}. Native alerts: {{notificationsSupport}}.",
         "notifications.permission.access.default": "Rudder has not asked for access yet.",
         "notifications.permission.access.denied.browser": "Browser denied.",
         "notifications.permission.access.requesting": "Requesting...",
         "notifications.permission.access.enable": "Enable notifications",
-        "notifications.permission.access.testing": "Sending...",
-        "notifications.permission.access.testNotification": "Send test notification",
-        "notifications.permission.access.testNotificationTitle": "Rudder notifications are on",
-        "notifications.permission.access.testNotificationBody": "Test body",
         "notifications.permission.access.desktopHelp": "Desktop help for {{appName}}.",
         "notifications.permission.access.desktopHelpProd": "Production desktop help for {{appName}}.",
-        "notifications.permission.access.lastTest": "Last notification {{title}} at {{timestamp}}.",
         "notifications.permission.access.openSettings": "Open notification settings",
         "notifications.environment.title": "Environment",
         "notifications.environment.desktop": "Running inside the desktop shell.",
         "notifications.environment.browser": "Running in browser preview.",
-        "notifications.environment.desktopHelp": "Desktop badges and alerts can both run here.",
-        "notifications.environment.browserHelp": "Browser mode can preview alerts, but it has no app icon badge.",
+        "notifications.environment.desktopHelp": "Desktop alerts can run here.",
+        "notifications.environment.browserHelp": "Browser mode can preview alerts.",
         "notifications.behavior.title": "Behavior",
         "notifications.behavior.description": "Choose what Rudder should surface.",
         "notifications.behavior.inbox.title": "Inbox activity",
         "notifications.behavior.inbox.description": "Show an alert when unread inbox count increases.",
         "notifications.behavior.inbox.toggle": "Toggle inbox notifications",
-        "notifications.behavior.badge.title": "App icon badge",
-        "notifications.behavior.badge.description": "Show unread inbox count on the app icon.",
-        "notifications.behavior.badge.browserOnly": "Only visible in the desktop shell.",
-        "notifications.behavior.badge.lastSync": "Last badge sync: {{count}} ({{result}}).",
-        "notifications.behavior.badge.desktopDebug": "Desktop debug badge copy.",
-        "notifications.behavior.badge.preview": "Preview badge",
-        "notifications.behavior.badge.previewing": "Previewing...",
-        "notifications.behavior.badge.toggle": "Toggle app icon badge",
         "notifications.support.available": "available",
         "notifications.support.unavailable": "unavailable",
-        "notifications.support.accepted": "accepted",
-        "notifications.support.rejected": "rejected",
+        "systemPermissions.title": "System permissions",
+        "systemPermissions.description": "Review OS permissions.",
+        "systemPermissions.section.title": "Permissions",
+        "systemPermissions.section.description": "Open the relevant system pane.",
+        "systemPermissions.status.authorized": "Authorized",
+        "systemPermissions.status.needsAccess": "Needs access",
+        "systemPermissions.status.blocked": "Blocked",
+        "systemPermissions.status.checking": "Checking",
+        "systemPermissions.status.desktopOnly": "Desktop app only",
+        "systemPermissions.status.perApp": "Per app",
+        "systemPermissions.status.unknown": "Unknown",
+        "systemPermissions.status.unavailable": "Unavailable",
+        "systemPermissions.action.openSettings": "Open settings",
+        "systemPermissions.action.desktopOnly": "Desktop only",
+        "systemPermissions.action.browserManaged": "Browser managed",
+        "systemPermissions.openSettingsFailed": "Failed to open system settings.",
+        "systemPermissions.permission.fullDiskAccess.title": "Full Disk Access",
+        "systemPermissions.permission.fullDiskAccess.description": "Read local project files.",
+        "systemPermissions.permission.accessibility.title": "Accessibility",
+        "systemPermissions.permission.accessibility.description": "Observe and control app UI.",
+        "systemPermissions.permission.automation.title": "Automation",
+        "systemPermissions.permission.automation.description": "macOS grants Automation per target app.",
+        "systemPermissions.permission.notifications.title": "Notifications",
+        "systemPermissions.permission.notifications.description": "System notification access for Rudder alerts.",
+        "systemPermissions.permission.notifications.inboxLabel": "Inbox activity alerts",
+        "systemPermissions.notifications.title": "Notifications",
+        "systemPermissions.notifications.description": "Choose notification types.",
+        "systemPermissions.notifications.system.title": "System notification access",
+        "systemPermissions.notifications.system.description": "Open the OS notification pane.",
+        "systemPermissions.notifications.issue.title": "Issue notifications",
+        "systemPermissions.notifications.issue.description": "Notify about issue activity.",
+        "systemPermissions.notifications.issue.toggle": "Toggle issue notifications",
+        "systemPermissions.notifications.chat.title": "Chat notifications",
+        "systemPermissions.notifications.chat.description": "Notify about chat replies.",
+        "systemPermissions.notifications.chat.toggle": "Toggle chat notifications",
       };
       return (messages[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_, name) => String(vars?.[name] ?? ""));
     },
@@ -130,7 +154,9 @@ afterEach(() => {
   cleanupFn = null;
   desktopShellValue = null;
   desktopShellMock.getBootState.mockReset();
+  desktopShellMock.getSystemPermissions.mockReset();
   desktopShellMock.onBootState.mockReset();
+  desktopShellMock.openExternal.mockReset();
   desktopShellMock.openNotificationSettings.mockReset();
   desktopShellMock.setBadgeCount.mockReset();
   desktopShellMock.showNotification.mockReset();
@@ -156,27 +182,50 @@ function renderPage() {
 }
 
 describe("InstanceNotificationsSettings", () => {
-  it("explains browser preview behavior and shows both notification controls", async () => {
+  it("separates system permissions from notification preferences", async () => {
     const container = renderPage();
 
     await act(async () => {
       await Promise.resolve();
     });
 
+    expect(container.textContent).toContain("System permissions");
+    expect(container.textContent).toContain("Full Disk Access");
+    expect(container.textContent).toContain("Accessibility");
+    expect(container.textContent).toContain("Automation");
     expect(container.textContent).toContain("Notifications");
-    expect(container.textContent).toContain("Running in browser preview.");
-    expect(container.textContent).toContain("Browser mode can preview alerts, but it has no app icon badge.");
-    expect(container.textContent).toContain("Inbox activity");
-    expect(container.textContent).toContain("App icon badge");
+    expect(container.textContent).toContain("System notification access");
+    expect(container.textContent).toContain("Issue notifications");
+    expect(container.textContent).toContain("Chat notifications");
+    expect(container.textContent).not.toContain("Inbox activity alerts");
+    expect(container.textContent).toContain("Desktop app only");
+    expect(container.textContent).not.toContain("Running in browser preview.");
+    expect(container.textContent).not.toContain("App icon badge");
+    expect(
+      container.querySelector('button[role="switch"][aria-label="Toggle issue notifications"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(
+      container.querySelector('button[role="switch"][aria-label="Toggle chat notifications"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
   });
 
-  it("shows desktop debug actions instead of browser permission actions in the desktop shell", async () => {
+  it("shows desktop system-settings actions instead of browser permission action in the desktop shell", async () => {
     desktopShellValue = desktopShellMock;
     desktopShellMock.onBootState.mockReturnValue(() => {});
+    desktopShellMock.getSystemPermissions.mockResolvedValue({
+      fullDiskAccess: "needs_access",
+      accessibility: "authorized",
+      automation: "per_app",
+    });
     desktopShellMock.getBootState.mockResolvedValue({
       capabilities: {
         notifications: true,
         badgeCount: true,
+      },
+      permissions: {
+        fullDiskAccess: "needs_access",
+        accessibility: "authorized",
+        automation: "per_app",
       },
       diagnostics: {
         lastBadgeCount: 2,
@@ -195,21 +244,40 @@ describe("InstanceNotificationsSettings", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Running inside the desktop shell.");
-    expect(container.textContent).toContain("Desktop help for Rudder-dev.");
-    expect(container.textContent).toContain("Send test notification");
-    expect(container.textContent).toContain("Preview badge");
-    expect(container.textContent).toContain("Last notification Rudder notifications are on at 2026-04-22T09:30:00.000Z.");
+    expect(container.textContent).toContain("System permissions");
+    expect(container.textContent).toContain("Full Disk Access");
+    expect(container.textContent).toContain("Needs access");
+    expect(container.textContent).toContain("Accessibility");
+    expect(container.textContent).toContain("Authorized");
+    expect(container.textContent).toContain("Automation");
+    expect(container.textContent).not.toContain("Checking");
+    expect(container.textContent).not.toContain("Per app");
+    expect(container.textContent).not.toContain("Unknown");
+    expect(container.textContent).not.toContain("System managed");
+    expect(container.textContent).toContain("Open settings");
+    expect(container.textContent).not.toContain("Send test notification");
+    expect(container.textContent).not.toContain("Preview badge");
+    expect(container.textContent).not.toContain("Last notification Rudder notifications are on at 2026-04-22T09:30:00.000Z.");
     expect(container.textContent).not.toContain("Enable notifications");
   });
 
   it("hides desktop debug actions outside the dev desktop shell", async () => {
     desktopShellValue = desktopShellMock;
     desktopShellMock.onBootState.mockReturnValue(() => {});
+    desktopShellMock.getSystemPermissions.mockResolvedValue({
+      fullDiskAccess: "authorized",
+      accessibility: "authorized",
+      automation: "per_app",
+    });
     desktopShellMock.getBootState.mockResolvedValue({
       capabilities: {
         notifications: true,
         badgeCount: true,
+      },
+      permissions: {
+        fullDiskAccess: "authorized",
+        accessibility: "authorized",
+        automation: "per_app",
       },
       diagnostics: {
         lastBadgeCount: 2,
@@ -228,13 +296,43 @@ describe("InstanceNotificationsSettings", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Running inside the desktop shell.");
-    expect(container.textContent).toContain("Production desktop help for Rudder.");
-    expect(container.textContent).toContain("Open notification settings");
+    expect(container.textContent).toContain("System permissions");
+    expect(container.textContent).toContain("Authorized");
+    expect(container.textContent).toContain("Needs access");
+    expect(container.textContent).not.toContain("Checking");
+    expect(container.textContent).not.toContain("Per app");
+    expect(container.textContent).not.toContain("Unknown");
+    expect(container.textContent).not.toContain("System managed");
+    expect(container.textContent).toContain("Open settings");
     expect(container.textContent).not.toContain("Send test notification");
     expect(container.textContent).not.toContain("Preview badge");
     expect(container.textContent).not.toContain("Last notification Rudder notifications are on at 2026-04-22T09:30:00.000Z.");
-    expect(container.textContent).not.toContain("Desktop debug badge copy.");
     expect(container.textContent).not.toContain("Enable notifications");
+  });
+
+  it("does not leave legacy desktop shells stuck in checking state", async () => {
+    desktopShellValue = desktopShellMock;
+    desktopShellMock.onBootState.mockReturnValue(() => {});
+    desktopShellMock.getSystemPermissions.mockResolvedValue({});
+    desktopShellMock.getBootState.mockResolvedValue({
+      capabilities: {
+        notifications: true,
+        badgeCount: true,
+      },
+    });
+
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Full Disk Access");
+    expect(container.textContent).toContain("Accessibility");
+    expect(container.textContent).toContain("Automation");
+    expect(container.textContent).toContain("Needs access");
+    expect(container.textContent).not.toContain("Checking");
+    expect(container.textContent).not.toContain("Per app");
+    expect(container.textContent).not.toContain("Unknown");
   });
 });

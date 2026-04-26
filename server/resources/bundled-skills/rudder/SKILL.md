@@ -49,7 +49,9 @@ Each organization has one system-managed shared workspace root at:
 
 Important files and conventions:
 
-- Structured shared references live in the org `Resources` catalog. Agents receive those catalog entries in run context automatically.
+- Structured shared references live in the org `Resources` catalog. Agents do not receive the whole org catalog automatically.
+- If a run or chat is linked to a project, Rudder injects only that project's attached resources into the runtime context.
+- If you need broader org-wide resources, query the org resource catalog explicitly instead of assuming it is already in the prompt.
 - Use Workspaces for disk-backed shared files, plans, and skill packages.
 - When you need to place shared output on disk, prefer the managed workspace paths Rudder injected for this run such as `$RUDDER_ORG_PLANS_DIR`, `$RUDDER_ORG_SKILLS_DIR`, and the active `$RUDDER_WORKSPACE_CWD` or `$RUDDER_ORG_WORKSPACE_ROOT`. Do not invent new top-level `projects/` folders.
 - If a `resources.md` file exists, treat it like a normal workspace file rather than a reserved Rudder surface.
