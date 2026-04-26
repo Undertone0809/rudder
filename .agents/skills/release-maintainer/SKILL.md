@@ -38,6 +38,9 @@ cannot be safely inferred.
   to the same CLI version. The `npx` form is the first-run or explicit dist-tag
   form.
 - Canaries publish from `main` automatically and use npm dist-tag `canary`.
+- The Release workflow must explicitly dispatch the Desktop workflow after it
+  pushes a canary or stable tag. A tag push made by `GITHUB_TOKEN` does not
+  trigger another workflow run by itself.
 - Stables are manually promoted from an explicitly chosen source ref and use
   npm dist-tag `latest`.
 - Stable tags point at the original source commit, not at a generated release
@@ -189,10 +192,13 @@ Canary releases should normally be automatic.
 2. Watch the `Release` workflow canary job.
 3. Confirm npm `canary` points at the new prerelease.
 4. Confirm tag `canary/vX.Y.Z-canary.N` exists.
-5. Confirm whether `.github/workflows/desktop-release.yml` also handles
-   `canary/v*` tags. If it does, verify the canary GitHub Release and Desktop
-   assets too; do not assume canaries are npm-only.
-6. Smoke test the actual start path with isolated HOME and npm cache:
+5. Confirm the `Release` workflow dispatched `.github/workflows/desktop-release.yml`
+   for the canary tag. If no Desktop run appears, do not republish npm; manually
+   dispatch `desktop-release.yml` for the existing tag and fix the release
+   workflow.
+6. Verify the canary GitHub Release and Desktop assets; do not assume canaries
+   are npm-only.
+7. Smoke test the actual start path with isolated HOME and npm cache:
 
 ```bash
 tmp_home="$(mktemp -d /tmp/rudder-cli-smoke-canary.XXXXXX)"

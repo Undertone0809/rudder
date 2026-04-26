@@ -4,10 +4,10 @@ Maintainer runbook for shipping Rudder across npm, GitHub, and the website-facin
 
 The release model is now commit-driven:
 
-1. Every push to `main` publishes a canary automatically.
+1. Every push to `main` publishes a canary automatically, except explicit release-infra maintenance commits marked `[skip release]`.
 2. Stable releases are manually promoted from a chosen tested commit or canary tag.
 3. Stable release notes live in `releases/vX.Y.Z.md`.
-4. Only stable releases get GitHub Releases.
+4. Stable releases get user-facing GitHub Releases; canaries may get prerelease GitHub Releases for Desktop installer assets.
 
 ## Versioning Model
 
@@ -40,7 +40,7 @@ Every stable release has five separate surfaces:
 
 A stable release is done only when all five surfaces are handled.
 
-Canaries only cover the first two surfaces plus an internal traceability tag.
+Canaries cover verification, npm, a traceability tag, and Desktop installer assets.
 
 ## Core Invariants
 
@@ -48,14 +48,14 @@ Canaries only cover the first two surfaces plus an internal traceability tag.
 - stables publish from an explicitly chosen source ref
 - tags point at the original source commit, not a generated release commit
 - stable notes are always `releases/vX.Y.Z.md`
-- canaries never create GitHub Releases
+- canary GitHub Releases are only for traceability and Desktop installer assets
 - canaries never require changelog generation
 
 ## TL;DR
 
 ### Canary
 
-Every push to `main` runs the canary path inside [`.github/workflows/release.yml`](../.github/workflows/release.yml).
+Every push to `main` runs the canary path inside [`.github/workflows/release.yml`](../.github/workflows/release.yml), unless the head commit message contains `[skip release]`.
 
 It:
 
@@ -63,6 +63,11 @@ It:
 - derives the next canary prerelease from the committed semver
 - publishes under npm dist-tag `canary`
 - creates a git tag `canary/vX.Y.Z-canary.N`
+- starts the Desktop release workflow for `canary/vX.Y.Z-canary.N`
+
+The release workflow dispatches the Desktop workflow explicitly after pushing the
+canary tag. Do not rely on a tag push made by `GITHUB_TOKEN` to trigger another
+workflow.
 
 Users install canaries with:
 

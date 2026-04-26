@@ -17,6 +17,7 @@ on:
         default: true
 
 permissions:
+  actions: write
   contents: write
   id-token: write
 
@@ -27,7 +28,7 @@ concurrency:
 jobs:
   canary:
     name: Publish npm canary
-    if: github.event_name == 'push' && github.repository == 'Undertone0809/rudder'
+    if: github.event_name == 'push' && github.repository == 'Undertone0809/rudder' && !contains(github.event.head_commit.message, '[skip release]')
     runs-on: ubuntu-latest
     environment: npm-canary
     steps:
@@ -64,6 +65,13 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           ./scripts/release.sh canary
           git push origin "refs/tags/canary/v${version}"
+
+      - name: Start desktop release build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="canary/v${{ steps.publish.outputs.version }}"
+          gh workflow run desktop-release.yml --ref "$tag" -f release_tag="$tag"
 
   stable-dry-run:
     name: Preview stable release

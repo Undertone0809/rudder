@@ -13,6 +13,11 @@ Repo-side files that depend on this setup:
 - `.github/workflows/desktop-release.yml`
 - `.github/CODEOWNERS`
 
+The `Release` workflow needs `actions: write` because it dispatches
+`desktop-release.yml` after publishing npm and pushing the release tag. A tag
+push performed with `GITHUB_TOKEN` will not, by itself, trigger a second
+workflow run.
+
 Note:
 
 - the release workflows intentionally use `pnpm install --no-frozen-lockfile`
@@ -221,6 +226,8 @@ After setup:
 4. confirm publish succeeds under the `npm-canary` environment
 5. confirm npm now shows a new `canary` release
 6. confirm a git tag named `canary/v0.1.0-canary.N` was pushed
+7. confirm `.github/workflows/desktop-release.yml` runs for that canary tag
+8. confirm the canary GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets
 
 Start-path check:
 
