@@ -17,7 +17,8 @@ related_code:
   - ui/src/lib/new-issue-dialog.ts
   - ui/src/components/NewIssueDialog.tsx
   - ui/src/components/ThreeColumnContextSidebar.tsx
-commit_refs: []
+commit_refs:
+  - f751aea
 updated_at: 2026-04-26
 ---
 
