@@ -29,6 +29,9 @@ cannot be safely inferred.
 
 - npm publishes the CLI and public runtime/workspace packages.
 - Desktop binaries are GitHub Release assets, not npm packages.
+- Canary git tags keep the `canary/` namespace, for example
+  `canary/v0.1.0-canary.2`, but the GitHub Release display title should be the
+  clean version name, for example `v0.1.0-canary.2`.
 - The public npm scope is `@rudderhq`. Treat old examples using `@rudder` as
   stale unless the repository explicitly reintroduces that scope.
 - The stable user entrypoint is `npx @rudderhq/cli@latest start`. Bare
@@ -197,7 +200,8 @@ Canary releases should normally be automatic.
    dispatch `desktop-release.yml` for the existing tag and fix the release
    workflow.
 6. Verify the canary GitHub Release and Desktop assets; do not assume canaries
-   are npm-only.
+   are npm-only. The release title should be `vX.Y.Z-canary.N`, not the tag name
+   `canary/vX.Y.Z-canary.N`.
 7. Smoke test the actual start path with isolated HOME and npm cache:
 
 ```bash

@@ -64,6 +64,7 @@ It:
 - publishes under npm dist-tag `canary`
 - creates a git tag `canary/vX.Y.Z-canary.N`
 - starts the Desktop release workflow for `canary/vX.Y.Z-canary.N`
+- creates or updates the canary GitHub Release with display title `vX.Y.Z-canary.N`
 
 The release workflow dispatches the Desktop workflow explicitly after pushing the
 canary tag. Do not rely on a tag push made by `GITHUB_TOKEN` to trigger another

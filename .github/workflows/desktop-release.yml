@@ -118,14 +118,25 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ inputs.release_tag || github.ref_name }}"
+          release_title="${tag##*/}"
           notes_file="releases/${tag}.md"
+          release_args=(create "${tag}" --title "${release_title}")
+          if [[ "${tag}" == canary/* ]]; then
+            release_args+=(--prerelease)
+          fi
 
           if ! gh release view "${tag}" >/dev/null 2>&1; then
             if [ -f "${notes_file}" ]; then
-              gh release create "${tag}" --title "${tag}" --notes-file "${notes_file}"
+              gh release "${release_args[@]}" --notes-file "${notes_file}"
             else
-              gh release create "${tag}" --title "${tag}" --notes "Desktop artifacts for ${tag}."
+              gh release "${release_args[@]}" --notes "Desktop artifacts for ${tag}."
             fi
+          else
+            edit_args=(edit "${tag}" --title "${release_title}")
+            if [[ "${tag}" == canary/* ]]; then
+              edit_args+=(--prerelease)
+            fi
+            gh release "${edit_args[@]}"
           fi
 
           gh release upload "${tag}" dist/desktop-assets/Rudder-* dist/desktop-assets/SHASUMS256.txt --clobber

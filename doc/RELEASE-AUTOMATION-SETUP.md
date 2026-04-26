@@ -228,6 +228,7 @@ After setup:
 6. confirm a git tag named `canary/v0.1.0-canary.N` was pushed
 7. confirm `.github/workflows/desktop-release.yml` runs for that canary tag
 8. confirm the canary GitHub Release contains macOS, Windows, Linux, and `SHASUMS256.txt` assets
+9. confirm the canary GitHub Release title is `v0.1.0-canary.N`, while the tag remains `canary/v0.1.0-canary.N`
 
 Start-path check:
 
