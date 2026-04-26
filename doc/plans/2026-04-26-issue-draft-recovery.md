@@ -18,7 +18,7 @@ related_code:
   - ui/src/components/ThreeColumnContextSidebar.tsx
   - ui/src/lib/new-issue-dialog.ts
 commit_refs:
-  - b0df7a7
+  - dbe0f29
 updated_at: 2026-04-26
 ---
 
