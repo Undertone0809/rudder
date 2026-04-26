@@ -151,6 +151,7 @@ const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
 const DESKTOP_LATEST_RELEASE_API_URL = `https://api.github.com/repos/${DESKTOP_GITHUB_REPO}/releases/latest`;
 const DESKTOP_FEEDBACK_EMAIL = "zeeland4work@gmail.com";
+const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
 
 const LOCAL_ENV_PROFILES: Record<LocalEnvProfile["name"], LocalEnvProfile> = {
   dev: {
@@ -1165,6 +1166,49 @@ async function beginQuitFlow(): Promise<void> {
   await quitInFlight;
 }
 
+function resolveUpdateQuitResponsePath(argv: string[] = process.argv): string | null {
+  const inline = argv.find((arg) => arg.startsWith(`${DESKTOP_UPDATE_QUIT_ARG}=`));
+  if (inline) return inline.slice(`${DESKTOP_UPDATE_QUIT_ARG}=`.length).trim() || null;
+
+  const flagIndex = argv.indexOf(DESKTOP_UPDATE_QUIT_ARG);
+  if (flagIndex === -1) return null;
+  return argv[flagIndex + 1]?.trim() || null;
+}
+
+function writeUpdateQuitResponse(responsePath: string, payload: unknown): void {
+  fs.mkdirSync(path.dirname(responsePath), { recursive: true });
+  fs.writeFileSync(responsePath, `${JSON.stringify(payload)}\n`, "utf8");
+}
+
+async function handleUpdateQuitRequest(responsePath: string): Promise<void> {
+  try {
+    let activeRuns: ActiveRunSummary = { totalRuns: 0, organizations: [] };
+    try {
+      activeRuns = await listActiveRunsForQuit();
+    } catch (error) {
+      console.warn("[rudder-desktop] failed to inspect active runs for update quit; continuing with quit", error);
+    }
+
+    if (activeRuns.totalRuns > 0) {
+      writeUpdateQuitResponse(responsePath, {
+        ok: false,
+        status: "active_runs",
+        totalRuns: activeRuns.totalRuns,
+      });
+      return;
+    }
+
+    writeUpdateQuitResponse(responsePath, { ok: true, status: "quitting" });
+    await finalizeQuit();
+  } catch (error) {
+    writeUpdateQuitResponse(responsePath, {
+      ok: false,
+      status: "failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function registerIpc(): void {
   ipcMain.handle("desktop:get-boot-state", async () => {
     refreshDesktopSystemPermissions();
@@ -1374,6 +1418,7 @@ async function bootstrap(): Promise<void> {
 }
 
 const desktopCliArgv = resolveDesktopCliArgv(process.argv);
+const updateQuitResponsePath = resolveUpdateQuitResponsePath(process.argv);
 
 if (desktopCliArgv) {
   void importCliModule()
@@ -1385,34 +1430,45 @@ if (desktopCliArgv) {
       console.error("[rudder-desktop] failed to run desktop CLI mode", error);
       app.exit(1);
     });
-} else if (!app.requestSingleInstanceLock()) {
-  app.quit();
 } else {
-  app.on("second-instance", () => {
-    showMainWindow();
-  });
-
-  app.on("activate", () => {
-    showMainWindow();
-  });
-
-  app.on("browser-window-focus", () => {
-    refreshDesktopSystemPermissions();
-  });
-
-  app.on("window-all-closed", () => {
-    if (shouldHideToResidentShell()) return;
+  const singleInstanceLock = app.requestSingleInstanceLock();
+  if (updateQuitResponsePath && singleInstanceLock) {
+    writeUpdateQuitResponse(updateQuitResponsePath, { ok: true, status: "not_running" });
+    app.exit(0);
+  } else if (!singleInstanceLock) {
     app.quit();
-  });
+  } else {
+    app.on("second-instance", (_event, argv) => {
+      const responsePath = resolveUpdateQuitResponsePath(argv);
+      if (responsePath) {
+        void handleUpdateQuitRequest(responsePath);
+        return;
+      }
+      showMainWindow();
+    });
 
-  app.on("before-quit", (event) => {
-    if (quitting) return;
-    event.preventDefault();
-    void beginQuitFlow();
-  });
+    app.on("activate", () => {
+      showMainWindow();
+    });
 
-  void app.whenReady().then(() => bootstrap()).catch((error) => {
-    console.error("[rudder-desktop] Failed to bootstrap desktop app", error);
-    app.exit(1);
-  });
+    app.on("browser-window-focus", () => {
+      refreshDesktopSystemPermissions();
+    });
+
+    app.on("window-all-closed", () => {
+      if (shouldHideToResidentShell()) return;
+      app.quit();
+    });
+
+    app.on("before-quit", (event) => {
+      if (quitting) return;
+      event.preventDefault();
+      void beginQuitFlow();
+    });
+
+    void app.whenReady().then(() => bootstrap()).catch((error) => {
+      console.error("[rudder-desktop] Failed to bootstrap desktop app", error);
+      app.exit(1);
+    });
+  }
 }

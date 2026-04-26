@@ -12,7 +12,7 @@ Use these scripts:
 - [`scripts/create-github-release.sh`](../scripts/create-github-release.sh) after pushing a stable tag
 - [`scripts/rollback-latest.sh`](../scripts/rollback-latest.sh) to repoint `latest`
 - [`scripts/build-npm.sh`](../scripts/build-npm.sh) for the CLI packaging build
-- [`scripts/collect-desktop-release-assets.mjs`](../scripts/collect-desktop-release-assets.mjs) to normalize desktop installer asset names for GitHub Releases
+- [`scripts/collect-desktop-release-assets.mjs`](../scripts/collect-desktop-release-assets.mjs) to normalize desktop portable asset names for GitHub Releases
 
 Rudder no longer uses release branches or Changesets for publishing.
 
@@ -109,7 +109,7 @@ Stable publishes do not create a release commit. Instead:
 - package versions are read from the chosen source commit
 - packages are published from the chosen source commit
 - git tag `vX.Y.Z` points at that original commit
-- desktop installers are attached to the matching GitHub Release by
+- portable desktop assets are attached to the matching GitHub Release by
   `.github/workflows/desktop-release.yml`
 
 The primary user install path is:
@@ -119,8 +119,9 @@ npx @rudderhq/cli@latest start
 ```
 
 The `start` command checks npm for newer CLI releases, uses npm for the
-persistent CLI, and uses GitHub Release assets for the desktop app. Desktop
-binaries are intentionally not published to npm.
+persistent CLI, and uses checksum-verified GitHub Release assets for the
+per-user portable desktop app. Desktop binaries are intentionally not published
+to npm.
 
 `npx @rudderhq/cli@latest <command>` and `rudder <command>` are the same command
 surface once they resolve to the same CLI version. Public docs use the `npx`

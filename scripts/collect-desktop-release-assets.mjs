@@ -31,8 +31,8 @@ function readArgs(argv) {
 }
 
 function expectedExtension(platform) {
-  if (platform === "macos") return ".dmg";
-  if (platform === "windows") return ".exe";
+  if (platform === "macos") return ".zip";
+  if (platform === "windows") return ".zip";
   if (platform === "linux") return ".AppImage";
   throw new Error(`Unsupported desktop platform: ${platform}`);
 }
@@ -88,7 +88,8 @@ function main() {
   const source = findDesktopAsset(releaseDir, platform);
   const extension = expectedExtension(platform);
   const outputDir = path.resolve(repoRoot, outDir);
-  const outputName = `Rudder-${version}-${platform}-${arch}${extension}`;
+  const portableSuffix = platform === "linux" ? "" : "-portable";
+  const outputName = `Rudder-${version}-${platform}-${arch}${portableSuffix}${extension}`;
   const outputPath = path.join(outputDir, outputName);
 
   mkdirSync(outputDir, { recursive: true });

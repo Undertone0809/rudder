@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
+const packageJsonPath = path.join(desktopRoot, "package.json");
+const releaseDir = path.join(desktopRoot, "release");
 const packagingNodeModulesDir = path.join(desktopRoot, "node_modules");
 const hiddenPackagingNodeModulesDir = path.join(desktopRoot, ".node_modules.packaging-hidden");
 const requireFromScript = createRequire(import.meta.url);
@@ -37,6 +39,65 @@ function run(command, args) {
       resolve();
     });
   });
+}
+
+async function exists(targetPath) {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function powershellQuote(value) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+async function readPackageInfo() {
+  const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
+  return {
+    productName: packageJson.build?.productName ?? packageJson.productName ?? packageJson.name,
+    version: packageJson.version,
+  };
+}
+
+async function resolvePackagedAppDir(platform, arch, productName) {
+  const candidates = platform === "macos"
+    ? [
+        path.join(releaseDir, `mac-${arch}`, `${productName}.app`),
+        path.join(releaseDir, "mac", `${productName}.app`),
+      ]
+    : [
+        path.join(releaseDir, arch === "arm64" ? "win-arm64-unpacked" : "win-unpacked"),
+        path.join(releaseDir, "win-unpacked"),
+      ];
+
+  for (const candidate of candidates) {
+    if (await exists(candidate)) return candidate;
+  }
+
+  throw new Error(`packaged app not found in: ${candidates.join(", ")}`);
+}
+
+async function createPortableZip(platform, arch) {
+  const { productName, version } = await readPackageInfo();
+  const appDir = await resolvePackagedAppDir(platform, arch, productName);
+  const outputPath = path.join(releaseDir, `${productName}-${version}-${platform}-${arch}-portable.zip`);
+
+  await fs.rm(outputPath, { force: true });
+  if (platform === "macos") {
+    await run("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appDir, outputPath]);
+    return;
+  }
+
+  await run("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    `Compress-Archive -LiteralPath ${powershellQuote(appDir)} -DestinationPath ${powershellQuote(outputPath)} -Force`,
+  ]);
 }
 
 async function hidePackagingNodeModules() {
@@ -78,16 +139,19 @@ async function main() {
       if (archFlag) args.push(archFlag);
 
       await run(process.execPath, args);
-      await run(process.execPath, ["scripts/create-dmg.mjs"]);
+      await createPortableZip("macos", targetArch);
       return;
     }
 
     const args = [electronBuilderCliPath];
-    if (process.platform === "win32") args.push("--win");
+    if (process.platform === "win32") args.push("--win", "dir");
     if (process.platform === "linux") args.push("--linux");
     const archFlag = archFlagFor(targetArch);
     if (archFlag) args.push(archFlag);
     await run(process.execPath, args);
+    if (process.platform === "win32") {
+      await createPortableZip("windows", targetArch);
+    }
   } finally {
     await restorePackagingNodeModules(nodeModulesHidden);
   }

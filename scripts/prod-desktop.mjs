@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,19 +23,28 @@ function run(command, args, options = {}) {
   });
 }
 
-function currentPlatformArtifactExtension() {
-  if (process.platform === "darwin") return ".dmg";
-  if (process.platform === "win32") return ".exe";
-  return ".AppImage";
-}
-
-function findNewestInstallerArtifact() {
-  const extension = currentPlatformArtifactExtension();
+function findNewestReleaseFile(extension) {
   const entries = readdirSync(releaseDir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(extension))
     .map((entry) => path.join(releaseDir, entry.name))
     .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs);
   return entries[0] ?? null;
+}
+
+function findLaunchableArtifact() {
+  if (process.platform === "darwin") {
+    const appPath = path.join(releaseDir, `mac-${process.arch}`, "Rudder.app");
+    if (existsSync(appPath)) return appPath;
+    const fallback = path.join(releaseDir, "mac", "Rudder.app");
+    if (existsSync(fallback)) return fallback;
+  }
+  if (process.platform === "win32") {
+    const appPath = path.join(releaseDir, process.arch === "arm64" ? "win-arm64-unpacked" : "win-unpacked", "Rudder.exe");
+    if (existsSync(appPath)) return appPath;
+    const fallback = path.join(releaseDir, "win-unpacked", "Rudder.exe");
+    if (existsSync(fallback)) return fallback;
+  }
+  return findNewestReleaseFile(".AppImage");
 }
 
 async function openArtifact(artifactPath) {
@@ -66,29 +75,29 @@ async function main() {
     return;
   }
   if (smokeResult.code !== 0) {
-    console.error("[rudder:prod] packaged desktop smoke failed; refusing to open the installer");
+    console.error("[rudder:prod] packaged desktop smoke failed; refusing to open the app");
     process.exit(smokeResult.code);
   }
 
-  const artifactPath = findNewestInstallerArtifact();
+  const artifactPath = findLaunchableArtifact();
   if (!artifactPath) {
-    console.error(`[rudder:prod] built desktop artifacts, but could not find an installer in ${releaseDir}`);
+    console.error(`[rudder:prod] built desktop artifacts, but could not find a launchable artifact in ${releaseDir}`);
     process.exit(1);
   }
 
-  console.log(`[rudder:prod] opening installer: ${artifactPath}`);
+  console.log(`[rudder:prod] opening packaged desktop app: ${artifactPath}`);
   const openResult = await openArtifact(artifactPath);
   if (openResult.signal) {
     process.kill(process.pid, openResult.signal);
     return;
   }
   if (openResult.code !== 0) {
-    console.error(`[rudder:prod] failed to open installer automatically. Open this file manually:\n${artifactPath}`);
+    console.error(`[rudder:prod] failed to open the packaged app automatically. Open this file manually:\n${artifactPath}`);
     process.exit(openResult.code);
   }
 }
 
 void main().catch((error) => {
-  console.error("[rudder:prod] failed to build or open the production desktop installer", error);
+  console.error("[rudder:prod] failed to build or open the production desktop app", error);
   process.exit(1);
 });

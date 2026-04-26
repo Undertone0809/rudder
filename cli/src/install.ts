@@ -71,6 +71,13 @@ export function hasGlobalInstalledPackage(
   packageName: string,
   execFileSyncImpl: typeof execFileSync = execFileSync,
 ): boolean {
+  return getGlobalInstalledPackageVersion(packageName, execFileSyncImpl) !== null;
+}
+
+export function getGlobalInstalledPackageVersion(
+  packageName: string,
+  execFileSyncImpl: typeof execFileSync = execFileSync,
+): string | null {
   try {
     const output = execFileSyncImpl(
       process.platform === "win32" ? "npm.cmd" : "npm",
@@ -83,9 +90,9 @@ export function hasGlobalInstalledPackage(
     const parsed = JSON.parse(output) as {
       dependencies?: Record<string, { version?: string }>;
     };
-    return Boolean(parsed.dependencies?.[packageName]?.version);
+    return parsed.dependencies?.[packageName]?.version ?? null;
   } catch {
-    return false;
+    return null;
   }
 }
 
