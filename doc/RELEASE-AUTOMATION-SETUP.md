@@ -87,6 +87,19 @@ After the workflows are live:
 
 Only after that should you remove old token-based access.
 
+### 2.4. Configure macOS Desktop signing
+
+Public macOS Desktop artifacts must be Developer ID signed and notarized. Unsigned or ad-hoc signed DMGs downloaded through Chrome can be blocked by Gatekeeper with a misleading "damaged and can't be opened" dialog.
+
+Add these repository or environment secrets for `.github/workflows/desktop-release.yml`:
+
+- `MACOS_CSC_LINK` or `CSC_LINK`: base64 `.p12`, `file://`, path, or HTTPS URL for a Developer ID Application certificate
+- `MACOS_CSC_KEY_PASSWORD` or `CSC_KEY_PASSWORD`: certificate password
+- optional `MACOS_CSC_NAME` or `CSC_NAME`: certificate identity selector when more than one identity is available
+- either `APPLE_API_KEY_P8` + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER`, `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`, or `APPLE_KEYCHAIN_PROFILE`
+
+The workflow runs `desktop/scripts/verify-macos-release-signing.mjs` before uploading macOS artifacts. This checks the built app and the app inside the DMG with `codesign`, `xcrun stapler validate`, and `spctl --assess`.
+
 Temporary fallback:
 
 - If trusted publishing is not configured yet, add an environment secret named

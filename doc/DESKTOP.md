@@ -198,7 +198,7 @@ Desktop packaging uses Electron + electron-builder and currently produces:
 - Windows: `NSIS .exe`
 - Linux: `.AppImage`
 
-The GitHub Actions desktop workflow builds artifacts on all three operating systems. Stable tags under `v*` publish Desktop artifacts to the matching stable GitHub Release:
+The GitHub Actions desktop workflow builds artifacts on all three operating systems. macOS release builds must be Developer ID signed and notarized before upload; the workflow fails before publishing a macOS artifact if `codesign`, `stapler`, or Gatekeeper assessment fails. Stable tags under `v*` and canary tags under `canary/v*` publish Desktop artifacts to the matching GitHub Release:
 
 - `Rudder-X.Y.Z-macos-x64.dmg`
 - `Rudder-X.Y.Z-macos-arm64.dmg`
@@ -209,3 +209,9 @@ The GitHub Actions desktop workflow builds artifacts on all three operating syst
 Desktop artifacts are not published to npm. The CLI `start` command resolves
 the appropriate GitHub Release asset for the current platform and reminds users
 when a newer CLI version is available.
+
+Required macOS release secrets:
+
+- `MACOS_CSC_LINK` or `CSC_LINK`: base64 `.p12`, `file://`, path, or HTTPS URL for a Developer ID Application certificate
+- `MACOS_CSC_KEY_PASSWORD` or `CSC_KEY_PASSWORD`: certificate password
+- either `APPLE_API_KEY_P8` + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER`, `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`, or `APPLE_KEYCHAIN_PROFILE`

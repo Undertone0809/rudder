@@ -63,15 +63,83 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
+      - name: Check macOS signing inputs
+        if: matrix.platform == 'macos'
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK || secrets.CSC_LINK }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_KEYCHAIN_PROFILE: ${{ secrets.APPLE_KEYCHAIN_PROFILE }}
+        run: |
+          if [ -z "${CSC_LINK:-}" ]; then
+            echo "Missing MACOS_CSC_LINK or CSC_LINK for Developer ID signing."
+            exit 1
+          fi
+
+          has_api_key=0
+          if [ -n "${APPLE_API_KEY_P8:-}" ] && [ -n "${APPLE_API_KEY_ID:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ]; then
+            has_api_key=1
+          fi
+
+          has_apple_id=0
+          if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+            has_apple_id=1
+          fi
+
+          has_keychain_profile=0
+          if [ -n "${APPLE_KEYCHAIN_PROFILE:-}" ]; then
+            has_keychain_profile=1
+          fi
+
+          if [ "${has_api_key}" -ne 1 ] && [ "${has_apple_id}" -ne 1 ] && [ "${has_keychain_profile}" -ne 1 ]; then
+            echo "Missing notarization credentials. Configure APPLE_API_KEY_P8 + APPLE_API_KEY_ID + APPLE_API_ISSUER, APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID, or APPLE_KEYCHAIN_PROFILE."
+            exit 1
+          fi
+
+      - name: Prepare Apple API key
+        if: matrix.platform == 'macos'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -z "${APPLE_API_KEY_P8:-}" ]; then
+            echo "APPLE_API_KEY_P8 is not configured; using Apple ID or keychain notarization if present."
+            exit 0
+          fi
+          key_path="${RUNNER_TEMP}/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8"
+          printf '%s' "${APPLE_API_KEY_P8}" > "${key_path}"
+          chmod 600 "${key_path}"
+          echo "APPLE_API_KEY=${key_path}" >> "${GITHUB_ENV}"
+
+      - name: Build macOS desktop installer
+        if: matrix.platform == 'macos'
+        env:
+          RUDDER_DESKTOP_TARGET_ARCH: ${{ matrix.arch }}
+          RUDDER_DESKTOP_REQUIRE_SIGNING: "1"
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK || secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD || secrets.CSC_KEY_PASSWORD }}
+          CSC_NAME: ${{ secrets.MACOS_CSC_NAME || secrets.CSC_NAME }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_KEYCHAIN: ${{ secrets.APPLE_KEYCHAIN }}
+          APPLE_KEYCHAIN_PROFILE: ${{ secrets.APPLE_KEYCHAIN_PROFILE }}
+        run: |
+          ulimit -n 65536 || ulimit -n 10240 || true
+          echo "macOS open file limit: $(ulimit -n)"
+
+          pnpm desktop:dist
+
       - name: Build desktop installer
+        if: matrix.platform != 'macos'
         env:
           RUDDER_DESKTOP_TARGET_ARCH: ${{ matrix.arch }}
         run: |
-          if [ "$(uname -s)" = "Darwin" ]; then
-            ulimit -n 65536 || ulimit -n 10240 || true
-            echo "macOS open file limit: $(ulimit -n)"
-          fi
-
           pnpm desktop:dist
 
       - name: Collect release asset

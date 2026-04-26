@@ -11,6 +11,7 @@ const hiddenPackagingNodeModulesDir = path.join(desktopRoot, ".node_modules.pack
 const requireFromScript = createRequire(import.meta.url);
 const electronBuilderCliPath = requireFromScript.resolve("electron-builder/cli.js");
 const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
+const requireReleaseSigning = process.env.RUDDER_DESKTOP_REQUIRE_SIGNING === "1";
 
 function archFlagFor(arch) {
   if (arch === "arm64") return "--arm64";
@@ -79,6 +80,9 @@ async function main() {
 
       await run(process.execPath, args);
       await run(process.execPath, ["scripts/create-dmg.mjs"]);
+      if (requireReleaseSigning) {
+        await run(process.execPath, ["scripts/verify-macos-release-signing.mjs", "--arch", targetArch]);
+      }
       return;
     }
 
