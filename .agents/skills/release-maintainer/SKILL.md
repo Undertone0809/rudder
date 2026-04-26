@@ -2,7 +2,7 @@
 name: release-maintainer
 description: >
   Maintain and execute Rudder releases across npm, GitHub Releases, and Desktop
-  installers. Use this skill whenever the user asks about 发版, release,
+  portable assets. Use this skill whenever the user asks about 发版, release,
   publishing to npm, canary/stable promotion, GitHub Release assets, Desktop
   distribution, `npx @rudderhq/cli@latest start`, `npx @rudderhq/cli start`,
   version bumps, rollback, first-time package bootstrap, npm token-based
@@ -16,7 +16,7 @@ description: >
 Help the user ship Rudder without losing track of release surfaces.
 
 Rudder's release model has several moving parts: npm packages, git tags, GitHub
-Releases, Desktop installers, release notes, and smoke tests. Your job is to
+Releases, Desktop portable assets, release notes, and smoke tests. Your job is to
 turn the current repo and remote state into a concrete release plan, then
 execute only the steps the user has authorized.
 
@@ -249,9 +249,9 @@ gh release view 'canary/v0.1.0-canary.N' \
 Expected canary Desktop assets:
 
 - `Rudder-X.Y.Z-canary.N-linux-x64.AppImage`
-- `Rudder-X.Y.Z-canary.N-macos-arm64.dmg`
-- `Rudder-X.Y.Z-canary.N-macos-x64.dmg`
-- `Rudder-X.Y.Z-canary.N-windows-x64.exe`
+- `Rudder-X.Y.Z-canary.N-macos-arm64-portable.zip`
+- `Rudder-X.Y.Z-canary.N-macos-x64-portable.zip`
+- `Rudder-X.Y.Z-canary.N-windows-x64-portable.zip`
 - `SHASUMS256.txt`
 
 7. Smoke test the actual start path with isolated HOME and npm cache:
