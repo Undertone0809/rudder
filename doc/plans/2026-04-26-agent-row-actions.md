@@ -12,6 +12,8 @@ related_plans:
   - 2026-04-22-agent-dashboard-skills-analytics.md
 supersedes: []
 related_code:
+  - ui/src/components/AgentActionsMenu.tsx
+  - ui/src/components/ThreeColumnContextSidebar.tsx
   - ui/src/pages/Agents.tsx
   - ui/src/api/chats.ts
   - tests/e2e/agents-row-actions.spec.ts
@@ -49,31 +51,37 @@ should stay quiet until row hover/focus or menu-open state.
   pause/resume, and copy name.
 - Mutating actions invalidate agent and heartbeat data and report errors through
   toast feedback.
-- The same action affordance works in list and org-tree views.
-- E2E coverage proves the main menu workflows from the Agents page.
+- The same action affordance works in list, org-tree, and agent detail sidebar
+  views.
+- E2E coverage proves the main menu workflows from the Agents page and the
+  agent detail sidebar entrypoint.
 
 ## Implementation
 
-1. Add an `AgentRowActionsMenu` inside `ui/src/pages/Agents.tsx`.
+1. Add a shared `AgentActionsMenu` component used by agent rows across
+   surfaces.
 2. Reuse existing APIs: `openNewIssue({ assigneeAgentId })`,
    `chatsApi.create({ preferredAgentId, contextLinks })`, `agentsApi.invoke`,
    `agentsApi.pause`, `agentsApi.resume`, and clipboard copy.
 3. Stop row navigation from firing when the action trigger or menu items are
    used.
-4. Add focused E2E coverage for menu visibility and key actions.
-5. Verify with targeted E2E, typecheck, and build where feasible.
+4. Add the shared menu to the detail-page Agents sidebar row used by the desktop
+   three-column shell.
+5. Add focused E2E coverage for menu visibility and key actions.
+6. Verify with targeted E2E, typecheck, and build where feasible.
 
 ## Verification
 
 - `pnpm --filter @rudderhq/ui typecheck`
 - `pnpm -r typecheck`
 - `pnpm build`
+- `pnpm --filter @rudderhq/ui exec vitest run src/components/ThreeColumnContextSidebar.test.tsx`
 - `pnpm test:e2e tests/e2e/agents-row-actions.spec.ts` was attempted, but
   Playwright timed out launching `chrome-headless-shell` before the test body
   executed.
 - Direct browser verification through the available browser MCP tools was also
-  attempted against `http://127.0.0.1:3100`, but both Playwright MCP and Chrome
-  MCP navigation timed out before page interaction.
+  attempted against `http://127.0.0.1:3100`, but Chrome MCP navigation timed out
+  before page interaction.
 - `pnpm test:run` was attempted and failed in unrelated pre-existing areas:
   PrimaryRail active-index expectation, company import/export skill duplication,
   agent avatar upload status expectation, issue reopen mock expectation, and
