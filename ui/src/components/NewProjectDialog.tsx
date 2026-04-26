@@ -38,7 +38,9 @@ import {
   X,
   Link2,
   Folder,
+  CircleHelp,
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PROJECT_COLORS } from "@rudderhq/shared";
 import { cn } from "../lib/utils";
 import { MarkdownEditor, type MarkdownEditorRef } from "./MarkdownEditor";
@@ -318,11 +320,22 @@ export function NewProjectDialog() {
 
         <div className="border-t border-border px-4 py-3 space-y-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-1">
+            <div className="flex items-center gap-1.5">
               <div className="text-sm font-medium">Resources</div>
-              <p className="text-xs text-muted-foreground">
-                Attach the codebases, docs, URLs, and external systems agents should use for this project.
-              </p>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label="About project resources"
+                  >
+                    <CircleHelp className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={8} className="max-w-[260px] px-3 py-2 text-xs leading-5">
+                  Attach the codebases, docs, URLs, and external systems agents should use for this project.
+                </TooltipContent>
+              </Tooltip>
             </div>
             <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
               <Popover open={resourcePickerOpen} onOpenChange={setResourcePickerOpen}>
@@ -374,11 +387,7 @@ export function NewProjectDialog() {
             </div>
           </div>
 
-          {resourceDrafts.length === 0 ? (
-            <div className="rounded-[var(--radius-sm)] border border-dashed border-border/80 px-3 py-3 text-xs text-muted-foreground">
-              No project-specific resources yet. You can still create the project now and attach resources later.
-            </div>
-          ) : (
+          {resourceDrafts.length > 0 ? (
             <div className="space-y-3">
               {resourceDrafts.map((resource) => {
                 const key = draftResourceKey(resource);
@@ -529,7 +538,7 @@ export function NewProjectDialog() {
                 );
               })}
             </div>
-          )}
+          ) : null}
         </div>
 
         <div className="flex items-center gap-1.5 px-4 py-2 border-t border-border flex-wrap">
