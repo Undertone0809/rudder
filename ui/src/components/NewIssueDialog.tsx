@@ -14,8 +14,14 @@ import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
 import {
   buildNewIssueCreateRequest,
+  clearIssueDraft,
+  hasMeaningfulIssueDraft,
+  readIssueDraft,
   resolveDefaultNewIssueProjectId,
   resolveDraftBackedNewIssueValues,
+  saveIssueDraft,
+  summarizeIssueDraft,
+  type IssueDraft,
 } from "../lib/new-issue-dialog";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
@@ -66,27 +72,7 @@ import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./Ma
 import { AgentIcon } from "./AgentIconPicker";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 
-const DRAFT_KEY = "rudder:issue-draft";
 const DEBOUNCE_MS = 800;
-
-
-interface IssueDraft {
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  labelIds?: string[];
-  assigneeValue: string;
-  assigneeId?: string;
-  projectId: string;
-  projectWorkspaceId?: string;
-  assigneeModelOverride: string;
-  assigneeThinkingEffort: string;
-  assigneeChrome: boolean;
-  executionWorkspaceMode?: string;
-  selectedExecutionWorkspaceId?: string;
-  useIsolatedExecutionWorkspace?: boolean;
-}
 
 type StagedIssueFile = {
   id: string;
@@ -156,24 +142,6 @@ function buildAssigneeAdapterOverrides(input: {
     overrides.agentRuntimeConfig = agentRuntimeConfig;
   }
   return Object.keys(overrides).length > 0 ? overrides : null;
-}
-
-function loadDraft(): IssueDraft | null {
-  try {
-    const raw = localStorage.getItem(DRAFT_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as IssueDraft;
-  } catch {
-    return null;
-  }
-}
-
-function saveDraft(draft: IssueDraft) {
-  localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
-}
-
-function clearDraft() {
-  localStorage.removeItem(DRAFT_KEY);
 }
 
 function isTextDocumentFile(file: File) {
@@ -511,7 +479,7 @@ export function NewIssueDialog() {
             : undefined,
         });
       }
-      clearDraft();
+      clearIssueDraft();
       reset();
       closeNewIssue();
     },
@@ -538,7 +506,7 @@ export function NewIssueDialog() {
     (draft: IssueDraft) => {
       if (draftTimer.current) clearTimeout(draftTimer.current);
       draftTimer.current = setTimeout(() => {
-        if (draft.title.trim()) saveDraft(draft);
+        saveIssueDraft(draft);
       }, DEBOUNCE_MS);
     },
     [],
@@ -547,7 +515,25 @@ export function NewIssueDialog() {
   // Save draft on meaningful changes
   useEffect(() => {
     if (!newIssueOpen) return;
+    if (!hasMeaningfulIssueDraft({
+      title,
+      description,
+      status,
+      priority,
+      labelIds: selectedLabelIds,
+      assigneeValue,
+      projectId,
+      projectWorkspaceId,
+      assigneeModelOverride,
+      assigneeThinkingEffort,
+      assigneeChrome,
+      executionWorkspaceMode,
+      selectedExecutionWorkspaceId,
+    })) {
+      return;
+    }
     scheduleSave({
+      orgId: effectiveCompanyId,
       title,
       description,
       status,
@@ -576,6 +562,7 @@ export function NewIssueDialog() {
     assigneeChrome,
     executionWorkspaceMode,
     selectedExecutionWorkspaceId,
+    effectiveCompanyId,
     newIssueOpen,
     scheduleSave,
   ]);
@@ -596,7 +583,7 @@ export function NewIssueDialog() {
       projects: orderedProjects,
     });
 
-    const draft = loadDraft();
+    const draft = readIssueDraft(selectedOrganizationId);
     if (newIssueDefaults.title) {
       setTitle(newIssueDefaults.title);
       setDescription(newIssueDefaults.description ?? "");
@@ -614,7 +601,7 @@ export function NewIssueDialog() {
       setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForProject(defaultProject));
       setSelectedExecutionWorkspaceId("");
       executionWorkspaceDefaultProjectId.current = defaultProjectId || null;
-    } else if (draft && draft.title.trim()) {
+    } else if (draft && hasMeaningfulIssueDraft(draft)) {
       const restoredValues = resolveDraftBackedNewIssueValues({
         defaults: newIssueDefaults,
         draft,
@@ -726,7 +713,7 @@ export function NewIssueDialog() {
   }
 
   function discardDraft() {
-    clearDraft();
+    clearIssueDraft();
     reset();
     closeNewIssue();
   }
@@ -966,8 +953,8 @@ export function NewIssueDialog() {
       })),
     [orderedProjects],
   );
-  const savedDraft = loadDraft();
-  const hasSavedDraft = Boolean(savedDraft?.title.trim() || savedDraft?.description.trim());
+  const savedDraft = summarizeIssueDraft(selectedOrganizationId);
+  const hasSavedDraft = Boolean(savedDraft);
   const canDiscardDraft = hasDraft || hasSavedDraft;
   const createIssueErrorMessage =
     createIssue.error instanceof Error ? createIssue.error.message : "Failed to create issue. Try again.";

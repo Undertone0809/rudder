@@ -1,6 +1,36 @@
 import { toOrganizationRelativePath } from "./organization-routes";
 import { projectRouteRef } from "./utils";
 
+export const ISSUE_DRAFT_STORAGE_KEY = "rudder:issue-draft";
+export const ISSUE_DRAFT_CHANGED_EVENT = "rudder:issue-draft-changed";
+
+export interface IssueDraft {
+  orgId?: string | null;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  labelIds?: string[];
+  assigneeValue: string;
+  assigneeId?: string;
+  projectId: string;
+  projectWorkspaceId?: string;
+  assigneeModelOverride: string;
+  assigneeThinkingEffort: string;
+  assigneeChrome: boolean;
+  executionWorkspaceMode?: string;
+  selectedExecutionWorkspaceId?: string;
+  useIsolatedExecutionWorkspace?: boolean;
+}
+
+export interface IssueDraftSummary {
+  title: string;
+  description: string;
+  projectId: string;
+  status: string;
+  priority: string;
+}
+
 export interface BuildNewIssueCreateRequestInput {
   title: string;
   description: string;
@@ -32,6 +62,82 @@ export interface ResolvedNewIssueDraftInput {
   labelIds?: string[];
   assigneeValue?: string;
   assigneeId?: string;
+}
+
+function issueDraftStorage(): Storage | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function emitIssueDraftChanged() {
+  try {
+    globalThis.dispatchEvent?.(new Event(ISSUE_DRAFT_CHANGED_EVENT));
+  } catch {
+    // Some SSR/test environments do not expose Event.
+  }
+}
+
+function safeTrim(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function hasMeaningfulIssueDraft(draft: Partial<IssueDraft> | null | undefined): boolean {
+  if (!draft) return false;
+  return Boolean(
+    safeTrim(draft.title) ||
+      safeTrim(draft.description) ||
+      safeTrim(draft.projectId) ||
+      safeTrim(draft.assigneeValue) ||
+      safeTrim(draft.assigneeId) ||
+      (safeTrim(draft.priority) && safeTrim(draft.priority) !== "medium") ||
+      (safeTrim(draft.status) && safeTrim(draft.status) !== "todo") ||
+      (Array.isArray(draft.labelIds) && draft.labelIds.length > 0) ||
+      safeTrim(draft.projectWorkspaceId) ||
+      safeTrim(draft.assigneeModelOverride) ||
+      safeTrim(draft.assigneeThinkingEffort) ||
+      Boolean(draft.assigneeChrome) ||
+      safeTrim(draft.selectedExecutionWorkspaceId) ||
+      (safeTrim(draft.executionWorkspaceMode) && safeTrim(draft.executionWorkspaceMode) !== "shared_workspace"),
+  );
+}
+
+export function readIssueDraft(orgId?: string | null): IssueDraft | null {
+  try {
+    const raw = issueDraftStorage()?.getItem(ISSUE_DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const draft = JSON.parse(raw) as IssueDraft;
+    if (orgId && draft.orgId && draft.orgId !== orgId) return null;
+    return hasMeaningfulIssueDraft(draft) ? draft : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveIssueDraft(draft: IssueDraft) {
+  if (!hasMeaningfulIssueDraft(draft)) return;
+  issueDraftStorage()?.setItem(ISSUE_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  emitIssueDraftChanged();
+}
+
+export function clearIssueDraft() {
+  issueDraftStorage()?.removeItem(ISSUE_DRAFT_STORAGE_KEY);
+  emitIssueDraftChanged();
+}
+
+export function summarizeIssueDraft(orgId?: string | null): IssueDraftSummary | null {
+  const draft = readIssueDraft(orgId);
+  if (!draft) return null;
+  const title = draft.title.trim() || "Untitled issue draft";
+  return {
+    title,
+    description: draft.description.trim(),
+    projectId: draft.projectId,
+    status: draft.status || "todo",
+    priority: draft.priority,
+  };
 }
 
 export interface ResolvedNewIssueDefaultsInput {
