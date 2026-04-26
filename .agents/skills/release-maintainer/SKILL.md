@@ -4,10 +4,11 @@ description: >
   Maintain and execute Rudder releases across npm, GitHub Releases, and Desktop
   installers. Use this skill whenever the user asks about 发版, release,
   publishing to npm, canary/stable promotion, GitHub Release assets, Desktop
-  distribution, `npx @rudderhq/cli@latest start`, version bumps, rollback, or
-  release workflow failures. Prefer this skill for both planning and hands-on
-  release operations in the Rudder repository, even when the user only asks
-  "现在要做什么" or "帮我发版".
+  distribution, `npx @rudderhq/cli@latest start`, `npx @rudderhq/cli start`,
+  version bumps, rollback, first-time package bootstrap, npm token-based
+  fallback publishing, or release workflow failures. Prefer this skill for both
+  planning and hands-on release operations in the Rudder repository, even when
+  the user only asks "现在要做什么" or "帮我发版".
 ---
 
 # Release Maintainer
@@ -19,11 +20,19 @@ Releases, Desktop installers, release notes, and smoke tests. Your job is to
 turn the current repo and remote state into a concrete release plan, then
 execute only the steps the user has authorized.
 
+When the user authorizes hands-on release work, operate with local and remote
+tools instead of stopping at guidance. Prefer `git`, `gh`, `npm`, and repository
+scripts for discoverable state. Ask the user only for secrets or decisions that
+cannot be safely inferred.
+
 ## First Principles
 
 - npm publishes the CLI and public runtime/workspace packages.
 - Desktop binaries are GitHub Release assets, not npm packages.
-- The stable user entrypoint is `npx @rudderhq/cli@latest start`.
+- The public npm scope is `@rudderhq`. Treat old examples using `@rudder` as
+  stale unless the repository explicitly reintroduces that scope.
+- The stable user entrypoint is `npx @rudderhq/cli@latest start`. Bare
+  `npx @rudderhq/cli start` resolves npm's `latest` dist-tag.
 - After the persistent CLI exists, `rudder <command>` and
   `npx @rudderhq/cli@latest <command>` are the same CLI surface when they resolve
   to the same CLI version. The `npx` form is the first-run or explicit dist-tag
@@ -35,6 +44,10 @@ execute only the steps the user has authorized.
   commit.
 - A stable release is not done until verification, npm, GitHub Release, Desktop
   assets, and public notes/announcement are all handled.
+- A first public canary may temporarily be the default `latest` install path if
+  there is no stable release yet and the user explicitly wants
+  `npx @rudderhq/cli start` to work immediately. Call this out as a bootstrap
+  exception, not the normal canary policy.
 
 ## Required Context
 
@@ -52,6 +65,10 @@ Start by reading only the context needed for the user's request:
 Use live checks for anything that may have changed, such as npm package
 versions, GitHub Actions status, tags, and Release assets. Do not rely on
 memory for those.
+
+If the docs and live workflow disagree, inspect the workflow and scripts before
+acting, then report the mismatch. The workflow is the executable truth during an
+active release; docs should be updated after the release if policy changed.
 
 ## Fast State Check
 
@@ -79,6 +96,20 @@ npm view @rudderhq/cli versions --json
 If the worktree has unrelated dirty files, explicitly say you will ignore them
 and only touch release files needed for the task.
 
+For hands-on publishing from a dirty local repo, prefer a clean temporary clone
+or worktree, then keep the user's main workspace untouched:
+
+```bash
+tmp="$(mktemp -d /tmp/rudder-release-XXXXXX)"
+git clone <repo-url> "$tmp"
+cd "$tmp"
+git switch main
+git pull --ff-only
+```
+
+Only stash or restore files in the user's main checkout when they explicitly
+asked you to switch or sync that checkout. Never drop unrelated user changes.
+
 ## Decision Flow
 
 ### One-Time Setup
@@ -100,6 +131,51 @@ Use this when the user is preparing release automation for the first time.
 6. Keep long-lived `NPM_TOKEN` out of the steady-state workflow once trusted
    publishing is verified.
 
+### First-Time npm Bootstrap
+
+Use this when packages do not exist yet, trusted publishing cannot be attached
+yet, or the user has explicitly provided a one-time npm token.
+
+1. Confirm the package names with:
+
+```bash
+node scripts/release-package-map.mjs list
+```
+
+2. Check existing npm state for every package before publishing. Missing
+   packages are expected on the first release; an existing version is a hard
+   stop for that package/version.
+3. If using a token, write it only to a temporary npmrc or environment-scoped
+   npm config. Do not echo it, commit it, store it in shell history, or leave it
+   behind. Remove the temp npmrc after publish and tell the user to revoke or
+   rotate any token pasted into chat.
+4. Publish all public packages in release-package-map order using the chosen
+   version and dist-tag. Do not retry a package/version that npm already
+   accepted; continue by verifying and repairing tags/releases instead.
+5. For a first public canary where no stable exists and the user wants bare
+   `npx @rudderhq/cli start`, move both `canary` and `latest` to the same
+   canary version across every public package. For ordinary later canaries, only
+   `canary` should move.
+6. Immediately verify all dist-tags across the whole package set with a script,
+   not just `@rudderhq/cli`.
+
+```bash
+RUDDER_EXPECTED_VERSION=0.1.0-canary.1 RUDDER_VERIFY_LATEST=1 node - <<'NODE'
+const { execFileSync } = require('node:child_process');
+const expected = process.env.RUDDER_EXPECTED_VERSION;
+const rows = execFileSync('node', ['scripts/release-package-map.mjs', 'list'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+let failed = false;
+for (const row of rows) {
+  const pkg = row.split(/\s+/)[1];
+  const tags = JSON.parse(execFileSync('npm', ['--prefer-online', 'view', pkg, 'dist-tags', '--json'], { encoding: 'utf8' }));
+  const ok = tags.canary === expected && (!process.env.RUDDER_VERIFY_LATEST || tags.latest === expected);
+  console.log(`${ok ? 'ok' : 'bad'}\t${pkg}\tlatest=${tags.latest}\tcanary=${tags.canary}`);
+  if (!ok) failed = true;
+}
+process.exit(failed ? 1 : 0);
+NODE
+```
+
 ### Canary Release
 
 Canary releases should normally be automatic.
@@ -108,10 +184,16 @@ Canary releases should normally be automatic.
 2. Watch the `Release` workflow canary job.
 3. Confirm npm `canary` points at the new prerelease.
 4. Confirm tag `canary/vX.Y.Z-canary.N` exists.
-5. Smoke test with:
+5. Confirm whether `.github/workflows/desktop-release.yml` also handles
+   `canary/v*` tags. If it does, verify the canary GitHub Release and Desktop
+   assets too; do not assume canaries are npm-only.
+6. Smoke test the actual start path with isolated HOME and npm cache:
 
 ```bash
-npx @rudderhq/cli@canary onboard
+tmp_home="$(mktemp -d /tmp/rudder-cli-smoke-canary.XXXXXX)"
+tmp_cache="$(mktemp -d /tmp/rudder-npm-cache-canary.XXXXXX)"
+HOME="$tmp_home" npm_config_cache="$tmp_cache" npm_config_yes=true \
+  npx --prefer-online --yes @rudderhq/cli@canary start --dry-run --no-open
 ```
 
 If canary smoke fails, do not promote stable. Fix forward on `main`, wait for
@@ -173,10 +255,77 @@ After rollback, fix forward with a new stable semver.
 - npm published but tag/GitHub Release failed: do not republish npm. Push or
   recreate the missing tag/release for the same version.
 - GitHub Release exists but Desktop assets failed: rerun `desktop-release.yml`
-  for the same `vX.Y.Z`; do not republish npm.
+  for the same `vX.Y.Z` or `canary/vX.Y.Z-canary.N`; do not republish npm.
 - Desktop assets exist but checksum missing or stale: rerun `desktop-release.yml`
   and verify `SHASUMS256.txt`.
 - `latest` is broken: rollback the dist-tag, then fix forward.
+
+Useful rerun command:
+
+```bash
+gh workflow run desktop-release.yml \
+  --ref main \
+  -f release_tag='canary/v0.1.0-canary.1' \
+  -f source_ref=main
+```
+
+For Desktop releases, verify the Release object directly:
+
+```bash
+gh release view 'canary/v0.1.0-canary.1' \
+  --json tagName,url,isPrerelease,isDraft,assets \
+  --jq '{tagName,url,isPrerelease,isDraft,assets:[.assets[].name]}'
+```
+
+Expected first canary Desktop assets are:
+
+- `Rudder-X.Y.Z-canary.N-macos-arm64.dmg`
+- `Rudder-X.Y.Z-canary.N-macos-x64.dmg`
+- `Rudder-X.Y.Z-canary.N-linux-x64.AppImage`
+- `Rudder-X.Y.Z-canary.N-windows-x64.exe`
+- `SHASUMS256.txt`
+
+When Desktop packaging fails:
+
+- macOS x64 should use the current Intel runner from the workflow, not an
+  unavailable legacy runner label.
+- canary macOS builds may be unsigned; verify `desktop/package.json` and the
+  release policy before assuming signing is required.
+- x64 DMG collection must look for the architecture-specific Electron Builder
+  output such as `release/mac-x64` as well as any generic `release/mac` path.
+- Windows builds frequently expose script portability problems; prefer Node
+  scripts over shell-only assumptions in packaging steps.
+
+### Final Release Verification
+
+Before claiming a release is done, verify every surface that applies to the
+channel:
+
+```bash
+git status --short --branch
+node scripts/release-package-map.mjs list
+npm view @rudderhq/cli dist-tags --json
+gh release view '<tag>' --json tagName,url,isPrerelease,isDraft,assets
+```
+
+For first-public canary bootstrap where `latest` intentionally equals canary,
+run both smoke checks:
+
+```bash
+tmp_home="$(mktemp -d /tmp/rudder-cli-smoke-canary-start.XXXXXX)"
+tmp_cache="$(mktemp -d /tmp/rudder-npm-cache-canary-start.XXXXXX)"
+HOME="$tmp_home" npm_config_cache="$tmp_cache" npm_config_yes=true \
+  npx --prefer-online --yes @rudderhq/cli@canary start --dry-run --no-open
+
+tmp_home="$(mktemp -d /tmp/rudder-cli-smoke-latest-start.XXXXXX)"
+tmp_cache="$(mktemp -d /tmp/rudder-npm-cache-latest-start.XXXXXX)"
+HOME="$tmp_home" npm_config_cache="$tmp_cache" npm_config_yes=true \
+  npx --prefer-online --yes @rudderhq/cli start --dry-run --no-open
+```
+
+The smoke should show the resolved Rudder release tag, target platform/arch, and
+the persistent CLI version it would install. If it still resolves an old npm
+cache entry, rerun with an isolated `npm_config_cache` and `--prefer-online`.
 
 ## Safety Rules
 
@@ -187,8 +336,12 @@ After rollback, fix forward with a new stable semver.
   tag and reason.
 - Do not treat a canary as a stable release.
 - Do not claim a stable is complete until all release surfaces are verified.
+- Do not claim a canary is complete until npm, tag, and Desktop assets are
+  verified when the Desktop workflow is configured for canary tags.
 - Do not edit unrelated dirty files; stage/commit only release-maintainer scope
   files for skill maintenance, or only release-scope files during release work.
+- Do not print npm tokens in logs or final answers. If a token was pasted into
+  the conversation, finish by telling the user to revoke or rotate it.
 - When using relative dates like "today", include the concrete date in the
   final release plan or report.
 
@@ -212,6 +365,9 @@ finish with:
 - what was verified
 - what failed or remains manual
 - exact links or commands for the next action
+- whether the local working tree was left clean, or which unrelated files were
+  already dirty and preserved
+- a token rotation reminder if token-based publishing was used
 
 ## Examples
 
@@ -245,3 +401,21 @@ Expected behavior:
 - explain `npx` is first-run/dist-tag resolution and `rudder` is persistent
   direct execution
 - remind that Desktop binaries still come from GitHub Releases
+
+**First canary bootstrap**
+
+User: `之前没发过这些包，这是第一次发包。我要 0.1.0 canary，并且 npx @rudderhq/cli start 要能直接跑。`
+
+Expected behavior:
+- use `@rudderhq/*` package names from `scripts/release-package-map.mjs`
+- detect that trusted publishing cannot exist until package names exist
+- if the user provides/authorizes an npm token, use a temporary npmrc and remove
+  it after publishing
+- publish `0.1.0-canary.1` once, under `canary`, without retrying already
+  accepted packages
+- because this is first-public bootstrap and the user wants bare `npx`, move
+  `latest` to the same canary across all packages and explicitly label this as
+  an exception
+- verify all package dist-tags, the canary GitHub Release Desktop assets, and
+  both `npx @rudderhq/cli@canary start --dry-run --no-open` and
+  `npx @rudderhq/cli start --dry-run --no-open`
