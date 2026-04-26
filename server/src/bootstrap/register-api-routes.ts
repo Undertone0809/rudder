@@ -48,7 +48,7 @@ export function registerApiRoutes(
   );
   api.use("/orgs", organizationRoutes(db, opts.storageService));
   api.use(organizationSkillRoutes(db));
-  api.use(agentRoutes(db));
+  api.use(agentRoutes(db, opts.storageService));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
   api.use(issueRoutes(db, opts.storageService));

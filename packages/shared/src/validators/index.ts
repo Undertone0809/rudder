@@ -147,9 +147,12 @@ export {
 } from "./organization-portability.js";
 
 export {
+  agentIconSchema,
+  customAgentIconSchema,
   createAgentSchema,
   createAgentHireSchema,
   updateAgentSchema,
+  uploadedAgentIconSchema,
   agentInstructionsBundleModeSchema,
   updateAgentInstructionsBundleSchema,
   upsertAgentInstructionsFileSchema,
