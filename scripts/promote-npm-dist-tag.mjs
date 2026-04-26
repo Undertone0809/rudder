@@ -83,8 +83,7 @@ for (const packageName of packages) {
     });
   }
 
-  const afterTags = npmDistTags(packageName);
-  const ok = dryRun || afterTags[distTag] === version;
+  const { ok, tags: afterTags } = await waitForDistTag(packageName, distTag, version);
   console.log(`${ok ? "ok" : "bad"}\t${packageName}\t${distTag}=${afterTags[distTag] ?? "<missing>"}`);
   if (!ok) {
     failed = true;
@@ -113,4 +112,27 @@ function hasPublishedStableVersion(packageName) {
     }),
   );
   return versions.some((candidate) => /^\d+\.\d+\.\d+$/.test(candidate));
+}
+
+async function waitForDistTag(packageName, tag, expectedVersion) {
+  const attempts = Number.parseInt(process.env.NPM_DIST_TAG_VERIFY_ATTEMPTS ?? "12", 10);
+  const delaySeconds = Number.parseInt(process.env.NPM_DIST_TAG_VERIFY_DELAY_SECONDS ?? "5", 10);
+  let tags = {};
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    tags = npmDistTags(packageName);
+    if (tags[tag] === expectedVersion) {
+      return { ok: true, tags };
+    }
+
+    if (attempt < attempts) {
+      await sleep(delaySeconds * 1000);
+    }
+  }
+
+  return { ok: false, tags };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
