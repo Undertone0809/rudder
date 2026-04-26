@@ -72,13 +72,11 @@ test.describe("Agents row actions", () => {
     await row.hover();
     await actions.click();
     await page.getByRole("menuitem", { name: "Chat with agent" }).click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/[^/]+$`));
-    const chatId = new URL(page.url()).pathname.split("/").pop();
-    expect(chatId).toBeTruthy();
-    const chatRes = await page.request.get(`${E2E_BASE_URL}/api/chats/${chatId}`);
-    expect(chatRes.ok()).toBe(true);
-    const chat = (await chatRes.json()) as { preferredAgentId: string | null };
-    expect(chat.preferredAgentId).toBe(agent.id);
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat(?:\\?.*)?$`));
+    await expect
+      .poll(() => page.url())
+      .not.toContain("agentId=");
+    await expect(page.getByRole("button", { name: "Row Action Agent (Founding Engineer)" })).toBeVisible();
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/agents/all`);
     await row.hover();

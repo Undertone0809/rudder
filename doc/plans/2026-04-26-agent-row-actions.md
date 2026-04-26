@@ -49,6 +49,8 @@ should stay quiet until row hover/focus or menu-open state.
   is open.
 - Menu actions cover task creation, preferred-agent chat, heartbeat invoke,
   pause/resume, and copy name.
+- Chat entry opens the new chat composer with the agent preselected instead of
+  creating an empty conversation record.
 - Mutating actions invalidate agent and heartbeat data and report errors through
   toast feedback.
 - The same action affordance works in list, org-tree, and agent detail sidebar
@@ -61,8 +63,9 @@ should stay quiet until row hover/focus or menu-open state.
 1. Add a shared `AgentActionsMenu` component used by agent rows across
    surfaces.
 2. Reuse existing APIs: `openNewIssue({ assigneeAgentId })`,
-   `chatsApi.create({ preferredAgentId, contextLinks })`, `agentsApi.invoke`,
-   `agentsApi.pause`, `agentsApi.resume`, and clipboard copy.
+   `navigate({ pathname: "/messenger/chat", search: "?agentId=..." })`,
+   `agentsApi.invoke`, `agentsApi.pause`, `agentsApi.resume`, and clipboard
+   copy.
 3. Stop row navigation from firing when the action trigger or menu items are
    used.
 4. Add the shared menu to the detail-page Agents sidebar row used by the desktop
@@ -76,6 +79,7 @@ should stay quiet until row hover/focus or menu-open state.
 - `pnpm -r typecheck`
 - `pnpm build`
 - `pnpm --filter @rudderhq/ui exec vitest run src/components/ThreeColumnContextSidebar.test.tsx`
+- `pnpm --filter @rudderhq/ui exec vitest run src/components/ThreeColumnContextSidebar.test.tsx src/lib/chat-route-state.test.ts`
 - `pnpm test:e2e tests/e2e/agents-row-actions.spec.ts` was attempted, but
   Playwright timed out launching `chrome-headless-shell` before the test body
   executed.
