@@ -14,13 +14,15 @@ import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
 import {
   buildNewIssueCreateRequest,
-  clearIssueDraft,
+  clearIssueAutosave,
+  createIssueDraft,
+  deleteIssueDraft,
   hasMeaningfulIssueDraft,
-  readIssueDraft,
+  readIssueAutosave,
+  readSavedIssueDraft,
   resolveDefaultNewIssueProjectId,
   resolveDraftBackedNewIssueValues,
-  saveIssueDraft,
-  summarizeIssueDraft,
+  saveIssueAutosave,
   type IssueDraft,
 } from "../lib/new-issue-dialog";
 import { useProjectOrder } from "../hooks/useProjectOrder";
@@ -280,6 +282,7 @@ export function NewIssueDialog() {
   const [dialogCompanyId, setDialogCompanyId] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
+  const [activeSavedIssueDraftId, setActiveSavedIssueDraftId] = useState<string | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const executionWorkspaceDefaultProjectId = useRef<string | null>(null);
   const openContextLocationRef = useRef<{ pathname: string; search: string } | null>(null);
@@ -479,7 +482,8 @@ export function NewIssueDialog() {
             : undefined,
         });
       }
-      clearIssueDraft();
+      clearIssueAutosave();
+      deleteIssueDraft(activeSavedIssueDraftId);
       reset();
       closeNewIssue();
     },
@@ -506,7 +510,7 @@ export function NewIssueDialog() {
     (draft: IssueDraft) => {
       if (draftTimer.current) clearTimeout(draftTimer.current);
       draftTimer.current = setTimeout(() => {
-        saveIssueDraft(draft);
+        saveIssueAutosave(draft);
       }, DEBOUNCE_MS);
     },
     [],
@@ -583,8 +587,41 @@ export function NewIssueDialog() {
       projects: orderedProjects,
     });
 
-    const draft = readIssueDraft(selectedOrganizationId);
-    if (newIssueDefaults.title) {
+    const savedDraft = readSavedIssueDraft(newIssueDefaults.draftId, selectedOrganizationId);
+    const draft = savedDraft ?? readIssueAutosave(selectedOrganizationId);
+    if (savedDraft) {
+      setActiveSavedIssueDraftId(savedDraft.id);
+    } else {
+      setActiveSavedIssueDraftId(null);
+    }
+    if (savedDraft && hasMeaningfulIssueDraft(savedDraft)) {
+      const restoredValues = resolveDraftBackedNewIssueValues({
+        defaults: {},
+        draft: savedDraft,
+        defaultProjectId,
+        defaultAssigneeValue: assigneeValueFromSelection(newIssueDefaults),
+      });
+      const restoredProjectId = restoredValues.projectId;
+      const restoredProject = orderedProjects.find((project) => project.id === restoredProjectId);
+      setTitle(savedDraft.title);
+      setDescription(savedDraft.description);
+      setStatus(restoredValues.status);
+      setPriority(restoredValues.priority);
+      setSelectedLabelIds(restoredValues.labelIds);
+      setLabelSearch("");
+      setAssigneeValue(restoredValues.assigneeValue);
+      setProjectId(restoredProjectId);
+      setProjectWorkspaceId(savedDraft.projectWorkspaceId ?? defaultProjectWorkspaceIdForProject(restoredProject));
+      setAssigneeModelOverride(savedDraft.assigneeModelOverride ?? "");
+      setAssigneeThinkingEffort(savedDraft.assigneeThinkingEffort ?? "");
+      setAssigneeChrome(savedDraft.assigneeChrome ?? false);
+      setExecutionWorkspaceMode(
+        savedDraft.executionWorkspaceMode
+          ?? (savedDraft.useIsolatedExecutionWorkspace ? "isolated_workspace" : defaultExecutionWorkspaceModeForProject(restoredProject)),
+      );
+      setSelectedExecutionWorkspaceId(savedDraft.selectedExecutionWorkspaceId ?? "");
+      executionWorkspaceDefaultProjectId.current = restoredProjectId || null;
+    } else if (newIssueDefaults.title) {
       setTitle(newIssueDefaults.title);
       setDescription(newIssueDefaults.description ?? "");
       setStatus(newIssueDefaults.status ?? "todo");
@@ -630,6 +667,8 @@ export function NewIssueDialog() {
       executionWorkspaceDefaultProjectId.current = restoredProjectId || null;
     } else {
       const defaultProject = orderedProjects.find((project) => project.id === defaultProjectId);
+      setTitle("");
+      setDescription("");
       setStatus(newIssueDefaults.status ?? "todo");
       setPriority(newIssueDefaults.priority ?? "");
       setSelectedLabelIds(newIssueDefaults.labelIds ?? []);
@@ -694,6 +733,7 @@ export function NewIssueDialog() {
     setStagedFiles([]);
     setIsFileDragOver(false);
     setCompanyOpen(false);
+    setActiveSavedIssueDraftId(null);
     executionWorkspaceDefaultProjectId.current = null;
   }
 
@@ -712,8 +752,32 @@ export function NewIssueDialog() {
     setSelectedExecutionWorkspaceId("");
   }
 
-  function discardDraft() {
-    clearIssueDraft();
+  function saveDraftIssue() {
+    const savedDraft = createIssueDraft({
+      orgId: effectiveCompanyId,
+      title,
+      description,
+      status,
+      priority,
+      labelIds: selectedLabelIds,
+      assigneeValue,
+      projectId,
+      projectWorkspaceId,
+      assigneeModelOverride,
+      assigneeThinkingEffort,
+      assigneeChrome,
+      executionWorkspaceMode,
+      selectedExecutionWorkspaceId,
+    });
+    if (!savedDraft) return;
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    deleteIssueDraft(activeSavedIssueDraftId);
+    clearIssueAutosave();
+    pushToast({
+      title: "Saved to Draft Issues",
+      body: "You can find it from the Issues sidebar.",
+      tone: "success",
+    });
     reset();
     closeNewIssue();
   }
@@ -831,7 +895,6 @@ export function NewIssueDialog() {
     setStagedFiles((current) => current.filter((file) => file.id !== id));
   }
 
-  const hasDraft = title.trim().length > 0 || description.trim().length > 0 || stagedFiles.length > 0;
   const currentStatus = statuses.find((s) => s.value === status) ?? statuses[1]!;
   const currentPriority = priorities.find((p) => p.value === priority);
   const selectedLabels = useMemo(
@@ -953,9 +1016,21 @@ export function NewIssueDialog() {
       })),
     [orderedProjects],
   );
-  const savedDraft = summarizeIssueDraft(selectedOrganizationId);
-  const hasSavedDraft = Boolean(savedDraft);
-  const canDiscardDraft = hasDraft || hasSavedDraft;
+  const canSaveDraft = hasMeaningfulIssueDraft({
+    title,
+    description,
+    status,
+    priority,
+    labelIds: selectedLabelIds,
+    assigneeValue,
+    projectId,
+    projectWorkspaceId,
+    assigneeModelOverride,
+    assigneeThinkingEffort,
+    assigneeChrome,
+    executionWorkspaceMode,
+    selectedExecutionWorkspaceId,
+  });
   const createIssueErrorMessage =
     createIssue.error instanceof Error ? createIssue.error.message : "Failed to create issue. Try again.";
   const stagedDocuments = stagedFiles.filter((file) => file.kind === "document");
@@ -1647,12 +1722,12 @@ export function NewIssueDialog() {
             size="sm"
             className={cn(
               "text-muted-foreground disabled:opacity-100",
-              !canDiscardDraft && "disabled:border-border/40 disabled:bg-muted/20 disabled:text-muted-foreground/70",
+              !canSaveDraft && "disabled:border-border/40 disabled:bg-muted/20 disabled:text-muted-foreground/70",
             )}
-            onClick={discardDraft}
-            disabled={createIssue.isPending || !canDiscardDraft}
+            onClick={saveDraftIssue}
+            disabled={createIssue.isPending || !canSaveDraft}
           >
-            Discard Draft
+            Save Draft
           </Button>
           <div className="flex items-center gap-3">
             <div className="min-h-5 text-right">

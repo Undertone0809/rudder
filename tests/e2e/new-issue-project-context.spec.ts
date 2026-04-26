@@ -60,7 +60,7 @@ test.describe("New issue project context", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues?projectId=${project.id}`);
     await page.getByTitle("Board view").click();
     await page.evaluate(() => {
-      window.localStorage.setItem("rudder:issue-draft", JSON.stringify({
+      window.localStorage.setItem("rudder:issue-autosave", JSON.stringify({
         title: "Saved draft",
         description: "",
         status: "blocked",
@@ -94,7 +94,8 @@ test.describe("New issue project context", () => {
     await page.goto(E2E_BASE_URL);
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
-      window.localStorage.setItem("rudder:issue-draft", JSON.stringify({
+      window.localStorage.setItem("rudder:issue-drafts", JSON.stringify([{
+        id: "draft-recovery-e2e",
         orgId,
         title: "Recovered draft issue",
         description: "This draft should be findable from the issues sidebar.",
@@ -109,7 +110,9 @@ test.describe("New issue project context", () => {
         assigneeChrome: false,
         executionWorkspaceMode: "shared_workspace",
         selectedExecutionWorkspaceId: "",
-      }));
+        createdAt: "2026-04-26T10:00:00.000Z",
+        updatedAt: "2026-04-26T10:00:00.000Z",
+      }]));
     }, organization.id);
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`);

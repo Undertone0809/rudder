@@ -1,7 +1,9 @@
 import { toOrganizationRelativePath } from "./organization-routes";
 import { projectRouteRef } from "./utils";
 
-export const ISSUE_DRAFT_STORAGE_KEY = "rudder:issue-draft";
+export const LEGACY_ISSUE_DRAFT_STORAGE_KEY = "rudder:issue-draft";
+export const ISSUE_AUTOSAVE_STORAGE_KEY = "rudder:issue-autosave";
+export const ISSUE_DRAFTS_STORAGE_KEY = "rudder:issue-drafts";
 export const ISSUE_DRAFT_CHANGED_EVENT = "rudder:issue-draft-changed";
 
 export interface IssueDraft {
@@ -24,11 +26,20 @@ export interface IssueDraft {
 }
 
 export interface IssueDraftSummary {
+  id: string;
   title: string;
   description: string;
   projectId: string;
   status: string;
   priority: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedIssueDraft extends IssueDraft {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface BuildNewIssueCreateRequestInput {
@@ -104,9 +115,19 @@ export function hasMeaningfulIssueDraft(draft: Partial<IssueDraft> | null | unde
   );
 }
 
-export function readIssueDraft(orgId?: string | null): IssueDraft | null {
+function issueDraftId() {
   try {
-    const raw = issueDraftStorage()?.getItem(ISSUE_DRAFT_STORAGE_KEY);
+    return globalThis.crypto?.randomUUID?.() ?? `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  } catch {
+    return `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+
+export function readIssueAutosave(orgId?: string | null): IssueDraft | null {
+  try {
+    const storage = issueDraftStorage();
+    const raw = storage?.getItem(ISSUE_AUTOSAVE_STORAGE_KEY)
+      ?? storage?.getItem(LEGACY_ISSUE_DRAFT_STORAGE_KEY);
     if (!raw) return null;
     const draft = JSON.parse(raw) as IssueDraft;
     if (orgId && draft.orgId && draft.orgId !== orgId) return null;
@@ -116,28 +137,82 @@ export function readIssueDraft(orgId?: string | null): IssueDraft | null {
   }
 }
 
-export function saveIssueDraft(draft: IssueDraft) {
+export function saveIssueAutosave(draft: IssueDraft) {
   if (!hasMeaningfulIssueDraft(draft)) return;
-  issueDraftStorage()?.setItem(ISSUE_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  const storage = issueDraftStorage();
+  storage?.setItem(ISSUE_AUTOSAVE_STORAGE_KEY, JSON.stringify(draft));
+  storage?.removeItem(LEGACY_ISSUE_DRAFT_STORAGE_KEY);
   emitIssueDraftChanged();
 }
 
-export function clearIssueDraft() {
-  issueDraftStorage()?.removeItem(ISSUE_DRAFT_STORAGE_KEY);
+export function clearIssueAutosave() {
+  const storage = issueDraftStorage();
+  storage?.removeItem(ISSUE_AUTOSAVE_STORAGE_KEY);
+  storage?.removeItem(LEGACY_ISSUE_DRAFT_STORAGE_KEY);
   emitIssueDraftChanged();
 }
 
-export function summarizeIssueDraft(orgId?: string | null): IssueDraftSummary | null {
-  const draft = readIssueDraft(orgId);
-  if (!draft) return null;
+function readAllIssueDrafts(): SavedIssueDraft[] {
+  try {
+    const raw = issueDraftStorage()?.getItem(ISSUE_DRAFTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(hasMeaningfulIssueDraft) as SavedIssueDraft[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeAllIssueDrafts(drafts: SavedIssueDraft[]) {
+  issueDraftStorage()?.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify(drafts));
+  emitIssueDraftChanged();
+}
+
+export function listIssueDrafts(orgId?: string | null): SavedIssueDraft[] {
+  return readAllIssueDrafts()
+    .filter((draft) => !orgId || !draft.orgId || draft.orgId === orgId)
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
+export function readSavedIssueDraft(id: string | null | undefined, orgId?: string | null): SavedIssueDraft | null {
+  if (!id) return null;
+  return listIssueDrafts(orgId).find((draft) => draft.id === id) ?? null;
+}
+
+export function createIssueDraft(draft: IssueDraft): SavedIssueDraft | null {
+  if (!hasMeaningfulIssueDraft(draft)) return null;
+  const now = new Date().toISOString();
+  const savedDraft: SavedIssueDraft = {
+    ...draft,
+    id: issueDraftId(),
+    createdAt: now,
+    updatedAt: now,
+  };
+  writeAllIssueDrafts([savedDraft, ...readAllIssueDrafts()]);
+  return savedDraft;
+}
+
+export function deleteIssueDraft(id: string | null | undefined) {
+  if (!id) return;
+  writeAllIssueDrafts(readAllIssueDrafts().filter((draft) => draft.id !== id));
+}
+
+export function summarizeIssueDraft(draft: SavedIssueDraft): IssueDraftSummary {
   const title = draft.title.trim() || "Untitled issue draft";
   return {
+    id: draft.id,
     title,
     description: draft.description.trim(),
     projectId: draft.projectId,
     status: draft.status || "todo",
     priority: draft.priority,
+    createdAt: draft.createdAt,
+    updatedAt: draft.updatedAt,
   };
+}
+
+export function summarizeIssueDrafts(orgId?: string | null): IssueDraftSummary[] {
+  return listIssueDrafts(orgId).map(summarizeIssueDraft);
 }
 
 export interface ResolvedNewIssueDefaultsInput {

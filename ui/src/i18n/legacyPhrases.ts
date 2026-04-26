@@ -313,6 +313,7 @@ const zhExactPhrases: Record<string, string> = {
   "Brand color": "品牌色",
   "Sets the hue for the organization icon. Leave empty for auto-generated color.": "设置组织图标的主色调。留空则自动生成颜色。",
   "Auto": "自动",
+  "Save Draft": "保存草稿",
   "Save changes": "保存更改",
   "Saving...": "保存中...",
   "Saving…": "保存中...",

@@ -41,7 +41,7 @@ import { relativeTime } from "@/lib/utils";
 import { readRecentIssueIds, resolveRecentIssues } from "@/lib/recent-issues";
 import {
   ISSUE_DRAFT_CHANGED_EVENT,
-  summarizeIssueDraft,
+  summarizeIssueDrafts,
 } from "@/lib/new-issue-dialog";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { MessengerContextSidebar } from "@/components/MessengerContextSidebar";
@@ -338,7 +338,7 @@ export function ThreeColumnContextSidebar() {
   }, [liveRuns]);
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  const [issueDraftSummary, setIssueDraftSummary] = useState(() => summarizeIssueDraft(selectedOrganizationId));
+  const [issueDraftSummaries, setIssueDraftSummaries] = useState(() => summarizeIssueDrafts(selectedOrganizationId));
   const [recentIssueIds, setRecentIssueIds] = useState<string[]>(() => readRecentIssueIds(selectedOrganizationId));
   const starredIssueRefs = useMemo(() => [...followedIssueIds], [followedIssueIds]);
   const recentIssueRefs = useMemo(
@@ -398,16 +398,16 @@ export function ThreeColumnContextSidebar() {
   }, [location.key, selectedOrganizationId]);
 
   useEffect(() => {
-    const refreshIssueDraftSummary = () => {
-      setIssueDraftSummary(summarizeIssueDraft(selectedOrganizationId));
+    const refreshIssueDraftSummaries = () => {
+      setIssueDraftSummaries(summarizeIssueDrafts(selectedOrganizationId));
     };
-    refreshIssueDraftSummary();
+    refreshIssueDraftSummaries();
     if (typeof window === "undefined") return;
-    window.addEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummary);
-    window.addEventListener("storage", refreshIssueDraftSummary);
+    window.addEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummaries);
+    window.addEventListener("storage", refreshIssueDraftSummaries);
     return () => {
-      window.removeEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummary);
-      window.removeEventListener("storage", refreshIssueDraftSummary);
+      window.removeEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummaries);
+      window.removeEventListener("storage", refreshIssueDraftSummaries);
     };
   }, [selectedOrganizationId]);
 
@@ -491,12 +491,12 @@ export function ThreeColumnContextSidebar() {
       >
         <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
         <SectionLabel>Issues</SectionLabel>
-        {issueDraftSummary ? (
+        {issueDraftSummaries.length > 0 ? (
           <button
             type="button"
             data-testid="issue-draft-sidebar-entry"
             onClick={() => {
-              openNewIssue();
+              openNewIssue({ draftId: issueDraftSummaries[0]?.id });
               closeMobileSidebar();
             }}
             className={cn(
@@ -507,9 +507,11 @@ export function ThreeColumnContextSidebar() {
             <div className="flex items-center gap-3">
               <PencilLine className="h-4 w-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0">
-                <div className="truncate text-sm font-medium">Draft Issue</div>
+                <div className="truncate text-sm font-medium">
+                  Draft Issues{issueDraftSummaries.length > 1 ? ` (${issueDraftSummaries.length})` : ""}
+                </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  {issueDraftSummary.title}
+                  {issueDraftSummaries[0]?.title}
                 </div>
               </div>
             </div>

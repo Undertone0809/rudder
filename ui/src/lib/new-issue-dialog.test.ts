@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildNewIssueCreateRequest,
-  clearIssueDraft,
+  clearIssueAutosave,
+  createIssueDraft,
   hasMeaningfulIssueDraft,
-  ISSUE_DRAFT_STORAGE_KEY,
-  readIssueDraft,
+  ISSUE_AUTOSAVE_STORAGE_KEY,
+  ISSUE_DRAFTS_STORAGE_KEY,
+  listIssueDrafts,
+  readIssueAutosave,
+  readSavedIssueDraft,
   resolveDraftBackedNewIssueValues,
   resolveDefaultNewIssueProjectId,
-  saveIssueDraft,
-  summarizeIssueDraft,
+  saveIssueAutosave,
+  summarizeIssueDrafts,
 } from "./new-issue-dialog";
 
 const projects = [
@@ -166,7 +170,7 @@ describe("resolveDraftBackedNewIssueValues", () => {
   });
 });
 
-describe("issue draft persistence", () => {
+describe("issue autosave and draft persistence", () => {
   const draft = {
     orgId: "org-1",
     title: "Recover me",
@@ -206,12 +210,34 @@ describe("issue draft persistence", () => {
     })).toBe(false);
   });
 
-  it("persists and summarizes an issue draft for the selected organization", () => {
-    saveIssueDraft(draft);
+  it("persists autosave without adding a saved draft", () => {
+    saveIssueAutosave(draft);
 
-    expect(localStorage.getItem(ISSUE_DRAFT_STORAGE_KEY)).toContain("Recover me");
-    expect(readIssueDraft("org-1")).toMatchObject({ title: "Recover me", projectId: "project-1" });
-    expect(summarizeIssueDraft("org-1")).toEqual({
+    expect(localStorage.getItem(ISSUE_AUTOSAVE_STORAGE_KEY)).toContain("Recover me");
+    expect(readIssueAutosave("org-1")).toMatchObject({ title: "Recover me", projectId: "project-1" });
+    expect(listIssueDrafts("org-1")).toEqual([]);
+  });
+
+  it("creates multiple saved drafts for the selected organization", () => {
+    const first = createIssueDraft(draft);
+    const second = createIssueDraft({ ...draft, title: "Second draft" });
+
+    expect(localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY)).toContain("Second draft");
+    expect(first?.id).toBeTruthy();
+    expect(second?.id).toBeTruthy();
+    expect(listIssueDrafts("org-1")).toHaveLength(2);
+    expect(readSavedIssueDraft(second?.id, "org-1")).toMatchObject({ title: "Second draft" });
+    expect(summarizeIssueDrafts("org-1")[0]).toMatchObject({
+      id: second?.id,
+      title: "Second draft",
+    });
+  });
+
+  it("summarizes a saved draft for the selected organization", () => {
+    const savedDraft = createIssueDraft(draft);
+
+    expect(summarizeIssueDrafts("org-1")[0]).toMatchObject({
+      id: savedDraft?.id,
       title: "Recover me",
       description: "Draft body",
       projectId: "project-1",
@@ -221,16 +247,19 @@ describe("issue draft persistence", () => {
   });
 
   it("does not expose another organization's draft", () => {
-    saveIssueDraft(draft);
+    const savedDraft = createIssueDraft(draft);
 
-    expect(readIssueDraft("org-2")).toBeNull();
-    expect(summarizeIssueDraft("org-2")).toBeNull();
+    expect(readIssueAutosave("org-2")).toBeNull();
+    expect(readSavedIssueDraft(savedDraft?.id, "org-2")).toBeNull();
+    expect(summarizeIssueDrafts("org-2")).toEqual([]);
   });
 
-  it("clears the saved draft", () => {
-    saveIssueDraft(draft);
-    clearIssueDraft();
+  it("clears autosave without clearing saved drafts", () => {
+    saveIssueAutosave(draft);
+    createIssueDraft(draft);
+    clearIssueAutosave();
 
-    expect(readIssueDraft("org-1")).toBeNull();
+    expect(readIssueAutosave("org-1")).toBeNull();
+    expect(listIssueDrafts("org-1")).toHaveLength(1);
   });
 });
