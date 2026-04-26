@@ -4,6 +4,7 @@ import {
   Plus,
   Settings,
 } from "lucide-react";
+import type { CSSProperties } from "react";
 import { useOrganization } from "../context/OrganizationContext";
 import { useDialog } from "../context/DialogContext";
 import { useSidebar } from "../context/SidebarContext";
@@ -37,6 +38,13 @@ export function OrganizationSwitcher({ compact = false }: { compact?: boolean })
   const sidebarOrganizations = sortOrganizationsByStoredOrder(
     organizations.filter((organization) => organization.status !== "archived"),
   );
+
+  function getMenuItemStyle(index: number) {
+    return {
+      "--motion-org-menu-item-index": index,
+      "--motion-org-menu-item-delay": `${Math.min(54 + index * 18, 180)}ms`,
+    } as CSSProperties;
+  }
 
   function closeMobileSidebar() {
     if (isMobile) setSidebarOpen(false);
@@ -112,18 +120,22 @@ export function OrganizationSwitcher({ compact = false }: { compact?: boolean })
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        className="surface-overlay w-[340px] overflow-hidden p-0 text-foreground"
+        className="surface-overlay motion-organization-menu-pop w-[340px] overflow-hidden p-0 text-foreground"
       >
         <div
           ref={menuScrollRef}
           className="scrollbar-auto-hide max-h-(--radix-dropdown-menu-content-available-height) overflow-y-auto p-1"
         >
-          <DropdownMenuLabel>Organizations</DropdownMenuLabel>
+          <DropdownMenuLabel data-org-menu-item style={getMenuItemStyle(0)}>
+            Organizations
+          </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          {sidebarOrganizations.map((organization) => (
+          {sidebarOrganizations.map((organization, index) => (
             <DropdownMenuItem
               key={organization.id}
               onClick={() => selectOrganization(organization.id)}
+              data-org-menu-item
+              style={getMenuItemStyle(index + 1)}
               className={cn(
                 "gap-3 rounded-[calc(var(--radius-md)-2px)] px-2.5 py-2",
                 organization.id === selectedOrganization?.id && "bg-[color:var(--surface-active)]",
@@ -142,11 +154,19 @@ export function OrganizationSwitcher({ compact = false }: { compact?: boolean })
             </DropdownMenuItem>
           ))}
           {sidebarOrganizations.length === 0 && (
-            <DropdownMenuItem disabled>No organizations</DropdownMenuItem>
+            <DropdownMenuItem
+              disabled
+              data-org-menu-item
+              style={getMenuItemStyle(1)}
+            >
+              No organizations
+            </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={addOrganization}
+            data-org-menu-item
+            style={getMenuItemStyle(sidebarOrganizations.length + 1)}
             className="gap-3 rounded-[calc(var(--radius-md)-2px)] px-2.5 py-2"
           >
             <Plus className="h-4 w-4" />
@@ -155,6 +175,8 @@ export function OrganizationSwitcher({ compact = false }: { compact?: boolean })
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={goToOrganizationSettings}
+            data-org-menu-item
+            style={getMenuItemStyle(sidebarOrganizations.length + 2)}
             className="gap-3 rounded-[calc(var(--radius-md)-2px)] px-2.5 py-2"
           >
             <Settings className="h-4 w-4" />

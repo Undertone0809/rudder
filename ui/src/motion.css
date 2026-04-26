@@ -214,6 +214,26 @@
   animation-delay: 220ms;
 }
 
+.motion-organization-menu-pop {
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin, left top);
+  will-change: opacity, transform, clip-path;
+}
+
+.motion-organization-menu-pop[data-state="open"] {
+  animation: rudder-organization-menu-pop var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+}
+
+.motion-organization-menu-pop[data-state="closed"] {
+  animation: rudder-organization-menu-close var(--motion-duration-fast) var(--motion-ease-exit) both;
+}
+
+.motion-organization-menu-pop[data-state="open"] [data-org-menu-item] {
+  opacity: 0;
+  transform: translateY(4px) scale(0.992);
+  animation: rudder-organization-menu-item-enter 190ms var(--motion-ease-enter) both;
+  animation-delay: var(--motion-org-menu-item-delay, 54ms);
+}
+
 @keyframes rudder-list-enter {
   from {
     opacity: 0;
@@ -333,6 +353,43 @@
   }
 }
 
+@keyframes rudder-organization-menu-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.96);
+    clip-path: inset(0 16% 100% 0 round var(--radius-md));
+  }
+  54% {
+    opacity: 1;
+    transform: translateY(2px) scale(1.012);
+    clip-path: inset(0 0 0 0 round var(--radius-md));
+  }
+  78% {
+    opacity: 1;
+    transform: translateY(-1px) scale(0.997);
+    clip-path: inset(0 0 0 0 round var(--radius-md));
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    clip-path: inset(0 0 0 0 round var(--radius-md));
+  }
+}
+
+@keyframes rudder-organization-menu-close {
+  to {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.985);
+  }
+}
+
+@keyframes rudder-organization-menu-item-enter {
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .motion-list-enter,
   .motion-state-flash,
@@ -343,7 +400,9 @@
   .motion-org-card,
   .motion-org-edge[data-active="true"],
   .motion-chat-options-pop,
-  .motion-chat-options-pop [data-chat-option] {
+  .motion-chat-options-pop [data-chat-option],
+  .motion-organization-menu-pop,
+  .motion-organization-menu-pop [data-org-menu-item] {
     animation: none !important;
   }
 
@@ -362,7 +421,9 @@
   }
 
   .motion-chat-options-pop,
-  .motion-chat-options-pop [data-chat-option] {
+  .motion-chat-options-pop [data-chat-option],
+  .motion-organization-menu-pop,
+  .motion-organization-menu-pop [data-org-menu-item] {
     opacity: 1 !important;
     transform: none !important;
     clip-path: none !important;

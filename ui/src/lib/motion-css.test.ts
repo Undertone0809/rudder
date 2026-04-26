@@ -10,6 +10,7 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain('.motion-kanban-card[data-live="true"]');
     expect(motionCss).toContain('.motion-org-edge[data-active="true"]');
     expect(motionCss).toContain(".motion-chat-options-pop");
+    expect(motionCss).toContain(".motion-organization-menu-pop");
     expect(motionCss).toContain(".motion-rail-active-indicator");
     expect(motionCss).toContain(".motion-context-active-indicator");
     expect(motionCss).toContain("animation: none !important");
@@ -34,5 +35,14 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-context-nav--project-card-list");
     expect(motionCss).toContain(".motion-context-nav--messenger-thread-list");
     expect(motionCss).toContain("transform var(--motion-duration-standard) var(--motion-ease-enter)");
+  });
+
+  it("defines a pop animation for organization menu disclosure", () => {
+    expect(motionCss).toContain("@keyframes rudder-organization-menu-pop");
+    expect(motionCss).toContain("@keyframes rudder-organization-menu-close");
+    expect(motionCss).toContain("@keyframes rudder-organization-menu-item-enter");
+    expect(motionCss).toContain("[data-org-menu-item]");
+    expect(motionCss).toContain("--motion-org-menu-item-delay");
+    expect(motionCss).toContain("clip-path: inset(0 16% 100% 0 round var(--radius-md))");
   });
 });
