@@ -163,10 +163,6 @@
   --motion-context-item-height: 3.625rem;
 }
 
-.motion-context-nav--messenger-thread-list {
-  --motion-context-item-height: 3.75rem;
-}
-
 .motion-context-active-indicator {
   position: absolute;
   top: 0;

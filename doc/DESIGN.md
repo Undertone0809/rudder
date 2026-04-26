@@ -463,7 +463,7 @@ High-value Rudder motion belongs on:
 
 - live agent runs and transcript updates
 - issue board drag/drop, status changes, and active issue indicators
-- middle-column active navigation indicators in three-column workspaces
+- middle-column active navigation indicators in three-column workspaces, excluding Messenger thread lists
 - Organization Structure active-state and work-flow hints
 - proposal, approval, and budget decision state changes
 - toast and inline feedback after mutating actions

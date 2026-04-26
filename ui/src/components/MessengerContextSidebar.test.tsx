@@ -108,13 +108,13 @@ describe("MessengerContextSidebar", () => {
     expect(html).not.toContain(`aria-label="${exactLabel}"`);
   });
 
-  it("renders a sliding active indicator for the selected thread row", () => {
+  it("keeps Messenger thread selection on the static active-row treatment", () => {
     messengerRoute = { kind: "chat", conversationId: "chat-1" };
 
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
-    expect(html).toContain("motion-context-nav--messenger-thread-list");
-    expect(html).toContain('data-active-index="1"');
-    expect(html).toContain('data-testid="messenger-sidebar-active-indicator"');
+    expect(html).not.toContain("motion-context-nav--messenger-thread-list");
+    expect(html).not.toContain('data-testid="messenger-sidebar-active-indicator"');
+    expect(html).toContain("chat-conversation-active");
   });
 });

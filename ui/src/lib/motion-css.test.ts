@@ -33,7 +33,6 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("--motion-context-active-index");
     expect(motionCss).toContain(".motion-context-nav--agent-list");
     expect(motionCss).toContain(".motion-context-nav--project-card-list");
-    expect(motionCss).toContain(".motion-context-nav--messenger-thread-list");
     expect(motionCss).toContain("transform var(--motion-duration-standard) var(--motion-ease-enter)");
   });
 
