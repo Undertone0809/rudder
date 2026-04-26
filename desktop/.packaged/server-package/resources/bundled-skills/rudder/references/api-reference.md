@@ -143,6 +143,27 @@ When updating an existing document, send the latest `baseRevisionId` or the API 
 - `GET /api/orgs/:orgId/costs/by-agent`
 - `GET /api/orgs/:orgId/costs/by-project`
 
+### Resources
+
+- `GET /api/orgs/:orgId/resources`
+- `POST /api/orgs/:orgId/resources`
+- `PATCH /api/orgs/:orgId/resources/:resourceId`
+- `DELETE /api/orgs/:orgId/resources/:resourceId`
+- `GET /api/projects/:projectId/resources`
+- `POST /api/projects/:projectId/resources`
+- `PATCH /api/projects/:projectId/resources/:attachmentId`
+- `DELETE /api/projects/:projectId/resources/:attachmentId`
+
+Loading policy:
+
+- Org resources are the reusable catalog. They are queryable, but not loaded
+  into every prompt by default.
+- Project resources are attachments from a project to org resources. When a run
+  or chat has a project context, Rudder injects that project's attached
+  resources into the runtime context.
+- If you need org-wide background that was not attached to the current project,
+  query the org catalog explicitly.
+
 ## Approval Workflows
 
 - `GET /api/approvals/:approvalId`
