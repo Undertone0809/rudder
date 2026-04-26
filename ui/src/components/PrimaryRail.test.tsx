@@ -207,6 +207,6 @@ describe("PrimaryRail active motion indicator", () => {
 
     const nav = document.querySelector(".motion-rail-nav");
 
-    expect(nav?.getAttribute("data-active-index")).toBe("4");
+    expect(nav?.getAttribute("data-active-index")).toBe("2");
   });
 });
