@@ -1,4 +1,6 @@
-import { Router, type Request } from "express";
+import { Router, type Request, type Response } from "express";
+import multer from "multer";
+import sharp from "sharp";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Db } from "@rudderhq/db";
@@ -40,11 +42,14 @@ import {
   syncInstructionsBundleConfigFromFilePath,
   workspaceOperationService,
 } from "../services/index.js";
+import { assetService } from "../services/assets.js";
+import type { StorageService } from "../storage/types.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import { findServerAdapter, listAgentRuntimeModels } from "../agent-runtimes/index.js";
 import { redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
+import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { runClaudeLogin } from "@rudderhq/agent-runtime-claude-local/server";
@@ -61,7 +66,67 @@ import {
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
 
-export function agentRoutes(db: Db) {
+const AGENT_AVATAR_CONTENT_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/gif",
+]);
+const AGENT_AVATAR_SIZE_PX = 256;
+const AGENT_AVATAR_WEBP_QUALITY = 82;
+const AGENT_AVATAR_ASSET_RE =
+  /^asset:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
+
+type UploadedMemoryFile = {
+  mimetype: string;
+  buffer: Buffer;
+  originalname: string;
+};
+
+function extractAgentAvatarAssetId(icon: unknown): string | null {
+  if (typeof icon !== "string") return null;
+  const match = icon.trim().match(AGENT_AVATAR_ASSET_RE);
+  return match?.[1] ?? null;
+}
+
+async function runSingleFileUpload(
+  upload: ReturnType<typeof multer>,
+  req: Request,
+  res: Response,
+) {
+  await new Promise<void>((resolve, reject) => {
+    upload.single("file")(req, res, (err: unknown) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+async function compressAgentAvatar(file: UploadedMemoryFile): Promise<Buffer> {
+  try {
+    const output = await sharp(file.buffer, {
+      animated: false,
+      limitInputPixels: 24_000_000,
+    })
+      .rotate()
+      .resize(AGENT_AVATAR_SIZE_PX, AGENT_AVATAR_SIZE_PX, {
+        fit: "cover",
+        position: "center",
+        withoutEnlargement: true,
+      })
+      .webp({ quality: AGENT_AVATAR_WEBP_QUALITY, effort: 4 })
+      .toBuffer();
+    if (output.length <= 0) {
+      throw new Error("empty avatar output");
+    }
+    return output;
+  } catch {
+    throw unprocessable("Avatar image could not be processed");
+  }
+}
+
+export function agentRoutes(db: Db, storage?: StorageService) {
   function stripPersistedSkillSyncConfig(config: Record<string, unknown>) {
     const next = { ...config };
     delete next.rudderSkillSync;
@@ -105,6 +170,7 @@ export function agentRoutes(db: Db) {
 
   const router = Router();
   const svc = agentService(db);
+  const assets = assetService(db);
   const access = accessService(db);
   const approvalsSvc = approvalService(db);
   const budgets = budgetService(db);
@@ -116,6 +182,10 @@ export function agentRoutes(db: Db) {
   const workspaceOperations = workspaceOperationService(db);
   const instanceSettings = instanceSettingsService(db);
   const strictSecretsMode = process.env.RUDDER_SECRETS_STRICT_MODE === "true";
+  const avatarUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
+  });
 
   async function persistReconciledInstructionsBundle(
     agent: NonNullable<Awaited<ReturnType<typeof svc.getInternalById>>>,
@@ -253,6 +323,22 @@ export function agentRoutes(db: Db) {
     if (!actorAgent || actorAgent.orgId !== orgId) return false;
     const allowedByGrant = await access.hasPermission(orgId, "agent", actorAgent.id, "agents:create");
     return allowedByGrant || canCreateAgents(actorAgent);
+  }
+
+  async function assertAgentAvatarAssetBelongsToOrg(orgId: string, icon: unknown) {
+    const assetId = extractAgentAvatarAssetId(icon);
+    if (!assetId) return;
+
+    const asset = await assets.getById(assetId);
+    if (!asset) {
+      throw unprocessable("Avatar asset not found");
+    }
+    if (asset.orgId !== orgId) {
+      throw forbidden("Avatar asset belongs to another organization");
+    }
+    if (!asset.contentType.toLowerCase().startsWith("image/")) {
+      throw unprocessable("Avatar asset must be an image");
+    }
   }
 
   async function assertCanUpdateAgent(req: Request, targetAgent: { id: string; orgId: string }) {
@@ -1263,6 +1349,7 @@ export function agentRoutes(db: Db) {
       ...hireInput,
       agentRuntimeConfig: normalizedAdapterConfig,
     };
+    await assertAgentAvatarAssetBelongsToOrg(orgId, normalizedHireInput.icon);
 
     const organization = await db
       .select()
@@ -1428,6 +1515,7 @@ export function agentRoutes(db: Db) {
       createInput.agentRuntimeType,
       normalizedAdapterConfig,
     );
+    await assertAgentAvatarAssetBelongsToOrg(orgId, createInput.icon);
 
     const createdAgent = await svc.create(orgId, {
       ...createInput,
@@ -1538,6 +1626,93 @@ export function agentRoutes(db: Db) {
     });
 
     res.json(await buildAgentDetail(agent));
+  });
+
+  router.post("/agents/:id/avatar", async (req, res) => {
+    if (!storage) {
+      res.status(500).json({ error: "Storage service unavailable" });
+      return;
+    }
+
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanUpdateAgent(req, existing);
+
+    try {
+      await runSingleFileUpload(avatarUpload, req, res);
+    } catch (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          res.status(422).json({ error: `Image exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
+          return;
+        }
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
+
+    const file = (req as Request & { file?: UploadedMemoryFile }).file;
+    if (!file) {
+      res.status(400).json({ error: "Missing file field 'file'" });
+      return;
+    }
+
+    const inputContentType = (file.mimetype || "").toLowerCase();
+    if (!AGENT_AVATAR_CONTENT_TYPES.has(inputContentType)) {
+      res.status(422).json({ error: `Unsupported avatar image type: ${inputContentType || "unknown"}` });
+      return;
+    }
+
+    const compressed = await compressAgentAvatar(file);
+    const actor = getActorInfo(req);
+    const stored = await storage.putFile({
+      orgId: existing.orgId,
+      namespace: `assets/agents/${existing.id}/avatars`,
+      originalFilename: file.originalname || "avatar.webp",
+      contentType: "image/webp",
+      body: compressed,
+    });
+    const asset = await assets.create(existing.orgId, {
+      provider: stored.provider,
+      objectKey: stored.objectKey,
+      contentType: stored.contentType,
+      byteSize: stored.byteSize,
+      sha256: stored.sha256,
+      originalFilename: stored.originalFilename,
+      createdByAgentId: actor.agentId,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+    });
+
+    const avatarIcon = `asset:${asset.id}`;
+    const agent = await svc.update(existing.id, { icon: avatarIcon });
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    await logActivity(db, {
+      orgId: agent.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "agent.avatar_updated",
+      entityType: "agent",
+      entityId: agent.id,
+      details: {
+        assetId: asset.id,
+        contentType: asset.contentType,
+        byteSize: asset.byteSize,
+        originalFilename: asset.originalFilename,
+      },
+    });
+
+    res.status(201).json(agent);
   });
 
   router.patch("/agents/:id/instructions-path", validate(updateAgentInstructionsPathSchema), async (req, res) => {
@@ -1878,6 +2053,9 @@ export function agentRoutes(db: Db) {
         requestedAdapterType,
         effectiveAdapterConfig,
       );
+    }
+    if (Object.prototype.hasOwnProperty.call(patchData, "icon")) {
+      await assertAgentAvatarAssetBelongsToOrg(existing.orgId, patchData.icon);
     }
 
     const actor = getActorInfo(req);

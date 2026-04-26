@@ -118,6 +118,13 @@ export const agentsApi = {
     api.post<AgentHireResponse>(`/orgs/${orgId}/agent-hires`, data),
   update: (id: string, data: Record<string, unknown>, orgId?: string) =>
     api.patch<Agent>(agentPath(id, orgId), data),
+  uploadAvatar: async (id: string, file: File, orgId?: string) => {
+    const buffer = await file.arrayBuffer();
+    const safeFile = new File([buffer], file.name, { type: file.type });
+    const form = new FormData();
+    form.append("file", safeFile);
+    return api.postForm<Agent>(agentPath(id, orgId, "/avatar"), form);
+  },
   updatePermissions: (id: string, data: AgentPermissionUpdate, orgId?: string) =>
     api.patch<AgentDetail>(agentPath(id, orgId, "/permissions"), data),
   instructionsBundle: (id: string, orgId?: string) =>

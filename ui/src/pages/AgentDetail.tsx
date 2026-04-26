@@ -1246,11 +1246,30 @@ export function AgentDetail() {
   const updateIcon = useMutation({
     mutationFn: (icon: string) => agentsApi.update(agentLookupRef, { icon }, resolvedCompanyId ?? undefined),
     onSuccess: () => {
+      setActionError(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(routeAgentRef) });
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentLookupRef) });
       if (resolvedCompanyId) {
         queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(resolvedCompanyId) });
       }
+    },
+    onError: (err) => {
+      setActionError(err instanceof Error ? err.message : "Failed to update avatar");
+    },
+  });
+
+  const uploadAvatar = useMutation({
+    mutationFn: (file: File) => agentsApi.uploadAvatar(agentLookupRef, file, resolvedCompanyId ?? undefined),
+    onSuccess: () => {
+      setActionError(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(routeAgentRef) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agentLookupRef) });
+      if (resolvedCompanyId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(resolvedCompanyId) });
+      }
+    },
+    onError: (err) => {
+      setActionError(err instanceof Error ? err.message : "Failed to upload avatar");
     },
   });
 
@@ -1378,9 +1397,15 @@ export function AgentDetail() {
           <AgentIconPicker
             value={agent.icon}
             onChange={(icon) => updateIcon.mutate(icon)}
+            onUpload={(file) => uploadAvatar.mutate(file)}
+            uploadPending={uploadAvatar.isPending}
+            uploadError={uploadAvatar.error instanceof Error ? uploadAvatar.error.message : null}
           >
-            <button className="shrink-0 flex items-center justify-center h-12 w-12 rounded-lg bg-accent hover:bg-accent/80 transition-colors">
-              <AgentIcon icon={agent.icon} className="h-6 w-6" />
+            <button
+              className="shrink-0 flex items-center justify-center h-12 w-12 rounded-lg bg-accent hover:bg-accent/80 transition-colors"
+              aria-label="Change agent avatar"
+            >
+              <AgentIcon icon={agent.icon} className="h-7 w-7" />
             </button>
           </AgentIconPicker>
           <div className="min-w-0">
