@@ -119,6 +119,15 @@ Notes:
 
 ## 5. Core Engineering Rules
 
+1. Start feature work in an isolated git worktree and branch.
+
+For new feature development, create a fresh worktree and a new branch before editing code. Do not develop new features directly on `main` or inside an existing dirty worktree. Use the repository branch prefix unless the task asks for another name:
+
+```sh
+git worktree add -b zeelandc/<short-feature-name> ../rudder-oss-<short-feature-name> main
+cd ../rudder-oss-<short-feature-name>
+```
+
 1. Keep changes organization-scoped.
 
 Every domain entity should be scoped to a organization and organization boundaries must be enforced in routes/services.
