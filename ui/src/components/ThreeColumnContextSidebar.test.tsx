@@ -12,7 +12,9 @@ import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockState = vi.hoisted(() => ({
+  confirm: vi.fn(),
   openNewIssue: vi.fn(),
+  pushToast: vi.fn(),
   setSidebarOpen: vi.fn(),
   pathname: "/RUD/issues",
   search: "",
@@ -68,7 +70,7 @@ vi.mock("@/context/SidebarContext", () => ({
 
 vi.mock("@/context/ToastContext", () => ({
   useToast: () => ({
-    pushToast: vi.fn(),
+    pushToast: mockState.pushToast,
   }),
 }));
 
@@ -119,8 +121,12 @@ let cleanupFn: (() => void) | null = null;
 
 beforeEach(() => {
   window.localStorage.clear();
+  mockState.confirm.mockReset();
+  mockState.confirm.mockReturnValue(true);
   mockState.openNewIssue.mockReset();
+  mockState.pushToast.mockReset();
   mockState.setSidebarOpen.mockReset();
+  vi.stubGlobal("confirm", mockState.confirm);
 });
 
 afterEach(() => {
@@ -132,6 +138,7 @@ afterEach(() => {
   cleanupFn = null;
   window.localStorage.clear();
   document.body.innerHTML = "";
+  vi.unstubAllGlobals();
 });
 
 describe("ThreeColumnContextSidebar issue draft recovery", () => {
@@ -256,6 +263,8 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     act(() => {
       menuItems[0]?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     });
+    expect(mockState.confirm).toHaveBeenCalledWith('Delete draft issue "Newer draft"? This cannot be undone.');
+    expect(mockState.pushToast).toHaveBeenCalledWith({ title: "Draft issue deleted", tone: "success" });
 
     const storedDraftsAfterMenuDelete = JSON.parse(
       window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY) ?? "[]",
@@ -266,11 +275,31 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     act(() => {
       draftEntry?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     });
+    expect(mockState.confirm).toHaveBeenCalledWith('Delete draft issue "Recovered draft issue"? This cannot be undone.');
 
     const storedDraftsAfterSingleDelete = JSON.parse(
       window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY) ?? "[]",
     ) as Array<{ id: string }>;
     expect(storedDraftsAfterSingleDelete).toEqual([]);
     expect(document.querySelector("[data-testid='issue-draft-sidebar-entry']")).toBeNull();
+  });
+
+  it("keeps a draft issue when right-click deletion is cancelled", () => {
+    mockState.confirm.mockReturnValue(false);
+    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([savedDraft]));
+
+    renderSidebar();
+
+    const draftEntry = document.querySelector("[data-testid='issue-draft-sidebar-entry']") as HTMLButtonElement | null;
+    act(() => {
+      draftEntry?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+
+    const storedDrafts = JSON.parse(
+      window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY) ?? "[]",
+    ) as Array<{ id: string }>;
+    expect(storedDrafts.map((draft) => draft.id)).toEqual(["draft-1"]);
+    expect(document.querySelector("[data-testid='issue-draft-sidebar-entry']")).not.toBeNull();
+    expect(mockState.pushToast).not.toHaveBeenCalled();
   });
 });

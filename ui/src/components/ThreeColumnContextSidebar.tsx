@@ -422,8 +422,13 @@ export function ThreeColumnContextSidebar() {
     closeMobileSidebar();
   };
 
-  const removeIssueDraft = (draftId: string | null | undefined) => {
+  const removeIssueDraft = (draftId: string | null | undefined, draftTitle?: string) => {
+    if (!draftId) return;
+    const label = draftTitle?.trim() || "Untitled issue draft";
+    const confirmed = window.confirm(`Delete draft issue "${label}"? This cannot be undone.`);
+    if (!confirmed) return;
     deleteIssueDraft(draftId);
+    pushToast({ title: "Draft issue deleted", tone: "success" });
   };
 
   const refreshChatList = async (chatId?: string) => {
@@ -512,7 +517,7 @@ export function ThreeColumnContextSidebar() {
             }}
             onContextMenu={(event) => {
               event.preventDefault();
-              removeIssueDraft(issueDraftSummaries[0]?.id);
+              removeIssueDraft(issueDraftSummaries[0]?.id, issueDraftSummaries[0]?.title);
             }}
             className={cn(
               "mx-1.5 mt-2 rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] px-3 py-2 text-left transition-[background-color,border-color,color]",
@@ -569,7 +574,7 @@ export function ThreeColumnContextSidebar() {
                   onContextMenu={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    removeIssueDraft(draft.id);
+                    removeIssueDraft(draft.id, draft.title);
                   }}
                   className="items-start gap-3 py-2"
                 >
