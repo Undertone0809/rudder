@@ -3,7 +3,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Copy, HeartPulse, Loader2, MessageSquare, MoreHorizontal, Pause, Play, Plus } from "lucide-react";
 import type { Agent } from "@rudderhq/shared";
 import { agentsApi } from "@/api/agents";
-import { chatsApi } from "@/api/chats";
 import { useDialog } from "@/context/DialogContext";
 import { useToast } from "@/context/ToastContext";
 import { useNavigate } from "@/lib/router";
@@ -48,30 +47,6 @@ export function AgentActionsMenu({
       queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(orgId) }),
     ]);
   };
-
-  const chatMutation = useMutation({
-    mutationFn: () =>
-      chatsApi.create(orgId, {
-        title: `Chat with ${agent.name}`,
-        preferredAgentId: agent.id,
-        contextLinks: [{ entityType: "agent", entityId: agent.id }],
-      }),
-    onSuccess: async (conversation) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(orgId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.messenger.threads(orgId) }),
-      ]);
-      onActionComplete?.();
-      navigate(`/messenger/chat/${conversation.id}`);
-    },
-    onError: (error) => {
-      pushToast({
-        title: "Failed to open chat",
-        body: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    },
-  });
 
   const heartbeatMutation = useMutation({
     mutationFn: () => agentsApi.invoke(agent.id, orgId),
@@ -120,6 +95,14 @@ export function AgentActionsMenu({
     onActionComplete?.();
   };
 
+  const handleChatWithAgent = () => {
+    onActionComplete?.();
+    navigate({
+      pathname: "/messenger/chat",
+      search: `?agentId=${encodeURIComponent(agent.id)}`,
+    });
+  };
+
   const handleCopyName = async () => {
     try {
       await navigator.clipboard.writeText(agent.name);
@@ -134,7 +117,7 @@ export function AgentActionsMenu({
     }
   };
 
-  const isBusy = chatMutation.isPending || heartbeatMutation.isPending || pauseResumeMutation.isPending;
+  const isBusy = heartbeatMutation.isPending || pauseResumeMutation.isPending;
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -163,7 +146,7 @@ export function AgentActionsMenu({
           <Plus className="h-4 w-4" />
           Create task
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => chatMutation.mutate()} disabled={chatMutation.isPending || isTerminated}>
+        <DropdownMenuItem onSelect={handleChatWithAgent} disabled={isTerminated}>
           <MessageSquare className="h-4 w-4" />
           Chat with agent
         </DropdownMenuItem>
