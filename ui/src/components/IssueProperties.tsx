@@ -111,7 +111,7 @@ function PropertyPicker({
   children: React.ReactNode;
 }) {
   const btnCn = cn(
-    "inline-flex items-center gap-1.5 cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1 py-0.5 transition-colors",
+    "inline-flex min-w-0 max-w-full items-center gap-1.5 cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1 py-0.5 transition-colors",
     triggerClassName,
   );
 
@@ -632,6 +632,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
           open={assigneeOpen}
           onOpenChange={(open) => { setAssigneeOpen(open); if (!open) setAssigneeSearch(""); }}
           triggerContent={assigneeTrigger}
+          triggerClassName="min-w-0 max-w-full"
           popoverClassName="w-52"
         >
           {assigneeContent}
