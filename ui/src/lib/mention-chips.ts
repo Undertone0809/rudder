@@ -1,7 +1,6 @@
 import type { CSSProperties } from "react";
 import { parseAgentMentionHref, parseIssueMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
 import { getAgentIcon } from "./agent-icons";
-import { hexToRgb, pickTextColorForPillBg } from "./color-contrast";
 
 export type ParsedMentionChip =
   | {
@@ -61,8 +60,6 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
   const style: CSSProperties & Record<string, string> = {};
 
   if (mention.kind === "project" && mention.color) {
-    const projectStyle = projectMentionColors(mention.color);
-    Object.assign(style, projectStyle);
     style["--rudder-mention-project-color"] = mention.color;
   }
 
@@ -118,16 +115,6 @@ export function clearMentionChipDecoration(element: HTMLElement) {
   element.style.removeProperty("color");
   element.style.removeProperty("--rudder-mention-project-color");
   element.style.removeProperty("--rudder-mention-icon-mask");
-}
-
-function projectMentionColors(color: string): Pick<CSSProperties, "borderColor" | "backgroundColor" | "color"> {
-  const rgb = hexToRgb(color);
-  if (!rgb) return {};
-  return {
-    borderColor: color,
-    backgroundColor: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.22)`,
-    color: pickTextColorForPillBg(color),
-  };
 }
 
 function buildAgentIconMask(iconName: string | null): string | null {

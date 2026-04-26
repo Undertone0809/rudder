@@ -764,13 +764,13 @@
   }
 
   .chat-message-user {
-    --foreground: var(--primary-foreground);
-    --muted-foreground: color-mix(in oklab, var(--primary-foreground) 68%, var(--primary) 32%);
-    --border: color-mix(in oklab, var(--primary-foreground) 18%, var(--primary) 82%);
-    --accent: color-mix(in oklab, var(--primary-foreground) 12%, var(--primary) 88%);
-    background: var(--primary);
-    border: 1px solid color-mix(in oklab, var(--primary) 92%, black);
-    color: var(--primary-foreground);
+    --foreground: var(--ink-strong);
+    --muted-foreground: var(--ink-muted);
+    --border: var(--border-soft);
+    --accent: var(--surface-active);
+    background: color-mix(in oklab, var(--surface-elevated) 92%, var(--surface-shell));
+    border: 1px solid color-mix(in oklab, var(--border-soft) 86%, var(--surface-shell));
+    color: var(--ink-strong);
     box-shadow: var(--shadow-sm);
   }
 
@@ -1165,9 +1165,12 @@ button[draggable="false"] {
   gap: 0.25rem;
   margin: 0 0.1rem;
   padding: 0.05rem 0.45rem;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
   border-radius: 999px;
+  background-color: color-mix(in oklab, var(--foreground) 7%, transparent);
+  color: var(--foreground);
   font-size: 0.75rem;
+  font-weight: 600;
   line-height: 1.3;
   text-decoration: none;
   vertical-align: baseline;
@@ -1614,13 +1617,24 @@ a.rudder-project-mention-chip {
   gap: 0.25rem;
   margin: 0 0.1rem;
   padding: 0.05rem 0.45rem;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
   border-radius: 999px;
+  background-color: color-mix(in oklab, var(--foreground) 7%, transparent);
+  color: var(--foreground);
   font-size: 0.75rem;
+  font-weight: 600;
   line-height: 1.3;
   text-decoration: none;
   vertical-align: baseline;
   white-space: nowrap;
+}
+
+.rudder-mdxeditor-content a.rudder-mention-chip:hover,
+.rudder-mdxeditor-content a.rudder-project-mention-chip:hover,
+a.rudder-mention-chip:hover,
+a.rudder-project-mention-chip:hover {
+  background-color: color-mix(in oklab, var(--foreground) 10%, transparent);
+  text-decoration: none;
 }
 
 /* Keep MDXEditor popups above app dialogs, even when they portal to <body>. */
