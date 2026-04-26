@@ -41,9 +41,12 @@ cannot be safely inferred.
   to the same CLI version. The `npx` form is the first-run or explicit dist-tag
   form.
 - Canaries publish from `main` automatically and use npm dist-tag `canary`.
-- The Release workflow must explicitly dispatch the Desktop workflow after it
-  pushes a canary or stable tag. A tag push made by `GITHUB_TOKEN` does not
-  trigger another workflow run by itself.
+- Canary git tags use `canary/vX.Y.Z-canary.N`. The matching GitHub Release
+  display title should be clean `vX.Y.Z-canary.N`, not the full tag name, and
+  it should be marked prerelease.
+- A tag pushed by GitHub Actions' `GITHUB_TOKEN` does not trigger another
+  workflow by itself. If canary npm publish creates the tag, `release.yml` must
+  explicitly dispatch `desktop-release.yml`, or the maintainer must do it.
 - Stables are manually promoted from an explicitly chosen source ref and use
   npm dist-tag `latest`.
 - Stable tags point at the original source commit, not at a generated release
@@ -54,6 +57,11 @@ cannot be safely inferred.
   there is no stable release yet and the user explicitly wants
   `npx @rudderhq/cli start` to work immediately. Call this out as a bootstrap
   exception, not the normal canary policy.
+- Release-maintenance commits that should not publish another canary must
+  include `[skip release]`, then be verified as skipped in `release.yml`.
+- If a normal `main` push is already running while you make release-maintenance
+  changes, watch it to completion. It may publish the next canary, and that
+  canary still needs npm, tag, Desktop, and Release-title verification.
 
 ## Required Context
 
@@ -95,6 +103,7 @@ When the task depends on remote truth, also check:
 gh workflow list
 gh run list --workflow release.yml --limit 10
 gh run list --workflow desktop-release.yml --limit 10
+gh release list --repo Undertone0809/rudder --limit 20
 npm view @rudderhq/cli dist-tags --json
 npm view @rudderhq/cli versions --json
 ```
@@ -192,16 +201,59 @@ NODE
 Canary releases should normally be automatic.
 
 1. Confirm the change is merged to `main`.
-2. Watch the `Release` workflow canary job.
-3. Confirm npm `canary` points at the new prerelease.
-4. Confirm tag `canary/vX.Y.Z-canary.N` exists.
-5. Confirm the `Release` workflow dispatched `.github/workflows/desktop-release.yml`
-   for the canary tag. If no Desktop run appears, do not republish npm; manually
-   dispatch `desktop-release.yml` for the existing tag and fix the release
-   workflow.
-6. Verify the canary GitHub Release and Desktop assets; do not assume canaries
-   are npm-only. The release title should be `vX.Y.Z-canary.N`, not the tag name
-   `canary/vX.Y.Z-canary.N`.
+2. Watch the `Release` workflow canary job. If the triggering commit is a
+   release-maintenance commit with `[skip release]`, verify the run is skipped
+   before assuming no canary was produced.
+3. Confirm npm `canary` points at the new prerelease for every public package,
+   not just `@rudderhq/cli`:
+
+```bash
+RUDDER_EXPECTED_VERSION=0.1.0-canary.N node - <<'NODE'
+const { execFileSync } = require('node:child_process');
+const expected = process.env.RUDDER_EXPECTED_VERSION;
+const rows = execFileSync('node', ['scripts/release-package-map.mjs', 'list'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+let failed = false;
+for (const row of rows) {
+  const pkg = row.split(/\s+/)[1];
+  const version = execFileSync('npm', ['--prefer-online', 'view', `${pkg}@${expected}`, 'version'], { encoding: 'utf8' }).trim();
+  const tags = JSON.parse(execFileSync('npm', ['--prefer-online', 'view', pkg, 'dist-tags', '--json'], { encoding: 'utf8' }));
+  const ok = version === expected && tags.canary === expected;
+  console.log(`${ok ? 'ok' : 'bad'}\t${pkg}\tversion=${version}\tlatest=${tags.latest}\tcanary=${tags.canary}`);
+  if (!ok) failed = true;
+}
+process.exit(failed ? 1 : 0);
+NODE
+```
+
+4. Confirm tag `canary/vX.Y.Z-canary.N` exists locally and remotely.
+5. Confirm `desktop-release.yml` ran for the canary tag. If it did not, dispatch
+   it explicitly; do not rely on the tag push to trigger it:
+
+```bash
+gh workflow run desktop-release.yml \
+  --ref main \
+  -f release_tag='canary/v0.1.0-canary.N' \
+  -f source_ref=main
+```
+
+6. Verify the canary GitHub Release uses the clean display title
+   `vX.Y.Z-canary.N`, is prerelease, and has all Desktop assets:
+
+```bash
+gh release view 'canary/v0.1.0-canary.N' \
+  --repo Undertone0809/rudder \
+  --json tagName,name,url,isPrerelease,isDraft,assets \
+  --jq '{tagName,name,url,isPrerelease,isDraft,assets:[.assets[].name]}'
+```
+
+Expected canary Desktop assets:
+
+- `Rudder-X.Y.Z-canary.N-linux-x64.AppImage`
+- `Rudder-X.Y.Z-canary.N-macos-arm64.dmg`
+- `Rudder-X.Y.Z-canary.N-macos-x64.dmg`
+- `Rudder-X.Y.Z-canary.N-windows-x64.exe`
+- `SHASUMS256.txt`
+
 7. Smoke test the actual start path with isolated HOME and npm cache:
 
 ```bash
@@ -271,8 +323,20 @@ After rollback, fix forward with a new stable semver.
   recreate the missing tag/release for the same version.
 - GitHub Release exists but Desktop assets failed: rerun `desktop-release.yml`
   for the same `vX.Y.Z` or `canary/vX.Y.Z-canary.N`; do not republish npm.
+- GitHub Release title is `canary/vX.Y.Z-canary.N` or prerelease is false:
+
+```bash
+gh release edit 'canary/vX.Y.Z-canary.N' \
+  --repo Undertone0809/rudder \
+  --title 'vX.Y.Z-canary.N' \
+  --prerelease
+```
+
 - Desktop assets exist but checksum missing or stale: rerun `desktop-release.yml`
   and verify `SHASUMS256.txt`.
+- A failed or skipped run may be harmless, but only after checking whether a
+  newer canary was already published. Check npm dist-tags, tags, and recent
+  Release workflow runs before declaring no release happened.
 - `latest` is broken: rollback the dist-tag, then fix forward.
 
 Useful rerun command:
@@ -288,17 +352,10 @@ For Desktop releases, verify the Release object directly:
 
 ```bash
 gh release view 'canary/v0.1.0-canary.1' \
-  --json tagName,url,isPrerelease,isDraft,assets \
-  --jq '{tagName,url,isPrerelease,isDraft,assets:[.assets[].name]}'
+  --repo Undertone0809/rudder \
+  --json tagName,name,url,isPrerelease,isDraft,assets \
+  --jq '{tagName,name,url,isPrerelease,isDraft,assets:[.assets[].name]}'
 ```
-
-Expected first canary Desktop assets are:
-
-- `Rudder-X.Y.Z-canary.N-macos-arm64.dmg`
-- `Rudder-X.Y.Z-canary.N-macos-x64.dmg`
-- `Rudder-X.Y.Z-canary.N-linux-x64.AppImage`
-- `Rudder-X.Y.Z-canary.N-windows-x64.exe`
-- `SHASUMS256.txt`
 
 When Desktop packaging fails:
 
@@ -352,7 +409,10 @@ cache entry, rerun with an isolated `npm_config_cache` and `--prefer-online`.
 - Do not treat a canary as a stable release.
 - Do not claim a stable is complete until all release surfaces are verified.
 - Do not claim a canary is complete until npm, tag, and Desktop assets are
-  verified when the Desktop workflow is configured for canary tags.
+  verified when the Desktop workflow is configured for canary tags. Also verify
+  the GitHub Release title is clean and the Release is marked prerelease.
+- Do not ignore already-running `release.yml` runs on `main`; they can publish a
+  newer canary while you are repairing docs or automation.
 - Do not edit unrelated dirty files; stage/commit only release-maintainer scope
   files for skill maintenance, or only release-scope files during release work.
 - Do not print npm tokens in logs or final answers. If a token was pasted into
@@ -380,6 +440,10 @@ finish with:
 - what was verified
 - what failed or remains manual
 - exact links or commands for the next action
+- GitHub Actions run IDs for the release and Desktop workflows when publishing
+  was involved
+- GitHub Release URL/title, npm dist-tag state, and whether Desktop assets match
+  the expected set
 - whether the local working tree was left clean, or which unrelated files were
   already dirty and preserved
 - a token rotation reminder if token-based publishing was used

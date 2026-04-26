@@ -220,10 +220,10 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("Labels");
   });
 
-  it("keeps the discard draft control visible when nothing can be discarded", () => {
+  it("keeps the save draft control visible when nothing can be saved", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
-    expect(html).toContain("Discard Draft");
+    expect(html).toContain("Save Draft");
     expect(html).toContain("disabled:opacity-100");
     expect(html).toContain("disabled:bg-muted/20");
   });

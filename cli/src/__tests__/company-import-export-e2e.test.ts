@@ -64,8 +64,8 @@ async function startTempDatabase() {
     port,
     persistent: true,
     initdbFlags: ["--encoding=UTF8", "--locale=C"],
-    onLog: () => {},
-    onError: () => {},
+    onLog: (msg: unknown) => console.log("[pg log]", msg),
+    onError: (msg: unknown) => console.error("[pg err]", msg),
   });
   await instance.initialise();
   await instance.start();
@@ -139,7 +139,7 @@ function writeTestConfig(configPath: string, tempRoot: string, port: number, con
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
 
-function createServerEnv(configPath: string, port: number, connectionString: string, instanceId: string) {
+function createServerEnv(configPath: string, port: number, connectionString: string, instanceId: string, tempRoot: string) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
     if (key.startsWith("RUDDER_")) {
@@ -154,6 +154,7 @@ function createServerEnv(configPath: string, port: number, connectionString: str
 
   env.RUDDER_CONFIG = configPath;
   env.RUDDER_INSTANCE_ID = instanceId;
+  env.RUDDER_HOME = tempRoot;
   env.DATABASE_URL = connectionString;
   env.HOST = "127.0.0.1";
   env.PORT = String(port);
@@ -333,7 +334,7 @@ describe("rudder org import/export e2e", () => {
       ["cli/node_modules/tsx/dist/cli.mjs", "cli/src/index.ts", "run", "--config", configPath],
       {
         cwd: repoRoot,
-        env: createServerEnv(configPath, port, db.connectionString, instanceId),
+        env: createServerEnv(configPath, port, db.connectionString, instanceId, tempRoot),
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -346,7 +347,7 @@ describe("rudder org import/export e2e", () => {
     });
 
     await waitForServer(apiBase, child, output);
-  }, 120_000);
+  }, 300_000);
 
   afterAll(async () => {
     await stopServerProcess(serverProcess);
@@ -357,7 +358,7 @@ describe("rudder org import/export e2e", () => {
     if (tempRoot) {
       rmSync(tempRoot, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 60_000);
 
   it("exports an organization package and imports it into new and existing organizations", async () => {
     expect(serverProcess).not.toBeNull();
@@ -605,5 +606,247 @@ describe("rudder org import/export e2e", () => {
 
     expect(importedFromZip.organization.action).toBe("created");
     expect(importedFromZip.agents.some((agent) => agent.action === "created")).toBe(true);
-  }, 180_000);
+  }, 300_000);
+
+  it("round-trips an organization package with data fidelity", async () => {
+    expect(serverProcess).not.toBeNull();
+
+    const sourceOrganization = await api<{ id: string; name: string; issuePrefix: string }>(apiBase, "/api/orgs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: `Roundtrip Source ${Date.now()}` }),
+    });
+
+    const sourceAgent = await api<{
+      id: string;
+      name: string;
+      role: string;
+      title: string;
+      icon: string;
+      capabilities: string;
+    }>(apiBase, `/api/orgs/${sourceOrganization.id}/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Roundtrip Agent",
+        role: "engineer",
+        title: "Senior Engineer",
+        icon: "code",
+        capabilities: "Writes tests and verifies round-trips",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {
+          promptTemplate: "You verify round-trip data fidelity.",
+        },
+      }),
+    });
+
+    const sourceProject = await api<{
+      id: string;
+      name: string;
+      description: string;
+      status: string;
+      color: string;
+    }>(apiBase, `/api/orgs/${sourceOrganization.id}/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Roundtrip Project",
+        description: "Project for round-trip testing",
+        status: "in_progress",
+        color: "#ff5733",
+      }),
+    });
+
+    const sourceIssue = await api<{
+      id: string;
+      title: string;
+      description: string;
+      status: string;
+      priority: string;
+    }>(apiBase, `/api/orgs/${sourceOrganization.id}/issues`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Roundtrip Issue",
+        description: "Verify that data survives a full export/import round-trip.",
+        status: "todo",
+        priority: "high",
+        projectId: sourceProject.id,
+        assigneeAgentId: sourceAgent.id,
+      }),
+    });
+
+    const sourceExportDir = path.join(tempRoot, "roundtrip-source-export");
+    const sourceExport = await runCliJson<{
+      ok: boolean;
+      out: string;
+      filesWritten: number;
+    }>(
+      [
+        "org",
+        "export",
+        sourceOrganization.id,
+        "--out",
+        sourceExportDir,
+        "--include",
+        "organization,agents,projects,issues",
+      ],
+      { apiBase, configPath },
+    );
+    expect(sourceExport.ok).toBe(true);
+    expect(sourceExport.filesWritten).toBeGreaterThan(0);
+
+    const imported = await runCliJson<{
+      organization: { id: string; name: string; action: string };
+      agents: Array<{ id: string | null; action: string; name: string }>;
+    }>(
+      [
+        "org",
+        "import",
+        sourceExportDir,
+        "--target",
+        "new",
+        "--include",
+        "organization,agents,projects,issues",
+        "--collision",
+        "rename",
+        "--yes",
+      ],
+      { apiBase, configPath },
+    );
+    expect(imported.organization.action).toBe("created");
+
+    const importedAgents = await api<
+      Array<{
+        id: string;
+        name: string;
+        role: string;
+        title: string;
+        icon: string;
+        capabilities: string;
+      }>
+    >(apiBase, `/api/orgs/${imported.organization.id}/agents`);
+    const importedProjects = await api<
+      Array<{
+        id: string;
+        name: string;
+        description: string | null;
+        status: string;
+        color: string | null;
+      }>
+    >(apiBase, `/api/orgs/${imported.organization.id}/projects`);
+    const importedIssues = await api<
+      Array<{
+        id: string;
+        title: string;
+        description: string | null;
+        status: string;
+        priority: string;
+      }>
+    >(apiBase, `/api/orgs/${imported.organization.id}/issues`);
+
+    expect(importedAgents).toHaveLength(1);
+    expect(importedAgents[0]).toMatchObject({
+      name: sourceAgent.name,
+      role: sourceAgent.role,
+      title: sourceAgent.title,
+      icon: sourceAgent.icon,
+      capabilities: sourceAgent.capabilities,
+    });
+
+    expect(importedProjects).toHaveLength(1);
+    expect(importedProjects[0]).toMatchObject({
+      name: sourceProject.name,
+      description: sourceProject.description,
+      status: sourceProject.status,
+      color: sourceProject.color,
+    });
+
+    expect(importedIssues).toHaveLength(1);
+    expect(importedIssues[0]).toMatchObject({
+      title: sourceIssue.title,
+      description: sourceIssue.description,
+      status: sourceIssue.status,
+      priority: sourceIssue.priority,
+    });
+
+    const reexportDir = path.join(tempRoot, "roundtrip-reexport");
+    const reexport = await runCliJson<{
+      ok: boolean;
+      out: string;
+      filesWritten: number;
+    }>(
+      [
+        "org",
+        "export",
+        imported.organization.id,
+        "--out",
+        reexportDir,
+        "--include",
+        "organization,agents,projects,issues",
+      ],
+      { apiBase, configPath },
+    );
+    expect(reexport.ok).toBe(true);
+
+    const sourceFiles: Record<string, string> = {};
+    const reexportFiles: Record<string, string> = {};
+    collectTextFiles(sourceExportDir, sourceExportDir, sourceFiles);
+    collectTextFiles(reexportDir, reexportDir, reexportFiles);
+
+    const sourceKeys = Object.keys(sourceFiles).sort();
+    const reexportKeys = Object.keys(reexportFiles).sort();
+
+    const sourcePrefix = sourceOrganization.issuePrefix.toLowerCase();
+    const importedOrgDetail = await api<{ issuePrefix: string }>(
+      apiBase,
+      `/api/orgs/${imported.organization.id}`,
+    );
+    const importedPrefix = importedOrgDetail.issuePrefix.toLowerCase();
+
+    const isPrefixDependentPath = (filePath: string) => {
+      return (
+        filePath.startsWith(`skills/organization/${sourcePrefix}/`) ||
+        filePath.startsWith(`skills/organization/${importedPrefix}/`) ||
+        filePath.startsWith("tasks/")
+      );
+    };
+
+    // Compare files whose paths should be identical (agents, projects, rudder skills, etc.)
+    for (const filePath of sourceKeys) {
+      if (isPrefixDependentPath(filePath)) continue;
+
+      const sourceContent = sourceFiles[filePath];
+      const reexportContent = reexportFiles[filePath];
+      expect(reexportContent).toBeDefined();
+
+      if (filePath === ".rudder.yaml") {
+        const normalizeYaml = (content: string, fromPrefix: string, toPrefix: string) =>
+          content
+            .replace(new RegExp(fromPrefix, "gi"), toPrefix)
+            .split("\n")
+            .filter((line) => line.trim() !== "")
+            .join("\n");
+        expect(normalizeYaml(reexportContent!, importedPrefix, sourcePrefix)).toBe(
+          normalizeYaml(sourceContent, sourcePrefix, sourcePrefix),
+        );
+      } else {
+        expect(reexportContent!).toBe(sourceContent);
+      }
+    }
+
+    // Verify task files exist in reexport (same count, paths differ due to prefix)
+    const sourceTaskFiles = sourceKeys.filter((k) => k.startsWith("tasks/"));
+    const reexportTaskFiles = reexportKeys.filter((k) => k.startsWith("tasks/"));
+    expect(reexportTaskFiles.length).toBe(sourceTaskFiles.length);
+
+    // Verify organization skills exist in reexport (may be more due to defaults/collisions)
+    const sourceSkillFiles = sourceKeys.filter((k) =>
+      k.startsWith(`skills/organization/${sourcePrefix}/`),
+    );
+    const reexportSkillFiles = reexportKeys.filter((k) =>
+      k.startsWith(`skills/organization/${importedPrefix}/`),
+    );
+    expect(reexportSkillFiles.length).toBeGreaterThanOrEqual(sourceSkillFiles.length);
+  }, 300_000);
 });

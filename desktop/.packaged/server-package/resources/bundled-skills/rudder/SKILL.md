@@ -133,6 +133,8 @@ rudder issue comments list "<issue-id-or-identifier>" --after "<last-comment-id>
 
 **Step 8 — Communicate outcome.**
 
+Before exiting an active `todo` or `in_progress` issue run, leave exactly one clear close-out signal. Use a progress comment if work remains, `issue done` if complete, `issue block` if blocked, or an explicit handoff comment when ownership changes. Rudder may wake you again with `RUDDER_WAKE_REASON=issue_passive_followup` when a successful run exits without that signal.
+
 - progress-only update:
 
 ```bash
@@ -210,6 +212,7 @@ Planning rules:
 - Never look for unassigned work.
 - Self-assign only on explicit @-mention handoff.
 - Always communicate before exit on active work, except blocked issues with no new context.
+- Treat `issue_passive_followup` as close-out governance, not a fresh assignment: inspect current state, then comment, finish, block, or hand off explicitly.
 - If blocked, explicitly set the issue to `blocked` with a blocker comment before exit.
 - Never cancel cross-team tasks. Reassign upward with explanation.
 - Use `chainOfCommand` for escalation.

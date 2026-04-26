@@ -39,7 +39,7 @@
     "dev": "tsx src/index.ts",
     "dev:watch": "cross-env RUDDER_MIGRATION_PROMPT=never RUDDER_MIGRATION_AUTO_APPLY=true tsx watch --ignore ../ui/node_modules --ignore ../ui/.vite --ignore ../ui/dist src/index.ts",
     "prepare:ui-dist": "bash ../scripts/prepare-server-ui-dist.sh",
-    "build": "tsc && mkdir -p dist/onboarding-assets && cp -R src/onboarding-assets/. dist/onboarding-assets/",
+    "build": "node ../scripts/build-tsc-copy-assets.mjs --copy src/onboarding-assets dist/onboarding-assets",
     "prepack": "pnpm run prepare:ui-dist",
     "postpack": "rm -rf ui-dist",
     "clean": "rm -rf dist",

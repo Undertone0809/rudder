@@ -40,8 +40,9 @@ import { queryKeys } from "@/lib/queryKeys";
 import { relativeTime } from "@/lib/utils";
 import { readRecentIssueIds, resolveRecentIssues } from "@/lib/recent-issues";
 import {
+  deleteIssueDraft,
   ISSUE_DRAFT_CHANGED_EVENT,
-  summarizeIssueDraft,
+  summarizeIssueDrafts,
 } from "@/lib/new-issue-dialog";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { MessengerContextSidebar } from "@/components/MessengerContextSidebar";
@@ -338,7 +339,7 @@ export function ThreeColumnContextSidebar() {
   }, [liveRuns]);
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  const [issueDraftSummary, setIssueDraftSummary] = useState(() => summarizeIssueDraft(selectedOrganizationId));
+  const [issueDraftSummaries, setIssueDraftSummaries] = useState(() => summarizeIssueDrafts(selectedOrganizationId));
   const [recentIssueIds, setRecentIssueIds] = useState<string[]>(() => readRecentIssueIds(selectedOrganizationId));
   const starredIssueRefs = useMemo(() => [...followedIssueIds], [followedIssueIds]);
   const recentIssueRefs = useMemo(
@@ -398,21 +399,36 @@ export function ThreeColumnContextSidebar() {
   }, [location.key, selectedOrganizationId]);
 
   useEffect(() => {
-    const refreshIssueDraftSummary = () => {
-      setIssueDraftSummary(summarizeIssueDraft(selectedOrganizationId));
+    const refreshIssueDraftSummaries = () => {
+      setIssueDraftSummaries(summarizeIssueDrafts(selectedOrganizationId));
     };
-    refreshIssueDraftSummary();
+    refreshIssueDraftSummaries();
     if (typeof window === "undefined") return;
-    window.addEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummary);
-    window.addEventListener("storage", refreshIssueDraftSummary);
+    window.addEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummaries);
+    window.addEventListener("storage", refreshIssueDraftSummaries);
     return () => {
-      window.removeEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummary);
-      window.removeEventListener("storage", refreshIssueDraftSummary);
+      window.removeEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummaries);
+      window.removeEventListener("storage", refreshIssueDraftSummaries);
     };
   }, [selectedOrganizationId]);
 
   const closeMobileSidebar = () => {
     if (isMobile) setSidebarOpen(false);
+  };
+
+  const openIssueDraft = (draftId: string | null | undefined) => {
+    if (!draftId) return;
+    openNewIssue({ draftId });
+    closeMobileSidebar();
+  };
+
+  const removeIssueDraft = (draftId: string | null | undefined, draftTitle?: string) => {
+    if (!draftId) return;
+    const label = draftTitle?.trim() || "Untitled issue draft";
+    const confirmed = window.confirm(`Delete draft issue "${label}"? This cannot be undone.`);
+    if (!confirmed) return;
+    deleteIssueDraft(draftId);
+    pushToast({ title: "Draft issue deleted", tone: "success" });
   };
 
   const refreshChatList = async (chatId?: string) => {
@@ -491,13 +507,17 @@ export function ThreeColumnContextSidebar() {
       >
         <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
         <SectionLabel>Issues</SectionLabel>
-        {issueDraftSummary ? (
+        {issueDraftSummaries.length === 1 ? (
           <button
             type="button"
             data-testid="issue-draft-sidebar-entry"
+            title="Right-click to delete draft"
             onClick={() => {
-              openNewIssue();
-              closeMobileSidebar();
+              openIssueDraft(issueDraftSummaries[0]?.id);
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              removeIssueDraft(issueDraftSummaries[0]?.id, issueDraftSummaries[0]?.title);
             }}
             className={cn(
               "mx-1.5 mt-2 rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] px-3 py-2 text-left transition-[background-color,border-color,color]",
@@ -507,13 +527,68 @@ export function ThreeColumnContextSidebar() {
             <div className="flex items-center gap-3">
               <PencilLine className="h-4 w-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0">
-                <div className="truncate text-sm font-medium">Draft Issue</div>
+                <div className="truncate text-sm font-medium">
+                  Draft Issues{issueDraftSummaries.length > 1 ? ` (${issueDraftSummaries.length})` : ""}
+                </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  {issueDraftSummary.title}
+                  {issueDraftSummaries[0]?.title}
                 </div>
               </div>
             </div>
           </button>
+        ) : issueDraftSummaries.length > 1 ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid="issue-draft-sidebar-entry"
+                className={cn(
+                  "mx-1.5 mt-2 rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] px-3 py-2 text-left transition-[background-color,border-color,color]",
+                  "bg-[color:color-mix(in_oklab,var(--surface-proposal)_64%,transparent)] text-foreground hover:border-[color:var(--border-strong)] hover:bg-[color:color-mix(in_oklab,var(--surface-proposal)_86%,transparent)]",
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <PencilLine className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">
+                      Draft Issues ({issueDraftSummaries.length})
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {issueDraftSummaries[0]?.title}
+                    </div>
+                  </div>
+                  <MoreHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </div>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-72 max-h-80 overflow-y-auto">
+              {issueDraftSummaries.map((draft) => (
+                <DropdownMenuItem
+                  key={draft.id}
+                  data-testid="issue-draft-menu-item"
+                  title="Right-click to delete draft"
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    openIssueDraft(draft.id);
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    removeIssueDraft(draft.id, draft.title);
+                  }}
+                  className="items-start gap-3 py-2"
+                >
+                  <PencilLine className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-foreground">{draft.title}</div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {draft.description || `${draft.status} / ${draft.priority}`}
+                    </div>
+                  </div>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         ) : null}
         <SlidingContextNav
           activeIndex={activeIssueContextIndex}
