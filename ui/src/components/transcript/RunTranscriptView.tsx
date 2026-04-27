@@ -1224,6 +1224,14 @@ export function normalizeTranscript(entries: TranscriptEntry[], streaming: boole
     }
   }
 
+  if (!streaming) {
+    for (const block of blocks) {
+      if ((block.type === "tool" || block.type === "activity") && block.status === "running") {
+        block.status = "completed";
+      }
+    }
+  }
+
   return groupCommandBlocks(blocks);
 }
 

@@ -23,12 +23,37 @@ describe("RunTranscriptView", () => {
       },
     ];
 
-    const blocks = normalizeTranscript(entries, false);
+    const blocks = normalizeTranscript(entries, true);
 
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({
       type: "command_group",
       items: [{ result: "file-a\nfile-b", status: "running" }],
+    });
+  });
+
+  it("closes unmatched tool calls once the run is no longer streaming", () => {
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "tool_call",
+        ts: "2026-03-12T00:00:00.000Z",
+        name: "command_execution",
+        toolUseId: "cmd_1",
+        input: { command: "ls -la" },
+      },
+      {
+        kind: "stdout",
+        ts: "2026-03-12T00:00:01.000Z",
+        text: "file-a\nfile-b",
+      },
+    ];
+
+    const blocks = normalizeTranscript(entries, false);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      type: "command_group",
+      items: [{ result: "file-a\nfile-b", status: "completed" }],
     });
   });
 
@@ -595,5 +620,52 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Explored 2 files");
     expect(html).not.toContain("para-memory-files/SKILL.md");
     expect(html).not.toContain("rudder-create-agent/SKILL.md");
+  });
+
+  it("does not keep a detail model turn running after a terminal run with missing tool results", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="detail"
+          streaming={false}
+          entries={[
+            {
+              kind: "init",
+              ts: "2026-03-12T00:00:00.000Z",
+              model: "codex",
+              sessionId: "session-1",
+            },
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:02.000Z",
+              text: "I checked the repository and completed the work.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:03.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-open-1",
+              input: { command: "rg AGENTS.md" },
+            },
+            {
+              kind: "stdout",
+              ts: "2026-03-12T00:00:04.000Z",
+              text: "AGENTS.md",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Model turn 1");
+    expect(html).toContain("Completed");
+    expect(html).not.toContain("Running");
+    expect(html).not.toContain("animate-spin");
   });
 });
