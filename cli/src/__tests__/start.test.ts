@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -18,6 +18,7 @@ import {
   buildForceQuitCommand,
   buildLinuxDesktopEntry,
   compareStableSemver,
+  copyPortableAppBundle,
   getCliUpdateNotice,
   isInstalledDesktopCurrent,
   isPersistentCliVersionCurrent,
@@ -211,6 +212,29 @@ describe("persistent CLI install helpers", () => {
 });
 
 describe("desktop start command helpers", () => {
+  it("copies portable app bundles without rewriting relative symlinks", async () => {
+    if (process.platform === "win32") return;
+
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-copy-bundle-test."));
+    try {
+      const source = path.join(root, "source");
+      const destination = path.join(root, "destination");
+      const packagePath = path.join(source, "node_modules", ".pnpm", "pkg@1.0.0", "node_modules", "pkg");
+      const symlinkPath = path.join(source, "node_modules", "pkg");
+      await mkdir(packagePath, { recursive: true });
+      await writeFile(path.join(packagePath, "index.js"), "export {};\n");
+      await symlink(".pnpm/pkg@1.0.0/node_modules/pkg", symlinkPath);
+
+      await copyPortableAppBundle(source, destination);
+
+      const copiedSymlink = path.join(destination, "node_modules", "pkg");
+      expect(await readlink(copiedSymlink)).toBe(".pnpm/pkg@1.0.0/node_modules/pkg");
+      await access(path.join(copiedSymlink, "index.js"));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("resolves the current CLI version from npm execution metadata", () => {
     expect(
       resolveCurrentCliVersion({

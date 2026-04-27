@@ -599,16 +599,20 @@ async function installPortableDesktop(
     await extractZip(installerPath, extractDir, target);
     if (target.platform === "macos") {
       const appSource = await findMacApp(extractDir);
-      await cp(appSource, paths.appPath, { recursive: true });
+      await copyPortableAppBundle(appSource, paths.appPath);
       return;
     }
 
     const appSource = await findWindowsAppDir(extractDir);
     await mkdir(path.dirname(paths.installRoot), { recursive: true });
-    await cp(appSource, paths.installRoot, { recursive: true });
+    await copyPortableAppBundle(appSource, paths.installRoot);
   } finally {
     await rm(extractDir, { recursive: true, force: true });
   }
+}
+
+export async function copyPortableAppBundle(sourcePath: string, destinationPath: string): Promise<void> {
+  await cp(sourcePath, destinationPath, { recursive: true, verbatimSymlinks: true });
 }
 
 async function removeMacQuarantine(paths: DesktopInstallPaths, target: DesktopAssetTarget): Promise<void> {
