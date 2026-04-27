@@ -2227,6 +2227,15 @@ function ChatWorkspace() {
   const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined);
   const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id);
   const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id);
+  const agentSelectionLocked = Boolean(
+    selectedConversation
+    && (
+      selectedConversation.lastMessageAt
+      || rawMessages.length > 0
+      || activeStream
+      || activeSendInFlight
+    ),
+  );
   const activeEditCutoffMs = activeStream?.editedFromCreatedAt
     ? activeStream.editedFromCreatedAt.getTime()
     : null;
@@ -2258,6 +2267,13 @@ function ChatWorkspace() {
       || !rawMessages.some((message) => message.id === activeStream.userMessageId)
     ),
   );
+
+  useEffect(() => {
+    if (agentSelectionLocked) {
+      setAgentMenuOpen(false);
+    }
+  }, [agentSelectionLocked]);
+
   const loadError =
     conversationsQuery.error
     ?? conversationQuery.error
@@ -2415,6 +2431,11 @@ function ChatWorkspace() {
   }, [draft, pushToast]);
 
   const applyPreferredAgent = (value: string) => {
+    if (agentSelectionLocked) {
+      setAgentMenuOpen(false);
+      return;
+    }
+
     setDraftPreferredAgentId(value);
     setAgentMenuOpen(false);
     if (selectedConversation) {
@@ -2752,11 +2773,27 @@ function ChatWorkspace() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <DropdownMenu open={agentMenuOpen} onOpenChange={setAgentMenuOpen}>
+          <DropdownMenu
+            open={agentMenuOpen}
+            onOpenChange={(open) => {
+              if (agentSelectionLocked) {
+                setAgentMenuOpen(false);
+                return;
+              }
+              setAgentMenuOpen(open);
+            }}
+          >
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)] data-[state=open]:bg-[color:var(--surface-active)]"
+                data-testid="chat-agent-selector"
+                disabled={agentSelectionLocked}
+                className={cn(
+                  "chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center rounded-full px-3 py-1.5 text-xs font-medium",
+                  agentSelectionLocked
+                    ? "cursor-default"
+                    : "transition-colors hover:bg-[color:var(--surface-active)] data-[state=open]:bg-[color:var(--surface-active)]",
+                )}
               >
                 <span className="min-w-0 truncate">{agentPillLabel}</span>
               </button>
