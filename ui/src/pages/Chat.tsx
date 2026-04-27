@@ -36,7 +36,7 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import {
@@ -487,22 +487,26 @@ function ChatAttachmentPreviewDialog({
   }, [preview?.src]);
 
   const dialogWidth = naturalSize
-    ? `min(calc(100vw - 3rem), ${naturalSize.width + 32}px, 1440px)`
-    : "min(calc(100vw - 3rem), 1440px)";
+    ? `min(calc(100vw - 1.5rem), ${naturalSize.width}px, 1440px)`
+    : "min(calc(100vw - 1.5rem), 1440px)";
 
   return (
     <Dialog open={preview !== null} onOpenChange={onOpenChange}>
       <DialogContent
-        showCloseButton
-        className="rudder-markdown-editor-image-preview-panel gap-3 border-[color:var(--border-soft)] bg-[color:var(--surface-page)] p-3 shadow-[var(--shadow-lg)]"
-        style={{ width: dialogWidth, maxWidth: dialogWidth }}
+        showCloseButton={false}
+        className="rudder-markdown-editor-image-preview-panel top-[50%] w-fit translate-y-[-50%] border-0 bg-transparent p-0 shadow-none"
+        style={{ maxWidth: dialogWidth }}
       >
         <DialogTitle className="sr-only">{preview?.name ?? "Attachment preview"}</DialogTitle>
         {preview ? (
           <div
             data-testid="chat-image-preview-dialog"
-            className="rudder-markdown-editor-image-preview-media flex items-center justify-center overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-black/3"
+            className="rudder-markdown-editor-image-preview-media relative flex w-fit max-w-full items-center justify-center overflow-hidden"
           >
+            <DialogClose className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-sm bg-black/55 text-white shadow-[0_6px_18px_rgb(0_0_0/0.28)] transition-colors hover:bg-black/70 focus:outline-none focus:ring-2 focus:ring-white/80">
+              <X className="size-4" aria-hidden="true" />
+              <span className="sr-only">Close image preview</span>
+            </DialogClose>
             <img
               src={preview.src}
               alt={preview.name}

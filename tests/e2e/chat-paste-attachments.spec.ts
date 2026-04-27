@@ -92,6 +92,38 @@ test("pastes clipboard images and files into chat as pending attachments", async
   await expect(previewDialog).toBeVisible({ timeout: 15_000 });
   const previewImage = previewDialog.getByAltText("clipboard-image.png");
   await expect(previewImage).toBeVisible();
+  const previewChromeMetrics = await page.getByRole("dialog").evaluate((dialog) => {
+    const image = dialog.querySelector('[data-testid="chat-image-preview-dialog"] img');
+    const close = dialog.querySelector('[data-slot="dialog-close"]');
+    if (!(image instanceof HTMLImageElement) || !(close instanceof HTMLElement)) {
+      throw new Error("Expected image preview content and close button");
+    }
+    const dialogRect = dialog.getBoundingClientRect();
+    const imageRect = image.getBoundingClientRect();
+    const closeRect = close.getBoundingClientRect();
+    const style = window.getComputedStyle(dialog);
+
+    return {
+      backgroundColor: style.backgroundColor,
+      borderTopWidth: style.borderTopWidth,
+      boxShadow: style.boxShadow,
+      paddingTop: style.paddingTop,
+      widthDelta: Math.abs(dialogRect.width - imageRect.width),
+      heightDelta: Math.abs(dialogRect.height - imageRect.height),
+      closeInsideImage:
+        closeRect.top >= imageRect.top
+        && closeRect.right <= imageRect.right
+        && closeRect.bottom <= imageRect.bottom
+        && closeRect.left >= imageRect.left,
+    };
+  });
+  expect(previewChromeMetrics.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+  expect(previewChromeMetrics.borderTopWidth).toBe("0px");
+  expect(previewChromeMetrics.boxShadow).toBe("none");
+  expect(previewChromeMetrics.paddingTop).toBe("0px");
+  expect(previewChromeMetrics.widthDelta).toBeLessThan(2);
+  expect(previewChromeMetrics.heightDelta).toBeLessThan(2);
+  expect(previewChromeMetrics.closeInsideImage).toBe(true);
   const previewMetrics = await previewImage.evaluate((image) => {
     const element = image as HTMLImageElement;
     const rect = element.getBoundingClientRect();

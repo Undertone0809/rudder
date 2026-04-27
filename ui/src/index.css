@@ -1630,8 +1630,8 @@ a.rudder-skill-token {
   display: block;
   width: auto !important;
   height: auto !important;
-  max-width: min(calc(100vw - 3rem), 1408px) !important;
-  max-height: calc(100vh - 6.5rem) !important;
+  max-width: min(calc(100vw - 1.5rem), 1440px) !important;
+  max-height: calc(100vh - 1.5rem) !important;
   aspect-ratio: auto !important;
   object-fit: contain !important;
 }

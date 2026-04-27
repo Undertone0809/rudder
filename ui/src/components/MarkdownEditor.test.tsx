@@ -34,10 +34,18 @@ vi.mock("@/components/ui/dialog", () => ({
   }) => (open ? <div data-testid="mock-dialog-root">{children}</div> : null),
   DialogContent: ({
     children,
+    showCloseButton: _showCloseButton,
     ...props
   }: {
     children: import("react").ReactNode;
-  }) => <div {...props}>{children}</div>,
+    showCloseButton?: boolean;
+  }) => <div data-slot="dialog-content" {...props}>{children}</div>,
+  DialogClose: ({
+    children,
+    ...props
+  }: {
+    children: import("react").ReactNode;
+  }) => <button data-slot="dialog-close" {...props}>{children}</button>,
   DialogTitle: ({ children }: { children: import("react").ReactNode }) => <div>{children}</div>,
 }));
 
@@ -225,11 +233,20 @@ describe("MarkdownEditor", () => {
       image?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
     });
 
-    const preview = document.body.querySelector('[data-testid="markdown-editor-image-preview-dialog"] img');
+    const previewRoot = document.body.querySelector('[data-testid="markdown-editor-image-preview-dialog"]');
+    const preview = previewRoot?.querySelector("img");
     expect(preview).toBeTruthy();
     expect(new URL(preview?.getAttribute("src") ?? "", "http://localhost:3000").pathname).toBe(
       "/api/attachments/test/content",
     );
+    const dialogContent = previewRoot?.closest('[data-slot="dialog-content"]');
+    expect(dialogContent?.className).toContain("border-0");
+    expect(dialogContent?.className).toContain("bg-transparent");
+    expect(dialogContent?.className).toContain("p-0");
+    expect(dialogContent?.className).toContain("shadow-none");
+    const closeButton = previewRoot?.querySelector('[data-slot="dialog-close"]');
+    expect(closeButton).toBeTruthy();
+    expect(closeButton?.parentElement).toBe(previewRoot);
     expect(document.body.textContent).toContain("Architecture diagram");
   });
 
