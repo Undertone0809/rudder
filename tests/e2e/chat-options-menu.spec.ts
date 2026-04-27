@@ -113,6 +113,20 @@ test.describe("Chat options menu", () => {
 
     await page.goto("/chat");
     await expect(selector).toContainText("Launch Context", { timeout: 15_000 });
+    const toolbar = page.getByTestId("chat-composer-toolbar");
+    await expect(toolbar.getByTestId("chat-project-selector")).toBeVisible();
+    await expect(toolbar.getByRole("button", { name: "Rudder Copilot", exact: true })).toBeVisible();
+
+    const composerBox = await page.locator(".rudder-mdxeditor-content").first().boundingBox();
+    const selectorBox = await selector.boundingBox();
+    const agentBox = await toolbar.getByRole("button", { name: "Rudder Copilot", exact: true }).boundingBox();
+    expect(composerBox).not.toBeNull();
+    expect(selectorBox).not.toBeNull();
+    expect(agentBox).not.toBeNull();
+    expect(selectorBox!.y).toBeGreaterThan(composerBox!.y);
+    expect(
+      Math.abs((selectorBox!.y + selectorBox!.height / 2) - (agentBox!.y + agentBox!.height / 2)),
+    ).toBeLessThan(10);
 
     await selector.click();
     await page.getByRole("menuitemradio", { name: "No project" }).click();

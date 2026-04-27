@@ -167,7 +167,11 @@ describe("heartbeat paused wakeups", () => {
       status,
       agentRuntimeType: "codex_local",
       agentRuntimeConfig: {},
-      runtimeConfig: {},
+      runtimeConfig: {
+        heartbeat: {
+          maxConcurrentRuns: 1,
+        },
+      },
       permissions: {},
     });
 

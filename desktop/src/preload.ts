@@ -63,6 +63,11 @@ type DesktopPathPickResult = {
   path: string | null;
 };
 
+type DesktopIdeTarget = {
+  id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij";
+  label: string;
+};
+
 let desktopCapabilitiesPromise: Promise<DesktopCapabilities> | null = null;
 
 async function getDesktopCapabilities(): Promise<DesktopCapabilities> {
@@ -99,6 +104,9 @@ contextBridge.exposeInMainWorld("desktopShell", {
     };
   },
   openPath: (targetPath: string) => ipcRenderer.invoke("desktop:open-path", targetPath),
+  listAvailableIdes: () => ipcRenderer.invoke("desktop:list-available-ides") as Promise<DesktopIdeTarget[]>,
+  openWorkspaceFileInIde: (rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]) =>
+    ipcRenderer.invoke("desktop:open-workspace-file-in-ide", { rootPath, filePath, ideId }) as Promise<void>,
   copyText: (value: string) => ipcRenderer.invoke("desktop:copy-text", value),
   setAppearance: (theme: "light" | "dark" | "system") => ipcRenderer.invoke("desktop:set-appearance", theme),
   restart: () => ipcRenderer.invoke("desktop:restart"),
@@ -123,6 +131,8 @@ declare global {
       getBootState(): Promise<BootState>;
       onBootState(listener: (state: BootState) => void): () => void;
       openPath(targetPath: string): Promise<void>;
+      listAvailableIdes(): Promise<DesktopIdeTarget[]>;
+      openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
       copyText(value: string): Promise<void>;
       setAppearance(theme: "light" | "dark" | "system"): Promise<void>;
       restart(): Promise<void>;

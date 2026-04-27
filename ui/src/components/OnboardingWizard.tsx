@@ -1,6 +1,10 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AgentRuntimeEnvironmentTestResult, Organization } from "@rudderhq/shared";
+import {
+  AGENT_RUN_CONCURRENCY_DEFAULT,
+  type AgentRuntimeEnvironmentTestResult,
+  type Organization,
+} from "@rudderhq/shared";
 import { useLocation, useNavigate, useParams } from "@/lib/router";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
@@ -739,7 +743,7 @@ export function OnboardingWizard() {
             intervalSec: 3600,
             wakeOnDemand: true,
             cooldownSec: 10,
-            maxConcurrentRuns: 1
+            maxConcurrentRuns: AGENT_RUN_CONCURRENCY_DEFAULT
           }
         }
       };

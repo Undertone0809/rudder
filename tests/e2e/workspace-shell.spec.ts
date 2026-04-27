@@ -105,6 +105,48 @@ async function expectDualCardWorkspace(page: Page) {
   expect(gutter).toBeLessThanOrEqual(14);
 }
 
+async function installDesktopShellWorkspaceIdeStub(page: Page) {
+  await page.addInitScript(() => {
+    const ideCalls: Array<{ rootPath: string; filePath: string; ideId?: string }> = [];
+    Object.defineProperty(window, "__rudderWorkspaceIdeCalls", {
+      configurable: true,
+      value: ideCalls,
+      writable: false,
+    });
+
+    const desktopShell = {
+      getBootState: async () => ({}),
+      onBootState: () => () => {},
+      openPath: async () => {},
+      listAvailableIdes: async () => [{ id: "cursor", label: "Cursor" }],
+      openWorkspaceFileInIde: async (rootPath: string, filePath: string, ideId?: string) => {
+        ideCalls.push({ rootPath, filePath, ideId });
+      },
+      copyText: async () => {},
+      setAppearance: async () => {},
+      restart: async () => {},
+      getAppVersion: async () => "0.0.0-test",
+      checkForUpdates: async () => ({
+        status: "unavailable",
+        currentVersion: "0.0.0-test",
+        checkedAt: "1970-01-01T00:00:00.000Z",
+      }),
+      getSystemPermissions: async () => ({}),
+      sendFeedback: async () => {},
+      openExternal: async () => {},
+      openNotificationSettings: async () => ({ opened: false, platform: "darwin" }),
+      setBadgeCount: async () => {},
+      showNotification: async () => {},
+      pickPath: async () => ({ canceled: true, path: null }),
+    };
+
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: desktopShell,
+    });
+  });
+}
+
 test.describe("Workspace shell", () => {
   test("keeps the shared desktop wrapper visually neutral", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
@@ -694,6 +736,7 @@ test.describe("Workspace shell", () => {
     await expect(mainContent.getByRole("button", { name: ".npm", exact: true })).toHaveCount(0);
     await expect(mainContent.getByRole("button", { name: ".nvm", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Save" })).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-open-in-ide-button")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Activate for agents" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "notes.md", exact: true }).click();
@@ -721,6 +764,59 @@ test.describe("Workspace shell", () => {
       path: testInfo.outputPath("workspace-shell-org-files.png"),
       fullPage: true,
     });
+  });
+
+  test("shows an IDE open action in workspaces when the desktop shell exposes a local editor", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-Desktop-IDE-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await fs.writeFile(path.join(resolveOrganizationWorkspaceRoot(organization.id), "notes.md"), "# Shared Notes\n", "utf8");
+    await installDesktopShellWorkspaceIdeStub(page);
+    await gotoOrganizationPath(page, organization, "/workspaces");
+
+    await page.getByRole("button", { name: "notes.md", exact: true }).click();
+    const openInIdeButton = page.getByTestId("org-workspaces-open-in-ide-button");
+    await expect(openInIdeButton).toBeVisible();
+    await expect(openInIdeButton).toHaveAttribute("aria-label", "Open in Cursor");
+
+    await openInIdeButton.click();
+    await expect(page.getByText("Opened in IDE")).toBeVisible();
+
+    const ideCalls = await page.evaluate(() =>
+      (window as typeof window & {
+        __rudderWorkspaceIdeCalls?: Array<{ rootPath: string; filePath: string; ideId?: string }>;
+      }).__rudderWorkspaceIdeCalls ?? [],
+    );
+    expect(ideCalls).toEqual([
+      {
+        rootPath: resolveOrganizationWorkspaceRoot(organization.id),
+        filePath: "notes.md",
+        ideId: "cursor",
+      },
+    ]);
+  });
+
+  test("does not show the IDE action for workspace paths that fail file loading", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-Desktop-IDE-Guard-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    await fs.writeFile(path.join(resolveOrganizationWorkspaceRoot(organization.id), "notes.md"), "# Shared Notes\n", "utf8");
+    await installDesktopShellWorkspaceIdeStub(page);
+    await gotoOrganizationPath(page, organization, "/workspaces?path=../outside.md");
+
+    await expect(page.getByText("../outside.md")).toBeVisible();
+    await expect(page.getByText("Loading file…")).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-open-in-ide-button")).toHaveCount(0);
   });
 
   test("renders goals inside the org workspace shell", async ({ page }, testInfo) => {

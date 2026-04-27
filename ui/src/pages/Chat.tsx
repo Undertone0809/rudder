@@ -27,6 +27,7 @@ import {
   type ChatOperationProposalDecisionAction,
   type ChatOperationProposalDecisionStatus,
   type ChatPrimaryIssueSummary,
+  type Issue,
   type MessengerThreadSummary,
   type Project,
 } from "@rudderhq/shared";
@@ -89,6 +90,7 @@ import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
   appendSkillReferencesToDraft,
 } from "@/lib/organization-skill-picker";
+import { formatAssigneeUserLabel } from "@/lib/assignees";
 import { cn, relativeTime } from "@/lib/utils";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useI18n } from "@/context/I18nContext";
@@ -188,6 +190,19 @@ function rememberChatProjectId(orgId: string, projectId: string | null) {
 
 function projectContextId(conversation: ChatConversation | null | undefined) {
   return conversation?.contextLinks.find((link) => link.entityType === "project")?.entityId ?? null;
+}
+
+function issueAssigneeMentionLabel(
+  issue: Pick<Issue, "assigneeAgentId" | "assigneeUserId">,
+  agentById: Map<string, Agent>,
+) {
+  if (issue.assigneeAgentId) {
+    return agentById.get(issue.assigneeAgentId)?.name ?? issue.assigneeAgentId.slice(0, 8);
+  }
+  if (issue.assigneeUserId) {
+    return formatAssigneeUserLabel(issue.assigneeUserId, null) ?? issue.assigneeUserId.slice(0, 8);
+  }
+  return null;
 }
 
 function projectDisplayName(project: Project | null | undefined) {
@@ -1983,9 +1998,16 @@ function ChatWorkspace() {
 
   const stopStreaming = useCallback((chatId: string) => {
     stopRequestedChatIdsRef.current.add(chatId);
+    void chatsApi.stopMessageStream(chatId).catch((error) => {
+      pushToast({
+        title: "Failed to stop streaming",
+        body: error instanceof Error ? error.message : "Try again.",
+        tone: "error",
+      });
+    });
     streamAbortControllersRef.current[chatId]?.abort();
     setStreamDraftForChat(chatId, (current) => (current ? { ...current, state: "stopped" } : current));
-  }, [setStreamDraftForChat]);
+  }, [pushToast, setStreamDraftForChat]);
 
   const sendMessage = async (
     options?: {
@@ -2080,6 +2102,7 @@ function ChatWorkspace() {
       await chatsApi.sendMessageStream(chatId, body, {
         signal: abortController.signal,
         editUserMessageId,
+        files: filesToUpload,
         onEvent: async (event) => {
           if (event.type === "ack") {
             upsertMessages(chatId, [event.userMessage]);
@@ -2087,27 +2110,6 @@ function ChatWorkspace() {
               chatId,
               (current) => (current ? { ...current, userMessageId: event.userMessage.id } : current),
             );
-
-            if (filesToUpload.length > 0) {
-              const uploads = await Promise.allSettled(
-                filesToUpload.map((file) =>
-                  chatsApi.uploadAttachment(selectedOrganizationId, chatId, event.userMessage.id, file),
-                ),
-              );
-              const failedUploads = uploads.filter((result) => result.status === "rejected");
-              if (failedUploads.length > 0) {
-                pushToast({
-                  title: "Some attachments failed to upload",
-                  body: failedUploads[0] instanceof Object && "reason" in failedUploads[0]
-                    ? String(failedUploads[0].reason)
-                    : undefined,
-                  tone: "error",
-                });
-              }
-              if (uploads.some((result) => result.status === "fulfilled")) {
-                await refreshChat(chatId);
-              }
-            }
             return;
           }
 
@@ -2331,6 +2333,14 @@ function ChatWorkspace() {
   );
   const chatSkillsPending = Boolean(activeSkillAgentId) && (organizationSkillsPending || activeAgentSkillsPending);
   const showChatSkillsPicker = Boolean(activeSkillAgentId);
+  const projectById = useMemo(
+    () => new Map((projects ?? []).map((project) => [project.id, project])),
+    [projects],
+  );
+  const agentById = useMemo(
+    () => new Map((agents ?? []).map((agent) => [agent.id, agent])),
+    [agents],
+  );
 
   const mentionOptions = useMemo<MentionOption[]>(() => {
     const options: MentionOption[] = [];
@@ -2353,12 +2363,27 @@ function ChatWorkspace() {
       });
     }
     for (const issue of issues ?? []) {
+      const issueProject = issue.projectId ? projectById.get(issue.projectId) ?? issue.project ?? null : null;
+      const assigneeAgent = issue.assigneeAgentId ? agentById.get(issue.assigneeAgentId) ?? null : null;
+      const issueAssigneeName = issueAssigneeMentionLabel(issue, agentById);
       options.push({
         id: `issue:${issue.id}`,
         name: issue.identifier ? `${issue.identifier} ${issue.title}` : issue.title,
         kind: "issue",
+        searchText: [
+          issue.identifier,
+          issue.title,
+          issue.status,
+          issueProject?.name,
+          issueAssigneeName,
+        ].filter(Boolean).join(" "),
         issueId: issue.id,
         issueIdentifier: issue.identifier,
+        issueStatus: issue.status,
+        issueProjectName: issueProject?.name ?? null,
+        issueProjectColor: issueProject?.color ?? null,
+        issueAssigneeName,
+        issueAssigneeIcon: assigneeAgent?.icon ?? null,
       });
     }
     for (const skill of availableChatSkills) {
@@ -2373,7 +2398,7 @@ function ChatWorkspace() {
       });
     }
     return options;
-  }, [agents, availableChatSkills, issues, projects]);
+  }, [agentById, agents, availableChatSkills, issues, projectById, projects]);
 
   const insertSkillReference = useCallback((entry: (typeof availableChatSkills)[number]) => {
     if (!entry.skillRefLabel || !entry.skillMarkdownTarget) {
@@ -2552,67 +2577,6 @@ function ChatWorkspace() {
         centered ? "mx-auto w-full max-w-3xl" : "w-full",
       )}
     >
-      <div className="mb-1.5 flex min-w-0 items-center gap-1 px-1">
-        <DropdownMenu open={projectMenuOpen} onOpenChange={setProjectMenuOpen}>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              data-testid="chat-project-selector"
-              aria-label={`Project context: ${projectPillLabel}`}
-              className="inline-flex max-w-[min(100%,18rem)] min-w-0 items-center gap-1.5 rounded-[calc(var(--radius-sm)+2px)] px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground data-[state=open]:bg-[color:var(--surface-active)] data-[state=open]:text-foreground"
-            >
-              <Folder className="h-3.5 w-3.5 shrink-0" />
-              <span className="min-w-0 truncate">{projectPillLabel}</span>
-              <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            sideOffset={6}
-            className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1 text-foreground"
-          >
-            <DropdownMenuLabel className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-              Project context
-            </DropdownMenuLabel>
-            <DropdownMenuRadioGroup value={activeProjectId} onValueChange={applyProjectContext}>
-              <DropdownMenuRadioItem
-                value={NO_PROJECT_ID}
-                hideIndicator
-                className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
-              >
-                <span className="project-context-empty-swatch mr-2 h-3 w-3 shrink-0" aria-hidden="true" />
-                <span className="min-w-0 flex-1 truncate">No project</span>
-              </DropdownMenuRadioItem>
-              {visibleProjects.length > 0 ? (
-                <>
-                  <DropdownMenuSeparator className="panel-divider" />
-                  {visibleProjects.map((project) => (
-                    <DropdownMenuRadioItem
-                      key={project.id}
-                      value={project.id}
-                      hideIndicator
-                      className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
-                    >
-                      <span
-                        className="project-context-swatch mr-2 h-3 w-3 shrink-0"
-                        style={projectContextSwatchStyle(project.color)}
-                        aria-hidden="true"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{projectDisplayName(project)}</span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {project.resources.length} resources
-                        </span>
-                      </span>
-                    </DropdownMenuRadioItem>
-                  ))}
-                </>
-              ) : null}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
       <div onPasteCapture={handleComposerPasteCapture}>
         <MarkdownEditor
           ref={composerEditorRef}
@@ -2656,8 +2620,8 @@ function ChatWorkspace() {
         }}
       />
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
             <DropdownMenuTrigger asChild>
               <Button
@@ -2737,6 +2701,65 @@ function ChatWorkspace() {
               >
                 <Link to="/organization/settings">Open chat settings</Link>
               </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu open={projectMenuOpen} onOpenChange={setProjectMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid="chat-project-selector"
+                aria-label={`Project context: ${projectPillLabel}`}
+                className="chat-chip inline-flex max-w-[min(100%,15rem)] min-w-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)] data-[state=open]:bg-[color:var(--surface-active)]"
+              >
+                <Folder className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 truncate">{projectPillLabel}</span>
+                <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              sideOffset={8}
+              className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1 text-foreground"
+            >
+              <DropdownMenuLabel className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                Project context
+              </DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={activeProjectId} onValueChange={applyProjectContext}>
+                <DropdownMenuRadioItem
+                  value={NO_PROJECT_ID}
+                  hideIndicator
+                  className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
+                >
+                  <span className="project-context-empty-swatch mr-2 h-3 w-3 shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate">No project</span>
+                </DropdownMenuRadioItem>
+                {visibleProjects.length > 0 ? (
+                  <>
+                    <DropdownMenuSeparator className="panel-divider" />
+                    {visibleProjects.map((project) => (
+                      <DropdownMenuRadioItem
+                        key={project.id}
+                        value={project.id}
+                        hideIndicator
+                        className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
+                      >
+                        <span
+                          className="project-context-swatch mr-2 h-3 w-3 shrink-0"
+                          style={projectContextSwatchStyle(project.color)}
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">{projectDisplayName(project)}</span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {project.resources.length} resources
+                          </span>
+                        </span>
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </>
+                ) : null}
+              </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
 

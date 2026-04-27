@@ -3,17 +3,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useSearchParams } from "@/lib/router";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { organizationsApi } from "../api/orgs";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
+import { readDesktopShell, type DesktopIdeTarget } from "../lib/desktop-shell";
 import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import {
   ChevronDown,
   ChevronRight,
+  ExternalLink,
   HardDrive,
   Folder,
   FileCode2,
@@ -211,10 +214,33 @@ export function OrganizationWorkspaces() {
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(requestedFilePath);
   const [draftContent, setDraftContent] = useState("");
   const [refreshingWorkspace, setRefreshingWorkspace] = useState(false);
+  const [availableIdes, setAvailableIdes] = useState<DesktopIdeTarget[]>([]);
+  const [openingInIde, setOpeningInIde] = useState(false);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Workspaces" }]);
   }, [setBreadcrumbs]);
+
+  useEffect(() => {
+    const desktopShell = readDesktopShell();
+    if (!desktopShell) {
+      setAvailableIdes([]);
+      return;
+    }
+
+    let cancelled = false;
+    desktopShell.listAvailableIdes()
+      .then((targets) => {
+        if (!cancelled) setAvailableIdes(targets);
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableIdes([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const rootQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", ""),
@@ -334,6 +360,42 @@ export function OrganizationWorkspaces() {
   );
   const hasUnsavedChanges = canEditSelectedFile && draftContent !== (selectedFileDetail?.content ?? "");
   const selectedLanguage = inferLanguageFromPath(selectedFilePath);
+  const primaryIde = availableIdes[0] ?? null;
+  const workspaceRootPath = workspace.rootExists ? workspace.rootPath : null;
+  const hasLoadedSelectedFile = Boolean(
+    selectedFilePath
+    && selectedFileDetail
+    && selectedFileDetail.filePath === selectedFilePath,
+  );
+  const canOpenInIde = Boolean(
+    primaryIde
+    && workspaceRootPath
+    && hasLoadedSelectedFile,
+  );
+
+  async function handleOpenInIde() {
+    if (!primaryIde || !selectedFilePath || !workspaceRootPath || !hasLoadedSelectedFile) return;
+    const desktopShell = readDesktopShell();
+    if (!desktopShell) return;
+
+    setOpeningInIde(true);
+    try {
+      await desktopShell.openWorkspaceFileInIde(workspaceRootPath, selectedFilePath, primaryIde.id);
+      pushToast({
+        title: "Opened in IDE",
+        body: `Opened ${selectedFilePath} in ${primaryIde.label}.`,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to open in IDE",
+        body: error instanceof Error ? error.message : "Could not open the selected workspace file in a local IDE.",
+        tone: "error",
+      });
+    } finally {
+      setOpeningInIde(false);
+    }
+  }
 
   return (
     <div className="flex min-h-full flex-col gap-4">
@@ -392,6 +454,29 @@ export function OrganizationWorkspaces() {
                   <span className="rounded-full border border-border px-2 py-0.5 font-mono">
                     {selectedLanguage}
                   </span>
+                ) : null}
+                {canOpenInIde && primaryIde ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        aria-label={`Open in ${primaryIde.label}`}
+                        data-testid="org-workspaces-open-in-ide-button"
+                        onClick={() => void handleOpenInIde()}
+                        disabled={openingInIde}
+                      >
+                        {openingInIde ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{`Open in ${primaryIde.label}`}</TooltipContent>
+                  </Tooltip>
                 ) : null}
                 <Button
                   type="button"

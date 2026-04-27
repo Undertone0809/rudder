@@ -61,7 +61,8 @@ Representative shape:
     "heartbeat": {
       "enabled": true,
       "intervalSec": 300,
-      "wakeOnDemand": true
+      "wakeOnDemand": true,
+      "maxConcurrentRuns": 3
     }
   },
   "permissions": {
@@ -95,7 +96,8 @@ Request body:
     "heartbeat": {
       "enabled": true,
       "intervalSec": 300,
-      "wakeOnDemand": true
+      "wakeOnDemand": true,
+      "maxConcurrentRuns": 3
     }
   },
   "budgetMonthlyCents": 0,

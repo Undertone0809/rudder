@@ -201,7 +201,7 @@ test.describe("Primary rail create menu", () => {
     await expect(statusTrigger).toHaveCSS("border-top-width", "0px");
 
     await statusTrigger.click();
-    await dialog.getByRole("button", { name: "In Progress" }).click();
+    await page.getByRole("button", { name: "In Progress" }).click();
     await expect(dialog.getByRole("button", { name: "in progress" })).toBeVisible();
 
     await dialog.getByPlaceholder("Project name").fill("Single frame status project");

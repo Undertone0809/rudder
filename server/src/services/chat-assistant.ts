@@ -16,6 +16,7 @@ import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "
 import { agentRunContextService, RUDDER_COPILOT_LABEL, type AgentRunContextAgent } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import { organizationService } from "./orgs.js";
+import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 
 const ORGANIZATION_DEFAULT_CHAT_ADAPTER_TYPES = new Set<AgentRuntimeType>([
   "claude_local",
@@ -137,6 +138,16 @@ function buildPrompt(input: GenerateChatAssistantReplyInput) {
     kind: message.kind,
     status: message.status,
     body: message.body,
+    attachments: message.attachments.map((attachment) => ({
+      id: attachment.id,
+      assetId: attachment.assetId,
+      name: attachment.originalFilename ?? attachment.assetId,
+      contentType: attachment.contentType,
+      byteSize: attachment.byteSize,
+      contentPath: attachment.contentPath,
+      fetchUrl: `$RUDDER_API_URL${attachment.contentPath}`,
+      downloadCommand: `curl -L -H "Authorization: Bearer $RUDDER_API_KEY" "$RUDDER_API_URL${attachment.contentPath}" -o ${attachment.originalFilename ?? attachment.assetId}`,
+    })),
     structuredPayload: message.structuredPayload,
   }));
 
@@ -220,6 +231,8 @@ function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntimeSource,
     "This is the dedicated chat scene. Do not use heartbeat issue bootstrap framing.",
     "Always reply in the same language as the user's most recent substantive message unless they explicitly ask for a different language.",
     "Always prefer clarification before proposing issue creation when requirements are incomplete.",
+    "Treat message attachments as part of the user's message. If an image attachment is present, fetch or inspect it before claiming you cannot see the image.",
+    "Attachment URLs in the conversation input are relative to $RUDDER_API_URL and require Authorization: Bearer $RUDDER_API_KEY when fetched from tools.",
     "Use result kind 'message' for clarification, summaries, and small requests that can stay in chat.",
     "Use result kind 'issue_proposal' for larger work that should become an issue.",
     "Use result kind 'routing_suggestion' only when recommending an agent or role to handle work.",
@@ -1124,6 +1137,14 @@ export function chatAssistantService(db: Db) {
           loadedSkills: runtimeSource.runtimeSkills,
         });
       },
+      authToken: adapter.supportsLocalAgentJwt
+        ? createLocalAgentJwt(
+          runtimeSource.descriptor.runtimeAgentId ?? `org-chat:${input.conversation.orgId}`,
+          input.conversation.orgId,
+          runtimeAgentType,
+          runId,
+        ) ?? undefined
+        : undefined,
       abortSignal: input.abortSignal,
       onLog: async (stream, chunk) => {
         if (stream === "stdout") {

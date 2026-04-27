@@ -47,19 +47,30 @@ export const chatsApi = {
     options: {
       signal?: AbortSignal;
       editUserMessageId?: string | null;
+      files?: File[];
       onEvent: (event: ChatStreamEvent) => Promise<void> | void;
     },
   ) => {
+    const files = options.files ?? [];
+    const requestBody = files.length > 0
+      ? (() => {
+        const form = new FormData();
+        form.append("body", body);
+        if (options.editUserMessageId) form.append("editUserMessageId", options.editUserMessageId);
+        for (const file of files) {
+          form.append("files", file, file.name || "attachment");
+        }
+        return form;
+      })()
+      : JSON.stringify({
+        body,
+        ...(options.editUserMessageId ? { editUserMessageId: options.editUserMessageId } : {}),
+      });
     const res = await fetch(`/api/chats/${chatId}/messages/stream`, {
       method: "POST",
       credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        body,
-        ...(options.editUserMessageId ? { editUserMessageId: options.editUserMessageId } : {}),
-      }),
+      headers: files.length > 0 ? undefined : { "Content-Type": "application/json" },
+      body: requestBody,
       signal: options.signal,
     });
 
@@ -111,6 +122,8 @@ export const chatsApi = {
       throw streamError;
     }
   },
+  stopMessageStream: (chatId: string) =>
+    api.post<{ stopped: boolean }>(`/chats/${chatId}/messages/stream/stop`, {}),
   uploadAttachment: async (orgId: string, chatId: string, messageId: string, file: File) => {
     const buffer = await file.arrayBuffer();
     const safeFile = new File([buffer], file.name || "attachment", {

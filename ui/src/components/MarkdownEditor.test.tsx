@@ -45,6 +45,7 @@ vi.mock("../lib/mention-chips", () => ({
   applyMentionChipDecoration: vi.fn(),
   clearMentionChipDecoration: vi.fn(),
   parseMentionChipHref: () => null,
+  stripMentionChipLabelPrefix: (value: string) => value.replace(/^@(?=\S)/, ""),
 }));
 
 vi.mock("../lib/mention-aware-link-node", () => ({
@@ -98,7 +99,7 @@ vi.mock("@mdxeditor/editor", async () => {
     return (
       <div className={props.className}>
         <div contentEditable className={props.contentEditableClassName} onBlur={props.onBlur}>
-          {match ? <img src={match[2]} alt={match[1]} /> : null}
+          {match ? <img src={match[2]} alt={match[1]} /> : props.markdown}
         </div>
       </div>
     );
@@ -225,5 +226,77 @@ describe("MarkdownEditor", () => {
       "/api/attachments/test/content",
     );
     expect(document.body.textContent).toContain("Architecture diagram");
+  });
+
+  it("renders issue mention options with status, project, and assignee metadata", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const originalGetBoundingClientRect = Range.prototype.getBoundingClientRect;
+    Range.prototype.getBoundingClientRect = () => ({
+      x: 120,
+      y: 240,
+      width: 1,
+      height: 18,
+      top: 240,
+      right: 121,
+      bottom: 258,
+      left: 120,
+      toJSON: () => undefined,
+    });
+
+    cleanupFn = () => {
+      Range.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="@rud"
+          onChange={() => undefined}
+          mentionMenuPlacement="container"
+          mentions={[
+            {
+              id: "issue:issue-1",
+              name: "RUD-28 Add icon for opening a file in IDE",
+              kind: "issue",
+              issueId: "issue-1",
+              issueIdentifier: "RUD-28",
+              issueStatus: "todo",
+              issueProjectName: "rudder dev",
+              issueProjectColor: "#3b82f6",
+              issueAssigneeName: "Ella",
+              issueAssigneeIcon: "sparkles",
+              searchText: "RUD-28 Add icon rudder dev Ella todo",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    const textNode = editable?.firstChild;
+    expect(textNode?.nodeType).toBe(Node.TEXT_NODE);
+
+    await act(async () => {
+      const range = document.createRange();
+      range.setStart(textNode!, 4);
+      range.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+
+    const menu = document.body.querySelector('[data-testid="markdown-mention-menu"]');
+    expect(menu?.textContent).toContain("RUD-28 Add icon for opening a file in IDE");
+    expect(menu?.textContent).toContain("Todo");
+    expect(menu?.textContent).toContain("rudder dev");
+    expect(menu?.textContent).toContain("Ella");
+    expect(menu?.querySelector('[aria-label="Status: Todo"]')?.className).toContain("text-blue-600");
   });
 });
