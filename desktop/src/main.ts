@@ -7,6 +7,7 @@ import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electro
 import { createBootScreenHtml } from "./boot-screen.js";
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
+import { listAvailableIdeTargets, openWorkspaceFileInIde } from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import { resolveDesktopSystemPermissions, type DesktopSystemPermissions } from "./system-permissions.js";
 import {
@@ -121,6 +122,11 @@ type DesktopPathPickOptions = {
 type DesktopPathPickResult = {
   canceled: boolean;
   path: string | null;
+};
+
+type DesktopIdeTarget = {
+  id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij";
+  label: string;
 };
 
 type ActiveRunSummary = {
@@ -1219,6 +1225,15 @@ function registerIpc(): void {
   ipcMain.handle("desktop:open-path", async (_event, targetPath: string) => {
     await shell.openPath(targetPath);
   });
+  ipcMain.handle("desktop:list-available-ides", async (): Promise<DesktopIdeTarget[]> => {
+    return await listAvailableIdeTargets();
+  });
+  ipcMain.handle(
+    "desktop:open-workspace-file-in-ide",
+    async (_event, payload: { rootPath: string; filePath: string; ideId?: DesktopIdeTarget["id"] }) => {
+      await openWorkspaceFileInIde(payload.rootPath, payload.filePath, payload.ideId);
+    },
+  );
   ipcMain.handle("desktop:copy-text", async (_event, value: string) => {
     clipboard.writeText(value);
   });

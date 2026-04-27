@@ -67,10 +67,17 @@ export type DesktopPathPickResult = {
   path: string | null;
 };
 
+export type DesktopIdeTarget = {
+  id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij";
+  label: string;
+};
+
 export type DesktopShellApi = {
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   openPath(targetPath: string): Promise<void>;
+  listAvailableIdes(): Promise<DesktopIdeTarget[]>;
+  openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
   copyText(value: string): Promise<void>;
   setAppearance(theme: "light" | "dark" | "system"): Promise<void>;
   restart(): Promise<void>;
