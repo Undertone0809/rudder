@@ -26,9 +26,9 @@ import { timeAgo } from "../lib/timeAgo";
 import { cn, formatCents } from "../lib/utils";
 import { Bot, CalendarDays, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle } from "lucide-react";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
-import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
+import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart, SkillsUsageChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
-import type { Agent, Issue } from "@rudderhq/shared";
+import type { Agent, AgentSkillAnalytics, Issue } from "@rudderhq/shared";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -163,7 +163,7 @@ function DashboardDateRangeControl({
               <div>
                 <div className="text-sm font-medium text-foreground">Custom range</div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Filter charts and recent lists by a specific date window.
+                  Filter charts, skills analytics, and recent lists by a specific date window.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -346,6 +346,25 @@ export function Dashboard() {
   );
 
   const showFilteredSections = preset !== "custom" || customReady;
+
+  const { data: skillAnalytics } = useQuery({
+    queryKey: [
+      ...queryKeys.dashboardSkillsAnalytics(selectedOrganizationId ?? "__none__"),
+      preset,
+      customFrom,
+      customTo,
+    ],
+    queryFn: () => dashboardApi.skillsAnalytics(selectedOrganizationId!, {
+      ...(preset === "custom" && customReady
+        ? { startDate: customFrom, endDate: customTo }
+        : { windowDays: preset === "7d" ? 7 : preset === "15d" ? 15 : 30 }),
+    }),
+    enabled: Boolean(selectedOrganizationId) && showFilteredSections,
+  });
+
+  const visibleSkillAnalytics: AgentSkillAnalytics | null = skillAnalytics && skillAnalytics.totalRunsWithSkills > 0
+    ? skillAnalytics
+    : null;
 
   const filteredRuns = useMemo(
     () => (runs ?? []).filter((run) => isWithinRange(run.createdAt, from, to)),
@@ -646,6 +665,24 @@ export function Dashboard() {
               )}
             </ChartCard>
           </div>
+
+          {showFilteredSections && visibleSkillAnalytics ? (
+            <div className="space-y-3">
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-medium">Skills</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Loaded skills per run for {rangeLabel} across all agents. Hover a day to inspect the breakdown.
+                  </p>
+                </div>
+                <div className="text-right text-[11px] text-muted-foreground tabular-nums">
+                  <div>{visibleSkillAnalytics.totalCount} skill loads</div>
+                  <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill metadata</div>
+                </div>
+              </div>
+              <SkillsUsageChart analytics={visibleSkillAnalytics} />
+            </div>
+          ) : null}
 
           <PluginSlotOutlet
             slotTypes={["dashboardWidget"]}

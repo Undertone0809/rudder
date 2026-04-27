@@ -201,6 +201,145 @@ test.describe("Agent dashboard skills analytics", () => {
     });
   });
 
+  test("shows organization-wide loaded-skills analytics on the dashboard", async ({ page, request }, testInfo) => {
+    const orgRes = await request.post("/api/orgs", {
+      data: {
+        name: `Dashboard-Skills-Analytics-${Date.now()}`,
+        defaultChatAgentRuntimeType: "codex_local",
+        defaultChatAgentRuntimeConfig: {
+          model: "gpt-5.4",
+        },
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as {
+      id: string;
+      issuePrefix: string;
+    };
+
+    const firstAgentRes = await request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Penelope",
+        role: "ceo",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+        },
+      },
+    });
+    expect(firstAgentRes.ok()).toBe(true);
+    const firstAgent = await firstAgentRes.json() as { id: string };
+
+    const secondAgentRes = await request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Blake",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+        },
+      },
+    });
+    expect(secondAgentRes.ok()).toBe(true);
+    const secondAgent = await secondAgentRes.json() as { id: string };
+
+    const firstRunId = randomUUID();
+    const secondRunId = randomUUID();
+    const firstRunAt = makeUtcDate(1, 8);
+    const secondRunAt = makeUtcDate(1, 14);
+    const recentDateKey = utcDateKey(firstRunAt);
+
+    await e2eDb.insert(heartbeatRuns).values([
+      {
+        id: firstRunId,
+        orgId: organization.id,
+        agentId: firstAgent.id,
+        invocationSource: "on_demand",
+        status: "succeeded",
+        createdAt: firstRunAt,
+        updatedAt: new Date(firstRunAt.getTime() + 5 * 60 * 1000),
+      },
+      {
+        id: secondRunId,
+        orgId: organization.id,
+        agentId: secondAgent.id,
+        invocationSource: "on_demand",
+        status: "succeeded",
+        createdAt: secondRunAt,
+        updatedAt: new Date(secondRunAt.getTime() + 5 * 60 * 1000),
+      },
+    ]);
+
+    await e2eDb.insert(heartbeatRunEvents).values([
+      {
+        orgId: organization.id,
+        runId: firstRunId,
+        agentId: firstAgent.id,
+        seq: 1,
+        eventType: "adapter.invoke",
+        stream: "system",
+        level: "info",
+        message: "adapter invocation",
+        payload: {
+          loadedSkills: [
+            { key: "rudder/build-advisor", runtimeName: "build-advisor", name: "Build Advisor" },
+            { key: "screenshot", runtimeName: "screenshot", name: "Screenshot" },
+          ],
+        },
+        createdAt: new Date(firstRunAt.getTime() + 5 * 1000),
+      },
+      {
+        orgId: organization.id,
+        runId: secondRunId,
+        agentId: secondAgent.id,
+        seq: 1,
+        eventType: "adapter.invoke",
+        stream: "system",
+        level: "info",
+        message: "adapter invocation",
+        payload: {
+          loadedSkills: [
+            { key: "rudder/build-advisor", runtimeName: "build-advisor", name: "Build Advisor" },
+            { key: "deep-research", runtimeName: "deep-research", name: "Deep Research" },
+          ],
+        },
+        createdAt: new Date(secondRunAt.getTime() + 5 * 1000),
+      },
+    ]);
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`, {
+      waitUntil: "domcontentloaded",
+    });
+
+    const mainContent = page.locator("#main-content");
+    await expect(mainContent.getByRole("heading", { name: "Skills" })).toBeVisible();
+    await expect(mainContent.getByText("Loaded skills per run for Last 7 days across all agents. Hover a day to inspect the breakdown.")).toBeVisible();
+    await expect(mainContent.getByText("4 skill loads")).toBeVisible();
+    await expect(mainContent.getByText("2 runs with skill metadata")).toBeVisible();
+
+    const distributionPie = mainContent.getByRole("button", { name: /Skill distribution: 4 skill loads across 3 skills/ });
+    await expect(distributionPie).toBeVisible();
+    await distributionPie.hover();
+    await expect(page.getByText("Skill distribution")).toBeVisible();
+    await expect(page.getByText("4 skill loads across 2 runs")).toBeVisible();
+
+    const recentDayColumn = mainContent.getByLabel(new RegExp(`${escapeRegExp(formatDayTitle(recentDateKey))}: 4 skill loads across 2 runs`));
+    await expect(recentDayColumn).toBeVisible();
+    await recentDayColumn.hover();
+    await expect(page.getByText("build-advisor")).toBeVisible();
+    await expect(page.getByText("screenshot")).toBeVisible();
+    await expect(page.getByText("deep-research")).toBeVisible();
+
+    await mainContent.screenshot({
+      path: testInfo.outputPath("dashboard-skills-analytics.png"),
+      animations: "disabled",
+    });
+  });
+
   test("hides the skills section for a new agent without skill metadata", async ({ page, request }) => {
     const orgRes = await request.post("/api/orgs", {
       data: {
