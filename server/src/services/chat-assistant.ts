@@ -237,8 +237,8 @@ function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntimeSource,
     "Use result kind 'issue_proposal' for larger work that should become an issue.",
     "Use result kind 'routing_suggestion' only when recommending an agent or role to handle work.",
     "Reply in two phases.",
-    "Phase 1: write the user-visible reply in Markdown with no JSON fences.",
-    `Phase 2: on a new line, emit exactly ${resultSentinel} followed immediately by one JSON object.`,
+    "Phase 1: while you work, write concise progress updates in Markdown with no JSON fences. These are process transcript entries, not the final answer.",
+    `Phase 2: on a new line, emit exactly ${resultSentinel} followed immediately by one JSON object. The JSON body is the final user-visible answer.`,
     "Do not output anything after that JSON object.",
   ];
 }
@@ -259,7 +259,7 @@ function buildResponseSchemaPromptSection(planMode: boolean) {
     JSON.stringify(
       {
         kind: "message",
-        body: "same visible reply, summarized if needed",
+        body: "final user-visible answer only, not progress updates",
         structuredPayload: {
           summary: "optional short summary",
           issueProposal: {
@@ -333,11 +333,11 @@ function extractJsonObject(text: string): Record<string, unknown> | null {
 
 function validateAssistantResult(
   payload: Record<string, unknown>,
-  options: { bodyOverride?: string | null } = {},
+  options: { bodyOverride?: string | null; bodyFallback?: string | null } = {},
 ): ChatAssistantResult {
   const kind = typeof payload.kind === "string" ? payload.kind : "message";
   const payloadBody = typeof payload.body === "string" ? payload.body.trim() : "";
-  const body = options.bodyOverride?.trim() || payloadBody;
+  const body = options.bodyOverride?.trim() || payloadBody || options.bodyFallback?.trim() || "";
   const structuredPayload =
     payload.structuredPayload && typeof payload.structuredPayload === "object" && !Array.isArray(payload.structuredPayload)
       ? (payload.structuredPayload as Record<string, unknown>)
@@ -681,7 +681,7 @@ function parseCompletedAssistantReply(rawText: string, resultSentinel: string): 
   const enveloped = parseAssistantEnvelope(rawText, resultSentinel);
   if (enveloped.jsonPayload) {
     return validateAssistantResult(enveloped.jsonPayload, {
-      bodyOverride: enveloped.usedSentinel ? enveloped.visibleBody : null,
+      bodyFallback: enveloped.usedSentinel ? enveloped.visibleBody : null,
     });
   }
 
@@ -1057,14 +1057,15 @@ export function chatAssistantService(db: Db) {
           if (!delta) continue;
           const visibleDelta = sentinelStream.push(delta);
           if (visibleDelta) {
-            await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, {
+            const assistantTranscriptEntry: TranscriptEntry = {
               kind: "assistant",
               ts: entry.ts,
               text: visibleDelta,
               delta: true,
-            });
+            };
+            await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, assistantTranscriptEntry);
+            await maybeEmitTranscriptEntry(input.onTranscriptEntry, assistantTranscriptEntry);
           }
-          await maybeEmitAssistantDelta(input.onAssistantDelta, visibleDelta);
           continue;
         }
         if (entry.kind === "result") {
@@ -1187,10 +1188,7 @@ export function chatAssistantService(db: Db) {
     reply.replyingAgentId = runtimeSource.descriptor.runtimeAgentId;
 
     const streamedBody = safeTrim(sentinelStream.visibleText) ?? "";
-    if (finalBody.startsWith(streamedBody)) {
-      const delta = finalBody.slice(streamedBody.length);
-      await maybeEmitAssistantDelta(input.onAssistantDelta, delta);
-    } else if (!streamedBody && finalBody) {
+    if (finalBody && finalBody !== streamedBody) {
       await maybeEmitAssistantDelta(input.onAssistantDelta, finalBody);
     }
 

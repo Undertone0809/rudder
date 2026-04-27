@@ -2128,7 +2128,6 @@ function ChatWorkspace() {
           }
 
           if (event.type === "transcript_entry") {
-            if (event.entry.kind === "assistant") return;
             setStreamDraftForChat(chatId, (current) => {
               if (!current) return current;
               const transcript = [...current.transcript];

@@ -559,16 +559,17 @@ describe("chatAssistantService operator profile prompt injection", () => {
     }));
   });
 
-  it("streams visible assistant deltas while parsing the sentinel envelope", async () => {
+  it("streams assistant progress through transcript entries and final body through deltas", async () => {
     const svc = chatAssistantService({} as any);
     const deltas: string[] = [];
+    const entries: Array<{ kind: string; text?: string }> = [];
     const states: string[] = [];
 
     mockAdapter.execute.mockImplementationOnce(async (ctx) => {
       const prompt = String(ctx.context.chatPrompt);
       const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
       const finalText =
-        `Clarify the success criteria first.\n${sentinel}${JSON.stringify({
+        `Checking the success criteria first.\n${sentinel}${JSON.stringify({
           kind: "message",
           body: "Clarify the success criteria first.",
           structuredPayload: null,
@@ -578,18 +579,14 @@ describe("chatAssistantService operator profile prompt injection", () => {
         "stdout",
         `${JSON.stringify({
           type: "item.completed",
-          item: { type: "agent_message", text: "Clarify the success " },
+          item: { type: "agent_message", text: "Checking the success " },
         })}\n`,
       );
       await ctx.onLog(
         "stdout",
         `${JSON.stringify({
           type: "item.completed",
-          item: { type: "agent_message", text: `criteria first.\n${sentinel}${JSON.stringify({
-            kind: "message",
-            body: "Clarify the success criteria first.",
-            structuredPayload: null,
-          })}` },
+          item: { type: "agent_message", text: "criteria first." },
         })}\n`,
       );
 
@@ -609,6 +606,9 @@ describe("chatAssistantService operator profile prompt injection", () => {
       onAssistantDelta: (delta) => {
         deltas.push(delta);
       },
+      onTranscriptEntry: (entry) => {
+        entries.push(entry);
+      },
       onAssistantState: (state) => {
         states.push(state);
       },
@@ -625,16 +625,29 @@ describe("chatAssistantService operator profile prompt injection", () => {
         replyingAgentId: "copilot-agent",
       },
     });
-    expect(deltas.join("")).toContain("Clarify the success criteria first.");
+    expect(entries).toEqual([
+      expect.objectContaining({ kind: "assistant", text: "Checking the success " }),
+      expect.objectContaining({ kind: "assistant", text: "criteria first." }),
+    ]);
+    expect(deltas.join("")).toBe("Clarify the success criteria first.");
     expect(deltas.join("")).not.toContain("__RUDDER_RESULT_");
     expect(states).toEqual(["streaming", "finalizing"]);
   });
 
-  it("forwards non-assistant transcript entries while streaming", async () => {
+  it("forwards process transcript entries while streaming", async () => {
     const svc = chatAssistantService({} as any);
     const entries: Array<{ kind: string; text?: string; name?: string; toolUseId?: string }> = [];
 
     mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      const prompt = String(ctx.context.chatPrompt);
+      const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", text: "I am checking the chat surface first." },
+        })}\n`,
+      );
       await ctx.onLog(
         "stdout",
         `${JSON.stringify({
@@ -660,16 +673,20 @@ describe("chatAssistantService operator profile prompt injection", () => {
         "stdout",
         `${JSON.stringify({
           type: "item.completed",
-          item: { type: "agent_message", text: "Done.\n" },
+          item: { type: "agent_message", text: `${sentinel}${JSON.stringify({
+            kind: "message",
+            body: "Done.",
+            structuredPayload: null,
+          })}` },
         })}\n`,
       );
 
       return {
-        summary: JSON.stringify({
+        summary: `${sentinel}${JSON.stringify({
           kind: "message",
           body: "Done.",
           structuredPayload: null,
-        }),
+        })}`,
         resultJson: null,
         timedOut: false,
         exitCode: 0,
@@ -687,6 +704,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
 
     expect(entries).toEqual([
+      { kind: "assistant", text: "I am checking the chat surface first." },
       { kind: "thinking", text: "Inspecting current chat state" },
       { kind: "tool_call", name: "read_file", toolUseId: "tool-1" },
       { kind: "tool_result", toolUseId: "tool-1" },
@@ -702,7 +720,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       const prompt = String(ctx.context.chatPrompt);
       const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
       const finalText =
-        `Hello Zeeland! I'm here to help clarify and route work requests. How can I assist you today?\n${sentinel}${JSON.stringify({
+        `Preparing the final chat reply.\n${sentinel}${JSON.stringify({
           kind: "message",
           body: "Hello Zeeland! I'm here to help clarify and route work requests. How can I assist you today?",
           structuredPayload: null,
@@ -712,7 +730,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
         "stdout",
         `${JSON.stringify({
           type: "item.completed",
-          item: { type: "agent_message", text: "Hello Zeeland! I'm here to help clarify and route work requests. How can I assist you today?" },
+          item: { type: "agent_message", text: "Preparing the final chat reply." },
         })}\n`,
       );
       await ctx.onLog(
@@ -757,15 +775,20 @@ describe("chatAssistantService operator profile prompt injection", () => {
         replyingAgentId: "copilot-agent",
       },
     });
-    expect(entries).toEqual([]);
+    expect(entries).toEqual([
+      expect.objectContaining({
+        kind: "assistant",
+        text: "Preparing the final chat reply.",
+      }),
+    ]);
     expect(observedEntries).toEqual([
       expect.objectContaining({
         kind: "assistant",
-        text: "Hello Zeeland! I'm here to help clarify and route work requests. How can I assist you today?",
+        text: "Preparing the final chat reply.",
       }),
       expect.objectContaining({
         kind: "result",
-        text: "Hello Zeeland! I'm here to help clarify and route work requests. How can I assist you today?",
+        text: "Preparing the final chat reply.",
       }),
     ]);
   });
