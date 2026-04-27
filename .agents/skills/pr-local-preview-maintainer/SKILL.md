@@ -1,5 +1,5 @@
 ---
-name: pr-local-preview-validator
+name: pr-local-preview-maintainer
 description: >
   Check out a GitHub pull request into a local worktree, start it safely, verify
   the local preview, and hand the user a URL. Use this skill whenever the user
@@ -10,7 +10,7 @@ description: >
   shipped result, not just the URL.
 ---
 
-# PR Local Preview Validator
+# PR Local Preview Maintainer
 
 Run pull requests in a disposable local worktree and give the user a stable
 preview link. The point is to let the user review the PR while protecting their
