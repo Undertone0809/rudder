@@ -389,8 +389,8 @@ export const zhCN: Messages = {
   "about.title": "关于",
   "about.description": "查看当前构建和所连接的本地桌面环境，检查是否有新的桌面版发布，或打开默认邮件应用发送产品反馈。",
   "about.version.title": "版本",
-  "about.version.description": "这里显示当前机器上运行的桌面构建版本，以及它所连接的本地服务端构建版本。",
-  "about.version.current": "应用版本",
+  "about.version.description": "这里显示当前机器上运行的 Rudder 构建版本。",
+  "about.version.current": "版本",
   "about.desktop.title": "桌面应用",
   "about.desktop.description":
     "这个壳层连接到与控制台、CLI 以及其他本地 Rudder 界面共用的同一份本地实例数据。",
@@ -398,7 +398,6 @@ export const zhCN: Messages = {
   "about.desktop.instance": "实例 ID",
   "about.desktop.runtime": "运行时",
   "about.desktop.owner": "拥有者",
-  "about.desktop.serverVersion": "服务端版本",
   "about.desktop.instanceDataPath": "实例数据路径",
   "about.actions.title": "操作",
   "about.actions.description": "这些动作属于应用生命周期，不应该埋在通用偏好里。",

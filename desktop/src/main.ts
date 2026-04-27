@@ -16,6 +16,7 @@ import {
   type DesktopAppearance,
   type DesktopThemePreference,
 } from "./theme-preference.js";
+import { checkForStableUpdates, type DesktopUpdateCheckResult } from "./update-check.js";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -140,14 +141,6 @@ type ActiveRunSummary = {
 
 type MacWindowMode = "opaque" | "transparent" | "transparent_vibrant";
 
-type DesktopUpdateCheckResult = {
-  status: "update-available" | "up-to-date" | "unavailable";
-  currentVersion: string;
-  latestVersion?: string;
-  releaseUrl?: string;
-  checkedAt: string;
-};
-
 type OpenNotificationSettingsResult = {
   opened: boolean;
   platform: NodeJS.Platform;
@@ -155,7 +148,6 @@ type OpenNotificationSettingsResult = {
 
 const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
-const DESKTOP_LATEST_RELEASE_API_URL = `https://api.github.com/repos/${DESKTOP_GITHUB_REPO}/releases/latest`;
 const DESKTOP_FEEDBACK_EMAIL = "zeeland4work@gmail.com";
 const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
 
@@ -180,32 +172,6 @@ const LOCAL_ENV_PROFILES: Record<LocalEnvProfile["name"], LocalEnvProfile> = {
   },
 };
 
-function parseSemver(value: string): { major: number; minor: number; patch: number; prerelease: string | null } | null {
-  const match = value.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/);
-  if (!match) return null;
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    prerelease: match[4] ?? null,
-  };
-}
-
-function compareSemver(a: string, b: string): number {
-  const parsedA = parseSemver(a);
-  const parsedB = parseSemver(b);
-  if (!parsedA || !parsedB) return a.localeCompare(b);
-
-  if (parsedA.major !== parsedB.major) return parsedA.major - parsedB.major;
-  if (parsedA.minor !== parsedB.minor) return parsedA.minor - parsedB.minor;
-  if (parsedA.patch !== parsedB.patch) return parsedA.patch - parsedB.patch;
-
-  if (parsedA.prerelease === parsedB.prerelease) return 0;
-  if (!parsedA.prerelease) return 1;
-  if (!parsedB.prerelease) return -1;
-  return parsedA.prerelease.localeCompare(parsedB.prerelease);
-}
-
 function createFeedbackMailtoUrl(): string {
   const params = new URLSearchParams({
     subject: `Rudder feedback (${app.getVersion()})`,
@@ -228,42 +194,45 @@ function resolveDesktopCapabilities(): DesktopCapabilities {
 }
 
 async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
-  const currentVersion = app.getVersion();
-  try {
-    const response = await fetch(DESKTOP_LATEST_RELEASE_API_URL, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        "User-Agent": `${app.getName()}/${currentVersion}`,
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`GitHub release lookup failed (${response.status})`);
-    }
+  return checkForStableUpdates({
+    currentVersion: app.getVersion(),
+    appName: app.getName(),
+    repo: DESKTOP_GITHUB_REPO,
+    releasesUrl: DESKTOP_RELEASES_URL,
+  });
+}
 
-    const payload = await response.json() as {
-      tag_name?: string;
-      html_url?: string;
-    };
-    const latestVersion = typeof payload.tag_name === "string" ? payload.tag_name.replace(/^v/, "") : undefined;
-    if (!latestVersion) {
-      throw new Error("GitHub release lookup returned no tag");
-    }
+function formatVersionForDisplay(version: string | null | undefined): string {
+  if (!version) return "unknown";
+  return version.startsWith("v") ? version : `v${version}`;
+}
 
-    return {
-      status: compareSemver(latestVersion, currentVersion) > 0 ? "update-available" : "up-to-date",
-      currentVersion,
-      latestVersion,
-      releaseUrl: typeof payload.html_url === "string" ? payload.html_url : DESKTOP_RELEASES_URL,
-      checkedAt: new Date().toISOString(),
-    };
-  } catch (error) {
-    console.warn("[rudder-desktop] update check failed", error);
-    return {
-      status: "unavailable",
-      currentVersion,
-      releaseUrl: DESKTOP_RELEASES_URL,
-      checkedAt: new Date().toISOString(),
-    };
+async function maybeShowStartupUpdateNotice(): Promise<void> {
+  if (startupUpdateNoticeShown || !app.isPackaged) return;
+  startupUpdateNoticeShown = true;
+
+  const result = await checkForUpdates();
+  if (result.status !== "update-available") return;
+
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const options: Electron.MessageBoxOptions = {
+    type: "info",
+    title: APP_NAME,
+    buttons: ["Open Release", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+    message: `Rudder ${formatVersionForDisplay(result.latestVersion)} is available.`,
+    detail:
+      `You are running ${formatVersionForDisplay(result.currentVersion)}. `
+      + "This reminder only follows stable Rudder releases and ignores canary or beta releases.",
+  };
+  const response = window
+    ? await dialog.showMessageBox(window, options)
+    : await dialog.showMessageBox(options);
+
+  if (response.response === 0) {
+    await shell.openExternal(result.releaseUrl ?? DESKTOP_RELEASES_URL);
   }
 }
 
@@ -434,6 +403,7 @@ let quitInFlight: Promise<void> | null = null;
 let quitRequested = false;
 let quitting = false;
 let quitExceptionGuardInstalled = false;
+let startupUpdateNoticeShown = false;
 
 function resolveDesktopWindowBackgroundColor(appearance: DesktopAppearance = currentAppearance): string {
   return DESKTOP_WINDOW_BACKGROUND[appearance];
@@ -1427,6 +1397,7 @@ async function bootstrap(): Promise<void> {
     console.info("[rudder-desktop] bootstrap:start-runtime");
   }
   await startLocalRudder();
+  void maybeShowStartupUpdateNotice();
   if (desktopDebugEnabled()) {
     console.info("[rudder-desktop] bootstrap:ready");
   }

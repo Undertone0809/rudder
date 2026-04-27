@@ -7,6 +7,8 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
 const stagedServerPackageDir = path.join(repoRoot, "desktop", ".packaged", "server-package");
 const stagedCliEntry = path.join(stagedServerPackageDir, "desktop-cli.js");
+const stagedCliVersionManifest = path.join(stagedServerPackageDir, "rudder-cli-package.json");
+const sourceCliManifest = path.join(repoRoot, "cli", "package.json");
 const stagedCommanderDir = path.join(stagedServerPackageDir, "node_modules", "commander");
 const sourceCommanderDir = path.join(repoRoot, "cli", "node_modules", "commander");
 
@@ -49,6 +51,12 @@ const serverRuntimeExternals = [
 
 async function main() {
   await fs.access(path.join(stagedServerPackageDir, "package.json"));
+  const cliManifest = JSON.parse(await fs.readFile(sourceCliManifest, "utf8"));
+  await fs.writeFile(
+    stagedCliVersionManifest,
+    `${JSON.stringify({ name: cliManifest.name, version: cliManifest.version }, null, 2)}\n`,
+    "utf8",
+  );
   await fs.mkdir(path.dirname(stagedCliEntry), { recursive: true });
   await fs.mkdir(path.dirname(stagedCommanderDir), { recursive: true });
   await fs.rm(stagedCommanderDir, { recursive: true, force: true });

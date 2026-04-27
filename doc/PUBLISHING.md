@@ -56,13 +56,13 @@ Public packages are discovered from:
 
 `ui/` is ignored because it is private.
 
-[`scripts/release-package-map.mjs`](../scripts/release-package-map.mjs) is used to discover public packages and, when needed for canary publishes, to rewrite public package payloads. It:
+[`scripts/release-package-map.mjs`](../scripts/release-package-map.mjs) is used to discover public packages and, when needed for canary publishes or Desktop release builds, to rewrite release payload versions. It:
 
 - finds all public packages
 - sorts them topologically by internal dependencies
 - rewrites each public package version to the target canary prerelease version
 - rewrites internal `workspace:*` dependency references to the exact target canary version
-- updates the CLI's displayed version string
+- updates the private Desktop package manifest so Electron `app.getVersion()` and portable asset names use the same target version
 
 Stable releases do not rewrite versions. They publish the committed workspace semver directly.
 

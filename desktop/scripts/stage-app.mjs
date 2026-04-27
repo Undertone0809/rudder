@@ -6,15 +6,22 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
 const stagedAppDir = path.join(desktopRoot, ".packaged", "app");
 const sourceDistDir = path.join(desktopRoot, "dist");
+const packageJsonPath = path.join(desktopRoot, "package.json");
+
+async function readDesktopPackageJson() {
+  return JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
+}
 
 async function main() {
+  const desktopPackage = await readDesktopPackageJson();
+
   await fs.rm(stagedAppDir, { recursive: true, force: true });
   await fs.mkdir(stagedAppDir, { recursive: true });
   await fs.cp(sourceDistDir, path.join(stagedAppDir, "dist"), { recursive: true });
 
   const appManifest = {
     name: "@rudderhq/desktop",
-    version: "0.1.0",
+    version: desktopPackage.version ?? "0.0.0",
     private: true,
     description: "Rudder Desktop local-first Electron shell",
     author: "Rudder",
