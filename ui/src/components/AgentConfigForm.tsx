@@ -6,6 +6,7 @@ import {
   AGENT_RUN_CONCURRENCY_MAX,
   AGENT_RUN_CONCURRENCY_MIN,
 } from "@rudderhq/shared";
+import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
 import type {
   Agent,
   AgentRuntimeEnvironmentTestResult,
@@ -352,6 +353,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const [runPolicyAdvancedOpen, setRunPolicyAdvancedOpen] = useState(false);
   // Popover states
   const [modelOpen, setModelOpen] = useState(false);
+  const [fallbackModelOpenIndex, setFallbackModelOpenIndex] = useState<number | null>(null);
   const [thinkingEffortOpen, setThinkingEffortOpen] = useState(false);
 
   // Create mode helpers
@@ -383,6 +385,24 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const currentModelId = isCreate
     ? val!.model
     : eff("agentRuntimeConfig", "model", String(config.model ?? ""));
+  const currentFallbackModels = normalizeModelFallbacks(
+    isCreate
+      ? val!.modelFallbacks
+      : eff("agentRuntimeConfig", "modelFallbacks", config.modelFallbacks ?? []),
+    currentModelId,
+  );
+
+  function updateFallbackModel(index: number, model: string) {
+    const next = [...currentFallbackModels];
+    while (next.length <= index) next.push("");
+    next[index] = model;
+    const normalized = normalizeModelFallbacks(next, currentModelId);
+    if (isCreate) {
+      set!({ modelFallbacks: normalized });
+    } else {
+      mark("agentRuntimeConfig", "modelFallbacks", normalized);
+    }
+  }
 
   const thinkingEffortKey =
     agentRuntimeType === "codex_local"
@@ -595,6 +615,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                             : t === "cursor"
                               ? DEFAULT_CURSOR_LOCAL_MODEL
                             : "",
+                        modelFallbacks: [],
                         effort: "",
                         modelReasoningEffort: "",
                         variant: "",
@@ -627,19 +648,47 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
           )}
 
           <ModelDropdown
+            label="Model"
+            hint={help.model}
             models={models}
             value={currentModelId}
-            onChange={(v) =>
-              isCreate
-                ? set!({ model: v })
-                : mark("agentRuntimeConfig", "model", v || undefined)
-            }
+            onChange={(v) => {
+              const normalizedFallbacks = normalizeModelFallbacks(currentFallbackModels, v);
+              if (isCreate) {
+                set!({ model: v, modelFallbacks: normalizedFallbacks });
+              } else {
+                mark("agentRuntimeConfig", "model", v || undefined);
+                mark("agentRuntimeConfig", "modelFallbacks", normalizedFallbacks);
+              }
+            }}
             open={modelOpen}
             onOpenChange={setModelOpen}
             allowDefault={agentRuntimeType !== "opencode_local"}
             required={agentRuntimeType === "opencode_local"}
             groupByProvider={agentRuntimeType === "opencode_local"}
+            emptyLabel={agentRuntimeType === "opencode_local" ? "Select model (required)" : "Default"}
+            allowCustom
+            triggerTestId="agent-primary-model"
           />
+          {[0, 1].map((index) => (
+            <ModelDropdown
+              key={index}
+              label={`Fallback model ${index + 1}`}
+              hint={help.modelFallbacks}
+              models={models}
+              value={currentFallbackModels[index] ?? ""}
+              onChange={(v) => updateFallbackModel(index, v)}
+              open={fallbackModelOpenIndex === index}
+              onOpenChange={(open) => setFallbackModelOpenIndex(open ? index : null)}
+              allowDefault={false}
+              allowClear
+              required={false}
+              groupByProvider={agentRuntimeType === "opencode_local"}
+              emptyLabel="No fallback model"
+              allowCustom
+              triggerTestId={`agent-fallback-model-${index + 1}`}
+            />
+          ))}
           {fetchedModelsError && (
             <p className="text-xs text-destructive">
               {fetchedModelsError instanceof Error
@@ -1314,26 +1363,39 @@ function EnvVarEditor({
 }
 
 function ModelDropdown({
+  label,
+  hint,
   models,
   value,
   onChange,
   open,
   onOpenChange,
   allowDefault,
+  allowClear = false,
+  allowCustom = false,
   required,
   groupByProvider,
+  emptyLabel,
+  triggerTestId,
 }: {
+  label: string;
+  hint?: string;
   models: AgentRuntimeModel[];
   value: string;
   onChange: (id: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   allowDefault: boolean;
+  allowClear?: boolean;
+  allowCustom?: boolean;
   required: boolean;
   groupByProvider: boolean;
+  emptyLabel: string;
+  triggerTestId?: string;
 }) {
   const [modelSearch, setModelSearch] = useState("");
   const selected = models.find((m) => m.id === value);
+  const customModel = modelSearch.trim();
   const filteredModels = useMemo(() => {
     return models.filter((m) => {
       if (!modelSearch.trim()) return true;
@@ -1346,6 +1408,9 @@ function ModelDropdown({
       );
     });
   }, [models, modelSearch]);
+  const canUseCustomModel = allowCustom
+    && customModel.length > 0
+    && !models.some((m) => m.id === customModel);
   const groupedModels = useMemo(() => {
     if (!groupByProvider) {
       return [
@@ -1371,7 +1436,7 @@ function ModelDropdown({
   }, [filteredModels, groupByProvider]);
 
   return (
-    <Field label="Model" hint={help.model}>
+    <Field label={label} hint={hint}>
       <Popover
         open={open}
         onOpenChange={(nextOpen) => {
@@ -1380,11 +1445,14 @@ function ModelDropdown({
         }}
       >
         <PopoverTrigger asChild>
-          <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between">
-            <span className={cn(!value && "text-muted-foreground")}>
+          <button
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between min-w-0"
+            data-testid={triggerTestId}
+          >
+            <span className={cn("truncate text-left", !value && "text-muted-foreground")}>
               {selected
                 ? selected.label
-                : value || (allowDefault ? "Default" : required ? "Select model (required)" : "Select model")}
+                : value || emptyLabel || (required ? "Select model (required)" : "Select model")}
             </span>
             <ChevronDown className="h-3 w-3 text-muted-foreground" />
           </button>
@@ -1410,6 +1478,33 @@ function ModelDropdown({
                 }}
               >
                 Default
+              </button>
+            )}
+            {allowClear && (
+              <button
+                className={cn(
+                  "flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
+                  !value && "bg-accent",
+                )}
+                onClick={() => {
+                  onChange("");
+                  onOpenChange(false);
+                }}
+              >
+                No fallback model
+              </button>
+            )}
+            {canUseCustomModel && (
+              <button
+                className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50"
+                onClick={() => {
+                  onChange(customModel);
+                  onOpenChange(false);
+                }}
+              >
+                <span className="block w-full text-left truncate" title={customModel}>
+                  Use "{customModel}"
+                </span>
               </button>
             )}
             {groupedModels.map((group) => (
@@ -1438,7 +1533,7 @@ function ModelDropdown({
                 ))}
               </div>
             ))}
-            {filteredModels.length === 0 && (
+            {filteredModels.length === 0 && !canUseCustomModel && (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">No models found.</p>
             )}
           </div>

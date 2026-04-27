@@ -1,4 +1,4 @@
-import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
+import { normalizeModelFallbacks, type CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 
 function parseEnvVars(text: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -50,6 +50,8 @@ export function buildPiLocalConfig(v: CreateConfigValues): Record<string, unknow
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
   if (v.model) ac.model = v.model;
+  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, v.model);
+  if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
   if (v.thinkingEffort) ac.thinking = v.thinkingEffort;
   
   // Pi sessions can run until the CLI exits naturally; keep timeout disabled (0)

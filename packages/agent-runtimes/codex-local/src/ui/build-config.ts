@@ -1,4 +1,4 @@
-import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
+import { normalizeModelFallbacks, type CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
@@ -74,6 +74,8 @@ export function buildCodexLocalConfig(v: CreateConfigValues): Record<string, unk
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
   ac.model = v.model || DEFAULT_CODEX_LOCAL_MODEL;
+  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, ac.model);
+  if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
   if (v.thinkingEffort) ac.modelReasoningEffort = v.thinkingEffort;
   ac.timeoutSec = 0;
   ac.graceSec = 15;

@@ -95,6 +95,7 @@ import {
   coerceCreateAgentBenchmarkMetadata,
   extractCreateAgentBenchmarkMetadata,
 } from "@rudderhq/run-intelligence-core";
+import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
@@ -3466,7 +3467,7 @@ export function heartbeatService(db: Db) {
           "local agent jwt secret missing or invalid; running without injected RUDDER_API_KEY",
         );
       }
-      const adapterResult = await adapter.execute({
+      const adapterResult = await executeAdapterWithModelFallbacks(adapter, {
         runId: run.id,
         agent,
         runtime: runtimeForAdapter,

@@ -1,4 +1,4 @@
-import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
+import { normalizeModelFallbacks, type CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 
 function parseCommaArgs(value: string): string[] {
   return value
@@ -57,6 +57,8 @@ export function buildOpenCodeLocalConfig(v: CreateConfigValues): Record<string, 
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
   if (v.model) ac.model = v.model;
+  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, v.model);
+  if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
   if (v.thinkingEffort) ac.variant = v.thinkingEffort;
   // OpenCode sessions can run until the CLI exits naturally; keep timeout disabled (0)
   // and rely on graceSec for termination handling when a timeout is configured elsewhere.

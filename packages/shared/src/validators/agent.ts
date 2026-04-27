@@ -7,6 +7,8 @@ import {
 } from "../constants.js";
 import { envConfigSchema } from "./secret.js";
 
+const MAX_AGENT_MODEL_FALLBACKS = 2;
+
 export const agentPermissionsSchema = z.object({
   canCreateAgents: z.boolean().optional().default(false),
 });
@@ -32,13 +34,45 @@ export type UpsertAgentInstructionsFile = z.infer<typeof upsertAgentInstructions
 
 const agentRuntimeConfigSchema = z.record(z.unknown()).superRefine((value, ctx) => {
   const envValue = value.env;
-  if (envValue === undefined) return;
-  const parsed = envConfigSchema.safeParse(envValue);
-  if (!parsed.success) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "agentRuntimeConfig.env must be a map of valid env bindings",
-      path: ["env"],
+  if (envValue !== undefined) {
+    const parsed = envConfigSchema.safeParse(envValue);
+    if (!parsed.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agentRuntimeConfig.env must be a map of valid env bindings",
+        path: ["env"],
+      });
+    }
+  }
+
+  const fallbackModels = value.modelFallbacks;
+  if (fallbackModels !== undefined) {
+    if (!Array.isArray(fallbackModels)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agentRuntimeConfig.modelFallbacks must be an array",
+        path: ["modelFallbacks"],
+      });
+      return;
+    }
+    if (fallbackModels.length > MAX_AGENT_MODEL_FALLBACKS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.too_big,
+        maximum: MAX_AGENT_MODEL_FALLBACKS,
+        type: "array",
+        inclusive: true,
+        message: `agentRuntimeConfig.modelFallbacks can include at most ${MAX_AGENT_MODEL_FALLBACKS} models`,
+        path: ["modelFallbacks"],
+      });
+    }
+    fallbackModels.forEach((model, index) => {
+      if (typeof model !== "string" || model.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "agentRuntimeConfig.modelFallbacks entries must be non-empty strings",
+          path: ["modelFallbacks", index],
+        });
+      }
     });
   }
 });

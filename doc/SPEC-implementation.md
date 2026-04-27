@@ -151,6 +151,10 @@ Invariants:
 - agent and manager must be in same organization
 - no cycles in reporting tree
 - `terminated` agents cannot be resumed
+- Local model-backed adapters may store `modelFallbacks` in
+  `adapter_config` as an ordered array of at most two backup model IDs. On
+  heartbeat invocation failure, Rudder retries the same adapter with each
+  fallback model in order.
 
 ## 7.3 `agent_api_keys`
 

@@ -21,6 +21,7 @@ Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to the run prompt
 - model (string, required): OpenCode model id in provider/model format (for example anthropic/claude-sonnet-4-5)
+- modelFallbacks (string[], optional): up to two backup provider/model ids tried in order when the primary model invocation fails
 - variant (string, optional): provider-specific model variant (for example minimal|low|medium|high|max)
 - promptTemplate (string, optional): run prompt template
 - command (string, optional): defaults to "opencode"

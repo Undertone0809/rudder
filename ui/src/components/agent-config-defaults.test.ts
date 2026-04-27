@@ -7,4 +7,8 @@ describe("agent config defaults", () => {
     expect(defaultCreateValues.maxConcurrentRuns).toBe(AGENT_RUN_CONCURRENCY_DEFAULT);
     expect(defaultCreateValues.maxConcurrentRuns).toBe(3);
   });
+
+  it("does not configure fallback models unless the operator opts in", () => {
+    expect(defaultCreateValues.modelFallbacks).toEqual([]);
+  });
 });

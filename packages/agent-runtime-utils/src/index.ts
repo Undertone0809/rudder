@@ -52,3 +52,10 @@ export {
   redactTranscriptEntryPaths,
 } from "./log-redaction.js";
 export { inferOpenAiCompatibleBiller } from "./billing.js";
+export {
+  MAX_MODEL_FALLBACKS,
+  buildModelAttemptSpecs,
+  isSuccessfulRuntimeResult,
+  normalizeModelFallbacks,
+  type ModelAttemptSpec,
+} from "./model-fallbacks.js";
