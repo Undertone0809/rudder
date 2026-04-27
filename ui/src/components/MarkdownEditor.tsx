@@ -28,7 +28,7 @@ import {
   thematicBreakPlugin,
   type RealmPlugin,
 } from "@mdxeditor/editor";
-import { CircleDot, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
@@ -42,6 +42,7 @@ import {
 } from "../lib/mention-chips";
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
 import { mentionDeletionPlugin } from "../lib/mention-deletion";
+import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import {
   applySkillTokenDecoration,
   clearSkillTokenDecoration,
@@ -65,6 +66,11 @@ export interface MentionOption {
   projectColor?: string | null;
   issueId?: string;
   issueIdentifier?: string | null;
+  issueStatus?: string | null;
+  issueProjectName?: string | null;
+  issueProjectColor?: string | null;
+  issueAssigneeName?: string | null;
+  issueAssigneeIcon?: string | null;
   skillRefLabel?: string | null;
   skillMarkdownTarget?: string | null;
   skillDisplayName?: string | null;
@@ -380,6 +386,10 @@ function getMentionPanelPosition(anchor: HTMLElement) {
 
 function getMentionMenuPosition(state: MentionState) {
   return getMentionMenuPositionForViewport(state, window.innerWidth, window.innerHeight);
+}
+
+function statusLabel(status: string): string {
+  return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function mentionMarkdown(option: MentionOption): string {
@@ -1066,6 +1076,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                     {group.options.map((option) => {
                       const i = optionIndex;
                       optionIndex += 1;
+                      const issueStatusLabel = option.issueStatus ? statusLabel(option.issueStatus) : "Issue";
                       return (
                         <button
                           key={option.id}
@@ -1091,7 +1102,17 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                               style={{ backgroundColor: option.projectColor ?? "#64748b" }}
                             />
                           ) : option.kind === "issue" && option.issueId ? (
-                            <CircleDot className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            <span
+                              className={cn(
+                                "relative inline-flex h-4 w-4 shrink-0 rounded-full border-2",
+                                option.issueStatus ? issueStatusIcon[option.issueStatus] ?? issueStatusIconDefault : issueStatusIconDefault,
+                              )}
+                              aria-label={`Status: ${issueStatusLabel}`}
+                            >
+                              {option.issueStatus === "done" ? (
+                                <span className="absolute inset-0 m-auto h-2 w-2 rounded-full bg-current" />
+                              ) : null}
+                            </span>
                           ) : (
                             <AgentIcon
                               icon={option.agentIcon}
@@ -1100,6 +1121,30 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                           )}
                           <div className="min-w-0 flex-1">
                             <div className="truncate font-medium text-foreground">{option.name}</div>
+                            {option.kind === "issue" && option.issueId ? (
+                              <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                                {option.issueStatus ? <span>{issueStatusLabel}</span> : null}
+                                {option.issueProjectName ? (
+                                  <span className="inline-flex min-w-0 items-center gap-1">
+                                    <span
+                                      className="h-2 w-2 shrink-0 rounded-full border border-border/50"
+                                      style={{ backgroundColor: option.issueProjectColor ?? "#64748b" }}
+                                      aria-hidden="true"
+                                    />
+                                    <span className="truncate">{option.issueProjectName}</span>
+                                  </span>
+                                ) : null}
+                                <span className="inline-flex min-w-0 items-center gap-1">
+                                  {option.issueAssigneeIcon ? (
+                                    <AgentIcon
+                                      icon={option.issueAssigneeIcon}
+                                      className="h-3 w-3 shrink-0 text-muted-foreground"
+                                    />
+                                  ) : null}
+                                  <span className="truncate">{option.issueAssigneeName ?? "Unassigned"}</span>
+                                </span>
+                              </div>
+                            ) : null}
                             {option.kind === "skill" && option.skillDisplayName ? (
                               <div className="truncate text-[11px] text-muted-foreground">
                                 {option.skillDisplayName}

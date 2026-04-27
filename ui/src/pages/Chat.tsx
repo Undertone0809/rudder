@@ -27,6 +27,7 @@ import {
   type ChatOperationProposalDecisionAction,
   type ChatOperationProposalDecisionStatus,
   type ChatPrimaryIssueSummary,
+  type Issue,
   type MessengerThreadSummary,
   type Project,
 } from "@rudderhq/shared";
@@ -89,6 +90,7 @@ import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
   appendSkillReferencesToDraft,
 } from "@/lib/organization-skill-picker";
+import { formatAssigneeUserLabel } from "@/lib/assignees";
 import { cn, relativeTime } from "@/lib/utils";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useI18n } from "@/context/I18nContext";
@@ -188,6 +190,19 @@ function rememberChatProjectId(orgId: string, projectId: string | null) {
 
 function projectContextId(conversation: ChatConversation | null | undefined) {
   return conversation?.contextLinks.find((link) => link.entityType === "project")?.entityId ?? null;
+}
+
+function issueAssigneeMentionLabel(
+  issue: Pick<Issue, "assigneeAgentId" | "assigneeUserId">,
+  agentById: Map<string, Agent>,
+) {
+  if (issue.assigneeAgentId) {
+    return agentById.get(issue.assigneeAgentId)?.name ?? issue.assigneeAgentId.slice(0, 8);
+  }
+  if (issue.assigneeUserId) {
+    return formatAssigneeUserLabel(issue.assigneeUserId, null) ?? issue.assigneeUserId.slice(0, 8);
+  }
+  return null;
 }
 
 function projectDisplayName(project: Project | null | undefined) {
@@ -2331,6 +2346,14 @@ function ChatWorkspace() {
   );
   const chatSkillsPending = Boolean(activeSkillAgentId) && (organizationSkillsPending || activeAgentSkillsPending);
   const showChatSkillsPicker = Boolean(activeSkillAgentId);
+  const projectById = useMemo(
+    () => new Map((projects ?? []).map((project) => [project.id, project])),
+    [projects],
+  );
+  const agentById = useMemo(
+    () => new Map((agents ?? []).map((agent) => [agent.id, agent])),
+    [agents],
+  );
 
   const mentionOptions = useMemo<MentionOption[]>(() => {
     const options: MentionOption[] = [];
@@ -2353,12 +2376,27 @@ function ChatWorkspace() {
       });
     }
     for (const issue of issues ?? []) {
+      const issueProject = issue.projectId ? projectById.get(issue.projectId) ?? issue.project ?? null : null;
+      const assigneeAgent = issue.assigneeAgentId ? agentById.get(issue.assigneeAgentId) ?? null : null;
+      const issueAssigneeName = issueAssigneeMentionLabel(issue, agentById);
       options.push({
         id: `issue:${issue.id}`,
         name: issue.identifier ? `${issue.identifier} ${issue.title}` : issue.title,
         kind: "issue",
+        searchText: [
+          issue.identifier,
+          issue.title,
+          issue.status,
+          issueProject?.name,
+          issueAssigneeName,
+        ].filter(Boolean).join(" "),
         issueId: issue.id,
         issueIdentifier: issue.identifier,
+        issueStatus: issue.status,
+        issueProjectName: issueProject?.name ?? null,
+        issueProjectColor: issueProject?.color ?? null,
+        issueAssigneeName,
+        issueAssigneeIcon: assigneeAgent?.icon ?? null,
       });
     }
     for (const skill of availableChatSkills) {
@@ -2373,7 +2411,7 @@ function ChatWorkspace() {
       });
     }
     return options;
-  }, [agents, availableChatSkills, issues, projects]);
+  }, [agentById, agents, availableChatSkills, issues, projectById, projects]);
 
   const insertSkillReference = useCallback((entry: (typeof availableChatSkills)[number]) => {
     if (!entry.skillRefLabel || !entry.skillMarkdownTarget) {
