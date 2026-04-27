@@ -1260,14 +1260,6 @@ function StreamTranscriptItem({
   const streamingActive = state === "streaming" || state === "finalizing";
   const [processOpen, setProcessOpen] = useState(() => streamingActive);
   const [tick, setTick] = useState(0);
-  const wasStreamingRef = useRef(streamingActive);
-
-  useEffect(() => {
-    if (wasStreamingRef.current && !streamingActive) {
-      setProcessOpen(false);
-    }
-    wasStreamingRef.current = streamingActive;
-  }, [streamingActive]);
 
   useEffect(() => {
     if (!streamingActive) return;

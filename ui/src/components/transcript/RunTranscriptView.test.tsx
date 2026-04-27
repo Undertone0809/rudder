@@ -6,6 +6,10 @@ import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { RunTranscriptView, normalizeTranscript } from "./RunTranscriptView";
 
+function countOccurrences(value: string, needle: string) {
+  return value.split(needle).length - 1;
+}
+
 describe("RunTranscriptView", () => {
   it("keeps running command stdout inside the command fold instead of a standalone stdout block", () => {
     const entries: TranscriptEntry[] = [
@@ -152,6 +156,7 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Model turn 1");
     expect(html).toContain("Read README.md");
     expect(html).toContain("I will inspect the transcript before replying.");
+    expect(countOccurrences(html, "I will inspect the transcript before replying.")).toBe(1);
     expect(html).not.toContain("README contents hidden by default");
     expect(html).not.toContain("Activity details");
   });

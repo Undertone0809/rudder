@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { MarkdownBody } from "../MarkdownBody";
@@ -1409,20 +1409,12 @@ function TranscriptThinkingBlock({
   collapsibleSummary?: boolean;
 }) {
   const [open, setOpen] = useState(() => Boolean(block.streaming));
-  const wasStreamingRef = useRef(block.streaming);
 
   useEffect(() => {
     if (block.streaming) {
       setOpen(true);
     }
   }, [block.streaming]);
-
-  useEffect(() => {
-    if (collapsibleSummary && wasStreamingRef.current && !block.streaming) {
-      setOpen(false);
-    }
-    wasStreamingRef.current = block.streaming;
-  }, [block.streaming, collapsibleSummary]);
 
   const previewSource = compactWhitespace(block.text);
   const preview = truncate(previewSource, density === "compact" ? 100 : 160);
@@ -2377,7 +2369,7 @@ function TranscriptChatTurn({
   const failedActionCount = actions.filter((action) => action.type === "tool" && action.entry.status === "error").length;
   const segments = segmentChatTranscriptBlocks(turn.blocks);
   const actionGroupCount = segments.filter((segment) => segment.type === "actions").length;
-  const showPreview = Boolean(turn.preview) && !detailVariant;
+  const showPreview = Boolean(turn.preview) && detailVariant;
   const highlightTurnError = turn.hasError && !detailVariant;
   const showToolIssue = turn.hasError && detailVariant && !turn.hasRunning;
 
