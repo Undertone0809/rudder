@@ -5,9 +5,42 @@ import { E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
+test.afterAll(async () => {
+  await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
+});
+
+function makeUtcDate(daysAgo: number, hour: number, minute = 0): Date {
+  const now = new Date();
+  return new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() - daysAgo,
+    hour,
+    minute,
+    0,
+    0,
+  ));
+}
+
+function utcDateKey(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function formatDayTitle(dateKey: string): string {
+  return new Date(`${dateKey}T12:00:00`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 test.describe("Agent dashboard skills analytics", () => {
-  test("shows a 7-day loaded-skills chart when all recent activity is within the last week", async ({ page }, testInfo) => {
-    const orgRes = await page.request.post("/api/orgs", {
+  test("shows a 7-day loaded-skills chart when all recent activity is within the last week", async ({ page, request }, testInfo) => {
+    const orgRes = await request.post("/api/orgs", {
       data: {
         name: `Agent-Skills-Analytics-${Date.now()}`,
         defaultChatAgentRuntimeType: "codex_local",
@@ -22,7 +55,7 @@ test.describe("Agent dashboard skills analytics", () => {
       issuePrefix: string;
     };
 
-    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    const agentRes = await request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
         name: "Penelope",
         role: "ceo",
@@ -38,6 +71,10 @@ test.describe("Agent dashboard skills analytics", () => {
     const runOneId = randomUUID();
     const runTwoId = randomUUID();
     const runThreeId = randomUUID();
+    const recentMorning = makeUtcDate(2, 8);
+    const recentAfternoon = makeUtcDate(2, 16);
+    const earlierRecent = makeUtcDate(4, 10);
+    const recentDateKey = utcDateKey(recentMorning);
 
     await e2eDb.insert(heartbeatRuns).values([
       {
@@ -46,8 +83,8 @@ test.describe("Agent dashboard skills analytics", () => {
         agentId: agent.id,
         invocationSource: "on_demand",
         status: "succeeded",
-        createdAt: new Date("2026-04-20T08:00:00.000Z"),
-        updatedAt: new Date("2026-04-20T08:05:00.000Z"),
+        createdAt: recentMorning,
+        updatedAt: new Date(recentMorning.getTime() + 5 * 60 * 1000),
       },
       {
         id: runTwoId,
@@ -55,8 +92,8 @@ test.describe("Agent dashboard skills analytics", () => {
         agentId: agent.id,
         invocationSource: "on_demand",
         status: "succeeded",
-        createdAt: new Date("2026-04-20T16:00:00.000Z"),
-        updatedAt: new Date("2026-04-20T16:05:00.000Z"),
+        createdAt: recentAfternoon,
+        updatedAt: new Date(recentAfternoon.getTime() + 5 * 60 * 1000),
       },
       {
         id: runThreeId,
@@ -64,8 +101,8 @@ test.describe("Agent dashboard skills analytics", () => {
         agentId: agent.id,
         invocationSource: "on_demand",
         status: "succeeded",
-        createdAt: new Date("2026-04-18T10:00:00.000Z"),
-        updatedAt: new Date("2026-04-18T10:05:00.000Z"),
+        createdAt: earlierRecent,
+        updatedAt: new Date(earlierRecent.getTime() + 5 * 60 * 1000),
       },
     ]);
 
@@ -85,7 +122,7 @@ test.describe("Agent dashboard skills analytics", () => {
             { key: "screenshot", runtimeName: "screenshot", name: "Screenshot" },
           ],
         },
-        createdAt: new Date("2026-04-20T08:00:05.000Z"),
+        createdAt: new Date(recentMorning.getTime() + 5 * 1000),
       },
       {
         orgId: organization.id,
@@ -102,7 +139,7 @@ test.describe("Agent dashboard skills analytics", () => {
             { key: "pua", runtimeName: "pua", name: "PUA" },
           ],
         },
-        createdAt: new Date("2026-04-20T16:00:05.000Z"),
+        createdAt: new Date(recentAfternoon.getTime() + 5 * 1000),
       },
       {
         orgId: organization.id,
@@ -118,7 +155,7 @@ test.describe("Agent dashboard skills analytics", () => {
             { key: "screenshot", runtimeName: "screenshot", name: "Screenshot" },
           ],
         },
-        createdAt: new Date("2026-04-18T10:00:05.000Z"),
+        createdAt: new Date(earlierRecent.getTime() + 5 * 1000),
       },
     ]);
 
@@ -137,13 +174,20 @@ test.describe("Agent dashboard skills analytics", () => {
     await expect(page.getByRole("button", { name: "15D" })).toBeVisible();
     await expect(page.getByRole("button", { name: "1M" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Custom/ })).toBeVisible();
-    await expect(mainContent.getByText("Loaded skills per run over the last 7 days. Hover a day to inspect the breakdown.")).toBeVisible();
+    await expect(mainContent.getByText("Loaded skills per run for Last 7 days. Hover a day to inspect the breakdown.")).toBeVisible();
     await expect(mainContent.getByText("5 skill loads")).toBeVisible();
     await expect(mainContent.getByText("3 runs with skill metadata")).toBeVisible();
+    await expect(mainContent.getByText("Skill Distribution")).toBeVisible();
+    await expect(mainContent.getByText("Skill Usage Timeline")).toBeVisible();
+    const distributionPie = mainContent.getByRole("button", { name: /Skill distribution: 5 skill loads across 3 skills/ });
+    await expect(distributionPie).toBeVisible();
+    await distributionPie.hover();
+    await expect(page.getByText("Skill distribution")).toBeVisible();
+    await expect(page.getByText("5 skill loads across 3 runs")).toBeVisible();
 
-    const april20Column = mainContent.getByLabel(/Apr 20, 2026: 4 skill loads across 2 runs/);
-    await expect(april20Column).toBeVisible();
-    await april20Column.hover();
+    const recentDayColumn = mainContent.getByLabel(new RegExp(`${escapeRegExp(formatDayTitle(recentDateKey))}: 4 skill loads across 2 runs`));
+    await expect(recentDayColumn).toBeVisible();
+    await recentDayColumn.hover();
 
     await expect(page.getByText("Skill loads")).toBeVisible();
     await expect(page.getByText("Runs with skills")).toBeVisible();
@@ -157,8 +201,8 @@ test.describe("Agent dashboard skills analytics", () => {
     });
   });
 
-  test("hides the skills section for a new agent without skill metadata", async ({ page }) => {
-    const orgRes = await page.request.post("/api/orgs", {
+  test("hides the skills section for a new agent without skill metadata", async ({ page, request }) => {
+    const orgRes = await request.post("/api/orgs", {
       data: {
         name: `Agent-Skills-Hidden-${Date.now()}`,
         defaultChatAgentRuntimeType: "codex_local",
@@ -173,7 +217,7 @@ test.describe("Agent dashboard skills analytics", () => {
       issuePrefix: string;
     };
 
-    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    const agentRes = await request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
         name: "New Agent",
         role: "ceo",
