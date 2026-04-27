@@ -1,4 +1,6 @@
 import express from "express";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chatRoutes } from "../routes/chats.js";
@@ -59,6 +61,10 @@ const mockChatAssistantService = vi.hoisted(() => ({
   getChatAssistantAvailability: vi.fn(),
   generateChatAssistantReply: vi.fn(),
   streamChatAssistantReply: vi.fn(),
+}));
+
+const mockStorage = vi.hoisted(() => ({
+  putFile: vi.fn(),
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -162,12 +168,25 @@ function createApp() {
   });
   app.use(
     "/api",
-    chatRoutes({} as any, {
-      putFile: vi.fn(),
-    } as any),
+    chatRoutes({} as any, mockStorage as any),
   );
   app.use(errorHandler);
   return app;
+}
+
+async function waitUntil(assertion: () => void, timeoutMs = 1000) {
+  const startedAt = Date.now();
+  let lastError: unknown;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  throw lastError;
 }
 
 describe("chat routes", () => {
@@ -192,6 +211,14 @@ describe("chat routes", () => {
     mockOperatorProfileService.get.mockResolvedValue({
       nickname: "Zee",
       moreAboutYou: "Prefers concise answers",
+    });
+    mockStorage.putFile.mockResolvedValue({
+      provider: "local_disk",
+      objectKey: "chats/chat-1/image.png",
+      contentType: "image/png",
+      byteSize: 8,
+      sha256: "sha256",
+      originalFilename: "image.png",
     });
     mockChatService.addUserChatMessage.mockImplementation(async (_cid: string, _orgId: string, body: string) =>
       createMessage("message-user", "user", "message", body),
@@ -747,6 +774,102 @@ describe("chat routes", () => {
     );
   });
 
+  it("stores streamed chat attachments before invoking the assistant", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Can you see this?");
+    const attachment = {
+      id: "attachment-1",
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      messageId: "message-user",
+      assetId: "asset-1",
+      provider: "local_disk",
+      objectKey: "chats/chat-1/image.png",
+      contentType: "image/png",
+      byteSize: 8,
+      sha256: "sha256",
+      originalFilename: "image.png",
+      createdByAgentId: null,
+      createdByUserId: "user-1",
+      contentPath: "/api/assets/asset-1/content",
+      createdAt: new Date("2026-03-26T08:01:00.000Z"),
+      updatedAt: new Date("2026-03-26T08:01:00.000Z"),
+    };
+    const userMessageWithAttachment = {
+      ...userMessage,
+      attachments: [attachment],
+    };
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Yes.");
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.createAttachment.mockResolvedValueOnce(attachment);
+    mockChatService.listMessages.mockResolvedValue([userMessageWithAttachment]);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Yes.",
+      replyingAgentId: "copilot-agent",
+      reply: {
+        kind: "message",
+        body: "Yes.",
+        structuredPayload: null,
+        replyingAgentId: "copilot-agent",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .field("body", "Can you see this?")
+      .attach("files", Buffer.from("fake-png"), {
+        filename: "image.png",
+        contentType: "image/png",
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(mockStorage.putFile).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: "organization-1",
+      namespace: "chats/chat-1",
+      originalFilename: "image.png",
+      contentType: "image/png",
+    }));
+    expect(mockChatService.createAttachment).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      messageId: "message-user",
+      contentType: "image/png",
+      originalFilename: "image.png",
+      createdByUserId: "user-1",
+    }));
+    expect(events[0]).toEqual(expect.objectContaining({
+      type: "ack",
+      userMessage: expect.objectContaining({
+        id: "message-user",
+        attachments: [expect.objectContaining({ id: "attachment-1", contentPath: "/api/assets/asset-1/content" })],
+      }),
+    }));
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledWith(expect.objectContaining({
+      messages: [expect.objectContaining({
+        id: "message-user",
+        attachments: [expect.objectContaining({ id: "attachment-1" })],
+      })],
+    }));
+  });
+
   it("persists a stopped partial assistant message when streaming is interrupted", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
@@ -799,6 +922,156 @@ describe("chat routes", () => {
         transcript: [],
       }),
     );
+  });
+
+  it("keeps generating and persists the final reply when the stream client disconnects", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Completed after disconnect");
+    let capturedSignal: AbortSignal | null = null;
+    let releaseAssistant!: () => void;
+    const assistantStarted = new Promise<void>((resolve) => {
+      mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+        capturedSignal = input.abortSignal ?? null;
+        await input.onAssistantState?.("streaming");
+        resolve();
+        await new Promise<void>((release) => {
+          releaseAssistant = release;
+        });
+        return {
+          outcome: "completed",
+          partialBody: "Completed after disconnect",
+          replyingAgentId: "copilot-agent",
+          reply: {
+            kind: "message",
+            body: "Completed after disconnect",
+            structuredPayload: null,
+            replyingAgentId: "copilot-agent",
+          },
+        };
+      });
+    });
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+
+    const server = http.createServer(createApp());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+
+    try {
+      const body = JSON.stringify({ body: "Need help" });
+      await new Promise<void>((resolve, reject) => {
+        const req = http.request(
+          {
+            hostname: "127.0.0.1",
+            port: address.port,
+            path: "/api/chats/chat-1/messages/stream",
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(body),
+            },
+          },
+          (res) => {
+            res.setEncoding("utf8");
+            res.on("data", () => {
+              res.destroy();
+              resolve();
+            });
+          },
+        );
+        req.on("error", reject);
+        req.end(body);
+      });
+
+      await assistantStarted;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(capturedSignal?.aborted).toBe(false);
+
+      releaseAssistant();
+      await waitUntil(() => {
+        expect(mockChatService.addMessage).toHaveBeenCalledWith(
+          "chat-1",
+          expect.objectContaining({
+            role: "assistant",
+            body: "Completed after disconnect",
+          }),
+        );
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("aborts the active stream only through the explicit stop endpoint", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help");
+    const stoppedMessage = {
+      ...createMessage("message-stopped", "assistant", "message", "Partial reply"),
+      status: "stopped",
+    };
+    let capturedSignal: AbortSignal | null = null;
+    let releaseAssistant!: () => void;
+    const assistantStarted = new Promise<void>((resolve) => {
+      mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+        capturedSignal = input.abortSignal ?? null;
+        await input.onAssistantState?.("streaming");
+        resolve();
+        await new Promise<void>((release) => {
+          releaseAssistant = release;
+        });
+        return {
+          outcome: "stopped",
+          partialBody: "Partial reply",
+          replyingAgentId: "copilot-agent",
+        };
+      });
+    });
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(stoppedMessage);
+
+    const streamRequest = request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Need help" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+    const streamPromise = streamRequest.then((response) => response);
+
+    await assistantStarted;
+    expect(capturedSignal?.aborted).toBe(false);
+
+    const stopRes = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream/stop")
+      .send({});
+
+    expect(stopRes.status).toBe(200);
+    expect(stopRes.body).toEqual({ stopped: true });
+    expect(capturedSignal?.aborted).toBe(true);
+
+    releaseAssistant();
+    const streamRes = await streamPromise;
+    expect(streamRes.status).toBe(201);
+    const events = String(streamRes.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events.at(-1)).toEqual({
+      type: "final",
+      messages: [expect.objectContaining({ id: "message-stopped", status: "stopped" })],
+    });
   });
 
   it("traces manual chat-to-issue conversion as a chat action", async () => {

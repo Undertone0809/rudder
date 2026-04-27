@@ -9,6 +9,7 @@ import {
   updateChatConversationUserStateSchema,
   type ChatContextLink,
   type ChatConversation,
+  type ChatAttachment,
   type ChatMessage,
   type ExecutionObservabilityContext,
   type ExecutionObservabilitySurface,
@@ -38,7 +39,7 @@ import {
   chatAssistantService,
   type ChatAssistantResult,
 } from "../services/chat-assistant.js";
-import { claimChatGeneration } from "../services/chat-generation-locks.js";
+import { cancelActiveChatGeneration, claimChatGeneration } from "../services/chat-generation-locks.js";
 import {
   agentService,
   chatService,
@@ -67,6 +68,10 @@ export function chatRoutes(db: Db, storage: StorageService) {
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
   });
+  const messageUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 10 },
+  });
 
   async function runSingleFileUpload(req: Request, res: Response) {
     await new Promise<void>((resolve, reject) => {
@@ -75,6 +80,42 @@ export function chatRoutes(db: Db, storage: StorageService) {
         else resolve();
       });
     });
+  }
+
+  async function runMessageFileUpload(req: Request, res: Response) {
+    await new Promise<void>((resolve, reject) => {
+      messageUpload.array("files", 10)(req, res, (err: unknown) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  }
+
+  function isMultipartRequest(req: Request) {
+    return (req.headers["content-type"] ?? "").toLowerCase().startsWith("multipart/form-data");
+  }
+
+  function uploadedMessageFiles(req: Request) {
+    const files = (req as Request & { files?: unknown }).files;
+    const list: unknown[] = Array.isArray(files) ? files : [];
+    return list.filter((file): file is { mimetype: string; buffer: Buffer; originalname: string } =>
+        typeof file === "object" &&
+        file !== null &&
+        Buffer.isBuffer((file as { buffer?: unknown }).buffer),
+    );
+  }
+
+  function validateUploadedMessageFiles(files: Array<{ mimetype: string; buffer: Buffer }>) {
+    for (const file of files) {
+      const contentType = (file.mimetype || "").toLowerCase();
+      if (!isAllowedContentType(contentType)) {
+        return `Unsupported attachment type: ${contentType || "unknown"}`;
+      }
+      if (file.buffer.length <= 0) {
+        return "Attachment is empty";
+      }
+    }
+    return null;
   }
 
   async function assertConversationAccess(req: Request, conversationId: string) {
@@ -331,6 +372,65 @@ export function chatRoutes(db: Db, storage: StorageService) {
     });
 
     return userMessage as ChatMessage;
+  }
+
+  async function attachFilesToUserMessage(
+    conversation: ChatConversation,
+    messageId: string,
+    files: Array<{ mimetype: string; buffer: Buffer; originalname: string }>,
+    actor: ActorInfo,
+  ): Promise<ChatAttachment[]> {
+    const attachments: ChatAttachment[] = [];
+    for (const file of files) {
+      const contentType = (file.mimetype || "").toLowerCase();
+      if (!isAllowedContentType(contentType)) {
+        throw new HttpError(422, `Unsupported attachment type: ${contentType || "unknown"}`);
+      }
+      if (file.buffer.length <= 0) {
+        throw new HttpError(422, "Attachment is empty");
+      }
+
+      const stored = await storage.putFile({
+        orgId: conversation.orgId,
+        namespace: `chats/${conversation.id}`,
+        originalFilename: file.originalname || null,
+        contentType,
+        body: file.buffer,
+      });
+
+      const attachment = await svc.createAttachment({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        messageId,
+        provider: stored.provider,
+        objectKey: stored.objectKey,
+        contentType: stored.contentType,
+        byteSize: stored.byteSize,
+        sha256: stored.sha256,
+        originalFilename: stored.originalFilename,
+        createdByAgentId: actor.agentId,
+        createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      });
+      attachments.push(attachment as ChatAttachment);
+
+      await logActivity(db, {
+        orgId: conversation.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "chat.attachment_added",
+        entityType: "chat",
+        entityId: conversation.id,
+        details: {
+          attachmentId: attachment.id,
+          messageId: attachment.messageId,
+          originalFilename: attachment.originalFilename,
+          contentType: attachment.contentType,
+        },
+      });
+    }
+    return attachments;
   }
 
   async function loadAssistantInput(conversation: ChatConversation, actor: ActorInfo) {
@@ -833,7 +933,35 @@ export function chatRoutes(db: Db, storage: StorageService) {
     }
   });
 
-  router.post("/chats/:id/messages/stream", validate(addChatMessageSchema), async (req, res) => {
+  router.post("/chats/:id/messages/stream", async (req, res) => {
+    if (isMultipartRequest(req)) {
+      try {
+        await runMessageFileUpload(req, res);
+      } catch (err) {
+        if (err instanceof multer.MulterError) {
+          if (err.code === "LIMIT_FILE_SIZE") {
+            res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
+            return;
+          }
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
+    }
+
+    const parsedBody = addChatMessageSchema.safeParse(req.body ?? {});
+    if (!parsedBody.success) {
+      res.status(400).json({ error: "Invalid chat message", details: parsedBody.error.issues });
+      return;
+    }
+    const messageFiles = uploadedMessageFiles(req);
+    const attachmentValidationError = validateUploadedMessageFiles(messageFiles);
+    if (attachmentValidationError) {
+      res.status(422).json({ error: attachmentValidationError });
+      return;
+    }
+
     const conversation = await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
       res.status(404).json({ error: "Chat conversation not found" });
@@ -846,7 +974,8 @@ export function chatRoutes(db: Db, storage: StorageService) {
       return;
     }
 
-    const releaseGeneration = claimChatGeneration(conversation.id);
+    const abortController = new AbortController();
+    const releaseGeneration = claimChatGeneration(conversation.id, abortController);
     if (!releaseGeneration) {
       res.status(409).json({ error: "A chat reply is already being generated for this conversation" });
       return;
@@ -858,12 +987,10 @@ export function chatRoutes(db: Db, storage: StorageService) {
     let chatObservation: ExecutionObservabilityContext | null = null;
     const transcript: TranscriptEntry[] = [];
     const observedTranscript: TranscriptEntry[] = [];
-    let requestClosed = false;
-    const abortController = new AbortController();
+    let clientClosed = false;
     const handleClosed = () => {
-      if (requestClosed || res.writableEnded) return;
-      requestClosed = true;
-      abortController.abort();
+      if (clientClosed || res.writableEnded) return;
+      clientClosed = true;
     };
     req.on("aborted", handleClosed);
     res.on("close", handleClosed);
@@ -877,10 +1004,20 @@ export function chatRoutes(db: Db, storage: StorageService) {
     try {
       const userMessage = await addUserMessage(
         conversation as ChatConversation,
-        req.body.body,
+        parsedBody.data.body,
         actor,
-        req.body.editUserMessageId ?? null,
+        parsedBody.data.editUserMessageId ?? null,
       );
+      const userAttachments = await attachFilesToUserMessage(
+        conversation as ChatConversation,
+        userMessage.id,
+        messageFiles,
+        actor,
+      );
+      const hydratedUserMessage = {
+        ...userMessage,
+        attachments: userAttachments,
+      } as ChatMessage;
       turnContextForPartial = turnContextFromUserMessage(userMessage);
       chatObservation = buildChatObservabilityContext(conversation as ChatConversation, {
         surface: "chat_turn",
@@ -890,18 +1027,19 @@ export function chatRoutes(db: Db, storage: StorageService) {
         metadata: {
           stream: true,
           userMessageId: userMessage.id,
-          editUserMessageId: req.body.editUserMessageId ?? null,
+          editUserMessageId: parsedBody.data.editUserMessageId ?? null,
+          attachmentCount: userAttachments.length,
         },
       });
       const traceInputBase = {
         conversationId: conversation.id,
-        body: req.body.body,
+        body: parsedBody.data.body,
         userMessageId: userMessage.id,
       };
       let currentChatTraceInput = buildChatTraceInput(traceInputBase);
       writeStreamEvent(res, {
         type: "ack",
-        userMessage,
+        userMessage: hydratedUserMessage,
       });
 
       await withChatObservation(
@@ -935,7 +1073,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
                 });
               },
               onAssistantState: async (state) => {
-                if (requestClosed) return;
+                if (clientClosed) return;
                 writeStreamEvent(res, {
                   type: "assistant_state",
                   state,
@@ -943,7 +1081,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
               },
               onTranscriptEntry: async (entry) => {
                 transcript.push(entry);
-                if (requestClosed) return;
+                if (clientClosed) return;
                 writeStreamEvent(res, {
                   type: "transcript_entry",
                   entry,
@@ -981,7 +1119,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
                   observedTranscriptEntries: observedTranscript.length,
                 },
               });
-              if (!requestClosed) {
+              if (!clientClosed) {
                 writeStreamEvent(res, {
                   type: "final",
                   messages: stoppedMessage ? [stoppedMessage] : [],
@@ -1013,11 +1151,13 @@ export function chatRoutes(db: Db, storage: StorageService) {
                 ...summarizeChatObservationMessages(createdMessages),
               },
             });
-            writeStreamEvent(res, {
-              type: "final",
-              messages: createdMessages,
-            });
-            res.end();
+            if (!clientClosed) {
+              writeStreamEvent(res, {
+                type: "final",
+                messages: createdMessages,
+              });
+              res.end();
+            }
           } catch (error) {
             finalChatStatus = "failed";
             if (error instanceof ChatAssistantStreamError) {
@@ -1091,7 +1231,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
       }
 
       logger.warn({ err, conversationId: conversation.id }, "chat assistant stream failed");
-      if (!requestClosed) {
+      if (!clientClosed) {
         writeStreamEvent(res, {
           type: "error",
           error: err instanceof Error ? err.message : "Chat assistant failed to respond",
@@ -1104,6 +1244,16 @@ export function chatRoutes(db: Db, storage: StorageService) {
       res.off("close", handleClosed);
       releaseGeneration();
     }
+  });
+
+  router.post("/chats/:id/messages/stream/stop", async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+
+    res.json({ stopped: cancelActiveChatGeneration(conversation.id) });
   });
 
   router.post("/orgs/:orgId/chats/:chatId/attachments", async (req, res) => {

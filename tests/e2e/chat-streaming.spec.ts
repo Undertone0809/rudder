@@ -57,6 +57,12 @@ async function createStreamingOrgThatIgnoresStop(page: Page, name: string) {
   return orgRes.json();
 }
 
+function currentChatId(pageUrl: string) {
+  const chatId = new URL(pageUrl).pathname.split("/").pop();
+  expect(chatId).toBeTruthy();
+  return chatId!;
+}
+
 test.describe("Chat streaming", () => {
   test("streams a codex reply through to completion", async ({ page }) => {
     const organization = await createStreamingOrg(page, `Str-Chat-${Date.now()}`);
@@ -102,6 +108,41 @@ test.describe("Chat streaming", () => {
     await expect(transcriptItem.locator('button[aria-label="Expand command details"]').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/__RUDDER_RESULT_/)).toHaveCount(0);
     await expect(page.getByText(/"kind":"message"/)).toHaveCount(0);
+  });
+
+  test("keeps generating when the operator leaves the chat page", async ({ page }) => {
+    const organization = await createStreamingOrg(page, `Leave-Chat-${Date.now()}`);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto("/chat");
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill("Keep running after navigation");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
+    const chatId = currentChatId(page.url());
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({ timeout: 15_000 });
+
+    await expect.poll(async () => {
+      const messagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
+      expect(messagesRes.ok()).toBe(true);
+      const messages = await messagesRes.json();
+      return messages.find((message: { role: string }) => message.role === "assistant")?.status ?? null;
+    }, { timeout: 15_000 }).toBe("completed");
+
+    await page.goto(`/messenger/chat/${chatId}`);
+    await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Streaming reply for chat.", {
+      timeout: 15_000,
+    });
+    await expect(page.getByRole("button", { name: /Stopped/ })).toHaveCount(0);
   });
 
   test("stops generation and keeps the partial assistant output", async ({ page }) => {

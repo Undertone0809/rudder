@@ -1998,9 +1998,16 @@ function ChatWorkspace() {
 
   const stopStreaming = useCallback((chatId: string) => {
     stopRequestedChatIdsRef.current.add(chatId);
+    void chatsApi.stopMessageStream(chatId).catch((error) => {
+      pushToast({
+        title: "Failed to stop streaming",
+        body: error instanceof Error ? error.message : "Try again.",
+        tone: "error",
+      });
+    });
     streamAbortControllersRef.current[chatId]?.abort();
     setStreamDraftForChat(chatId, (current) => (current ? { ...current, state: "stopped" } : current));
-  }, [setStreamDraftForChat]);
+  }, [pushToast, setStreamDraftForChat]);
 
   const sendMessage = async (
     options?: {
