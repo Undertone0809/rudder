@@ -2597,67 +2597,6 @@ function ChatWorkspace() {
         centered ? "mx-auto w-full max-w-3xl" : "w-full",
       )}
     >
-      <div className="mb-1.5 flex min-w-0 items-center gap-1 px-1">
-        <DropdownMenu open={projectMenuOpen} onOpenChange={setProjectMenuOpen}>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              data-testid="chat-project-selector"
-              aria-label={`Project context: ${projectPillLabel}`}
-              className="inline-flex max-w-[min(100%,18rem)] min-w-0 items-center gap-1.5 rounded-[calc(var(--radius-sm)+2px)] px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground data-[state=open]:bg-[color:var(--surface-active)] data-[state=open]:text-foreground"
-            >
-              <Folder className="h-3.5 w-3.5 shrink-0" />
-              <span className="min-w-0 truncate">{projectPillLabel}</span>
-              <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            sideOffset={6}
-            className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1 text-foreground"
-          >
-            <DropdownMenuLabel className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-              Project context
-            </DropdownMenuLabel>
-            <DropdownMenuRadioGroup value={activeProjectId} onValueChange={applyProjectContext}>
-              <DropdownMenuRadioItem
-                value={NO_PROJECT_ID}
-                hideIndicator
-                className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
-              >
-                <span className="project-context-empty-swatch mr-2 h-3 w-3 shrink-0" aria-hidden="true" />
-                <span className="min-w-0 flex-1 truncate">No project</span>
-              </DropdownMenuRadioItem>
-              {visibleProjects.length > 0 ? (
-                <>
-                  <DropdownMenuSeparator className="panel-divider" />
-                  {visibleProjects.map((project) => (
-                    <DropdownMenuRadioItem
-                      key={project.id}
-                      value={project.id}
-                      hideIndicator
-                      className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
-                    >
-                      <span
-                        className="project-context-swatch mr-2 h-3 w-3 shrink-0"
-                        style={projectContextSwatchStyle(project.color)}
-                        aria-hidden="true"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{projectDisplayName(project)}</span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {project.resources.length} resources
-                        </span>
-                      </span>
-                    </DropdownMenuRadioItem>
-                  ))}
-                </>
-              ) : null}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
       <div onPasteCapture={handleComposerPasteCapture}>
         <MarkdownEditor
           ref={composerEditorRef}
@@ -2701,8 +2640,8 @@ function ChatWorkspace() {
         }}
       />
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
             <DropdownMenuTrigger asChild>
               <Button
@@ -2782,6 +2721,65 @@ function ChatWorkspace() {
               >
                 <Link to="/organization/settings">Open chat settings</Link>
               </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu open={projectMenuOpen} onOpenChange={setProjectMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid="chat-project-selector"
+                aria-label={`Project context: ${projectPillLabel}`}
+                className="chat-chip inline-flex max-w-[min(100%,15rem)] min-w-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)] data-[state=open]:bg-[color:var(--surface-active)]"
+              >
+                <Folder className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 truncate">{projectPillLabel}</span>
+                <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              sideOffset={8}
+              className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1 text-foreground"
+            >
+              <DropdownMenuLabel className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                Project context
+              </DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={activeProjectId} onValueChange={applyProjectContext}>
+                <DropdownMenuRadioItem
+                  value={NO_PROJECT_ID}
+                  hideIndicator
+                  className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
+                >
+                  <span className="project-context-empty-swatch mr-2 h-3 w-3 shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate">No project</span>
+                </DropdownMenuRadioItem>
+                {visibleProjects.length > 0 ? (
+                  <>
+                    <DropdownMenuSeparator className="panel-divider" />
+                    {visibleProjects.map((project) => (
+                      <DropdownMenuRadioItem
+                        key={project.id}
+                        value={project.id}
+                        hideIndicator
+                        className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
+                      >
+                        <span
+                          className="project-context-swatch mr-2 h-3 w-3 shrink-0"
+                          style={projectContextSwatchStyle(project.color)}
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">{projectDisplayName(project)}</span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {project.resources.length} resources
+                          </span>
+                        </span>
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </>
+                ) : null}
+              </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
 
