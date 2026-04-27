@@ -289,6 +289,10 @@ describe("chatAssistantService operator profile prompt injection", () => {
     const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
     const prompt = executeInput?.context?.chatPrompt as string;
     expect(prompt).toContain("Treat message attachments as part of the user's message.");
+    expect(prompt).toContain("Current user message attachments:");
+    expect(prompt).toContain("The latest user message includes 1 attachment(s). Inspect them before answering.");
+    expect(prompt).toContain('User message body: "Help me scope this work."');
+    expect(prompt).toContain("- [1] name=image.png; contentType=image/png; byteSize=1234; contentPath=/api/assets/asset-1/content;");
     expect(prompt).toContain("\"attachments\": [");
     expect(prompt).toContain("\"name\": \"image.png\"");
     expect(prompt).toContain("\"contentType\": \"image/png\"");

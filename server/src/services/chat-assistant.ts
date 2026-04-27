@@ -91,6 +91,13 @@ function safeTrim(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
+function summarizeBody(value: string, maxChars = 160) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "(empty)";
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars - 1)}…`;
+}
+
 function modelLabel(config: Record<string, unknown> | null | undefined) {
   return safeTrim(typeof config?.model === "string" ? config.model : null);
 }
@@ -171,6 +178,28 @@ function buildPrompt(input: GenerateChatAssistantReplyInput) {
     null,
     2,
   );
+}
+
+function buildCurrentUserAttachmentPromptSection(messages: ChatMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.role !== "user" || message.attachments.length === 0) continue;
+
+    const lines = [
+      "Current user message attachments:",
+      `- The latest user message includes ${message.attachments.length} attachment(s). Inspect them before answering.`,
+      `- User message body: ${JSON.stringify(summarizeBody(message.body))}`,
+      ...message.attachments.map((attachment, attachmentIndex) => {
+        const name = attachment.originalFilename ?? attachment.assetId;
+        const fetchUrl = `$RUDDER_API_URL${attachment.contentPath}`;
+        const downloadCommand = `curl -L -H "Authorization: Bearer $RUDDER_API_KEY" "${fetchUrl}" -o ${name}`;
+        return `- [${attachmentIndex + 1}] name=${name}; contentType=${attachment.contentType}; byteSize=${attachment.byteSize}; contentPath=${attachment.contentPath}; fetchUrl=${fetchUrl}; downloadCommand=${downloadCommand}`;
+      }),
+    ];
+    return lines.join("\n");
+  }
+
+  return null;
 }
 
 function buildOperatorProfilePromptSection(profile: OperatorProfileSettings | null | undefined) {
@@ -372,6 +401,7 @@ function buildConversationPrompt(
 ) {
   const operatorProfileSection = buildOperatorProfilePromptSection(input.operatorProfile);
   const selectedProjectSection = buildSelectedProjectPromptSection(input.contextLinks);
+  const currentUserAttachmentSection = buildCurrentUserAttachmentPromptSection(input.messages.slice(-12));
   /**
    * Chat prompt assembly stays compositional on purpose.
    *
@@ -389,6 +419,7 @@ function buildConversationPrompt(
     ...(selectedProjectSection ? [selectedProjectSection] : []),
     ...(orgResourcesPrompt ? [orgResourcesPrompt] : []),
     ...(operatorProfileSection ? [operatorProfileSection] : []),
+    ...(currentUserAttachmentSection ? [currentUserAttachmentSection] : []),
     "Conversation input:",
     buildPrompt(input),
   ].join("\n\n");
