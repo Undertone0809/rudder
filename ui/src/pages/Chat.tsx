@@ -71,6 +71,7 @@ import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
+import { projectColorCssVars } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
 import {
   formatChatProcessDuration,
@@ -208,9 +209,7 @@ function projectDisplayName(project: Project | null | undefined) {
 }
 
 function projectContextSwatchStyle(color: string | null | undefined): CSSProperties {
-  return {
-    "--project-context-color": color?.trim() || "var(--accent-base)",
-  } as CSSProperties;
+  return projectColorCssVars(color);
 }
 
 const COMPOSER_MENU_VIEWPORT_PADDING = 12;

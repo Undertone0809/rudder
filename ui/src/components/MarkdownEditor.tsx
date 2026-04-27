@@ -43,6 +43,7 @@ import {
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
 import { mentionDeletionPlugin } from "../lib/mention-deletion";
 import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
+import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   applySkillTokenDecoration,
   clearSkillTokenDecoration,
@@ -1104,7 +1105,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                           ) : option.kind === "project" && option.projectId ? (
                             <span
                               className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full border border-border/50"
-                              style={{ backgroundColor: option.projectColor ?? "#64748b" }}
+                              style={projectColorBackgroundStyle(option.projectColor)}
                             />
                           ) : option.kind === "issue" && option.issueId ? (
                             <span

@@ -13,6 +13,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
+import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { ProjectProperties, type ProjectConfigFieldKey, type ProjectFieldSaveState } from "../components/ProjectProperties";
 import { ProjectResourcesPanel } from "../components/ProjectResourcesPanel";
 import { InlineEditor } from "../components/InlineEditor";
@@ -78,8 +79,8 @@ function ColorPicker({
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(!open)}
-        className="shrink-0 h-5 w-5 rounded-md cursor-pointer hover:ring-2 hover:ring-foreground/20 transition-[box-shadow]"
-        style={{ backgroundColor: currentColor }}
+        className="shrink-0 h-5 w-5 rounded-md cursor-pointer shadow-[inset_0_0_0_1px_color-mix(in_oklab,white_24%,transparent),0_0_0_1px_color-mix(in_oklab,var(--border-base)_76%,transparent)] transition-[box-shadow] hover:ring-2 hover:ring-foreground/20"
+        style={projectColorBackgroundStyle(currentColor)}
         aria-label="Change project color"
       />
       {open && (
@@ -97,7 +98,7 @@ function ColorPicker({
                     ? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
                     : "hover:ring-2 hover:ring-foreground/30"
                 }`}
-                style={{ backgroundColor: color }}
+                style={projectColorBackgroundStyle(color)}
                 aria-label={`Select color ${color}`}
               />
             ))}

@@ -750,8 +750,8 @@
   }
 
   .project-context-swatch {
-    background: color-mix(in oklab, var(--project-context-color, var(--accent-base)) 64%, var(--surface-elevated));
-    border: 1px solid color-mix(in oklab, var(--project-context-color, var(--accent-base)) 42%, var(--border-base));
+    background: var(--project-color, var(--accent-base));
+    border: 1px solid color-mix(in oklab, var(--project-accent-color, var(--accent-base)) 42%, var(--border-base));
   }
 
   .project-context-empty-swatch {
@@ -1255,7 +1255,7 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
   width: 0.45rem;
   height: 0.45rem;
   border-radius: 999px;
-  background-color: var(--rudder-mention-project-color, currentColor);
+  background: var(--rudder-mention-project-color, currentColor);
 }
 
 .rudder-mdxeditor-content a.rudder-mention-chip[data-mention-kind="agent"]::before,

@@ -7,7 +7,6 @@ import {
   Clock3,
   Copy,
   DollarSign,
-  Folder,
   FolderTree,
   History,
   MessageSquare,
@@ -36,6 +35,7 @@ import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { heartbeatsApi } from "@/api/heartbeats";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
+import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
 import { relativeTime } from "@/lib/utils";
 import { readRecentIssueIds, resolveRecentIssues } from "@/lib/recent-issues";
@@ -205,7 +205,7 @@ function ProjectListSection({
   closeMobileSidebar,
   onNewProject,
 }: {
-  visibleProjects: Array<{ id: string; name: string; description: string | null; urlKey?: string | null }>;
+  visibleProjects: Array<{ id: string; name: string; description: string | null; color?: string | null; urlKey?: string | null }>;
   activeProjectRef: string | null;
   closeMobileSidebar: () => void;
   onNewProject: () => void;
@@ -256,7 +256,11 @@ function ProjectListSection({
               )}
             >
               <div className="flex items-center gap-2">
-                <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span
+                  data-testid={`workspace-project-color-${project.id}`}
+                  className="h-4 w-4 shrink-0 rounded-[calc(var(--radius-sm)-3px)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,white_20%,transparent),0_0_0_1px_color-mix(in_oklab,var(--border-base)_72%,transparent)]"
+                  style={projectColorBackgroundStyle(project.color)}
+                />
                 <span className="truncate text-sm font-medium text-foreground">{project.name}</span>
               </div>
               <div className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -547,8 +551,9 @@ export function ThreeColumnContextSidebar() {
                 )}
               >
                 <Circle
+                  data-testid={`issue-project-color-${project.id}`}
                   className="h-2.5 w-2.5 shrink-0 fill-current"
-                  style={{ color: project.color ?? "#7c3aed" }}
+                  style={{ color: projectColorAccent(project.color) }}
                 />
                 <span className="truncate">{project.name}</span>
               </Link>

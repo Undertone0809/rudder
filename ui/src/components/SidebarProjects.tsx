@@ -18,6 +18,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { authApi } from "../api/auth";
 import { projectsApi } from "../api/projects";
 import { queryKeys } from "../lib/queryKeys";
+import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { cn, projectRouteRef } from "../lib/utils";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
@@ -84,8 +85,9 @@ function SortableProjectItem({
           })}
         >
           <span
-            className="shrink-0 h-3.5 w-3.5 rounded-sm"
-            style={{ backgroundColor: project.color ?? "#6366f1" }}
+            data-testid={`project-sidebar-color-${project.id}`}
+            className="shrink-0 h-3.5 w-3.5 rounded-[calc(var(--radius-sm)-3px)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,white_22%,transparent),0_0_0_1px_color-mix(in_oklab,var(--border-base)_72%,transparent)]"
+            style={projectColorBackgroundStyle(project.color)}
           />
           <span className="flex-1 truncate">{project.name}</span>
           {project.pauseReason === "budget" ? <BudgetSidebarMarker title="Project paused by budget" /> : null}

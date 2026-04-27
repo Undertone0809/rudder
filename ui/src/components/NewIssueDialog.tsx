@@ -12,6 +12,7 @@ import { organizationSkillsApi } from "../api/organizationSkills";
 import { authApi } from "../api/auth";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
+import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   buildNewIssueCreateRequest,
   clearIssueAutosave,
@@ -1313,7 +1314,7 @@ export function NewIssueDialog() {
                     <>
                       <span
                         className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={{ backgroundColor: currentProject.color ?? "#6366f1" }}
+                        style={projectColorBackgroundStyle(currentProject.color)}
                       />
                       <span className="truncate">{option.label}</span>
                     </>
@@ -1328,7 +1329,7 @@ export function NewIssueDialog() {
                     <>
                       <span
                         className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={{ backgroundColor: project?.color ?? "#6366f1" }}
+                        style={projectColorBackgroundStyle(project?.color)}
                       />
                       <span className="truncate">{option.label}</span>
                     </>

@@ -25,6 +25,7 @@ import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { buildAutomationTriggerPatch } from "../lib/automation-trigger-patch";
 import { formatChatAgentLabel } from "../lib/agent-labels";
+import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { timeAgo } from "../lib/timeAgo";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -1108,7 +1109,7 @@ export function AutomationDetail() {
                     <SidebarSelectValue>
                       <span
                         className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={{ backgroundColor: currentProject.color ?? "#64748b" }}
+                        style={projectColorBackgroundStyle(currentProject.color)}
                       />
                       <span className="truncate">{option.label}</span>
                     </SidebarSelectValue>
@@ -1125,7 +1126,7 @@ export function AutomationDetail() {
                     <>
                       <span
                         className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={{ backgroundColor: project?.color ?? "#64748b" }}
+                        style={projectColorBackgroundStyle(project?.color)}
                       />
                       <span className="truncate">{option.label}</span>
                     </>
