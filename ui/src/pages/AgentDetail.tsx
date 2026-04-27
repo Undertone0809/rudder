@@ -40,6 +40,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { retryHeartbeatRun } from "../lib/heartbeat-retry";
 import { queryKeys } from "../lib/queryKeys";
 import { findOrganizationByPrefix } from "../lib/organization-routes";
+import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
 import { AgentConfigForm } from "../components/AgentConfigForm";
 import { PageTabBar } from "../components/PageTabBar";
 import { roleLabels, help } from "../components/agent-config-primitives";
@@ -542,13 +543,6 @@ function formatEnvForDisplay(envValue: unknown, censorUsernameInLogs: boolean): 
     .map((key) => `${key}=${redactEnvValue(key, env[key], censorUsernameInLogs)}`)
     .join("\n");
 }
-
-const sourceLabels: Record<string, string> = {
-  timer: "Timer",
-  assignment: "Assignment",
-  on_demand: "On-demand",
-  automation: "Automation",
-};
 
 const LIVE_SCROLL_BOTTOM_TOLERANCE_PX = 32;
 type ScrollContainer = Window | HTMLElement;
@@ -1715,6 +1709,7 @@ function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId: strin
   const isLive = run.status === "running" || run.status === "queued";
   const statusInfo = runStatusIcons[run.status] ?? { icon: Clock, color: "text-neutral-400" };
   const StatusIcon = statusInfo.icon;
+  const runReason = describeRunReason(run);
   const summary = run.resultJson
     ? String((run.resultJson as Record<string, unknown>).summary ?? (run.resultJson as Record<string, unknown>).result ?? "")
     : run.error ?? "";
@@ -1752,12 +1747,9 @@ function LatestRunCard({ runs, agentId }: { runs: HeartbeatRun[]; agentId: strin
           <span className="font-mono text-xs text-muted-foreground">{run.id.slice(0, 8)}</span>
           <span className={cn(
             "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-            run.invocationSource === "timer" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
-              : run.invocationSource === "assignment" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300"
-              : run.invocationSource === "on_demand" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300"
-              : "bg-muted text-muted-foreground"
-          )}>
-            {sourceLabels[run.invocationSource] ?? run.invocationSource}
+            runReasonBadgeClassName(runReason.tone)
+          )} title={runReason.description}>
+            {runReason.label}
           </span>
           <span className="ml-auto text-xs text-muted-foreground">{relativeTime(run.createdAt)}</span>
         </div>
@@ -3765,6 +3757,7 @@ function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelect
     ? String((run.resultJson as Record<string, unknown>).summary ?? (run.resultJson as Record<string, unknown>).result ?? "")
     : run.error ?? "";
   const runLabel = run.id.slice(0, 8);
+  const runReason = describeRunReason(run);
   const destination = isSelected ? `/agents/${agentId}/runs` : `/agents/${agentId}/runs/${run.id}`;
 
   const openRun = () => {
@@ -3822,12 +3815,9 @@ function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelect
         </button>
         <span className={cn(
           "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium shrink-0",
-          run.invocationSource === "timer" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
-            : run.invocationSource === "assignment" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300"
-            : run.invocationSource === "on_demand" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300"
-            : "bg-muted text-muted-foreground"
-        )}>
-          {sourceLabels[run.invocationSource] ?? run.invocationSource}
+          runReasonBadgeClassName(runReason.tone)
+        )} title={runReason.description}>
+          {runReason.label}
         </span>
         <span className="ml-auto text-[11px] text-muted-foreground shrink-0">
           {relativeTime(run.createdAt)}
