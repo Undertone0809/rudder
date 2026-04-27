@@ -58,6 +58,10 @@ cannot be safely inferred.
   `npx @rudderhq/cli@latest start` or bare `npx @rudderhq/cli start` to work
   immediately. Call this out as an alpha/bootstrap exception, not the normal
   canary policy.
+- During the pre-stable bootstrap exception, npm `latest` must not move to a
+  canary until the matching Desktop GitHub Release has all portable assets and
+  `SHASUMS256.txt`. Otherwise `npx @rudderhq/cli@latest start` can resolve a CLI
+  version whose Desktop release is not installable yet.
 - Release-maintenance commits that should not publish another canary must
   include `[skip release]`, then be verified as skipped in `release.yml`.
 - If a normal `main` push is already running while you make release-maintenance
@@ -205,7 +209,9 @@ Canary releases should normally be automatic.
 1. Confirm the change is merged to `main`.
 2. Watch the `Release` workflow canary job. If the triggering commit is a
    release-maintenance commit with `[skip release]`, verify the run is skipped
-   before assuming no canary was produced.
+   before assuming no canary was produced. For pre-stable public canaries, the
+   canary job is not complete until it has dispatched the Desktop release,
+   verified the Desktop assets, and only then promoted npm `latest`.
 3. Confirm npm `canary` points at the new prerelease for every public package,
    not just `@rudderhq/cli`:
 

@@ -64,7 +64,6 @@ jobs:
           version="$(./scripts/release.sh canary --print-version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           ./scripts/release.sh canary
-          node scripts/promote-npm-dist-tag.mjs --version "$version" --tag latest --only-if-no-stable
           git push origin "refs/tags/canary/v${version}"
 
       - name: Start desktop release build
@@ -73,6 +72,25 @@ jobs:
         run: |
           tag="canary/v${{ steps.publish.outputs.version }}"
           gh workflow run desktop-release.yml --ref "$tag" -f release_tag="$tag"
+
+      - name: Wait for desktop release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="canary/v${{ steps.publish.outputs.version }}"
+          node scripts/wait-for-desktop-release-assets.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$tag" \
+            --version "${{ steps.publish.outputs.version }}"
+
+      - name: Promote canary to npm latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          node scripts/promote-npm-dist-tag.mjs \
+            --version "${{ steps.publish.outputs.version }}" \
+            --tag latest \
+            --only-if-no-stable
 
   stable-dry-run:
     name: Preview stable release
