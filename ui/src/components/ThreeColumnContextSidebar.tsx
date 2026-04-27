@@ -40,6 +40,7 @@ import { formatSidebarAgentLabel } from "@/lib/agent-labels";
 import { queryKeys } from "@/lib/queryKeys";
 import { relativeTime } from "@/lib/utils";
 import { readRecentIssueIds, resolveRecentIssues } from "@/lib/recent-issues";
+import { isFollowingIssue } from "@/lib/issue-scope-filters";
 import {
   deleteIssueDraft,
   ISSUE_DRAFT_CHANGED_EVENT,
@@ -348,6 +349,10 @@ export function ThreeColumnContextSidebar() {
     () => resolveRecentIssues(recentIssueIds, allIssues ?? []),
     [allIssues, recentIssueIds],
   );
+  const followingIssueCount = useMemo(() => {
+    if (!currentUserId) return 0;
+    return (allIssues ?? []).filter((issue) => isFollowingIssue(issue, currentUserId)).length;
+  }, [allIssues, currentUserId]);
   const issueContextItems = [
     {
       key: "all",
@@ -357,11 +362,11 @@ export function ThreeColumnContextSidebar() {
       active: scope === "" && !selectedProjectId,
     },
     {
-      key: "assigned",
-      to: `/issues${currentUserId ? "?scope=assigned" : ""}`,
+      key: "following",
+      to: `/issues${currentUserId ? "?scope=following" : ""}`,
       icon: UserRound,
-      label: "Assigned to Me",
-      active: scope === "assigned",
+      label: `Following${followingIssueCount > 0 ? ` (${followingIssueCount})` : ""}`,
+      active: scope === "following",
     },
     {
       key: "starred",

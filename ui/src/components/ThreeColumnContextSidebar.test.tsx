@@ -187,6 +187,13 @@ function renderSidebar() {
 }
 
 describe("ThreeColumnContextSidebar issue draft recovery", () => {
+  it("shows the following issues scope in the issues sidebar", () => {
+    renderSidebar();
+
+    const followingLink = document.querySelector('a[href="/issues?scope=following"]');
+    expect(followingLink?.textContent).toContain("Following");
+  });
+
   const savedDraft = {
     id: "draft-1",
     orgId: "org-1",
