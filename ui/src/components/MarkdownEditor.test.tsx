@@ -9,6 +9,10 @@ import {
   MarkdownEditor,
 } from "./MarkdownEditor";
 
+const mdxEditorMocks = vi.hoisted(() => ({
+  imagePlugin: vi.fn(() => ({})),
+}));
+
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -111,7 +115,7 @@ vi.mock("@mdxeditor/editor", async () => {
     codeBlockPlugin: () => ({}),
     codeMirrorPlugin: () => ({}),
     headingsPlugin: () => ({}),
-    imagePlugin: () => ({}),
+    imagePlugin: mdxEditorMocks.imagePlugin,
     linkDialogPlugin: () => ({}),
     linkPlugin: () => ({}),
     listsPlugin: () => ({}),
@@ -127,6 +131,7 @@ let cleanupFn: (() => void) | null = null;
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
+  mdxEditorMocks.imagePlugin.mockClear();
   document.body.innerHTML = "";
 });
 
@@ -226,6 +231,36 @@ describe("MarkdownEditor", () => {
       "/api/attachments/test/content",
     );
     expect(document.body.textContent).toContain("Architecture diagram");
+  });
+
+  it("disables the default inline image toolbar when image uploads are enabled", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value=""
+          onChange={() => undefined}
+          imageUploadHandler={async () => "/api/attachments/test/content"}
+        />,
+      );
+    });
+
+    expect(mdxEditorMocks.imagePlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        imageUploadHandler: expect.any(Function),
+        EditImageToolbar: expect.any(Function),
+      }),
+    );
   });
 
   it("renders issue mention options with status, project, and assignee metadata", async () => {
