@@ -1,0 +1,23 @@
+{
+  "skill_name": "pr-local-preview-validator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "gh pr checkout 8 这个 PR 可以本地 worktree 跑起来，然后我看看效果",
+      "expected_output": "The agent protects the current worktree, checks out PR 8 in a sibling worktree, starts the app on an isolated port and instance, verifies readiness, and gives a URL plus stop/log commands.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "把 PR 12 拉下来跑一下，这个改的是 issue board UI，我需要看截图再 review",
+      "expected_output": "The agent starts PR 12 in an isolated worktree, verifies the preview, captures relevant UI screenshots outside the repo, and returns the local URL, screenshot paths/images, logs command, and cleanup command.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "关掉刚才那个 PR 预览服务",
+      "expected_output": "The agent stops only the PR preview session, confirms the preview port is no longer listening, and avoids killing unrelated dev runtimes.",
+      "files": []
+    }
+  ]
+}
