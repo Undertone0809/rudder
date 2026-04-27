@@ -11,15 +11,27 @@ import { Issues } from "./Issues";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockState = vi.hoisted(() => ({
+  agents: [
+    { id: "agent-1", name: "Build Agent" },
+  ],
   confirm: vi.fn(),
   openNewIssue: vi.fn(),
+  projects: [
+    { id: "project-1", name: "Rudder App" },
+  ],
   pushToast: vi.fn(),
   search: "?scope=drafts",
+  session: { user: { id: "local-board" } },
   setBreadcrumbs: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: [], isLoading: false, error: null }),
+  useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
+    if (queryKey[0] === "agents") return { data: mockState.agents, isLoading: false, error: null };
+    if (queryKey[0] === "projects") return { data: mockState.projects, isLoading: false, error: null };
+    if (queryKey[0] === "auth") return { data: mockState.session, isLoading: false, error: null };
+    return { data: [], isLoading: false, error: null };
+  },
   useMutation: () => ({
     mutate: vi.fn(),
   }),
@@ -78,8 +90,8 @@ const savedDraft = {
   status: "backlog",
   priority: "high",
   labelIds: [],
-  assigneeValue: "",
-  projectId: "",
+  assigneeValue: "agent:agent-1",
+  projectId: "project-1",
   projectWorkspaceId: "",
   assigneeModelOverride: "",
   assigneeThinkingEffort: "",
@@ -137,6 +149,8 @@ describe("Issues draft scope", () => {
     expect(cards).toHaveLength(2);
     expect(cards[0]?.textContent).toContain("Newer draft");
     expect(cards[1]?.textContent).toContain("Recovered draft issue");
+    expect(cards[1]?.textContent).toContain("Rudder App");
+    expect(cards[1]?.textContent).toContain("Build Agent");
 
     const openButton = cards[1]?.querySelector("button") as HTMLButtonElement | null;
     act(() => {

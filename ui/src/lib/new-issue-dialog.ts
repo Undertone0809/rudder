@@ -29,6 +29,8 @@ export interface IssueDraftSummary {
   id: string;
   title: string;
   description: string;
+  assigneeValue: string;
+  assigneeId?: string;
   projectId: string;
   status: string;
   priority: string;
@@ -203,6 +205,8 @@ export function summarizeIssueDraft(draft: SavedIssueDraft): IssueDraftSummary {
     id: draft.id,
     title,
     description: draft.description.trim(),
+    assigneeValue: draft.assigneeValue,
+    assigneeId: draft.assigneeId,
     projectId: draft.projectId,
     status: draft.status || "todo",
     priority: draft.priority,

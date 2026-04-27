@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { Agent, Project } from "@rudderhq/shared";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -15,6 +16,7 @@ import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import { rememberIssueNavigation } from "../lib/issue-navigation";
 import { getIssueScopeFilters } from "../lib/issue-scope-filters";
 import { readRecentIssueIds, recordRecentIssue, resolveRecentIssues } from "../lib/recent-issues";
+import { formatAssigneeUserLabel, parseAssigneeValue } from "../lib/assignees";
 import {
   deleteIssueDraft,
   ISSUE_DRAFT_CHANGED_EVENT,
@@ -24,15 +26,45 @@ import {
 import { relativeTime } from "../lib/utils";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
-import { CircleDot, PencilLine, Trash2 } from "lucide-react";
+import { CircleDot, Clock3, Flag, FolderKanban, PencilLine, Trash2, UserRound } from "lucide-react";
 import { useIssueFollows } from "@/hooks/useIssueFollows";
+
+function formatDraftMetadataValue(value: string) {
+  return value.replace(/[-_]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function resolveDraftProjectName(draft: IssueDraftSummary, projects: Project[] | undefined) {
+  if (!draft.projectId) return null;
+  return projects?.find((project) => project.id === draft.projectId)?.name ?? null;
+}
+
+function resolveDraftAssigneeLabel(
+  draft: IssueDraftSummary,
+  agents: Agent[] | undefined,
+  currentUserId: string | null | undefined,
+) {
+  const assignee = parseAssigneeValue(draft.assigneeValue || draft.assigneeId || "");
+  if (assignee.assigneeAgentId) {
+    return agents?.find((agent) => agent.id === assignee.assigneeAgentId)?.name ?? null;
+  }
+  if (assignee.assigneeUserId) {
+    return formatAssigneeUserLabel(assignee.assigneeUserId, currentUserId);
+  }
+  return null;
+}
 
 function DraftIssuesView({
   drafts,
+  agents,
+  projects,
+  currentUserId,
   onOpenDraft,
   onDeleteDraft,
 }: {
   drafts: IssueDraftSummary[];
+  agents?: Agent[];
+  projects?: Project[];
+  currentUserId?: string | null;
   onOpenDraft: (draft: IssueDraftSummary) => void;
   onDeleteDraft: (draft: IssueDraftSummary) => void;
 }) {
@@ -54,45 +86,65 @@ function DraftIssuesView({
       </div>
 
       <section aria-label="Draft issues" className="grid max-w-5xl grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {drafts.map((draft) => (
-          <article
-            key={draft.id}
-            data-testid="issue-draft-card"
-            className="group relative min-h-36 rounded-[var(--radius-sm)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_88%,transparent)] transition-[background-color,border-color] hover:border-[color:var(--border-strong)] hover:bg-[color:var(--surface-elevated)]"
-          >
-            <button
-              type="button"
-              className="flex h-full min-h-36 w-full flex-col items-start px-4 py-3 text-left"
-              onClick={() => onOpenDraft(draft)}
+        {drafts.map((draft) => {
+          const projectName = resolveDraftProjectName(draft, projects);
+          const assigneeLabel = resolveDraftAssigneeLabel(draft, agents, currentUserId);
+          const metadataItems = [
+            draft.status ? { icon: CircleDot, label: formatDraftMetadataValue(draft.status) } : null,
+            draft.priority ? { icon: Flag, label: formatDraftMetadataValue(draft.priority) } : null,
+            projectName ? { icon: FolderKanban, label: projectName } : null,
+            assigneeLabel ? { icon: UserRound, label: assigneeLabel } : null,
+            { icon: Clock3, label: relativeTime(draft.updatedAt) },
+          ].filter((item): item is { icon: typeof CircleDot; label: string } => Boolean(item));
+
+          return (
+            <article
+              key={draft.id}
+              data-testid="issue-draft-card"
+              className="group relative min-h-36 rounded-[var(--radius-sm)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_88%,transparent)] transition-[background-color,border-color] hover:border-[color:var(--border-strong)] hover:bg-[color:var(--surface-elevated)]"
             >
-              <div className="flex w-full min-w-0 items-start gap-2 pr-9">
-                <PencilLine className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-foreground">{draft.title}</div>
-                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {draft.status} / {draft.priority} / {relativeTime(draft.updatedAt)}
+              <button
+                type="button"
+                className="flex h-full min-h-36 w-full flex-col items-start px-4 py-3 text-left"
+                onClick={() => onOpenDraft(draft)}
+              >
+                <div className="flex w-full min-w-0 items-start gap-2 pr-9">
+                  <PencilLine className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-foreground">{draft.title}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      {metadataItems.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <span key={`${draft.id}-${item.label}`} className="inline-flex min-w-0 items-center gap-1">
+                            <Icon className="h-3 w-3 shrink-0" />
+                            <span className="max-w-[11rem] truncate">{item.label}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
-              </div>
-              <p className="mt-5 line-clamp-3 text-sm leading-6 text-muted-foreground">
-                {draft.description || "Add description..."}
-              </p>
-            </button>
-            <button
-              type="button"
-              data-testid="issue-draft-delete-button"
-              aria-label={`Delete draft ${draft.title}`}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onDeleteDraft(draft);
-              }}
-              className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-100 transition-colors hover:bg-[color:color-mix(in_oklab,var(--destructive)_16%,transparent)] hover:text-destructive"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </article>
-        ))}
+                <p className="mt-5 line-clamp-3 text-sm leading-6 text-muted-foreground">
+                  {draft.description || "Add description..."}
+                </p>
+              </button>
+              <button
+                type="button"
+                data-testid="issue-draft-delete-button"
+                aria-label={`Delete draft ${draft.title}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onDeleteDraft(draft);
+                }}
+                className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-100 transition-colors hover:bg-[color:color-mix(in_oklab,var(--destructive)_16%,transparent)] hover:text-destructive"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </article>
+          );
+        })}
       </section>
     </div>
   );
@@ -270,6 +322,9 @@ export function Issues() {
     return (
       <DraftIssuesView
         drafts={issueDraftSummaries}
+        agents={agents}
+        projects={projects}
+        currentUserId={currentUserId}
         onOpenDraft={(draft) => {
           openNewIssue({ draftId: draft.id });
         }}
