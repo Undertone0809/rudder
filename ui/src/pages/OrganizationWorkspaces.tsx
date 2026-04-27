@@ -151,23 +151,25 @@ function WorkspaceTreeNode({
           <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
             {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </span>
-          <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          {isAgentWorkspace ? (
+            <span
+              data-testid="org-workspaces-agent-icon"
+              className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground"
+            >
+              <AgentIcon icon={entry.agentIcon} className="h-3.5 w-3.5 text-[12px]" />
+            </span>
+          ) : (
+            <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          )}
           <div className="min-w-0 flex-1">
             <div className="truncate font-medium">{primaryLabel}</div>
-            {isAgentWorkspace ? (
-              <div aria-hidden="true" className="truncate text-[11px] text-muted-foreground">
-                Agent workspace
-              </div>
-            ) : null}
           </div>
           {isAgentWorkspace ? (
             <span
               aria-hidden="true"
+              data-testid="org-workspaces-agent-badge"
               className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground"
             >
-              {entry.agentIcon ? (
-                <AgentIcon icon={entry.agentIcon} className="h-3 w-3 shrink-0 text-[11px]" />
-              ) : null}
               Agent
             </span>
           ) : null}
