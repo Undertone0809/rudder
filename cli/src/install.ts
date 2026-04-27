@@ -27,6 +27,8 @@ export interface PersistentCliInstallResult {
   output: string;
 }
 
+type SpawnSyncResultLike = ReturnType<typeof spawnSync>;
+
 function normalizePath(value: string | null | undefined): string {
   return (value ?? "").replaceAll("\\", "/").toLowerCase();
 }
@@ -148,19 +150,51 @@ export function installPersistentCli(
 ): PersistentCliInstallResult {
   const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
   const command = `npm install --global ${options.installSpec}`;
-  const result = spawnSyncImpl(process.platform === "win32" ? "npm.cmd" : "npm", ["install", "--global", options.installSpec], {
+  const initialResult = runNpmGlobalInstall(spawnSyncImpl, ["install", "--global", options.installSpec]);
+  const initialOutput = collectSpawnOutput(initialResult);
+
+  if (initialResult.status === 0 || !isRudderBinConflict(initialOutput)) {
+    return {
+      ok: initialResult.status === 0,
+      command,
+      output: initialOutput,
+    };
+  }
+
+  const forcedCommand = `npm install --global --force ${options.installSpec}`;
+  const forcedResult = runNpmGlobalInstall(spawnSyncImpl, ["install", "--global", "--force", options.installSpec]);
+  const forcedOutput = collectSpawnOutput(forcedResult);
+
+  return {
+    ok: forcedResult.status === 0,
+    command: forcedCommand,
+    output: forcedOutput || initialOutput,
+  };
+}
+
+function runNpmGlobalInstall(
+  spawnSyncImpl: typeof spawnSync,
+  args: string[],
+): SpawnSyncResultLike {
+  return spawnSyncImpl(process.platform === "win32" ? "npm.cmd" : "npm", args, {
     encoding: "utf8",
     stdio: ["inherit", "pipe", "pipe"],
   });
+}
 
-  const output = [result.stdout, result.stderr]
+function collectSpawnOutput(result: SpawnSyncResultLike): string {
+  return [result.stdout, result.stderr]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .join("\n")
     .trim();
+}
 
-  return {
-    ok: result.status === 0,
-    command,
-    output,
-  };
+function isRudderBinConflict(output: string): boolean {
+  const normalized = output.toLowerCase().replaceAll("\\", "/");
+  return (
+    normalized.includes("eexist") &&
+    (normalized.includes(`/${CLI_BIN_NAME}`) ||
+      normalized.includes(`/${CLI_BIN_NAME}.cmd`) ||
+      normalized.includes(`/${CLI_BIN_NAME}.ps1`))
+  );
 }

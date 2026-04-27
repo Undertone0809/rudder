@@ -160,6 +160,51 @@ describe("persistent CLI install helpers", () => {
       },
     );
   });
+
+  it("retries with --force when npm reports an existing rudder binary", () => {
+    const spawnSyncImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "npm error code EEXIST\nnpm error File exists: /usr/local/bin/rudder\n",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "changed 1 package",
+        stderr: "",
+      });
+
+    expect(
+      installPersistentCli({
+        installSpec: "@rudderhq/cli@0.1.0",
+        spawnSyncImpl: spawnSyncImpl as never,
+      }),
+    ).toEqual({
+      ok: true,
+      command: "npm install --global --force @rudderhq/cli@0.1.0",
+      output: "changed 1 package",
+    });
+
+    expect(spawnSyncImpl).toHaveBeenNthCalledWith(
+      1,
+      process.platform === "win32" ? "npm.cmd" : "npm",
+      ["install", "--global", "@rudderhq/cli@0.1.0"],
+      {
+        encoding: "utf8",
+        stdio: ["inherit", "pipe", "pipe"],
+      },
+    );
+    expect(spawnSyncImpl).toHaveBeenNthCalledWith(
+      2,
+      process.platform === "win32" ? "npm.cmd" : "npm",
+      ["install", "--global", "--force", "@rudderhq/cli@0.1.0"],
+      {
+        encoding: "utf8",
+        stdio: ["inherit", "pipe", "pipe"],
+      },
+    );
+  });
 });
 
 describe("desktop start command helpers", () => {
