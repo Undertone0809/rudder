@@ -2266,7 +2266,8 @@ function TranscriptChatActionGroup({
   const hasSingleAction = actions.length === 1;
   const hasError = actions.some((action) => action.type === "tool" && action.entry.status === "error");
   const hasRunning = actions.some((action) => action.type === "tool" && action.entry.status === "running");
-  const shouldInlineSingleAction = hasSingleAction && singleAction && (!detailVariant || singleAction.type === "stdout");
+  const shouldInlineSingleStdoutAction = hasSingleAction && singleAction?.type === "stdout";
+  const shouldRenderSingleToolAction = hasSingleAction && singleAction?.type === "tool" && !detailVariant;
   const summary = formatChatActionSummary(actions);
   const highlightGroupError = hasError && !detailVariant;
   const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : hasError));
@@ -2277,13 +2278,24 @@ function TranscriptChatActionGroup({
     }
   }, [detailVariant, hasError]);
 
-  if (shouldInlineSingleAction) {
+  if (shouldInlineSingleStdoutAction) {
     return (
       <div className="divide-y divide-border/30">
         <TranscriptChatActionRow
           action={singleAction}
           density={density}
           inline
+        />
+      </div>
+    );
+  }
+
+  if (shouldRenderSingleToolAction) {
+    return (
+      <div className="divide-y divide-border/30">
+        <TranscriptChatActionRow
+          action={singleAction}
+          density={density}
         />
       </div>
     );

@@ -194,6 +194,56 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("Expand output details");
   });
 
+  it("renders a single chat tool call as a collapsible row", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "init",
+              ts: "2026-03-12T00:00:00.000Z",
+              model: "codex",
+              sessionId: "session-1",
+            },
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:02.000Z",
+              text: "I will read the README before replying.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:03.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-read-1",
+              input: { command: "sed -n '1,220p' README.md" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:04.000Z",
+              toolUseId: "cmd-read-1",
+              content: "README contents hidden until expanded",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Read README.md");
+    expect(html).toContain("aria-expanded=\"false\"");
+    expect(html).toContain("Expand command details");
+    expect(html).not.toContain("data-testid=\"command-terminal-detail\"");
+    expect(html).not.toContain("README contents hidden until expanded");
+    expect(html).not.toContain("Expand tool activity");
+  });
+
   it("filters routine Rudder-managed runtime home logs from nice transcript views", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
