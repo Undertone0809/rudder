@@ -382,7 +382,8 @@ Agent-level control-plane settings (not adapter-specific):
     "wakeOnAssignment": true,
     "wakeOnOnDemand": true,
     "wakeOnAutomation": true,
-    "cooldownSec": 10
+    "cooldownSec": 10,
+    "maxConcurrentRuns": 3
   }
 }
 ```
@@ -394,6 +395,7 @@ Defaults:
 - `wakeOnAssignment: true`
 - `wakeOnOnDemand: true`
 - `wakeOnAutomation: true`
+- `maxConcurrentRuns: 3`
 
 ## 8.5 Trigger integration rules
 

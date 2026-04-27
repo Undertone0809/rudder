@@ -727,16 +727,16 @@ relevance cost of loading the whole org catalog into every agent run.
 
 ## 11.5 Scheduler Rules
 
-Per-agent schedule fields in `adapter_config`:
+Per-agent schedule and run-capacity fields in `runtimeConfig.heartbeat`:
 
 - `enabled` boolean
 - `intervalSec` integer (minimum 30)
-- `maxConcurrentRuns` fixed at `1` for V1
+- `maxConcurrentRuns` integer, default `3`, minimum `1`, maximum `10`
 
 Scheduler must skip invocation when:
 
 - agent is paused/terminated
-- an existing run is active
+- the agent already has `maxConcurrentRuns` active runs
 - hard budget limit has been hit
 
 ## 12. Governance and Approval Flows

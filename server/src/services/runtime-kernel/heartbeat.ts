@@ -12,6 +12,11 @@ import type {
   HeartbeatRunRecoveryContext,
 } from "@rudderhq/shared";
 import {
+  AGENT_RUN_CONCURRENCY_DEFAULT,
+  AGENT_RUN_CONCURRENCY_MAX,
+  AGENT_RUN_CONCURRENCY_MIN,
+} from "@rudderhq/shared";
+import {
   agents,
   agentRuntimeState,
   agentTaskSessions,
@@ -94,8 +99,9 @@ import {
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
-const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = 1;
-const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 10;
+const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = AGENT_RUN_CONCURRENCY_DEFAULT;
+const HEARTBEAT_MAX_CONCURRENT_RUNS_MIN = AGENT_RUN_CONCURRENCY_MIN;
+const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = AGENT_RUN_CONCURRENCY_MAX;
 const DEFERRED_WAKE_CONTEXT_KEY = "_paperclipWakeContext";
 const DETACHED_PROCESS_ERROR_CODE = "process_detached";
 const ORPHANED_PROCESS_TERMINATION_GRACE_MS = 2_000;
@@ -194,7 +200,7 @@ function appendTranscriptEntriesFromChunk(input: {
 function normalizeMaxConcurrentRuns(value: unknown) {
   const parsed = Math.floor(asNumber(value, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT));
   if (!Number.isFinite(parsed)) return HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT;
-  return Math.max(HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, Math.min(HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, parsed));
+  return Math.max(HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, Math.min(HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, parsed));
 }
 
 async function withAgentStartLock<T>(agentId: string, fn: () => Promise<T>) {
@@ -1658,6 +1664,7 @@ export function heartbeatService(db: Db) {
     const existing = await getRuntimeState(agent.id);
     if (existing) return existing;
 
+    const now = new Date();
     return db
       .insert(agentRuntimeState)
       .values({
@@ -1665,6 +1672,16 @@ export function heartbeatService(db: Db) {
         orgId: agent.orgId,
         agentRuntimeType: agent.agentRuntimeType,
         stateJson: {},
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: agentRuntimeState.agentId,
+        set: {
+          orgId: agent.orgId,
+          agentRuntimeType: agent.agentRuntimeType,
+          updatedAt: now,
+        },
       })
       .returning()
       .then((rows) => rows[0]);

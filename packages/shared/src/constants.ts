@@ -21,6 +21,10 @@ export const AGENT_STATUSES = [
 ] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
 
+export const AGENT_RUN_CONCURRENCY_DEFAULT = 3;
+export const AGENT_RUN_CONCURRENCY_MIN = 1;
+export const AGENT_RUN_CONCURRENCY_MAX = 10;
+
 export const AGENT_RUNTIME_TYPES = [
   "process",
   "http",

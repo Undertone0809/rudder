@@ -63,7 +63,7 @@ rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
   "agentRuntimeType": "codex_local",
   "agentRuntimeConfig": {"cwd": "/abs/path/to/repo", "model": "o4-mini"},
-  "runtimeConfig": {"heartbeat": {"enabled": true, "intervalSec": 300, "wakeOnDemand": true}},
+  "runtimeConfig": {"heartbeat": {"enabled": true, "intervalSec": 300, "wakeOnDemand": true, "maxConcurrentRuns": 3}},
   "sourceIssueId": "<issue-id>"
 }' --json
 ```

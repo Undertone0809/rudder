@@ -1,4 +1,5 @@
 import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
+import { AGENT_RUN_CONCURRENCY_DEFAULT } from "@rudderhq/shared";
 
 export const defaultCreateValues: CreateConfigValues = {
   agentRuntimeType: "claude_local",
@@ -27,4 +28,5 @@ export const defaultCreateValues: CreateConfigValues = {
   maxTurnsPerRun: 300,
   heartbeatEnabled: false,
   intervalSec: 300,
+  maxConcurrentRuns: AGENT_RUN_CONCURRENCY_DEFAULT,
 };

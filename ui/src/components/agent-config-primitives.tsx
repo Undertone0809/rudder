@@ -45,7 +45,7 @@ export const help: Record<string, string> = {
   graceSec: "Seconds to wait after sending interrupt before force-killing the process.",
   wakeOnDemand: "Allow this agent to be woken by assignments, API calls, UI actions, or automated systems.",
   cooldownSec: "Minimum seconds between consecutive heartbeat runs.",
-  maxConcurrentRuns: "Maximum number of heartbeat runs that can execute simultaneously for this agent.",
+  maxConcurrentRuns: "Maximum number of agent runs Rudder may execute simultaneously for this agent. This is separate from the timer heartbeat interval.",
   budgetMonthlyCents: "Monthly spending limit in cents. 0 means no limit.",
 };
 

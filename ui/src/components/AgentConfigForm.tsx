@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AGENT_RUNTIME_TYPES } from "@rudderhq/shared";
+import {
+  AGENT_RUNTIME_TYPES,
+  AGENT_RUN_CONCURRENCY_DEFAULT,
+  AGENT_RUN_CONCURRENCY_MAX,
+  AGENT_RUN_CONCURRENCY_MIN,
+} from "@rudderhq/shared";
 import type {
   Agent,
   AgentRuntimeEnvironmentTestResult,
@@ -418,6 +423,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
         heartbeat: {
           enabled: val!.heartbeatEnabled,
           intervalSec: val!.intervalSec,
+          maxConcurrentRuns: val!.maxConcurrentRuns,
         },
       };
     }
@@ -872,6 +878,18 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               numberHint={help.intervalSec}
               showNumber={val!.heartbeatEnabled}
             />
+            <Field label="Agent run concurrency" hint={help.maxConcurrentRuns}>
+              <DraftNumberInput
+                value={val!.maxConcurrentRuns}
+                onCommit={(v) => set!({ maxConcurrentRuns: v })}
+                immediate
+                min={AGENT_RUN_CONCURRENCY_MIN}
+                max={AGENT_RUN_CONCURRENCY_MAX}
+                step={1}
+                aria-label="Agent run concurrency"
+                className={inputClass}
+              />
+            </Field>
           </div>
         </div>
       ) : !isCreate ? (
@@ -894,6 +912,22 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 numberHint={help.intervalSec}
                 showNumber={eff("heartbeat", "enabled", heartbeat.enabled !== false)}
               />
+              <Field label="Agent run concurrency" hint={help.maxConcurrentRuns}>
+                <DraftNumberInput
+                  value={eff(
+                    "heartbeat",
+                    "maxConcurrentRuns",
+                    Number(heartbeat.maxConcurrentRuns ?? AGENT_RUN_CONCURRENCY_DEFAULT),
+                  )}
+                  onCommit={(v) => mark("heartbeat", "maxConcurrentRuns", v)}
+                  immediate
+                  min={AGENT_RUN_CONCURRENCY_MIN}
+                  max={AGENT_RUN_CONCURRENCY_MAX}
+                  step={1}
+                  aria-label="Agent run concurrency"
+                  className={inputClass}
+                />
+              </Field>
             </div>
             <CollapsibleSection
               title="Advanced Run Policy"
@@ -920,18 +954,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     Number(heartbeat.cooldownSec ?? 10),
                   )}
                   onCommit={(v) => mark("heartbeat", "cooldownSec", v)}
-                  immediate
-                  className={inputClass}
-                />
-              </Field>
-              <Field label="Max concurrent runs" hint={help.maxConcurrentRuns}>
-                <DraftNumberInput
-                  value={eff(
-                    "heartbeat",
-                    "maxConcurrentRuns",
-                    Number(heartbeat.maxConcurrentRuns ?? 1),
-                  )}
-                  onCommit={(v) => mark("heartbeat", "maxConcurrentRuns", v)}
                   immediate
                   className={inputClass}
                 />

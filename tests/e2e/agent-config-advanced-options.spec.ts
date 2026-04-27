@@ -40,6 +40,9 @@ test.describe("Agent configuration advanced options", () => {
     await expect(page.getByRole("button", { name: "gpt-5.5", exact: true })).toBeVisible();
     await expect(page.getByText("Thinking effort", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Auto", exact: true })).toBeVisible();
+    const runConcurrencyInput = page.getByRole("spinbutton", { name: "Agent run concurrency" });
+    await expect(runConcurrencyInput).toBeVisible();
+    await expect(runConcurrencyInput).toHaveValue("3");
 
     const advancedButton = page.getByRole("button", { name: "Advanced options", exact: true });
     await expect(advancedButton).toHaveAttribute("aria-expanded", "false");
@@ -54,5 +57,20 @@ test.describe("Agent configuration advanced options", () => {
     await expect(page.getByText("Environment variables", { exact: true })).toBeVisible();
     await expect(page.getByText("Bypass sandbox", { exact: true })).toBeVisible();
     await expect(page.getByRole("switch", { name: "Enable search", exact: true })).toBeChecked();
+
+    await runConcurrencyInput.fill("4");
+    const saveResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes(`/api/agents/${agent.id}`),
+    );
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    expect((await saveResponse).ok()).toBe(true);
+
+    const refreshedRes = await page.request.get(`/api/agents/${agent.id}?orgId=${organization.id}`);
+    expect(refreshedRes.ok()).toBe(true);
+    const refreshed = await refreshedRes.json() as {
+      runtimeConfig: { heartbeat?: { maxConcurrentRuns?: number } };
+    };
+    expect(refreshed.runtimeConfig.heartbeat?.maxConcurrentRuns).toBe(4);
   });
 });
