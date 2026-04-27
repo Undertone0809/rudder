@@ -75,6 +75,7 @@ const CANARY_SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+-canary\.[0-9]+$/;
 const CLI_REGISTRY_LATEST_URL = "https://registry.npmjs.org/@rudderhq%2fcli/latest";
 const DESKTOP_APP_NAME = "Rudder";
 const DESKTOP_METADATA_FILE = ".rudder-desktop-install.json";
+const DESKTOP_CHECKSUM_ASSET_NAME = "SHASUMS256.txt";
 
 export function resolveCurrentCliVersion(env: NodeJS.ProcessEnv = process.env): string {
   const envPackageName = env.npm_package_name?.trim();
@@ -276,7 +277,7 @@ export function selectDesktopAsset(
 }
 
 export function selectChecksumAsset(assets: GithubReleaseAsset[]): GithubReleaseAsset | null {
-  return assets.find((asset) => /^SHASUMS256\.txt$/i.test(asset.name)) ?? null;
+  return assets.find((asset) => asset.name.toLowerCase() === DESKTOP_CHECKSUM_ASSET_NAME.toLowerCase()) ?? null;
 }
 
 function githubApiHeaders(): HeadersInit {
@@ -298,6 +299,40 @@ async function fetchGithubRelease(repo: string, tag: string): Promise<GithubRele
   return (await response.json()) as GithubRelease;
 }
 
+export function resolveDesktopReleaseVersion(tag: string): string | null {
+  if (!tag || tag === "latest") return null;
+
+  const name = tag.split("/").pop() ?? tag;
+  if (!name.startsWith("v")) return null;
+
+  const version = name.slice(1);
+  if (STABLE_SEMVER_RE.test(version) || CANARY_SEMVER_RE.test(version)) return version;
+
+  return null;
+}
+
+export function resolveDesktopAssetName(version: string, target: DesktopAssetTarget): string {
+  if (target.platform === "macos") return `${DESKTOP_APP_NAME}-${version}-macos-${target.arch}-portable.zip`;
+  if (target.platform === "windows") return `${DESKTOP_APP_NAME}-${version}-windows-x64-portable.zip`;
+  return `${DESKTOP_APP_NAME}-${version}-linux-x64.AppImage`;
+}
+
+function encodeReleaseTagForDownloadUrl(tag: string): string {
+  return tag.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+}
+
+export function buildGithubReleaseAssetDownloadUrl(repo: string, tag: string, assetName: string): string {
+  const encodedTag = encodeReleaseTagForDownloadUrl(tag);
+  return `https://github.com/${repo}/releases/download/${encodedTag}/${encodeURIComponent(assetName)}`;
+}
+
+function buildGithubReleaseAsset(repo: string, tag: string, assetName: string): GithubReleaseAsset {
+  return {
+    name: assetName,
+    browser_download_url: buildGithubReleaseAssetDownloadUrl(repo, tag, assetName),
+  };
+}
+
 async function downloadAsset(asset: GithubReleaseAsset, outputDir: string): Promise<string> {
   mkdirSync(outputDir, { recursive: true });
   const outputPath = path.join(outputDir, path.basename(asset.name));
@@ -305,7 +340,7 @@ async function downloadAsset(asset: GithubReleaseAsset, outputDir: string): Prom
     headers: { "User-Agent": "rudder-cli-installer" },
   });
   if (!response.ok || !response.body) {
-    throw new Error(`Failed to download ${asset.name} (${response.status}).`);
+    throw new Error(`Failed to download ${asset.name} from ${asset.browser_download_url} (${response.status}).`);
   }
 
   await pipeline(Readable.fromWeb(response.body as never), createWriteStream(outputPath));
@@ -732,18 +767,29 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
       return;
     }
 
-    const release = await fetchGithubRelease(repo, tag);
-    const asset = selectDesktopAsset(release.assets ?? [], target);
-    if (!asset) {
-      throw new Error(`No Rudder Desktop portable asset found for ${target.platform}/${target.arch} in ${repo}@${release.tag_name}.`);
+    const directReleaseVersion = resolveDesktopReleaseVersion(tag);
+    const release = directReleaseVersion ? null : await fetchGithubRelease(repo, tag);
+    const releaseTag = directReleaseVersion ? tag : release?.tag_name;
+    if (!releaseTag) {
+      throw new Error(`Unable to resolve Rudder Desktop release tag for ${repo}@${tag}.`);
     }
 
-    const checksums = await downloadChecksums(selectChecksumAsset(release.assets ?? []), outputDir);
+    const asset = directReleaseVersion
+      ? buildGithubReleaseAsset(repo, tag, resolveDesktopAssetName(directReleaseVersion, target))
+      : selectDesktopAsset(release?.assets ?? [], target);
+    if (!asset) {
+      throw new Error(`No Rudder Desktop portable asset found for ${target.platform}/${target.arch} in ${repo}@${releaseTag}.`);
+    }
+
+    const checksumAsset = directReleaseVersion
+      ? buildGithubReleaseAsset(repo, tag, DESKTOP_CHECKSUM_ASSET_NAME)
+      : selectChecksumAsset(release?.assets ?? []);
+    const checksums = await downloadChecksums(checksumAsset, outputDir);
     const expectedChecksum = resolveAssetChecksum(checksums, asset.name);
 
     const metadata = await readInstallMetadata(installPaths.metadataPath);
     if (
-      isInstalledDesktopCurrent(metadata, release.tag_name, asset.name, expectedChecksum) &&
+      isInstalledDesktopCurrent(metadata, releaseTag, asset.name, expectedChecksum) &&
       await pathExists(installPaths.executablePath)
     ) {
       p.log.success(`Rudder Desktop is already installed at ${pc.cyan(installPaths.appPath)}.`);
@@ -759,7 +805,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
       await installPortableDesktop(installerPath, installPaths, target);
       await removeMacQuarantine(installPaths, target);
       await createPlatformLaunchers(installPaths, target);
-      await writeInstallMetadata(installPaths, release.tag_name, asset.name, checksum);
+      await writeInstallMetadata(installPaths, releaseTag, asset.name, checksum);
       p.log.success(`Installed Rudder Desktop to ${pc.cyan(installPaths.appPath)}.`);
     }
 

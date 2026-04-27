@@ -14,6 +14,7 @@ import {
 } from "../install.js";
 import {
   assertChecksumMatch,
+  buildGithubReleaseAssetDownloadUrl,
   buildForceQuitCommand,
   buildLinuxDesktopEntry,
   compareStableSemver,
@@ -26,7 +27,9 @@ import {
   resolveCurrentCliVersion,
   resolveDesktopAssetTarget,
   resolveDefaultDesktopInstallRoot,
+  resolveDesktopAssetName,
   resolveDesktopInstallPaths,
+  resolveDesktopReleaseVersion,
   resolveDesktopReleaseTag,
   selectChecksumAsset,
   selectDesktopAsset,
@@ -257,6 +260,32 @@ describe("desktop start command helpers", () => {
       extension: ".AppImage",
     });
     expect(() => resolveDesktopAssetTarget("linux", "arm64")).toThrow("does not publish portable assets");
+  });
+
+  it("builds deterministic portable asset names and release download URLs", () => {
+    const macTarget = { platform: "macos" as const, arch: "arm64" as const, extension: ".zip" as const };
+    const linuxTarget = { platform: "linux" as const, arch: "x64" as const, extension: ".AppImage" as const };
+    const windowsTarget = { platform: "windows" as const, arch: "x64" as const, extension: ".zip" as const };
+
+    expect(resolveDesktopReleaseVersion("canary/v0.3.1-canary.2")).toBe("0.3.1-canary.2");
+    expect(resolveDesktopReleaseVersion("v0.3.1")).toBe("0.3.1");
+    expect(resolveDesktopReleaseVersion("latest")).toBeNull();
+    expect(resolveDesktopAssetName("0.3.1-canary.2", macTarget)).toBe(
+      "Rudder-0.3.1-canary.2-macos-arm64-portable.zip",
+    );
+    expect(resolveDesktopAssetName("0.3.1-canary.2", linuxTarget)).toBe(
+      "Rudder-0.3.1-canary.2-linux-x64.AppImage",
+    );
+    expect(resolveDesktopAssetName("0.3.1-canary.2", windowsTarget)).toBe(
+      "Rudder-0.3.1-canary.2-windows-x64-portable.zip",
+    );
+    expect(
+      buildGithubReleaseAssetDownloadUrl(
+        "Undertone0809/rudder",
+        "canary/v0.3.1-canary.2",
+        "SHASUMS256.txt",
+      ),
+    ).toBe("https://github.com/Undertone0809/rudder/releases/download/canary/v0.3.1-canary.2/SHASUMS256.txt");
   });
 
   it("selects the best matching desktop asset by platform and architecture", () => {
