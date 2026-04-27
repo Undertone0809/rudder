@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatContextLink, ChatConversation, ChatMessage } from "@rudderhq/shared";
 
 const mockAdapter = vi.hoisted(() => ({
+  supportsLocalAgentJwt: true,
   execute: vi.fn(),
   parseStdoutLine: vi.fn((line: string, ts: string) => {
     const parsed = JSON.parse(line) as { type?: string; item?: Record<string, unknown> };
@@ -249,6 +250,49 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("Current board operator profile:");
     expect(prompt).toContain("- Preferred form of address: Zee");
     expect(prompt).toContain("- Background about the operator: Prefers concise, implementation-first responses.");
+  });
+
+  it("includes chat attachments in the runtime prompt and injects agent API auth", async () => {
+    const svc = chatAssistantService({} as any);
+    const [message] = makeMessages();
+    const messageWithAttachment: ChatMessage = {
+      ...message!,
+      attachments: [{
+        id: "attachment-1",
+        orgId: "organization-1",
+        conversationId: "chat-1",
+        messageId: "message-1",
+        assetId: "asset-1",
+        provider: "local_disk",
+        objectKey: "chats/chat-1/image.png",
+        contentType: "image/png",
+        byteSize: 1234,
+        sha256: "sha256",
+        originalFilename: "image.png",
+        createdByAgentId: null,
+        createdByUserId: "user-1",
+        contentPath: "/api/assets/asset-1/content",
+        createdAt: new Date("2026-03-29T08:01:00.000Z"),
+        updatedAt: new Date("2026-03-29T08:01:00.000Z"),
+      }],
+    };
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: [messageWithAttachment],
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
+    const prompt = executeInput?.context?.chatPrompt as string;
+    expect(prompt).toContain("Treat message attachments as part of the user's message.");
+    expect(prompt).toContain("\"attachments\": [");
+    expect(prompt).toContain("\"name\": \"image.png\"");
+    expect(prompt).toContain("\"contentType\": \"image/png\"");
+    expect(prompt).toContain("\"fetchUrl\": \"$RUDDER_API_URL/api/assets/asset-1/content\"");
+    expect(prompt).toContain("Authorization: Bearer $RUDDER_API_KEY");
+    expect(executeInput?.authToken).toEqual(expect.any(String));
   });
 
   it("applies plan-mode prompt guidance and a read-only Codex runtime overlay", async () => {
