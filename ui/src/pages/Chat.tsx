@@ -269,7 +269,8 @@ function ChatImageAttachmentTile({
     >
       <button
         type="button"
-        className="flex min-w-0 items-center gap-2 rounded-[calc(var(--radius-sm)+2px)] text-left transition-colors hover:bg-[color:var(--surface-active)]"
+        aria-label={`Open image preview: ${name}`}
+        className="flex min-w-0 items-center rounded-[calc(var(--radius-sm)+2px)] text-left transition-colors hover:bg-[color:var(--surface-active)]"
         onClick={onOpen}
       >
         <img
@@ -277,9 +278,6 @@ function ChatImageAttachmentTile({
           alt={name}
           className="h-10 w-10 shrink-0 rounded-[calc(var(--radius-sm)+1px)] border border-black/5 object-cover"
         />
-        <span className="max-w-[11rem] truncate pr-1 text-xs font-medium text-foreground">
-          {name}
-        </span>
       </button>
       {onRemove ? (
         <button
@@ -445,14 +443,14 @@ function ChatAttachmentPreviewDialog({
     <Dialog open={preview !== null} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton
-        className="gap-3 border-[color:var(--border-soft)] bg-[color:var(--surface-page)] p-3 shadow-[var(--shadow-lg)]"
+        className="rudder-markdown-editor-image-preview-panel gap-3 border-[color:var(--border-soft)] bg-[color:var(--surface-page)] p-3 shadow-[var(--shadow-lg)]"
         style={{ width: dialogWidth, maxWidth: dialogWidth }}
       >
-        <DialogTitle className="px-1 text-sm font-medium">{preview?.name ?? "Attachment preview"}</DialogTitle>
+        <DialogTitle className="sr-only">{preview?.name ?? "Attachment preview"}</DialogTitle>
         {preview ? (
           <div
             data-testid="chat-image-preview-dialog"
-            className="flex items-center justify-center overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-black/3"
+            className="rudder-markdown-editor-image-preview-media flex items-center justify-center overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-black/3"
           >
             <img
               src={preview.src}
