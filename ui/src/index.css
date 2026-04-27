@@ -1292,6 +1292,10 @@ a.rudder-mention-chip[data-mention-kind="agent"]::before {
   cursor: zoom-in;
 }
 
+.rudder-mdxeditor-content [class*="_editImageToolbar_"] {
+  display: none !important;
+}
+
 .rudder-mdxeditor-content blockquote {
   margin: 1.2em 0;
   padding-left: 1em;
@@ -1598,6 +1602,47 @@ a.rudder-skill-token {
   max-height: calc(100vh - 6.5rem) !important;
   aspect-ratio: auto !important;
   object-fit: contain !important;
+}
+
+.rudder-markdown-editor-image-preview-panel[data-state="open"] {
+  transform-origin: center;
+}
+
+.rudder-markdown-editor-image-preview-media {
+  animation: rudder-image-preview-media-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.rudder-markdown-editor-image-preview-media .chat-attachment-preview-image {
+  animation: rudder-image-preview-image-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes rudder-image-preview-media-in {
+  from {
+    opacity: 0;
+    transform: scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes rudder-image-preview-image-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rudder-markdown-editor-image-preview-media,
+  .rudder-markdown-editor-image-preview-media .chat-attachment-preview-image {
+    animation: none;
+  }
 }
 
 .rudder-markdown table {

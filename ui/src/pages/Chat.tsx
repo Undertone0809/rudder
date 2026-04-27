@@ -2102,6 +2102,7 @@ function ChatWorkspace() {
       await chatsApi.sendMessageStream(chatId, body, {
         signal: abortController.signal,
         editUserMessageId,
+        files: filesToUpload,
         onEvent: async (event) => {
           if (event.type === "ack") {
             upsertMessages(chatId, [event.userMessage]);
@@ -2109,27 +2110,6 @@ function ChatWorkspace() {
               chatId,
               (current) => (current ? { ...current, userMessageId: event.userMessage.id } : current),
             );
-
-            if (filesToUpload.length > 0) {
-              const uploads = await Promise.allSettled(
-                filesToUpload.map((file) =>
-                  chatsApi.uploadAttachment(selectedOrganizationId, chatId, event.userMessage.id, file),
-                ),
-              );
-              const failedUploads = uploads.filter((result) => result.status === "rejected");
-              if (failedUploads.length > 0) {
-                pushToast({
-                  title: "Some attachments failed to upload",
-                  body: failedUploads[0] instanceof Object && "reason" in failedUploads[0]
-                    ? String(failedUploads[0].reason)
-                    : undefined,
-                  tone: "error",
-                });
-              }
-              if (uploads.some((result) => result.status === "fulfilled")) {
-                await refreshChat(chatId);
-              }
-            }
             return;
           }
 

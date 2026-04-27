@@ -496,25 +496,46 @@ test.describe("Messenger unified threads contract", () => {
     expect(agentRes.ok()).toBe(true);
     const agent = await agentRes.json();
 
-    const runId = randomUUID();
-    const runTimestamp = new Date("2026-04-14T02:30:00.000Z");
-    await e2eDb.insert(heartbeatRuns).values({
-      id: runId,
-      orgId: organization.id,
-      agentId: agent.id,
-      invocationSource: "manual",
-      status: "failed",
-      error: "Process exited with code 1.",
-      stderrExcerpt: "Agent bootstrap failed before tool execution.",
-      contextSnapshot: {
-        issueId: issue.id,
-        issue: {
-          title: issue.title,
+    const olderRunId = randomUUID();
+    const newerRunId = randomUUID();
+    const olderRunTimestamp = new Date("2026-04-14T02:30:00.000Z");
+    const newerRunTimestamp = new Date("2026-04-14T03:45:00.000Z");
+    await e2eDb.insert(heartbeatRuns).values([
+      {
+        id: olderRunId,
+        orgId: organization.id,
+        agentId: agent.id,
+        invocationSource: "manual",
+        status: "failed",
+        error: "Process exited with code 1.",
+        stderrExcerpt: "Agent bootstrap failed before tool execution.",
+        contextSnapshot: {
+          issueId: issue.id,
+          issue: {
+            title: issue.title,
+          },
         },
+        createdAt: olderRunTimestamp,
+        updatedAt: olderRunTimestamp,
       },
-      createdAt: runTimestamp,
-      updatedAt: runTimestamp,
-    });
+      {
+        id: newerRunId,
+        orgId: organization.id,
+        agentId: agent.id,
+        invocationSource: "manual",
+        status: "failed",
+        error: "Process exited with code 2.",
+        stderrExcerpt: "Agent bootstrap failed again after retry.",
+        contextSnapshot: {
+          issueId: issue.id,
+          issue: {
+            title: issue.title,
+          },
+        },
+        createdAt: newerRunTimestamp,
+        updatedAt: newerRunTimestamp,
+      },
+    ]);
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -528,8 +549,17 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId(threadTestId("failed-runs"))).toContainText("Failed runs");
     await expect(page.getByTestId(threadTestId("agent-errors"))).toHaveCount(0);
 
-    const runCard = page.locator(`[data-testid="messenger-system-card-failed-runs-${runId}"]`);
-    const issueLink = runCard.getByTestId(`messenger-failed-run-issue-title-${runId}`);
+    const failedRunCards = page.locator('[data-testid^="messenger-system-card-failed-runs-"]');
+    await expect(failedRunCards).toHaveCount(2);
+    await expect
+      .poll(async () => failedRunCards.evaluateAll((elements) => elements.map((element) => element.getAttribute("data-testid"))))
+      .toEqual([
+        `messenger-system-card-failed-runs-${olderRunId}`,
+        `messenger-system-card-failed-runs-${newerRunId}`,
+      ]);
+
+    const runCard = page.locator(`[data-testid="messenger-system-card-failed-runs-${olderRunId}"]`);
+    const issueLink = runCard.getByTestId(`messenger-failed-run-issue-title-${olderRunId}`);
     await expect(issueLink).toHaveText("Create your first agent");
     await expect(issueLink).toHaveAttribute("href", new RegExp(`/issues/${issue.id}$`));
     await expect(runCard.getByRole("link", { name: "Open issue" })).toHaveCount(0);

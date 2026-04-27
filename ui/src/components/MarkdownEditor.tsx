@@ -202,6 +202,10 @@ const FALLBACK_CODE_BLOCK_DESCRIPTOR: CodeBlockEditorDescriptor = {
   Editor: CodeMirrorEditor,
 };
 
+function EmptyImageToolbar() {
+  return null;
+}
+
 function detectMention(container: HTMLElement): MentionState | null {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return null;
@@ -626,7 +630,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       markdownShortcutPlugin(),
     ];
     if (imageHandler) {
-      all.push(imagePlugin({ imageUploadHandler: imageHandler }));
+      all.push(imagePlugin({ imageUploadHandler: imageHandler, EditImageToolbar: EmptyImageToolbar }));
     }
     return all;
   }, [focusEditorAtEnd, hasImageUpload]);
@@ -1196,7 +1200,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       }}>
         <DialogContent
           showCloseButton
-          className="gap-3 border-[color:var(--border-soft)] bg-[color:var(--surface-page)] p-3 shadow-[var(--shadow-lg)]"
+          className="rudder-markdown-editor-image-preview-panel gap-3 border-[color:var(--border-soft)] bg-[color:var(--surface-page)] p-3 shadow-[var(--shadow-lg)]"
           style={{ width: imagePreviewDialogWidth, maxWidth: imagePreviewDialogWidth }}
         >
           <DialogTitle className="px-1 text-sm font-medium">
@@ -1205,7 +1209,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           {imagePreview ? (
             <div
               data-testid="markdown-editor-image-preview-dialog"
-              className="flex items-center justify-center overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-black/3"
+              className="rudder-markdown-editor-image-preview-media flex items-center justify-center overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-black/3"
             >
               <img
                 src={imagePreview.src}

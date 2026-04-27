@@ -7,11 +7,13 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
   applyPendingMigrations,
+  agents,
   approvalComments,
   approvals,
   chatConversations,
   createDb,
   ensurePostgresDatabase,
+  heartbeatRuns,
   issueFollows,
   issueComments,
   issues,
@@ -109,9 +111,11 @@ describe("messengerService and issue follows", () => {
     await db.delete(messengerThreadUserStates);
     await db.delete(approvalComments);
     await db.delete(approvals);
+    await db.delete(heartbeatRuns);
     await db.delete(activityLog);
     await db.delete(issueComments);
     await db.delete(issues);
+    await db.delete(agents);
     await db.delete(organizations);
   });
 
@@ -379,6 +383,67 @@ describe("messengerService and issue follows", () => {
     expect(thread.detail.items.map((item) => item.id)).toEqual([olderApprovalId, newerApprovalId]);
     expect(thread.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
     expect(approvalsSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+  });
+
+  it("returns Messenger failed-run detail items in chronological order while keeping the summary pinned to latest activity", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-failed-runs";
+    const agentId = randomUUID();
+    const olderRunId = randomUUID();
+    const newerRunId = randomUUID();
+    const olderActivityAt = new Date("2026-04-12T09:00:00.000Z");
+    const newerActivityAt = new Date("2026-04-12T12:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Failed Runs Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Failed Runs Org"),
+      issuePrefix: `F${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Failure bot",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(heartbeatRuns).values([
+      {
+        id: olderRunId,
+        orgId,
+        agentId,
+        invocationSource: "on_demand",
+        status: "failed",
+        error: "Older run failed",
+        createdAt: olderActivityAt,
+        updatedAt: olderActivityAt,
+      },
+      {
+        id: newerRunId,
+        orgId,
+        agentId,
+        invocationSource: "on_demand",
+        status: "failed",
+        error: "Newer run failed",
+        createdAt: newerActivityAt,
+        updatedAt: newerActivityAt,
+      },
+    ]);
+
+    const thread = await messengerSvc.getSystemThread(orgId, userId, "failed-runs");
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const failedRunsSummary = summaries.find((item) => item.threadKey === "failed-runs");
+
+    expect(thread.detail.items.map((item) => item.id)).toEqual([olderRunId, newerRunId]);
+    expect(thread.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+    expect(failedRunsSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
   });
 
   it("excludes archived chats from Messenger thread summaries", async () => {

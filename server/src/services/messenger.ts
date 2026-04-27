@@ -876,7 +876,9 @@ export function messengerService(db: Db) {
     ]);
     const agentNames = new Map(agentRows.map((row) => [row.id, row.name]));
     const items = runRows.map((run) => failedRunCard(run, agentNames.get(run.agentId) ?? null));
-    const latestActivityAt = items[0]?.latestActivityAt ?? null;
+    const latestFirstItems = [...items].sort(compareLatestActivity);
+    const chronologicalItems = [...items].sort(compareChronologicalActivity);
+    const latestActivityAt = latestFirstItems[0]?.latestActivityAt ?? null;
     const unreadCount = systemUnreadCountSince(runRows, lastReadAt);
     return {
       summary: systemSummary(
@@ -887,21 +889,21 @@ export function messengerService(db: Db) {
         unreadCount,
         lastReadAt,
         "No failed runs yet",
-        items[0]?.preview ?? null,
+        latestFirstItems[0]?.preview ?? null,
       ),
       detail: {
         threadKey: "failed-runs",
         kind: "failed-runs",
         title: "Failed runs",
         subtitle: `${runRows.length} recent failure${runRows.length === 1 ? "" : "s"}`,
-        preview: items[0]?.preview ?? null,
+        preview: latestFirstItems[0]?.preview ?? null,
         latestActivityAt,
         lastReadAt,
         unreadCount,
         needsAttention: unreadCount > 0,
         href: "/messenger/system/failed-runs",
         description: "Recent failed heartbeat runs",
-        items,
+        items: chronologicalItems,
       } satisfies MessengerThreadDetail<MessengerHeartbeatRunThreadItem>,
     };
   }
