@@ -1,5 +1,6 @@
 export {
   buildExplicitResumeSessionOverride,
+  buildHeartbeatAdapterInvokePayload,
   buildHeartbeatRuntimeTraceMetadata,
   buildIssueRunTraceName,
   formatRuntimeWorkspaceWarningLog,

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildHeartbeatRuntimeTraceMetadata, buildIssueRunTraceName, resolveHeartbeatObservabilitySurface } from "../services/heartbeat.js";
+import {
+  buildHeartbeatAdapterInvokePayload,
+  buildHeartbeatRuntimeTraceMetadata,
+  buildIssueRunTraceName,
+  resolveHeartbeatObservabilitySurface,
+} from "../services/heartbeat.js";
 
 describe("heartbeat observability surface", () => {
   it("classifies issue-backed executions as issue runs", () => {
@@ -85,6 +90,60 @@ describe("heartbeat observability surface", () => {
       runtimePromptMetrics: {
         promptChars: 2048,
       },
+    });
+  });
+
+  it("adds prepared runtime skills to adapter invoke event payloads", () => {
+    expect(buildHeartbeatAdapterInvokePayload({
+      meta: {
+        agentRuntimeType: "claude_local",
+        command: "claude",
+        cwd: "/tmp/run-workspace",
+        commandArgs: ["--print"],
+        commandNotes: ["Claude Code run"],
+        promptMetrics: {
+          promptChars: 1024,
+        },
+      },
+      runtimeSkills: [
+        {
+          key: "rudder/build-advisor",
+          runtimeName: "build-advisor",
+          name: "Build Advisor",
+          description: "Diagnose build quality",
+        },
+        {
+          key: "rudder/screenshot",
+          runtimeName: "screenshot",
+          name: "Screenshot",
+          description: null,
+        },
+      ],
+    })).toEqual({
+      agentRuntimeType: "claude_local",
+      command: "claude",
+      cwd: "/tmp/run-workspace",
+      commandArgs: ["--print"],
+      commandNotes: ["Claude Code run"],
+      promptMetrics: {
+        promptChars: 1024,
+      },
+      loadedSkillCount: 2,
+      loadedSkillKeys: ["rudder/build-advisor", "rudder/screenshot"],
+      loadedSkills: [
+        {
+          key: "rudder/build-advisor",
+          runtimeName: "build-advisor",
+          name: "Build Advisor",
+          description: "Diagnose build quality",
+        },
+        {
+          key: "rudder/screenshot",
+          runtimeName: "screenshot",
+          name: "Screenshot",
+          description: null,
+        },
+      ],
     });
   });
 });

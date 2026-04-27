@@ -301,6 +301,21 @@ export function buildHeartbeatRuntimeTraceMetadata(input: {
   };
 }
 
+export function buildHeartbeatAdapterInvokePayload(input: {
+  meta: AgentRuntimeInvocationMeta;
+  runtimeSkills: Array<{
+    key: string;
+    runtimeName: string;
+    name: string | null;
+    description: string | null;
+  }>;
+}): Record<string, unknown> {
+  return {
+    ...input.meta,
+    ...summarizeRuntimeSkillsForTrace(input.runtimeSkills),
+  } as Record<string, unknown>;
+}
+
 function buildRecentDateKeys(windowDays: number, now: Date): string[] {
   return Array.from({ length: windowDays }, (_, index) => {
     const next = new Date(now);
@@ -3413,7 +3428,10 @@ export function heartbeatService(db: Db) {
           stream: "system",
           level: "info",
           message: "adapter invocation",
-          payload: meta as unknown as Record<string, unknown>,
+          payload: buildHeartbeatAdapterInvokePayload({
+            meta,
+            runtimeSkills: runtimeSkillEntries,
+          }),
         });
       };
 
