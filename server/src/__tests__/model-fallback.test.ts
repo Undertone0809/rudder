@@ -64,7 +64,10 @@ describe("executeAdapterWithModelFallbacks", () => {
     };
     const ctx = baseContext({
       model: "gpt-primary",
-      modelFallbacks: ["gpt-backup", "gpt-final"],
+      modelFallbacks: [
+        { agentRuntimeType: "codex_local", model: "gpt-backup" },
+        { agentRuntimeType: "codex_local", model: "gpt-final" },
+      ],
     });
 
     const executed = await executeAdapterWithModelFallbacks(adapter, ctx);
@@ -77,6 +80,7 @@ describe("executeAdapterWithModelFallbacks", () => {
         sessionId: null,
         fallback: {
           attemptIndex: 1,
+          agentRuntimeType: "codex_local",
           fallbackIndex: 1,
           totalFallbacks: 2,
           model: "gpt-backup",
@@ -85,11 +89,11 @@ describe("executeAdapterWithModelFallbacks", () => {
     ]);
     expect(ctx.onLog).toHaveBeenCalledWith(
       "stdout",
-      expect.stringContaining("retrying with fallback model 1/2: gpt-backup"),
+      expect.stringContaining("retrying with fallback model 1/2: codex_local/gpt-backup"),
     );
     expect(ctx.onMeta).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        commandNotes: [expect.stringContaining("model fallback 1/2: gpt-backup")],
+        commandNotes: [expect.stringContaining("model fallback 1/2: codex_local/gpt-backup")],
       }),
     );
   });
@@ -112,12 +116,75 @@ describe("executeAdapterWithModelFallbacks", () => {
       adapter,
       baseContext({
         model: "openai/down",
-        modelFallbacks: ["anthropic/backup"],
+        modelFallbacks: [{ agentRuntimeType: "opencode_local", model: "anthropic/backup" }],
       }),
     );
 
     expect(executed.model).toBe("anthropic/backup");
     expect(models).toEqual(["openai/down", "anthropic/backup"]);
+  });
+
+  it("can switch adapters for provider-aware fallback attempts", async () => {
+    const primaryAdapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ exitCode: 1, errorMessage: "codex unavailable" })),
+    };
+    const fallbackAdapter: ServerAgentRuntimeModule = {
+      type: "claude_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async (ctx) => {
+        await ctx.onMeta?.({
+          agentRuntimeType: "claude_local",
+          command: "claude",
+          commandNotes: [],
+        });
+        return result({ model: String(ctx.config.model) });
+      }),
+    };
+    const ctx = baseContext({
+      model: "gpt-primary",
+      promptTemplate: "Keep going",
+      modelFallbacks: [
+        {
+          agentRuntimeType: "claude_local",
+          model: "claude-sonnet-4-6",
+          config: { effort: "high", command: "claude" },
+        },
+      ],
+    });
+
+    const executed = await executeAdapterWithModelFallbacks(primaryAdapter, ctx, {
+      resolveAdapter: (agentRuntimeType) => agentRuntimeType === "claude_local" ? fallbackAdapter : null,
+      createAuthToken: (agentRuntimeType) => `token:${agentRuntimeType}`,
+    });
+
+    expect(executed.model).toBe("claude-sonnet-4-6");
+    expect(primaryAdapter.execute).toHaveBeenCalledTimes(1);
+    expect(fallbackAdapter.execute).toHaveBeenCalledTimes(1);
+    expect(fallbackAdapter.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: expect.objectContaining({ agentRuntimeType: "claude_local" }),
+        authToken: "token:claude_local",
+        config: expect.objectContaining({
+          model: "claude-sonnet-4-6",
+          promptTemplate: "Keep going",
+          effort: "high",
+          command: "claude",
+        }),
+        runtime: expect.objectContaining({ sessionId: null }),
+      }),
+    );
+    expect(ctx.onMeta).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          rudderModelFallback: expect.objectContaining({
+            agentRuntimeType: "claude_local",
+            model: "claude-sonnet-4-6",
+          }),
+        }),
+      }),
+    );
   });
 
   it("does not retry when no fallback models are configured", async () => {

@@ -50,7 +50,7 @@ export function buildPiLocalConfig(v: CreateConfigValues): Record<string, unknow
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
   if (v.model) ac.model = v.model;
-  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, v.model);
+  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, { agentRuntimeType: "pi_local", model: v.model });
   if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
   if (v.thinkingEffort) ac.thinking = v.thinkingEffort;
   

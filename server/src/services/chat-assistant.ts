@@ -17,6 +17,7 @@ import { agentRunContextService, RUDDER_COPILOT_LABEL, type AgentRunContextAgent
 import { agentService } from "./agents.js";
 import { organizationService } from "./orgs.js";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
+import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
 
 const ORGANIZATION_DEFAULT_CHAT_ADAPTER_TYPES = new Set<AgentRuntimeType>([
   "claude_local",
@@ -1040,7 +1041,7 @@ export function chatAssistantService(db: Db) {
     const runId = `chat-${input.conversation.id}-${randomUUID()}`;
     const assistantTextAccumulator = createAssistantTextAccumulator();
     const sentinelStream = createSentinelStream(resultSentinel);
-    const parser = adapter.parseStdoutLine;
+    let parser = adapter.parseStdoutLine;
     let stdoutLineBuffer = "";
     const { rudderWorkspace, rudderWorkspaces, rudderRuntimeServiceIntents, rudderScene } = sceneContext;
     const prompt = buildConversationPrompt(
@@ -1104,7 +1105,7 @@ export function chatAssistantService(db: Db) {
 
     await maybeEmitAssistantState(input.onAssistantState, "streaming");
 
-    const result = await adapter.execute({
+    const result = await executeAdapterWithModelFallbacks(adapter, {
       runId,
       agent: stubAgent({
         orgId: input.conversation.orgId,
@@ -1149,8 +1150,30 @@ export function chatAssistantService(db: Db) {
       abortSignal: input.abortSignal,
       onLog: async (stream, chunk) => {
         if (stream === "stdout") {
+          if (chunk.startsWith("[rudder]")) {
+            const entry: TranscriptEntry = {
+              kind: "stdout",
+              ts: new Date().toISOString(),
+              text: chunk,
+            };
+            await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, entry);
+            await maybeEmitTranscriptEntry(input.onTranscriptEntry, entry);
+            return;
+          }
           await flushStdoutChunk(chunk);
         }
+      },
+    }, {
+      resolveAdapter: findServerAdapter,
+      createAuthToken: (agentRuntimeType) =>
+        createLocalAgentJwt(
+          runtimeSource.descriptor.runtimeAgentId ?? `org-chat:${input.conversation.orgId}`,
+          input.conversation.orgId,
+          agentRuntimeType,
+          runId,
+        ) ?? undefined,
+      onAttemptStart: (_attempt, attemptAdapter) => {
+        parser = attemptAdapter.parseStdoutLine;
       },
     });
 

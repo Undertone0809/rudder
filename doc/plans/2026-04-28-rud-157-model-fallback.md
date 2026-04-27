@@ -15,10 +15,13 @@ related_plans:
 supersedes: []
 related_code:
   - server/src/services/runtime-kernel/heartbeat.ts
+  - server/src/services/chat-assistant.ts
   - ui/src/components/AgentConfigForm.tsx
+  - ui/src/pages/OrganizationSettings.tsx
   - packages/agent-runtime-utils/src/types.ts
 commit_refs:
   - feat: add agent model fallback
+  - fix: support provider-aware model fallbacks
 updated_at: 2026-04-28
 ---
 
@@ -26,10 +29,11 @@ updated_at: 2026-04-28
 
 ## Summary
 
-Add an ordered model fallback mechanism for agents. An agent keeps its primary
-runtime and model, plus up to two backup model IDs. When a heartbeat adapter
-invocation fails, Rudder retries the same adapter with the next configured
-fallback model until one succeeds or the fallback list is exhausted.
+Add an ordered provider-aware model fallback mechanism for agents and system
+chat. A primary runtime/model attempt can be followed by any number of fallback
+attempts, each with its own `agentRuntimeType`, `model`, and optional advanced
+runtime config. When an invocation fails, Rudder retries the next configured
+attempt until one succeeds or the fallback list is exhausted.
 
 ## Diagnosis
 
@@ -41,40 +45,47 @@ agent's task context.
 ## Scope
 
 - In scope:
-  - persist up to two fallback model IDs in `agentRuntimeConfig.modelFallbacks`
-  - expose primary and fallback model selection in Agent configuration
-  - retry failed heartbeat adapter execution with fallback models in order
+  - persist ordered fallback attempt objects in `agentRuntimeConfig.modelFallbacks`
+    and organization `defaultChatAgentRuntimeConfig.modelFallbacks`
+  - expose primary, fallback, and add-card model provider selection in Agent
+    configuration
+  - expose the same provider-aware fallback editor for Rudder Copilot system
+    chat defaults
+  - retry failed heartbeat and chat adapter execution with fallback attempts in
+    order
   - mark fallback attempts in run logs and adapter invocation metadata
   - add focused server, UI, and E2E coverage
 - Out of scope:
-  - cross-adapter fallback, such as switching from Codex CLI to Gemini CLI
   - automatic provider health scoring
-  - chat-scene fallback unification
   - schema migration for first-class fallback columns
 
 ## Implementation Plan
 
-1. Add shared config helpers for normalizing a maximum of two fallback model
-   IDs and applying a selected model to adapter config.
+1. Add shared config helpers for normalizing provider-aware fallback attempt
+   objects while retaining backward compatibility for legacy string entries.
 2. Wrap heartbeat adapter execution with an ordered attempt loop:
-   primary model first, then configured fallbacks after failed attempts.
+   primary runtime/model first, then configured fallback attempts after failed
+   attempts.
 3. Use fresh runtime session state on fallback attempts so a prior model-bound
    session cannot block the backup model.
-4. Add Agent configuration UI controls for fallback model 1 and fallback model
-   2, allowing values from discovered models or manually typed provider/model
-   IDs.
+4. Add Agent configuration UI provider cards for Primary, each fallback, and an
+   Add fallback action in a horizontally scrollable rail. Each card owns its
+   runtime, model, and collapsed Advanced options, and uses a wide item width
+   so provider-specific settings are not squeezed into narrow columns.
 5. Extend create-mode adapter config builders so new agents persist
    `modelFallbacks` consistently across local model-backed runtimes.
-6. Document the V1 contract and add tests for runtime behavior, config
+6. Reuse the provider-card editor for organization system chat defaults.
+7. Document the V1 contract and add tests for runtime behavior, config
    defaults/builders, and visible configuration persistence.
 
 ## Success Criteria
 
-- Operators can configure up to two fallback models per agent.
-- A failed primary heartbeat attempt retries with fallback model 1, then
-  fallback model 2.
+- Operators can configure any number of fallback attempts per agent or system
+  chat default.
+- A failed primary heartbeat or chat attempt retries fallback 1, then fallback
+  2, and so on.
 - A successful fallback attempt makes the run succeed and records the fallback
-  model in normal run result/cost metadata.
+  runtime/model in normal run result/cost metadata.
 - Fallback attempts are visible in run logs.
 - Existing agents without `modelFallbacks` keep current behavior.
 

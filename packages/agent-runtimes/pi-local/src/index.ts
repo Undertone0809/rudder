@@ -23,7 +23,7 @@ Core fields:
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file appended to system prompt via --append-system-prompt
 - promptTemplate (string, optional): user prompt template passed via -p flag
 - model (string, required): Pi model id in provider/model format (for example xai/grok-4)
-- modelFallbacks (string[], optional): up to two backup provider/model ids tried in order when the primary model invocation fails
+- modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
 - thinking (string, optional): thinking level (off, minimal, low, medium, high, xhigh)
 - command (string, optional): defaults to "pi"
 - env (object, optional): KEY=VALUE environment variables

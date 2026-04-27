@@ -7,6 +7,7 @@ import {
   AGENT_RUN_CONCURRENCY_MIN,
 } from "@rudderhq/shared";
 import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
+import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
 import type {
   Agent,
   AgentRuntimeEnvironmentTestResult,
@@ -22,6 +23,7 @@ import {
   DEFAULT_CODEX_LOCAL_MODEL,
   DEFAULT_CODEX_LOCAL_SEARCH,
 } from "@rudderhq/agent-runtime-codex-local";
+import { models as CLAUDE_LOCAL_MODELS } from "@rudderhq/agent-runtime-claude-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import {
@@ -35,9 +37,10 @@ import {
   semanticNoticeToneClasses,
   semanticTextToneClasses,
 } from "@/components/ui/semanticTones";
-import { Heart, ChevronDown, X } from "lucide-react";
+import { Heart, ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { cn } from "../lib/utils";
 import { extractModelName, extractProviderId } from "../lib/model-utils";
+import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
 import { resolveRuntimeModels } from "../lib/runtime-models";
 import { queryKeys } from "../lib/queryKeys";
 import { useOrganization } from "../context/OrganizationContext";
@@ -53,6 +56,7 @@ import {
 } from "./agent-config-primitives";
 import { defaultCreateValues } from "./agent-config-defaults";
 import { getUIAdapter } from "../agent-runtimes";
+import type { AgentRuntimeConfigFieldsProps } from "../agent-runtimes/types";
 import { ClaudeLocalAdvancedFields } from "../agent-runtimes/claude-local/config-fields";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
@@ -146,11 +150,10 @@ function formatArgList(value: unknown): string {
 }
 
 const codexThinkingEffortOptions = [
-  { id: "", label: "Auto" },
-  { id: "minimal", label: "Minimal" },
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
+  ...withDefaultThinkingEffortOption("Auto", CODEX_LOCAL_REASONING_EFFORT_OPTIONS).map((option) => ({
+    id: option.value,
+    label: option.label,
+  })),
 ] as const;
 
 const openCodeThinkingEffortOptions = [
@@ -175,6 +178,101 @@ const claudeThinkingEffortOptions = [
   { id: "high", label: "High" },
 ] as const;
 
+const LOCAL_MODEL_RUNTIME_TYPES = [
+  "claude_local",
+  "codex_local",
+  "gemini_local",
+  "opencode_local",
+  "pi_local",
+  "cursor",
+] as const;
+
+function defaultModelForRuntime(agentRuntimeType: string) {
+  if (agentRuntimeType === "claude_local") {
+    return CLAUDE_LOCAL_MODELS.find((model) => model.id.includes("sonnet"))?.id
+      ?? CLAUDE_LOCAL_MODELS[0]?.id
+      ?? "";
+  }
+  if (agentRuntimeType === "codex_local") return DEFAULT_CODEX_LOCAL_MODEL;
+  if (agentRuntimeType === "gemini_local") return DEFAULT_GEMINI_LOCAL_MODEL;
+  if (agentRuntimeType === "cursor") return DEFAULT_CURSOR_LOCAL_MODEL;
+  if (agentRuntimeType === "opencode_local") return "anthropic/claude-sonnet-4-5";
+  if (agentRuntimeType === "pi_local") return "xai/grok-4";
+  return "";
+}
+
+function defaultCommandForRuntime(agentRuntimeType: string) {
+  if (agentRuntimeType === "codex_local") return "codex";
+  if (agentRuntimeType === "gemini_local") return "gemini";
+  if (agentRuntimeType === "pi_local") return "pi";
+  if (agentRuntimeType === "cursor") return "agent";
+  if (agentRuntimeType === "opencode_local") return "opencode";
+  return "claude";
+}
+
+function createValuesForRuntime(agentRuntimeType: string): CreateConfigValues {
+  const values: CreateConfigValues = {
+    ...defaultCreateValues,
+    agentRuntimeType,
+    model: defaultModelForRuntime(agentRuntimeType),
+    modelFallbacks: [],
+    command: defaultCommandForRuntime(agentRuntimeType),
+  };
+  if (agentRuntimeType === "codex_local") {
+    values.search = DEFAULT_CODEX_LOCAL_SEARCH;
+    values.dangerouslyBypassSandbox = DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
+  }
+  return values;
+}
+
+export function defaultConfigForRuntime(agentRuntimeType: string): Record<string, unknown> {
+  return getUIAdapter(agentRuntimeType).buildAdapterConfig(createValuesForRuntime(agentRuntimeType));
+}
+
+function defaultFallbackRuntime(primaryRuntimeType: string) {
+  return primaryRuntimeType === "claude_local" ? "codex_local" : "claude_local";
+}
+
+export function defaultFallbackItem(primaryRuntimeType: string): ModelFallbackConfig {
+  const agentRuntimeType = defaultFallbackRuntime(primaryRuntimeType);
+  const config = defaultConfigForRuntime(agentRuntimeType);
+  const model = typeof config.model === "string" ? config.model : defaultModelForRuntime(agentRuntimeType);
+  return {
+    agentRuntimeType,
+    model,
+    config,
+  };
+}
+
+function thinkingEffortKeyForRuntime(agentRuntimeType: string) {
+  if (agentRuntimeType === "codex_local") return "modelReasoningEffort";
+  if (agentRuntimeType === "cursor") return "mode";
+  if (agentRuntimeType === "opencode_local") return "variant";
+  if (agentRuntimeType === "pi_local") return "thinking";
+  return "effort";
+}
+
+function thinkingEffortOptionsForRuntime(agentRuntimeType: string) {
+  if (agentRuntimeType === "codex_local") return codexThinkingEffortOptions;
+  if (agentRuntimeType === "cursor") return cursorModeOptions;
+  if (agentRuntimeType === "opencode_local" || agentRuntimeType === "pi_local") {
+    return openCodeThinkingEffortOptions;
+  }
+  return claudeThinkingEffortOptions;
+}
+
+function shouldShowThinkingEffort(agentRuntimeType: string) {
+  return agentRuntimeType !== "gemini_local";
+}
+
+export function primaryModelFallbackKey(agentRuntimeType: string, model: string) {
+  return { agentRuntimeType, model };
+}
+
+export const runtimeProviderRailClassName =
+  "flex gap-3 overflow-x-auto overscroll-x-contain pb-2 pr-2 [-webkit-overflow-scrolling:touch]";
+export const runtimeProviderItemClassName =
+  "basis-[60%] min-w-[420px] shrink-0 grow-0";
 
 /* ---- Form ---- */
 
@@ -303,13 +401,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const agentRuntimeType = isCreate
     ? props.values.agentRuntimeType
     : overlay.agentRuntimeType ?? props.agent.agentRuntimeType;
-  const isLocal =
-    agentRuntimeType === "claude_local" ||
-    agentRuntimeType === "codex_local" ||
-    agentRuntimeType === "gemini_local" ||
-    agentRuntimeType === "opencode_local" ||
-    agentRuntimeType === "pi_local" ||
-    agentRuntimeType === "cursor";
+  const isLocal = LOCAL_MODEL_RUNTIME_TYPES.includes(agentRuntimeType as (typeof LOCAL_MODEL_RUNTIME_TYPES)[number]);
   const uiAdapter = useMemo(() => getUIAdapter(agentRuntimeType), [agentRuntimeType]);
 
   // Fetch adapter models for the effective adapter type
@@ -351,10 +443,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   // Section toggle state — advanced always starts collapsed
   const [configurationAdvancedOpen, setConfigurationAdvancedOpen] = useState(false);
   const [runPolicyAdvancedOpen, setRunPolicyAdvancedOpen] = useState(false);
-  // Popover states
-  const [modelOpen, setModelOpen] = useState(false);
-  const [fallbackModelOpenIndex, setFallbackModelOpenIndex] = useState<number | null>(null);
-  const [thinkingEffortOpen, setThinkingEffortOpen] = useState(false);
+  // Popover state for top-level selectors that still live outside provider cards.
 
   // Create mode helpers
   const val = isCreate ? props.values : null;
@@ -389,51 +478,20 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     isCreate
       ? val!.modelFallbacks
       : eff("agentRuntimeConfig", "modelFallbacks", config.modelFallbacks ?? []),
-    currentModelId,
+    primaryModelFallbackKey(agentRuntimeType, currentModelId),
   );
 
-  function updateFallbackModel(index: number, model: string) {
-    const next = [...currentFallbackModels];
-    while (next.length <= index) next.push("");
-    next[index] = model;
-    const normalized = normalizeModelFallbacks(next, currentModelId);
+  function updateFallbackModels(next: ModelFallbackConfig[]) {
+    const normalized = normalizeModelFallbacks(
+      next,
+      primaryModelFallbackKey(agentRuntimeType, currentModelId),
+    );
     if (isCreate) {
       set!({ modelFallbacks: normalized });
     } else {
       mark("agentRuntimeConfig", "modelFallbacks", normalized);
     }
   }
-
-  const thinkingEffortKey =
-    agentRuntimeType === "codex_local"
-      ? "modelReasoningEffort"
-      : agentRuntimeType === "cursor"
-        ? "mode"
-        : agentRuntimeType === "opencode_local"
-          ? "variant"
-          : "effort";
-  const thinkingEffortOptions =
-    agentRuntimeType === "codex_local"
-      ? codexThinkingEffortOptions
-      : agentRuntimeType === "cursor"
-        ? cursorModeOptions
-        : agentRuntimeType === "opencode_local"
-          ? openCodeThinkingEffortOptions
-          : claudeThinkingEffortOptions;
-  const currentThinkingEffort = isCreate
-    ? val!.thinkingEffort
-    : agentRuntimeType === "codex_local"
-      ? eff(
-          "agentRuntimeConfig",
-          "modelReasoningEffort",
-          String(config.modelReasoningEffort ?? config.reasoningEffort ?? ""),
-        )
-      : agentRuntimeType === "cursor"
-        ? eff("agentRuntimeConfig", "mode", String(config.mode ?? ""))
-      : agentRuntimeType === "opencode_local"
-        ? eff("agentRuntimeConfig", "variant", String(config.variant ?? ""))
-      : eff("agentRuntimeConfig", "effort", String(config.effort ?? ""));
-  const showThinkingEffort = agentRuntimeType !== "gemini_local";
   const codexSearchEnabled = agentRuntimeType === "codex_local"
     ? (isCreate ? Boolean(val!.search) : eff("agentRuntimeConfig", "search", Boolean(config.search)))
     : false;
@@ -578,63 +636,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
           )}
         </div>
         <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
-          {showAdapterTypeField && (
-            <Field label="Runtime type" hint={help.agentRuntimeType}>
-              <AdapterTypeDropdown
-                value={agentRuntimeType}
-                onChange={(t) => {
-                  if (isCreate) {
-                    // Reset all adapter-specific fields to defaults when switching adapter type
-                    const { agentRuntimeType: _at, ...defaults } = defaultCreateValues;
-                    const nextValues: CreateConfigValues = { ...defaults, agentRuntimeType: t };
-                    if (t === "codex_local") {
-                      nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
-                      nextValues.search = DEFAULT_CODEX_LOCAL_SEARCH;
-                      nextValues.dangerouslyBypassSandbox =
-                        DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
-                    } else if (t === "gemini_local") {
-                      nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
-                    } else if (t === "cursor") {
-                      nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
-                    } else if (t === "opencode_local") {
-                      nextValues.model = "";
-                    }
-                    set!(nextValues);
-                  } else {
-                    // Clear all adapter config and explicitly blank out model + effort/mode keys
-                    // so the old adapter's values don't bleed through via eff()
-                    setOverlay((prev) => ({
-                      ...prev,
-                      agentRuntimeType: t,
-                      agentRuntimeConfig: {
-                        model:
-                          t === "codex_local"
-                            ? DEFAULT_CODEX_LOCAL_MODEL
-                            : t === "gemini_local"
-                              ? DEFAULT_GEMINI_LOCAL_MODEL
-                            : t === "cursor"
-                              ? DEFAULT_CURSOR_LOCAL_MODEL
-                            : "",
-                        modelFallbacks: [],
-                        effort: "",
-                        modelReasoningEffort: "",
-                        variant: "",
-                        mode: "",
-                        ...(t === "codex_local"
-                          ? {
-                              search: DEFAULT_CODEX_LOCAL_SEARCH,
-                              dangerouslyBypassApprovalsAndSandbox:
-                                DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-                            }
-                          : {}),
-                      },
-                    }));
-                  }
-                }}
-              />
-            </Field>
-          )}
-
           {testEnvironment.error && (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {testEnvironment.error instanceof Error
@@ -647,77 +648,131 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             <AdapterEnvironmentResult result={testEnvironment.data} />
           )}
 
-          <ModelDropdown
-            label="Model"
-            hint={help.model}
-            models={models}
-            value={currentModelId}
-            onChange={(v) => {
-              const normalizedFallbacks = normalizeModelFallbacks(currentFallbackModels, v);
-              if (isCreate) {
-                set!({ model: v, modelFallbacks: normalizedFallbacks });
-              } else {
-                mark("agentRuntimeConfig", "model", v || undefined);
-                mark("agentRuntimeConfig", "modelFallbacks", normalizedFallbacks);
+          <div className={runtimeProviderRailClassName}>
+            <RuntimeProviderCard
+              title="Primary"
+              className={runtimeProviderItemClassName}
+              runtimeType={agentRuntimeType}
+              model={currentModelId}
+              config={isCreate ? uiAdapter.buildAdapterConfig(val!) : { ...config, ...overlay.agentRuntimeConfig }}
+              selectedOrganizationId={selectedOrganizationId}
+              externalModels={externalModels}
+              availableSecrets={availableSecrets}
+              onCreateSecret={(name, value) => createSecret.mutateAsync({ name, value })}
+              hideRuntimeType={!showAdapterTypeField}
+              hideInstructionsFile={hideInstructionsFile}
+              createValues={isCreate ? val! : null}
+              createSet={isCreate ? set : null}
+              onRuntimeTypeChange={(nextRuntimeType) => {
+                if (isCreate) {
+                  set!(createValuesForRuntime(nextRuntimeType));
+                  return;
+                }
+                setOverlay((prev) => ({
+                  ...prev,
+                  agentRuntimeType: nextRuntimeType,
+                  agentRuntimeConfig: {
+                    ...defaultConfigForRuntime(nextRuntimeType),
+                    modelFallbacks: [],
+                  },
+                }));
+              }}
+              onModelChange={(model) => {
+                const normalizedFallbacks = normalizeModelFallbacks(
+                  currentFallbackModels,
+                  primaryModelFallbackKey(agentRuntimeType, model),
+                );
+                if (isCreate) {
+                  set!({ model, modelFallbacks: normalizedFallbacks });
+                } else {
+                  mark("agentRuntimeConfig", "model", model || undefined);
+                  mark("agentRuntimeConfig", "modelFallbacks", normalizedFallbacks);
+                }
+              }}
+              onConfigFieldChange={(field, value) =>
+                isCreate
+                  ? set!({ [field]: value } as Partial<CreateConfigValues>)
+                  : mark("agentRuntimeConfig", field, value)
               }
-            }}
-            open={modelOpen}
-            onOpenChange={setModelOpen}
-            allowDefault={agentRuntimeType !== "opencode_local"}
-            required={agentRuntimeType === "opencode_local"}
-            groupByProvider={agentRuntimeType === "opencode_local"}
-            emptyLabel={agentRuntimeType === "opencode_local" ? "Select model (required)" : "Default"}
-            allowCustom
-            triggerTestId="agent-primary-model"
-          />
-          {[0, 1].map((index) => (
-            <ModelDropdown
-              key={index}
-              label={`Fallback model ${index + 1}`}
-              hint={help.modelFallbacks}
-              models={models}
-              value={currentFallbackModels[index] ?? ""}
-              onChange={(v) => updateFallbackModel(index, v)}
-              open={fallbackModelOpenIndex === index}
-              onOpenChange={(open) => setFallbackModelOpenIndex(open ? index : null)}
-              allowDefault={false}
-              allowClear
-              required={false}
-              groupByProvider={agentRuntimeType === "opencode_local"}
-              emptyLabel="No fallback model"
-              allowCustom
-              triggerTestId={`agent-fallback-model-${index + 1}`}
+              triggerTestId="agent-primary-model"
             />
-          ))}
+
+            {currentFallbackModels.map((fallback, index) => (
+              <RuntimeProviderCard
+                key={`${fallback.agentRuntimeType}-${index}`}
+                title={`Fallback ${index + 1}`}
+                className={runtimeProviderItemClassName}
+                runtimeType={fallback.agentRuntimeType}
+                model={fallback.model}
+                config={{ ...(fallback.config ?? {}), model: fallback.model }}
+                selectedOrganizationId={selectedOrganizationId}
+                externalModels={undefined}
+                availableSecrets={availableSecrets}
+                onCreateSecret={(name, value) => createSecret.mutateAsync({ name, value })}
+                hideInstructionsFile={hideInstructionsFile}
+                onRemove={() =>
+                  updateFallbackModels(currentFallbackModels.filter((_, itemIndex) => itemIndex !== index))
+                }
+                onRuntimeTypeChange={(nextRuntimeType) => {
+                  const nextConfig = defaultConfigForRuntime(nextRuntimeType);
+                  const next = [...currentFallbackModels];
+                  next[index] = {
+                    agentRuntimeType: nextRuntimeType,
+                    model: typeof nextConfig.model === "string" ? nextConfig.model : defaultModelForRuntime(nextRuntimeType),
+                    config: nextConfig,
+                  };
+                  updateFallbackModels(next);
+                }}
+                onModelChange={(model) => {
+                  const next = [...currentFallbackModels];
+                  next[index] = {
+                    ...fallback,
+                    model,
+                    config: {
+                      ...(fallback.config ?? {}),
+                      model,
+                    },
+                  };
+                  updateFallbackModels(next);
+                }}
+                onConfigFieldChange={(field, value) => {
+                  const next = [...currentFallbackModels];
+                  next[index] = {
+                    ...fallback,
+                    config: {
+                      ...(fallback.config ?? {}),
+                      [field]: value,
+                    },
+                  };
+                  updateFallbackModels(next);
+                }}
+                triggerTestId={`agent-fallback-model-${index + 1}`}
+              />
+            ))}
+
+            <button
+              type="button"
+              className={cn(
+                runtimeProviderItemClassName,
+                "min-h-[180px] rounded-lg border border-dashed border-border/80 px-4 py-4 text-left transition-colors hover:border-primary/50 hover:bg-accent/30",
+              )}
+              onClick={() => updateFallbackModels([...currentFallbackModels, defaultFallbackItem(agentRuntimeType)])}
+            >
+              <div className="flex h-full min-h-[140px] flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                <span className="rounded-full border border-border p-2">
+                  <Plus className="h-4 w-4" />
+                </span>
+                <span>Add fallback</span>
+              </div>
+            </button>
+          </div>
+
           {fetchedModelsError && (
             <p className="text-xs text-destructive">
               {fetchedModelsError instanceof Error
                 ? fetchedModelsError.message
                 : "Failed to load runtime models."}
             </p>
-          )}
-
-          {showThinkingEffort && (
-            <>
-              <ThinkingEffortDropdown
-                value={currentThinkingEffort}
-                options={thinkingEffortOptions}
-                onChange={(v) =>
-                  isCreate
-                    ? set!({ thinkingEffort: v })
-                    : mark("agentRuntimeConfig", thinkingEffortKey, v || undefined)
-                }
-                open={thinkingEffortOpen}
-                onOpenChange={setThinkingEffortOpen}
-              />
-              {agentRuntimeType === "codex_local" &&
-                codexSearchEnabled &&
-                currentThinkingEffort === "minimal" && (
-                  <p className={cn("text-xs", semanticTextToneClasses.warn)}>
-                    Codex may reject `minimal` thinking when search is enabled.
-                  </p>
-                )}
-            </>
           )}
 
           {/* Prompt template (create mode only — edit mode shows this in Identity) */}
@@ -744,168 +799,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               </div>
             </>
           )}
-
-          {/* Adapter-specific fields */}
-          {!isLocal && <uiAdapter.ConfigFields {...adapterFieldProps} />}
         </div>
 
       </div>
-
-      {/* ---- Permissions & Configuration ---- */}
-      {isLocal && (
-        <div className={cn(!cards && "border-b border-border")}>
-          {cards
-            ? <h3 className="text-sm font-medium mb-3">Permissions &amp; Configuration</h3>
-            : <div className="px-4 py-2 text-xs font-medium text-muted-foreground">Permissions &amp; Configuration</div>
-          }
-          <div className={cn(cards ? "border border-border rounded-lg overflow-hidden" : "pb-3")}>
-            <CollapsibleSection
-              title="Advanced options"
-              bordered
-              open={configurationAdvancedOpen}
-              onToggle={() => setConfigurationAdvancedOpen(!configurationAdvancedOpen)}
-            >
-              <div className="space-y-3">
-                <uiAdapter.ConfigFields {...adapterFieldProps} />
-
-                <Field label="Command" hint={help.localCommand}>
-                  <DraftInput
-                    value={
-                      isCreate
-                        ? val!.command
-                        : eff("agentRuntimeConfig", "command", String(config.command ?? ""))
-                    }
-                    onCommit={(v) =>
-                      isCreate
-                        ? set!({ command: v })
-                        : mark("agentRuntimeConfig", "command", v || undefined)
-                    }
-                    immediate
-                    className={inputClass}
-                    placeholder={
-                      agentRuntimeType === "codex_local"
-                        ? "codex"
-                        : agentRuntimeType === "gemini_local"
-                          ? "gemini"
-                          : agentRuntimeType === "pi_local"
-                            ? "pi"
-                            : agentRuntimeType === "cursor"
-                              ? "agent"
-                              : agentRuntimeType === "opencode_local"
-                                ? "opencode"
-                                : "claude"
-                    }
-                  />
-                </Field>
-
-                {!isCreate && typeof config.bootstrapPromptTemplate === "string" && config.bootstrapPromptTemplate && (
-                  <>
-                    <Field label="Bootstrap prompt (legacy)" hint={help.bootstrapPrompt}>
-                      <MarkdownEditor
-                        value={eff(
-                          "agentRuntimeConfig",
-                          "bootstrapPromptTemplate",
-                          String(config.bootstrapPromptTemplate ?? ""),
-                        )}
-                        onChange={(v) =>
-                          mark("agentRuntimeConfig", "bootstrapPromptTemplate", v || undefined)
-                        }
-                        placeholder="Optional initial setup prompt for the first run"
-                        contentClassName="min-h-[44px] text-sm font-mono"
-                        imageUploadHandler={async (file) => {
-                          const namespace = `agents/${props.agent.id}/bootstrap-prompt`;
-                          const asset = await uploadMarkdownImage.mutateAsync({ file, namespace });
-                          return asset.contentPath;
-                        }}
-                      />
-                    </Field>
-                    <div
-                      className={cn(
-                        "rounded-md border px-3 py-2 text-xs",
-                        semanticNoticeToneClasses.warn,
-                      )}
-                    >
-                      Bootstrap prompt is legacy and will be removed in a future release. Consider moving this content into the agent&apos;s prompt template or instructions file instead.
-                    </div>
-                  </>
-                )}
-                {agentRuntimeType === "claude_local" && (
-                  <ClaudeLocalAdvancedFields {...adapterFieldProps} />
-                )}
-
-                <Field label="Extra args (comma-separated)" hint={help.extraArgs}>
-                  <DraftInput
-                    value={
-                      isCreate
-                        ? val!.extraArgs
-                        : eff("agentRuntimeConfig", "extraArgs", formatArgList(config.extraArgs))
-                    }
-                    onCommit={(v) =>
-                      isCreate
-                        ? set!({ extraArgs: v })
-                        : mark("agentRuntimeConfig", "extraArgs", v ? parseCommaArgs(v) : undefined)
-                    }
-                    immediate
-                    className={inputClass}
-                    placeholder="e.g. --verbose, --foo=bar"
-                  />
-                </Field>
-
-                <Field label="Environment variables" hint={help.envVars}>
-                  <EnvVarEditor
-                    value={
-                      isCreate
-                        ? ((val!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>)
-                        : ((eff("agentRuntimeConfig", "env", (config.env ?? EMPTY_ENV) as Record<string, EnvBinding>))
-                        )
-                    }
-                    secrets={availableSecrets}
-                    onCreateSecret={async (name, value) => {
-                      const created = await createSecret.mutateAsync({ name, value });
-                      return created;
-                    }}
-                    onChange={(env) =>
-                      isCreate
-                        ? set!({ envBindings: env ?? {}, envVars: "" })
-                        : mark("agentRuntimeConfig", "env", env)
-                    }
-                  />
-                </Field>
-
-                {/* Edit-only: timeout + grace period */}
-                {!isCreate && (
-                  <>
-                    <Field label="Timeout (sec)" hint={help.timeoutSec}>
-                      <DraftNumberInput
-                        value={eff(
-                          "agentRuntimeConfig",
-                          "timeoutSec",
-                          Number(config.timeoutSec ?? 0),
-                        )}
-                        onCommit={(v) => mark("agentRuntimeConfig", "timeoutSec", v)}
-                        immediate
-                        className={inputClass}
-                      />
-                    </Field>
-                    <Field label="Interrupt grace period (sec)" hint={help.graceSec}>
-                      <DraftNumberInput
-                        value={eff(
-                          "agentRuntimeConfig",
-                          "graceSec",
-                          Number(config.graceSec ?? 15),
-                        )}
-                        onCommit={(v) => mark("agentRuntimeConfig", "graceSec", v)}
-                        immediate
-                        className={inputClass}
-                      />
-                    </Field>
-                  </>
-                )}
-              </div>
-            </CollapsibleSection>
-          </div>
-        </div>
-      )}
 
       {/* ---- Run Policy ---- */}
       {isCreate && showCreateRunPolicySection ? (
@@ -1048,6 +944,247 @@ function AdapterEnvironmentResult({ result }: { result: AgentRuntimeEnvironmentT
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+export function RuntimeProviderCard({
+  title,
+  className,
+  runtimeType,
+  model,
+  config,
+  selectedOrganizationId,
+  externalModels,
+  availableSecrets,
+  onCreateSecret,
+  onRuntimeTypeChange,
+  onModelChange,
+  onConfigFieldChange,
+  onRemove,
+  hideRuntimeType = false,
+  hideInstructionsFile = false,
+  createValues,
+  createSet,
+  triggerTestId,
+}: {
+  title: string;
+  className?: string;
+  runtimeType: string;
+  model: string;
+  config: Record<string, unknown>;
+  selectedOrganizationId: string | null | undefined;
+  externalModels?: AgentRuntimeModel[];
+  availableSecrets: OrganizationSecret[];
+  onCreateSecret: (name: string, value: string) => Promise<OrganizationSecret>;
+  onRuntimeTypeChange: (runtimeType: string) => void;
+  onModelChange: (model: string) => void;
+  onConfigFieldChange: (field: string, value: unknown) => void;
+  onRemove?: () => void;
+  hideRuntimeType?: boolean;
+  hideInstructionsFile?: boolean;
+  createValues?: CreateConfigValues | null;
+  createSet?: ((patch: Partial<CreateConfigValues>) => void) | null;
+  triggerTestId?: string;
+}) {
+  const [modelOpen, setModelOpen] = useState(false);
+  const [thinkingEffortOpen, setThinkingEffortOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const adapter = useMemo(() => getUIAdapter(runtimeType), [runtimeType]);
+  const { data: fetchedModels } = useQuery({
+    queryKey: selectedOrganizationId
+      ? queryKeys.agents.adapterModels(selectedOrganizationId, runtimeType)
+      : ["agents", "none", "adapter-models", runtimeType],
+    queryFn: () => agentsApi.adapterModels(selectedOrganizationId!, runtimeType),
+    enabled: Boolean(selectedOrganizationId),
+  });
+  const models = useMemo(
+    () => resolveRuntimeModels(runtimeType, fetchedModels, externalModels),
+    [runtimeType, fetchedModels, externalModels],
+  );
+  const thinkingEffortKey = thinkingEffortKeyForRuntime(runtimeType);
+  const currentThinkingEffort = createValues
+    ? createValues.thinkingEffort
+    : String(config[thinkingEffortKey] ?? config.reasoningEffort ?? "");
+  const adapterFieldProps: AgentRuntimeConfigFieldsProps = {
+    mode: createValues ? "create" : "edit",
+    isCreate: Boolean(createValues),
+    agentRuntimeType: runtimeType,
+    values: createValues ?? null,
+    set: createSet ?? null,
+    config,
+    eff: <T,>(_group: "agentRuntimeConfig", field: string, original: T): T =>
+      Object.prototype.hasOwnProperty.call(config, field) ? config[field] as T : original,
+    mark: (_group: "agentRuntimeConfig", field: string, value: unknown) => onConfigFieldChange(field, value),
+    models,
+    hideInstructionsFile,
+  };
+
+  return (
+    <div className={cn("rounded-lg border border-border/80 bg-background/30 p-3", className)}>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="text-sm font-medium">{title}</div>
+        {onRemove ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-muted-foreground hover:text-destructive"
+            onClick={onRemove}
+            aria-label={`Remove ${title}`}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        ) : null}
+      </div>
+      <div className="space-y-3">
+        {!hideRuntimeType && (
+          <Field label="Runtime type" hint={help.agentRuntimeType}>
+            <AdapterTypeDropdown value={runtimeType} onChange={onRuntimeTypeChange} />
+          </Field>
+        )}
+        <ModelDropdown
+          label="Model"
+          hint={help.model}
+          models={models}
+          value={model}
+          onChange={onModelChange}
+          open={modelOpen}
+          onOpenChange={setModelOpen}
+          allowDefault={runtimeType !== "opencode_local" && !onRemove}
+          required={runtimeType === "opencode_local" || Boolean(onRemove)}
+          groupByProvider={runtimeType === "opencode_local"}
+          emptyLabel={runtimeType === "opencode_local" || onRemove ? "Select model" : "Default"}
+          allowCustom
+          triggerTestId={triggerTestId}
+        />
+        {shouldShowThinkingEffort(runtimeType) && (
+          <>
+            <ThinkingEffortDropdown
+              value={currentThinkingEffort}
+              options={thinkingEffortOptionsForRuntime(runtimeType)}
+              onChange={(value) => {
+                if (createSet) {
+                  createSet({ thinkingEffort: value });
+                } else {
+                  onConfigFieldChange(thinkingEffortKey, value || undefined);
+                }
+              }}
+              open={thinkingEffortOpen}
+              onOpenChange={setThinkingEffortOpen}
+            />
+          </>
+        )}
+        <CollapsibleSection
+          title="Advanced options"
+          bordered
+          open={advancedOpen}
+          onToggle={() => setAdvancedOpen(!advancedOpen)}
+        >
+          <RuntimeAdvancedOptions
+            runtimeType={runtimeType}
+            adapter={adapter}
+            fieldProps={adapterFieldProps}
+            availableSecrets={availableSecrets}
+            onCreateSecret={onCreateSecret}
+          />
+        </CollapsibleSection>
+      </div>
+    </div>
+  );
+}
+
+function RuntimeAdvancedOptions({
+  runtimeType,
+  adapter,
+  fieldProps,
+  availableSecrets,
+  onCreateSecret,
+}: {
+  runtimeType: string;
+  adapter: ReturnType<typeof getUIAdapter>;
+  fieldProps: AgentRuntimeConfigFieldsProps;
+  availableSecrets: OrganizationSecret[];
+  onCreateSecret: (name: string, value: string) => Promise<OrganizationSecret>;
+}) {
+  const { isCreate, values, set, config, eff, mark } = fieldProps;
+  const ConfigFields = adapter.ConfigFields;
+  return (
+    <div className="space-y-3">
+      <ConfigFields {...fieldProps} />
+      {runtimeType === "claude_local" && (
+        <ClaudeLocalAdvancedFields {...fieldProps} />
+      )}
+      <Field label="Command" hint={help.localCommand}>
+        <DraftInput
+          value={
+            isCreate
+              ? values!.command
+              : eff("agentRuntimeConfig", "command", String(config.command ?? ""))
+          }
+          onCommit={(value) =>
+            isCreate
+              ? set!({ command: value })
+              : mark("agentRuntimeConfig", "command", value || undefined)
+          }
+          immediate
+          className={inputClass}
+          placeholder={defaultCommandForRuntime(runtimeType)}
+        />
+      </Field>
+      <Field label="Extra args (comma-separated)" hint={help.extraArgs}>
+        <DraftInput
+          value={
+            isCreate
+              ? values!.extraArgs
+              : eff("agentRuntimeConfig", "extraArgs", formatArgList(config.extraArgs))
+          }
+          onCommit={(value) =>
+            isCreate
+              ? set!({ extraArgs: value })
+              : mark("agentRuntimeConfig", "extraArgs", value ? parseCommaArgs(value) : undefined)
+          }
+          immediate
+          className={inputClass}
+          placeholder="e.g. --verbose, --foo=bar"
+        />
+      </Field>
+      <Field label="Environment variables" hint={help.envVars}>
+        <EnvVarEditor
+          value={
+            isCreate
+              ? ((values!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>)
+              : eff("agentRuntimeConfig", "env", (config.env ?? EMPTY_ENV) as Record<string, EnvBinding>)
+          }
+          secrets={availableSecrets}
+          onCreateSecret={onCreateSecret}
+          onChange={(env) =>
+            isCreate
+              ? set!({ envBindings: env ?? {}, envVars: "" })
+              : mark("agentRuntimeConfig", "env", env)
+          }
+        />
+      </Field>
+      {!isCreate && (
+        <>
+          <Field label="Timeout (sec)" hint={help.timeoutSec}>
+            <DraftNumberInput
+              value={eff("agentRuntimeConfig", "timeoutSec", Number(config.timeoutSec ?? 0))}
+              onCommit={(value) => mark("agentRuntimeConfig", "timeoutSec", value)}
+              immediate
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Interrupt grace period (sec)" hint={help.graceSec}>
+            <DraftNumberInput
+              value={eff("agentRuntimeConfig", "graceSec", Number(config.graceSec ?? 15))}
+              onCommit={(value) => mark("agentRuntimeConfig", "graceSec", value)}
+              immediate
+              className={inputClass}
+            />
+          </Field>
+        </>
+      )}
     </div>
   );
 }

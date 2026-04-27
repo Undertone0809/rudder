@@ -6,8 +6,7 @@ import {
   AGENT_STATUSES,
 } from "../constants.js";
 import { envConfigSchema } from "./secret.js";
-
-const MAX_AGENT_MODEL_FALLBACKS = 2;
+import { validateModelFallbacksConfig } from "./model-fallbacks.js";
 
 export const agentPermissionsSchema = z.object({
   canCreateAgents: z.boolean().optional().default(false),
@@ -45,36 +44,7 @@ const agentRuntimeConfigSchema = z.record(z.unknown()).superRefine((value, ctx) 
     }
   }
 
-  const fallbackModels = value.modelFallbacks;
-  if (fallbackModels !== undefined) {
-    if (!Array.isArray(fallbackModels)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "agentRuntimeConfig.modelFallbacks must be an array",
-        path: ["modelFallbacks"],
-      });
-      return;
-    }
-    if (fallbackModels.length > MAX_AGENT_MODEL_FALLBACKS) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.too_big,
-        maximum: MAX_AGENT_MODEL_FALLBACKS,
-        type: "array",
-        inclusive: true,
-        message: `agentRuntimeConfig.modelFallbacks can include at most ${MAX_AGENT_MODEL_FALLBACKS} models`,
-        path: ["modelFallbacks"],
-      });
-    }
-    fallbackModels.forEach((model, index) => {
-      if (typeof model !== "string" || model.trim().length === 0) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "agentRuntimeConfig.modelFallbacks entries must be non-empty strings",
-          path: ["modelFallbacks", index],
-        });
-      }
-    });
-  }
+  validateModelFallbacksConfig(value, ctx, []);
 });
 
 const optionalAgentNameSchema = z.preprocess(

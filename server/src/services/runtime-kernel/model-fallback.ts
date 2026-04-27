@@ -11,6 +11,26 @@ import {
   type ModelAttemptSpec,
 } from "@rudderhq/agent-runtime-utils";
 
+interface ModelFallbackExecutionOptions {
+  resolveAdapter?: (agentRuntimeType: string) => ServerAgentRuntimeModule | null;
+  createAuthToken?: (agentRuntimeType: string) => string | undefined;
+  onAttemptStart?: (attempt: ModelAttemptSpec, adapter: ServerAgentRuntimeModule) => Promise<void> | void;
+}
+
+const SHARED_ATTEMPT_CONFIG_KEYS = [
+  "promptTemplate",
+  "bootstrapPromptTemplate",
+  "instructionsFilePath",
+  "instructionsRootPath",
+  "instructionsEntryFile",
+  "instructionsBundleMode",
+  "agentsMdPath",
+  "rudderSkillSync",
+  "paperclipSkillSync",
+  "rudderRuntimeSkills",
+  "paperclipRuntimeSkills",
+];
+
 function clearRuntimeSession(runtime: AgentRuntimeState): AgentRuntimeState {
   return {
     ...runtime,
@@ -32,10 +52,25 @@ function describeFailure(failure: AgentRuntimeExecutionResult | Error | null): s
 function buildAttemptConfig(
   baseConfig: Record<string, unknown>,
   attempt: ModelAttemptSpec,
+  primaryRuntimeType: string,
 ): Record<string, unknown> {
   if (!attempt.isFallback) return baseConfig;
+  if (attempt.agentRuntimeType === primaryRuntimeType) {
+    const { modelFallbacks: _modelFallbacks, ...baseWithoutFallbacks } = baseConfig;
+    return {
+      ...baseWithoutFallbacks,
+      ...(attempt.config ?? {}),
+      model: attempt.model,
+    };
+  }
+  const sharedConfig = Object.fromEntries(
+    SHARED_ATTEMPT_CONFIG_KEYS
+      .filter((key) => baseConfig[key] !== undefined)
+      .map((key) => [key, baseConfig[key]]),
+  );
   return {
-    ...baseConfig,
+    ...sharedConfig,
+    ...(attempt.config ?? {}),
     model: attempt.model,
   };
 }
@@ -49,6 +84,7 @@ function buildAttemptContext(
     ...baseContext,
     rudderModelFallback: {
       attemptIndex: attempt.index,
+      agentRuntimeType: attempt.agentRuntimeType,
       fallbackIndex: attempt.fallbackIndex,
       totalFallbacks: attempt.totalFallbacks,
       model: attempt.model,
@@ -62,7 +98,7 @@ function wrapMeta(
   previousFailure: AgentRuntimeExecutionResult | Error | null,
 ): AgentRuntimeInvocationMeta {
   if (!attempt.isFallback) return meta;
-  const note = `model fallback ${attempt.fallbackIndex}/${attempt.totalFallbacks}: ${attempt.model} after ${describeFailure(previousFailure)}`;
+  const note = `model fallback ${attempt.fallbackIndex}/${attempt.totalFallbacks}: ${attempt.agentRuntimeType}/${attempt.model} after ${describeFailure(previousFailure)}`;
   return {
     ...meta,
     commandNotes: [...(meta.commandNotes ?? []), note],
@@ -70,6 +106,7 @@ function wrapMeta(
       ...(meta.context ?? {}),
       rudderModelFallback: {
         attemptIndex: attempt.index,
+        agentRuntimeType: attempt.agentRuntimeType,
         fallbackIndex: attempt.fallbackIndex,
         totalFallbacks: attempt.totalFallbacks,
         model: attempt.model,
@@ -82,24 +119,43 @@ function wrapMeta(
 export async function executeAdapterWithModelFallbacks(
   adapter: ServerAgentRuntimeModule,
   ctx: AgentRuntimeExecutionContext,
+  options: ModelFallbackExecutionOptions = {},
 ): Promise<AgentRuntimeExecutionResult> {
-  const attempts = buildModelAttemptSpecs(ctx.config);
+  const attempts = buildModelAttemptSpecs(ctx.config, ctx.agent.agentRuntimeType);
   let previousFailure: AgentRuntimeExecutionResult | Error | null = null;
 
   for (const attempt of attempts) {
+    const attemptRuntimeType = attempt.agentRuntimeType ?? ctx.agent.agentRuntimeType ?? adapter.type;
+    const attemptAdapter = attempt.isFallback && attemptRuntimeType !== adapter.type
+      ? options.resolveAdapter?.(attemptRuntimeType) ?? null
+      : adapter;
+
+    if (!attemptAdapter) {
+      previousFailure = new Error(`No adapter found for fallback runtime ${attemptRuntimeType}`);
+      continue;
+    }
+
     if (attempt.isFallback) {
       await ctx.onLog(
         "stdout",
-        `[rudder] ${describeFailure(previousFailure)}; retrying with fallback model ${attempt.fallbackIndex}/${attempt.totalFallbacks}: ${attempt.model}\n`,
+        `[rudder] ${describeFailure(previousFailure)}; retrying with fallback model ${attempt.fallbackIndex}/${attempt.totalFallbacks}: ${attemptRuntimeType}/${attempt.model}\n`,
       );
     }
 
     try {
-      const result = await adapter.execute({
+      const attemptConfig = buildAttemptConfig(ctx.config, attempt, ctx.agent.agentRuntimeType ?? adapter.type);
+      await options.onAttemptStart?.(attempt, attemptAdapter);
+      const result = await attemptAdapter.execute({
         ...ctx,
-        config: buildAttemptConfig(ctx.config, attempt),
+        agent: {
+          ...ctx.agent,
+          agentRuntimeType: attemptRuntimeType,
+          agentRuntimeConfig: attemptConfig,
+        },
+        config: attemptConfig,
         context: buildAttemptContext(ctx.context, attempt),
         runtime: attempt.isFallback ? clearRuntimeSession(ctx.runtime) : ctx.runtime,
+        authToken: options.createAuthToken?.(attemptRuntimeType) ?? ctx.authToken,
         onMeta: ctx.onMeta
           ? async (meta) => {
             await ctx.onMeta?.(wrapMeta(meta, attempt, previousFailure));
@@ -121,5 +177,11 @@ export async function executeAdapterWithModelFallbacks(
     }
   }
 
-  throw new Error("No adapter execution attempt was made");
+  if (previousFailure instanceof Error) throw previousFailure;
+  return previousFailure ?? {
+    exitCode: 1,
+    signal: null,
+    timedOut: false,
+    errorMessage: "No adapter execution attempt was made",
+  };
 }

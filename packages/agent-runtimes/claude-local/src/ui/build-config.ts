@@ -69,7 +69,7 @@ export function buildClaudeLocalConfig(v: CreateConfigValues): Record<string, un
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
   if (v.model) ac.model = v.model;
-  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, v.model);
+  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, { agentRuntimeType: "claude_local", model: v.model });
   if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
   if (v.thinkingEffort) ac.effort = v.thinkingEffort;
   if (v.chrome) ac.chrome = true;

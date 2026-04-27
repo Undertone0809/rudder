@@ -65,7 +65,7 @@ Core fields:
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to the run prompt
 - promptTemplate (string, optional): run prompt template
 - model (string, optional): Cursor model id (for example auto or gpt-5.3-codex)
-- modelFallbacks (string[], optional): up to two backup model ids tried in order when the primary model invocation fails
+- modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
 - mode (string, optional): Cursor execution mode passed as --mode (plan|ask). Leave unset for normal autonomous runs.
 - command (string, optional): defaults to "agent"
 - extraArgs (string[], optional): additional CLI args

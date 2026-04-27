@@ -64,7 +64,7 @@ export function buildCursorLocalConfig(v: CreateConfigValues): Record<string, un
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
   ac.model = v.model || DEFAULT_CURSOR_LOCAL_MODEL;
-  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, ac.model);
+  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, { agentRuntimeType: "cursor", model: ac.model });
   if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
   const mode = normalizeMode(v.thinkingEffort);
   if (mode) ac.mode = mode;

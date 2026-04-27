@@ -74,7 +74,7 @@ export function buildCodexLocalConfig(v: CreateConfigValues): Record<string, unk
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
   ac.model = v.model || DEFAULT_CODEX_LOCAL_MODEL;
-  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, ac.model);
+  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, { agentRuntimeType: "codex_local", model: ac.model });
   if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
   if (v.thinkingEffort) ac.modelReasoningEffort = v.thinkingEffort;
   ac.timeoutSec = 0;

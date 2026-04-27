@@ -57,7 +57,7 @@ export function buildOpenCodeLocalConfig(v: CreateConfigValues): Record<string, 
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
   if (v.model) ac.model = v.model;
-  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, v.model);
+  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, { agentRuntimeType: "opencode_local", model: v.model });
   if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
   if (v.thinkingEffort) ac.variant = v.thinkingEffort;
   // OpenCode sessions can run until the CLI exits naturally; keep timeout disabled (0)

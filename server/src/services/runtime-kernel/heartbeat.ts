@@ -43,7 +43,7 @@ import { emitExecutionTranscriptTree } from "../../langfuse-transcript.js";
 import { logger } from "../../middleware/logger.js";
 import { publishLiveEvent } from "../live-events.js";
 import { getRunLogStore, type RunLogHandle } from "../run-log-store.js";
-import { getServerAdapter, runningProcesses } from "../../agent-runtimes/index.js";
+import { findServerAdapter, getServerAdapter, runningProcesses } from "../../agent-runtimes/index.js";
 import type {
   AgentRuntimeExecutionResult,
   AgentRuntimeInvocationMeta,
@@ -3480,6 +3480,13 @@ export function heartbeatService(db: Db) {
           await persistRunProcessMetadata(run.id, meta);
         },
         authToken: authToken ?? undefined,
+      }, {
+        resolveAdapter: findServerAdapter,
+        createAuthToken: (agentRuntimeType) =>
+          createLocalAgentJwt(agent.id, agent.orgId, agentRuntimeType, run.id) ?? undefined,
+        onAttemptStart: (_attempt, attemptAdapter) => {
+          stdoutTranscriptParser = attemptAdapter.parseStdoutLine ?? null;
+        },
       });
       const adapterManagedRuntimeServices = adapterResult.runtimeServices
         ? await persistAdapterManagedRuntimeServices({

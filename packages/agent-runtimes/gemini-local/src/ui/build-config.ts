@@ -58,7 +58,7 @@ export function buildGeminiLocalConfig(v: CreateConfigValues): Record<string, un
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
   ac.model = v.model || DEFAULT_GEMINI_LOCAL_MODEL;
-  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, ac.model);
+  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, { agentRuntimeType: "gemini_local", model: ac.model });
   if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
   ac.timeoutSec = 0;
   ac.graceSec = 15;
