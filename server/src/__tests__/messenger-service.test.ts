@@ -170,7 +170,7 @@ describe("messengerService and issue follows", () => {
     ]);
 
     await issueSvc.followIssue(orgId, followedIssueId, userId);
-    await issueSvc.addComment(followedIssueId, "Followed issue needs review", { userId });
+    await issueSvc.addComment(followedIssueId, "Followed issue needs review", {});
     expect(await issueSvc.isFollowedByUser(orgId, followedIssueId, userId)).toBe(true);
 
     const thread = await messengerSvc.getIssuesThread(orgId, userId);
@@ -188,6 +188,48 @@ describe("messengerService and issue follows", () => {
     expect(assignedItem?.body).toContain("assigned to me");
     expect(createdItem?.metadata).toMatchObject({ assignedToMe: false, createdByMe: true });
     expect(issuesSummary?.preview).toBe("Followed issue needs review");
+  });
+
+  it("does not count self-authored issue activity as Messenger attention", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-self-activity";
+    const createdIssueId = randomUUID();
+    const createdAt = new Date("2026-04-10T09:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Self Activity Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Self Activity Org"),
+      issuePrefix: `S${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: createdIssueId,
+      orgId,
+      title: "Self-created issue",
+      status: "todo",
+      priority: "medium",
+      createdByUserId: userId,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    await issueSvc.addComment(createdIssueId, "I already handled this", { userId });
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const issuesSummary = summaries.find((item) => item.threadKey === "issues");
+
+    expect(thread.detail.items.map((item) => item.issueId)).toEqual([createdIssueId]);
+    expect(thread.detail.items[0]?.preview).toBe("I already handled this");
+    expect(thread.detail.unreadCount).toBe(0);
+    expect(thread.detail.needsAttention).toBe(false);
+    expect(thread.summary.latestActivityAt).toBeNull();
+    expect(thread.summary.preview).toBe("Cross-issue activity feed");
+    expect(issuesSummary?.unreadCount).toBe(0);
+    expect(issuesSummary?.needsAttention).toBe(false);
+    expect(issuesSummary?.latestActivityAt).toBeNull();
   });
 
   it("returns Messenger issue detail items in chronological order while keeping the summary pinned to latest activity", async () => {
@@ -213,7 +255,7 @@ describe("messengerService and issue follows", () => {
         title: "Older issue update",
         status: "todo",
         priority: "medium",
-        createdByUserId: userId,
+        assigneeUserId: userId,
         createdAt: olderActivityAt,
         updatedAt: olderActivityAt,
       },
@@ -223,7 +265,7 @@ describe("messengerService and issue follows", () => {
         title: "Newer issue update",
         status: "todo",
         priority: "medium",
-        createdByUserId: userId,
+        assigneeUserId: userId,
         createdAt: newerActivityAt,
         updatedAt: newerActivityAt,
       },

@@ -70,6 +70,8 @@ type IssueCommentRow = {
   id: string;
   issueId: string;
   body: string;
+  authorAgentId: string | null;
+  authorUserId: string | null;
   createdAt: Date;
 };
 
@@ -77,6 +79,8 @@ type IssueActivityRow = {
   id: string;
   action: string;
   entityId: string;
+  actorType: string;
+  actorId: string;
   details: Record<string, unknown> | null;
   createdAt: Date;
   runId: string | null;
@@ -270,6 +274,14 @@ function summarizeIssueActivity(activity: IssueActivityRow, issue: IssueUniverse
     default:
       return `${issue.title} updated`;
   }
+}
+
+function isSelfAuthoredComment(comment: IssueCommentRow, userId: string) {
+  return comment.authorUserId === userId;
+}
+
+function isSelfAuthoredActivity(activity: IssueActivityRow, userId: string) {
+  return activity.actorType === "user" && activity.actorId === userId;
 }
 
 function summarizeApprovalPayload(approval: ApprovalRow) {
@@ -628,6 +640,8 @@ export function messengerService(db: Db) {
             id: issueComments.id,
             issueId: issueComments.issueId,
             body: issueComments.body,
+            authorAgentId: issueComments.authorAgentId,
+            authorUserId: issueComments.authorUserId,
             createdAt: issueComments.createdAt,
           })
           .from(issueComments)
@@ -640,6 +654,8 @@ export function messengerService(db: Db) {
             id: activityLog.id,
             action: activityLog.action,
             entityId: activityLog.entityId,
+            actorType: activityLog.actorType,
+            actorId: activityLog.actorId,
             details: activityLog.details,
             createdAt: activityLog.createdAt,
             runId: activityLog.runId,
@@ -657,19 +673,27 @@ export function messengerService(db: Db) {
     ]);
 
     const latestCommentByIssue = new Map<string, IssueCommentRow>();
+    const latestExternalCommentByIssue = new Map<string, IssueCommentRow>();
     for (const row of commentRows) {
       if (!latestCommentByIssue.has(row.issueId)) {
         latestCommentByIssue.set(row.issueId, row);
       }
+      if (!isSelfAuthoredComment(row, userId) && !latestExternalCommentByIssue.has(row.issueId)) {
+        latestExternalCommentByIssue.set(row.issueId, row);
+      }
     }
     const latestActivityByIssue = new Map<string, IssueActivityRow>();
+    const latestExternalActivityByIssue = new Map<string, IssueActivityRow>();
     for (const row of activityRows) {
       if (!latestActivityByIssue.has(row.entityId)) {
         latestActivityByIssue.set(row.entityId, row);
       }
+      if (!isSelfAuthoredActivity(row, userId) && !latestExternalActivityByIssue.has(row.entityId)) {
+        latestExternalActivityByIssue.set(row.entityId, row);
+      }
     }
 
-    const unsortedItems = issuesUniverse.map((issue) => {
+    const unsortedEntries = issuesUniverse.map((issue) => {
       const latestComment = latestCommentByIssue.get(issue.id) ?? null;
       const latestActivity = latestActivityByIssue.get(issue.id) ?? null;
       const latestCommentAt = normalizeDate(latestComment?.createdAt ?? null);
@@ -682,34 +706,68 @@ export function messengerService(db: Db) {
           : latestActivity
             ? summarizeIssueActivity(latestActivity, issue)
             : null;
-      return issueCard(
-        issue,
-        userId,
-        issue.followed,
-        latestPreview,
-        latestActivityAt ?? issue.updatedAt,
+
+      const latestExternalComment = latestExternalCommentByIssue.get(issue.id) ?? null;
+      const latestExternalActivity = latestExternalActivityByIssue.get(issue.id) ?? null;
+      const latestExternalCommentAt = normalizeDate(latestExternalComment?.createdAt ?? null);
+      const fallbackAssignedActivityAt =
+        issue.assigneeUserId === userId && !latestActivityByIssue.has(issue.id)
+          ? normalizeDate(issue.updatedAt)
+          : null;
+      const attentionActivityAt = maxDate(
+        latestExternalCommentAt,
+        latestExternalActivity?.createdAt,
+        fallbackAssignedActivityAt,
       );
+      const attentionPreview =
+        latestExternalCommentAt &&
+        (!latestExternalActivity?.createdAt || latestExternalCommentAt.getTime() >= new Date(latestExternalActivity.createdAt).getTime())
+          ? truncate(latestExternalComment?.body)
+          : latestExternalActivity
+            ? summarizeIssueActivity(latestExternalActivity, issue)
+            : fallbackAssignedActivityAt
+              ? issueBodyFromSnapshot(issue, null, issue.followed, issue.createdByUserId === userId, issue.assigneeUserId === userId)
+              : null;
+
+      return {
+        item: issueCard(
+          issue,
+          userId,
+          issue.followed,
+          latestPreview,
+          latestActivityAt ?? issue.updatedAt,
+        ),
+        attentionActivityAt,
+        attentionPreview,
+      };
     });
 
-    const latestFirstItems = [...unsortedItems].sort(compareLatestActivity);
+    const unsortedItems = unsortedEntries.map((entry) => entry.item);
+    const latestFirstEntries = [...unsortedEntries].sort((a, b) => {
+      const aTime = a.attentionActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+      const bTime = b.attentionActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+      if (aTime !== bTime) return bTime - aTime;
+      return a.item.title.localeCompare(b.item.title);
+    });
     const chronologicalItems = [...unsortedItems].sort(compareChronologicalActivity);
 
-    const latestActivityAt = latestFirstItems[0]?.latestActivityAt ?? null;
-    const unreadCount = latestFirstItems.filter((item) => {
-      const itemActivity = item.latestActivityAt;
+    const latestAttentionEntry = latestFirstEntries.find((entry) => entry.attentionActivityAt);
+    const latestActivityAt = latestAttentionEntry?.attentionActivityAt ?? null;
+    const unreadCount = unsortedEntries.filter((entry) => {
+      const itemActivity = entry.attentionActivityAt;
       if (!itemActivity) return false;
       if (!lastReadAt) return true;
       return itemActivity.getTime() > lastReadAt.getTime();
     }).length;
 
     return {
-      summary: issueSummary(issuesUniverse.length, latestActivityAt, unreadCount, lastReadAt, latestFirstItems[0]?.preview ?? null),
+      summary: issueSummary(issuesUniverse.length, latestActivityAt, unreadCount, lastReadAt, latestAttentionEntry?.attentionPreview ?? null),
       detail: {
         threadKey: "issues",
         kind: "issues",
         title: "Issues",
         subtitle: `${issuesUniverse.length} tracked issue${issuesUniverse.length === 1 ? "" : "s"}`,
-        preview: latestFirstItems[0]?.preview ?? null,
+        preview: latestAttentionEntry?.attentionPreview ?? null,
         latestActivityAt,
         lastReadAt,
         unreadCount,
