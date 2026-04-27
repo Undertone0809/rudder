@@ -82,7 +82,7 @@ test.describe("New issue project context", () => {
     await expect(dialog.getByRole("button", { name: /todo/i })).toBeVisible();
   });
 
-  test("shows a saved issue draft in the issues sidebar and reopens it", async ({ page }) => {
+  test("shows saved issue drafts in the main issues draft view and reopens one", async ({ page }) => {
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {
         name: `New-Issue-Draft-Recovery-${Date.now()}`,
@@ -117,15 +117,18 @@ test.describe("New issue project context", () => {
 
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`);
 
-    await expect(page.getByTestId("issue-draft-sidebar-entry")).toContainText("Recovered draft issue");
+    await expect(page.getByTestId("issue-draft-sidebar-entry")).toContainText("Draft Issues (1)");
     await page.getByTestId("issue-draft-sidebar-entry").click();
+    await expect(page.getByTestId("issue-drafts-view")).toBeVisible();
+    await expect(page.getByTestId("issue-draft-card")).toContainText("Recovered draft issue");
+    await page.getByTestId("issue-draft-card").click();
 
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
     await expect(dialog).toBeVisible();
     await expect(dialog.getByPlaceholder("Issue title")).toHaveValue("Recovered draft issue");
   });
 
-  test("opens a picker for multiple saved issue drafts", async ({ page }) => {
+  test("opens the main draft issues view for multiple saved issue drafts", async ({ page }) => {
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {
         name: `New-Issue-Draft-Picker-${Date.now()}`,
@@ -183,8 +186,9 @@ test.describe("New issue project context", () => {
 
     await expect(page.getByTestId("issue-draft-sidebar-entry")).toContainText("Draft Issues (2)");
     await page.getByTestId("issue-draft-sidebar-entry").click();
+    await expect(page).toHaveURL(/scope=drafts/);
 
-    const selectedDraft = page.getByTestId("issue-draft-menu-item").filter({ hasText: "Older draft issue" });
+    const selectedDraft = page.getByTestId("issue-draft-card").filter({ hasText: "Older draft issue" });
     await expect(selectedDraft).toBeVisible();
     await selectedDraft.click();
 

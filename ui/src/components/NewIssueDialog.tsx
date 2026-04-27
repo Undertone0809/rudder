@@ -775,7 +775,7 @@ export function NewIssueDialog() {
     clearIssueAutosave();
     pushToast({
       title: "Saved to Draft Issues",
-      body: "You can find it from the Issues sidebar.",
+      body: "Open Draft Issues from the Issues sidebar to continue it.",
       tone: "success",
     });
     reset();

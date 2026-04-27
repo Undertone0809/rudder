@@ -8,25 +8,108 @@ import { projectsApi } from "../api/projects";
 import { heartbeatsApi } from "../api/heartbeats";
 import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
+import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import { rememberIssueNavigation } from "../lib/issue-navigation";
 import { getIssueScopeFilters } from "../lib/issue-scope-filters";
 import { readRecentIssueIds, recordRecentIssue, resolveRecentIssues } from "../lib/recent-issues";
+import {
+  deleteIssueDraft,
+  ISSUE_DRAFT_CHANGED_EVENT,
+  type IssueDraftSummary,
+  summarizeIssueDrafts,
+} from "../lib/new-issue-dialog";
+import { relativeTime } from "../lib/utils";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
-import { CircleDot } from "lucide-react";
+import { CircleDot, PencilLine, Trash2 } from "lucide-react";
 import { useIssueFollows } from "@/hooks/useIssueFollows";
+
+function DraftIssuesView({
+  drafts,
+  onOpenDraft,
+  onDeleteDraft,
+}: {
+  drafts: IssueDraftSummary[];
+  onOpenDraft: (draft: IssueDraftSummary) => void;
+  onDeleteDraft: (draft: IssueDraftSummary) => void;
+}) {
+  if (drafts.length === 0) {
+    return (
+      <div data-testid="issue-drafts-view" className="flex h-full min-h-0 flex-col">
+        <EmptyState icon={PencilLine} message="No draft issues." />
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="issue-drafts-view" className="flex h-full min-h-0 flex-col overflow-y-auto px-6 py-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-foreground">Draft Issues</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{drafts.length} saved draft{drafts.length === 1 ? "" : "s"}</p>
+        </div>
+      </div>
+
+      <section aria-label="Draft issues" className="grid max-w-5xl grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {drafts.map((draft) => (
+          <article
+            key={draft.id}
+            data-testid="issue-draft-card"
+            className="group relative min-h-36 rounded-[var(--radius-sm)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_88%,transparent)] transition-[background-color,border-color] hover:border-[color:var(--border-strong)] hover:bg-[color:var(--surface-elevated)]"
+          >
+            <button
+              type="button"
+              className="flex h-full min-h-36 w-full flex-col items-start px-4 py-3 text-left"
+              onClick={() => onOpenDraft(draft)}
+            >
+              <div className="flex w-full min-w-0 items-start gap-2 pr-9">
+                <PencilLine className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-foreground">{draft.title}</div>
+                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {draft.status} / {draft.priority} / {relativeTime(draft.updatedAt)}
+                  </div>
+                </div>
+              </div>
+              <p className="mt-5 line-clamp-3 text-sm leading-6 text-muted-foreground">
+                {draft.description || "Add description..."}
+              </p>
+            </button>
+            <button
+              type="button"
+              data-testid="issue-draft-delete-button"
+              aria-label={`Delete draft ${draft.title}`}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onDeleteDraft(draft);
+              }}
+              className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-100 transition-colors hover:bg-[color:color-mix(in_oklab,var(--destructive)_16%,transparent)] hover:text-destructive"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </article>
+        ))}
+      </section>
+    </div>
+  );
+}
 
 export function Issues() {
   const { selectedOrganizationId } = useOrganization();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { openNewIssue } = useDialog();
+  const { pushToast } = useToast();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
   const initialSearch = searchParams.get("q") ?? "";
   const issueScope = searchParams.get("scope") ?? "";
+  const isDraftScope = issueScope === "drafts";
   const projectId = searchParams.get("projectId") ?? undefined;
   const participantAgentId = searchParams.get("participantAgentId") ?? undefined;
   const requestedGroupBy = searchParams.get("groupBy");
@@ -75,6 +158,9 @@ export function Issues() {
   const [recentIssueIds, setRecentIssueIds] = useState<string[]>(() =>
     readRecentIssueIds(selectedOrganizationId),
   );
+  const [issueDraftSummaries, setIssueDraftSummaries] = useState<IssueDraftSummary[]>(() =>
+    summarizeIssueDrafts(selectedOrganizationId),
+  );
   const { followedIssueIds, toggleFollowIssue } = useIssueFollows(selectedOrganizationId);
 
   const { data: projects } = useQuery({
@@ -108,20 +194,34 @@ export function Issues() {
   );
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Issue Tracker" }]);
-  }, [setBreadcrumbs]);
+    setBreadcrumbs([{ label: isDraftScope ? "Draft Issues" : "Issue Tracker" }]);
+  }, [isDraftScope, setBreadcrumbs]);
 
   useEffect(() => {
     setRecentIssueIds(readRecentIssueIds(selectedOrganizationId));
   }, [location.key, selectedOrganizationId]);
 
   useEffect(() => {
-    if (!selectedOrganizationId || participantAgentId) return;
+    const refreshIssueDraftSummaries = () => {
+      setIssueDraftSummaries(summarizeIssueDrafts(selectedOrganizationId));
+    };
+    refreshIssueDraftSummaries();
+    if (typeof window === "undefined") return;
+    window.addEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummaries);
+    window.addEventListener("storage", refreshIssueDraftSummaries);
+    return () => {
+      window.removeEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummaries);
+      window.removeEventListener("storage", refreshIssueDraftSummaries);
+    };
+  }, [selectedOrganizationId]);
+
+  useEffect(() => {
+    if (!selectedOrganizationId || participantAgentId || isDraftScope) return;
     rememberIssueNavigation(selectedOrganizationId, {
       scope: issueScope || undefined,
       projectId,
     });
-  }, [issueScope, participantAgentId, projectId, selectedOrganizationId]);
+  }, [isDraftScope, issueScope, participantAgentId, projectId, selectedOrganizationId]);
 
   const issueFilters = useMemo(
     () => getIssueScopeFilters(issueScope, currentUserId),
@@ -141,7 +241,7 @@ export function Issues() {
       projectId ?? "__all__",
     ],
     queryFn: () => issuesApi.list(selectedOrganizationId!, { participantAgentId, projectId, ...issueFilters }),
-    enabled: !!selectedOrganizationId,
+    enabled: !!selectedOrganizationId && !isDraftScope,
   });
   const visibleIssues = useMemo(() => {
     const allIssues = issues ?? [];
@@ -164,6 +264,23 @@ export function Issues() {
 
   if (!selectedOrganizationId) {
     return <EmptyState icon={CircleDot} message="Select a organization to view issues." />;
+  }
+
+  if (isDraftScope) {
+    return (
+      <DraftIssuesView
+        drafts={issueDraftSummaries}
+        onOpenDraft={(draft) => {
+          openNewIssue({ draftId: draft.id });
+        }}
+        onDeleteDraft={(draft) => {
+          const confirmed = window.confirm(`Delete draft issue "${draft.title}"? This cannot be undone.`);
+          if (!confirmed) return;
+          deleteIssueDraft(draft.id);
+          pushToast({ title: "Draft issue deleted", tone: "success" });
+        }}
+      />
+    );
   }
 
   return (
