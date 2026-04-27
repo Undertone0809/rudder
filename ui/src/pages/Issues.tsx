@@ -11,7 +11,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import { rememberIssueNavigation } from "../lib/issue-navigation";
-import { getIssueScopeFilters } from "../lib/issue-scope-filters";
+import { getIssueScopeFilters, isFollowingIssue } from "../lib/issue-scope-filters";
 import { readRecentIssueIds, recordRecentIssue, resolveRecentIssues } from "../lib/recent-issues";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
@@ -151,8 +151,11 @@ export function Issues() {
     if (issueScope === "recent") {
       return resolveRecentIssues(recentIssueIds, allIssues);
     }
+    if (issueScope === "following" && currentUserId) {
+      return allIssues.filter((issue) => isFollowingIssue(issue, currentUserId));
+    }
     return allIssues;
-  }, [followedIssueIds, issues, issueScope, recentIssueIds]);
+  }, [currentUserId, followedIssueIds, issues, issueScope, recentIssueIds]);
 
   const updateIssue = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
