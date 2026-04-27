@@ -16,6 +16,7 @@ export interface SkillMentionOption {
   skillRefLabel: string;
   skillMarkdownTarget: string;
   skillDisplayName: string;
+  skillDescription: string | null;
 }
 
 function normalizeMarkdownTarget(candidate: string | null | undefined) {
@@ -63,6 +64,11 @@ function buildExternalSkillDisplayName(entry: AgentSkillEntry) {
   const origin = entry.originLabel?.trim() || "Agent skill";
   const location = entry.locationLabel?.trim();
   return location ? `${origin} · ${location}` : origin;
+}
+
+function normalizeOptionalText(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
 function buildExternalSkillSearchText(publicRef: string, entry: AgentSkillEntry) {
@@ -128,6 +134,7 @@ export function buildAgentSkillMentionOptions(params: {
         skillRefLabel: publicRef,
         skillMarkdownTarget: markdownTarget,
         skillDisplayName: organizationSkill?.name ?? entry.runtimeName ?? entry.key,
+        skillDescription: normalizeOptionalText(organizationSkill?.description ?? entry.description ?? entry.detail),
       });
       continue;
     }
@@ -144,6 +151,7 @@ export function buildAgentSkillMentionOptions(params: {
       skillRefLabel: publicRef,
       skillMarkdownTarget: markdownTarget,
       skillDisplayName: buildExternalSkillDisplayName(entry),
+      skillDescription: normalizeOptionalText(entry.description ?? entry.detail),
     });
   }
 

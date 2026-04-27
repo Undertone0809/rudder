@@ -74,6 +74,7 @@ export interface MentionOption {
   skillRefLabel?: string | null;
   skillMarkdownTarget?: string | null;
   skillDisplayName?: string | null;
+  skillDescription?: string | null;
 }
 
 /* ---- Editor props ---- */
@@ -1149,9 +1150,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                                 </span>
                               </div>
                             ) : null}
-                            {option.kind === "skill" && option.skillDisplayName ? (
+                            {option.kind === "skill" ? (
                               <div className="truncate text-[11px] text-muted-foreground">
-                                {option.skillDisplayName}
+                                {option.skillDescription ?? option.skillDisplayName}
                               </div>
                             ) : null}
                           </div>
