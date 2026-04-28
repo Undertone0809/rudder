@@ -302,11 +302,13 @@ async function launchDesktop(userDataDir, mode, ports) {
   const paths = resolveInstancePaths(userDataDir);
   const executablePath = mode === "packaged" ? await resolvePackagedExecutablePath() : electronBinary;
   const args = mode === "packaged" ? [] : [path.resolve(desktopDir, "dist/main.js")];
+  const smokeAppName = `Rudder-smoke-${mode}-${ports.appPort}`;
   const electronApp = await electron.launch({
     executablePath,
     args,
     env: {
       ...process.env,
+      RUDDER_DESKTOP_APP_NAME: smokeAppName,
       RUDDER_HOME: paths.rudderHome,
       RUDDER_DESKTOP_USER_DATA_DIR: paths.electronUserDataDir,
       RUDDER_LOCAL_ENV: "prod_local",

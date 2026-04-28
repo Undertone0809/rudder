@@ -34,8 +34,6 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   semanticBadgeToneClasses,
-  semanticNoticeToneClasses,
-  semanticTextToneClasses,
 } from "@/components/ui/semanticTones";
 import { Heart, ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { cn } from "../lib/utils";

@@ -69,6 +69,7 @@ import {
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { extractProviderIdWithFallback } from "../lib/model-utils";
+import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
 import { resolveRuntimeModels } from "../lib/runtime-models";
 import { issueStatusText, issueStatusTextDefault, priorityColor, priorityColorDefault } from "../lib/status-colors";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
@@ -95,13 +96,7 @@ const ISSUE_THINKING_EFFORT_OPTIONS = {
     { value: "medium", label: "Medium" },
     { value: "high", label: "High" },
   ],
-  codex_local: [
-    { value: "", label: "Default" },
-    { value: "minimal", label: "Minimal" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-  ],
+  codex_local: withDefaultThinkingEffortOption("Default", CODEX_LOCAL_REASONING_EFFORT_OPTIONS),
   opencode_local: [
     { value: "", label: "Default" },
     { value: "minimal", label: "Minimal" },

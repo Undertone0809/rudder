@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { IssueDetail } from "./IssueDetail";
 
 let capturedMentions: Array<Record<string, unknown>> = [];
+let mockSourceBreadcrumb: { label: string; href: string } | null = null;
 
 const parentIssue = {
   id: "issue-parent",
@@ -213,7 +214,7 @@ vi.mock("../lib/assignees", () => ({
 }));
 
 vi.mock("../lib/issueDetailBreadcrumb", () => ({
-  readIssueDetailBreadcrumb: () => null,
+  readIssueDetailBreadcrumb: () => mockSourceBreadcrumb,
 }));
 
 vi.mock("../lib/activity-actors", () => ({
@@ -410,6 +411,18 @@ vi.mock("lucide-react", () => {
 });
 
 describe("IssueDetail", () => {
+  it("renders a clickable source breadcrumb in the issue header", () => {
+    mockSourceBreadcrumb = { label: "Inbox", href: "/inbox?scope=recent" };
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Issue navigation");
+    expect(html).toContain(">Inbox</a>");
+    expect(html).toContain('href="/inbox?scope=recent"');
+    expect(html).toContain("Parent issue");
+    mockSourceBreadcrumb = null;
+  });
+
   it("renders existing sub-issues from the issue org instead of the selected org cache", () => {
     const html = renderToStaticMarkup(<IssueDetail />);
 

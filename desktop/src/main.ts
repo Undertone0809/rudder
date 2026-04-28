@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Notification, app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, systemPreferences } from "electron";
 import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electron";
+import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml } from "./boot-screen.js";
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
@@ -337,12 +338,8 @@ function createResidentTrayIcon(): string | Electron.NativeImage {
   return image;
 }
 
-function resolveDesktopAppName(profile: LocalEnvProfile): string {
-  return profile.name === "dev" ? "Rudder-dev" : "Rudder";
-}
-
 function applyDesktopAppIdentity(profile: LocalEnvProfile): string {
-  const appName = resolveDesktopAppName(profile);
+  const appName = resolveDesktopAppName(profile.name);
   app.setName(appName);
   process.title = appName;
   app.setAboutPanelOptions({

@@ -26,7 +26,7 @@ Core fields:
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to stdin prompt at runtime
 - model (string, optional): Codex model id
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
-- modelReasoningEffort (string, optional): reasoning effort override (minimal|low|medium|high) passed via -c model_reasoning_effort=...
+- modelReasoningEffort (string, optional): reasoning effort override (low|medium|high|xhigh) passed via -c model_reasoning_effort=...
 - promptTemplate (string, optional): run prompt template
 - search (boolean, optional, defaults to true on new Codex agents): run codex with --search
 - dangerouslyBypassApprovalsAndSandbox (boolean, optional): run with bypass flag
@@ -48,6 +48,5 @@ Notes:
 - The codex_local adapter does not materialize skills into repo-scoped ".agents/skills"; it realizes selected skills by linking them into the Rudder-managed \`CODEX_HOME/skills\` directory that Codex discovers at runtime.
 - Unless explicitly overridden in adapter config, Rudder runs Codex with a per-agent managed CODEX_HOME under the active Rudder instance and seeds auth/config from the shared Codex home (the CODEX_HOME env var, when set, or ~/.codex).
 - Rudder also isolates the child process HOME/USERPROFILE away from the operator's real home so Codex does not auto-discover unrelated global skills from ~/.agents/skills during agent runs.
-- Some model/tool combinations reject certain effort levels (for example minimal with web search enabled).
 - When Rudder realizes a workspace/runtime for a run, it injects RUDDER_WORKSPACE_* and RUDDER_RUNTIME_* env vars for agent-side tooling.
 `;
