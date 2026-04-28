@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
@@ -375,6 +375,7 @@ export function IssueDetail() {
     () => readIssueDetailBreadcrumb(location.state) ?? { label: "Issues", href: "/issues" },
     [location.state],
   );
+  const ancestors = issue?.ancestors ?? [];
   const issueHeaderBreadcrumbs = useMemo(() => {
     const currentLabel = issue?.title ?? issueId ?? "Issue";
     return [
@@ -847,7 +848,7 @@ export function IssueDetail() {
     }
   }, [issue, issueId, navigate, location.state]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandleIssueDetailEscape(event)) return;
       navigate(sourceBreadcrumb.href);
@@ -882,7 +883,6 @@ export function IssueDetail() {
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
   if (!issue) return null;
 
-  const ancestors = issue.ancestors ?? [];
   const handleFilePicked = async (evt: ChangeEvent<HTMLInputElement>) => {
     const files = evt.target.files;
     if (!files || files.length === 0) return;
@@ -1011,43 +1011,43 @@ export function IssueDetail() {
   return (
     <div className="mx-auto max-w-6xl xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start xl:gap-6">
       <div className="min-w-0 space-y-6">
-      <nav aria-label="Issue navigation" data-testid="issue-detail-breadcrumb">
-        <Breadcrumb>
-          <BreadcrumbList className="flex-wrap gap-y-1">
-            {issueHeaderBreadcrumbs.map((crumb, index) => {
-              const isLast = index === issueHeaderBreadcrumbs.length - 1;
-              return (
-                <BreadcrumbItem key={`${crumb.label}-${index}`} className={isLast ? "min-w-0" : "max-w-[220px]"}>
-                  {index > 0 ? <BreadcrumbSeparator /> : null}
-                  {isLast || !crumb.href ? (
-                    <BreadcrumbPage className="truncate" title={crumb.label}>
-                      {crumb.label}
-                    </BreadcrumbPage>
-                  ) : (
-                    <BreadcrumbLink asChild>
-                      <Link
-                        to={crumb.href}
-                        state={crumb.href.startsWith("/issues/") ? location.state : undefined}
-                        className="truncate"
-                        title={crumb.label}
-                      >
+        <nav aria-label="Issue navigation" data-testid="issue-detail-breadcrumb">
+          <Breadcrumb>
+            <BreadcrumbList className="flex-wrap gap-y-1">
+              {issueHeaderBreadcrumbs.map((crumb, index) => {
+                const isLast = index === issueHeaderBreadcrumbs.length - 1;
+                return (
+                  <BreadcrumbItem key={`${crumb.label}-${index}`} className={isLast ? "min-w-0" : "max-w-[220px]"}>
+                    {index > 0 ? <BreadcrumbSeparator /> : null}
+                    {isLast || !crumb.href ? (
+                      <BreadcrumbPage className="truncate" title={crumb.label}>
                         {crumb.label}
-                      </Link>
-                    </BreadcrumbLink>
-                  )}
-                </BreadcrumbItem>
-              );
-            })}
-          </BreadcrumbList>
-        </Breadcrumb>
-      </nav>
+                      </BreadcrumbPage>
+                    ) : (
+                      <BreadcrumbLink asChild>
+                        <Link
+                          to={crumb.href}
+                          state={crumb.href.startsWith("/issues/") ? location.state : undefined}
+                          className="truncate"
+                          title={crumb.label}
+                        >
+                          {crumb.label}
+                        </Link>
+                      </BreadcrumbLink>
+                    )}
+                  </BreadcrumbItem>
+                );
+              })}
+            </BreadcrumbList>
+          </Breadcrumb>
+        </nav>
 
-      {issue.hiddenAt && (
-        <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          <EyeOff className="h-4 w-4 shrink-0" />
-          This issue is hidden
-        </div>
-      )}
+        {issue.hiddenAt && (
+          <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <EyeOff className="h-4 w-4 shrink-0" />
+            This issue is hidden
+          </div>
+        )}
 
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-3">

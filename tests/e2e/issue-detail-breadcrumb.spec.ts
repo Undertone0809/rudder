@@ -47,6 +47,7 @@ test.describe("Issue detail breadcrumb", () => {
     await expect(issueLink).toBeVisible({ timeout: 15_000 });
     await issueLink.click();
     await expect(page).toHaveURL(new RegExp(`/issues/${issue.identifier ?? issue.id}$`));
+    await expect(page.getByTestId("issue-detail-breadcrumb").getByRole("link", { name: "Issues" })).toBeVisible();
 
     await page.keyboard.press("Escape");
     await expect(page).toHaveURL(new RegExp(`/issues\\?q=${encodeURIComponent(searchQuery)}`));
