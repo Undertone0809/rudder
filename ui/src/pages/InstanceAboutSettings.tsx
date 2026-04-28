@@ -28,6 +28,14 @@ function formatVersion(value: string | null | undefined, unknownLabel: string): 
   return value.startsWith("v") ? value : `v${value}`;
 }
 
+export function resolveAboutCurrentVersion(input: {
+  desktopRuntimeVersion?: string | null;
+  desktopAppVersion?: string | null;
+  healthVersion?: string | null;
+}): string | null {
+  return input.desktopRuntimeVersion ?? input.desktopAppVersion ?? input.healthVersion ?? null;
+}
+
 function formatDesktopValue(value: string | null | undefined, unknownLabel: string): string {
   if (!value) return unknownLabel;
   return value
@@ -125,7 +133,11 @@ export function InstanceAboutSettings() {
   }, []);
 
   const currentVersion = useMemo(
-    () => appVersion ?? desktopBootState?.runtime?.version ?? healthQuery.data?.version ?? null,
+    () => resolveAboutCurrentVersion({
+      desktopRuntimeVersion: desktopBootState?.runtime?.version,
+      desktopAppVersion: appVersion,
+      healthVersion: healthQuery.data?.version,
+    }),
     [appVersion, desktopBootState?.runtime?.version, healthQuery.data?.version],
   );
 

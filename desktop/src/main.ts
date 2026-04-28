@@ -196,11 +196,17 @@ function resolveDesktopCapabilities(): DesktopCapabilities {
 
 async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
   return checkForStableUpdates({
-    currentVersion: app.getVersion(),
+    currentVersion: resolveRudderAppVersion(),
     appName: app.getName(),
     repo: DESKTOP_GITHUB_REPO,
     releasesUrl: DESKTOP_RELEASES_URL,
   });
+}
+
+function resolveRudderAppVersion(): string {
+  return serverHandle?.runtime.version
+    ?? currentBootState.runtime?.version
+    ?? app.getVersion();
 }
 
 function formatVersionForDisplay(version: string | null | undefined): string {
@@ -1188,7 +1194,7 @@ function registerIpc(): void {
     return currentBootState;
   });
   ipcMain.handle("desktop:get-system-permissions", async () => refreshDesktopSystemPermissions());
-  ipcMain.handle("desktop:get-app-version", async () => app.getVersion());
+  ipcMain.handle("desktop:get-app-version", async () => resolveRudderAppVersion());
   ipcMain.handle("desktop:open-path", async (_event, targetPath: string) => {
     await shell.openPath(targetPath);
   });

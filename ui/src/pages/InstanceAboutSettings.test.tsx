@@ -2,7 +2,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { InstanceAboutSettings } from "./InstanceAboutSettings";
+import { InstanceAboutSettings, resolveAboutCurrentVersion } from "./InstanceAboutSettings";
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({
@@ -85,5 +85,15 @@ describe("InstanceAboutSettings", () => {
     expect(html).toContain(">v1.2.3<");
     expect(html).not.toContain("App version");
     expect(html).not.toContain("Server version");
+  });
+
+  it("prefers the Rudder runtime version over the desktop shell package version", () => {
+    expect(
+      resolveAboutCurrentVersion({
+        desktopRuntimeVersion: "0.1.0-canary.18",
+        desktopAppVersion: "37.10.3",
+        healthVersion: "0.1.0",
+      }),
+    ).toBe("0.1.0-canary.18");
   });
 });
