@@ -12,6 +12,7 @@ import { organizationSkillsApi } from "../api/organizationSkills";
 import { authApi } from "../api/auth";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
+import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   buildNewIssueCreateRequest,
   clearIssueAutosave,
@@ -68,6 +69,7 @@ import {
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { extractProviderIdWithFallback } from "../lib/model-utils";
+import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
 import { resolveRuntimeModels } from "../lib/runtime-models";
 import { issueStatusText, issueStatusTextDefault, priorityColor, priorityColorDefault } from "../lib/status-colors";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
@@ -94,13 +96,7 @@ const ISSUE_THINKING_EFFORT_OPTIONS = {
     { value: "medium", label: "Medium" },
     { value: "high", label: "High" },
   ],
-  codex_local: [
-    { value: "", label: "Default" },
-    { value: "minimal", label: "Minimal" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-  ],
+  codex_local: withDefaultThinkingEffortOption("Default", CODEX_LOCAL_REASONING_EFFORT_OPTIONS),
   opencode_local: [
     { value: "", label: "Default" },
     { value: "minimal", label: "Minimal" },
@@ -775,7 +771,7 @@ export function NewIssueDialog() {
     clearIssueAutosave();
     pushToast({
       title: "Saved to Draft Issues",
-      body: "You can find it from the Issues sidebar.",
+      body: "Open Draft Issues from the Issues sidebar to continue it.",
       tone: "success",
     });
     reset();
@@ -1313,7 +1309,7 @@ export function NewIssueDialog() {
                     <>
                       <span
                         className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={{ backgroundColor: currentProject.color ?? "#6366f1" }}
+                        style={projectColorBackgroundStyle(currentProject.color)}
                       />
                       <span className="truncate">{option.label}</span>
                     </>
@@ -1328,7 +1324,7 @@ export function NewIssueDialog() {
                     <>
                       <span
                         className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={{ backgroundColor: project?.color ?? "#6366f1" }}
+                        style={projectColorBackgroundStyle(project?.color)}
                       />
                       <span className="truncate">{option.label}</span>
                     </>

@@ -721,15 +721,15 @@ test.describe("Workspace shell", () => {
     await expect(page.getByText(/shared workspace files, plans, and skill packages/i)).toBeVisible();
     await expect(filesCard.getByRole("button", { name: "notes.md", exact: true })).toBeVisible();
     await mainContent.getByRole("button", { name: "agents", exact: true }).click();
-    await expect(mainContent.getByRole("button", { name: "Jade", exact: true })).toBeVisible();
+    const jadeWorkspaceButton = mainContent.getByRole("button", { name: "Jade", exact: true });
+    await expect(jadeWorkspaceButton).toBeVisible();
     await expect(mainContent.getByRole("button", { name: originalWorkspaceKey, exact: true })).toHaveCount(0);
     await expect(filesCard.getByText(originalWorkspaceKey, { exact: true })).toHaveCount(0);
-    await expect(
-      mainContent
-        .getByRole("button", { name: "Jade", exact: true })
-        .locator('[aria-hidden="true"] svg'),
-    ).toBeVisible();
-    await mainContent.getByRole("button", { name: "Jade", exact: true }).click();
+    await expect(jadeWorkspaceButton.getByTestId("org-workspaces-agent-icon").locator("svg")).toBeVisible();
+    const agentBadge = jadeWorkspaceButton.getByTestId("org-workspaces-agent-badge");
+    await expect(agentBadge).toHaveText("Agent");
+    await expect(agentBadge.locator("svg,img")).toHaveCount(0);
+    await jadeWorkspaceButton.click();
     await expect(mainContent.getByRole("button", { name: "instructions", exact: true })).toBeVisible();
     await expect(mainContent.getByRole("button", { name: ".DS_Store", exact: true })).toHaveCount(0);
     await expect(mainContent.getByRole("button", { name: ".cache", exact: true })).toHaveCount(0);

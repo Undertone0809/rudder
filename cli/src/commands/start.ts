@@ -1,13 +1,12 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants as fsConstants, createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { constants as fsConstants, createWriteStream, mkdirSync, readFileSync } from "node:fs";
 import { access, chmod, copyFile, cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import {
@@ -16,6 +15,7 @@ import {
   installPersistentCli,
   resolvePersistentCliInstallSpec,
 } from "../install.js";
+import { resolveCliVersion } from "../version.js";
 
 export const DEFAULT_DESKTOP_RELEASE_REPO = "Undertone0809/rudder";
 export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
@@ -78,27 +78,8 @@ const DESKTOP_METADATA_FILE = ".rudder-desktop-install.json";
 const DESKTOP_CHECKSUM_ASSET_NAME = "SHASUMS256.txt";
 
 export function resolveCurrentCliVersion(env: NodeJS.ProcessEnv = process.env): string {
-  const envPackageName = env.npm_package_name?.trim();
-  const envPackageVersion = env.npm_package_version?.trim();
-  if (envPackageName === CLI_NPM_PACKAGE_NAME && envPackageVersion) return envPackageVersion;
-
-  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    path.resolve(moduleDir, "../package.json"),
-    path.resolve(moduleDir, "../../package.json"),
-  ];
-
-  for (const candidate of candidates) {
-    if (!existsSync(candidate)) continue;
-    try {
-      const parsed = JSON.parse(readFileSync(candidate, "utf8")) as { name?: string; version?: string };
-      if (parsed.name === CLI_NPM_PACKAGE_NAME && parsed.version) return parsed.version;
-    } catch {
-      // Continue to the next candidate.
-    }
-  }
-
-  return "latest";
+  const version = resolveCliVersion(import.meta.url, env);
+  return version === "0.0.0" ? "latest" : version;
 }
 
 export function resolveCliInstallSpec(version: string, env: NodeJS.ProcessEnv = process.env): string {

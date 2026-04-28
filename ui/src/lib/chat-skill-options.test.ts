@@ -119,6 +119,7 @@ describe("chat-skill-options", () => {
           skillRefLabel: "rudder/build-advisor",
           skillMarkdownTarget: "/workspace/.agents/skills/build-advisor/SKILL.md",
           skillDisplayName: "Build Advisor",
+          skillDescription: "Turns vague build feedback into expert diagnosis.",
         },
       ],
       "advisor",

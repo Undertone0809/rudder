@@ -113,6 +113,7 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
   it("aggregates recent loaded skills from adapter invoke events", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
+    const secondAgentId = randomUUID();
 
     await db.insert(organizations).values({
       id: orgId,
@@ -133,11 +134,23 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
       runtimeConfig: {},
       permissions: {},
     });
+    await db.insert(agents).values({
+      id: secondAgentId,
+      orgId,
+      name: "Blake",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
 
     const runOneId = randomUUID();
     const runTwoId = randomUUID();
     const runThreeId = randomUUID();
     const oldRunId = randomUUID();
+    const secondAgentRunId = randomUUID();
 
     await db.insert(heartbeatRuns).values([
       {
@@ -175,6 +188,15 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
         status: "succeeded",
         createdAt: new Date("2026-03-10T09:00:00.000Z"),
         updatedAt: new Date("2026-03-10T09:05:00.000Z"),
+      },
+      {
+        id: secondAgentRunId,
+        orgId,
+        agentId: secondAgentId,
+        invocationSource: "on_demand",
+        status: "succeeded",
+        createdAt: new Date("2026-04-20T18:00:00.000Z"),
+        updatedAt: new Date("2026-04-20T18:05:00.000Z"),
       },
     ]);
 
@@ -258,6 +280,23 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
         },
         createdAt: new Date("2026-03-10T09:00:05.000Z"),
       },
+      {
+        orgId,
+        runId: secondAgentRunId,
+        agentId: secondAgentId,
+        seq: 1,
+        eventType: "adapter.invoke",
+        stream: "system",
+        level: "info",
+        message: "adapter invocation",
+        payload: {
+          loadedSkills: [
+            { key: "deep-research", runtimeName: "deep-research", name: "Deep Research" },
+            { key: "pua", runtimeName: "pua", name: "PUA" },
+          ],
+        },
+        createdAt: new Date("2026-04-20T18:00:05.000Z"),
+      },
     ]);
 
     const analytics = await svc.getAgentSkillAnalytics(agentId, {
@@ -321,5 +360,33 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
         ],
       },
     ]);
+
+    const organizationAnalytics = await svc.getOrganizationSkillAnalytics(orgId, {
+      now: new Date("2026-04-22T12:00:00.000Z"),
+    });
+
+    expect(organizationAnalytics.agentId).toBe("__all__");
+    expect(organizationAnalytics.orgId).toBe(orgId);
+    expect(organizationAnalytics.totalCount).toBe(7);
+    expect(organizationAnalytics.totalRunsWithSkills).toBe(4);
+    expect(organizationAnalytics.skills).toEqual([
+      { key: "pua", label: "pua", count: 3 },
+      { key: "rudder/build-advisor", label: "build-advisor", count: 2 },
+      { key: "deep-research", label: "deep-research", count: 1 },
+      { key: "screenshot", label: "screenshot", count: 1 },
+    ]);
+
+    const orgApril20 = organizationAnalytics.days.find((day) => day.date === "2026-04-20");
+    expect(orgApril20).toEqual({
+      date: "2026-04-20",
+      totalCount: 6,
+      runCount: 3,
+      skills: [
+        { key: "rudder/build-advisor", label: "build-advisor", count: 2 },
+        { key: "pua", label: "pua", count: 2 },
+        { key: "deep-research", label: "deep-research", count: 1 },
+        { key: "screenshot", label: "screenshot", count: 1 },
+      ],
+    });
   });
 });

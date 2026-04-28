@@ -328,12 +328,19 @@ export interface CLIAgentRuntimeModule {
 // UI config form values (moved from ui/src/components/AgentConfigForm.tsx)
 // ---------------------------------------------------------------------------
 
+export interface ModelFallbackConfig {
+  agentRuntimeType: string;
+  model: string;
+  config?: Record<string, unknown>;
+}
+
 export interface CreateConfigValues {
   agentRuntimeType: string;
   cwd: string;
   instructionsFilePath?: string;
   promptTemplate: string;
   model: string;
+  modelFallbacks: ModelFallbackConfig[];
   thinkingEffort: string;
   chrome: boolean;
   dangerouslySkipPermissions: boolean;

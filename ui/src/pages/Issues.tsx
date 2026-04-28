@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { Agent, Project } from "@rudderhq/shared";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -8,25 +9,159 @@ import { projectsApi } from "../api/projects";
 import { heartbeatsApi } from "../api/heartbeats";
 import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
+import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import { rememberIssueNavigation } from "../lib/issue-navigation";
 import { getIssueScopeFilters, isFollowingIssue } from "../lib/issue-scope-filters";
 import { readRecentIssueIds, recordRecentIssue, resolveRecentIssues } from "../lib/recent-issues";
+import { formatAssigneeUserLabel, parseAssigneeValue } from "../lib/assignees";
+import {
+  deleteIssueDraft,
+  ISSUE_DRAFT_CHANGED_EVENT,
+  type IssueDraftSummary,
+  summarizeIssueDrafts,
+} from "../lib/new-issue-dialog";
+import { relativeTime } from "../lib/utils";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
-import { CircleDot } from "lucide-react";
+import { CircleDot, Clock3, Flag, FolderKanban, PencilLine, Trash2, UserRound } from "lucide-react";
 import { useIssueFollows } from "@/hooks/useIssueFollows";
+
+function formatDraftMetadataValue(value: string) {
+  return value.replace(/[-_]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function resolveDraftProjectName(draft: IssueDraftSummary, projects: Project[] | undefined) {
+  if (!draft.projectId) return null;
+  return projects?.find((project) => project.id === draft.projectId)?.name ?? null;
+}
+
+function resolveDraftAssigneeLabel(
+  draft: IssueDraftSummary,
+  agents: Agent[] | undefined,
+  currentUserId: string | null | undefined,
+) {
+  const assignee = parseAssigneeValue(draft.assigneeValue || draft.assigneeId || "");
+  if (assignee.assigneeAgentId) {
+    return agents?.find((agent) => agent.id === assignee.assigneeAgentId)?.name ?? null;
+  }
+  if (assignee.assigneeUserId) {
+    return formatAssigneeUserLabel(assignee.assigneeUserId, currentUserId);
+  }
+  return null;
+}
+
+function DraftIssuesView({
+  drafts,
+  agents,
+  projects,
+  currentUserId,
+  onOpenDraft,
+  onDeleteDraft,
+}: {
+  drafts: IssueDraftSummary[];
+  agents?: Agent[];
+  projects?: Project[];
+  currentUserId?: string | null;
+  onOpenDraft: (draft: IssueDraftSummary) => void;
+  onDeleteDraft: (draft: IssueDraftSummary) => void;
+}) {
+  if (drafts.length === 0) {
+    return (
+      <div data-testid="issue-drafts-view" className="flex h-full min-h-0 flex-col">
+        <EmptyState icon={PencilLine} message="No draft issues." />
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="issue-drafts-view" className="flex h-full min-h-0 flex-col overflow-y-auto px-6 py-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-foreground">Draft Issues</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{drafts.length} saved draft{drafts.length === 1 ? "" : "s"}</p>
+        </div>
+      </div>
+
+      <section aria-label="Draft issues" className="grid max-w-5xl grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {drafts.map((draft) => {
+          const projectName = resolveDraftProjectName(draft, projects);
+          const assigneeLabel = resolveDraftAssigneeLabel(draft, agents, currentUserId);
+          const metadataItems = [
+            draft.status ? { icon: CircleDot, label: formatDraftMetadataValue(draft.status) } : null,
+            draft.priority ? { icon: Flag, label: formatDraftMetadataValue(draft.priority) } : null,
+            projectName ? { icon: FolderKanban, label: projectName } : null,
+            assigneeLabel ? { icon: UserRound, label: assigneeLabel } : null,
+            { icon: Clock3, label: relativeTime(draft.updatedAt) },
+          ].filter((item): item is { icon: typeof CircleDot; label: string } => Boolean(item));
+
+          return (
+            <article
+              key={draft.id}
+              data-testid="issue-draft-card"
+              className="group relative min-h-36 rounded-[var(--radius-sm)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_88%,transparent)] transition-[background-color,border-color] hover:border-[color:var(--border-strong)] hover:bg-[color:var(--surface-elevated)]"
+            >
+              <button
+                type="button"
+                className="flex h-full min-h-36 w-full flex-col items-start px-4 py-3 text-left"
+                onClick={() => onOpenDraft(draft)}
+              >
+                <div className="flex w-full min-w-0 items-start gap-2 pr-9">
+                  <PencilLine className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-foreground">{draft.title}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      {metadataItems.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <span key={`${draft.id}-${item.label}`} className="inline-flex min-w-0 items-center gap-1">
+                            <Icon className="h-3 w-3 shrink-0" />
+                            <span className="max-w-[11rem] truncate">{item.label}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+                <p className="mt-5 line-clamp-3 text-sm leading-6 text-muted-foreground">
+                  {draft.description || "Add description..."}
+                </p>
+              </button>
+              <button
+                type="button"
+                data-testid="issue-draft-delete-button"
+                aria-label={`Delete draft ${draft.title}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onDeleteDraft(draft);
+                }}
+                className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-100 transition-colors hover:bg-[color:color-mix(in_oklab,var(--destructive)_16%,transparent)] hover:text-destructive"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </article>
+          );
+        })}
+      </section>
+    </div>
+  );
+}
 
 export function Issues() {
   const { selectedOrganizationId } = useOrganization();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { openNewIssue } = useDialog();
+  const { pushToast } = useToast();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
   const initialSearch = searchParams.get("q") ?? "";
   const issueScope = searchParams.get("scope") ?? "";
+  const isDraftScope = issueScope === "drafts";
   const projectId = searchParams.get("projectId") ?? undefined;
   const participantAgentId = searchParams.get("participantAgentId") ?? undefined;
   const requestedGroupBy = searchParams.get("groupBy");
@@ -75,6 +210,9 @@ export function Issues() {
   const [recentIssueIds, setRecentIssueIds] = useState<string[]>(() =>
     readRecentIssueIds(selectedOrganizationId),
   );
+  const [issueDraftSummaries, setIssueDraftSummaries] = useState<IssueDraftSummary[]>(() =>
+    summarizeIssueDrafts(selectedOrganizationId),
+  );
   const { followedIssueIds, toggleFollowIssue } = useIssueFollows(selectedOrganizationId);
 
   const { data: projects } = useQuery({
@@ -108,20 +246,34 @@ export function Issues() {
   );
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Issue Tracker" }]);
-  }, [setBreadcrumbs]);
+    setBreadcrumbs([{ label: isDraftScope ? "Draft Issues" : "Issue Tracker" }]);
+  }, [isDraftScope, setBreadcrumbs]);
 
   useEffect(() => {
     setRecentIssueIds(readRecentIssueIds(selectedOrganizationId));
   }, [location.key, selectedOrganizationId]);
 
   useEffect(() => {
-    if (!selectedOrganizationId || participantAgentId) return;
+    const refreshIssueDraftSummaries = () => {
+      setIssueDraftSummaries(summarizeIssueDrafts(selectedOrganizationId));
+    };
+    refreshIssueDraftSummaries();
+    if (typeof window === "undefined") return;
+    window.addEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummaries);
+    window.addEventListener("storage", refreshIssueDraftSummaries);
+    return () => {
+      window.removeEventListener(ISSUE_DRAFT_CHANGED_EVENT, refreshIssueDraftSummaries);
+      window.removeEventListener("storage", refreshIssueDraftSummaries);
+    };
+  }, [selectedOrganizationId]);
+
+  useEffect(() => {
+    if (!selectedOrganizationId || participantAgentId || isDraftScope) return;
     rememberIssueNavigation(selectedOrganizationId, {
       scope: issueScope || undefined,
       projectId,
     });
-  }, [issueScope, participantAgentId, projectId, selectedOrganizationId]);
+  }, [isDraftScope, issueScope, participantAgentId, projectId, selectedOrganizationId]);
 
   const issueFilters = useMemo(
     () => getIssueScopeFilters(issueScope, currentUserId),
@@ -141,7 +293,7 @@ export function Issues() {
       projectId ?? "__all__",
     ],
     queryFn: () => issuesApi.list(selectedOrganizationId!, { participantAgentId, projectId, ...issueFilters }),
-    enabled: !!selectedOrganizationId,
+    enabled: !!selectedOrganizationId && !isDraftScope,
   });
   const visibleIssues = useMemo(() => {
     const allIssues = issues ?? [];
@@ -167,6 +319,26 @@ export function Issues() {
 
   if (!selectedOrganizationId) {
     return <EmptyState icon={CircleDot} message="Select a organization to view issues." />;
+  }
+
+  if (isDraftScope) {
+    return (
+      <DraftIssuesView
+        drafts={issueDraftSummaries}
+        agents={agents}
+        projects={projects}
+        currentUserId={currentUserId}
+        onOpenDraft={(draft) => {
+          openNewIssue({ draftId: draft.id });
+        }}
+        onDeleteDraft={(draft) => {
+          const confirmed = window.confirm(`Delete draft issue "${draft.title}"? This cannot be undone.`);
+          if (!confirmed) return;
+          deleteIssueDraft(draft.id);
+          pushToast({ title: "Draft issue deleted", tone: "success" });
+        }}
+      />
+    );
   }
 
   return (

@@ -1,3 +1,5 @@
+import { PROJECT_COLORS } from "./constants.js";
+
 export const PROJECT_MENTION_SCHEME = "project://";
 export const AGENT_MENTION_SCHEME = "agent://";
 export const ISSUE_MENTION_SCHEME = "issue://";
@@ -10,6 +12,7 @@ const PROJECT_MENTION_LINK_RE = /\[[^\]]*]\((project:\/\/[^)\s]+)\)/gi;
 const AGENT_MENTION_LINK_RE = /\[[^\]]*]\((agent:\/\/[^)\s]+)\)/gi;
 const ISSUE_MENTION_LINK_RE = /\[[^\]]*]\((issue:\/\/[^)\s]+)\)/gi;
 const AGENT_ICON_NAME_RE = /^[a-z0-9-]+$/i;
+const PROJECT_COLOR_VALUES = new Set<string>(PROJECT_COLORS);
 
 export interface ParsedProjectMention {
   projectId: string;
@@ -48,13 +51,26 @@ function normalizeHexColor(input: string | null | undefined): string | null {
   return null;
 }
 
+function normalizeProjectMentionColor(input: string | null | undefined): string | null {
+  const hex = normalizeHexColor(input);
+  if (hex) return hex;
+  const trimmed = input?.trim();
+  if (trimmed && PROJECT_COLOR_VALUES.has(trimmed)) return trimmed;
+  return null;
+}
+
+function encodeMentionParam(value: string): string {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
 export function buildProjectMentionHref(projectId: string, color?: string | null): string {
   const trimmedProjectId = projectId.trim();
-  const normalizedColor = normalizeHexColor(color ?? null);
+  const normalizedColor = normalizeProjectMentionColor(color ?? null);
   if (!normalizedColor) {
     return `${PROJECT_MENTION_SCHEME}${trimmedProjectId}`;
   }
-  return `${PROJECT_MENTION_SCHEME}${trimmedProjectId}?c=${encodeURIComponent(normalizedColor.slice(1))}`;
+  const colorParam = normalizedColor.startsWith("#") ? normalizedColor.slice(1) : normalizedColor;
+  return `${PROJECT_MENTION_SCHEME}${trimmedProjectId}?c=${encodeMentionParam(colorParam)}`;
 }
 
 export function parseProjectMentionHref(href: string): ParsedProjectMention | null {
@@ -72,7 +88,7 @@ export function parseProjectMentionHref(href: string): ParsedProjectMention | nu
   const projectId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
   if (!projectId) return null;
 
-  const color = normalizeHexColor(url.searchParams.get("c") ?? url.searchParams.get("color"));
+  const color = normalizeProjectMentionColor(url.searchParams.get("c") ?? url.searchParams.get("color"));
 
   return {
     projectId,

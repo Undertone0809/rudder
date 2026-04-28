@@ -67,6 +67,11 @@ jobs:
         env:
           RUDDER_DESKTOP_TARGET_ARCH: ${{ matrix.arch }}
         run: |
+          tag="${{ inputs.release_tag || github.ref_name }}"
+          version="${tag##*/}"
+          version="${version#v}"
+          node scripts/release-package-map.mjs set-version "${version}"
+
           if [ "$(uname -s)" = "Darwin" ]; then
             ulimit -n 65536 || ulimit -n 10240 || true
             echo "macOS open file limit: $(ulimit -n)"

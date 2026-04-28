@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatContextLink, ChatConversation, ChatMessage } from "@rudderhq/shared";
 
 const mockAdapter = vi.hoisted(() => ({
+  type: "codex_local",
   supportsLocalAgentJwt: true,
   execute: vi.fn(),
   parseStdoutLine: vi.fn((line: string, ts: string) => {
@@ -173,6 +174,7 @@ function makeProjectContextLink(): ChatContextLink {
 describe("chatAssistantService operator profile prompt injection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFindServerAdapter.mockImplementation(() => mockAdapter);
     mockOrganizationService.getById.mockResolvedValue({
       id: "organization-1",
       defaultChatAgentRuntimeType: "codex_local",
@@ -287,6 +289,10 @@ describe("chatAssistantService operator profile prompt injection", () => {
     const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
     const prompt = executeInput?.context?.chatPrompt as string;
     expect(prompt).toContain("Treat message attachments as part of the user's message.");
+    expect(prompt).toContain("Current user message attachments:");
+    expect(prompt).toContain("The latest user message includes 1 attachment(s). Inspect them before answering.");
+    expect(prompt).toContain('User message body: "Help me scope this work."');
+    expect(prompt).toContain("- [1] name=image.png; contentType=image/png; byteSize=1234; contentPath=/api/assets/asset-1/content;");
     expect(prompt).toContain("\"attachments\": [");
     expect(prompt).toContain("\"name\": \"image.png\"");
     expect(prompt).toContain("\"contentType\": \"image/png\"");
@@ -463,6 +469,91 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(invocationMeta[0]).toEqual(expect.objectContaining({
       prompt: expect.stringContaining("Conversation input:"),
     }));
+  });
+
+  it("uses provider-aware model fallbacks for the organization chat runtime", async () => {
+    const fallbackAdapter = {
+      type: "claude_local",
+      supportsLocalAgentJwt: true,
+      parseStdoutLine: vi.fn(() => []),
+      execute: vi.fn(async () => ({
+        summary: JSON.stringify({
+          kind: "message",
+          body: "Fallback handled the chat.",
+          structuredPayload: null,
+        }),
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      })),
+    };
+    const modelFallbacks = [{
+      agentRuntimeType: "claude_local",
+      model: "claude-sonnet-4-6",
+      config: { effort: "high", command: "claude" },
+    }];
+
+    mockFindServerAdapter.mockImplementation((agentRuntimeType: string) =>
+      agentRuntimeType === "claude_local" ? fallbackAdapter : mockAdapter,
+    );
+    mockOrganizationService.getById.mockResolvedValueOnce({
+      id: "organization-1",
+      defaultChatAgentRuntimeType: "codex_local",
+      defaultChatAgentRuntimeConfig: {
+        model: "gpt-primary",
+        modelFallbacks,
+      },
+    });
+    mockRunContextService.ensureChatCopilotAgent.mockResolvedValueOnce({
+      id: "copilot-agent",
+      orgId: "organization-1",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "gpt-primary", modelFallbacks },
+    });
+    mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
+      resolvedConfig: { model: "gpt-primary", modelFallbacks },
+      runtimeConfig: {
+        model: "gpt-primary",
+        modelFallbacks,
+        rudderSkillSync: { desiredSkills: [] },
+        paperclipSkillSync: { desiredSkills: [] },
+        rudderRuntimeSkills: [],
+        paperclipRuntimeSkills: [],
+      },
+      runtimeSkillEntries: [],
+      secretKeys: new Set(),
+    });
+    mockAdapter.execute.mockResolvedValueOnce({
+      summary: null,
+      resultJson: null,
+      timedOut: false,
+      exitCode: 1,
+      errorMessage: "primary model unavailable",
+    });
+
+    const svc = chatAssistantService({} as any);
+    const result = await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    expect(result.body).toBe("Fallback handled the chat.");
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
+    expect(fallbackAdapter.execute).toHaveBeenCalledTimes(1);
+    expect(fallbackAdapter.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: expect.objectContaining({ agentRuntimeType: "claude_local" }),
+        config: expect.objectContaining({
+          model: "claude-sonnet-4-6",
+          effort: "high",
+          command: "claude",
+        }),
+      }),
+    );
   });
 
   it("uses the preferred agent as the chat speaker and preserves prepared runtime context", async () => {

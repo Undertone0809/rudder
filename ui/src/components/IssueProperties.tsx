@@ -11,6 +11,7 @@ import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { useOrganization } from "../context/OrganizationContext";
 import { formatChatAgentLabel } from "../lib/agent-labels";
+import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { queryKeys } from "../lib/queryKeys";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
@@ -518,7 +519,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
     <>
       <span
         className="shrink-0 h-3 w-3 rounded-sm"
-        style={{ backgroundColor: orderedProjects.find((p) => p.id === issue.projectId)?.color ?? "#6366f1" }}
+        style={projectColorBackgroundStyle(orderedProjects.find((p) => p.id === issue.projectId)?.color)}
       />
       <span className="text-sm truncate">{projectName(issue.projectId)}</span>
     </>
@@ -586,7 +587,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
           >
             <span
               className="shrink-0 h-3 w-3 rounded-sm"
-              style={{ backgroundColor: p.color ?? "#6366f1" }}
+              style={projectColorBackgroundStyle(p.color)}
             />
             {p.name}
           </button>

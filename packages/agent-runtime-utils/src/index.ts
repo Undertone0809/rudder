@@ -30,6 +30,7 @@ export type {
   StdoutLineParser,
   CLIAgentRuntimeModule,
   CreateConfigValues,
+  ModelFallbackConfig,
 } from "./types.js";
 export type {
   SessionCompactionPolicy,
@@ -52,3 +53,9 @@ export {
   redactTranscriptEntryPaths,
 } from "./log-redaction.js";
 export { inferOpenAiCompatibleBiller } from "./billing.js";
+export {
+  buildModelAttemptSpecs,
+  isSuccessfulRuntimeResult,
+  normalizeModelFallbacks,
+  type ModelAttemptSpec,
+} from "./model-fallbacks.js";

@@ -5,10 +5,11 @@ description: >
   portable assets. Use this skill whenever the user asks about 发版, release,
   publishing to npm, canary/stable promotion, GitHub Release assets, Desktop
   distribution, `npx @rudderhq/cli@latest start`, `npx @rudderhq/cli start`,
-  version bumps, rollback, first-time package bootstrap, npm token-based
-  fallback publishing, or release workflow failures. Prefer this skill for both
-  planning and hands-on release operations in the Rudder repository, even when
-  the user only asks "现在要做什么" or "帮我发版".
+  broken npm `latest` dist-tags, full Desktop install smoke tests, GitHub
+  Release API/rate-limit failures, version bumps, rollback, first-time package
+  bootstrap, npm token-based fallback publishing, or release workflow failures.
+  Prefer this skill for both planning and hands-on release operations in the
+  Rudder repository, even when the user only asks "现在要做什么" or "帮我发版".
 ---
 
 # Release Maintainer
@@ -62,11 +63,25 @@ cannot be safely inferred.
   canary until the matching Desktop GitHub Release has all portable assets and
   `SHASUMS256.txt`. Otherwise `npx @rudderhq/cli@latest start` can resolve a CLI
   version whose Desktop release is not installable yet.
+- A `--dry-run` smoke only proves version and asset selection. It does not prove
+  download, checksum, extraction, symlink preservation, quarantine cleanup, or
+  app launchability. Do not claim the public Desktop install path is fixed until
+  a non-dry-run isolated `npx ... start --no-open` install succeeds on the
+  available platform, or until you explicitly state which platform could not be
+  tested.
+- GitHub REST `403` during release lookup can mean anonymous API rate limiting,
+  not a missing Release. Before declaring a release absent, verify with
+  authenticated `gh release view` and, when possible, a direct asset URL check.
+- Local npm auth is not guaranteed. If `npm whoami` fails and a dist-tag must be
+  moved, use the repository `npm-dist-tag.yml` workflow instead of pretending the
+  local shell can publish or repair npm state.
 - Release-maintenance commits that should not publish another canary must
   include `[skip release]`, then be verified as skipped in `release.yml`.
 - If a normal `main` push is already running while you make release-maintenance
   changes, watch it to completion. It may publish the next canary, and that
-  canary still needs npm, tag, Desktop, and Release-title verification.
+  canary still needs npm, tag, Desktop, and Release-title verification. After
+  any emergency dist-tag repair, recheck `latest` after in-progress `release.yml`
+  runs finish or explicitly report the remaining overwrite risk.
 
 ## Required Context
 
@@ -77,9 +92,12 @@ Start by reading only the context needed for the user's request:
 - `doc/RELEASE-AUTOMATION-SETUP.md` for one-time GitHub/npm setup.
 - `.github/workflows/release.yml` when diagnosing canary/stable workflow behavior.
 - `.github/workflows/desktop-release.yml` when diagnosing Desktop artifacts.
+- `.github/workflows/npm-dist-tag.yml` when repairing `latest` or `canary`
+  dist-tags through GitHub Actions.
 - `scripts/release.sh`, `scripts/release-package-map.mjs`,
-  `scripts/create-github-release.sh`, and `scripts/rollback-latest.sh` when
-  you need exact command behavior.
+  `scripts/create-github-release.sh`, `scripts/promote-npm-dist-tag.mjs`,
+  `scripts/wait-for-desktop-release-assets.mjs`, and
+  `scripts/rollback-latest.sh` when you need exact command behavior.
 
 Use live checks for anything that may have changed, such as npm package
 versions, GitHub Actions status, tags, and Release assets. Do not rely on
@@ -108,6 +126,7 @@ When the task depends on remote truth, also check:
 gh workflow list
 gh run list --workflow release.yml --limit 10
 gh run list --workflow desktop-release.yml --limit 10
+gh run list --workflow npm-dist-tag.yml --limit 5
 gh release list --repo Undertone0809/rudder --limit 20
 npm view @rudderhq/cli dist-tags --json
 npm view @rudderhq/cli versions --json
@@ -234,8 +253,21 @@ NODE
 ```
 
 4. If no stable npm version exists yet, confirm npm `latest` also points at the
-   same canary for every public package. If it does not, run the `npm Dist Tag`
-   workflow for that version and verify again.
+   same canary for every public package. If it does not and the matching Desktop
+   assets are already complete, run the `npm Dist Tag` workflow for that version
+   and verify again:
+
+```bash
+gh workflow run npm-dist-tag.yml \
+  --repo Undertone0809/rudder \
+  --ref main \
+  -f version=0.1.0-canary.N \
+  -f tag=latest \
+  -f dry_run=false
+```
+
+   Watch the resulting run to completion, then verify all public packages, not
+   just `@rudderhq/cli`.
 5. Confirm tag `canary/vX.Y.Z-canary.N` exists locally and remotely.
 6. Confirm `desktop-release.yml` ran for the canary tag. If it did not, dispatch
    it explicitly; do not rely on the tag push to trigger it:
@@ -265,7 +297,7 @@ Expected canary Desktop assets:
 - `Rudder-X.Y.Z-canary.N-windows-x64-portable.zip`
 - `SHASUMS256.txt`
 
-8. Smoke test the actual start path with isolated HOME and npm cache:
+8. Smoke test CLI resolution with isolated HOME and npm cache:
 
 ```bash
 tmp_home="$(mktemp -d /tmp/rudder-cli-smoke-canary.XXXXXX)"
@@ -278,14 +310,40 @@ If canary smoke fails, do not promote stable. Fix forward on `main`, wait for
 the next canary, and smoke again.
 
 For pre-stable alpha releases, also smoke the user-facing `latest` path after
-confirming the `latest` dist-tag moved:
+confirming the `latest` dist-tag moved. Use a full install smoke, not only
+`--dry-run`, before telling a user that `npx @rudderhq/cli@latest start` works:
 
 ```bash
-tmp_home="$(mktemp -d /tmp/rudder-cli-smoke-latest.XXXXXX)"
-tmp_cache="$(mktemp -d /tmp/rudder-npm-cache-latest.XXXXXX)"
-HOME="$tmp_home" npm_config_cache="$tmp_cache" npm_config_yes=true \
-  npx --prefer-online --yes @rudderhq/cli@latest start --dry-run --no-open
+tmp_home="$(mktemp -d /tmp/rudder-npx-home.XXXXXX)"
+tmp_cache="$(mktemp -d /tmp/rudder-npx-cache.XXXXXX)"
+tmp_prefix="$(mktemp -d /tmp/rudder-npx-prefix.XXXXXX)"
+tmp_output="$(mktemp -d /tmp/rudder-npx-output.XXXXXX)"
+tmp_install="$(mktemp -d /tmp/rudder-npx-install.XXXXXX)"
+HOME="$tmp_home" npm_config_cache="$tmp_cache" npm_config_prefix="$tmp_prefix" npm_config_yes=true PATH="$tmp_prefix/bin:$PATH" \
+  npx --prefer-online --yes @rudderhq/cli@latest start --no-open \
+    --output-dir "$tmp_output" \
+    --desktop-install-dir "$tmp_install"
 ```
+
+On macOS, also verify the installed app is structurally usable:
+
+```bash
+app="$tmp_install/Rudder.app"
+test -d "$app"
+xattr -dr com.apple.quarantine "$app"
+link="$app/Contents/Resources/server-package/node_modules/zod"
+if [ -L "$link" ]; then
+  target="$(readlink "$link")"
+  case "$target" in
+    /tmp/*|/private/tmp/*|/var/folders/*) echo "bad absolute temp symlink: $target"; exit 1 ;;
+  esac
+  test -e "$link"
+fi
+```
+
+If the user reported that installation succeeds but the app is unusable, do a
+controlled launch check from the temporary install path and terminate only the
+processes started from that path before claiming the app opens.
 
 ### Stable Release
 
@@ -344,6 +402,20 @@ After rollback, fix forward with a new stable semver.
   recreate the missing tag/release for the same version.
 - GitHub Release exists but Desktop assets failed: rerun `desktop-release.yml`
   for the same `vX.Y.Z` or `canary/vX.Y.Z-canary.N`; do not republish npm.
+- `GitHub Release ... was not found (403)` from the CLI: do not stop at the CLI
+  error. Check whether GitHub API rate limits are exhausted and whether the
+  Release and direct assets are actually public:
+
+```bash
+curl -sS https://api.github.com/rate_limit
+gh release view 'canary/v0.1.0-canary.N' \
+  --repo Undertone0809/rudder \
+  --json tagName,name,url,isPrerelease,isDraft,assets
+```
+
+  If authenticated `gh release view` succeeds and direct asset download works,
+  treat the problem as a CLI download/lookup bug or API-rate-limit issue, not as
+  a missing Release.
 - GitHub Release title is `canary/vX.Y.Z-canary.N` or prerelease is false:
 
 ```bash
@@ -358,7 +430,11 @@ gh release edit 'canary/vX.Y.Z-canary.N' \
 - A failed or skipped run may be harmless, but only after checking whether a
   newer canary was already published. Check npm dist-tags, tags, and recent
   Release workflow runs before declaring no release happened.
-- `latest` is broken: rollback the dist-tag, then fix forward.
+- `latest` is broken: if a prior stable exists, rollback the dist-tag, then fix
+  forward. During the pre-stable canary bootstrap exception, repair `latest` to
+  the newest canary that already has complete Desktop assets by using
+  `npm-dist-tag.yml`, then verify all package dist-tags and run the full npx
+  Desktop smoke.
 
 Useful rerun command:
 
@@ -401,8 +477,16 @@ npm view @rudderhq/cli dist-tags --json
 gh release view '<tag>' --json tagName,url,isPrerelease,isDraft,assets
 ```
 
+Also check whether any `release.yml` run is still in progress and could publish
+a newer canary or move npm tags after your verification:
+
+```bash
+gh run list --workflow release.yml --limit 10
+```
+
 For first-public canary bootstrap where `latest` intentionally equals canary,
-run both smoke checks:
+run both smoke checks. The `--dry-run` form is a fast resolver check; the
+non-dry-run `latest` form is the install proof:
 
 ```bash
 tmp_home="$(mktemp -d /tmp/rudder-cli-smoke-canary-start.XXXXXX)"
@@ -410,15 +494,23 @@ tmp_cache="$(mktemp -d /tmp/rudder-npm-cache-canary-start.XXXXXX)"
 HOME="$tmp_home" npm_config_cache="$tmp_cache" npm_config_yes=true \
   npx --prefer-online --yes @rudderhq/cli@canary start --dry-run --no-open
 
-tmp_home="$(mktemp -d /tmp/rudder-cli-smoke-latest-start.XXXXXX)"
-tmp_cache="$(mktemp -d /tmp/rudder-npm-cache-latest-start.XXXXXX)"
-HOME="$tmp_home" npm_config_cache="$tmp_cache" npm_config_yes=true \
-  npx --prefer-online --yes @rudderhq/cli start --dry-run --no-open
+tmp_home="$(mktemp -d /tmp/rudder-npx-home-latest.XXXXXX)"
+tmp_cache="$(mktemp -d /tmp/rudder-npx-cache-latest.XXXXXX)"
+tmp_prefix="$(mktemp -d /tmp/rudder-npx-prefix-latest.XXXXXX)"
+tmp_output="$(mktemp -d /tmp/rudder-npx-output-latest.XXXXXX)"
+tmp_install="$(mktemp -d /tmp/rudder-npx-install-latest.XXXXXX)"
+HOME="$tmp_home" npm_config_cache="$tmp_cache" npm_config_prefix="$tmp_prefix" npm_config_yes=true PATH="$tmp_prefix/bin:$PATH" \
+  npx --prefer-online --yes @rudderhq/cli@latest start --no-open \
+    --output-dir "$tmp_output" \
+    --desktop-install-dir "$tmp_install"
 ```
 
 The smoke should show the resolved Rudder release tag, target platform/arch, and
-the persistent CLI version it would install. If it still resolves an old npm
-cache entry, rerun with an isolated `npm_config_cache` and `--prefer-online`.
+the persistent CLI version it installed. If it still resolves an old npm cache
+entry, rerun with an isolated `npm_config_cache` and `--prefer-online`. If the
+install succeeds but the app is suspected unusable, inspect installed portable
+app symlinks and perform a controlled launch check from the temporary install
+path.
 
 ## Safety Rules
 
@@ -432,6 +524,9 @@ cache entry, rerun with an isolated `npm_config_cache` and `--prefer-online`.
 - Do not claim a canary is complete until npm, tag, and Desktop assets are
   verified when the Desktop workflow is configured for canary tags. Also verify
   the GitHub Release title is clean and the Release is marked prerelease.
+- Do not claim `npx @rudderhq/cli@latest start` is fixed from a dry-run alone.
+  A user-facing Desktop install fix requires a real isolated install smoke, and
+  when practical a minimal app-start check.
 - Do not ignore already-running `release.yml` runs on `main`; they can publish a
   newer canary while you are repairing docs or automation.
 - Do not edit unrelated dirty files; stage/commit only release-maintainer scope
@@ -492,6 +587,24 @@ Expected behavior:
 - rerun `desktop-release.yml` for the existing stable tag
 - verify Release assets and `SHASUMS256.txt`
 
+**Broken npx latest install**
+
+User: `npx @rudderhq/cli@latest start 还是报 GitHub Release not found (403)，你自己测一下。`
+
+Expected behavior:
+- check npm `latest` and `canary` dist-tags across all public packages
+- check recent `release.yml`, `desktop-release.yml`, and `npm-dist-tag.yml` runs
+- verify the exact GitHub Release and assets with `gh release view`
+- treat GitHub API `403` as possible rate limiting until proven otherwise
+- if `latest` points to a canary without complete Desktop assets, repair it via
+  `npm-dist-tag.yml` only after choosing a canary whose assets and checksums are
+  complete
+- run a real isolated `npx --prefer-online --yes @rudderhq/cli@latest start --no-open`
+  install with temporary HOME/cache/prefix/output/install directories
+- on macOS, verify quarantine cleanup and that portable app symlinks resolve
+- report the exact resolved version, Release tag, workflow run IDs, smoke exit
+  code, and any in-progress release runs that could still affect `latest`
+
 **Entrypoint confusion**
 
 User: `npx @rudderhq/cli@latest start 和 rudder start 是什么关系？`
@@ -517,5 +630,5 @@ Expected behavior:
   `latest` to the same canary across all packages and explicitly label this as
   an exception
 - verify all package dist-tags, the canary GitHub Release Desktop assets, and
-  both `npx @rudderhq/cli@canary start --dry-run --no-open` and
-  `npx @rudderhq/cli start --dry-run --no-open`
+  both `npx @rudderhq/cli@canary start --dry-run --no-open` and a real isolated
+  `npx @rudderhq/cli@latest start --no-open` Desktop install smoke

@@ -6,6 +6,7 @@ import {
   AGENT_STATUSES,
 } from "../constants.js";
 import { envConfigSchema } from "./secret.js";
+import { validateModelFallbacksConfig } from "./model-fallbacks.js";
 
 export const agentPermissionsSchema = z.object({
   canCreateAgents: z.boolean().optional().default(false),
@@ -32,15 +33,18 @@ export type UpsertAgentInstructionsFile = z.infer<typeof upsertAgentInstructions
 
 const agentRuntimeConfigSchema = z.record(z.unknown()).superRefine((value, ctx) => {
   const envValue = value.env;
-  if (envValue === undefined) return;
-  const parsed = envConfigSchema.safeParse(envValue);
-  if (!parsed.success) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "agentRuntimeConfig.env must be a map of valid env bindings",
-      path: ["env"],
-    });
+  if (envValue !== undefined) {
+    const parsed = envConfigSchema.safeParse(envValue);
+    if (!parsed.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agentRuntimeConfig.env must be a map of valid env bindings",
+        path: ["env"],
+      });
+    }
   }
+
+  validateModelFallbacksConfig(value, ctx, []);
 });
 
 const optionalAgentNameSchema = z.preprocess(

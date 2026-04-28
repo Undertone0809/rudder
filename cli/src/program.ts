@@ -24,6 +24,7 @@ import { registerWorktreeCommands } from "./commands/worktree.js";
 import { registerPluginCommands } from "./commands/client/plugin.js";
 import { registerClientAuthCommands } from "./commands/client/auth.js";
 import { registerCreateAgentBenchmarkCommands } from "./commands/benchmark-create-agent.js";
+import { resolveCliVersion } from "./version.js";
 
 const DATA_DIR_OPTION_HELP =
   "Rudder data directory root (isolates state from ~/.rudder)";
@@ -36,7 +37,7 @@ export function createProgram(): Command {
   program
     .name("rudder")
     .description("Rudder CLI — setup, diagnose, and configure your instance")
-    .version("0.1.0");
+    .version(resolveCliVersion());
 
   program.option("--local-env <name>", LOCAL_ENV_OPTION_HELP);
 

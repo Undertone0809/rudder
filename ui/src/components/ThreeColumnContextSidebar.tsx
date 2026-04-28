@@ -7,7 +7,6 @@ import {
   Clock3,
   Copy,
   DollarSign,
-  Folder,
   FolderTree,
   History,
   MessageSquare,
@@ -19,7 +18,6 @@ import {
   Plus,
   Star,
   Target,
-  Trash2,
   UserRound,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
@@ -37,12 +35,12 @@ import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { heartbeatsApi } from "@/api/heartbeats";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
+import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
 import { relativeTime } from "@/lib/utils";
 import { readRecentIssueIds, resolveRecentIssues } from "@/lib/recent-issues";
 import { isFollowingIssue } from "@/lib/issue-scope-filters";
 import {
-  deleteIssueDraft,
   ISSUE_DRAFT_CHANGED_EVENT,
   summarizeIssueDrafts,
 } from "@/lib/new-issue-dialog";
@@ -121,16 +119,19 @@ function ContextItem({
   label,
   active,
   slidingActiveIndicator = false,
+  testId,
 }: {
   to: string;
   icon: typeof UserRound;
   label: string;
   active?: boolean;
   slidingActiveIndicator?: boolean;
+  testId?: string;
 }) {
   return (
     <Link
       to={to}
+      data-testid={testId}
       className={cn(
         "relative z-10 mx-1.5 flex items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
         slidingActiveIndicator && "min-h-[var(--motion-context-item-height)]",
@@ -205,7 +206,7 @@ function ProjectListSection({
   closeMobileSidebar,
   onNewProject,
 }: {
-  visibleProjects: Array<{ id: string; name: string; description: string | null; urlKey?: string | null }>;
+  visibleProjects: Array<{ id: string; name: string; description: string | null; color?: string | null; urlKey?: string | null }>;
   activeProjectRef: string | null;
   closeMobileSidebar: () => void;
   onNewProject: () => void;
@@ -256,7 +257,11 @@ function ProjectListSection({
               )}
             >
               <div className="flex items-center gap-2">
-                <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span
+                  data-testid={`workspace-project-color-${project.id}`}
+                  className="h-4 w-4 shrink-0 rounded-[calc(var(--radius-sm)-3px)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,white_20%,transparent),0_0_0_1px_color-mix(in_oklab,var(--border-base)_72%,transparent)]"
+                  style={projectColorBackgroundStyle(project.color)}
+                />
                 <span className="truncate text-sm font-medium text-foreground">{project.name}</span>
               </div>
               <div className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -283,7 +288,7 @@ export function ThreeColumnContextSidebar() {
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
   const { pushToast } = useToast();
-  const { openNewAgent, openNewIssue, openNewProject } = useDialog();
+  const { openNewAgent, openNewProject } = useDialog();
   const queryClient = useQueryClient();
 
   const { data: session } = useQuery({
@@ -361,6 +366,16 @@ export function ThreeColumnContextSidebar() {
       label: "All Issues",
       active: scope === "" && !selectedProjectId,
     },
+    ...(issueDraftSummaries.length > 0
+      ? [{
+        key: "drafts",
+        to: "/issues?scope=drafts",
+        icon: PencilLine,
+        label: `Draft Issues (${issueDraftSummaries.length})`,
+        active: scope === "drafts",
+        testId: "issue-draft-sidebar-entry",
+      }]
+      : []),
     {
       key: "following",
       to: `/issues${currentUserId ? "?scope=following" : ""}`,
@@ -421,21 +436,6 @@ export function ThreeColumnContextSidebar() {
 
   const closeMobileSidebar = () => {
     if (isMobile) setSidebarOpen(false);
-  };
-
-  const openIssueDraft = (draftId: string | null | undefined) => {
-    if (!draftId) return;
-    openNewIssue({ draftId });
-    closeMobileSidebar();
-  };
-
-  const removeIssueDraft = (draftId: string | null | undefined, draftTitle?: string) => {
-    if (!draftId) return;
-    const label = draftTitle?.trim() || "Untitled issue draft";
-    const confirmed = window.confirm(`Delete draft issue "${label}"? This cannot be undone.`);
-    if (!confirmed) return;
-    deleteIssueDraft(draftId);
-    pushToast({ title: "Draft issue deleted", tone: "success" });
   };
 
   const refreshChatList = async (chatId?: string) => {
@@ -514,117 +514,6 @@ export function ThreeColumnContextSidebar() {
       >
         <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
         <SectionLabel>Issues</SectionLabel>
-        {issueDraftSummaries.length === 1 ? (
-          <div
-            data-testid="issue-draft-sidebar-entry"
-            className={cn(
-              "mx-1.5 mt-2 flex items-center rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] text-left transition-[background-color,border-color,color]",
-              "bg-[color:color-mix(in_oklab,var(--surface-proposal)_64%,transparent)] text-foreground hover:border-[color:var(--border-strong)] hover:bg-[color:color-mix(in_oklab,var(--surface-proposal)_86%,transparent)]",
-            )}
-          >
-            <button
-              type="button"
-              data-testid="issue-draft-open-button"
-              onClick={() => {
-                openIssueDraft(issueDraftSummaries[0]?.id);
-              }}
-              className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left"
-            >
-              <PencilLine className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium">
-                  Draft Issues{issueDraftSummaries.length > 1 ? ` (${issueDraftSummaries.length})` : ""}
-                </div>
-                <div className="truncate text-xs text-muted-foreground">
-                  {issueDraftSummaries[0]?.title}
-                </div>
-              </div>
-            </button>
-            <button
-              type="button"
-              data-testid="issue-draft-delete-button"
-              aria-label={`Delete draft ${issueDraftSummaries[0]?.title ?? "Untitled issue draft"}`}
-              onClick={() => {
-                removeIssueDraft(issueDraftSummaries[0]?.id, issueDraftSummaries[0]?.title);
-              }}
-              className={cn(
-                "mr-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground transition-colors",
-                "hover:bg-[color:color-mix(in_oklab,var(--destructive)_16%,transparent)] hover:text-destructive",
-              )}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        ) : issueDraftSummaries.length > 1 ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                data-testid="issue-draft-sidebar-entry"
-                className={cn(
-                  "mx-1.5 mt-2 rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] px-3 py-2 text-left transition-[background-color,border-color,color]",
-                  "bg-[color:color-mix(in_oklab,var(--surface-proposal)_64%,transparent)] text-foreground hover:border-[color:var(--border-strong)] hover:bg-[color:color-mix(in_oklab,var(--surface-proposal)_86%,transparent)]",
-                )}
-              >
-                <div className="flex items-center gap-3">
-                  <PencilLine className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">
-                      Draft Issues ({issueDraftSummaries.length})
-                    </div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {issueDraftSummaries[0]?.title}
-                    </div>
-                  </div>
-                  <MoreHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" />
-                </div>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-72 max-h-80 overflow-y-auto">
-              {issueDraftSummaries.map((draft) => (
-                <DropdownMenuItem
-                  key={draft.id}
-                  data-testid="issue-draft-menu-item"
-                  onSelect={(event) => {
-                    event.preventDefault();
-                    openIssueDraft(draft.id);
-                  }}
-                  className="group/draft items-center gap-3 py-2"
-                >
-                  <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <PencilLine className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-foreground">{draft.title}</div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {draft.description || `${draft.status} / ${draft.priority}`}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    data-testid="issue-draft-delete-button"
-                    aria-label={`Delete draft ${draft.title}`}
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      removeIssueDraft(draft.id, draft.title);
-                    }}
-                    className={cn(
-                      "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground transition-colors",
-                      "hover:bg-[color:color-mix(in_oklab,var(--destructive)_16%,transparent)] hover:text-destructive",
-                    )}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
         <SlidingContextNav
           activeIndex={activeIssueContextIndex}
           ariaLabel="Issue views"
@@ -638,6 +527,7 @@ export function ThreeColumnContextSidebar() {
               icon={item.icon}
               label={item.label}
               active={item.active}
+              testId={item.testId}
               slidingActiveIndicator
             />
           ))}
@@ -666,8 +556,9 @@ export function ThreeColumnContextSidebar() {
                 )}
               >
                 <Circle
+                  data-testid={`issue-project-color-${project.id}`}
                   className="h-2.5 w-2.5 shrink-0 fill-current"
-                  style={{ color: project.color ?? "#7c3aed" }}
+                  style={{ color: projectColorAccent(project.color) }}
                 />
                 <span className="truncate">{project.name}</span>
               </Link>

@@ -267,4 +267,59 @@ describe("Messenger page headers", () => {
     expect(html).not.toContain("Issue issue-1");
     expect(html).not.toContain("1 items");
   });
+
+  it("keeps failed run cards in chronological order so the newest message stays at the bottom", () => {
+    messengerModel.systemThreadDetail = {
+      title: "Failed runs",
+      description: "Recent failed heartbeat runs",
+      unreadCount: 3,
+      items: [
+        {
+          id: "run-older",
+          kind: "failed-runs",
+          title: "Older failed run",
+          subtitle: "failed",
+          body: "Failed first.",
+          preview: "Failed first.",
+          href: "/heartbeats/run-older",
+          latestActivityAt: "2026-04-11T08:00:00.000Z",
+          actions: [],
+          metadata: {},
+        },
+        {
+          id: "run-middle",
+          kind: "failed-runs",
+          title: "Middle failed run",
+          subtitle: "failed",
+          body: "Failed second.",
+          preview: "Failed second.",
+          href: "/heartbeats/run-middle",
+          latestActivityAt: "2026-04-11T09:00:00.000Z",
+          actions: [],
+          metadata: {},
+        },
+        {
+          id: "run-newer",
+          kind: "failed-runs",
+          title: "Newest failed run",
+          subtitle: "failed",
+          body: "Failed last.",
+          preview: "Failed last.",
+          href: "/heartbeats/run-newer",
+          latestActivityAt: "2026-04-11T10:00:00.000Z",
+          actions: [],
+          metadata: {},
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<MessengerSystemView threadKind="failed-runs" />);
+    const olderIndex = html.indexOf('data-testid="messenger-system-card-failed-runs-run-older"');
+    const middleIndex = html.indexOf('data-testid="messenger-system-card-failed-runs-run-middle"');
+    const newerIndex = html.indexOf('data-testid="messenger-system-card-failed-runs-run-newer"');
+
+    expect(olderIndex).toBeGreaterThanOrEqual(0);
+    expect(middleIndex).toBeGreaterThan(olderIndex);
+    expect(newerIndex).toBeGreaterThan(middleIndex);
+  });
 });

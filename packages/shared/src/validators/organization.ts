@@ -1,8 +1,12 @@
 import { z } from "zod";
 import { AGENT_RUNTIME_TYPES, CHAT_ISSUE_CREATION_MODES, ORGANIZATION_STATUSES } from "../constants.js";
+import { validateModelFallbacksConfig } from "./model-fallbacks.js";
 
 const logoAssetIdSchema = z.string().uuid().nullable().optional();
 const brandColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional();
+const defaultChatRuntimeConfigSchema = z.record(z.unknown()).superRefine((value, ctx) => {
+  validateModelFallbacksConfig(value, ctx, []);
+});
 
 export const createOrganizationSchema = z.object({
   name: z.string().min(1),
@@ -10,7 +14,7 @@ export const createOrganizationSchema = z.object({
   budgetMonthlyCents: z.number().int().nonnegative().optional().default(0),
   defaultChatIssueCreationMode: z.enum(CHAT_ISSUE_CREATION_MODES).optional().default("manual_approval"),
   defaultChatAgentRuntimeType: z.enum(AGENT_RUNTIME_TYPES).optional().nullable(),
-  defaultChatAgentRuntimeConfig: z.record(z.unknown()).optional().nullable(),
+  defaultChatAgentRuntimeConfig: defaultChatRuntimeConfigSchema.optional().nullable(),
   brandColor: brandColorSchema,
   requireBoardApprovalForNewAgents: z.boolean().optional(),
 });
@@ -25,7 +29,7 @@ export const updateOrganizationSchema = createOrganizationSchema
     requireBoardApprovalForNewAgents: z.boolean().optional(),
     defaultChatIssueCreationMode: z.enum(CHAT_ISSUE_CREATION_MODES).optional(),
     defaultChatAgentRuntimeType: z.enum(AGENT_RUNTIME_TYPES).optional().nullable(),
-    defaultChatAgentRuntimeConfig: z.record(z.unknown()).optional().nullable(),
+    defaultChatAgentRuntimeConfig: defaultChatRuntimeConfigSchema.optional().nullable(),
     brandColor: brandColorSchema,
     logoAssetId: logoAssetIdSchema,
   });

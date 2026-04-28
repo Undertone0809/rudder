@@ -148,6 +148,10 @@ Prefer additive updates. Keep `doc/SPEC.md` and `doc/SPEC-implementation.md` ali
 
 If you change a built-in Rudder skill under `server/resources/bundled-skills/<slug>/`, update the sibling `references/` docs and any contributor-facing docs that describe the bundled-skill location or behavior when they are affected. Do not leave `SKILL.md` content on a newer API contract than the docs that point to it.
 
+1. Name repo-local development skills with a `maintainer` suffix.
+
+Repository-based agent skills for local development, maintenance, release, debugging, preview, or operational workflows should use a `*-maintainer` name and directory under `.agents/skills/` (for example `release-maintainer`, `stop-rudder-dev-maintainer`, or `pr-local-preview-maintainer`). Keep the directory name, `SKILL.md` frontmatter `name`, and any eval `skill_name` values synchronized.
+
 1. Keep plan docs dated and centralized.
 
 New plan documents belong in `doc/plans/` and should use `YYYY-MM-DD-slug.md` filenames. Plan docs must be written in English.

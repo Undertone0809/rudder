@@ -122,6 +122,7 @@ export const queryKeys = {
     providers: (orgId: string) => ["secret-providers", orgId] as const,
   },
   dashboard: (orgId: string) => ["dashboard", orgId] as const,
+  dashboardSkillsAnalytics: (orgId: string) => ["dashboard", orgId, "skills-analytics"] as const,
   sidebarBadges: (orgId: string) => ["sidebar-badges", orgId] as const,
   activity: (orgId: string) => ["activity", orgId] as const,
   costs: (orgId: string, from?: string, to?: string) =>

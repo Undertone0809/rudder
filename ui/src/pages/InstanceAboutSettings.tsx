@@ -129,10 +129,6 @@ export function InstanceAboutSettings() {
     [appVersion, desktopBootState?.runtime?.version, healthQuery.data?.version],
   );
 
-  const runtimeVersion = useMemo(
-    () => desktopBootState?.runtime?.version ?? healthQuery.data?.version ?? null,
-    [desktopBootState?.runtime?.version, healthQuery.data?.version],
-  );
   const environment = healthQuery.data?.localEnv ?? null;
   const instance = healthQuery.data?.instanceId ?? null;
   const runtimeMode = desktopBootState?.runtime?.mode ?? null;
@@ -228,17 +224,11 @@ export function InstanceAboutSettings() {
         title={t("about.version.title")}
         description={t("about.version.description")}
       >
-        <div className="grid gap-2.5 md:grid-cols-2">
+        <div className="grid gap-2.5">
           <div className="rounded-[calc(var(--radius-md)-1px)] border border-border/70 bg-card/60 px-3.5 py-3">
             <div className="text-[11px] font-medium text-muted-foreground">{t("about.version.current")}</div>
             <div className="mt-2 text-sm font-medium text-foreground">
               {formatVersion(currentVersion, t("common.unknown"))}
-            </div>
-          </div>
-          <div className="rounded-[calc(var(--radius-md)-1px)] border border-border/70 bg-card/60 px-3.5 py-3">
-            <div className="text-[11px] font-medium text-muted-foreground">{t("about.desktop.serverVersion")}</div>
-            <div className="mt-2 text-sm font-medium text-foreground">
-              {formatVersion(runtimeVersion, t("common.unknown"))}
             </div>
           </div>
         </div>

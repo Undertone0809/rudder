@@ -17,10 +17,14 @@ related_code:
   - ui/src/lib/new-issue-dialog.ts
   - ui/src/components/NewIssueDialog.tsx
   - ui/src/components/ThreeColumnContextSidebar.tsx
+  - ui/src/pages/Issues.tsx
 commit_refs:
   - f751aea
   - 2c4b095
-updated_at: 2026-04-26
+  - 6c715fd
+  - bcc53ce
+  - 3979b80
+updated_at: 2026-04-28
 ---
 
 # Issue Draft Autosave Separation
@@ -49,11 +53,11 @@ behavior unclear.
 - Clicking `Save Draft` in New Issue creates a new saved draft, clears autosave,
   resets/closes the modal, and shows a toast telling the user where to find it.
 - Users can save multiple draft issues; the sidebar count increments.
-- Clicking the sidebar Draft Issues entry opens a single saved draft directly.
-- When multiple saved drafts exist, clicking the sidebar Draft Issues entry opens
-  an animated picker menu and the user chooses which draft to reopen.
-- Clicking a saved draft entry's visible delete button asks for confirmation
-  before deleting that saved draft.
+- Clicking the sidebar Draft Issues entry opens the main Draft Issues view.
+- The main Draft Issues view shows all saved draft issues as cards.
+- Clicking a draft card reopens that saved draft for editing.
+- Clicking a draft card's visible delete button asks for confirmation before
+  deleting that saved draft.
 - Creating an issue clears the active autosave and any opened saved draft.
 
 ## Implementation Plan
@@ -63,23 +67,26 @@ behavior unclear.
    footer action, restore selected saved drafts, and clear state correctly on
    create.
 3. Update the Issues sidebar to show `Draft Issues` only when explicit saved
-   drafts exist, including count and latest title.
-4. Add the draft sidebar picker behavior: one draft opens directly, multiple
-   drafts open a dropdown menu, and a visible delete button asks for
-   confirmation before deleting a saved draft.
+   drafts exist, including count.
+4. Add `scope=drafts` to the Issues page so the main content shows all saved
+   draft issues in a Linear-style card grid with visible delete buttons.
 5. Update focused unit/component tests and the existing E2E spec fixture to use
-   the explicit draft collection and cover the multi-draft picker.
+   the explicit draft collection and cover the main Draft Issues view.
 6. Run targeted UI tests, typecheck, and build before committing.
 
 ## Validation
 
 - `pnpm test:run ui/src/lib/new-issue-dialog.test.ts ui/src/components/NewIssueDialog.test.tsx ui/src/components/ThreeColumnContextSidebar.test.tsx`
+- `pnpm test:run ui/src/components/ThreeColumnContextSidebar.test.tsx ui/src/pages/Issues.test.tsx ui/src/components/NewIssueDialog.test.tsx`
 - `pnpm -r typecheck`
 - `pnpm build`
 - `pnpm test:e2e tests/e2e/new-issue-project-context.spec.ts` was attempted,
   but Playwright marked pre-existing tests as failed at 1ms and then hung during
   worker shutdown; the run was stopped after confirming it did not reach the
   new picker assertions.
+- `RUDDER_E2E_USE_EXISTING_SERVER=1 RUDDER_E2E_BASE_URL=http://localhost:3100 pnpm exec playwright test --config tests/e2e/playwright.config.ts tests/e2e/new-issue-project-context.spec.ts --grep "main issues draft view" --reporter list`
+  was attempted after the main Draft Issues view change, but the Playwright
+  worker timed out after 120s before producing assertion output.
 - `pnpm test:run` was run and still fails in unrelated existing areas:
   - server embedded PostgreSQL suites hit shared-memory/init failures.
   - `cli/src/__tests__/company-import-export-e2e.test.ts` still reports duplicated catalog skills in the round-trip export.

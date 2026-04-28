@@ -699,6 +699,38 @@
     transition-duration: 140ms;
   }
 
+  .chat-composer-context-menu {
+    transform-origin: bottom center;
+  }
+
+  .chat-composer-menu-row {
+    display: flex;
+    min-height: 40px;
+    width: 100%;
+    align-items: center;
+    gap: 10px;
+    border-radius: var(--radius-md);
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 14px;
+    line-height: 1.35;
+    color: var(--ink-base);
+    transition-property: background-color, color, border-color;
+    transition-duration: 140ms;
+  }
+
+  .chat-composer-menu-row:hover,
+  .chat-composer-menu-row:focus-visible {
+    background: color-mix(in oklab, var(--surface-active) 70%, transparent);
+    color: var(--ink-strong);
+    outline: none;
+  }
+
+  .chat-composer-menu-row[aria-checked="true"] {
+    background: color-mix(in oklab, var(--surface-active) 78%, transparent);
+    color: var(--ink-strong);
+  }
+
   .project-context-menu-item[data-highlighted],
   .project-context-menu-item:focus {
     background: color-mix(in oklab, var(--surface-active) 70%, transparent);
@@ -718,8 +750,8 @@
   }
 
   .project-context-swatch {
-    background: color-mix(in oklab, var(--project-context-color, var(--accent-base)) 64%, var(--surface-elevated));
-    border: 1px solid color-mix(in oklab, var(--project-context-color, var(--accent-base)) 42%, var(--border-base));
+    background: var(--project-color, var(--accent-base));
+    border: 1px solid color-mix(in oklab, var(--project-accent-color, var(--accent-base)) 42%, var(--border-base));
   }
 
   .project-context-empty-swatch {
@@ -1223,7 +1255,7 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
   width: 0.45rem;
   height: 0.45rem;
   border-radius: 999px;
-  background-color: var(--rudder-mention-project-color, currentColor);
+  background: var(--rudder-mention-project-color, currentColor);
 }
 
 .rudder-mdxeditor-content a.rudder-mention-chip[data-mention-kind="agent"]::before,
@@ -1598,8 +1630,8 @@ a.rudder-skill-token {
   display: block;
   width: auto !important;
   height: auto !important;
-  max-width: min(calc(100vw - 3rem), 1408px) !important;
-  max-height: calc(100vh - 6.5rem) !important;
+  max-width: min(calc(100vw - 1.5rem), 1440px) !important;
+  max-height: calc(100vh - 1.5rem) !important;
   aspect-ratio: auto !important;
   object-fit: contain !important;
 }

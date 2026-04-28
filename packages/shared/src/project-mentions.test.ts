@@ -10,6 +10,7 @@ import {
   parseIssueMentionHref,
   parseProjectMentionHref,
 } from "./project-mentions.js";
+import { PROJECT_COLORS } from "./constants.js";
 
 describe("project-mentions", () => {
   it("round-trips project mentions with color metadata", () => {
@@ -17,6 +18,15 @@ describe("project-mentions", () => {
     expect(parseProjectMentionHref(href)).toEqual({
       projectId: "project-123",
       color: "#336699",
+    });
+    expect(extractProjectMentionIds(`[@Rudder App](${href})`)).toEqual(["project-123"]);
+  });
+
+  it("round-trips project mentions with gradient metadata", () => {
+    const href = buildProjectMentionHref("project-123", PROJECT_COLORS[0]);
+    expect(parseProjectMentionHref(href)).toEqual({
+      projectId: "project-123",
+      color: PROJECT_COLORS[0],
     });
     expect(extractProjectMentionIds(`[@Rudder App](${href})`)).toEqual(["project-123"]);
   });

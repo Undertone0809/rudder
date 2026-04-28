@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
@@ -35,16 +36,13 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -73,6 +71,7 @@ import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
+import { projectColorCssVars } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
 import {
   formatChatProcessDuration,
@@ -210,9 +209,60 @@ function projectDisplayName(project: Project | null | undefined) {
 }
 
 function projectContextSwatchStyle(color: string | null | undefined): CSSProperties {
+  return projectColorCssVars(color);
+}
+
+const COMPOSER_MENU_VIEWPORT_PADDING = 12;
+const COMPOSER_MENU_OFFSET = 10;
+const COMPOSER_MENU_MIN_HEIGHT = 128;
+const COMPOSER_MENU_MAX_HEIGHT = 360;
+const COMPOSER_MENU_MIN_WIDTH = 320;
+
+function composerMenuPositionForAnchor(anchor: HTMLElement): CSSProperties {
+  const rect = anchor.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const availableWidth = Math.max(
+    COMPOSER_MENU_MIN_WIDTH,
+    viewportWidth - COMPOSER_MENU_VIEWPORT_PADDING * 2,
+  );
+  const width = Math.min(Math.max(rect.width, COMPOSER_MENU_MIN_WIDTH), availableWidth);
+  const left = Math.min(
+    Math.max(rect.left, COMPOSER_MENU_VIEWPORT_PADDING),
+    viewportWidth - COMPOSER_MENU_VIEWPORT_PADDING - width,
+  );
+  const availableAbove = Math.max(
+    0,
+    rect.top - COMPOSER_MENU_VIEWPORT_PADDING - COMPOSER_MENU_OFFSET,
+  );
+  const availableBelow = Math.max(
+    0,
+    viewportHeight - rect.bottom - COMPOSER_MENU_VIEWPORT_PADDING - COMPOSER_MENU_OFFSET,
+  );
+  const openUpward = availableAbove >= COMPOSER_MENU_MIN_HEIGHT || availableAbove >= availableBelow;
+  const maxHeight = Math.max(
+    COMPOSER_MENU_MIN_HEIGHT,
+    Math.min(
+      COMPOSER_MENU_MAX_HEIGHT,
+      openUpward ? availableAbove : availableBelow,
+    ),
+  );
+
+  if (openUpward) {
+    return {
+      left,
+      width,
+      bottom: viewportHeight - rect.top + COMPOSER_MENU_OFFSET,
+      maxHeight,
+    };
+  }
+
   return {
-    "--project-context-color": color?.trim() || "var(--accent-base)",
-  } as CSSProperties;
+    left,
+    width,
+    top: rect.bottom + COMPOSER_MENU_OFFSET,
+    maxHeight,
+  };
 }
 
 function inferAttachmentExtension(contentType: string) {
@@ -436,22 +486,26 @@ function ChatAttachmentPreviewDialog({
   }, [preview?.src]);
 
   const dialogWidth = naturalSize
-    ? `min(calc(100vw - 3rem), ${naturalSize.width + 32}px, 1440px)`
-    : "min(calc(100vw - 3rem), 1440px)";
+    ? `min(calc(100vw - 1.5rem), ${naturalSize.width}px, 1440px)`
+    : "min(calc(100vw - 1.5rem), 1440px)";
 
   return (
     <Dialog open={preview !== null} onOpenChange={onOpenChange}>
       <DialogContent
-        showCloseButton
-        className="rudder-markdown-editor-image-preview-panel gap-3 border-[color:var(--border-soft)] bg-[color:var(--surface-page)] p-3 shadow-[var(--shadow-lg)]"
-        style={{ width: dialogWidth, maxWidth: dialogWidth }}
+        showCloseButton={false}
+        className="rudder-markdown-editor-image-preview-panel top-[50%] w-fit translate-y-[-50%] border-0 bg-transparent p-0 shadow-none"
+        style={{ maxWidth: dialogWidth }}
       >
         <DialogTitle className="sr-only">{preview?.name ?? "Attachment preview"}</DialogTitle>
         {preview ? (
           <div
             data-testid="chat-image-preview-dialog"
-            className="rudder-markdown-editor-image-preview-media flex items-center justify-center overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-black/3"
+            className="rudder-markdown-editor-image-preview-media relative flex w-fit max-w-full items-center justify-center overflow-hidden"
           >
+            <DialogClose className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-sm bg-black/55 text-white shadow-[0_6px_18px_rgb(0_0_0/0.28)] transition-colors hover:bg-black/70 focus:outline-none focus:ring-2 focus:ring-white/80">
+              <X className="size-4" aria-hidden="true" />
+              <span className="sr-only">Close image preview</span>
+            </DialogClose>
             <img
               src={preview.src}
               alt={preview.name}
@@ -465,8 +519,6 @@ function ChatAttachmentPreviewDialog({
 }
 
 const RUDDER_COPILOT_LABEL = "Rudder Copilot";
-const RUDDER_COPILOT_TOOLTIP =
-  "Uses your organization's Copilot runtime to clarify requests and shape chat proposals when no specific agent is selected.";
 const PLAN_MODE_HELP_TEXT =
   "Read-only planning. The agent should investigate, produce a plan, and create an issue with that plan attached.";
 
@@ -1443,6 +1495,7 @@ function ChatWorkspace() {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [skillMenuOpen, setSkillMenuOpen] = useState(false);
   const [skillSearchQuery, setSkillSearchQuery] = useState("");
+  const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null);
   const [editForkUserMessageId, setEditForkUserMessageId] = useState<string | null>(null);
   const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null);
   const [expandedEmptyStatePrompt, setExpandedEmptyStatePrompt] = useState<EmptyStatePromptLabel | null>(null);
@@ -1451,6 +1504,8 @@ function ChatWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const composerEditorRef = useRef<MarkdownEditorRef>(null);
+  const composerContextMenuRef = useRef<HTMLDivElement>(null);
+  const skillSearchInputRef = useRef<HTMLInputElement>(null);
   const streamAbortControllersRef = useRef<Record<string, AbortController>>({});
   const stopRequestedChatIdsRef = useRef<Set<string>>(new Set());
   const pendingInitialSendRef = useRef<PendingInitialSend | null>(null);
@@ -1467,6 +1522,27 @@ function ChatWorkspace() {
   const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat";
   const chatRootPath = chatRouteBase;
   const chatConversationPath = useCallback((id: string) => `${chatRouteBase}/${id}`, [chatRouteBase]);
+  const composerContextMenuOpen = projectMenuOpen || agentMenuOpen || skillMenuOpen;
+
+  const closeComposerContextMenus = useCallback(() => {
+    setProjectMenuOpen(false);
+    setAgentMenuOpen(false);
+    setSkillMenuOpen(false);
+    setSkillSearchQuery("");
+  }, []);
+
+  const openComposerContextMenu = useCallback((kind: "project" | "agent" | "skill") => {
+    const anchor = composerSurfaceRef.current;
+    if (anchor) {
+      setComposerMenuPosition(composerMenuPositionForAnchor(anchor));
+    }
+    setProjectMenuOpen(kind === "project");
+    setAgentMenuOpen(kind === "agent");
+    setSkillMenuOpen(kind === "skill");
+    if (kind !== "skill") {
+      setSkillSearchQuery("");
+    }
+  }, []);
 
   const appendPendingFiles = useCallback(
     async (incomingFiles: Iterable<File>) => {
@@ -1654,6 +1730,58 @@ function ChatWorkspace() {
     setSkillMenuOpen(false);
     setSkillSearchQuery("");
   }, [activeSkillAgentId]);
+
+  useEffect(() => {
+    if (!composerContextMenuOpen) {
+      setComposerMenuPosition(null);
+      return;
+    }
+
+    const updatePosition = () => {
+      const anchor = composerSurfaceRef.current;
+      if (!anchor) return;
+      setComposerMenuPosition(composerMenuPositionForAnchor(anchor));
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [composerContextMenuOpen]);
+
+  useEffect(() => {
+    if (!composerContextMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (composerContextMenuRef.current?.contains(target)) return;
+      if (composerSurfaceRef.current?.contains(target)) return;
+      closeComposerContextMenus();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeComposerContextMenus();
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [closeComposerContextMenus, composerContextMenuOpen]);
+
+  useEffect(() => {
+    if (!skillMenuOpen) return;
+    requestAnimationFrame(() => {
+      skillSearchInputRef.current?.focus();
+    });
+  }, [skillMenuOpen]);
 
   useEffect(() => {
     if (!selectedOrganizationId) return;
@@ -2227,6 +2355,15 @@ function ChatWorkspace() {
   const showMessagesLoading = Boolean(selectedConversation && conversationId && messagesQuery.isPending && messagesQuery.data === undefined);
   const activeStream = readChatScopedState(streamDrafts, selectedConversation?.id);
   const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversation?.id);
+  const agentSelectionLocked = Boolean(
+    selectedConversation
+    && (
+      selectedConversation.lastMessageAt
+      || rawMessages.length > 0
+      || activeStream
+      || activeSendInFlight
+    ),
+  );
   const activeEditCutoffMs = activeStream?.editedFromCreatedAt
     ? activeStream.editedFromCreatedAt.getTime()
     : null;
@@ -2258,6 +2395,13 @@ function ChatWorkspace() {
       || !rawMessages.some((message) => message.id === activeStream.userMessageId)
     ),
   );
+
+  useEffect(() => {
+    if (agentSelectionLocked) {
+      setAgentMenuOpen(false);
+    }
+  }, [agentSelectionLocked]);
+
   const loadError =
     conversationsQuery.error
     ?? conversationQuery.error
@@ -2384,6 +2528,7 @@ function ChatWorkspace() {
         skillRefLabel: skill.skillRefLabel,
         skillMarkdownTarget: skill.skillMarkdownTarget,
         skillDisplayName: skill.skillDisplayName,
+        skillDescription: skill.skillDescription,
       });
     }
     return options;
@@ -2415,6 +2560,11 @@ function ChatWorkspace() {
   }, [draft, pushToast]);
 
   const applyPreferredAgent = (value: string) => {
+    if (agentSelectionLocked) {
+      setAgentMenuOpen(false);
+      return;
+    }
+
     setDraftPreferredAgentId(value);
     setAgentMenuOpen(false);
     if (selectedConversation) {
@@ -2558,6 +2708,156 @@ function ChatWorkspace() {
     return () => cancelAnimationFrame(frame);
   }, [expandedEmptyStatePrompt]);
 
+  const renderComposerContextMenu = () => {
+    if (!composerContextMenuOpen || !composerMenuPosition || typeof document === "undefined") return null;
+
+    const activeMenu = projectMenuOpen ? "project" : agentMenuOpen ? "agent" : "skill";
+    const liveAgents = (agents ?? []).filter((agent) => agent.status !== "terminated");
+
+    return createPortal(
+      <div
+        ref={composerContextMenuRef}
+        data-testid={`chat-${activeMenu}-menu`}
+        role="menu"
+        className="chat-composer-context-menu surface-overlay fixed z-50 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
+        style={composerMenuPosition}
+      >
+        {projectMenuOpen ? (
+          <>
+            <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Project context</div>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={activeProjectId === NO_PROJECT_ID}
+              className="chat-composer-menu-row project-context-menu-item"
+              onClick={() => applyProjectContext(NO_PROJECT_ID)}
+            >
+              <span className="project-context-empty-swatch h-3 w-3 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">No project</span>
+            </button>
+            {visibleProjects.length > 0 ? (
+              <div className="my-1 border-t border-[color:var(--border-soft)] pt-1">
+                {visibleProjects.map((project) => (
+                  <button
+                    key={project.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={activeProjectId === project.id}
+                    className="chat-composer-menu-row project-context-menu-item"
+                    onClick={() => applyProjectContext(project.id)}
+                  >
+                    <span
+                      className="project-context-swatch h-3 w-3 shrink-0"
+                      style={projectContextSwatchStyle(project.color)}
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{projectDisplayName(project)}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {project.resources.length} resources
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+
+        {agentMenuOpen && !agentSelectionLocked ? (
+          <>
+            <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Agents</div>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={activeAgentId === "__none__"}
+              className="chat-composer-menu-row"
+              onClick={() => applyPreferredAgent("__none__")}
+            >
+              <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{RUDDER_COPILOT_LABEL}</span>
+                <span className="block truncate text-xs text-muted-foreground">Default chat runtime</span>
+              </span>
+            </button>
+            {liveAgents.map((agent) => (
+              <button
+                key={agent.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={activeAgentId === agent.id}
+                className="chat-composer-menu-row"
+                onClick={() => applyPreferredAgent(agent.id)}
+              >
+                <AgentIcon icon={agent.icon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate font-medium">{formatChatAgentLabel(agent)}</span>
+              </button>
+            ))}
+          </>
+        ) : null}
+
+        {skillMenuOpen ? (
+          <>
+            <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Skills</div>
+            {chatSkillsPending ? (
+              <div className="flex items-center gap-2 rounded-[var(--radius-md)] px-3 py-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Loading skills...</span>
+              </div>
+            ) : availableChatSkills.length === 0 ? (
+              <div className="rounded-[var(--radius-md)] px-3 py-2 text-sm leading-6 text-muted-foreground">
+                This agent has no enabled skills.
+              </div>
+            ) : (
+              <>
+                <div className="px-2 pb-2">
+                  <input
+                    ref={skillSearchInputRef}
+                    className="w-full rounded-[var(--radius-md)] border border-border bg-transparent px-2.5 py-2 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-ring"
+                    placeholder="Search skills..."
+                    value={skillSearchQuery}
+                    onChange={(event) => {
+                      setSkillSearchQuery(event.target.value);
+                    }}
+                    onKeyDown={(event) => {
+                      event.stopPropagation();
+                    }}
+                  />
+                </div>
+                <div>
+                  {filteredChatSkills.length === 0 ? (
+                    <div className="rounded-[var(--radius-md)] px-3 py-2 text-sm leading-6 text-muted-foreground">
+                      No skills match search.
+                    </div>
+                  ) : filteredChatSkills.map((entry) => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      role="menuitem"
+                      className="chat-composer-menu-row"
+                      onClick={() => insertSkillReference(entry)}
+                    >
+                      <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="flex min-w-0 flex-1 items-baseline gap-3">
+                        <span className="shrink-0 truncate font-medium text-foreground">
+                          {entry.skillDisplayName}
+                        </span>
+                        <span className="min-w-0 truncate text-muted-foreground">
+                          {entry.skillDescription ?? entry.skillRefLabel}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        ) : null}
+      </div>,
+      document.body,
+    );
+  };
+
   const renderComposer = (centered: boolean) => (
     <div
       ref={composerSurfaceRef}
@@ -2693,193 +2993,73 @@ function ChatWorkspace() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <DropdownMenu open={projectMenuOpen} onOpenChange={setProjectMenuOpen}>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                data-testid="chat-project-selector"
-                aria-label={`Project context: ${projectPillLabel}`}
-                className="chat-chip inline-flex max-w-[min(100%,15rem)] min-w-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)] data-[state=open]:bg-[color:var(--surface-active)]"
-              >
-                <Folder className="h-3.5 w-3.5 shrink-0" />
-                <span className="min-w-0 truncate">{projectPillLabel}</span>
-                <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              sideOffset={8}
-              className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1 text-foreground"
-            >
-              <DropdownMenuLabel className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-                Project context
-              </DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={activeProjectId} onValueChange={applyProjectContext}>
-                <DropdownMenuRadioItem
-                  value={NO_PROJECT_ID}
-                  hideIndicator
-                  className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
-                >
-                  <span className="project-context-empty-swatch mr-2 h-3 w-3 shrink-0" aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate">No project</span>
-                </DropdownMenuRadioItem>
-                {visibleProjects.length > 0 ? (
-                  <>
-                    <DropdownMenuSeparator className="panel-divider" />
-                    {visibleProjects.map((project) => (
-                      <DropdownMenuRadioItem
-                        key={project.id}
-                        value={project.id}
-                        hideIndicator
-                        className="project-context-menu-item rounded-[var(--radius-md)] py-2 pr-2 leading-5"
-                      >
-                        <span
-                          className="project-context-swatch mr-2 h-3 w-3 shrink-0"
-                          style={projectContextSwatchStyle(project.color)}
-                          aria-hidden="true"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-medium">{projectDisplayName(project)}</span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {project.resources.length} resources
-                          </span>
-                        </span>
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </>
-                ) : null}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <button
+            type="button"
+            data-testid="chat-project-selector"
+            aria-label={`Project context: ${projectPillLabel}`}
+            aria-expanded={projectMenuOpen}
+            className={cn(
+              "chat-chip inline-flex max-w-[min(100%,15rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)]",
+              projectMenuOpen && "bg-[color:var(--surface-active)]",
+            )}
+            onClick={() => {
+              if (projectMenuOpen) {
+                closeComposerContextMenus();
+                return;
+              }
+              openComposerContextMenu("project");
+            }}
+          >
+            <Folder className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 truncate">{projectPillLabel}</span>
+            <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+          </button>
 
-          <DropdownMenu open={agentMenuOpen} onOpenChange={setAgentMenuOpen}>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)] data-[state=open]:bg-[color:var(--surface-active)]"
-              >
-                <span className="min-w-0 truncate">{agentPillLabel}</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              className="surface-overlay w-72 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1 text-foreground"
-            >
-              <DropdownMenuRadioGroup value={activeAgentId} onValueChange={applyPreferredAgent}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <DropdownMenuRadioItem
-                      value="__none__"
-                      hideIndicator
-                      className="rounded-[var(--radius-md)] py-2 pr-2 leading-5"
-                    >
-                      <Sparkles className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      {RUDDER_COPILOT_LABEL}
-                    </DropdownMenuRadioItem>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={8} className="max-w-[280px] px-3 py-2 text-xs leading-5">
-                    {RUDDER_COPILOT_TOOLTIP}
-                  </TooltipContent>
-                </Tooltip>
-                {(agents ?? [])
-                  .filter((agent) => agent.status !== "terminated")
-                  .map((agent) => (
-                    <DropdownMenuRadioItem
-                      key={agent.id}
-                      value={agent.id}
-                      hideIndicator
-                      className="rounded-[var(--radius-md)] py-2 pr-2 leading-5"
-                    >
-                      <AgentIcon icon={agent.icon} className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate">{formatChatAgentLabel(agent)}</span>
-                    </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <button
+            type="button"
+            data-testid="chat-agent-selector"
+            aria-expanded={agentMenuOpen}
+            disabled={agentSelectionLocked}
+            className={cn(
+              "chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium",
+              agentSelectionLocked
+                ? "cursor-default"
+                : "transition-colors hover:bg-[color:var(--surface-active)]",
+              agentMenuOpen && "bg-[color:var(--surface-active)]",
+            )}
+            onClick={() => {
+              if (agentSelectionLocked) return;
+              if (agentMenuOpen) {
+                closeComposerContextMenus();
+                return;
+              }
+              openComposerContextMenu("agent");
+            }}
+          >
+            <span className="min-w-0 truncate">{agentPillLabel}</span>
+            {agentSelectionLocked ? null : <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />}
+          </button>
 
           {showChatSkillsPicker ? (
-            <DropdownMenu
-              open={skillMenuOpen}
-              onOpenChange={(open) => {
-                setSkillMenuOpen(open);
-                if (!open) {
-                  setSkillSearchQuery("");
+            <button
+              type="button"
+              className={cn(
+                "chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)]",
+                skillMenuOpen && "bg-[color:var(--surface-active)]",
+              )}
+              aria-label="Skills"
+              aria-expanded={skillMenuOpen}
+              onClick={() => {
+                if (skillMenuOpen) {
+                  closeComposerContextMenus();
+                  return;
                 }
+                openComposerContextMenu("skill");
               }}
             >
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[color:var(--surface-active)] data-[state=open]:bg-[color:var(--surface-active)]"
-                  aria-label="Skills"
-                >
-                  <span className="min-w-0 truncate">Skills</span>
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="start"
-                sideOffset={8}
-                className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1.5 text-foreground"
-                onCloseAutoFocus={(event) => event.preventDefault()}
-              >
-                <DropdownMenuLabel className="px-2 py-1 text-xs font-medium text-muted-foreground">
-                </DropdownMenuLabel>
-                {chatSkillsPending ? (
-                  <div className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Loading skills...</span>
-                  </div>
-                ) : availableChatSkills.length === 0 ? (
-                  <div className="px-3 py-2 text-sm leading-6 text-muted-foreground">
-                    This agent has no enabled skills.
-                  </div>
-                ) : (
-                  <>
-                    <div className="px-2 pb-2">
-                      <input
-                        autoFocus
-                        className="w-full rounded-[var(--radius-md)] border border-border bg-transparent px-2.5 py-2 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-ring"
-                        placeholder="Search skills..."
-                        value={skillSearchQuery}
-                        onChange={(event) => {
-                          setSkillSearchQuery(event.target.value);
-                        }}
-                        onKeyDown={(event) => {
-                          event.stopPropagation();
-                        }}
-                      />
-                    </div>
-                    <div className="max-h-72 overflow-y-auto">
-                      {filteredChatSkills.length === 0 ? (
-                        <div className="px-3 py-2 text-sm leading-6 text-muted-foreground">
-                          No skills match search.
-                        </div>
-                      ) : filteredChatSkills.map((entry) => {
-                        return (
-                          <DropdownMenuItem
-                            key={entry.id}
-                            className="rounded-[var(--radius-md)] py-2.5"
-                            onSelect={(event) => {
-                              event.preventDefault();
-                              insertSkillReference(entry);
-                            }}
-                          >
-                            <div className="min-w-0">
-                              <div className="truncate font-medium text-foreground">{entry.skillRefLabel}</div>
-                              <div className="truncate text-xs text-muted-foreground">{entry.skillDisplayName}</div>
-                              <div className="truncate text-[11px] text-muted-foreground/80">
-                                Active on {agentPillLabel}
-                              </div>
-                            </div>
-                          </DropdownMenuItem>
-                        );
-                      })}
-                    </div>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+              <span className="min-w-0 truncate">Skills</span>
+              <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+            </button>
           ) : null}
         </div>
 
@@ -2951,6 +3131,7 @@ function ChatWorkspace() {
         }}
       />
 
+      {renderComposerContextMenu()}
     </div>
   );
 

@@ -129,6 +129,15 @@ test.describe("Chat options menu", () => {
     ).toBeLessThan(10);
 
     await selector.click();
+    const projectMenu = page.getByTestId("chat-project-menu");
+    await expect(projectMenu).toBeVisible();
+    const composerSurfaceBox = await page.locator(".chat-composer").first().boundingBox();
+    const projectMenuBox = await projectMenu.boundingBox();
+    expect(composerSurfaceBox).not.toBeNull();
+    expect(projectMenuBox).not.toBeNull();
+    expect(projectMenuBox!.y + projectMenuBox!.height).toBeLessThanOrEqual(composerSurfaceBox!.y + 1);
+    expect(Math.abs(projectMenuBox!.x - composerSurfaceBox!.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(projectMenuBox!.width - composerSurfaceBox!.width)).toBeLessThanOrEqual(2);
     await page.getByRole("menuitemradio", { name: "No project" }).click();
     await expect(selector).toContainText("No project");
 

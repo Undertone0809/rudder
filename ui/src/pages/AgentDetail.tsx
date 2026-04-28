@@ -1837,9 +1837,7 @@ function AgentOverview({
               <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill metadata</div>
             </div>
           </div>
-          <div className="border border-border rounded-lg p-4">
-            <SkillsUsageChart analytics={visibleSkillAnalytics} />
-          </div>
+          <SkillsUsageChart analytics={visibleSkillAnalytics} />
         </div>
       ) : null}
 

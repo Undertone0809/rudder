@@ -62,7 +62,15 @@ test.describe("Chat skill picker", () => {
     await expect(page.getByRole("button", { name: "Rudder Copilot" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "Skills" })).toHaveCount(0);
 
+    const composerSurface = page.locator(".chat-composer").first();
     await page.getByRole("button", { name: "Rudder Copilot" }).click();
+    const agentMenu = page.getByTestId("chat-agent-menu");
+    await expect(agentMenu).toBeVisible();
+    const composerSurfaceBox = await composerSurface.boundingBox();
+    const agentMenuBox = await agentMenu.boundingBox();
+    expect(composerSurfaceBox).not.toBeNull();
+    expect(agentMenuBox).not.toBeNull();
+    expect(agentMenuBox!.y + agentMenuBox!.height).toBeLessThanOrEqual(composerSurfaceBox!.y + 1);
     await page.getByRole("menuitemradio", { name: new RegExp(agent.name) }).click();
 
     await expect(page.getByRole("button", { name: new RegExp(agent.name) })).toBeVisible();
@@ -131,6 +139,13 @@ test.describe("Chat skill picker", () => {
     await composer.fill("Use these skills");
 
     await page.getByRole("button", { name: "Skills" }).click();
+    const skillMenu = page.getByTestId("chat-skill-menu");
+    await expect(skillMenu).toBeVisible();
+    const composerSurfaceBox = await page.locator(".chat-composer").first().boundingBox();
+    const skillMenuBox = await skillMenu.boundingBox();
+    expect(composerSurfaceBox).not.toBeNull();
+    expect(skillMenuBox).not.toBeNull();
+    expect(skillMenuBox!.y + skillMenuBox!.height).toBeLessThanOrEqual(composerSurfaceBox!.y + 1);
     const searchInput = page.getByPlaceholder("Search skills...");
     await expect(searchInput).toBeVisible();
 

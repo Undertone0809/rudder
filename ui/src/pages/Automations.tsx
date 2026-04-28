@@ -9,6 +9,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { formatChatAgentLabel } from "../lib/agent-labels";
+import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { EmptyState } from "../components/EmptyState";
@@ -386,7 +387,7 @@ export function Automations() {
                       <>
                         <span
                           className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                          style={{ backgroundColor: currentProject.color ?? "#64748b" }}
+                          style={projectColorBackgroundStyle(currentProject.color)}
                         />
                         <span className="truncate">{option.label}</span>
                       </>
@@ -401,7 +402,7 @@ export function Automations() {
                       <>
                         <span
                           className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                          style={{ backgroundColor: project?.color ?? "#64748b" }}
+                          style={projectColorBackgroundStyle(project?.color)}
                         />
                         <span className="truncate">{option.label}</span>
                       </>
@@ -542,7 +543,7 @@ export function Automations() {
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <span
                               className="shrink-0 h-3 w-3 rounded-sm"
-                              style={{ backgroundColor: projectById.get(automation.projectId)?.color ?? "#6366f1" }}
+                              style={projectColorBackgroundStyle(projectById.get(automation.projectId)?.color)}
                             />
                             <span className="truncate">{projectById.get(automation.projectId)?.name ?? "Unknown"}</span>
                           </div>

@@ -26,6 +26,7 @@ import {
   heartbeatRuns,
   issueComments,
   issues,
+  organizations,
   projects,
 } from "@rudderhq/db";
 import { conflict, notFound } from "../../errors.js";
@@ -42,7 +43,7 @@ import { emitExecutionTranscriptTree } from "../../langfuse-transcript.js";
 import { logger } from "../../middleware/logger.js";
 import { publishLiveEvent } from "../live-events.js";
 import { getRunLogStore, type RunLogHandle } from "../run-log-store.js";
-import { getServerAdapter, runningProcesses } from "../../agent-runtimes/index.js";
+import { findServerAdapter, getServerAdapter, runningProcesses } from "../../agent-runtimes/index.js";
 import type {
   AgentRuntimeExecutionResult,
   AgentRuntimeInvocationMeta,
@@ -95,6 +96,7 @@ import {
   coerceCreateAgentBenchmarkMetadata,
   extractCreateAgentBenchmarkMetadata,
 } from "@rudderhq/run-intelligence-core";
+import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
@@ -3466,7 +3468,7 @@ export function heartbeatService(db: Db) {
           "local agent jwt secret missing or invalid; running without injected RUDDER_API_KEY",
         );
       }
-      const adapterResult = await adapter.execute({
+      const adapterResult = await executeAdapterWithModelFallbacks(adapter, {
         runId: run.id,
         agent,
         runtime: runtimeForAdapter,
@@ -3478,6 +3480,13 @@ export function heartbeatService(db: Db) {
           await persistRunProcessMetadata(run.id, meta);
         },
         authToken: authToken ?? undefined,
+      }, {
+        resolveAdapter: findServerAdapter,
+        createAuthToken: (agentRuntimeType) =>
+          createLocalAgentJwt(agent.id, agent.orgId, agentRuntimeType, run.id) ?? undefined,
+        onAttemptStart: (_attempt, attemptAdapter) => {
+          stdoutTranscriptParser = attemptAdapter.parseStdoutLine ?? null;
+        },
       });
       const adapterManagedRuntimeServices = adapterResult.runtimeServices
         ? await persistAdapterManagedRuntimeServices({
@@ -5086,6 +5095,125 @@ export function heartbeatService(db: Db) {
     });
   }
 
+  async function buildSkillAnalytics(
+    scope: { orgId: string; agentId?: string },
+    opts?: { windowDays?: number; now?: Date; startDate?: string; endDate?: string },
+  ): Promise<AgentSkillAnalytics> {
+    const now = opts?.now ?? new Date();
+    const customDateKeys = opts?.startDate && opts?.endDate
+      ? buildDateKeysBetween(opts.startDate, opts.endDate).slice(0, 120)
+      : [];
+    const windowDays = customDateKeys.length > 0
+      ? customDateKeys.length
+      : Math.max(1, Math.min(opts?.windowDays ?? 30, 90));
+    const dateKeys = customDateKeys.length > 0
+      ? customDateKeys
+      : buildRecentDateKeys(windowDays, now);
+    const startDate = dateKeys[0]!;
+    const endDate = dateKeys.at(-1)!;
+    const windowStart = new Date(`${startDate}T00:00:00.000Z`);
+    const windowEnd = new Date(`${endDate}T23:59:59.999Z`);
+
+    const rows = await db
+      .select({
+        createdAt: heartbeatRunEvents.createdAt,
+        payload: heartbeatRunEvents.payload,
+      })
+      .from(heartbeatRunEvents)
+      .where(
+        and(
+          eq(heartbeatRunEvents.orgId, scope.orgId),
+          ...(scope.agentId ? [eq(heartbeatRunEvents.agentId, scope.agentId)] : []),
+          eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+          gte(heartbeatRunEvents.createdAt, windowStart),
+          lte(heartbeatRunEvents.createdAt, windowEnd),
+        ),
+      )
+      .orderBy(asc(heartbeatRunEvents.createdAt), asc(heartbeatRunEvents.id));
+
+    const days = new Map<string, {
+      totalCount: number;
+      runCount: number;
+      skills: Map<string, { key: string; label: string; count: number }>;
+    }>();
+    for (const date of dateKeys) {
+      days.set(date, { totalCount: 0, runCount: 0, skills: new Map() });
+    }
+
+    const overallSkills = new Map<string, { key: string; label: string; count: number }>();
+    let totalCount = 0;
+    let totalRunsWithSkills = 0;
+
+    for (const row of rows) {
+      const date = new Date(row.createdAt).toISOString().slice(0, 10);
+      const bucket = days.get(date);
+      if (!bucket) continue;
+
+      const payload = parseObject(row.payload);
+      const loadedSkills = Array.isArray(payload.loadedSkills) ? payload.loadedSkills : [];
+      if (loadedSkills.length === 0) continue;
+
+      const eventSkills = new Map<string, string>();
+      for (const entry of loadedSkills) {
+        const normalized = normalizeLoadedSkill(entry);
+        if (!normalized) continue;
+        if (!eventSkills.has(normalized.key)) {
+          eventSkills.set(normalized.key, normalized.label);
+        }
+      }
+      if (eventSkills.size === 0) continue;
+
+      bucket.runCount += 1;
+      totalRunsWithSkills += 1;
+      for (const [key, label] of eventSkills) {
+        bucket.totalCount += 1;
+        totalCount += 1;
+
+        const existingDaySkill = bucket.skills.get(key);
+        if (existingDaySkill) {
+          existingDaySkill.count += 1;
+        } else {
+          bucket.skills.set(key, { key, label, count: 1 });
+        }
+
+        const existingOverallSkill = overallSkills.get(key);
+        if (existingOverallSkill) {
+          existingOverallSkill.count += 1;
+        } else {
+          overallSkills.set(key, { key, label, count: 1 });
+        }
+      }
+    }
+
+    return {
+      agentId: scope.agentId ?? "__all__",
+      orgId: scope.orgId,
+      windowDays,
+      startDate,
+      endDate,
+      totalCount,
+      totalRunsWithSkills,
+      skills: Array.from(overallSkills.values()).sort((left, right) => (
+        right.count - left.count
+        || left.label.localeCompare(right.label)
+        || left.key.localeCompare(right.key)
+      )),
+      days: dateKeys.map((date) => {
+        const bucket = days.get(date)!;
+        return {
+          date,
+          totalCount: bucket.totalCount,
+          runCount: bucket.runCount,
+          skills: Array.from(bucket.skills.values()).sort((left, right) => (
+            right.count - left.count
+            || left.label.localeCompare(right.label)
+            || left.key.localeCompare(right.key)
+          )),
+        };
+      }),
+    };
+  }
+
   return {
     list: async (orgId: string, agentId?: string, limit?: number) => {
       const query = db
@@ -5111,120 +5239,21 @@ export function heartbeatService(db: Db) {
     ): Promise<AgentSkillAnalytics> => {
       const agent = await getAgent(agentId);
       if (!agent) throw notFound("Agent not found");
+      return buildSkillAnalytics({ orgId: agent.orgId, agentId: agent.id }, opts);
+    },
 
-      const now = opts?.now ?? new Date();
-      const customDateKeys = opts?.startDate && opts?.endDate
-        ? buildDateKeysBetween(opts.startDate, opts.endDate).slice(0, 120)
-        : [];
-      const windowDays = customDateKeys.length > 0
-        ? customDateKeys.length
-        : Math.max(1, Math.min(opts?.windowDays ?? 30, 90));
-      const dateKeys = customDateKeys.length > 0
-        ? customDateKeys
-        : buildRecentDateKeys(windowDays, now);
-      const startDate = dateKeys[0]!;
-      const endDate = dateKeys.at(-1)!;
-      const windowStart = new Date(`${startDate}T00:00:00.000Z`);
-      const windowEnd = new Date(`${endDate}T23:59:59.999Z`);
-
-      const rows = await db
-        .select({
-          createdAt: heartbeatRunEvents.createdAt,
-          payload: heartbeatRunEvents.payload,
-        })
-        .from(heartbeatRunEvents)
-        .where(
-          and(
-            eq(heartbeatRunEvents.orgId, agent.orgId),
-            eq(heartbeatRunEvents.agentId, agent.id),
-            eq(heartbeatRunEvents.eventType, "adapter.invoke"),
-            gte(heartbeatRunEvents.createdAt, windowStart),
-            lte(heartbeatRunEvents.createdAt, windowEnd),
-          ),
-        )
-        .orderBy(asc(heartbeatRunEvents.createdAt), asc(heartbeatRunEvents.id));
-
-      const days = new Map<string, {
-        totalCount: number;
-        runCount: number;
-        skills: Map<string, { key: string; label: string; count: number }>;
-      }>();
-      for (const date of dateKeys) {
-        days.set(date, { totalCount: 0, runCount: 0, skills: new Map() });
-      }
-
-      const overallSkills = new Map<string, { key: string; label: string; count: number }>();
-      let totalCount = 0;
-      let totalRunsWithSkills = 0;
-
-      for (const row of rows) {
-        const date = new Date(row.createdAt).toISOString().slice(0, 10);
-        const bucket = days.get(date);
-        if (!bucket) continue;
-
-        const payload = parseObject(row.payload);
-        const loadedSkills = Array.isArray(payload.loadedSkills) ? payload.loadedSkills : [];
-        if (loadedSkills.length === 0) continue;
-
-        const eventSkills = new Map<string, string>();
-        for (const entry of loadedSkills) {
-          const normalized = normalizeLoadedSkill(entry);
-          if (!normalized) continue;
-          if (!eventSkills.has(normalized.key)) {
-            eventSkills.set(normalized.key, normalized.label);
-          }
-        }
-        if (eventSkills.size === 0) continue;
-
-        bucket.runCount += 1;
-        totalRunsWithSkills += 1;
-        for (const [key, label] of eventSkills) {
-          bucket.totalCount += 1;
-          totalCount += 1;
-
-          const existingDaySkill = bucket.skills.get(key);
-          if (existingDaySkill) {
-            existingDaySkill.count += 1;
-          } else {
-            bucket.skills.set(key, { key, label, count: 1 });
-          }
-
-          const existingOverallSkill = overallSkills.get(key);
-          if (existingOverallSkill) {
-            existingOverallSkill.count += 1;
-          } else {
-            overallSkills.set(key, { key, label, count: 1 });
-          }
-        }
-      }
-
-      return {
-        agentId: agent.id,
-        orgId: agent.orgId,
-        windowDays,
-        startDate,
-        endDate,
-        totalCount,
-        totalRunsWithSkills,
-        skills: Array.from(overallSkills.values()).sort((left, right) => (
-          right.count - left.count
-          || left.label.localeCompare(right.label)
-          || left.key.localeCompare(right.key)
-        )),
-        days: dateKeys.map((date) => {
-          const bucket = days.get(date)!;
-          return {
-            date,
-            totalCount: bucket.totalCount,
-            runCount: bucket.runCount,
-            skills: Array.from(bucket.skills.values()).sort((left, right) => (
-              right.count - left.count
-              || left.label.localeCompare(right.label)
-              || left.key.localeCompare(right.key)
-            )),
-          };
-        }),
-      };
+    getOrganizationSkillAnalytics: async (
+      orgId: string,
+      opts?: { windowDays?: number; now?: Date; startDate?: string; endDate?: string },
+    ): Promise<AgentSkillAnalytics> => {
+      const org = await db
+        .select({ id: organizations.id })
+        .from(organizations)
+        .where(eq(organizations.id, orgId))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!org) throw notFound("Organization not found");
+      return buildSkillAnalytics({ orgId }, opts);
     },
 
     getRun,

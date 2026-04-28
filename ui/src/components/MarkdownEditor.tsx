@@ -28,11 +28,11 @@ import {
   thematicBreakPlugin,
   type RealmPlugin,
 } from "@mdxeditor/editor";
-import { Sparkles } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AgentIcon } from "./AgentIconPicker";
 import {
   applyMentionChipDecoration,
@@ -43,6 +43,7 @@ import {
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
 import { mentionDeletionPlugin } from "../lib/mention-deletion";
 import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
+import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   applySkillTokenDecoration,
   clearSkillTokenDecoration,
@@ -74,6 +75,7 @@ export interface MentionOption {
   skillRefLabel?: string | null;
   skillMarkdownTarget?: string | null;
   skillDisplayName?: string | null;
+  skillDescription?: string | null;
 }
 
 /* ---- Editor props ---- */
@@ -891,8 +893,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 
   const canDropImage = Boolean(imageUploadHandler);
   const imagePreviewDialogWidth = imagePreviewNaturalSize
-    ? `min(calc(100vw - 3rem), ${imagePreviewNaturalSize.width + 32}px, 1440px)`
-    : "min(calc(100vw - 3rem), 1440px)";
+    ? `min(calc(100vw - 1.5rem), ${imagePreviewNaturalSize.width}px, 1440px)`
+    : "min(calc(100vw - 1.5rem), 1440px)";
 
   return (
     <div
@@ -1103,7 +1105,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                           ) : option.kind === "project" && option.projectId ? (
                             <span
                               className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full border border-border/50"
-                              style={{ backgroundColor: option.projectColor ?? "#64748b" }}
+                              style={projectColorBackgroundStyle(option.projectColor)}
                             />
                           ) : option.kind === "issue" && option.issueId ? (
                             <span
@@ -1149,9 +1151,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                                 </span>
                               </div>
                             ) : null}
-                            {option.kind === "skill" && option.skillDisplayName ? (
+                            {option.kind === "skill" ? (
                               <div className="truncate text-[11px] text-muted-foreground">
-                                {option.skillDisplayName}
+                                {option.skillDescription ?? option.skillDisplayName}
                               </div>
                             ) : null}
                           </div>
@@ -1199,18 +1201,22 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         if (!open) setImagePreview(null);
       }}>
         <DialogContent
-          showCloseButton
-          className="rudder-markdown-editor-image-preview-panel gap-3 border-[color:var(--border-soft)] bg-[color:var(--surface-page)] p-3 shadow-[var(--shadow-lg)]"
-          style={{ width: imagePreviewDialogWidth, maxWidth: imagePreviewDialogWidth }}
+          showCloseButton={false}
+          className="rudder-markdown-editor-image-preview-panel top-[50%] w-fit translate-y-[-50%] border-0 bg-transparent p-0 shadow-none"
+          style={{ maxWidth: imagePreviewDialogWidth }}
         >
-          <DialogTitle className="px-1 text-sm font-medium">
+          <DialogTitle className="sr-only">
             {imagePreview?.name ?? "Image preview"}
           </DialogTitle>
           {imagePreview ? (
             <div
               data-testid="markdown-editor-image-preview-dialog"
-              className="rudder-markdown-editor-image-preview-media flex items-center justify-center overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-black/3"
+              className="rudder-markdown-editor-image-preview-media relative flex w-fit max-w-full items-center justify-center overflow-hidden"
             >
+              <DialogClose className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-sm bg-black/55 text-white shadow-[0_6px_18px_rgb(0_0_0/0.28)] transition-colors hover:bg-black/70 focus:outline-none focus:ring-2 focus:ring-white/80">
+                <X className="size-4" aria-hidden="true" />
+                <span className="sr-only">Close image preview</span>
+              </DialogClose>
               <img
                 src={imagePreview.src}
                 alt={imagePreview.alt}

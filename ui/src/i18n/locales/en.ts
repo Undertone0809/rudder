@@ -437,8 +437,8 @@ export const en = {
   "about.description":
     "See the running build, inspect which local desktop shell you are attached to, check whether a newer desktop release exists, or open your default mail app to send product feedback.",
   "about.version.title": "Version",
-  "about.version.description": "This identifies the desktop build currently running on this machine and the local server build it is attached to.",
-  "about.version.current": "App version",
+  "about.version.description": "This identifies the Rudder build currently running on this machine.",
+  "about.version.current": "Version",
   "about.desktop.title": "Desktop app",
   "about.desktop.description":
     "This shell is attached to the same local instance data used by the board, CLI, and any other local Rudder surface targeting the same profile.",
@@ -446,7 +446,6 @@ export const en = {
   "about.desktop.instance": "Instance ID",
   "about.desktop.runtime": "Runtime",
   "about.desktop.owner": "Owner",
-  "about.desktop.serverVersion": "Server version",
   "about.desktop.instanceDataPath": "Instance data path",
   "about.actions.title": "Actions",
   "about.actions.description": "Use these actions for app lifecycle tasks instead of burying them inside general preferences.",

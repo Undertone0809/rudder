@@ -206,9 +206,18 @@ The GitHub Actions desktop workflow builds artifacts on all three operating syst
 - `Rudder-X.Y.Z-linux-x64.AppImage`
 - `SHASUMS256.txt`
 
+Before packaging, the workflow rewrites package manifests to the release tag
+version. That means canary builds report `0.1.0-canary.N` from the app shell,
+the bundled local server, and the packaged `rudder --version` path instead of
+falling back to the committed stable base version.
+
 Desktop artifacts are not published to npm. The CLI `start` command resolves
 the appropriate GitHub Release asset for the current platform, verifies
 `SHASUMS256.txt`, installs the app into a per-user location, and launches it.
 The current Desktop channel is an unsigned portable alpha; signed/notarized
 installer distribution can be restored after Apple and Windows code signing are
 available.
+
+Packaged Desktop checks for updates on startup against stable GitHub Releases
+only. Canary and beta prereleases are ignored; if a newer stable version exists,
+the app prompts the user to open the release page.

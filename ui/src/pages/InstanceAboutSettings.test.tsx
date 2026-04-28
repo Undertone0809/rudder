@@ -33,8 +33,7 @@ vi.mock("@/context/I18nContext", () => ({
         "about.description": "About page",
         "about.version.title": "Version",
         "about.version.description": "Version section",
-        "about.version.current": "App version",
-        "about.desktop.serverVersion": "Server version",
+        "about.version.current": "Version",
         "about.desktop.title": "Desktop app",
         "about.desktop.description": "Desktop section",
         "about.desktop.profile": "Environment",
@@ -77,5 +76,14 @@ describe("InstanceAboutSettings", () => {
 
     expect(html).not.toContain("Notifications");
     expect(html).not.toContain("Open notifications");
+  });
+
+  it("shows one unified build version", () => {
+    const html = renderToStaticMarkup(<InstanceAboutSettings />);
+
+    expect(html).toContain(">Version<");
+    expect(html).toContain(">v1.2.3<");
+    expect(html).not.toContain("App version");
+    expect(html).not.toContain("Server version");
   });
 });

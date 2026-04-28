@@ -1,4 +1,4 @@
-import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
+import { normalizeModelFallbacks, type CreateConfigValues } from "@rudderhq/agent-runtime-utils";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "../index.js";
 
 function parseCommaArgs(value: string): string[] {
@@ -58,6 +58,8 @@ export function buildGeminiLocalConfig(v: CreateConfigValues): Record<string, un
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
   ac.model = v.model || DEFAULT_GEMINI_LOCAL_MODEL;
+  const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, { agentRuntimeType: "gemini_local", model: ac.model });
+  if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
   ac.timeoutSec = 0;
   ac.graceSec = 15;
   const env = parseEnvBindings(v.envBindings);

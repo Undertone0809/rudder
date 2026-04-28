@@ -39,6 +39,7 @@ describe("buildAgentSkillMentionOptions", () => {
         key: "rudder/build-advisor",
         slug: "build-advisor",
         name: "Build Advisor",
+        description: "Turn vague build feedback into expert diagnosis.",
         sourceType: "local_path",
         sourceBadge: "rudder",
         sourceLocator: "/workspace/.agents/skills/build-advisor",
@@ -182,6 +183,9 @@ describe("buildAgentSkillMentionOptions", () => {
     expect(options.find((option) => option.name === "org/acme/ella/alpha-test")).toMatchObject({
       skillMarkdownTarget: "/workspace/skills/alpha-test/SKILL.md",
       skillDisplayName: "Alpha Test",
+    });
+    expect(options.find((option) => option.name === "rudder/build-advisor")).toMatchObject({
+      skillDescription: "Turn vague build feedback into expert diagnosis.",
     });
     expect(options.find((option) => option.name === "agent/ella/agent-helper")).toMatchObject({
       skillMarkdownTarget: "/workspace/agents/ella/skills/agent-helper/SKILL.md",
