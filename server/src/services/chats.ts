@@ -20,9 +20,11 @@ import { agentService } from "./agents.js";
 import { logActivity } from "./activity-log.js";
 import { approvalService } from "./approvals.js";
 import { documentService } from "./documents.js";
+import { queueIssueAssignmentWakeup } from "./issue-assignment-wakeup.js";
 import { organizationService } from "./orgs.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
+import { heartbeatService } from "./runtime-kernel/heartbeat.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -96,6 +98,14 @@ function issueProposalFromPayload(payload: Record<string, unknown> | null | unde
   const description = safeTrim(typeof proposal.description === "string" ? proposal.description : null);
   if (!title || !description) return null;
 
+  const assigneeAgentId = safeTrim(typeof proposal.assigneeAgentId === "string" ? proposal.assigneeAgentId : null);
+  const assigneeUserId = safeTrim(typeof proposal.assigneeUserId === "string" ? proposal.assigneeUserId : null);
+  const explicitStatus =
+    typeof proposal.status === "string" &&
+    ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"].includes(proposal.status)
+      ? proposal.status
+      : null;
+
   return {
     title,
     description,
@@ -104,11 +114,12 @@ function issueProposalFromPayload(payload: Record<string, unknown> | null | unde
       ["critical", "high", "medium", "low"].includes(proposal.priority)
         ? proposal.priority
         : "medium",
+    status: explicitStatus ?? (assigneeAgentId || assigneeUserId ? "todo" : undefined),
     projectId: safeTrim(typeof proposal.projectId === "string" ? proposal.projectId : null),
     goalId: safeTrim(typeof proposal.goalId === "string" ? proposal.goalId : null),
     parentId: safeTrim(typeof proposal.parentId === "string" ? proposal.parentId : null),
-    assigneeAgentId: safeTrim(typeof proposal.assigneeAgentId === "string" ? proposal.assigneeAgentId : null),
-    assigneeUserId: safeTrim(typeof proposal.assigneeUserId === "string" ? proposal.assigneeUserId : null),
+    assigneeAgentId,
+    assigneeUserId,
   };
 }
 
@@ -208,6 +219,7 @@ export function chatService(db: Db) {
   const organizationsSvc = organizationService(db);
   const agentsSvc = agentService(db);
   const documentsSvc = documentService(db);
+  const heartbeat = heartbeatService(db);
 
   async function resolveContextEntities(rows: ContextLinkRow[]) {
     const issueIds = rows.filter((row) => row.entityType === "issue").map((row) => row.entityId);
@@ -1124,6 +1136,15 @@ export function chatService(db: Db) {
       const issue = await issuesSvc.create(conversation.orgId, {
         ...issueProposal,
         createdByUserId: input.actorUserId,
+      });
+      void queueIssueAssignmentWakeup({
+        heartbeat,
+        issue,
+        reason: "issue_assigned",
+        mutation: "create",
+        contextSource: "chat.convert_to_issue",
+        requestedByActorType: input.actorUserId ? "user" : "system",
+        requestedByActorId: input.actorUserId ?? "chat-assistant",
       });
       const planDocument = planDocumentFromPayload(
         sourceMessage?.structuredPayload ?? input.proposal ?? null,
