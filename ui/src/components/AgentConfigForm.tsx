@@ -295,9 +295,9 @@ type RuntimeEnvironmentTestItemResult = RuntimeEnvironmentTestTarget & {
   error?: Error;
 };
 
-type RuntimeEnvironmentStatus = AgentRuntimeEnvironmentTestResult["status"] | "testing" | "error";
+export type RuntimeEnvironmentStatus = AgentRuntimeEnvironmentTestResult["status"] | "testing" | "error";
 
-function formatRuntimeEnvironmentLabel(target: Pick<RuntimeEnvironmentTestTarget, "title" | "runtimeType" | "model">) {
+export function formatRuntimeEnvironmentLabel(target: Pick<RuntimeEnvironmentTestTarget, "title" | "runtimeType" | "model">) {
   const runtimeLabel = adapterLabels[target.runtimeType] ?? target.runtimeType;
   return target.model
     ? `${target.title} · ${runtimeLabel} · ${target.model}`
@@ -1014,7 +1014,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   );
 }
 
-function AdapterEnvironmentResult({
+export function AdapterEnvironmentResult({
   result,
   label,
 }: {
@@ -1055,7 +1055,7 @@ function AdapterEnvironmentResult({
   );
 }
 
-function AdapterEnvironmentError({
+export function AdapterEnvironmentError({
   label,
   message,
 }: {

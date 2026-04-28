@@ -8,6 +8,7 @@ test.describe("Chat copilot settings", () => {
         defaultChatAgentRuntimeType: "codex_local",
         defaultChatAgentRuntimeConfig: {
           model: "gpt-5.4",
+          modelFallbacks: [{ agentRuntimeType: "claude_local", model: "claude-sonnet-4-5" }],
         },
       },
     });
@@ -22,8 +23,12 @@ test.describe("Chat copilot settings", () => {
     await page.goto("/organization/settings");
 
     await expect(page.getByText("Rudder Copilot", { exact: true })).toBeVisible();
-    await expect(page.getByText("Copilot runtime", { exact: true })).toBeVisible();
-    await expect(page.getByText("Copilot model", { exact: true })).toBeVisible();
+    await expect(page.getByText("Copilot runtime chain", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Test Copilot runtime chain", exact: true })).toBeVisible();
+    await expect(page.getByText("Primary", { exact: true })).toBeVisible();
+    await expect(page.getByText("Fallback 1", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("chat-primary-model")).toContainText("gpt-5.4");
+    await expect(page.getByTestId("chat-fallback-model-1")).toContainText("claude-sonnet-4-5");
     await expect(
       page.getByText("Conversations without a preferred agent use Rudder Copilot. Preferred-agent chats inherit that agent's own runtime, skills, and instructions."),
     ).toBeVisible();

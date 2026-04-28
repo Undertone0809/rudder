@@ -2,11 +2,12 @@ import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
 import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
-import type { AgentRuntimeType, OrganizationSecret } from "@rudderhq/shared";
+import type { AgentRuntimeEnvironmentTestResult, AgentRuntimeType, OrganizationSecret } from "@rudderhq/shared";
 import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { organizationsApi } from "../api/orgs";
 import { accessApi } from "../api/access";
+import { agentsApi } from "../api/agents";
 import { secretsApi } from "../api/secrets";
 import { assetsApi } from "../api/assets";
 import { chatsApi } from "../api/chats";
@@ -28,11 +29,15 @@ import {
   adapterLabels,
 } from "../components/agent-config-primitives";
 import {
+  AdapterEnvironmentError,
+  AdapterEnvironmentResult,
   RuntimeProviderCard,
   defaultConfigForRuntime,
   defaultFallbackItem,
+  formatRuntimeEnvironmentLabel,
   normalizeModelFallbacksForEditor,
   primaryModelFallbackKey,
+  type RuntimeEnvironmentStatus,
   runtimeProviderItemClassName,
   runtimeProviderRailClassName,
 } from "../components/AgentConfigForm";
@@ -51,6 +56,19 @@ type AgentSnippetInput = {
   onboardingTextUrl: string;
   connectionCandidates?: string[] | null;
   testResolutionUrl?: string | null;
+};
+
+type RuntimeEnvironmentTestTarget = {
+  key: string;
+  title: string;
+  runtimeType: string;
+  model: string;
+  config: Record<string, unknown>;
+};
+
+type RuntimeEnvironmentTestItemResult = RuntimeEnvironmentTestTarget & {
+  result?: AgentRuntimeEnvironmentTestResult;
+  error?: Error;
 };
 
 const CHAT_DEFAULT_ADAPTER_OPTIONS: AgentRuntimeType[] = [
@@ -192,6 +210,73 @@ export function OrganizationSettings() {
     }
     return config;
   }, [viewedOrganization?.defaultChatAgentRuntimeConfig, viewedOrganization?.defaultChatAgentRuntimeType]);
+
+  function buildDefaultChatRuntimeEnvironmentTestTargets(): RuntimeEnvironmentTestTarget[] {
+    if (!defaultChatAgentRuntimeType) return [];
+    const primaryConfig = { ...defaultChatRuntimeConfig };
+    delete primaryConfig.modelFallbacks;
+    return [
+      {
+        key: "primary",
+        title: "Primary",
+        runtimeType: defaultChatAgentRuntimeType,
+        model: defaultChatModel,
+        config: {
+          ...primaryConfig,
+          ...(defaultChatModel ? { model: defaultChatModel } : {}),
+        },
+      },
+      ...defaultChatFallbackModels.map((fallback, index) => ({
+        key: `fallback-${index}`,
+        title: `Fallback ${index + 1}`,
+        runtimeType: fallback.agentRuntimeType,
+        model: fallback.model,
+        config: {
+          ...(fallback.config ?? {}),
+          ...(fallback.model ? { model: fallback.model } : {}),
+        },
+      })),
+    ];
+  }
+
+  const testDefaultChatRuntimeChain = useMutation({
+    mutationFn: async (): Promise<RuntimeEnvironmentTestItemResult[]> => {
+      if (!viewedOrganizationId) {
+        throw new Error("Select a organization to test Copilot runtime environment");
+      }
+      const targets = buildDefaultChatRuntimeEnvironmentTestTargets();
+      if (targets.length === 0) {
+        throw new Error("Configure Copilot before testing the runtime chain");
+      }
+      const results: RuntimeEnvironmentTestItemResult[] = [];
+      for (const target of targets) {
+        try {
+          const result = await agentsApi.testEnvironment(viewedOrganizationId, target.runtimeType, {
+            agentRuntimeConfig: target.config,
+          });
+          results.push({ ...target, result });
+        } catch (error) {
+          results.push({
+            ...target,
+            error: error instanceof Error ? error : new Error(String(error)),
+          });
+        }
+      }
+      return results;
+    },
+  });
+
+  const defaultChatRuntimeEnvironmentResultsByKey = useMemo(() => {
+    return new Map((testDefaultChatRuntimeChain.data ?? []).map((item) => [item.key, item]));
+  }, [testDefaultChatRuntimeChain.data]);
+
+  function defaultChatRuntimeEnvironmentStatusFor(key: string): RuntimeEnvironmentStatus | undefined {
+    if (testDefaultChatRuntimeChain.isPending) return "testing";
+    const item = defaultChatRuntimeEnvironmentResultsByKey.get(key);
+    if (!item) return undefined;
+    if (item.error) return "error";
+    return item.result?.status;
+  }
 
   const chatSettingsDirty =
     !!viewedOrganization &&
@@ -922,6 +1007,51 @@ export function OrganizationSettings() {
 
           {defaultChatAgentRuntimeType ? (
             <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-medium text-muted-foreground">Copilot runtime chain</div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => testDefaultChatRuntimeChain.mutate()}
+                  disabled={testDefaultChatRuntimeChain.isPending || !viewedOrganizationId}
+                >
+                  {testDefaultChatRuntimeChain.isPending
+                    ? "Testing Copilot runtime chain..."
+                    : "Test Copilot runtime chain"}
+                </Button>
+              </div>
+
+              {testDefaultChatRuntimeChain.error && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  {testDefaultChatRuntimeChain.error instanceof Error
+                    ? testDefaultChatRuntimeChain.error.message
+                    : "Copilot runtime chain environment test failed"}
+                </div>
+              )}
+
+              {testDefaultChatRuntimeChain.data && (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground">Copilot runtime environment</div>
+                  {testDefaultChatRuntimeChain.data.map((item) =>
+                    item.result ? (
+                      <AdapterEnvironmentResult
+                        key={item.key}
+                        result={item.result}
+                        label={formatRuntimeEnvironmentLabel(item)}
+                      />
+                    ) : (
+                      <AdapterEnvironmentError
+                        key={item.key}
+                        label={formatRuntimeEnvironmentLabel(item)}
+                        message={item.error?.message ?? "Environment test failed"}
+                      />
+                    ),
+                  )}
+                </div>
+              )}
+
               <div className={runtimeProviderRailClassName}>
                 <RuntimeProviderCard
                   title="Primary"
@@ -946,6 +1076,7 @@ export function OrganizationSettings() {
                   }}
                   onConfigFieldChange={updateDefaultChatRuntimeConfigField}
                   hideInstructionsFile
+                  environmentStatus={defaultChatRuntimeEnvironmentStatusFor("primary")}
                   triggerTestId="chat-primary-model"
                 />
 
@@ -1002,6 +1133,7 @@ export function OrganizationSettings() {
                       };
                       updateDefaultChatFallbackModels(next);
                     }}
+                    environmentStatus={defaultChatRuntimeEnvironmentStatusFor(`fallback-${index}`)}
                     triggerTestId={`chat-fallback-model-${index + 1}`}
                   />
                 ))}
