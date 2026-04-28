@@ -31,6 +31,7 @@ import {
   RuntimeProviderCard,
   defaultConfigForRuntime,
   defaultFallbackItem,
+  normalizeModelFallbacksForEditor,
   primaryModelFallbackKey,
   runtimeProviderItemClassName,
   runtimeProviderRailClassName,
@@ -132,7 +133,7 @@ export function OrganizationSettings() {
     setDefaultChatRuntimeConfig(runtimeConfig);
     setDefaultChatFallbackModels(
       runtimeType
-        ? normalizeModelFallbacks(runtimeConfig.modelFallbacks, primaryModelFallbackKey(runtimeType, model))
+        ? normalizeModelFallbacksForEditor(runtimeConfig.modelFallbacks, primaryModelFallbackKey(runtimeType, model))
         : [],
     );
   }, [viewedOrganization]);
@@ -526,7 +527,7 @@ export function OrganizationSettings() {
   function updateDefaultChatFallbackModels(nextFallbacks: ModelFallbackConfig[]) {
     if (!defaultChatAgentRuntimeType) return;
     setDefaultChatFallbackModels(
-      normalizeModelFallbacks(
+      normalizeModelFallbacksForEditor(
         nextFallbacks,
         primaryModelFallbackKey(defaultChatAgentRuntimeType, defaultChatModel),
       ),
@@ -935,7 +936,7 @@ export function OrganizationSettings() {
                   }
                   onRuntimeTypeChange={applyDefaultChatRuntimeType}
                   onModelChange={(model) => {
-                    const normalizedFallbacks = normalizeModelFallbacks(
+                    const normalizedFallbacks = normalizeModelFallbacksForEditor(
                       defaultChatFallbackModels,
                       primaryModelFallbackKey(defaultChatAgentRuntimeType, model),
                     );

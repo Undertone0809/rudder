@@ -37,6 +37,7 @@ test.describe("Agent configuration advanced options", () => {
 
     await expect(page.getByRole("heading", { name: "Naomi", exact: true })).toBeVisible();
     await expect(page.getByText("Permissions & Configuration", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Test runtime chain", exact: true })).toBeVisible();
     await expect(page.getByText("Primary", { exact: true })).toBeVisible();
     await expect(page.getByText("Fallback 1", { exact: true })).toBeVisible();
     await expect(page.getByText("Model", { exact: true }).first()).toBeVisible();

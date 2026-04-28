@@ -267,10 +267,42 @@ export function primaryModelFallbackKey(agentRuntimeType: string, model: string)
   return { agentRuntimeType, model };
 }
 
+export function normalizeModelFallbacksForEditor(
+  rawFallbacks: unknown,
+  primary: { agentRuntimeType: string; model: string },
+) {
+  return normalizeModelFallbacks(rawFallbacks, {
+    agentRuntimeType: primary.agentRuntimeType,
+    model: "",
+  });
+}
+
 export const runtimeProviderRailClassName =
   "flex gap-3 overflow-x-auto overscroll-x-contain pb-2 pr-2 [-webkit-overflow-scrolling:touch]";
 export const runtimeProviderItemClassName =
   "basis-[60%] min-w-[420px] shrink-0 grow-0";
+
+type RuntimeEnvironmentTestTarget = {
+  key: string;
+  title: string;
+  runtimeType: string;
+  model: string;
+  config: Record<string, unknown>;
+};
+
+type RuntimeEnvironmentTestItemResult = RuntimeEnvironmentTestTarget & {
+  result?: AgentRuntimeEnvironmentTestResult;
+  error?: Error;
+};
+
+type RuntimeEnvironmentStatus = AgentRuntimeEnvironmentTestResult["status"] | "testing" | "error";
+
+function formatRuntimeEnvironmentLabel(target: Pick<RuntimeEnvironmentTestTarget, "title" | "runtimeType" | "model">) {
+  const runtimeLabel = adapterLabels[target.runtimeType] ?? target.runtimeType;
+  return target.model
+    ? `${target.title} · ${runtimeLabel} · ${target.model}`
+    : `${target.title} · ${runtimeLabel}`;
+}
 
 /* ---- Form ---- */
 
@@ -457,30 +489,82 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     return { ...base, ...overlay.agentRuntimeConfig };
   }
 
-  const testEnvironment = useMutation({
-    mutationFn: async () => {
-      if (!selectedOrganizationId) {
-        throw new Error("Select a organization to test runtime environment");
-      }
-      return agentsApi.testEnvironment(selectedOrganizationId, agentRuntimeType, {
-        agentRuntimeConfig: buildAdapterConfigForTest(),
-      });
-    },
-  });
-
   // Current model for display
   const currentModelId = isCreate
     ? val!.model
     : eff("agentRuntimeConfig", "model", String(config.model ?? ""));
-  const currentFallbackModels = normalizeModelFallbacks(
+  const currentFallbackModels = normalizeModelFallbacksForEditor(
     isCreate
       ? val!.modelFallbacks
       : eff("agentRuntimeConfig", "modelFallbacks", config.modelFallbacks ?? []),
     primaryModelFallbackKey(agentRuntimeType, currentModelId),
   );
 
+  function buildRuntimeEnvironmentTestTargets(): RuntimeEnvironmentTestTarget[] {
+    const primaryConfig = { ...buildAdapterConfigForTest() };
+    delete primaryConfig.modelFallbacks;
+    return [
+      {
+        key: "primary",
+        title: "Primary",
+        runtimeType: agentRuntimeType,
+        model: currentModelId,
+        config: {
+          ...primaryConfig,
+          ...(currentModelId ? { model: currentModelId } : {}),
+        },
+      },
+      ...currentFallbackModels.map((fallback, index) => ({
+        key: `fallback-${index}`,
+        title: `Fallback ${index + 1}`,
+        runtimeType: fallback.agentRuntimeType,
+        model: fallback.model,
+        config: {
+          ...(fallback.config ?? {}),
+          ...(fallback.model ? { model: fallback.model } : {}),
+        },
+      })),
+    ];
+  }
+
+  const testRuntimeChain = useMutation({
+    mutationFn: async (): Promise<RuntimeEnvironmentTestItemResult[]> => {
+      if (!selectedOrganizationId) {
+        throw new Error("Select a organization to test runtime environment");
+      }
+      const targets = buildRuntimeEnvironmentTestTargets();
+      const results: RuntimeEnvironmentTestItemResult[] = [];
+      for (const target of targets) {
+        try {
+          const result = await agentsApi.testEnvironment(selectedOrganizationId, target.runtimeType, {
+            agentRuntimeConfig: target.config,
+          });
+          results.push({ ...target, result });
+        } catch (error) {
+          results.push({
+            ...target,
+            error: error instanceof Error ? error : new Error(String(error)),
+          });
+        }
+      }
+      return results;
+    },
+  });
+
+  const runtimeEnvironmentResultsByKey = useMemo(() => {
+    return new Map((testRuntimeChain.data ?? []).map((item) => [item.key, item]));
+  }, [testRuntimeChain.data]);
+
+  function runtimeEnvironmentStatusFor(key: string): RuntimeEnvironmentStatus | undefined {
+    if (testRuntimeChain.isPending) return "testing";
+    const item = runtimeEnvironmentResultsByKey.get(key);
+    if (!item) return undefined;
+    if (item.error) return "error";
+    return item.result?.status;
+  }
+
   function updateFallbackModels(next: ModelFallbackConfig[]) {
-    const normalized = normalizeModelFallbacks(
+    const normalized = normalizeModelFallbacksForEditor(
       next,
       primaryModelFallbackKey(agentRuntimeType, currentModelId),
     );
@@ -626,24 +710,41 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               variant="outline"
               size="sm"
               className="h-7 px-2.5 text-xs"
-              onClick={() => testEnvironment.mutate()}
-              disabled={testEnvironment.isPending || !selectedOrganizationId}
+              onClick={() => testRuntimeChain.mutate()}
+              disabled={testRuntimeChain.isPending || !selectedOrganizationId}
             >
-              {testEnvironment.isPending ? "Testing..." : "Test environment"}
+              {testRuntimeChain.isPending ? "Testing runtime chain..." : "Test runtime chain"}
             </Button>
           )}
         </div>
         <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
-          {testEnvironment.error && (
+          {testRuntimeChain.error && (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {testEnvironment.error instanceof Error
-                ? testEnvironment.error.message
-                : "Environment test failed"}
+              {testRuntimeChain.error instanceof Error
+                ? testRuntimeChain.error.message
+                : "Runtime chain environment test failed"}
             </div>
           )}
 
-          {testEnvironment.data && (
-            <AdapterEnvironmentResult result={testEnvironment.data} />
+          {testRuntimeChain.data && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-muted-foreground">Runtime chain environment</div>
+              {testRuntimeChain.data.map((item) =>
+                item.result ? (
+                  <AdapterEnvironmentResult
+                    key={item.key}
+                    result={item.result}
+                    label={formatRuntimeEnvironmentLabel(item)}
+                  />
+                ) : (
+                  <AdapterEnvironmentError
+                    key={item.key}
+                    label={formatRuntimeEnvironmentLabel(item)}
+                    message={item.error?.message ?? "Environment test failed"}
+                  />
+                ),
+              )}
+            </div>
           )}
 
           <div className={runtimeProviderRailClassName}>
@@ -676,7 +777,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 }));
               }}
               onModelChange={(model) => {
-                const normalizedFallbacks = normalizeModelFallbacks(
+                const normalizedFallbacks = normalizeModelFallbacksForEditor(
                   currentFallbackModels,
                   primaryModelFallbackKey(agentRuntimeType, model),
                 );
@@ -692,6 +793,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   ? set!({ [field]: value } as Partial<CreateConfigValues>)
                   : mark("agentRuntimeConfig", field, value)
               }
+              environmentStatus={runtimeEnvironmentStatusFor("primary")}
               triggerTestId="agent-primary-model"
             />
 
@@ -744,6 +846,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   };
                   updateFallbackModels(next);
                 }}
+                environmentStatus={runtimeEnvironmentStatusFor(`fallback-${index}`)}
                 triggerTestId={`agent-fallback-model-${index + 1}`}
               />
             ))}
@@ -911,7 +1014,13 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   );
 }
 
-function AdapterEnvironmentResult({ result }: { result: AgentRuntimeEnvironmentTestResult }) {
+function AdapterEnvironmentResult({
+  result,
+  label,
+}: {
+  result: AgentRuntimeEnvironmentTestResult;
+  label?: string;
+}) {
   const statusLabel =
     result.status === "pass" ? "Passed" : result.status === "warn" ? "Warnings" : "Failed";
   const statusClass =
@@ -924,7 +1033,7 @@ function AdapterEnvironmentResult({ result }: { result: AgentRuntimeEnvironmentT
   return (
     <div className={`rounded-md border px-3 py-2 text-xs ${statusClass}`}>
       <div className="flex items-center justify-between gap-2">
-        <span className="font-medium">{statusLabel}</span>
+        <span className="font-medium">{label ? `${label}: ${statusLabel}` : statusLabel}</span>
         <span className="text-[11px] opacity-80">
           {new Date(result.testedAt).toLocaleTimeString()}
         </span>
@@ -946,6 +1055,50 @@ function AdapterEnvironmentResult({ result }: { result: AgentRuntimeEnvironmentT
   );
 }
 
+function AdapterEnvironmentError({
+  label,
+  message,
+}: {
+  label: string;
+  message: string;
+}) {
+  return (
+    <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300">
+      <div className="font-medium">{label}: Failed</div>
+      <div className="mt-1 text-[11px] leading-relaxed break-words opacity-90">{message}</div>
+    </div>
+  );
+}
+
+function RuntimeEnvironmentStatusBadge({
+  status,
+}: {
+  status?: RuntimeEnvironmentStatus;
+}) {
+  if (!status) return null;
+  const label =
+    status === "pass"
+      ? "Env passed"
+      : status === "warn"
+        ? "Env warnings"
+        : status === "testing"
+          ? "Testing env"
+          : "Env failed";
+  const className =
+    status === "pass"
+      ? "border-green-300 bg-green-50 text-green-700 dark:border-green-500/40 dark:bg-green-500/10 dark:text-green-300"
+      : status === "warn"
+        ? semanticBadgeToneClasses.warn
+        : status === "testing"
+          ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-300"
+          : "border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300";
+  return (
+    <span className={cn("shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium", className)}>
+      {label}
+    </span>
+  );
+}
+
 export function RuntimeProviderCard({
   title,
   className,
@@ -964,6 +1117,7 @@ export function RuntimeProviderCard({
   hideInstructionsFile = false,
   createValues,
   createSet,
+  environmentStatus,
   triggerTestId,
 }: {
   title: string;
@@ -983,6 +1137,7 @@ export function RuntimeProviderCard({
   hideInstructionsFile?: boolean;
   createValues?: CreateConfigValues | null;
   createSet?: ((patch: Partial<CreateConfigValues>) => void) | null;
+  environmentStatus?: RuntimeEnvironmentStatus;
   triggerTestId?: string;
 }) {
   const [modelOpen, setModelOpen] = useState(false);
@@ -1021,7 +1176,10 @@ export function RuntimeProviderCard({
   return (
     <div className={cn("rounded-lg border border-border/80 bg-background/30 p-3", className)}>
       <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="text-sm font-medium">{title}</div>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="truncate text-sm font-medium">{title}</div>
+          <RuntimeEnvironmentStatusBadge status={environmentStatus} />
+        </div>
         {onRemove ? (
           <Button
             type="button"
