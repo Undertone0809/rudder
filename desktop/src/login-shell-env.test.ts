@@ -42,8 +42,8 @@ describe("login shell PATH sync", () => {
     const result = await readLoginShellPath({
       env: { SHELL: "/missing/zsh" },
       platform: "darwin",
-      runner: async (shellPath) => {
-        runnerCalls.push(shellPath);
+      runner: async (shellPath, args) => {
+        runnerCalls.push(`${shellPath} ${args[0]}`);
         if (shellPath === "/missing/zsh") {
           throw new Error("missing");
         }
@@ -59,10 +59,32 @@ describe("login shell PATH sync", () => {
       },
     });
 
-    expect(runnerCalls).toEqual(["/missing/zsh", "/bin/zsh"]);
+    expect(runnerCalls).toEqual(["/missing/zsh -lc", "/missing/zsh -lic", "/bin/zsh -lc", "/bin/zsh -lic"]);
     expect(result).toEqual({
       shellPath: "/bin/zsh",
       pathValue: "/Users/test/.nvm/bin:/usr/bin:/bin",
+    });
+  });
+
+  it("merges interactive shell PATH entries that login shell startup omits", async () => {
+    const result = await readLoginShellPath({
+      env: { SHELL: "/bin/zsh" },
+      platform: "darwin",
+      runner: async (_shellPath, args) => ({
+        stdout: [
+          "__RUDDER_LOGIN_SHELL_PATH_START__",
+          args[0] === "-lic"
+            ? "/Users/test/.nvm/versions/node/v22.17.0/bin:/usr/bin:/bin"
+            : "/usr/bin:/bin",
+          "__RUDDER_LOGIN_SHELL_PATH_END__",
+        ].join("\n"),
+        stderr: "",
+      }),
+    });
+
+    expect(result).toEqual({
+      shellPath: "/bin/zsh",
+      pathValue: "/usr/bin:/bin:/Users/test/.nvm/versions/node/v22.17.0/bin",
     });
   });
 

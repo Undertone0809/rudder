@@ -41,6 +41,15 @@ function uniqueNonEmptyPaths(values: Iterable<string>, delimiter: string): strin
   return result;
 }
 
+function shellArgSetsForPathRead(shellPath: string): string[][] {
+  const basename = path.basename(shellPath).toLowerCase();
+  const argSets = [["-lc"]];
+  if (basename === "zsh" || basename === "bash") {
+    argSets.push(["-lic"]);
+  }
+  return argSets;
+}
+
 export function mergePathValues(
   currentPath: string | null | undefined,
   loginPath: string | null | undefined,
@@ -150,17 +159,24 @@ export async function readLoginShellPath(options: {
   const command = `printf '%s\n' '${PATH_START_MARKER}' "$PATH" '${PATH_END_MARKER}'`;
 
   for (const shellPath of candidates) {
-    try {
-      const { stdout } = await runner(shellPath, ["-lc", command], {
-        env,
-        timeoutMs,
-      });
-      const pathValue = extractMarkedPath(stdout);
-      if (pathValue) {
-        return { shellPath, pathValue };
+    const pathValues: string[] = [];
+    for (const shellArgs of shellArgSetsForPathRead(shellPath)) {
+      try {
+        const { stdout } = await runner(shellPath, [...shellArgs, command], {
+          env,
+          timeoutMs,
+        });
+        const pathValue = extractMarkedPath(stdout);
+        if (pathValue) {
+          pathValues.push(pathValue);
+        }
+      } catch {
+        // Ignore candidate failures and fall through to the next invocation.
       }
-    } catch {
-      // Ignore candidate failures and fall through to the next login shell.
+    }
+
+    if (pathValues.length > 0) {
+      return { shellPath, pathValue: mergePathValues(null, pathValues.join(path.delimiter)) };
     }
   }
 

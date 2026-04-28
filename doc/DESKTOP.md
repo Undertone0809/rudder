@@ -103,7 +103,7 @@ Packaged Desktop is the primary local shell for `prod_local`.
 - explicit Quit => fully exit the shell and stop the runtime it owns
 - browser and CLI can still attach to the same local instance, but they do not define packaged Desktop lifecycle
 - packaged Desktop first launch is the only automatic CLI export path for the `rudder` command
-- packaged Desktop refreshes `PATH` from the user's login shell before starting the local runtime so CLI adapters like `codex` still resolve when the app is launched from Finder/menu shells
+- packaged Desktop refreshes `PATH` from the user's login shell and, for zsh/bash, the interactive login shell before starting the local runtime so CLI adapters like `codex` still resolve when the app is launched from Finder/menu shells and the CLI is installed through shell-managed toolchains such as nvm
 
 Platform behavior:
 
