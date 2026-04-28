@@ -1,6 +1,7 @@
-import { access, mkdir, mkdtemp, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { Writable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import {
   CLI_NPM_PACKAGE_NAME,
@@ -19,6 +20,8 @@ import {
   buildLinuxDesktopEntry,
   compareStableSemver,
   copyPortableAppBundle,
+  downloadAsset,
+  downloadChecksums,
   getCliUpdateNotice,
   isInstalledDesktopCurrent,
   isPersistentCliVersionCurrent,
@@ -35,6 +38,24 @@ import {
   selectChecksumAsset,
   selectDesktopAsset,
 } from "../commands/start.js";
+import { createByteProgress, formatByteProgress } from "../utils/progress.js";
+
+function responseFromChunks(chunks: string[], headers: Record<string, string> = {}): Response {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers(headers),
+    body: new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    }),
+  } as Response;
+}
 
 describe("persistent CLI install helpers", () => {
   it("detects npx execution from transient _npx entry paths", () => {
@@ -350,6 +371,106 @@ describe("desktop start command helpers", () => {
     );
     expect(() => resolveAssetChecksum(checksums, "Rudder-0.3.1-macos-arm64-portable.zip")).toThrow(
       "checksums do not include",
+    );
+  });
+
+  it("formats determinate and unknown-size byte progress", () => {
+    expect(formatByteProgress({ receivedBytes: 1024, totalBytes: 2048, width: 10 })).toBe(
+      "[#####-----] 50% 1.0 KB/2.0 KB",
+    );
+    expect(formatByteProgress({ receivedBytes: 1024, totalBytes: null, width: 10 })).toBe(
+      "[downloaded 1.0 KB]",
+    );
+  });
+
+  it("uses stable non-TTY progress lines without cursor controls", () => {
+    const writes: string[] = [];
+    const stream = {
+      write(chunk: string) {
+        writes.push(String(chunk));
+        return true;
+      },
+    } as unknown as Writable;
+
+    const progress = createByteProgress("Downloading Rudder.zip", {
+      stream,
+      isTty: false,
+    });
+    progress.start(2048);
+    progress.update(1024, 2048);
+    progress.finish(2048, 2048);
+
+    const output = writes.join("");
+    expect(output).toContain("Downloading Rudder.zip...\n");
+    expect(output).toContain("Downloading Rudder.zip complete (2.0 KB/2.0 KB).\n");
+    expect(output).not.toContain("\r");
+  });
+
+  it("reports progress while downloading checksum and desktop assets", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-download-progress-test."));
+    const originalFetch = globalThis.fetch;
+    const checksumBody =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  Rudder-0.3.1-linux-x64.AppImage\n";
+    const desktopBody = "desktop-asset";
+    const progressEvents: Array<{ event: string; label: string; receivedBytes?: number; totalBytes?: number | null }> = [];
+    const progressFactory = vi.fn((label: string) => ({
+      start: vi.fn((totalBytes?: number | null) => {
+        progressEvents.push({ event: "start", label, totalBytes });
+      }),
+      update: vi.fn((receivedBytes: number, totalBytes?: number | null) => {
+        progressEvents.push({ event: "update", label, receivedBytes, totalBytes });
+      }),
+      finish: vi.fn((receivedBytes?: number, totalBytes?: number | null) => {
+        progressEvents.push({ event: "finish", label, receivedBytes, totalBytes });
+      }),
+      fail: vi.fn(() => {
+        progressEvents.push({ event: "fail", label });
+      }),
+    }));
+
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        responseFromChunks([checksumBody], {
+          "content-length": String(Buffer.byteLength(checksumBody)),
+        }),
+      )
+      .mockResolvedValueOnce(
+        responseFromChunks(["desktop-", "asset"], {
+          "content-length": String(Buffer.byteLength(desktopBody)),
+        }),
+      ) as never;
+
+    try {
+      const checksums = await downloadChecksums(
+        { name: "SHASUMS256.txt", browser_download_url: "https://example.test/checksums" },
+        dir,
+        progressFactory,
+      );
+      expect(resolveAssetChecksum(checksums, "Rudder-0.3.1-linux-x64.AppImage")).toBe(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      );
+
+      const assetPath = await downloadAsset(
+        { name: "Rudder-0.3.1-linux-x64.AppImage", browser_download_url: "https://example.test/asset" },
+        dir,
+        progressFactory,
+      );
+      expect(await readFile(assetPath, "utf8")).toBe(desktopBody);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(dir, { recursive: true, force: true });
+    }
+
+    expect(progressFactory).toHaveBeenCalledWith("Downloading SHASUMS256.txt");
+    expect(progressFactory).toHaveBeenCalledWith("Downloading Rudder-0.3.1-linux-x64.AppImage");
+    expect(progressEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event: "update", label: "Downloading SHASUMS256.txt" }),
+        expect.objectContaining({ event: "finish", label: "Downloading SHASUMS256.txt" }),
+        expect.objectContaining({ event: "update", label: "Downloading Rudder-0.3.1-linux-x64.AppImage" }),
+        expect.objectContaining({ event: "finish", label: "Downloading Rudder-0.3.1-linux-x64.AppImage" }),
+      ]),
     );
   });
 

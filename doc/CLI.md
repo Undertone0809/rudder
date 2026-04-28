@@ -24,6 +24,13 @@ This checks for newer Rudder CLI releases, prepares the matching persistent
 from GitHub Release assets when needed. Desktop assets are checksum-verified
 before installation.
 
+Once the Rudder CLI process starts, `rudder start` shows progress for the
+Rudder-managed install stages, including Desktop checksum download, Desktop
+asset download, verification, replacement, portable app installation, launcher
+setup, and launch. The first `npx` package fetch and its "Ok to proceed?"
+prompt are controlled by npm itself, so Rudder progress output starts after
+npm has handed execution to the CLI.
+
 Invocation forms are equivalent once they resolve to the same CLI version:
 
 ```sh

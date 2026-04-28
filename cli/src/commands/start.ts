@@ -4,7 +4,7 @@ import { constants as fsConstants, createWriteStream, mkdirSync, readFileSync } 
 import { access, chmod, copyFile, cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import * as p from "@clack/prompts";
@@ -15,6 +15,7 @@ import {
   installPersistentCli,
   resolvePersistentCliInstallSpec,
 } from "../install.js";
+import { createByteProgress, type ByteProgressReporter } from "../utils/progress.js";
 import { resolveCliVersion } from "../version.js";
 
 export const DEFAULT_DESKTOP_RELEASE_REPO = "Undertone0809/rudder";
@@ -69,6 +70,8 @@ type UpdateQuitResponse =
   | { ok: true; status: "quitting" | "not_running" }
   | { ok: false; status: "active_runs"; totalRuns: number }
   | { ok: false; status: "failed"; message: string };
+
+export type ProgressReporterFactory = (label: string) => ByteProgressReporter;
 
 const STABLE_SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const CANARY_SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+-canary\.[0-9]+$/;
@@ -314,7 +317,18 @@ function buildGithubReleaseAsset(repo: string, tag: string, assetName: string): 
   };
 }
 
-async function downloadAsset(asset: GithubReleaseAsset, outputDir: string): Promise<string> {
+function contentLengthFromHeaders(headers: Headers): number | null {
+  const raw = headers.get("content-length");
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+export async function downloadAsset(
+  asset: GithubReleaseAsset,
+  outputDir: string,
+  progressFactory: ProgressReporterFactory = createByteProgress,
+): Promise<string> {
   mkdirSync(outputDir, { recursive: true });
   const outputPath = path.join(outputDir, path.basename(asset.name));
   const response = await fetch(asset.browser_download_url, {
@@ -324,7 +338,25 @@ async function downloadAsset(asset: GithubReleaseAsset, outputDir: string): Prom
     throw new Error(`Failed to download ${asset.name} from ${asset.browser_download_url} (${response.status}).`);
   }
 
-  await pipeline(Readable.fromWeb(response.body as never), createWriteStream(outputPath));
+  const totalBytes = contentLengthFromHeaders(response.headers);
+  const progress = progressFactory(`Downloading ${asset.name}`);
+  let receivedBytes = 0;
+  const monitor = new Transform({
+    transform(chunk: Buffer | string, _encoding, callback) {
+      receivedBytes += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
+      progress.update(receivedBytes, totalBytes);
+      callback(null, chunk);
+    },
+  });
+
+  progress.start(totalBytes);
+  try {
+    await pipeline(Readable.fromWeb(response.body as never), monitor, createWriteStream(outputPath));
+    progress.finish(receivedBytes, totalBytes);
+  } catch (error) {
+    progress.fail();
+    throw error;
+  }
   return outputPath;
 }
 
@@ -360,11 +392,15 @@ export function assertChecksumMatch(filePath: string, expected: string): string 
   return actual;
 }
 
-async function downloadChecksums(checksumAsset: GithubReleaseAsset | null, outputDir: string): Promise<Map<string, string>> {
+export async function downloadChecksums(
+  checksumAsset: GithubReleaseAsset | null,
+  outputDir: string,
+  progressFactory: ProgressReporterFactory = createByteProgress,
+): Promise<Map<string, string>> {
   if (!checksumAsset) {
     throw new Error("Desktop release is missing SHASUMS256.txt.");
   }
-  const checksumPath = await downloadAsset(checksumAsset, outputDir);
+  const checksumPath = await downloadAsset(checksumAsset, outputDir, progressFactory);
   return parseChecksumFile(readFileSync(checksumPath, "utf8"));
 }
 
@@ -692,6 +728,23 @@ async function writeInstallMetadata(
   await writeFile(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
 }
 
+async function runStartPhase<T>(
+  message: string,
+  successMessage: string,
+  task: () => Promise<T> | T,
+): Promise<T> {
+  const spinner = p.spinner();
+  spinner.start(message);
+  try {
+    const result = await task();
+    spinner.stop(successMessage);
+    return result;
+  } catch (error) {
+    spinner.stop(pc.red(`${message} failed.`));
+    throw error;
+  }
+}
+
 export async function startCommand(opts: StartCommandOptions): Promise<void> {
   const installCli = opts.cli !== false;
   const installDesktop = opts.desktop !== false;
@@ -721,12 +774,21 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
       p.log.message(`[dry-run] ${command}`);
     } else {
       p.log.message(pc.dim(`Running: ${command}`));
-      const result = installPersistentCli({ installSpec });
+      const spinner = p.spinner();
+      spinner.start("Installing persistent CLI...");
+      let result: ReturnType<typeof installPersistentCli>;
+      try {
+        result = installPersistentCli({ installSpec });
+      } catch (error) {
+        spinner.stop(pc.red("Persistent CLI installation failed."));
+        throw error;
+      }
       if (!result.ok) {
+        spinner.stop(pc.red("Persistent CLI installation failed."));
         if (result.output) p.log.message(pc.dim(result.output));
         throw new Error(`Persistent CLI installation failed. Re-run manually: ${result.command}`);
       }
-      p.log.success(`${pc.cyan("rudder")} CLI installed.`);
+      spinner.stop(`${pc.cyan("rudder")} CLI installed.`);
     }
   }
 
@@ -753,7 +815,14 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
     }
 
     const directReleaseVersion = resolveDesktopReleaseVersion(tag);
-    const release = directReleaseVersion ? null : await fetchGithubRelease(repo, tag);
+    const progressFactory: ProgressReporterFactory = createByteProgress;
+    const release = directReleaseVersion
+      ? null
+      : await runStartPhase(
+        "Resolving Desktop release...",
+        "Desktop release resolved.",
+        () => fetchGithubRelease(repo, tag),
+      );
     const releaseTag = directReleaseVersion ? tag : release?.tag_name;
     if (!releaseTag) {
       throw new Error(`Unable to resolve Rudder Desktop release tag for ${repo}@${tag}.`);
@@ -769,7 +838,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
     const checksumAsset = directReleaseVersion
       ? buildGithubReleaseAsset(repo, tag, DESKTOP_CHECKSUM_ASSET_NAME)
       : selectChecksumAsset(release?.assets ?? []);
-    const checksums = await downloadChecksums(checksumAsset, outputDir);
+    const checksums = await downloadChecksums(checksumAsset, outputDir, progressFactory);
     const expectedChecksum = resolveAssetChecksum(checksums, asset.name);
 
     const metadata = await readInstallMetadata(installPaths.metadataPath);
@@ -778,25 +847,49 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
       await pathExists(installPaths.executablePath)
     ) {
       p.log.success(`Rudder Desktop is already installed at ${pc.cyan(installPaths.appPath)}.`);
-      await removeMacQuarantine(installPaths, target);
-      await createPlatformLaunchers(installPaths, target);
+      await runStartPhase(
+        "Refreshing Desktop launchers...",
+        "Desktop launchers ready.",
+        async () => {
+          await removeMacQuarantine(installPaths, target);
+          await createPlatformLaunchers(installPaths, target);
+        },
+      );
     } else {
-      const installerPath = await downloadAsset(asset, outputDir);
-      const checksum = assertChecksumMatch(installerPath, expectedChecksum);
-      p.log.success(`Downloaded and verified ${pc.cyan(path.basename(installerPath))}`);
+      const installerPath = await downloadAsset(asset, outputDir, progressFactory);
+      const checksum = await runStartPhase(
+        "Verifying Desktop checksum...",
+        `Verified ${pc.cyan(path.basename(installerPath))}.`,
+        () => assertChecksumMatch(installerPath, expectedChecksum),
+      );
 
-      p.log.message("Replacing existing Rudder Desktop if needed.");
-      await prepareForDesktopReplace(installPaths, target);
-      await installPortableDesktop(installerPath, installPaths, target);
-      await removeMacQuarantine(installPaths, target);
-      await createPlatformLaunchers(installPaths, target);
+      await runStartPhase(
+        "Replacing existing Rudder Desktop if needed...",
+        "Existing Desktop install is ready for replacement.",
+        () => prepareForDesktopReplace(installPaths, target),
+      );
+      await runStartPhase(
+        "Installing portable Desktop app...",
+        `Installed Rudder Desktop to ${pc.cyan(installPaths.appPath)}.`,
+        () => installPortableDesktop(installerPath, installPaths, target),
+      );
+      await runStartPhase(
+        "Preparing Desktop launchers...",
+        "Desktop launchers ready.",
+        async () => {
+          await removeMacQuarantine(installPaths, target);
+          await createPlatformLaunchers(installPaths, target);
+        },
+      );
       await writeInstallMetadata(installPaths, releaseTag, asset.name, checksum);
-      p.log.success(`Installed Rudder Desktop to ${pc.cyan(installPaths.appPath)}.`);
     }
 
     if (opts.open !== false) {
-      launchDesktop(installPaths, target);
-      p.log.success("Rudder Desktop launched.");
+      await runStartPhase(
+        "Launching Rudder Desktop...",
+        "Rudder Desktop launched.",
+        () => launchDesktop(installPaths, target),
+      );
     }
   }
 
