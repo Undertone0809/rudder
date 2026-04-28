@@ -8,6 +8,7 @@ import type {
   ChatContextLink,
   ChatMessage,
   ChatRuntimeDescriptor,
+  ChatUserInputRequest,
   OperatorProfileSettings,
 } from "@rudderhq/shared";
 import { findServerAdapter } from "../agent-runtimes/index.js";
@@ -41,7 +42,7 @@ interface ResolvedChatRuntimeSource {
 }
 
 export interface ChatAssistantResult {
-  kind: "message" | "issue_proposal" | "operation_proposal" | "routing_suggestion";
+  kind: "message" | "issue_proposal" | "operation_proposal" | "routing_suggestion" | "user_input_request";
   body: string;
   structuredPayload: Record<string, unknown> | null;
   replyingAgentId?: string | null;
@@ -278,41 +279,70 @@ function buildPlanModePromptSection() {
     "Plan mode is active for this conversation.",
     "Stay strictly in read-only investigation and planning mode.",
     "Do not propose or imply file edits, shell mutations, or lightweight control-plane changes.",
+    "The structured user-input tool request_user_input is available only in plan mode.",
+    "Use request_user_input only when a user decision is genuinely blocking a good plan; do not ask questions by default.",
+    "To call request_user_input, emit kind 'user_input_request' with structuredPayload.requestUserInput instead of an issue proposal.",
+    "request_user_input accepts 1 to 3 short questions. Each question must have 2 to 3 mutually exclusive options.",
     "Converge on an issue-sized implementation plan, and when you are ready to conclude, emit kind 'issue_proposal'.",
     "Include structuredPayload.planDocument.body as markdown for the issue plan document.",
   ].join("\n");
 }
 
 function buildResponseSchemaPromptSection(planMode: boolean) {
+  const structuredPayload: Record<string, unknown> = {
+    summary: "optional short summary",
+    issueProposal: {
+      title: "required for issue_proposal",
+      description: "required for issue_proposal",
+      priority: "critical|high|medium|low",
+      assigneeAgentId: "optional uuid",
+      projectId: "optional uuid",
+      goalId: "optional uuid",
+      parentId: "optional uuid",
+    },
+    planDocument: {
+      title: "optional plan title",
+      body: planMode
+        ? "required markdown plan for the issue plan document"
+        : "optional markdown plan",
+      changeSummary: "optional short summary for the issue document revision",
+    },
+    routingSuggestion: {
+      agentId: "optional uuid",
+      reason: "short explanation",
+    },
+  };
+  if (planMode) {
+    structuredPayload.requestUserInput = {
+      questions: [
+        {
+          id: "stable_snake_case_id",
+          header: "12 chars max",
+          question: "short question for the user",
+          options: [
+            {
+              id: "stable_option_id",
+              label: "1-5 words",
+              description: "one short sentence explaining the tradeoff",
+            },
+            {
+              id: "another_option_id",
+              label: "1-5 words",
+              description: "one short sentence explaining the tradeoff",
+            },
+          ],
+        },
+      ],
+    };
+  }
+
   return [
     "JSON shape:",
     JSON.stringify(
       {
         kind: "message",
         body: "final user-visible answer only, not progress updates",
-        structuredPayload: {
-          summary: "optional short summary",
-          issueProposal: {
-            title: "required for issue_proposal",
-            description: "required for issue_proposal",
-            priority: "critical|high|medium|low",
-            assigneeAgentId: "optional uuid",
-            projectId: "optional uuid",
-            goalId: "optional uuid",
-            parentId: "optional uuid",
-          },
-          planDocument: {
-            title: "optional plan title",
-            body: planMode
-              ? "required markdown plan for the issue plan document"
-              : "optional markdown plan",
-            changeSummary: "optional short summary for the issue document revision",
-          },
-          routingSuggestion: {
-            agentId: "optional uuid",
-            reason: "short explanation",
-          },
-        },
+        structuredPayload,
       },
       null,
       2,
@@ -361,6 +391,95 @@ function extractJsonObject(text: string): Record<string, unknown> | null {
   return null;
 }
 
+function slugifyId(value: string, fallback: string) {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || fallback;
+}
+
+function normalizeUserInputOption(value: unknown, fallbackIndex: number) {
+  const option =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const label = typeof option.label === "string" ? option.label.trim() : "";
+  if (!label) return null;
+  const rawId =
+    typeof option.id === "string" ? option.id.trim()
+      : typeof option.key === "string" ? option.key.trim()
+        : "";
+  const description = typeof option.description === "string" && option.description.trim()
+    ? option.description.trim()
+    : null;
+  return {
+    id: slugifyId(rawId || label, `option_${fallbackIndex + 1}`),
+    label,
+    description,
+  };
+}
+
+function normalizeRequestUserInput(value: unknown): ChatUserInputRequest | null {
+  const payload =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  if (!payload || !Array.isArray(payload.questions)) return null;
+
+  const questions = payload.questions
+    .slice(0, 3)
+    .map((questionRaw, questionIndex) => {
+      const question =
+        questionRaw && typeof questionRaw === "object" && !Array.isArray(questionRaw)
+          ? (questionRaw as Record<string, unknown>)
+          : {};
+      const questionText =
+        (typeof question.question === "string" ? question.question.trim() : "")
+        || (typeof question.prompt === "string" ? question.prompt.trim() : "");
+      if (!questionText) return null;
+      const rawOptions = Array.isArray(question.options)
+        ? question.options
+        : Array.isArray(question.choices)
+          ? question.choices
+          : [];
+      const options = rawOptions
+        .slice(0, 3)
+        .map((optionRaw, optionIndex) => normalizeUserInputOption(optionRaw, optionIndex))
+        .filter((option): option is NonNullable<ReturnType<typeof normalizeUserInputOption>> => Boolean(option));
+      if (options.length < 2) return null;
+      const rawId = typeof question.id === "string" ? question.id.trim() : "";
+      const header =
+        (typeof question.header === "string" ? question.header.trim() : "")
+        || `Question ${questionIndex + 1}`;
+      return {
+        id: slugifyId(rawId || header || questionText, `question_${questionIndex + 1}`),
+        header: header.slice(0, 12),
+        question: questionText,
+        options,
+      };
+    })
+    .filter((question): question is NonNullable<typeof question> => Boolean(question));
+
+  return questions.length > 0 ? { questions } : null;
+}
+
+function normalizeStructuredPayloadForKind(
+  kind: string,
+  structuredPayload: Record<string, unknown> | null,
+) {
+  if (kind !== "user_input_request") return structuredPayload;
+  const request = normalizeRequestUserInput(structuredPayload?.requestUserInput);
+  if (!request) {
+    throw new Error("Assistant user_input_request result requires structuredPayload.requestUserInput");
+  }
+  return {
+    ...(structuredPayload ?? {}),
+    requestUserInput: request,
+  };
+}
+
 function validateAssistantResult(
   payload: Record<string, unknown>,
   options: { bodyOverride?: string | null; bodyFallback?: string | null } = {},
@@ -381,15 +500,18 @@ function validateAssistantResult(
     kind !== "message" &&
     kind !== "issue_proposal" &&
     kind !== "operation_proposal" &&
-    kind !== "routing_suggestion"
+    kind !== "routing_suggestion" &&
+    kind !== "user_input_request"
   ) {
     throw new Error(`Unsupported assistant result kind: ${kind}`);
   }
 
+  const normalizedStructuredPayload = normalizeStructuredPayloadForKind(kind, structuredPayload);
+
   return {
     kind,
     body,
-    structuredPayload,
+    structuredPayload: normalizedStructuredPayload,
   };
 }
 
@@ -441,6 +563,33 @@ function resultText(result: AgentRuntimeExecutionResult) {
         ? raw.content
         : null;
   return safeTrim(candidate) ?? "";
+}
+
+function assistantResultFromRuntimeQuestion(result: AgentRuntimeExecutionResult): ChatAssistantResult | null {
+  const question = result.question;
+  if (!question) return null;
+  const runtimeQuestions = Array.isArray(question.questions) && question.questions.length > 0
+    ? question.questions
+    : [{
+        id: "question_1",
+        header: "Question",
+        question: question.prompt,
+        choices: question.choices,
+      }];
+  const request = normalizeRequestUserInput({
+    questions: runtimeQuestions.map((runtimeQuestion) => ({
+      id: runtimeQuestion.id,
+      header: runtimeQuestion.header,
+      question: runtimeQuestion.question,
+      options: runtimeQuestion.choices,
+    })),
+  });
+  if (!request) return null;
+  return {
+    kind: "user_input_request",
+    body: resultText(result) || request.questions[0]?.question || "I need one decision before continuing.",
+    structuredPayload: { requestUserInput: request },
+  };
 }
 
 function configArgs(agentRuntimeConfig: Record<string, unknown>) {
@@ -1237,7 +1386,13 @@ export function chatAssistantService(db: Db) {
     await maybeEmitAssistantState(input.onAssistantState, "finalizing");
 
     const raw = resultText(result) || assistantTextAccumulator.fullText;
-    const reply = parseCompletedAssistantReply(raw, resultSentinel);
+    const runtimeQuestionReply = input.conversation.planMode
+      ? assistantResultFromRuntimeQuestion(result)
+      : null;
+    const reply = runtimeQuestionReply ?? parseCompletedAssistantReply(raw, resultSentinel);
+    if (reply.kind === "user_input_request" && !input.conversation.planMode) {
+      throw new Error("request_user_input is only available in plan mode");
+    }
     const finalBody = reply.body;
     reply.replyingAgentId = runtimeSource.descriptor.runtimeAgentId;
 

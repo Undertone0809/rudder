@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import type { ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import type { ChatMessageKind, ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import {
   agents,
   approvals,
@@ -893,7 +893,7 @@ export function chatService(db: Db) {
       input: {
         orgId: string;
         role: "user" | "assistant" | "system";
-        kind: "message" | "issue_proposal" | "operation_proposal" | "routing_suggestion" | "system_event";
+        kind: ChatMessageKind;
         status?: "completed" | "stopped" | "failed";
         body: string;
         structuredPayload?: Record<string, unknown> | null;

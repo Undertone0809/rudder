@@ -22,6 +22,47 @@ describe("codex_local parser", () => {
     });
     expect(parsed.errorMessage).toBe("model access denied");
   });
+
+  it("extracts request_user_input tool calls as structured questions", () => {
+    const stdout = [
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "tool_use",
+          name: "request_user_input",
+          input: {
+            questions: [{
+              id: "scope",
+              header: "Scope",
+              question: "Which scope should the plan use?",
+              options: [
+                { id: "minimal", label: "Minimal", description: "Smallest useful change." },
+                { id: "complete", label: "Complete", description: "Cover the whole workflow." },
+              ],
+            }],
+          },
+        },
+      }),
+    ].join("\n");
+
+    const parsed = parseCodexJsonl(stdout);
+    expect(parsed.question).toEqual({
+      prompt: "Which scope should the plan use?",
+      choices: [
+        { key: "minimal", label: "Minimal", description: "Smallest useful change." },
+        { key: "complete", label: "Complete", description: "Cover the whole workflow." },
+      ],
+      questions: [{
+        id: "scope",
+        header: "Scope",
+        question: "Which scope should the plan use?",
+        choices: [
+          { key: "minimal", label: "Minimal", description: "Smallest useful change." },
+          { key: "complete", label: "Complete", description: "Cover the whole workflow." },
+        ],
+      }],
+    });
+  });
 });
 
 describe("codex_local stale session detection", () => {

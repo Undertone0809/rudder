@@ -316,6 +316,8 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("\"planMode\": true");
     expect(prompt).toContain("Plan mode is active for this conversation.");
     expect(prompt).toContain("Stay strictly in read-only investigation and planning mode.");
+    expect(prompt).toContain("request_user_input is available only in plan mode");
+    expect(prompt).toContain("\"requestUserInput\"");
     expect(prompt).toContain("required markdown plan for the issue plan document");
     expect(runtimeConfig).toEqual(expect.objectContaining({
       dangerouslyBypassApprovalsAndSandbox: false,
@@ -335,8 +337,91 @@ describe("chatAssistantService operator profile prompt injection", () => {
 
     const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
     expect(prompt).not.toContain("Plan mode is active for this conversation.");
+    expect(prompt).not.toContain("request_user_input");
+    expect(prompt).not.toContain("\"requestUserInput\"");
     expect(prompt).not.toContain("required markdown plan for the issue plan document");
     expect(prompt).toContain("\"body\": \"optional markdown plan\"");
+  });
+
+  it("accepts structured request_user_input results only in plan mode", async () => {
+    mockAdapter.execute.mockResolvedValueOnce({
+      summary: JSON.stringify({
+        kind: "user_input_request",
+        body: "Choose the planning constraint.",
+        structuredPayload: {
+          requestUserInput: {
+            questions: [{
+              id: "scope",
+              header: "Scope",
+              question: "How narrow should this plan be?",
+              options: [
+                { id: "minimal", label: "Minimal", description: "Touch the smallest surface." },
+                { id: "complete", label: "Complete", description: "Cover the whole workflow." },
+              ],
+            }],
+          },
+        },
+      }),
+      resultJson: null,
+      timedOut: false,
+      exitCode: 0,
+      errorMessage: null,
+    });
+    const svc = chatAssistantService({} as any);
+
+    const reply = await svc.generateChatAssistantReply({
+      conversation: makeConversation({ planMode: true }),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    expect(reply.kind).toBe("user_input_request");
+    expect(reply.structuredPayload?.requestUserInput).toEqual({
+      questions: [{
+        id: "scope",
+        header: "Scope",
+        question: "How narrow should this plan be?",
+        options: [
+          { id: "minimal", label: "Minimal", description: "Touch the smallest surface." },
+          { id: "complete", label: "Complete", description: "Cover the whole workflow." },
+        ],
+      }],
+    });
+  });
+
+  it("rejects request_user_input results when plan mode is off", async () => {
+    mockAdapter.execute.mockResolvedValueOnce({
+      summary: JSON.stringify({
+        kind: "user_input_request",
+        body: "Choose one.",
+        structuredPayload: {
+          requestUserInput: {
+            questions: [{
+              id: "scope",
+              header: "Scope",
+              question: "Which scope?",
+              options: [
+                { id: "minimal", label: "Minimal" },
+                { id: "complete", label: "Complete" },
+              ],
+            }],
+          },
+        },
+      }),
+      resultJson: null,
+      timedOut: false,
+      exitCode: 0,
+      errorMessage: null,
+    });
+    const svc = chatAssistantService({} as any);
+
+    await expect(svc.generateChatAssistantReply({
+      conversation: makeConversation({ planMode: false }),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    })).rejects.toThrow("request_user_input is only available in plan mode");
   });
 
   it("omits the operator profile section when all profile fields are blank", async () => {
