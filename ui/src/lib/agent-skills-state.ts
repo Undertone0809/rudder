@@ -35,9 +35,9 @@ export function sortSkillRowsByPinnedSelectionKey<T extends SortableSkillRow>(
     : new Set(pinnedSelectionKeys);
 
   return [...rows].sort((left, right) => {
-    const leftPinned = Boolean(left.alwaysEnabled) || pinnedSelectionKeySet.has(left.selectionKey);
-    const rightPinned = Boolean(right.alwaysEnabled) || pinnedSelectionKeySet.has(right.selectionKey);
-    if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+    const leftPriority = left.alwaysEnabled ? 0 : pinnedSelectionKeySet.has(left.selectionKey) ? 1 : 2;
+    const rightPriority = right.alwaysEnabled ? 0 : pinnedSelectionKeySet.has(right.selectionKey) ? 1 : 2;
+    if (leftPriority !== rightPriority) return leftPriority - rightPriority;
     return left.name.localeCompare(right.name) || left.selectionKey.localeCompare(right.selectionKey);
   });
 }

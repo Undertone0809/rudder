@@ -262,6 +262,23 @@ export function documentService(db: Db) {
               });
             }
 
+            const nextTitle = input.title ?? null;
+            if (
+              existing.latestBody === input.body &&
+              (existing.title ?? null) === nextTitle &&
+              existing.format === input.format
+            ) {
+              return {
+                created: false as const,
+                unchanged: true as const,
+                document: {
+                  ...existing,
+                  body: existing.latestBody,
+                  latestRevisionId: existing.latestRevisionId ?? null,
+                },
+              };
+            }
+
             const nextRevisionNumber = existing.latestRevisionNumber + 1;
             const [revision] = await tx
               .insert(documentRevisions)
@@ -298,9 +315,10 @@ export function documentService(db: Db) {
 
             return {
               created: false as const,
+              unchanged: false as const,
               document: {
                 ...existing,
-                title: input.title ?? null,
+                title: nextTitle,
                 format: input.format,
                 body: input.body,
                 latestRevisionId: revision.id,
@@ -364,6 +382,7 @@ export function documentService(db: Db) {
 
           return {
             created: true as const,
+            unchanged: false as const,
             document: {
               id: document.id,
               orgId: issue.orgId,

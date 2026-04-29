@@ -28,11 +28,11 @@ import {
   thematicBreakPlugin,
   type RealmPlugin,
 } from "@mdxeditor/editor";
-import { Sparkles, X } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
-import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
 import { AgentIcon } from "./AgentIconPicker";
 import {
   applyMentionChipDecoration,
@@ -168,12 +168,6 @@ export interface MentionMenuContainerAnchor {
   viewportBottom: number;
   viewportLeft: number;
   viewportRight: number;
-}
-
-interface ImagePreviewState {
-  alt: string;
-  name: string;
-  src: string;
 }
 
 const CODE_BLOCK_LANGUAGES: Record<string, string> = {
@@ -445,7 +439,6 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
-  const [imagePreviewNaturalSize, setImagePreviewNaturalSize] = useState<{ width: number; height: number } | null>(null);
   const dragDepthRef = useRef(0);
 
   // Stable ref for imageUploadHandler so plugins don't recreate on every render
@@ -643,25 +636,6 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       latestValueRef.current = value;
     }
   }, [value]);
-
-  useEffect(() => {
-    if (!imagePreview?.src) {
-      setImagePreviewNaturalSize(null);
-      return;
-    }
-    const image = new window.Image();
-    image.onload = () => {
-      setImagePreviewNaturalSize({ width: image.naturalWidth, height: image.naturalHeight });
-    };
-    image.onerror = () => {
-      setImagePreviewNaturalSize(null);
-    };
-    image.src = imagePreview.src;
-    return () => {
-      image.onload = null;
-      image.onerror = null;
-    };
-  }, [imagePreview?.src]);
 
   const decorateInlineTokens = useCallback(() => {
     const editable = containerRef.current?.querySelector('[contenteditable="true"]');
@@ -892,9 +866,6 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
   }
 
   const canDropImage = Boolean(imageUploadHandler);
-  const imagePreviewDialogWidth = imagePreviewNaturalSize
-    ? `min(calc(100vw - 1.5rem), ${imagePreviewNaturalSize.width}px, 1440px)`
-    : "min(calc(100vw - 1.5rem), 1440px)";
 
   return (
     <div
@@ -1022,6 +993,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           alt: image.alt,
           name: getPreviewImageName(image),
           src: image.currentSrc || image.src,
+          naturalSize:
+            image.naturalWidth > 0 && image.naturalHeight > 0
+              ? { width: image.naturalWidth, height: image.naturalHeight }
+              : null,
         });
       }}
       onDragOver={(evt) => {
@@ -1197,35 +1172,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         <p className="px-3 pb-2 text-xs text-destructive">{uploadError}</p>
       )}
 
-      <Dialog open={imagePreview !== null} onOpenChange={(open) => {
-        if (!open) setImagePreview(null);
-      }}>
-        <DialogContent
-          showCloseButton={false}
-          className="rudder-markdown-editor-image-preview-panel top-[50%] w-fit translate-y-[-50%] border-0 bg-transparent p-0 shadow-none"
-          style={{ maxWidth: imagePreviewDialogWidth }}
-        >
-          <DialogTitle className="sr-only">
-            {imagePreview?.name ?? "Image preview"}
-          </DialogTitle>
-          {imagePreview ? (
-            <div
-              data-testid="markdown-editor-image-preview-dialog"
-              className="rudder-markdown-editor-image-preview-media relative flex w-fit max-w-full items-center justify-center overflow-hidden"
-            >
-              <DialogClose className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-sm bg-black/55 text-white shadow-[0_6px_18px_rgb(0_0_0/0.28)] transition-colors hover:bg-black/70 focus:outline-none focus:ring-2 focus:ring-white/80">
-                <X className="size-4" aria-hidden="true" />
-                <span className="sr-only">Close image preview</span>
-              </DialogClose>
-              <img
-                src={imagePreview.src}
-                alt={imagePreview.alt}
-                className="chat-attachment-preview-image"
-              />
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+      <ImagePreviewDialog
+        preview={imagePreview}
+        testId="markdown-editor-image-preview-dialog"
+        titleFallback="Image preview"
+        onOpenChange={(open) => {
+          if (!open) setImagePreview(null);
+        }}
+      />
     </div>
   );
 });

@@ -26,10 +26,6 @@ export interface OperatorProfileSettings {
   moreAboutYou: string;
 }
 
-export interface InstanceExperimentalSettings {
-  autoRestartDevServerWhenIdle: boolean;
-}
-
 export type InstancePathPickerSelectionType = "file" | "directory";
 
 export interface InstancePathPickerRequest {
@@ -45,7 +41,6 @@ export interface InstanceSettings {
   id: string;
   general: InstanceGeneralSettings;
   notifications: InstanceNotificationSettings;
-  experimental: InstanceExperimentalSettings;
   createdAt: Date;
   updatedAt: Date;
 }

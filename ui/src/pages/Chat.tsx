@@ -67,6 +67,7 @@ import { issuesApi } from "@/api/issues";
 import { projectsApi } from "@/api/projects";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { prefetchChatConversation } from "@/lib/chat-prefetch";
+import { readChatDraft, saveChatDraft } from "@/lib/chat-draft-storage";
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
@@ -1481,7 +1482,17 @@ function ChatWorkspace() {
   const { t } = useI18n();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
-  const [draft, setDraft] = useState("");
+  const draftStorageOrgId = selectedOrganizationId!;
+  const draftStorageConversationId = conversationId ?? null;
+  const draftStorageScopeKey = `${draftStorageOrgId}:${draftStorageConversationId ?? "__new__"}`;
+  const [draftState, setDraftState] = useState(() => ({
+    scopeKey: draftStorageScopeKey,
+    value: readChatDraft(draftStorageOrgId, draftStorageConversationId),
+  }));
+  const draft = draftState.scopeKey === draftStorageScopeKey ? draftState.value : "";
+  const setDraft = useCallback((nextDraft: string) => {
+    setDraftState((current) => ({ ...current, value: nextDraft }));
+  }, []);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [sendInFlightByChatId, setSendInFlightByChatId] = useState<Record<string, true>>({});
   const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false);
@@ -1580,6 +1591,19 @@ function ChatWorkspace() {
     event.stopPropagation();
     void appendPendingFiles(files);
   }, [appendPendingFiles]);
+
+  useEffect(() => {
+    if (draftState.scopeKey === draftStorageScopeKey) return;
+    setDraftState({
+      scopeKey: draftStorageScopeKey,
+      value: readChatDraft(draftStorageOrgId, draftStorageConversationId),
+    });
+  }, [draftState.scopeKey, draftStorageConversationId, draftStorageOrgId, draftStorageScopeKey]);
+
+  useEffect(() => {
+    if (draftState.scopeKey !== draftStorageScopeKey) return;
+    saveChatDraft(draftStorageOrgId, draftStorageConversationId, draftState.value);
+  }, [draftState.scopeKey, draftState.value, draftStorageConversationId, draftStorageOrgId, draftStorageScopeKey]);
 
   useEffect(() => {
     if (!pendingPrefill) return;

@@ -99,4 +99,71 @@ test.describe("Agent configuration advanced options", () => {
     ]);
     expect(refreshed.runtimeConfig.heartbeat?.maxConcurrentRuns).toBe(4);
   });
+
+  test("suppresses warning-only runtime environment results in the visible UI", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Agent-Config-Warn-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Naomi",
+        role: "ceo",
+        title: "CEO",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          command: "codex",
+          model: "gpt-5.5",
+          modelFallbacks: [],
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.route(`**/api/orgs/${organization.id}/adapters/codex_local/test-environment`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "warn",
+          testedAt: "2026-04-29T00:00:00.000Z",
+          checks: [
+            {
+              code: "auth_optional",
+              level: "warn",
+              message: "Auth is optional",
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/configuration`, {
+      waitUntil: "domcontentloaded",
+    });
+
+    await expect(page.getByRole("heading", { name: "Naomi", exact: true })).toBeVisible();
+    const testButton = page.getByRole("button", { name: "Test runtime chain", exact: true });
+    const testResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST" &&
+      response.url().includes(`/api/orgs/${organization.id}/adapters/codex_local/test-environment`),
+    );
+    await testButton.click();
+    expect((await testResponse).ok()).toBe(true);
+
+    await expect(page.getByText("Env passed", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Primary .*: Passed/)).toBeVisible();
+    await expect(page.getByText("Auth is optional", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Warnings", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Env warnings", { exact: true })).toHaveCount(0);
+  });
 });

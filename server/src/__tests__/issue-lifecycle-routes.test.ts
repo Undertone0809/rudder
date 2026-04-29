@@ -29,6 +29,10 @@ const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
 
+const mockDocumentService = vi.hoisted(() => ({
+  upsertIssueDocument: vi.fn(),
+}));
+
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 
 const ASSIGNEE_AGENT_ID = "22222222-2222-4222-8222-222222222222";
@@ -37,7 +41,7 @@ const RUN_ID = "run-1";
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
-  documentService: () => ({}),
+  documentService: () => mockDocumentService,
   executionWorkspaceService: () => ({}),
   goalService: () => ({}),
   heartbeatService: () => mockHeartbeatService,
@@ -126,6 +130,51 @@ describe("issue lifecycle routes", () => {
       authorAgentId: null,
       authorUserId: "local-board",
     });
+  });
+
+  it("does not log activity for unchanged document saves", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+    mockDocumentService.upsertIssueDocument.mockResolvedValue({
+      created: false,
+      unchanged: true,
+      document: {
+        id: "document-1",
+        orgId: "organization-1",
+        issueId: "11111111-1111-4111-8111-111111111111",
+        key: "plan",
+        title: null,
+        format: "markdown",
+        body: "# Plan",
+        latestRevisionId: "33333333-3333-4333-8333-333333333333",
+        latestRevisionNumber: 1,
+        createdByAgentId: null,
+        createdByUserId: "local-board",
+        updatedByAgentId: null,
+        updatedByUserId: "local-board",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    const res = await request(createApp())
+      .put("/api/issues/11111111-1111-4111-8111-111111111111/documents/plan")
+      .send({
+        title: null,
+        format: "markdown",
+        body: "# Plan",
+        baseRevisionId: "33333333-3333-4333-8333-333333333333",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockDocumentService.upsertIssueDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId: "11111111-1111-4111-8111-111111111111",
+        key: "plan",
+        body: "# Plan",
+        baseRevisionId: "33333333-3333-4333-8333-333333333333",
+      }),
+    );
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("queues an assignment wakeup when a new assigned issue is created", async () => {

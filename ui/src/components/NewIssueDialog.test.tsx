@@ -205,12 +205,6 @@ vi.mock("../api/assets", () => ({
   },
 }));
 
-vi.mock("../api/execution-workspaces", () => ({
-  executionWorkspacesApi: {
-    list: vi.fn(),
-  },
-}));
-
 describe("NewIssueDialog", () => {
   it("renders the label picker content in the new issue dialog", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
@@ -226,5 +220,12 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("Save Draft");
     expect(html).toContain("disabled:opacity-100");
     expect(html).toContain("disabled:bg-muted/20");
+  });
+
+  it("does not render the execution workspace controls", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).not.toContain("Execution workspace");
+    expect(html).not.toContain("Reuse existing workspace");
   });
 });

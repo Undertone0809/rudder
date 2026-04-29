@@ -538,23 +538,25 @@ export function issueRoutes(db: Db, storage: StorageService) {
     });
     const doc = result.document;
 
-    await logActivity(db, {
-      orgId: issue.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: result.created ? "issue.document_created" : "issue.document_updated",
-      entityType: "issue",
-      entityId: issue.id,
-      details: {
-        key: doc.key,
-        documentId: doc.id,
-        title: doc.title,
-        format: doc.format,
-        revisionNumber: doc.latestRevisionNumber,
-      },
-    });
+    if (!result.unchanged) {
+      await logActivity(db, {
+        orgId: issue.orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: result.created ? "issue.document_created" : "issue.document_updated",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          key: doc.key,
+          documentId: doc.id,
+          title: doc.title,
+          format: doc.format,
+          revisionNumber: doc.latestRevisionNumber,
+        },
+      });
+    }
 
     res.status(result.created ? 201 : 200).json(doc);
   });

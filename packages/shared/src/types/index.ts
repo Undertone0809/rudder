@@ -29,7 +29,6 @@ export type {
 } from "./chat.js";
 export type {
   InstanceLocale,
-  InstanceExperimentalSettings,
   InstanceGeneralSettings,
   InstanceNotificationSettings,
   InstanceLangfuseSettings,

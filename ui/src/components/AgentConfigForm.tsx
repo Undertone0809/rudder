@@ -295,13 +295,27 @@ type RuntimeEnvironmentTestItemResult = RuntimeEnvironmentTestTarget & {
   error?: Error;
 };
 
-type RuntimeEnvironmentStatus = AgentRuntimeEnvironmentTestResult["status"] | "testing" | "error";
+export type RuntimeEnvironmentStatus = AgentRuntimeEnvironmentTestResult["status"] | "testing" | "error";
+export type RuntimeEnvironmentDisplayStatus = Exclude<RuntimeEnvironmentStatus, "warn">;
 
-function formatRuntimeEnvironmentLabel(target: Pick<RuntimeEnvironmentTestTarget, "title" | "runtimeType" | "model">) {
+export function formatRuntimeEnvironmentLabel(target: Pick<RuntimeEnvironmentTestTarget, "title" | "runtimeType" | "model">) {
   const runtimeLabel = adapterLabels[target.runtimeType] ?? target.runtimeType;
   return target.model
     ? `${target.title} · ${runtimeLabel} · ${target.model}`
     : `${target.title} · ${runtimeLabel}`;
+}
+
+export function normalizeRuntimeEnvironmentDisplayStatus(
+  status?: RuntimeEnvironmentStatus,
+): RuntimeEnvironmentDisplayStatus | undefined {
+  if (status === "warn") return "pass";
+  return status;
+}
+
+export function filterRuntimeEnvironmentDisplayChecks(
+  result: Pick<AgentRuntimeEnvironmentTestResult, "checks">,
+) {
+  return result.checks.filter((check) => check.level === "error");
 }
 
 /* ---- Form ---- */
@@ -1014,21 +1028,21 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   );
 }
 
-function AdapterEnvironmentResult({
+export function AdapterEnvironmentResult({
   result,
   label,
 }: {
   result: AgentRuntimeEnvironmentTestResult;
   label?: string;
 }) {
+  const displayStatus = normalizeRuntimeEnvironmentDisplayStatus(result.status) ?? "pass";
+  const visibleChecks = filterRuntimeEnvironmentDisplayChecks(result);
   const statusLabel =
-    result.status === "pass" ? "Passed" : result.status === "warn" ? "Warnings" : "Failed";
+    displayStatus === "pass" ? "Passed" : "Failed";
   const statusClass =
-    result.status === "pass"
+    displayStatus === "pass"
       ? "text-green-700 dark:text-green-300 border-green-300 dark:border-green-500/40 bg-green-50 dark:bg-green-500/10"
-      : result.status === "warn"
-        ? semanticBadgeToneClasses.warn
-        : "text-red-700 dark:text-red-300 border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-500/10";
+      : "text-red-700 dark:text-red-300 border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-500/10";
 
   return (
     <div className={`rounded-md border px-3 py-2 text-xs ${statusClass}`}>
@@ -1038,24 +1052,26 @@ function AdapterEnvironmentResult({
           {new Date(result.testedAt).toLocaleTimeString()}
         </span>
       </div>
-      <div className="mt-2 space-y-1.5">
-        {result.checks.map((check, idx) => (
-          <div key={`${check.code}-${idx}`} className="text-[11px] leading-relaxed break-words">
-            <span className="font-medium uppercase tracking-wide opacity-80">
-              {check.level}
-            </span>
-            <span className="mx-1 opacity-60">·</span>
-            <span>{check.message}</span>
-            {check.detail && <span className="block opacity-75 break-all">({check.detail})</span>}
-            {check.hint && <span className="block opacity-90 break-words">Hint: {check.hint}</span>}
-          </div>
-        ))}
-      </div>
+      {visibleChecks.length > 0 ? (
+        <div className="mt-2 space-y-1.5">
+          {visibleChecks.map((check, idx) => (
+            <div key={`${check.code}-${idx}`} className="text-[11px] leading-relaxed break-words">
+              <span className="font-medium uppercase tracking-wide opacity-80">
+                {check.level}
+              </span>
+              <span className="mx-1 opacity-60">·</span>
+              <span>{check.message}</span>
+              {check.detail && <span className="block opacity-75 break-all">({check.detail})</span>}
+              {check.hint && <span className="block opacity-90 break-words">Hint: {check.hint}</span>}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function AdapterEnvironmentError({
+export function AdapterEnvironmentError({
   label,
   message,
 }: {
@@ -1075,23 +1091,20 @@ function RuntimeEnvironmentStatusBadge({
 }: {
   status?: RuntimeEnvironmentStatus;
 }) {
-  if (!status) return null;
+  const displayStatus = normalizeRuntimeEnvironmentDisplayStatus(status);
+  if (!displayStatus) return null;
   const label =
-    status === "pass"
+    displayStatus === "pass"
       ? "Env passed"
-      : status === "warn"
-        ? "Env warnings"
-        : status === "testing"
-          ? "Testing env"
-          : "Env failed";
+      : displayStatus === "testing"
+        ? "Testing env"
+        : "Env failed";
   const className =
-    status === "pass"
+    displayStatus === "pass"
       ? "border-green-300 bg-green-50 text-green-700 dark:border-green-500/40 dark:bg-green-500/10 dark:text-green-300"
-      : status === "warn"
-        ? semanticBadgeToneClasses.warn
-        : status === "testing"
-          ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-300"
-          : "border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300";
+      : displayStatus === "testing"
+        ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-300"
+        : "border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300";
   return (
     <span className={cn("shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium", className)}>
       {label}

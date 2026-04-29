@@ -42,15 +42,7 @@ function buildRestartToast(devServer: DevServerHealthStatus): ToastInput {
     details.push(`Updated ${changedAt}.`);
   }
 
-  if (devServer.autoRestartEnabled) {
-    if (devServer.waitingForIdle && devServer.activeRunCount > 0) {
-      details.push(`Auto-restart will trigger after ${devServer.activeRunCount} active run${devServer.activeRunCount === 1 ? "" : "s"} finish.`);
-    } else {
-      details.push("Auto-restart will trigger when the instance is idle.");
-    }
-  } else {
-    details.push("Restart pnpm dev after the active work is safe to interrupt.");
-  }
+  details.push("Restart pnpm dev after the active work is safe to interrupt.");
 
   if (devServer.changedPathsSample.length > 0) {
     const sample = devServer.changedPathsSample.slice(0, 2).join(", ");
@@ -79,9 +71,6 @@ function fingerprintRestartStatus(devServer: DevServerHealthStatus): string {
     changedPathCount: devServer.changedPathCount,
     changedPathsSample: devServer.changedPathsSample,
     pendingMigrations: devServer.pendingMigrations,
-    autoRestartEnabled: devServer.autoRestartEnabled,
-    activeRunCount: devServer.activeRunCount,
-    waitingForIdle: devServer.waitingForIdle,
     lastRestartAt: devServer.lastRestartAt,
   });
 }

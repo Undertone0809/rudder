@@ -19,7 +19,6 @@ export const en = {
   "common.langfuse": "Langfuse",
   "common.about": "About",
   "common.heartbeats": "Heartbeats",
-  "common.experimental": "Experimental",
   "common.plugins": "Plugins",
   "common.organizationSettings": "Organization Settings",
   "common.structure": "Structure",
@@ -500,18 +499,6 @@ export const en = {
     "Rudder only injects this into the chat scene. If you leave it blank, nothing is added to the chat system prompt.",
   "profile.save": "Save profile",
   "profile.saving": "Saving...",
-  "experimental.title": "Experimental",
-  "experimental.description":
-    "These features are still being evaluated. Use them when you want Claude-style workflows before they become stable defaults.",
-  "experimental.loadLoading": "Loading experimental settings...",
-  "experimental.loadFailed": "Failed to load experimental settings.",
-  "experimental.updateFailed": "Failed to update experimental settings.",
-  "experimental.developer.title": "Developer ergonomics",
-  "experimental.developer.description":
-    "Improve the local development loop when backend changes make the current boot stale.",
-  "experimental.developer.autorestart.title": "Auto-restart dev server when idle",
-  "experimental.developer.autorestart.description":
-    "In `pnpm dev`, wait for all queued and running local agent runs to finish, then restart the server automatically when backend changes or migrations make the current boot stale.",
   "heartbeats.title": "Heartbeats",
   "heartbeats.description":
     "Review timer heartbeat configuration across all organizations. Use this page to see what is scheduled, what is merely configured, and turn row-level heartbeats on or off directly.",

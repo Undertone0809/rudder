@@ -30,54 +30,56 @@ import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { errorHandler } from "../middleware/index.js";
 import { accessService } from "../services/access.js";
 
-vi.mock("../services/index.js", async () => {
-  const actual = await vi.importActual<typeof import("../services/index.js")>("../services/index.js");
-  const { randomUUID } = await import("node:crypto");
-  const { eq } = await import("drizzle-orm");
-  const { heartbeatRuns, issues } = await import("@rudderhq/db");
+function mockServicesIndex() {
+  vi.doMock("../services/index.js", async () => {
+    const actual = await vi.importActual<typeof import("../services/index.js")>("../services/index.js");
+    const { randomUUID } = await import("node:crypto");
+    const { eq } = await import("drizzle-orm");
+    const { heartbeatRuns, issues } = await import("@rudderhq/db");
 
-  return {
-    ...actual,
-    automationService: (db: any) =>
-      actual.automationService(db, {
-        heartbeat: {
-          wakeup: async (agentId: string, wakeupOpts: any) => {
-            const issueId =
-              (typeof wakeupOpts?.payload?.issueId === "string" && wakeupOpts.payload.issueId) ||
-              (typeof wakeupOpts?.contextSnapshot?.issueId === "string" && wakeupOpts.contextSnapshot.issueId) ||
-              null;
-            if (!issueId) return null;
+    return {
+      ...actual,
+      automationService: (db: any) =>
+        actual.automationService(db, {
+          heartbeat: {
+            wakeup: async (agentId: string, wakeupOpts: any) => {
+              const issueId =
+                (typeof wakeupOpts?.payload?.issueId === "string" && wakeupOpts.payload.issueId) ||
+                (typeof wakeupOpts?.contextSnapshot?.issueId === "string" && wakeupOpts.contextSnapshot.issueId) ||
+                null;
+              if (!issueId) return null;
 
-            const issue = await db
-              .select({ orgId: issues.orgId })
-              .from(issues)
-              .where(eq(issues.id, issueId))
-              .then((rows: Array<{ orgId: string }>) => rows[0] ?? null);
-            if (!issue) return null;
+              const issue = await db
+                .select({ orgId: issues.orgId })
+                .from(issues)
+                .where(eq(issues.id, issueId))
+                .then((rows: Array<{ orgId: string }>) => rows[0] ?? null);
+              if (!issue) return null;
 
-            const queuedRunId = randomUUID();
-            await db.insert(heartbeatRuns).values({
-              id: queuedRunId,
-              orgId: issue.orgId,
-              agentId,
-              invocationSource: wakeupOpts?.source ?? "assignment",
-              triggerDetail: wakeupOpts?.triggerDetail ?? null,
-              status: "queued",
-              contextSnapshot: { ...(wakeupOpts?.contextSnapshot ?? {}), issueId },
-            });
-            await db
-              .update(issues)
-              .set({
-                executionRunId: queuedRunId,
-                executionLockedAt: new Date(),
-              })
-              .where(eq(issues.id, issueId));
-            return { id: queuedRunId };
+              const queuedRunId = randomUUID();
+              await db.insert(heartbeatRuns).values({
+                id: queuedRunId,
+                orgId: issue.orgId,
+                agentId,
+                invocationSource: wakeupOpts?.source ?? "assignment",
+                triggerDetail: wakeupOpts?.triggerDetail ?? null,
+                status: "queued",
+                contextSnapshot: { ...(wakeupOpts?.contextSnapshot ?? {}), issueId },
+              });
+              await db
+                .update(issues)
+                .set({
+                  executionRunId: queuedRunId,
+                  executionLockedAt: new Date(),
+                })
+                .where(eq(issues.id, issueId));
+              return { id: queuedRunId };
+            },
           },
-        },
-      }),
-  };
-});
+        }),
+    };
+  });
+}
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -158,6 +160,8 @@ describe("automation routes end-to-end", () => {
   }, 20_000);
 
   afterEach(async () => {
+    vi.doUnmock("../services/index.js");
+    vi.resetModules();
     await db.delete(activityLog);
     await db.delete(automationRuns);
     await db.delete(automationTriggers);
@@ -182,6 +186,8 @@ describe("automation routes end-to-end", () => {
   });
 
   async function createApp(actor: Record<string, unknown>) {
+    vi.resetModules();
+    mockServicesIndex();
     const { automationRoutes } = await import("../routes/automations.js");
     const app = express();
     app.use(express.json());

@@ -3160,8 +3160,13 @@ function AgentSkillsTab({
     };
   }, [getOrganizationSelectionKey]);
 
+  const pinnedAgentSkillSelectionKeys = useMemo(
+    () => new Set(initialDesiredSkillKeysRef.current ?? []),
+    [agent.id, skillSnapshot],
+  );
+
   const organizationSkillRows = useMemo<SkillRow[]>(
-    () =>
+    () => sortSkillRowsByPinnedSelectionKey(
       (organizationSkills ?? [])
         .map((skill) => {
           const entry = entryBySelectionKey.get(getOrganizationSelectionKey(skill.key))
@@ -3185,12 +3190,17 @@ function AgentSkillsTab({
             configurable: canManageSkillEntry(entry),
             entry,
           };
-        })
-        .sort((left, right) => {
-          if (left.alwaysEnabled !== right.alwaysEnabled) return left.alwaysEnabled ? -1 : 1;
-          return left.name.localeCompare(right.name) || left.selectionKey.localeCompare(right.selectionKey);
         }),
-    [buildFallbackOrganizationEntry, entryBySelectionKey, getOrganizationBadgeLabel, getOrganizationSelectionKey, organizationSkills],
+      pinnedAgentSkillSelectionKeys,
+    ),
+    [
+      buildFallbackOrganizationEntry,
+      entryBySelectionKey,
+      getOrganizationBadgeLabel,
+      getOrganizationSelectionKey,
+      organizationSkills,
+      pinnedAgentSkillSelectionKeys,
+    ],
   );
 
   const discoveredSkillRows = useMemo<SkillRow[]>(
@@ -3229,11 +3239,6 @@ function AgentSkillsTab({
     [snapshotEntries],
   );
 
-  const pinnedAgentSkillSelectionKeys = useMemo(
-    () => new Set(initialDesiredSkillKeysRef.current ?? []),
-    [agent.id, skillSnapshot],
-  );
-
   const agentSkillRows = useMemo(
     () => sortSkillRowsByPinnedSelectionKey(
       discoveredSkillRows.filter((skill) => skill.entry.sourceClass === "agent_home"),
@@ -3248,13 +3253,19 @@ function AgentSkillsTab({
   );
 
   const globalSkillRows = useMemo(
-    () => externalSkillRows.filter((skill) => skill.entry.sourceClass === "global"),
-    [externalSkillRows],
+    () => sortSkillRowsByPinnedSelectionKey(
+      externalSkillRows.filter((skill) => skill.entry.sourceClass === "global"),
+      pinnedAgentSkillSelectionKeys,
+    ),
+    [externalSkillRows, pinnedAgentSkillSelectionKeys],
   );
 
   const adapterSkillRows = useMemo(
-    () => externalSkillRows.filter((skill) => skill.entry.sourceClass === "adapter_home"),
-    [externalSkillRows],
+    () => sortSkillRowsByPinnedSelectionKey(
+      externalSkillRows.filter((skill) => skill.entry.sourceClass === "adapter_home"),
+      pinnedAgentSkillSelectionKeys,
+    ),
+    [externalSkillRows, pinnedAgentSkillSelectionKeys],
   );
 
   const filteredOrganizationSkillRows = useMemo(() => {

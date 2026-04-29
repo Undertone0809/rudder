@@ -168,6 +168,17 @@ async function renderPrimaryRail() {
   await act(async () => {
     await Promise.resolve();
   });
+
+  return {
+    rerender: async () => {
+      await act(async () => {
+        root.render(<PrimaryRail onOpenSettings={vi.fn()} onWarmSettings={vi.fn()} />);
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+    },
+  };
 }
 
 describe("PrimaryRail desktop inbox signals", () => {
@@ -186,6 +197,28 @@ describe("PrimaryRail desktop inbox signals", () => {
     await renderPrimaryRail();
 
     expect(mockState.desktopShell.setBadgeCount).toHaveBeenCalledWith(0);
+  });
+
+  it("does not show a desktop notification when the unread count increases on Messenger routes", async () => {
+    mockState.pathname = "/messenger/issues";
+    mockState.inboxBadge = {
+      ...mockState.inboxBadge,
+      inbox: 1,
+    };
+    const view = await renderPrimaryRail();
+
+    mockState.inboxBadge = {
+      ...mockState.inboxBadge,
+      inbox: 2,
+      notificationContent: {
+        title: "Unread inbox",
+        body: "2 unread items",
+      },
+    };
+    await view.rerender();
+
+    expect(mockState.desktopShell.setBadgeCount).toHaveBeenLastCalledWith(2);
+    expect(mockState.desktopShell.showNotification).not.toHaveBeenCalled();
   });
 });
 

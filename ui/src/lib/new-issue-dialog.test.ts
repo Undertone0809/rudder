@@ -101,9 +101,6 @@ describe("buildNewIssueCreateRequest", () => {
         projectId: "",
         labelIds: ["label-1"],
         projectWorkspaceId: "",
-        executionWorkspacePolicyEnabled: false,
-        executionWorkspaceMode: "shared_workspace",
-        selectedExecutionWorkspaceId: "",
       }),
     ).toEqual(
       expect.objectContaining({
@@ -184,8 +181,6 @@ describe("issue autosave and draft persistence", () => {
     assigneeModelOverride: "",
     assigneeThinkingEffort: "",
     assigneeChrome: false,
-    executionWorkspaceMode: "shared_workspace",
-    selectedExecutionWorkspaceId: "",
   };
 
   it("treats a description-only draft as meaningful", () => {
@@ -205,8 +200,6 @@ describe("issue autosave and draft persistence", () => {
       assigneeModelOverride: "",
       assigneeThinkingEffort: "",
       assigneeChrome: false,
-      executionWorkspaceMode: "shared_workspace",
-      selectedExecutionWorkspaceId: "",
     })).toBe(false);
   });
 

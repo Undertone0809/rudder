@@ -81,6 +81,7 @@ vi.mock("@/components/IssuesList", () => ({
 }));
 
 let cleanupFn: (() => void) | null = null;
+let storageState: Record<string, string> = {};
 
 const savedDraft = {
   id: "draft-1",
@@ -102,6 +103,22 @@ const savedDraft = {
   updatedAt: "2026-04-26T10:00:00.000Z",
 };
 
+function installLocalStorageMock() {
+  storageState = {};
+  vi.stubGlobal("localStorage", {
+    getItem: vi.fn((key: string) => storageState[key] ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      storageState[key] = String(value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete storageState[key];
+    }),
+    clear: vi.fn(() => {
+      storageState = {};
+    }),
+  });
+}
+
 function renderIssues() {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -114,6 +131,7 @@ function renderIssues() {
 }
 
 beforeEach(() => {
+  installLocalStorageMock();
   window.localStorage.clear();
   mockState.confirm.mockReset();
   mockState.confirm.mockReturnValue(true);

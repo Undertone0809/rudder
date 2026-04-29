@@ -389,6 +389,8 @@ test.describe("Workspace shell", () => {
     await expect(page.getByRole("tab", { name: "Overview" })).toHaveCount(0);
     await expect(page.locator("#main-content").getByText("Description", { exact: true })).toBeVisible();
     await expect(page.locator("#main-content").getByText("Status", { exact: true })).toBeVisible();
+    await expect(page.locator("#main-content").getByText("Execution Workspaces", { exact: true })).toHaveCount(0);
+    await expect(page.locator("#main-content").getByText("Enable isolated issue checkouts", { exact: true })).toHaveCount(0);
 
     await page.screenshot({
       path: testInfo.outputPath("workspace-shell-project-detail-configuration.png"),

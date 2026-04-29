@@ -5,7 +5,6 @@ import {
   Building2,
   Check,
   Clock3,
-  FlaskConical,
   IdCard,
   Info,
   Puzzle,
@@ -188,13 +187,6 @@ export function SettingsSidebar({
                 label={t("common.heartbeats")}
                 icon={Clock3}
                 end
-                variant={modalVariant ? "compact" : "default"}
-              />
-              <SidebarNavItem
-                to="/instance/settings/experimental"
-                state={overlayState}
-                label={t("common.experimental")}
-                icon={FlaskConical}
                 variant={modalVariant ? "compact" : "default"}
               />
             </div>

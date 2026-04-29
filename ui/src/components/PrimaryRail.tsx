@@ -61,6 +61,10 @@ type RailItem = {
   active: boolean;
 };
 
+function isMessengerAttentionRoute(relativePath: string): boolean {
+  return /^\/(?:messenger|chat)(?:\/|$)/.test(relativePath);
+}
+
 const railUtilityButtonClass = [
   "h-9 w-9 translate-x-1 rounded-lg border shadow-[0_6px_18px_-16px_rgba(15,23,42,0.55)] backdrop-blur-[22px]",
   "border-[color:color-mix(in_oklab,var(--sidebar-border)_76%,white)]",
@@ -144,6 +148,7 @@ export function PrimaryRail({
   const location = useLocation();
   const navigate = useNavigate();
   const relativePath = toOrganizationRelativePath(location.pathname);
+  const suppressInboxPopups = isMessengerAttentionRoute(relativePath);
   const isDesktopShell = readDesktopShell() !== null;
   const previousInboxCountRef = useRef<number | null>(null);
   const requestedNotificationPermissionRef = useRef(false);
@@ -223,7 +228,8 @@ export function PrimaryRail({
         && nextCount > 0
         && browserPermission === "default"
         && !requestedNotificationPermissionRef.current
-        && notificationSettings.desktopInboxNotifications;
+        && notificationSettings.desktopInboxNotifications
+        && !suppressInboxPopups;
 
       if (shouldRequestBrowserPermission) {
         requestedNotificationPermissionRef.current = true;
@@ -237,6 +243,7 @@ export function PrimaryRail({
         previousCount != null
         && nextCount > previousCount
         && notificationSettings.desktopInboxNotifications
+        && !suppressInboxPopups
       ) {
         const { title, body } = inboxBadge.notificationContent;
 
@@ -271,6 +278,7 @@ export function PrimaryRail({
     inboxBadge.notificationContent,
     notificationsSettingsQuery.data,
     notificationsSettingsQuery.isLoading,
+    suppressInboxPopups,
   ]);
 
   function openSearch() {

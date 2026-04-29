@@ -22,9 +22,6 @@ const baseDevServer: DevServerHealthStatus = {
   changedPathsSample: ["server/src/services/messenger.ts"],
   envFileChanged: false,
   pendingMigrations: [],
-  autoRestartEnabled: false,
-  activeRunCount: 0,
-  waitingForIdle: false,
   lastRestartAt: "2026-04-14T03:20:00.000Z",
 };
 

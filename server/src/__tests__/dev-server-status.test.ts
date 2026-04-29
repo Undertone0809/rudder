@@ -43,28 +43,22 @@ describe("dev server status helpers", () => {
     });
   });
 
-  it("derives waiting-for-idle health state", () => {
-    const health = toDevServerHealthStatus(
-      {
-        dirty: true,
-        lastChangedAt: "2026-03-20T12:00:00.000Z",
-        changedPathCount: 2,
-        changedPathsSample: ["server/src/app.ts"],
-        envFileChanged: false,
-        pendingMigrations: [],
-        lastRestartAt: "2026-03-20T11:30:00.000Z",
-      },
-      { autoRestartEnabled: true, activeRunCount: 3 },
-    );
+  it("derives restart-required health state", () => {
+    const health = toDevServerHealthStatus({
+      dirty: true,
+      lastChangedAt: "2026-03-20T12:00:00.000Z",
+      changedPathCount: 2,
+      changedPathsSample: ["server/src/app.ts"],
+      envFileChanged: false,
+      pendingMigrations: [],
+      lastRestartAt: "2026-03-20T11:30:00.000Z",
+    });
 
     expect(health).toMatchObject({
       enabled: true,
       restartRequired: true,
       reason: "backend_changes",
       envFileChanged: false,
-      autoRestartEnabled: true,
-      activeRunCount: 3,
-      waitingForIdle: true,
     });
   });
 });

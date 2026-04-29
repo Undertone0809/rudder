@@ -20,8 +20,6 @@ export interface IssueDraft {
   assigneeModelOverride: string;
   assigneeThinkingEffort: string;
   assigneeChrome: boolean;
-  executionWorkspaceMode?: string;
-  selectedExecutionWorkspaceId?: string;
   useIsolatedExecutionWorkspace?: boolean;
 }
 
@@ -56,10 +54,6 @@ export interface BuildNewIssueCreateRequestInput {
   labelIds: string[];
   projectWorkspaceId: string;
   assigneeAgentRuntimeOverrides?: Record<string, unknown> | null;
-  executionWorkspacePolicyEnabled: boolean;
-  executionWorkspaceMode: string;
-  selectedExecutionWorkspaceId: string;
-  executionWorkspaceSettings?: { mode: string } | null;
 }
 
 type NewIssueDialogProjectContext = {
@@ -111,9 +105,7 @@ export function hasMeaningfulIssueDraft(draft: Partial<IssueDraft> | null | unde
       safeTrim(draft.projectWorkspaceId) ||
       safeTrim(draft.assigneeModelOverride) ||
       safeTrim(draft.assigneeThinkingEffort) ||
-      Boolean(draft.assigneeChrome) ||
-      safeTrim(draft.selectedExecutionWorkspaceId) ||
-      (safeTrim(draft.executionWorkspaceMode) && safeTrim(draft.executionWorkspaceMode) !== "shared_workspace"),
+      Boolean(draft.assigneeChrome),
   );
 }
 
@@ -289,10 +281,5 @@ export function buildNewIssueCreateRequest(input: BuildNewIssueCreateRequestInpu
     ...(input.labelIds.length > 0 ? { labelIds: input.labelIds } : {}),
     ...(input.projectWorkspaceId ? { projectWorkspaceId: input.projectWorkspaceId } : {}),
     ...(input.assigneeAgentRuntimeOverrides ? { assigneeAgentRuntimeOverrides: input.assigneeAgentRuntimeOverrides } : {}),
-    ...(input.executionWorkspacePolicyEnabled ? { executionWorkspacePreference: input.executionWorkspaceMode } : {}),
-    ...(input.executionWorkspaceMode === "reuse_existing" && input.selectedExecutionWorkspaceId
-      ? { executionWorkspaceId: input.selectedExecutionWorkspaceId }
-      : {}),
-    ...(input.executionWorkspaceSettings ? { executionWorkspaceSettings: input.executionWorkspaceSettings } : {}),
   };
 }
