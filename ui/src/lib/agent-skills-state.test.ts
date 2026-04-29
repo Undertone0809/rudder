@@ -196,4 +196,16 @@ describe("applyAgentSkillSnapshot", () => {
       "beta-helper",
     ]);
   });
+
+  it("keeps bundled always-enabled skills above other pinned entries", () => {
+    expect(sortSkillRowsByPinnedSelectionKey([
+      { selectionKey: "org:zeta-helper", name: "zeta-helper" },
+      { selectionKey: "bundled:rudder/rudder", name: "rudder", alwaysEnabled: true },
+      { selectionKey: "org:alpha-helper", name: "alpha-helper" },
+    ], ["org:alpha-helper"]).map((row) => row.name)).toEqual([
+      "rudder",
+      "alpha-helper",
+      "zeta-helper",
+    ]);
+  });
 });

@@ -535,6 +535,154 @@ test.describe("Organization and agent skills", () => {
     ]);
   });
 
+  test("pins enabled organization and external skills to the top on the next visit without reordering immediately", async ({ page }) => {
+    const organizationName = `Org-Managed-Skill-Sorting-${Date.now()}`;
+    const globalAlphaDir = path.join(E2E_HOME, ".agents", "skills", "alpha-global");
+    const globalZetaDir = path.join(E2E_HOME, ".agents", "skills", "zeta-global");
+    await fs.mkdir(globalAlphaDir, { recursive: true });
+    await fs.mkdir(globalZetaDir, { recursive: true });
+    await fs.writeFile(
+      path.join(globalAlphaDir, "SKILL.md"),
+      "---\nname: alpha-global\ndescription: Alpha global skill.\n---\n",
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(globalZetaDir, "SKILL.md"),
+      "---\nname: zeta-global\ndescription: Zeta global skill.\n---\n",
+      "utf8",
+    );
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: organizationName,
+        defaultChatAgentRuntimeType: "claude_local",
+        defaultChatAgentRuntimeConfig: {
+          command: E2E_CLAUDE_STUB,
+          env: {
+            HOME: E2E_HOME,
+          },
+        },
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as {
+      id: string;
+      issuePrefix: string;
+    };
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Section Sorting Tester",
+        role: "engineer",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {
+          command: E2E_CLAUDE_STUB,
+          env: {
+            HOME: E2E_HOME,
+          },
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    const orgAlphaRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
+      data: {
+        name: "alpha-org",
+        slug: "alpha-org",
+        markdown: "---\nname: alpha-org\ndescription: Alpha organization skill.\n---\n",
+      },
+    });
+    expect(orgAlphaRes.ok()).toBe(true);
+    const orgZetaRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
+      data: {
+        name: "zeta-org",
+        slug: "zeta-org",
+        markdown: "---\nname: zeta-org\ndescription: Zeta organization skill.\n---\n",
+      },
+    });
+    expect(orgZetaRes.ok()).toBe(true);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
+    const agentMain = page.locator("#main-content");
+    await expect(agentMain.getByText("Organization skills", { exact: true })).toBeVisible();
+    expect(await readNamedSkillSwitchOrder(agentMain, [
+      "alpha-org",
+      "zeta-org",
+    ])).toEqual([
+      "alpha-org",
+      "zeta-org",
+    ]);
+
+    const enableOrgSyncResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().includes(`/agents/${agent.id}/skills/sync`)
+      && response.ok(),
+    );
+    await agentMain.getByRole("switch", { name: "zeta-org" }).click();
+    await enableOrgSyncResponse;
+    await expect(agentMain.getByRole("switch", { name: "zeta-org" })).toHaveAttribute("aria-checked", "true");
+    expect(await readNamedSkillSwitchOrder(agentMain, [
+      "alpha-org",
+      "zeta-org",
+    ])).toEqual([
+      "alpha-org",
+      "zeta-org",
+    ]);
+
+    await expect(agentMain.getByRole("button", { name: /External skills/ })).toBeVisible();
+    await agentMain.getByRole("button", { name: /External skills/ }).click();
+    await expect(agentMain.getByText("Global skills", { exact: true })).toBeVisible();
+    expect(await readNamedSkillSwitchOrder(agentMain, [
+      "alpha-global",
+      "zeta-global",
+    ])).toEqual([
+      "alpha-global",
+      "zeta-global",
+    ]);
+
+    const enableExternalSyncResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().includes(`/agents/${agent.id}/skills/sync`)
+      && response.ok(),
+    );
+    await agentMain.getByRole("switch", { name: "zeta-global" }).click();
+    await enableExternalSyncResponse;
+    await expect(agentMain.getByRole("switch", { name: "zeta-global" })).toHaveAttribute("aria-checked", "true");
+    expect(await readNamedSkillSwitchOrder(agentMain, [
+      "alpha-global",
+      "zeta-global",
+    ])).toEqual([
+      "alpha-global",
+      "zeta-global",
+    ]);
+
+    await page.reload();
+    const reloadedAgentMain = page.locator("#main-content");
+    await expect(reloadedAgentMain.getByText("Organization skills", { exact: true })).toBeVisible();
+    expect(await readNamedSkillSwitchOrder(reloadedAgentMain, [
+      "alpha-org",
+      "zeta-org",
+    ])).toEqual([
+      "zeta-org",
+      "alpha-org",
+    ]);
+
+    await expect(reloadedAgentMain.getByText("Global skills", { exact: true })).toBeVisible();
+    expect(await readNamedSkillSwitchOrder(reloadedAgentMain, [
+      "alpha-global",
+      "zeta-global",
+    ])).toEqual([
+      "zeta-global",
+      "alpha-global",
+    ]);
+  });
+
   test("lets users explicitly enable a discovered Claude user-installed skill", async ({ page }) => {
     const organizationName = `Org-External-Skills-${Date.now()}`;
     const globalSkillDir = path.join(E2E_HOME, ".agents", "skills", "global-helper");
