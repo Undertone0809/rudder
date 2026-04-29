@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
-import { chatsApi } from "../api/chats";
 import { activityApi } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
@@ -16,6 +15,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { assigneeValueFromSelection, suggestedCommentAssigneeValue } from "../lib/assignees";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatChatAgentLabel } from "../lib/agent-labels";
+import { buildIssueChatPrefillHref } from "../lib/chat-object-prefill";
 import { queryKeys } from "../lib/queryKeys";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
 import { resolveBoardActorLabel } from "../lib/activity-actors";
@@ -792,27 +792,10 @@ export function IssueDetail() {
     },
   });
 
-  const openInChat = useMutation({
-    mutationFn: async () => {
-      if (!resolvedCompanyId || !issue) throw new Error("Issue is not ready");
-      return chatsApi.create(resolvedCompanyId, {
-        title: `Discuss ${issue.identifier ?? "issue"}`,
-        contextLinks: [{ entityType: "issue", entityId: issue.id }],
-      });
-    },
-    onSuccess: (conversation) => {
-      if (resolvedCompanyId) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(resolvedCompanyId) });
-      }
-      navigate(`/chat/${conversation.id}`);
-    },
-    onError: (err) => {
-      pushToast({
-        title: err instanceof Error ? err.message : "Failed to open chat",
-        tone: "error",
-      });
-    },
-  });
+  const openInChat = () => {
+    if (!issue) return;
+    navigate(buildIssueChatPrefillHref(issue));
+  };
 
   const createSubIssue = useMutation({
     mutationFn: async (title: string) => {
@@ -978,8 +961,7 @@ export function IssueDetail() {
         variant="ghost"
         size="sm"
         className="h-7 px-2 text-xs"
-        onClick={() => openInChat.mutate()}
-        disabled={openInChat.isPending}
+        onClick={openInChat}
       >
         <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
         Chat
@@ -1086,7 +1068,7 @@ export function IssueDetail() {
             <Button
               variant="ghost"
               size="icon-xs"
-              onClick={() => openInChat.mutate()}
+              onClick={openInChat}
               title="Open in chat"
             >
               <MessageSquare className="h-4 w-4" />

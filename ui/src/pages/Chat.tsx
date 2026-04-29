@@ -1757,7 +1757,6 @@ function ChatWorkspace() {
   useEffect(() => {
     if (!pendingPrefill) return;
     if (pendingPrefill === lastAppliedPrefillRef.current) return;
-    if (draft.trim().length > 0) return;
 
     lastAppliedPrefillRef.current = pendingPrefill;
     setDraft(pendingPrefill);
@@ -1774,7 +1773,7 @@ function ChatWorkspace() {
       },
       { replace: true },
     );
-  }, [chatConversationPath, chatRootPath, conversationId, draft, navigate, pendingPrefill, searchParams]);
+  }, [chatConversationPath, chatRootPath, conversationId, navigate, pendingPrefill, searchParams, setDraft]);
 
   const conversationsQuery = useQuery({
     queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),

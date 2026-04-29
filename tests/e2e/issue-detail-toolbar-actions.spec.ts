@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { E2E_BASE_URL } from "./support/e2e-env";
 
 const ORG_NAME = `Issue-Detail-Toolbar-${Date.now()}`;
 
@@ -30,6 +31,88 @@ test.describe("Issue detail toolbar actions", () => {
     await expect(page.getByRole("button", { name: "Chat" })).toHaveCount(1);
     await expect(page.getByRole("button", { name: "More issue actions" })).toHaveCount(1);
     await expect(page.getByText("Properties", { exact: true })).toBeVisible();
+  });
+
+  test("opens issue chat as a prefilled new chat without creating an empty conversation", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: { name: `${ORG_NAME}-Issue-Chat-Prefill` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const issueRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Issue chat should prefill",
+        description: "Clicking Chat should mention this issue in a new composer.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json() as { id: string; identifier: string | null };
+    expect(issue.identifier).toBeTruthy();
+
+    await page.goto(E2E_BASE_URL);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat(?:\\?.*)?$`));
+    await expect.poll(() => page.url()).not.toContain("prefill=");
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await expect(composer).toContainText(issue.identifier!);
+
+    const chatsRes = await page.request.get(`${E2E_BASE_URL}/api/orgs/${organization.id}/chats?status=all`);
+    expect(chatsRes.ok()).toBe(true);
+    const conversations = await chatsRes.json() as unknown[];
+    expect(conversations).toHaveLength(0);
+  });
+
+  test("opens project chat as a prefilled new chat without creating an empty conversation", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: { name: `${ORG_NAME}-Project-Chat-Prefill` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const projectRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Rudder Dev Chat Prefill",
+        status: "planned",
+        color: "#ff7a1a",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string; name: string };
+
+    await page.goto(E2E_BASE_URL);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/projects/${project.id}`);
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat(?:\\?.*)?$`));
+    await expect.poll(() => page.url()).not.toContain("prefill=");
+
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await expect(composer).toContainText(project.name);
+
+    const chatsRes = await page.request.get(`${E2E_BASE_URL}/api/orgs/${organization.id}/chats?status=all`);
+    expect(chatsRes.ok()).toBe(true);
+    const conversations = await chatsRes.json() as unknown[];
+    expect(conversations).toHaveLength(0);
   });
 
   test("shows default labels for issues in newly created organizations", async ({ page }) => {

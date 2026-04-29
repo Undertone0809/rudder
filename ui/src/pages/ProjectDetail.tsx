@@ -3,7 +3,6 @@ import { useParams, useNavigate, useLocation, Navigate } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PROJECT_COLORS, isUuidLike, type BudgetPolicySummary } from "@rudderhq/shared";
 import { budgetsApi } from "../api/budgets";
-import { chatsApi } from "../api/chats";
 import { projectsApi } from "../api/projects";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
@@ -13,6 +12,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
+import { buildProjectChatPrefillHref } from "../lib/chat-object-prefill";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { ProjectProperties, type ProjectConfigFieldKey, type ProjectFieldSaveState } from "../components/ProjectProperties";
 import { ProjectResourcesPanel } from "../components/ProjectResourcesPanel";
@@ -224,25 +224,10 @@ export function ProjectDetail() {
     },
   });
 
-  const openInChat = useMutation({
-    mutationFn: async () => {
-      if (!resolvedCompanyId || !project) throw new Error("Project is not ready");
-      return chatsApi.create(resolvedCompanyId, {
-        title: `Discuss ${project.name}`,
-        contextLinks: [{ entityType: "project", entityId: project.id }],
-      });
-    },
-    onSuccess: (conversation) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(resolvedCompanyId ?? "__none__") });
-      navigate(`/chat/${conversation.id}`);
-    },
-    onError: (err) => {
-      pushToast({
-        title: err instanceof Error ? err.message : "Failed to open chat",
-        tone: "error",
-      });
-    },
-  });
+  const openInChat = () => {
+    if (!project) return;
+    navigate(buildProjectChatPrefillHref(project));
+  };
 
   const { data: budgetOverview } = useQuery({
     queryKey: queryKeys.budgets.overview(resolvedCompanyId ?? "__none__"),
@@ -470,8 +455,7 @@ export function ProjectDetail() {
           size="sm"
           variant="outline"
           className="shrink-0"
-          onClick={() => openInChat.mutate()}
-          disabled={openInChat.isPending}
+          onClick={openInChat}
         >
           <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
           Chat
