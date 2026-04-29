@@ -20,6 +20,7 @@ import { StatusBadge } from "../components/StatusBadge";
 
 import { ActivityRow } from "../components/ActivityRow";
 import { Identity } from "../components/Identity";
+import { AgentIdentity } from "../components/AgentAvatar";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { timeAgo } from "../lib/timeAgo";
@@ -750,6 +751,7 @@ export function Dashboard() {
                         : null;
                       const displayAgentId = liveRun?.agentId ?? issue.assigneeAgentId;
                       const displayAgentName = displayAgentId ? agentName(displayAgentId) : null;
+                      const displayAgent = displayAgentId ? agentMap.get(displayAgentId) ?? null : null;
 
                       return (
                         <Link
@@ -773,7 +775,13 @@ export function Dashboard() {
                                     {issue.identifier ?? issue.id.slice(0, 8)}
                                   </span>
                                   <StatusBadge status={effectiveStatus} />
-                                  {displayAgentName ? <Identity name={displayAgentName} size="sm" /> : null}
+                                  {displayAgentName ? (
+                                    displayAgent ? (
+                                      <AgentIdentity name={displayAgentName} icon={displayAgent.icon} size="sm" />
+                                    ) : (
+                                      <Identity name={displayAgentName} size="sm" />
+                                    )
+                                  ) : null}
                                   <span className="shrink-0">{timeAgo(issue.updatedAt)}</span>
                                 </div>
                               </div>

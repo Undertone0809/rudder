@@ -13,22 +13,15 @@ import {
 } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { AGENT_ICONS, getAgentIcon } from "../lib/agent-icons";
+import { AgentIcon, getAgentAvatarImageSrc } from "./AgentAvatar";
+import { AGENT_ICONS } from "../lib/agent-icons";
 
 const DEFAULT_ICON: AgentIconName = "bot";
-const AGENT_ASSET_ICON_RE =
-  /^asset:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 const MAX_CUSTOM_ICON_LENGTH = 24;
 
 function normalizeIconValue(icon: string | null | undefined) {
   const normalized = icon?.trim();
   return normalized && normalized.length > 0 ? normalized : null;
-}
-
-export function getAgentAvatarImageSrc(icon: string | null | undefined): string | null {
-  const normalized = normalizeIconValue(icon);
-  const assetId = normalized?.match(AGENT_ASSET_ICON_RE)?.[1] ?? null;
-  return assetId ? `/api/assets/${assetId}/content` : null;
 }
 
 function isNamedAgentIcon(icon: string | null | undefined): icon is AgentIconName {
@@ -38,35 +31,6 @@ function isNamedAgentIcon(icon: string | null | undefined): icon is AgentIconNam
 function isCustomTextIcon(icon: string | null | undefined) {
   const normalized = normalizeIconValue(icon);
   return Boolean(normalized && !isNamedAgentIcon(normalized) && !getAgentAvatarImageSrc(normalized));
-}
-
-interface AgentIconProps {
-  icon: string | null | undefined;
-  className?: string;
-}
-
-export function AgentIcon({ icon, className }: AgentIconProps) {
-  const normalized = normalizeIconValue(icon);
-  const imageSrc = getAgentAvatarImageSrc(normalized);
-  if (imageSrc) {
-    return (
-      <img
-        src={imageSrc}
-        alt=""
-        className={cn("inline-flex rounded-full object-cover", className)}
-        loading="lazy"
-      />
-    );
-  }
-  if (normalized && !isNamedAgentIcon(normalized)) {
-    return (
-      <span className={cn("inline-flex items-center justify-center leading-none", className)}>
-        {normalized}
-      </span>
-    );
-  }
-  const Icon = getAgentIcon(normalized);
-  return <Icon className={className} />;
 }
 
 interface AgentIconPickerProps {
@@ -236,3 +200,5 @@ export function AgentIconPicker({
     </Popover>
   );
 }
+
+export { AgentIcon, getAgentAvatarImageSrc } from "./AgentAvatar";

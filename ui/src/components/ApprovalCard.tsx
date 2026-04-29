@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "@/lib/router";
 import { Button } from "@/components/ui/button";
-import { Identity } from "./Identity";
+import { AgentIdentity } from "./AgentAvatar";
 import { approvalLabel, typeIcon, defaultTypeIcon, ApprovalPayloadRenderer } from "./ApprovalPayload";
 import { ApprovalInset, ApprovalPanel } from "./approval-ui";
 import { StatusBadge } from "./StatusBadge";
@@ -54,7 +54,7 @@ export function ApprovalCard({
             </div>
             {requesterAgent && (
               <span className="text-xs text-muted-foreground">
-                requested by <Identity name={requesterAgent.name} size="sm" className="inline-flex" />
+                requested by <AgentIdentity name={requesterAgent.name} icon={requesterAgent.icon} size="sm" className="inline-flex" />
               </span>
             )}
           </div>

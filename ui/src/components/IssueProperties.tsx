@@ -18,7 +18,7 @@ import { formatAssigneeUserLabel } from "../lib/assignees";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
 import { AssigneeLabel } from "./AssigneeLabel";
-import { Identity } from "./Identity";
+import { AgentIdentity } from "./AgentAvatar";
 import { formatDate, formatDateTime, cn, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
 import { Separator } from "@/components/ui/separator";
@@ -204,9 +204,10 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
     () => sortAgentsByRecency((agents ?? []).filter((a) => a.status !== "terminated"), recentAssigneeIds),
     [agents, recentAssigneeIds],
   );
+  const agentById = useMemo(() => new Map((agents ?? []).map((agent) => [agent.id, agent])), [agents]);
 
   const assignee = issue.assigneeAgentId
-    ? agents?.find((a) => a.id === issue.assigneeAgentId)
+    ? agentById.get(issue.assigneeAgentId)
     : null;
   const userLabel = (userId: string | null | undefined) => formatAssigneeUserLabel(userId, currentUserId);
   const assigneeUserLabel = userLabel(issue.assigneeUserId);
@@ -566,7 +567,11 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
                 to={`/agents/${issue.createdByAgentId}`}
                 className="hover:underline"
               >
-                <Identity name={agentName(issue.createdByAgentId) ?? issue.createdByAgentId.slice(0, 8)} size="sm" />
+                <AgentIdentity
+                  name={agentName(issue.createdByAgentId) ?? issue.createdByAgentId.slice(0, 8)}
+                  icon={issue.createdByAgentId ? agentById.get(issue.createdByAgentId)?.icon : null}
+                  size="sm"
+                />
               </Link>
             ) : (
               <>

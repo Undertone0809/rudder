@@ -19,7 +19,7 @@ import {
 } from "@dnd-kit/sortable";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
-import { Identity } from "./Identity";
+import { AgentIdentity } from "./AgentAvatar";
 import { Button } from "@/components/ui/button";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { cn } from "@/lib/utils";
@@ -336,8 +336,9 @@ function KanbanCard({
             {showPriority ? <PriorityIcon priority={issue.priority} /> : null}
             {showAssignee && issue.assigneeAgentId ? (
               agent ? (
-                <Identity
+                <AgentIdentity
                   name={formatChatAgentLabel(agent)}
+                  icon={agent.icon}
                   size="xs"
                   className="min-w-0 flex-1 text-muted-foreground"
                 />

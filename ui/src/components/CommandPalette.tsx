@@ -27,7 +27,7 @@ import {
   History,
   Clock3,
 } from "lucide-react";
-import { Identity } from "./Identity";
+import { AgentIdentity } from "./AgentAvatar";
 import { agentUrl, projectUrl } from "../lib/utils";
 
 export function CommandPalette() {
@@ -87,10 +87,7 @@ export function CommandPalette() {
     navigate(path);
   }
 
-  const agentName = (id: string | null) => {
-    if (!id) return null;
-    return agents.find((a) => a.id === id)?.name ?? null;
-  };
+  const agentById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
 
   const visibleIssues = useMemo(
     () => (searchQuery.length > 0 ? searchedIssues : issues),
@@ -170,8 +167,8 @@ export function CommandPalette() {
                   </span>
                   <span className="flex-1 truncate">{issue.title}</span>
                   {issue.assigneeAgentId && (() => {
-                    const name = agentName(issue.assigneeAgentId);
-                    return name ? <Identity name={name} size="sm" className="ml-2 hidden sm:inline-flex" /> : null;
+                    const agent = agentById.get(issue.assigneeAgentId);
+                    return agent ? <AgentIdentity name={agent.name} icon={agent.icon} size="sm" className="ml-2 hidden sm:inline-flex" /> : null;
                   })()}
                 </CommandItem>
               ))}

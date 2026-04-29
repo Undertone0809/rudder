@@ -1,5 +1,6 @@
 import { Link } from "@/lib/router";
 import { Identity } from "./Identity";
+import { AgentIdentity } from "./AgentAvatar";
 import { resolveActivityActorName } from "@/lib/activity-actors";
 import { timeAgo } from "../lib/timeAgo";
 import { cn } from "../lib/utils";
@@ -135,11 +136,20 @@ export function ActivityRow({
   const inner = (
     <div className="flex gap-3">
       <p className="flex-1 min-w-0 truncate">
-        <Identity
-          name={actorName}
-          size="xs"
-          className="align-baseline"
-        />
+        {actor ? (
+          <AgentIdentity
+            name={actorName}
+            icon={actor.icon}
+            size="xs"
+            className="align-baseline"
+          />
+        ) : (
+          <Identity
+            name={actorName}
+            size="xs"
+            className="align-baseline"
+          />
+        )}
         <span className="text-muted-foreground ml-1">{verb} </span>
         {entityLabel && <span className="text-muted-foreground">{entityLabel} </span>}
         {name && <span className="font-medium">{name}</span>}

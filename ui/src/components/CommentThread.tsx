@@ -6,6 +6,7 @@ import { Check, Copy, Paperclip } from "lucide-react";
 import type { LiveRunForIssue } from "../api/heartbeats";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { Identity } from "./Identity";
+import { AgentIdentity } from "./AgentAvatar";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { MarkdownBody } from "./MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
@@ -178,8 +179,9 @@ const TimelineList = memo(function TimelineList({
             <div key={`run:${run.runId}`} className="overflow-hidden rounded-sm border border-border bg-accent/20 p-3">
               <div className="mb-3 flex items-start justify-between gap-3">
                 <Link to={`/agents/${run.agentId}`} className="hover:underline">
-                  <Identity
+                  <AgentIdentity
                     name={agentMap?.get(run.agentId)?.name ?? run.agentId.slice(0, 8)}
+                    icon={agentMap?.get(run.agentId)?.icon}
                     size="sm"
                   />
                 </Link>
@@ -235,8 +237,9 @@ const TimelineList = memo(function TimelineList({
             <div className="flex items-center justify-between mb-1">
               {comment.authorAgentId ? (
                 <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
-                  <Identity
+                  <AgentIdentity
                     name={agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
+                    icon={agentMap?.get(comment.authorAgentId)?.icon}
                     size="sm"
                   />
                 </Link>

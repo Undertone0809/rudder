@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { Link } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
-import type { Issue } from "@rudderhq/shared";
+import type { Agent, Issue } from "@rudderhq/shared";
+import { agentsApi } from "../api/agents";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { issuesApi } from "../api/issues";
 import type { TranscriptEntry } from "../agent-runtimes";
@@ -9,6 +10,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { cn, relativeTime } from "../lib/utils";
 import { ExternalLink } from "lucide-react";
 import { Identity } from "./Identity";
+import { AgentIdentity } from "./AgentAvatar";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
 
@@ -34,6 +36,11 @@ export function ActiveAgentsPanel({ orgId }: ActiveAgentsPanelProps) {
     queryFn: () => issuesApi.list(orgId),
     enabled: runs.length > 0,
   });
+  const { data: agents } = useQuery({
+    queryKey: queryKeys.agents.list(orgId),
+    queryFn: () => agentsApi.list(orgId),
+    enabled: runs.length > 0,
+  });
 
   const issueById = useMemo(() => {
     const map = new Map<string, Issue>();
@@ -42,6 +49,13 @@ export function ActiveAgentsPanel({ orgId }: ActiveAgentsPanelProps) {
     }
     return map;
   }, [issues]);
+  const agentById = useMemo(() => {
+    const map = new Map<string, Agent>();
+    for (const agent of agents ?? []) {
+      map.set(agent.id, agent);
+    }
+    return map;
+  }, [agents]);
 
   const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({
     runs,
@@ -64,6 +78,7 @@ export function ActiveAgentsPanel({ orgId }: ActiveAgentsPanelProps) {
             <AgentRunCard
               key={run.id}
               run={run}
+              agent={agentById.get(run.agentId) ?? null}
               issue={run.issueId ? issueById.get(run.issueId) : undefined}
               transcript={transcriptByRun.get(run.id) ?? []}
               hasOutput={hasOutputForRun(run.id)}
@@ -78,12 +93,14 @@ export function ActiveAgentsPanel({ orgId }: ActiveAgentsPanelProps) {
 
 function AgentRunCard({
   run,
+  agent,
   issue,
   transcript,
   hasOutput,
   isActive,
 }: {
   run: LiveRunForIssue;
+  agent: Agent | null;
   issue?: Issue;
   transcript: TranscriptEntry[];
   hasOutput: boolean;
@@ -107,7 +124,11 @@ function AgentRunCard({
               ) : (
                 <span className="inline-flex h-2.5 w-2.5 rounded-full bg-muted-foreground/35" />
               )}
-              <Identity name={run.agentName} size="sm" className="[&>span:last-child]:!text-[11px]" />
+              {agent ? (
+                <AgentIdentity name={agent.name} icon={agent.icon} size="sm" className="[&>span:last-child]:!text-[11px]" />
+              ) : (
+                <Identity name={run.agentName} size="sm" className="[&>span:last-child]:!text-[11px]" />
+              )}
             </div>
             <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
               <span>{isActive ? "Live now" : run.finishedAt ? `Finished ${relativeTime(run.finishedAt)}` : `Started ${relativeTime(run.createdAt)}`}</span>

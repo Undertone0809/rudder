@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { Link } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { agentsApi } from "../api/agents";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
 import { formatDateTime } from "../lib/utils";
 import { ExternalLink, Square } from "lucide-react";
 import { Identity } from "./Identity";
+import { AgentIdentity } from "./AgentAvatar";
 import { StatusBadge } from "./StatusBadge";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
@@ -68,6 +70,12 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
   }, [activeRun, issueId, liveRuns]);
 
   const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({ runs, orgId });
+  const { data: agents } = useQuery({
+    queryKey: queryKeys.agents.list(orgId ?? "__none__"),
+    queryFn: () => agentsApi.list(orgId!),
+    enabled: Boolean(orgId) && runs.length > 0,
+  });
+  const agentById = useMemo(() => new Map((agents ?? []).map((agent) => [agent.id, agent])), [agents]);
 
   const handleCancelRun = async (runId: string) => {
     setCancellingRunIds((prev) => new Set(prev).add(runId));
@@ -101,12 +109,17 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
         {runs.map((run) => {
           const isActive = isRunActive(run.status);
           const transcript = transcriptByRun.get(run.id) ?? [];
+          const agent = agentById.get(run.agentId) ?? null;
           return (
             <section key={run.id} className="px-4 py-4">
               <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <Link to={`/agents/${run.agentId}`} className="inline-flex hover:underline">
-                    <Identity name={run.agentName} size="sm" />
+                    {agent ? (
+                      <AgentIdentity name={agent.name} icon={agent.icon} size="sm" />
+                    ) : (
+                      <Identity name={run.agentName} size="sm" />
+                    )}
                   </Link>
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <Link
