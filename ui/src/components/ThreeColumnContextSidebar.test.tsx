@@ -149,9 +149,28 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 }));
 
 let cleanupFn: (() => void) | null = null;
+let storageState: Record<string, string> = {};
+
+function resetIssueDraftStorage() {
+  delete storageState[ISSUE_AUTOSAVE_STORAGE_KEY];
+  delete storageState[ISSUE_DRAFTS_STORAGE_KEY];
+}
 
 beforeEach(() => {
-  window.localStorage.clear();
+  storageState = {};
+  vi.stubGlobal("localStorage", {
+    getItem: vi.fn((key: string) => storageState[key] ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      storageState[key] = String(value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete storageState[key];
+    }),
+    clear: vi.fn(() => {
+      storageState = {};
+    }),
+  });
+  resetIssueDraftStorage();
   mockState.confirm.mockReset();
   mockState.confirm.mockReturnValue(true);
   mockState.openNewIssue.mockReset();
@@ -170,7 +189,7 @@ afterEach(() => {
     });
   }
   cleanupFn = null;
-  window.localStorage.clear();
+  resetIssueDraftStorage();
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
 });
@@ -208,8 +227,6 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     assigneeModelOverride: "",
     assigneeThinkingEffort: "",
     assigneeChrome: false,
-    executionWorkspaceMode: "shared_workspace",
-    selectedExecutionWorkspaceId: "",
     createdAt: "2026-04-26T10:00:00.000Z",
     updatedAt: "2026-04-26T10:00:00.000Z",
   };
@@ -228,8 +245,6 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
       assigneeModelOverride: "",
       assigneeThinkingEffort: "",
       assigneeChrome: false,
-      executionWorkspaceMode: "shared_workspace",
-      selectedExecutionWorkspaceId: "",
     }));
 
     const container = document.createElement("div");
