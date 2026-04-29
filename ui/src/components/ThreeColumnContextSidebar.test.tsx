@@ -19,6 +19,8 @@ const mockState = vi.hoisted(() => ({
   pathname: "/RUD/issues",
   search: "",
   relativePath: "/issues",
+  linearContributions: [] as unknown[],
+  linearCatalog: null as null | { orgId: string; projects: Array<{ id: string; name: string }> },
 }));
 
 const sidebarAgent = {
@@ -53,6 +55,12 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (queryKey[0] === "agents" && queryKey[1] === "org-1") {
       return { data: [sidebarAgent], isLoading: false, error: null };
+    }
+    if (queryKey[0] === "plugins" && queryKey[1] === "ui-contributions") {
+      return { data: mockState.linearContributions, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "plugins" && queryKey[1] === "rudder.linear") {
+      return { data: mockState.linearCatalog, isLoading: false, error: null };
     }
     return { data: [], isLoading: false, error: null };
   },
@@ -179,6 +187,8 @@ beforeEach(() => {
   mockState.pathname = "/RUD/issues";
   mockState.search = "";
   mockState.relativePath = "/issues";
+  mockState.linearContributions = [];
+  mockState.linearCatalog = null;
   vi.stubGlobal("confirm", mockState.confirm);
 });
 
@@ -283,6 +293,79 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(draftEntry?.textContent).toContain("Draft Issues (2)");
     expect(draftEntry?.textContent).not.toContain("Newer draft");
     expect(document.querySelector("[data-testid='issue-sidebar-active-indicator']")).not.toBeNull();
+  });
+
+  it("shows connected Linear projects as an external issue source group", () => {
+    mockState.linearContributions = [
+      {
+        pluginId: "plugin-linear",
+        pluginKey: "rudder.linear",
+        displayName: "Linear",
+        version: "0.1.0",
+        uiEntryFile: "index.js",
+        slots: [
+          {
+            type: "page",
+            id: "linear-page",
+            displayName: "Linear",
+            exportName: "LinearPluginPage",
+            routePath: "linear",
+          },
+        ],
+        launchers: [],
+      },
+    ];
+    mockState.linearCatalog = {
+      orgId: "org-1",
+      projects: [
+        { id: "proj-roadmap", name: "Roadmap" },
+        { id: "proj-platform", name: "Platform" },
+      ],
+    };
+
+    renderSidebar();
+
+    const section = document.querySelector("[data-testid='issue-linear-section']");
+    expect(section?.textContent).toContain("Linear");
+    expect(section?.textContent).toContain("External");
+
+    const roadmap = document.querySelector<HTMLAnchorElement>("[data-testid='issue-linear-project-proj-roadmap']");
+    expect(roadmap?.textContent).toContain("Roadmap");
+    expect(roadmap?.getAttribute("href")).toBe("/linear?linearProjectId=proj-roadmap");
+  });
+
+  it("keeps the Linear source group active on a selected Linear project route", () => {
+    mockState.pathname = "/RUD/linear";
+    mockState.relativePath = "/linear";
+    mockState.search = "?linearProjectId=proj-roadmap";
+    mockState.linearContributions = [
+      {
+        pluginId: "plugin-linear",
+        pluginKey: "rudder.linear",
+        displayName: "Linear",
+        version: "0.1.0",
+        uiEntryFile: "index.js",
+        slots: [
+          {
+            type: "page",
+            id: "linear-page",
+            displayName: "Linear",
+            exportName: "LinearPluginPage",
+            routePath: "linear",
+          },
+        ],
+        launchers: [],
+      },
+    ];
+    mockState.linearCatalog = {
+      orgId: "org-1",
+      projects: [{ id: "proj-roadmap", name: "Roadmap" }],
+    };
+
+    renderSidebar();
+
+    expect(document.querySelector("[data-testid='issue-linear-project-sidebar-active-indicator']")).not.toBeNull();
+    expect(document.querySelector("[data-testid='workspace-context-header']")?.textContent).toContain("Issues");
   });
 });
 

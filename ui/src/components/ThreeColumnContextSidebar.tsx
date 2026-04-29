@@ -7,6 +7,7 @@ import {
   Clock3,
   Copy,
   DollarSign,
+  ExternalLink,
   FolderTree,
   History,
   MessageSquare,
@@ -34,6 +35,7 @@ import { projectsApi } from "@/api/projects";
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { heartbeatsApi } from "@/api/heartbeats";
+import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
 import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
@@ -54,6 +56,31 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
+
+const LINEAR_PLUGIN_KEY = "rudder.linear";
+const LINEAR_CATALOG_DATA_KEY = "linear-catalog";
+const LINEAR_PLUGIN_ROUTE_PATH = "linear";
+
+type LinearSidebarProject = {
+  id: string;
+  name: string;
+};
+
+type LinearSidebarCatalog = {
+  orgId: string;
+  projects: LinearSidebarProject[];
+};
+
+function resolveLinearPageContribution(contributions: PluginUiContribution[] | undefined) {
+  const contribution = contributions?.find((entry) => entry.pluginKey === LINEAR_PLUGIN_KEY);
+  if (!contribution) return null;
+  const pageSlot = contribution.slots.find((slot) => slot.type === "page");
+  if (!pageSlot) return null;
+  return {
+    pluginId: contribution.pluginId,
+    routePath: pageSlot?.routePath || LINEAR_PLUGIN_ROUTE_PATH,
+  };
+}
 
 function SectionLabel({
   children,
@@ -96,7 +123,7 @@ function ContextColumnHeader({
 }
 
 function resolveContextColumnHeader(relativePath: string): { title: string; description: string } {
-  if (/^\/issues(?:\/|$)/.test(relativePath)) {
+  if (/^\/issues(?:\/|$)/.test(relativePath) || /^\/linear(?:\/|$)/.test(relativePath)) {
     return { title: "Issues", description: "Views and project slices" };
   }
   if (/^\/chat(?:\/|$)/.test(relativePath)) {
@@ -281,7 +308,8 @@ export function ThreeColumnContextSidebar() {
   const relativePath = toOrganizationRelativePath(location.pathname);
   const contextHeader = useMemo(() => resolveContextColumnHeader(relativePath), [relativePath]);
   const isMessengerRoute = /^\/messenger(?:\/|$)/.test(relativePath);
-  const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath);
+  const isLinearPluginRoute = /^\/linear(?:\/|$)/.test(relativePath);
+  const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath) || isLinearPluginRoute;
   const isOrgWorkspaceRoute = /^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const isChatRoute = /^\/chat(?:\/|$)/.test(relativePath);
   const isAgentRoute = !isMessengerRoute && !isIssuesRoute && !isOrgWorkspaceRoute && !isChatRoute;
@@ -321,11 +349,17 @@ export function ThreeColumnContextSidebar() {
     queryFn: () => issuesApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && isIssuesRoute,
   });
+  const { data: pluginContributions } = useQuery({
+    queryKey: queryKeys.plugins.uiContributions,
+    queryFn: () => pluginsApi.listUiContributions(),
+    enabled: !!selectedOrganizationId && isIssuesRoute,
+  });
   const { followedIssueIds } = useIssueFollows(selectedOrganizationId);
 
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   const scope = new URLSearchParams(location.search).get("scope") ?? "";
   const selectedProjectId = new URLSearchParams(location.search).get("projectId") ?? "";
+  const selectedLinearProjectId = new URLSearchParams(location.search).get("linearProjectId") ?? "";
   const activeConversationId = activeConversationIdFromPath(location.pathname);
   const activeAgentRef = location.pathname.match(/\/agents\/([^/]+)/)?.[1] ?? null;
   const activeProjectRef = location.pathname.match(/\/projects\/([^/]+)/)?.[1] ?? null;
@@ -333,6 +367,27 @@ export function ThreeColumnContextSidebar() {
   const visibleProjects = useMemo(
     () => (projects ?? []).filter((project) => !project.archivedAt),
     [projects],
+  );
+  const linearPageContribution = useMemo(
+    () => resolveLinearPageContribution(pluginContributions),
+    [pluginContributions],
+  );
+  const { data: linearCatalog } = useQuery({
+    queryKey: ["plugins", LINEAR_PLUGIN_KEY, "catalog", selectedOrganizationId ?? "__none__", linearPageContribution?.pluginId ?? "__none__"] as const,
+    queryFn: async () => {
+      const response = await pluginsApi.bridgeGetData(
+        linearPageContribution!.pluginId,
+        LINEAR_CATALOG_DATA_KEY,
+        { orgId: selectedOrganizationId! },
+        selectedOrganizationId,
+      );
+      return response.data as LinearSidebarCatalog;
+    },
+    enabled: !!selectedOrganizationId && !!linearPageContribution?.pluginId && isIssuesRoute,
+  });
+  const linearProjects = useMemo(
+    () => [...(linearCatalog?.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
+    [linearCatalog?.projects],
   );
   const visibleAgents = useMemo(
     () => (agents ?? []).filter((agent) => agent.status !== "terminated").sort((a, b) => a.name.localeCompare(b.name)),
@@ -403,6 +458,7 @@ export function ThreeColumnContextSidebar() {
     const routeRef = projectRouteRef(project);
     return selectedProjectId === project.id || activeProjectRef === routeRef;
   });
+  const issueLinearProjectActiveIndex = linearProjects.findIndex((project) => selectedLinearProjectId === project.id);
   const orgContextItems = [
     { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
     { key: "resources", to: "/resources", icon: Boxes, label: "Resources", active: /^\/resources(?:\/|$)/.test(relativePath) },
@@ -533,38 +589,86 @@ export function ThreeColumnContextSidebar() {
           ))}
         </SlidingContextNav>
 
-        <SectionLabel>Projects</SectionLabel>
-        <SlidingContextNav
-          activeIndex={issueProjectActiveIndex}
-          ariaLabel="Issue project slices"
-          className="mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
-          indicatorTestId="issue-project-sidebar-active-indicator"
-        >
-          {visibleProjects.map((project) => {
-            const routeRef = projectRouteRef(project);
-            const active = selectedProjectId === project.id || activeProjectRef === routeRef;
-            return (
-              <Link
-                key={project.id}
-                to={`/issues?projectId=${project.id}`}
-                onClick={closeMobileSidebar}
-                className={cn(
-                  "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
-                  active
-                    ? "font-medium text-foreground"
-                    : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
+        <div className="min-h-0 flex-1 overflow-y-auto pb-3.5">
+          <SectionLabel>Projects</SectionLabel>
+          <SlidingContextNav
+            activeIndex={issueProjectActiveIndex}
+            ariaLabel="Issue project slices"
+            className="mt-2"
+            indicatorTestId="issue-project-sidebar-active-indicator"
+          >
+            {visibleProjects.map((project) => {
+              const routeRef = projectRouteRef(project);
+              const active = selectedProjectId === project.id || activeProjectRef === routeRef;
+              return (
+                <Link
+                  key={project.id}
+                  to={`/issues?projectId=${project.id}`}
+                  onClick={closeMobileSidebar}
+                  className={cn(
+                    "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                    active
+                      ? "font-medium text-foreground"
+                      : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
+                  )}
+                >
+                  <Circle
+                    data-testid={`issue-project-color-${project.id}`}
+                    className="h-2.5 w-2.5 shrink-0 fill-current"
+                    style={{ color: projectColorAccent(project.color) }}
+                  />
+                  <span className="truncate">{project.name}</span>
+                </Link>
+              );
+            })}
+          </SlidingContextNav>
+
+          {linearProjects.length > 0 ? (
+            <>
+              <SectionLabel
+                testId="issue-linear-section"
+                action={(
+                  <span
+                    title="External source"
+                    className="inline-flex items-center gap-1 rounded-[calc(var(--radius-sm)-2px)] border border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-muted-foreground/78"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    External
+                  </span>
                 )}
               >
-                <Circle
-                  data-testid={`issue-project-color-${project.id}`}
-                  className="h-2.5 w-2.5 shrink-0 fill-current"
-                  style={{ color: projectColorAccent(project.color) }}
-                />
-                <span className="truncate">{project.name}</span>
-              </Link>
-            );
-          })}
-        </SlidingContextNav>
+                Linear
+              </SectionLabel>
+              <SlidingContextNav
+                activeIndex={issueLinearProjectActiveIndex}
+                ariaLabel="Linear issue project slices"
+                className="mt-2"
+                indicatorTestId="issue-linear-project-sidebar-active-indicator"
+              >
+                {linearProjects.map((project) => {
+                  const active = selectedLinearProjectId === project.id;
+                  return (
+                    <Link
+                      key={project.id}
+                      to={`/${linearPageContribution?.routePath ?? LINEAR_PLUGIN_ROUTE_PATH}?linearProjectId=${encodeURIComponent(project.id)}`}
+                      onClick={closeMobileSidebar}
+                      data-testid={`issue-linear-project-${project.id}`}
+                      className={cn(
+                        "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                        active
+                          ? "font-medium text-foreground"
+                          : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
+                      )}
+                    >
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-[calc(var(--radius-sm)-4px)] border border-[color:color-mix(in_oklab,var(--muted-foreground)_54%,transparent)] bg-[color:color-mix(in_oklab,var(--muted-foreground)_18%,transparent)]" />
+                      <span className="truncate">{project.name}</span>
+                    </Link>
+                  );
+                })}
+              </SlidingContextNav>
+            </>
+          ) : null}
+        </div>
       </aside>
     );
   }

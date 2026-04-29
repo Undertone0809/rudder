@@ -222,6 +222,58 @@ describe("@rudderhq/plugin-linear UI", () => {
     expect(importSelected?.disabled).toBe(false);
   });
 
+  it("initializes the Linear project filter from the sidebar query parameter", () => {
+    window.history.replaceState({}, "", "/ACME/linear?linearProjectId=proj-roadmap");
+    const dataCalls: Array<{ key: string; params: Record<string, unknown> | undefined }> = [];
+    mockedUsePluginData.mockImplementation((key: string, params?: Record<string, unknown>) => {
+      dataCalls.push({ key, params });
+      if (key === "page-bootstrap") {
+        return {
+          data: {
+            configured: true,
+            message: null,
+            projects: [{ id: "project-1", name: "Imported Work" }],
+            teamMappings: [],
+          },
+          loading: false,
+          error: null,
+          refresh: vi.fn(),
+        };
+      }
+      if (key === "linear-catalog") {
+        return {
+          data: {
+            orgId: "org-1",
+            teams: [{ id: "team-1", name: "Engineering", key: "ENG", states: [{ id: "state-1", name: "Backlog" }] }],
+            projects: [{ id: "proj-roadmap", name: "Roadmap" }],
+            users: [],
+          },
+          loading: false,
+          error: null,
+          refresh: vi.fn(),
+        };
+      }
+      return {
+        data: {
+          rows: [],
+          endCursor: null,
+          hasNextPage: false,
+          totalShown: 0,
+        },
+        loading: false,
+        error: null,
+        refresh: vi.fn(),
+      };
+    });
+
+    render(<LinearPluginPage {...makePageProps()} />);
+
+    expect(container.querySelector<HTMLSelectElement>("#linear-project-filter")?.value).toBe("proj-roadmap");
+    expect(dataCalls.find((call) => call.key === "linear-issues")?.params).toMatchObject({
+      projectId: "proj-roadmap",
+    });
+  });
+
   it("renders the token-first settings page instead of exposing raw mappings", async () => {
     mockedUsePluginData.mockReturnValue({
       data: {

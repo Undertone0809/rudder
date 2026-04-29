@@ -239,7 +239,7 @@ async function findIssueByTitle(request: APIRequestContext, organization: Organi
 }
 
 test.describe("Linear plugin import workflow", () => {
-  test("imports Linear issues through the host/plugin bridge", async ({ request }) => {
+  test("imports Linear issues through the host/plugin bridge", async ({ request, page }) => {
     const { organization, project, secret } = await createLinearFixtureOrg(request);
     const plugin = await installLinearPlugin(request);
     await configureLinearTokenOnly(request, plugin, secret);
@@ -277,6 +277,14 @@ test.describe("Linear plugin import workflow", () => {
     expect(catalog.teams).toContainEqual(expect.objectContaining({ id: "team-eng", name: "Engineering" }));
     expect(catalog.projects).toContainEqual(expect.objectContaining({ id: "proj-roadmap", name: "Roadmap" }));
     expect(catalog.users).toContainEqual(expect.objectContaining({ id: "user-amy", name: "Amy Zhang" }));
+
+    await page.goto(`/${organization.issuePrefix}/issues`);
+    await expect(page.getByTestId("issue-linear-section")).toContainText("External");
+    const roadmapLink = page.getByTestId("issue-linear-project-proj-roadmap");
+    await expect(roadmapLink).toContainText("Roadmap");
+    await roadmapLink.click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/linear\\?linearProjectId=proj-roadmap`));
+    await expect(page.locator("#linear-project-filter")).toHaveValue("proj-roadmap");
 
     const filtered = await pluginData<{
       rows: LinearIssueRow[];
