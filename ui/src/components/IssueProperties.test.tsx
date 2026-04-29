@@ -135,4 +135,24 @@ describe("IssueProperties", () => {
     expect(label?.classList.contains("min-w-0")).toBe(true);
     expect(label?.querySelector("span:last-child")?.classList.contains("truncate")).toBe(true);
   });
+
+  it("does not render a workspace property row", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(<IssueProperties issue={baseIssue} onUpdate={vi.fn()} />);
+    });
+
+    expect(container.textContent).not.toContain("Workspace");
+    expect(container.textContent).not.toContain("Execution workspace");
+  });
 });

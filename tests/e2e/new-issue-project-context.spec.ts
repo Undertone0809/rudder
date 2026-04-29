@@ -108,8 +108,6 @@ test.describe("New issue project context", () => {
         assigneeModelOverride: "",
         assigneeThinkingEffort: "",
         assigneeChrome: false,
-        executionWorkspaceMode: "shared_workspace",
-        selectedExecutionWorkspaceId: "",
         createdAt: "2026-04-26T10:00:00.000Z",
         updatedAt: "2026-04-26T10:00:00.000Z",
       }]));
@@ -155,8 +153,6 @@ test.describe("New issue project context", () => {
           assigneeModelOverride: "",
           assigneeThinkingEffort: "",
           assigneeChrome: false,
-          executionWorkspaceMode: "shared_workspace",
-          selectedExecutionWorkspaceId: "",
           createdAt: "2026-04-26T10:00:00.000Z",
           updatedAt: "2026-04-26T11:00:00.000Z",
         },
@@ -174,8 +170,6 @@ test.describe("New issue project context", () => {
           assigneeModelOverride: "",
           assigneeThinkingEffort: "",
           assigneeChrome: false,
-          executionWorkspaceMode: "shared_workspace",
-          selectedExecutionWorkspaceId: "",
           createdAt: "2026-04-26T09:00:00.000Z",
           updatedAt: "2026-04-26T09:00:00.000Z",
         },
@@ -195,5 +189,38 @@ test.describe("New issue project context", () => {
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
     await expect(dialog).toBeVisible();
     await expect(dialog.getByPlaceholder("Issue title")).toHaveValue("Older draft issue");
+  });
+
+  test("does not show execution workspace controls in the new issue dialog", async ({ page }) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: {
+        name: `New-Issue-No-Execution-Workspace-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const projectRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "No execution workspace project",
+        status: "planned",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json() as { id: string; name: string };
+
+    await page.goto(E2E_BASE_URL);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues?projectId=${project.id}`);
+    await page.getByTestId("workspace-main-header").getByRole("button", { name: "Create Issue" }).click();
+
+    const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: project.name })).toBeVisible();
+    await expect(dialog.getByText("Execution workspace", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByText("Reuse existing workspace", { exact: true })).toHaveCount(0);
   });
 });

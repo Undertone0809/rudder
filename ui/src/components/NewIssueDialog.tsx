@@ -4,7 +4,6 @@ import { pickTextColorForPillBg, pickTextColorForSolidBg } from "@/lib/color-con
 import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
-import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { agentsApi } from "../api/agents";
@@ -210,12 +209,6 @@ const priorities = [
   { value: "low", label: "Low", icon: ArrowDown, color: priorityColor.low ?? priorityColorDefault },
 ];
 
-const EXECUTION_WORKSPACE_MODES = [
-  { value: "shared_workspace", label: "Project default" },
-  { value: "isolated_workspace", label: "New isolated workspace" },
-  { value: "reuse_existing", label: "Reuse existing workspace" },
-] as const;
-
 function defaultProjectWorkspaceIdForProject(project: {
   workspaces?: Array<{ id: string; isPrimary: boolean }>;
   executionWorkspacePolicy?: { defaultProjectWorkspaceId?: string | null } | null;
@@ -229,28 +222,6 @@ function defaultProjectWorkspaceIdForProject(project: {
     ?? project.workspaces?.find((workspace) => workspace.isPrimary)?.id
     ?? project.workspaces?.[0]?.id
     ?? "";
-}
-
-function defaultExecutionWorkspaceModeForProject(project: { executionWorkspacePolicy?: { enabled?: boolean; defaultMode?: string | null } | null } | null | undefined) {
-  const defaultMode = project?.executionWorkspacePolicy?.enabled ? project.executionWorkspacePolicy.defaultMode : null;
-  if (
-    defaultMode === "isolated_workspace" ||
-    defaultMode === "operator_branch" ||
-    defaultMode === "adapter_default"
-  ) {
-    return defaultMode === "adapter_default" ? "agent_default" : defaultMode;
-  }
-  return "shared_workspace";
-}
-
-function issueExecutionWorkspaceModeForExistingWorkspace(mode: string | null | undefined) {
-  if (mode === "isolated_workspace" || mode === "operator_branch" || mode === "shared_workspace") {
-    return mode;
-  }
-  if (mode === "adapter_managed" || mode === "cloud_sandbox") {
-    return "agent_default";
-  }
-  return "shared_workspace";
 }
 
 export function NewIssueDialog() {
@@ -272,15 +243,12 @@ export function NewIssueDialog() {
   const [assigneeModelOverride, setAssigneeModelOverride] = useState("");
   const [assigneeThinkingEffort, setAssigneeThinkingEffort] = useState("");
   const [assigneeChrome, setAssigneeChrome] = useState(false);
-  const [executionWorkspaceMode, setExecutionWorkspaceMode] = useState<string>("shared_workspace");
-  const [selectedExecutionWorkspaceId, setSelectedExecutionWorkspaceId] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [dialogCompanyId, setDialogCompanyId] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const [activeSavedIssueDraftId, setActiveSavedIssueDraftId] = useState<string | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const executionWorkspaceDefaultProjectId = useRef<string | null>(null);
   const openContextLocationRef = useRef<{ pathname: string; search: string } | null>(null);
 
   const effectiveCompanyId = dialogCompanyId ?? selectedOrganizationId;
@@ -312,20 +280,6 @@ export function NewIssueDialog() {
     queryKey: queryKeys.issues.labels(effectiveCompanyId!),
     queryFn: () => issuesApi.listLabels(effectiveCompanyId!),
     enabled: !!effectiveCompanyId && newIssueOpen,
-  });
-  const { data: reusableExecutionWorkspaces } = useQuery({
-    queryKey: queryKeys.executionWorkspaces.list(effectiveCompanyId!, {
-      projectId,
-      projectWorkspaceId: projectWorkspaceId || undefined,
-      reuseEligible: true,
-    }),
-    queryFn: () =>
-      executionWorkspacesApi.list(effectiveCompanyId!, {
-        projectId,
-        projectWorkspaceId: projectWorkspaceId || undefined,
-        reuseEligible: true,
-      }),
-    enabled: Boolean(effectiveCompanyId) && newIssueOpen && Boolean(projectId),
   });
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
@@ -527,8 +481,6 @@ export function NewIssueDialog() {
       assigneeModelOverride,
       assigneeThinkingEffort,
       assigneeChrome,
-      executionWorkspaceMode,
-      selectedExecutionWorkspaceId,
     })) {
       return;
     }
@@ -545,8 +497,6 @@ export function NewIssueDialog() {
       assigneeModelOverride,
       assigneeThinkingEffort,
       assigneeChrome,
-      executionWorkspaceMode,
-      selectedExecutionWorkspaceId,
     });
   }, [
     title,
@@ -560,8 +510,6 @@ export function NewIssueDialog() {
     assigneeModelOverride,
     assigneeThinkingEffort,
     assigneeChrome,
-    executionWorkspaceMode,
-    selectedExecutionWorkspaceId,
     effectiveCompanyId,
     newIssueOpen,
     scheduleSave,
@@ -571,7 +519,6 @@ export function NewIssueDialog() {
   useEffect(() => {
     if (!newIssueOpen) return;
     setDialogCompanyId(selectedOrganizationId);
-    executionWorkspaceDefaultProjectId.current = null;
     const openContextLocation = openContextLocationRef.current ?? {
       pathname: location.pathname,
       search: location.search,
@@ -611,12 +558,6 @@ export function NewIssueDialog() {
       setAssigneeModelOverride(savedDraft.assigneeModelOverride ?? "");
       setAssigneeThinkingEffort(savedDraft.assigneeThinkingEffort ?? "");
       setAssigneeChrome(savedDraft.assigneeChrome ?? false);
-      setExecutionWorkspaceMode(
-        savedDraft.executionWorkspaceMode
-          ?? (savedDraft.useIsolatedExecutionWorkspace ? "isolated_workspace" : defaultExecutionWorkspaceModeForProject(restoredProject)),
-      );
-      setSelectedExecutionWorkspaceId(savedDraft.selectedExecutionWorkspaceId ?? "");
-      executionWorkspaceDefaultProjectId.current = restoredProjectId || null;
     } else if (newIssueDefaults.title) {
       setTitle(newIssueDefaults.title);
       setDescription(newIssueDefaults.description ?? "");
@@ -631,9 +572,6 @@ export function NewIssueDialog() {
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
-      setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForProject(defaultProject));
-      setSelectedExecutionWorkspaceId("");
-      executionWorkspaceDefaultProjectId.current = defaultProjectId || null;
     } else if (draft && hasMeaningfulIssueDraft(draft)) {
       const restoredValues = resolveDraftBackedNewIssueValues({
         defaults: newIssueDefaults,
@@ -655,12 +593,6 @@ export function NewIssueDialog() {
       setAssigneeModelOverride(draft.assigneeModelOverride ?? "");
       setAssigneeThinkingEffort(draft.assigneeThinkingEffort ?? "");
       setAssigneeChrome(draft.assigneeChrome ?? false);
-      setExecutionWorkspaceMode(
-        draft.executionWorkspaceMode
-          ?? (draft.useIsolatedExecutionWorkspace ? "isolated_workspace" : defaultExecutionWorkspaceModeForProject(restoredProject)),
-      );
-      setSelectedExecutionWorkspaceId(draft.selectedExecutionWorkspaceId ?? "");
-      executionWorkspaceDefaultProjectId.current = restoredProjectId || null;
     } else {
       const defaultProject = orderedProjects.find((project) => project.id === defaultProjectId);
       setTitle("");
@@ -675,9 +607,6 @@ export function NewIssueDialog() {
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
-      setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForProject(defaultProject));
-      setSelectedExecutionWorkspaceId("");
-      executionWorkspaceDefaultProjectId.current = defaultProjectId || null;
     }
   }, [newIssueOpen, newIssueDefaults, orderedProjects, selectedOrganizationId]);
 
@@ -722,15 +651,12 @@ export function NewIssueDialog() {
     setAssigneeModelOverride("");
     setAssigneeThinkingEffort("");
     setAssigneeChrome(false);
-    setExecutionWorkspaceMode("shared_workspace");
-    setSelectedExecutionWorkspaceId("");
     setExpanded(false);
     setDialogCompanyId(null);
     setStagedFiles([]);
     setIsFileDragOver(false);
     setCompanyOpen(false);
     setActiveSavedIssueDraftId(null);
-    executionWorkspaceDefaultProjectId.current = null;
   }
 
   function handleCompanyChange(orgId: string) {
@@ -744,8 +670,6 @@ export function NewIssueDialog() {
     setAssigneeModelOverride("");
     setAssigneeThinkingEffort("");
     setAssigneeChrome(false);
-    setExecutionWorkspaceMode("shared_workspace");
-    setSelectedExecutionWorkspaceId("");
   }
 
   function saveDraftIssue() {
@@ -762,8 +686,6 @@ export function NewIssueDialog() {
       assigneeModelOverride,
       assigneeThinkingEffort,
       assigneeChrome,
-      executionWorkspaceMode,
-      selectedExecutionWorkspaceId,
     });
     if (!savedDraft) return;
     if (draftTimer.current) clearTimeout(draftTimer.current);
@@ -786,18 +708,6 @@ export function NewIssueDialog() {
       thinkingEffortOverride: assigneeThinkingEffort,
       chrome: assigneeChrome,
     });
-    const selectedProject = orderedProjects.find((project) => project.id === projectId);
-    const executionWorkspacePolicy = selectedProject?.executionWorkspacePolicy ?? null;
-    const selectedReusableExecutionWorkspace = deduplicatedReusableWorkspaces.find(
-      (workspace) => workspace.id === selectedExecutionWorkspaceId,
-    );
-    const requestedExecutionWorkspaceMode =
-      executionWorkspaceMode === "reuse_existing"
-        ? issueExecutionWorkspaceModeForExistingWorkspace(selectedReusableExecutionWorkspace?.mode)
-        : executionWorkspaceMode;
-    const executionWorkspaceSettings = executionWorkspacePolicy?.enabled
-      ? { mode: requestedExecutionWorkspaceMode }
-      : null;
     createIssue.mutate({
       orgId: effectiveCompanyId,
       stagedFiles,
@@ -813,10 +723,6 @@ export function NewIssueDialog() {
         labelIds: selectedLabelIds,
         projectWorkspaceId,
         assigneeAgentRuntimeOverrides,
-        executionWorkspacePolicyEnabled: Boolean(executionWorkspacePolicy?.enabled),
-        executionWorkspaceMode,
-        selectedExecutionWorkspaceId,
-        executionWorkspaceSettings,
       }),
     });
   }
@@ -957,23 +863,6 @@ export function NewIssueDialog() {
     shouldShowCreateLabelOption,
   ]);
   const currentProject = orderedProjects.find((project) => project.id === projectId);
-  const currentProjectExecutionWorkspacePolicy = currentProject?.executionWorkspacePolicy ?? null;
-  const currentProjectSupportsExecutionWorkspace = Boolean(currentProjectExecutionWorkspacePolicy?.enabled);
-  const deduplicatedReusableWorkspaces = useMemo(() => {
-    const workspaces = reusableExecutionWorkspaces ?? [];
-    const seen = new Map<string, typeof workspaces[number]>();
-    for (const ws of workspaces) {
-      const key = ws.cwd ?? ws.id;
-      const existing = seen.get(key);
-      if (!existing || new Date(ws.lastUsedAt) > new Date(existing.lastUsedAt)) {
-        seen.set(key, ws);
-      }
-    }
-    return Array.from(seen.values());
-  }, [reusableExecutionWorkspaces]);
-  const selectedReusableExecutionWorkspace = deduplicatedReusableWorkspaces.find(
-    (workspace) => workspace.id === selectedExecutionWorkspaceId,
-  );
   const assigneeOptionsTitle =
     assigneeAdapterType === "claude_local"
       ? "Claude options"
@@ -1024,8 +913,6 @@ export function NewIssueDialog() {
     assigneeModelOverride,
     assigneeThinkingEffort,
     assigneeChrome,
-    executionWorkspaceMode,
-    selectedExecutionWorkspaceId,
   });
   const createIssueErrorMessage =
     createIssue.error instanceof Error ? createIssue.error.message : "Failed to create issue. Try again.";
@@ -1035,23 +922,8 @@ export function NewIssueDialog() {
   const handleProjectChange = useCallback((nextProjectId: string) => {
     setProjectId(nextProjectId);
     const nextProject = orderedProjects.find((project) => project.id === nextProjectId);
-    executionWorkspaceDefaultProjectId.current = nextProjectId || null;
     setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(nextProject));
-    setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForProject(nextProject));
-    setSelectedExecutionWorkspaceId("");
   }, [orderedProjects]);
-
-  useEffect(() => {
-    if (!newIssueOpen || !projectId || executionWorkspaceDefaultProjectId.current === projectId) {
-      return;
-    }
-    const project = orderedProjects.find((entry) => entry.id === projectId);
-    if (!project) return;
-    executionWorkspaceDefaultProjectId.current = projectId;
-    setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(project));
-    setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForProject(project));
-    setSelectedExecutionWorkspaceId("");
-  }, [newIssueOpen, orderedProjects, projectId]);
   const modelOverrideOptions = useMemo<InlineEntityOption[]>(
     () => {
       const models = resolveRuntimeModels(
@@ -1334,52 +1206,6 @@ export function NewIssueDialog() {
             </div>
           </div>
         </div>
-
-        {currentProject && currentProjectSupportsExecutionWorkspace && (
-          <div className="px-4 py-3 shrink-0 space-y-2">
-            <div className="space-y-1.5">
-              <div className="text-xs font-medium">Execution workspace</div>
-              <div className="text-[11px] text-muted-foreground">
-                Control whether this issue runs in the shared workspace, a new isolated workspace, or an existing one.
-              </div>
-              <select
-                className="w-full rounded border border-border bg-transparent px-2 py-1.5 text-xs outline-none"
-                value={executionWorkspaceMode}
-                onChange={(e) => {
-                  setExecutionWorkspaceMode(e.target.value);
-                  if (e.target.value !== "reuse_existing") {
-                    setSelectedExecutionWorkspaceId("");
-                  }
-                }}
-              >
-                {EXECUTION_WORKSPACE_MODES.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              {executionWorkspaceMode === "reuse_existing" && (
-                <select
-                  className="w-full rounded border border-border bg-transparent px-2 py-1.5 text-xs outline-none"
-                  value={selectedExecutionWorkspaceId}
-                  onChange={(e) => setSelectedExecutionWorkspaceId(e.target.value)}
-                >
-                  <option value="">Choose an existing workspace</option>
-                  {deduplicatedReusableWorkspaces.map((workspace) => (
-                    <option key={workspace.id} value={workspace.id}>
-                      {workspace.name} · {workspace.status} · {workspace.branchName ?? workspace.cwd ?? workspace.id.slice(0, 8)}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {executionWorkspaceMode === "reuse_existing" && selectedReusableExecutionWorkspace && (
-                <div className="text-[11px] text-muted-foreground">
-                  Reusing {selectedReusableExecutionWorkspace.name} from {selectedReusableExecutionWorkspace.branchName ?? selectedReusableExecutionWorkspace.cwd ?? "existing execution workspace"}.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
         {supportsAssigneeOverrides && (
           <div className="px-4 pb-2 shrink-0">
