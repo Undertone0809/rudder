@@ -189,4 +189,60 @@ describe("LiveUpdatesProvider notification preferences", () => {
 
     expect(toasts).toEqual([]);
   });
+
+  it("does not push live update toasts while Messenger is the visible surface", () => {
+    const toasts: unknown[] = [];
+
+    __liveUpdatesTestUtils.handleLiveEvent(
+      createQueryClientStub() as never,
+      "organization-1",
+      "/ORG/messenger/system/failed-runs",
+      {
+        type: "heartbeat.run.status",
+        orgId: "organization-1",
+        payload: {
+          runId: "run-1",
+          agentId: "agent-1",
+          status: "failed",
+          error: "The run failed.",
+        },
+      } as never,
+      (toast) => {
+        toasts.push(toast);
+        return "toast-1";
+      },
+      { cooldownHits: new Map(), suppressUntil: 0 },
+      { userId: "user-1", agentId: null },
+      { issueNotifications: true, chatNotifications: true },
+    );
+
+    __liveUpdatesTestUtils.handleLiveEvent(
+      createQueryClientStub() as never,
+      "organization-1",
+      "/ORG/messenger/chat/chat-1",
+      {
+        type: "activity.logged",
+        orgId: "organization-1",
+        payload: {
+          entityType: "chat",
+          entityId: "chat-1",
+          action: "chat.message_added",
+          details: {
+            role: "assistant",
+            preview: "I drafted the issue.",
+            messageId: "message-1",
+          },
+        },
+      } as never,
+      (toast) => {
+        toasts.push(toast);
+        return "toast-1";
+      },
+      { cooldownHits: new Map(), suppressUntil: 0 },
+      { userId: "user-1", agentId: null },
+      { issueNotifications: true, chatNotifications: true },
+    );
+
+    expect(toasts).toEqual([]);
+  });
 });

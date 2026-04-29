@@ -285,6 +285,13 @@ function shouldSuppressChatToastForVisibleConversation(
   return entityType === "chat" && !!entityId && entityId === visibleConversationId;
 }
 
+function shouldSuppressMessengerToast(
+  pathname: string,
+): boolean {
+  const relativePath = toOrganizationRelativePath(pathname);
+  return /^\/(?:messenger|chat)(?:\/|$)/.test(relativePath);
+}
+
 function shouldSuppressRunStatusToastForVisibleIssue(
   queryClient: QueryClient,
   pathname: string,
@@ -723,6 +730,7 @@ function handleLiveEvent(
       const toast = buildRunStatusToast(payload, nameOf);
       if (
         toast &&
+        !shouldSuppressMessengerToast(pathname) &&
         !shouldSuppressRunStatusToastForVisibleIssue(queryClient, pathname, payload)
       ) {
         gatedPushToast(gate, pushToast, "run-status", toast);
@@ -744,6 +752,7 @@ function handleLiveEvent(
     const toast = buildAgentStatusToast(payload, nameOf, queryClient, expectedCompanyId);
     if (
       toast &&
+      !shouldSuppressMessengerToast(pathname) &&
       !shouldSuppressAgentStatusToastForVisibleIssue(queryClient, pathname, payload)
     ) {
       gatedPushToast(gate, pushToast, "agent-status", toast);
@@ -762,6 +771,7 @@ function handleLiveEvent(
       buildJoinRequestToast(payload);
     if (
       toast &&
+      !shouldSuppressMessengerToast(pathname) &&
       !shouldSuppressActivityToastForVisibleIssue(queryClient, pathname, payload) &&
       !shouldSuppressChatToastForVisibleConversation(pathname, payload)
     ) {
@@ -775,6 +785,7 @@ export const __liveUpdatesTestUtils = {
   invalidateActivityQueries,
   shouldSuppressActivityToastForVisibleIssue,
   shouldSuppressChatToastForVisibleConversation,
+  shouldSuppressMessengerToast,
   shouldSuppressRunStatusToastForVisibleIssue,
   shouldSuppressAgentStatusToastForVisibleIssue,
 };
