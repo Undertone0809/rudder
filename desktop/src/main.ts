@@ -8,7 +8,13 @@ import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml } from "./boot-screen.js";
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
-import { listAvailableIdeTargets, openWorkspaceFileInIde } from "./ide-opener.js";
+import {
+  listAvailableIdeTargets,
+  listWorkspaceLaunchTargets,
+  openWorkspace,
+  openWorkspaceFileInIde,
+  type DesktopWorkspaceLaunchTarget,
+} from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import { resolveDesktopSystemPermissions, type DesktopSystemPermissions } from "./system-permissions.js";
 import {
@@ -130,6 +136,8 @@ type DesktopIdeTarget = {
   id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij";
   label: string;
 };
+
+type DesktopWorkspaceLaunchTargetId = DesktopWorkspaceLaunchTarget["id"];
 
 type ActiveRunSummary = {
   totalRuns: number;
@@ -1201,6 +1209,15 @@ function registerIpc(): void {
   ipcMain.handle("desktop:list-available-ides", async (): Promise<DesktopIdeTarget[]> => {
     return await listAvailableIdeTargets();
   });
+  ipcMain.handle("desktop:list-workspace-launch-targets", async (): Promise<DesktopWorkspaceLaunchTarget[]> => {
+    return await listWorkspaceLaunchTargets();
+  });
+  ipcMain.handle(
+    "desktop:open-workspace",
+    async (_event, payload: { rootPath: string; targetId?: DesktopWorkspaceLaunchTargetId }) => {
+      await openWorkspace(payload.rootPath, payload.targetId);
+    },
+  );
   ipcMain.handle(
     "desktop:open-workspace-file-in-ide",
     async (_event, payload: { rootPath: string; filePath: string; ideId?: DesktopIdeTarget["id"] }) => {

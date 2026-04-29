@@ -72,11 +72,19 @@ export type DesktopIdeTarget = {
   label: string;
 };
 
+export type DesktopWorkspaceLaunchTarget = {
+  id: "vscode" | "cursor" | "xcode" | "windsurf" | "zed" | "webstorm" | "intellij" | "terminal" | "warp" | "finder";
+  label: string;
+  kind: "ide" | "terminal" | "folder";
+};
+
 export type DesktopShellApi = {
   getBootState(): Promise<DesktopBootState>;
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   openPath(targetPath: string): Promise<void>;
   listAvailableIdes(): Promise<DesktopIdeTarget[]>;
+  listWorkspaceLaunchTargets(): Promise<DesktopWorkspaceLaunchTarget[]>;
+  openWorkspace(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
   openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
   copyText(value: string): Promise<void>;
   setAppearance(theme: "light" | "dark" | "system"): Promise<void>;
