@@ -20,7 +20,8 @@ related_code:
   - ui/src/pages/GoalDetail.tsx
   - ui/src/components/GoalProperties.tsx
   - ui/src/components/IssueProperties.tsx
-commit_refs: []
+commit_refs:
+  - 00d248c
 updated_at: 2026-04-30
 ---
 
