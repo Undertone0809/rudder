@@ -24,7 +24,7 @@ import { queueIssueAssignmentWakeup } from "./issue-assignment-wakeup.js";
 import { organizationService } from "./orgs.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
-import { heartbeatService } from "./runtime-kernel/heartbeat.js";
+import { heartbeatService } from "./heartbeat.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;

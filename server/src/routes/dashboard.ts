@@ -2,7 +2,7 @@ import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
 import type { AgentSkillAnalytics } from "@rudderhq/shared";
 import { dashboardService } from "../services/dashboard.js";
-import { heartbeatService } from "../services/runtime-kernel/heartbeat.js";
+import { heartbeatService } from "../services/heartbeat.js";
 import { assertCompanyAccess } from "./authz.js";
 
 export function dashboardRoutes(db: Db) {
