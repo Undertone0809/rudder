@@ -5,10 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockInstanceSettingsService = vi.hoisted(() => ({
   getGeneral: vi.fn(),
   getNotifications: vi.fn(),
-  getExperimental: vi.fn(),
   updateGeneral: vi.fn(),
   updateNotifications: vi.fn(),
-  updateExperimental: vi.fn(),
   listCompanyIds: vi.fn(),
 }));
 const mockOperatorProfileService = vi.hoisted(() => ({
@@ -78,9 +76,6 @@ describe("instance settings routes", () => {
       desktopIssueNotifications: true,
       desktopChatNotifications: true,
     });
-    mockInstanceSettingsService.getExperimental.mockResolvedValue({
-      autoRestartDevServerWhenIdle: false,
-    });
     mockInstanceSettingsService.updateGeneral.mockResolvedValue({
       id: "instance-settings-1",
       general: {
@@ -95,12 +90,6 @@ describe("instance settings routes", () => {
         desktopDockBadge: true,
         desktopIssueNotifications: false,
         desktopChatNotifications: true,
-      },
-    });
-    mockInstanceSettingsService.updateExperimental.mockResolvedValue({
-      id: "instance-settings-1",
-      experimental: {
-        autoRestartDevServerWhenIdle: false,
       },
     });
     mockInstanceSettingsService.listCompanyIds.mockResolvedValue(["organization-1", "organization-2"]);
@@ -145,55 +134,6 @@ describe("instance settings routes", () => {
     delete process.env.LANGFUSE_PUBLIC_KEY;
     delete process.env.LANGFUSE_SECRET_KEY;
     delete process.env.LANGFUSE_ENVIRONMENT;
-  });
-
-  it("allows local board users to read experimental settings", async () => {
-    const app = await createApp({
-      type: "board",
-      userId: "local-board",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-    });
-
-    const getRes = await request(app).get("/api/instance/settings/experimental");
-    expect(getRes.status).toBe(200);
-    expect(getRes.body).toEqual({
-      autoRestartDevServerWhenIdle: false,
-    });
-  });
-
-  it("allows local board users to update guarded dev-server auto-restart", async () => {
-    const app = await createApp({
-      type: "board",
-      userId: "local-board",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-    });
-
-    await request(app)
-      .patch("/api/instance/settings/experimental")
-      .send({ autoRestartDevServerWhenIdle: true })
-      .expect(200);
-
-    expect(mockInstanceSettingsService.updateExperimental).toHaveBeenCalledWith({
-      autoRestartDevServerWhenIdle: true,
-    });
-  });
-
-  it("rejects removed isolated workspace experimental settings patches", async () => {
-    const app = await createApp({
-      type: "board",
-      userId: "local-board",
-      source: "local_implicit",
-      isInstanceAdmin: true,
-    });
-
-    const patchRes = await request(app)
-      .patch("/api/instance/settings/experimental")
-      .send({ enableIsolatedWorkspaces: true });
-
-    expect(patchRes.status).toBe(400);
-    expect(mockInstanceSettingsService.updateExperimental).not.toHaveBeenCalled();
   });
 
   it("allows local board users to read and update general settings", async () => {

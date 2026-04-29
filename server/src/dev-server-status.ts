@@ -19,9 +19,6 @@ export type DevServerHealthStatus = {
   changedPathsSample: string[];
   envFileChanged: boolean;
   pendingMigrations: string[];
-  autoRestartEnabled: boolean;
-  activeRunCount: number;
-  waitingForIdle: boolean;
   lastRestartAt: string | null;
 };
 
@@ -80,7 +77,6 @@ export function readPersistedDevServerStatus(
 
 export function toDevServerHealthStatus(
   persisted: PersistedDevServerStatus,
-  opts: { autoRestartEnabled: boolean; activeRunCount: number },
 ): DevServerHealthStatus {
   const hasPathChanges = persisted.changedPathCount > 0;
   const hasPendingMigrations = persisted.pendingMigrations.length > 0;
@@ -103,9 +99,6 @@ export function toDevServerHealthStatus(
     changedPathsSample: persisted.changedPathsSample,
     envFileChanged: persisted.envFileChanged,
     pendingMigrations: persisted.pendingMigrations,
-    autoRestartEnabled: opts.autoRestartEnabled,
-    activeRunCount: opts.activeRunCount,
-    waitingForIdle: restartRequired && opts.autoRestartEnabled && opts.activeRunCount > 0,
     lastRestartAt: persisted.lastRestartAt,
   };
 }

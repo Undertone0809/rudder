@@ -41,8 +41,7 @@ export function normalizeRememberedInstanceSettingsPath(
       pathname === INSTANCE_SETTINGS_LANGFUSE_PATH ||
       pathname === INSTANCE_SETTINGS_ABOUT_PATH ||
       pathname === "/instance/settings/heartbeats" ||
-      pathname === "/instance/settings/plugins" ||
-      pathname === "/instance/settings/experimental"
+      pathname === "/instance/settings/plugins"
     )
   ) {
     return `${pathname}${search}${hash}`;
@@ -91,7 +90,6 @@ export function normalizeRememberedSettingsPath(
       pathname === INSTANCE_SETTINGS_ABOUT_PATH ||
       pathname === "/instance/settings/heartbeats" ||
       pathname === "/instance/settings/plugins" ||
-      pathname === "/instance/settings/experimental" ||
       /^\/instance\/settings\/plugins\/[^/?#]+$/.test(pathname)
     )
   ) {

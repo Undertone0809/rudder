@@ -43,12 +43,6 @@ export const operatorProfileSettingsSchema = z.object({
 
 export const patchOperatorProfileSettingsSchema = operatorProfileSettingsSchema.partial();
 
-export const instanceExperimentalSettingsSchema = z.object({
-  autoRestartDevServerWhenIdle: z.boolean().default(false),
-}).strict();
-
-export const patchInstanceExperimentalSettingsSchema = instanceExperimentalSettingsSchema.partial();
-
 export const instancePathPickerSelectionTypeSchema = z.enum(["file", "directory"]);
 
 export const instancePathPickerRequestSchema = z.object({
@@ -69,8 +63,6 @@ export type OperatorProfileSettings = z.infer<typeof operatorProfileSettingsSche
 export type PatchOperatorProfileSettings = z.infer<typeof patchOperatorProfileSettingsSchema>;
 export type InstanceNotificationSettings = z.infer<typeof instanceNotificationSettingsSchema>;
 export type PatchInstanceNotificationSettings = z.infer<typeof patchInstanceNotificationSettingsSchema>;
-export type InstanceExperimentalSettings = z.infer<typeof instanceExperimentalSettingsSchema>;
-export type PatchInstanceExperimentalSettings = z.infer<typeof patchInstanceExperimentalSettingsSchema>;
 export type InstancePathPickerSelectionType = z.infer<typeof instancePathPickerSelectionTypeSchema>;
 export type InstancePathPickerRequest = z.infer<typeof instancePathPickerRequestSchema>;
 export type InstancePathPickerResult = z.infer<typeof instancePathPickerResultSchema>;

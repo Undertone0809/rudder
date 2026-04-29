@@ -9,9 +9,6 @@ export type DevServerHealthStatus = {
   changedPathsSample: string[];
   envFileChanged: boolean;
   pendingMigrations: string[];
-  autoRestartEnabled: boolean;
-  activeRunCount: number;
-  waitingForIdle: boolean;
   lastRestartAt: string | null;
 };
 

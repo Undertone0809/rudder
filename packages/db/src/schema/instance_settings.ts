@@ -7,7 +7,6 @@ export const instanceSettings = pgTable(
     singletonKey: text("singleton_key").notNull().default("default"),
     general: jsonb("general").$type<Record<string, unknown>>().notNull().default({}),
     notifications: jsonb("notifications").$type<Record<string, unknown>>().notNull().default({}),
-    experimental: jsonb("experimental").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -1,7 +1,6 @@
 import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
 import {
-  patchInstanceExperimentalSettingsSchema,
   patchInstanceGeneralSettingsSchema,
   patchInstanceLangfuseSettingsSchema,
   patchInstanceNotificationSettingsSchema,
@@ -278,41 +277,6 @@ export function instanceSettingsRoutes(
       );
 
       res.json(updated);
-    },
-  );
-
-  router.get("/instance/settings/experimental", async (req, res) => {
-    assertCanManageInstanceSettings(req);
-    res.json(await svc.getExperimental());
-  });
-
-  router.patch(
-    "/instance/settings/experimental",
-    validate(patchInstanceExperimentalSettingsSchema),
-    async (req, res) => {
-      assertCanManageInstanceSettings(req);
-      const updated = await svc.updateExperimental(req.body);
-      const actor = getActorInfo(req);
-      const orgIds = await svc.listCompanyIds();
-      await Promise.all(
-        orgIds.map((orgId) =>
-          logActivity(db, {
-            orgId,
-            actorType: actor.actorType,
-            actorId: actor.actorId,
-            agentId: actor.agentId,
-            runId: actor.runId,
-            action: "instance.settings.experimental_updated",
-            entityType: "instance_settings",
-            entityId: updated.id,
-            details: {
-              experimental: updated.experimental,
-              changedKeys: Object.keys(req.body).sort(),
-            },
-          }),
-        ),
-      );
-      res.json(updated.experimental);
     },
   );
 

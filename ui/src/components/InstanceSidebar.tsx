@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Clock3,
-  FlaskConical,
   IdCard,
   Info,
   Puzzle,
@@ -118,7 +117,6 @@ export function InstanceSidebar() {
               {t("common.runtime")}
             </div>
             <SettingsNavLink to="/instance/settings/heartbeats" label={t("common.heartbeats")} icon={Clock3} end />
-            <SettingsNavLink to="/instance/settings/experimental" label={t("common.experimental")} icon={FlaskConical} />
           </div>
         ) : null}
 

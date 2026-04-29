@@ -18,7 +18,6 @@ import { shouldTrackDevServerPath } from "./dev-runner-paths.mjs";
 const mode = process.argv[2] === "watch" ? "watch" : "dev";
 const cliArgs = process.argv.slice(3);
 const scanIntervalMs = 1500;
-const autoRestartPollIntervalMs = 2500;
 const gracefulShutdownTimeoutMs = 10_000;
 const startupReadyTimeoutMs = 30_000;
 const changedPathSampleLimit = 5;
@@ -122,13 +121,11 @@ let pendingMigrations = [];
 let lastChangedAt = null;
 let lastRestartAt = null;
 let scanInFlight = false;
-let restartInFlight = false;
 let shuttingDown = false;
 let childExitWasExpected = false;
 let child = null;
 let childExitPromise = null;
 let scanTimer = null;
-let autoRestartTimer = null;
 
 function toError(error, context = "Dev runner command failed") {
   if (error instanceof Error) return error;
@@ -421,7 +418,7 @@ async function markChildAsCurrent() {
 }
 
 async function scanForBackendChanges() {
-  if (mode !== "dev" || scanInFlight || restartInFlight) return;
+  if (mode !== "dev" || scanInFlight) return;
   scanInFlight = true;
   try {
     const nextSnapshot = collectWatchedSnapshot();
@@ -513,22 +510,6 @@ async function waitForChildExit() {
   return await childExitPromise;
 }
 
-async function stopChildForRestart() {
-  if (!child) return { code: 0, signal: null };
-  childExitWasExpected = true;
-  child.kill("SIGTERM");
-  const killTimer = setTimeout(() => {
-    if (child) {
-      child.kill("SIGKILL");
-    }
-  }, gracefulShutdownTimeoutMs);
-  try {
-    return await waitForChildExit();
-  } finally {
-    clearTimeout(killTimer);
-  }
-}
-
 async function startServerChild() {
   await withRuntimeStartLock(
     {
@@ -574,7 +555,7 @@ async function startServerChild() {
           childExitPromise = null;
           resolve({ code: code ?? 0, signal });
 
-          if (restartInFlight || expected || shuttingDown) {
+          if (expected || shuttingDown) {
             return;
           }
           if (signal) {
@@ -591,65 +572,18 @@ async function startServerChild() {
   await markChildAsCurrent();
 }
 
-async function maybeAutoRestartChild() {
-  if (mode !== "dev" || restartInFlight || !child) return;
-  if (dirtyPaths.size === 0 && pendingMigrations.length === 0) return;
-
-  restartInFlight = true;
-  let health;
-  try {
-    health = await getDevHealthPayload();
-  } catch {
-    restartInFlight = false;
-    return;
-  }
-
-  const devServer = health?.devServer;
-  if (!devServer?.enabled || devServer.autoRestartEnabled !== true) {
-    restartInFlight = false;
-    return;
-  }
-  if ((devServer.activeRunCount ?? 0) > 0) {
-    restartInFlight = false;
-    return;
-  }
-
-  try {
-    await maybePreflightMigrations({
-      autoApply: true,
-      interactive: false,
-      exitOnDecline: false,
-    });
-    await stopChildForRestart();
-    await startServerChild();
-  } catch (error) {
-    const err = toError(error, "Auto-restart failed");
-    process.stderr.write(`${err.stack ?? err.message}\n`);
-    process.exit(1);
-  } finally {
-    restartInFlight = false;
-  }
-}
-
 function installDevIntervals() {
   if (mode !== "dev") return;
 
   scanTimer = setInterval(() => {
     void scanForBackendChanges();
   }, scanIntervalMs);
-  autoRestartTimer = setInterval(() => {
-    void maybeAutoRestartChild();
-  }, autoRestartPollIntervalMs);
 }
 
 function clearDevIntervals() {
   if (scanTimer) {
     clearInterval(scanTimer);
     scanTimer = null;
-  }
-  if (autoRestartTimer) {
-    clearInterval(autoRestartTimer);
-    autoRestartTimer = null;
   }
 }
 

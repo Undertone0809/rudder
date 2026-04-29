@@ -658,7 +658,6 @@ const zhExactPhrases: Record<string, string> = {
   "Medium": "中",
   "Low": "低",
   "Toggle username log censoring": "切换用户名日志脱敏",
-  "Toggle guarded dev-server auto-restart": "切换受保护开发服务器自动重启",
   "Worktree parent dir": "工作树父目录",
   "Working dir:": "工作目录：",
   "Org": "组织",

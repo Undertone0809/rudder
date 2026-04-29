@@ -40,7 +40,6 @@ import { InstanceLangfuseSettings } from "./pages/InstanceLangfuseSettings";
 import { InstanceAboutSettings } from "./pages/InstanceAboutSettings";
 import { InstanceProfileSettings } from "./pages/InstanceProfileSettings";
 import { InstanceSettings } from "./pages/InstanceSettings";
-import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
 import { PluginPage } from "./pages/PluginPage";
@@ -508,7 +507,6 @@ export function App() {
             <Route path="langfuse" element={<InstanceLangfuseSettings />} />
             <Route path="about" element={<InstanceAboutSettings />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
-            <Route path="experimental" element={<InstanceExperimentalSettings />} />
             <Route path="plugins" element={<PluginManager />} />
             <Route path="plugins/:pluginId" element={<PluginSettings />} />
           </Route>
@@ -560,7 +558,6 @@ export function App() {
               <Route path="langfuse" element={<InstanceLangfuseSettings />} />
               <Route path="about" element={<InstanceAboutSettings />} />
               <Route path="heartbeats" element={<InstanceSettings />} />
-              <Route path="experimental" element={<InstanceExperimentalSettings />} />
               <Route path="plugins" element={<PluginManager />} />
               <Route path="plugins/:pluginId" element={<PluginSettings />} />
             </Route>

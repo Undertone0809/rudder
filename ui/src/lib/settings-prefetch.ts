@@ -62,11 +62,6 @@ export function listSettingsPrefetchQueryKeys(target: string, organizationId: st
     return keys;
   }
 
-  if (target.startsWith("/instance/settings/experimental")) {
-    keys.push([...queryKeys.instance.experimentalSettings], [...queryKeys.health]);
-    return keys;
-  }
-
   if (target.startsWith("/instance/settings/plugins")) {
     keys.push([...queryKeys.plugins.all]);
     return keys;
@@ -188,22 +183,6 @@ export function prefetchSettingsQueries(
         queryKey: queryKeys.instance.schedulerHeartbeats,
         queryFn: () => heartbeatsApi.listInstanceSchedulerAgents(),
         staleTime: 15_000,
-      }),
-    );
-    return Promise.allSettled(jobs);
-  }
-
-  if (target.startsWith("/instance/settings/experimental")) {
-    jobs.push(
-      queryClient.prefetchQuery({
-        queryKey: queryKeys.instance.experimentalSettings,
-        queryFn: () => instanceSettingsApi.getExperimental(),
-        staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
-      }),
-      queryClient.prefetchQuery({
-        queryKey: queryKeys.health,
-        queryFn: () => healthApi.get(),
-        staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
       }),
     );
     return Promise.allSettled(jobs);

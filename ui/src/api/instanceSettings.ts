@@ -1,5 +1,4 @@
 import type {
-  InstanceExperimentalSettings,
   InstanceGeneralSettings,
   InstanceLangfuseSettings,
   InstanceNotificationSettings,
@@ -9,7 +8,6 @@ import type {
   PatchInstanceGeneralSettings,
   PatchInstanceLangfuseSettings,
   PatchInstanceNotificationSettings,
-  PatchInstanceExperimentalSettings,
   PatchOperatorProfileSettings,
 } from "@rudderhq/shared";
 import { api } from "./client";
@@ -31,10 +29,6 @@ export const instanceSettingsApi = {
     api.get<InstanceLangfuseSettings>("/instance/settings/langfuse"),
   updateLangfuse: (patch: PatchInstanceLangfuseSettings) =>
     api.patch<InstanceLangfuseSettings>("/instance/settings/langfuse", patch),
-  getExperimental: () =>
-    api.get<InstanceExperimentalSettings>("/instance/settings/experimental"),
-  updateExperimental: (patch: PatchInstanceExperimentalSettings) =>
-    api.patch<InstanceExperimentalSettings>("/instance/settings/experimental", patch),
   pickPath: (input: InstancePathPickerRequest) =>
     api.post<InstancePathPickerResult>("/instance/path-picker", input),
 };

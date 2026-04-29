@@ -6,12 +6,9 @@ import {
   type InstanceLocale,
   instanceNotificationSettingsSchema,
   type InstanceNotificationSettings,
-  instanceExperimentalSettingsSchema,
-  type InstanceExperimentalSettings,
   type PatchInstanceGeneralSettings,
   type PatchInstanceNotificationSettings,
   type InstanceSettings,
-  type PatchInstanceExperimentalSettings,
 } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 
@@ -55,30 +52,11 @@ function normalizeNotificationSettings(raw: unknown): InstanceNotificationSettin
   };
 }
 
-function normalizeExperimentalSettings(raw: unknown): InstanceExperimentalSettings {
-  const normalizedRaw =
-    raw && typeof raw === "object" && !Array.isArray(raw)
-      ? Object.fromEntries(
-          Object.entries(raw as Record<string, unknown>).filter(([key]) => key !== "enableIsolatedWorkspaces"),
-        )
-      : {};
-  const parsed = instanceExperimentalSettingsSchema.safeParse(normalizedRaw);
-  if (parsed.success) {
-    return {
-      autoRestartDevServerWhenIdle: parsed.data.autoRestartDevServerWhenIdle ?? false,
-    };
-  }
-  return {
-    autoRestartDevServerWhenIdle: false,
-  };
-}
-
 function toInstanceSettings(row: typeof instanceSettings.$inferSelect): InstanceSettings {
   return {
     id: row.id,
     general: normalizeGeneralSettings(row.general),
     notifications: normalizeNotificationSettings(row.notifications),
-    experimental: normalizeExperimentalSettings(row.experimental),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -100,7 +78,6 @@ export function instanceSettingsService(db: Db) {
         singletonKey: DEFAULT_SINGLETON_KEY,
         general: {},
         notifications: {},
-        experimental: {},
         createdAt: now,
         updatedAt: now,
       })
@@ -126,11 +103,6 @@ export function instanceSettingsService(db: Db) {
     getNotifications: async (): Promise<InstanceNotificationSettings> => {
       const row = await getOrCreateRow();
       return normalizeNotificationSettings(row.notifications);
-    },
-
-    getExperimental: async (): Promise<InstanceExperimentalSettings> => {
-      const row = await getOrCreateRow();
-      return normalizeExperimentalSettings(row.experimental);
     },
 
     updateGeneral: async (patch: PatchInstanceGeneralSettings): Promise<InstanceSettings> => {
@@ -173,24 +145,6 @@ export function instanceSettingsService(db: Db) {
         .update(instanceSettings)
         .set({
           notifications: { ...nextNotifications },
-          updatedAt: now,
-        })
-        .where(eq(instanceSettings.id, current.id))
-        .returning();
-      return toInstanceSettings(updated ?? current);
-    },
-
-    updateExperimental: async (patch: PatchInstanceExperimentalSettings): Promise<InstanceSettings> => {
-      const current = await getOrCreateRow();
-      const nextExperimental = normalizeExperimentalSettings({
-        ...normalizeExperimentalSettings(current.experimental),
-        ...patch,
-      });
-      const now = new Date();
-      const [updated] = await db
-        .update(instanceSettings)
-        .set({
-          experimental: { ...nextExperimental },
           updatedAt: now,
         })
         .where(eq(instanceSettings.id, current.id))
