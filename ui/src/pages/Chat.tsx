@@ -1448,19 +1448,21 @@ function ChatMessagesLoadingState() {
   );
 }
 
-function StreamTranscriptItem({
+export function StreamTranscriptItem({
   entries,
   state,
   streamStartedAt,
   streamEndedAt,
+  defaultOpen = false,
 }: {
   entries: TranscriptEntry[];
   state: StreamDraftState | ChatMessage["status"];
   streamStartedAt: Date;
   streamEndedAt?: Date | null;
+  defaultOpen?: boolean;
 }) {
   const streamingActive = state === "streaming" || state === "finalizing";
-  const [processOpen, setProcessOpen] = useState(() => streamingActive);
+  const [processOpen, setProcessOpen] = useState(() => defaultOpen || streamingActive);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -1468,6 +1470,10 @@ function StreamTranscriptItem({
     const id = window.setInterval(() => setTick((n) => n + 1), 500);
     return () => clearInterval(id);
   }, [streamingActive]);
+
+  useEffect(() => {
+    if (defaultOpen) setProcessOpen(true);
+  }, [defaultOpen]);
 
   const durationMs = useMemo(() => {
     const start = streamStartedAt.getTime();
@@ -1540,6 +1546,14 @@ function StreamTranscriptItem({
       </div>
     </div>
   );
+}
+
+function chatMessageHasRenderableTranscript(message: ChatMessage) {
+  const transcript = (message.transcript ?? []) as TranscriptEntry[];
+  return transcript.length > 0
+    && (message.role === "assistant"
+      || message.kind === "issue_proposal"
+      || message.kind === "operation_proposal");
 }
 
 function AssistantDraftItem({
@@ -2542,6 +2556,10 @@ function ChatWorkspace() {
   const visibleMessages = activeEditCutoffMs === null
     ? displayedMessages
     : displayedMessages.filter((message) => new Date(message.createdAt).getTime() < activeEditCutoffMs);
+  const latestPersistedTranscriptMessageId = useMemo(
+    () => [...visibleMessages].reverse().find(chatMessageHasRenderableTranscript)?.id ?? null,
+    [visibleMessages],
+  );
   const messageHasFollowingUserReply = useCallback(
     (message: ChatMessage) => {
       const messageCreatedAt = new Date(message.createdAt).getTime();
@@ -3416,11 +3434,7 @@ function ChatWorkspace() {
                         <>
                           {visibleMessages.map((message) => {
                             const persistedTranscript = (message.transcript ?? []) as TranscriptEntry[];
-                            const shouldRenderPersistedTranscript =
-                              persistedTranscript.length > 0
-                              && (message.role === "assistant"
-                                || message.kind === "issue_proposal"
-                                || message.kind === "operation_proposal");
+                            const shouldRenderPersistedTranscript = chatMessageHasRenderableTranscript(message);
                             const persistedProcessStartedAt = shouldRenderPersistedTranscript
                               ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript)
                               : null;
@@ -3436,6 +3450,7 @@ function ChatWorkspace() {
                                     state={message.status}
                                     streamStartedAt={persistedProcessStartedAt!}
                                     streamEndedAt={persistedProcessEndedAt}
+                                    defaultOpen={message.id === latestPersistedTranscriptMessageId}
                                   />
                                 ) : null}
                                 <ChatMessageItem

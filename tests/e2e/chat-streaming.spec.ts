@@ -85,13 +85,16 @@ test.describe("Chat streaming", () => {
     await expect(assistantReply).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: /Worked for/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-transcript-item").last().getByText("Model turn 1", { exact: false })).toBeVisible({
+      timeout: 15_000,
+    });
 
     await page.reload();
     await expect(page.getByText("Streaming reply for chat.", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
     await expectTranscriptBetweenUserAndAssistant(page);
     const transcriptToggle = page.getByRole("button", { name: /Worked for/ }).last();
     await expect(transcriptToggle).toBeVisible({ timeout: 15_000 });
-    await transcriptToggle.click();
+    await expect(transcriptToggle).toHaveAttribute("aria-expanded", "true");
     const transcriptItem = page.getByTestId("chat-transcript-item").last();
     await expect(transcriptItem.getByText("Model turn 1", { exact: false })).toBeVisible({ timeout: 15_000 });
     await expect(transcriptItem.getByText("Inspecting current chat state", { exact: false })).toBeVisible({ timeout: 15_000 });
@@ -171,7 +174,7 @@ test.describe("Chat streaming", () => {
     await expectTranscriptBetweenUserAndAssistant(page);
     const transcriptToggle = page.getByRole("button", { name: /Worked for .*Stopped/ }).last();
     await expect(transcriptToggle).toBeVisible({ timeout: 15_000 });
-    await transcriptToggle.click();
+    await expect(transcriptToggle).toHaveAttribute("aria-expanded", "true");
     const transcriptItem = page.getByTestId("chat-transcript-item").last();
     await expect(transcriptItem.getByText("Model turn 1", { exact: false })).toBeVisible({ timeout: 15_000 });
     await expect(transcriptItem.getByText("Inspecting current chat state", { exact: false })).toBeVisible({ timeout: 15_000 });
