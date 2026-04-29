@@ -6,6 +6,7 @@ import {
   CHAT_MESSAGE_KINDS,
   CHAT_MESSAGE_ROLES,
   CHAT_MESSAGE_STATUSES,
+  ISSUE_STATUSES,
 } from "../constants.js";
 
 export const chatConversationStatusSchema = z.enum(CHAT_CONVERSATION_STATUSES);
@@ -56,6 +57,7 @@ const chatIssueProposalSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().min(1).max(20000),
   priority: z.enum(["critical", "high", "medium", "low"]).optional().default("medium"),
+  status: z.enum(ISSUE_STATUSES).optional(),
   projectId: z.string().uuid().optional().nullable(),
   goalId: z.string().uuid().optional().nullable(),
   parentId: z.string().uuid().optional().nullable(),
