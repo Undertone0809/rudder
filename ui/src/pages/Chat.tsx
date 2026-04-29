@@ -28,6 +28,9 @@ import {
   type ChatOperationProposalDecisionAction,
   type ChatOperationProposalDecisionStatus,
   type ChatPrimaryIssueSummary,
+  type ChatUserInputOption,
+  type ChatUserInputQuestion,
+  type ChatUserInputRequest,
   type Issue,
   type MessengerThreadSummary,
   type Project,
@@ -521,7 +524,7 @@ function ChatAttachmentPreviewDialog({
 
 const RUDDER_COPILOT_LABEL = "Rudder Copilot";
 const PLAN_MODE_HELP_TEXT =
-  "Read-only planning. The agent should investigate, produce a plan, and create an issue with that plan attached.";
+  "Read-only planning. The agent can ask structured blocking questions, then produce a plan and create an issue with that plan attached.";
 
 type ChatBranchPreview = { chatTurnId: string; turnVariant: number };
 
@@ -686,6 +689,66 @@ function planDocumentFromMessage(message: ChatMessage) {
   return { title, body };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function userInputRequestFromMessage(message: ChatMessage): ChatUserInputRequest | null {
+  const payload = message.structuredPayload;
+  if (!payload || !isRecord(payload.requestUserInput)) return null;
+  const rawQuestions = Array.isArray(payload.requestUserInput.questions)
+    ? payload.requestUserInput.questions
+    : [];
+  const questions = rawQuestions
+    .map((questionRaw, questionIndex): ChatUserInputQuestion | null => {
+      if (!isRecord(questionRaw)) return null;
+      const question = typeof questionRaw.question === "string" ? questionRaw.question.trim() : "";
+      if (!question) return null;
+      const rawOptions = Array.isArray(questionRaw.options) ? questionRaw.options : [];
+      const options = rawOptions
+        .map((optionRaw, optionIndex): ChatUserInputOption | null => {
+          if (!isRecord(optionRaw)) return null;
+          const label = typeof optionRaw.label === "string" ? optionRaw.label.trim() : "";
+          if (!label) return null;
+          const id = typeof optionRaw.id === "string" && optionRaw.id.trim()
+            ? optionRaw.id.trim()
+            : `option_${optionIndex + 1}`;
+          const description = typeof optionRaw.description === "string" && optionRaw.description.trim()
+            ? optionRaw.description.trim()
+            : null;
+          return { id, label, description };
+        })
+        .filter((option): option is ChatUserInputOption => Boolean(option));
+      if (options.length < 2) return null;
+      const id = typeof questionRaw.id === "string" && questionRaw.id.trim()
+        ? questionRaw.id.trim()
+        : `question_${questionIndex + 1}`;
+      const header = typeof questionRaw.header === "string" && questionRaw.header.trim()
+        ? questionRaw.header.trim()
+        : `Question ${questionIndex + 1}`;
+      return { id, header, question, options };
+    })
+    .filter((question): question is ChatUserInputQuestion => Boolean(question));
+  return questions.length > 0 ? { questions } : null;
+}
+
+function formatUserInputAnswer(
+  request: ChatUserInputRequest,
+  selections: Record<string, string>,
+) {
+  const answers = request.questions
+    .map((question) => {
+      const option = question.options.find((candidate) => candidate.id === selections[question.id]);
+      if (!option) return null;
+      return `- ${question.header}: ${option.label}`;
+    })
+    .filter((line): line is string => Boolean(line));
+  return [
+    "Selected answers for request_user_input:",
+    ...answers,
+  ].join("\n");
+}
+
 function operationProposalFromMessage(message: ChatMessage) {
   const payload = message.structuredPayload;
   if (!payload) return null;
@@ -815,6 +878,78 @@ function ChatAssistantAttributionRow({
         )}
       </span>
       <span className="text-sm font-semibold tracking-tight text-foreground">{label}</span>
+    </div>
+  );
+}
+
+function RequestUserInputCard({
+  request,
+  onSubmit,
+  disabled,
+}: {
+  request: ChatUserInputRequest;
+  onSubmit: (answer: string) => void;
+  disabled?: boolean;
+}) {
+  const [selections, setSelections] = useState<Record<string, string>>({});
+  const allSelected = request.questions.every((question) => Boolean(selections[question.id]));
+
+  return (
+    <div
+      data-testid="chat-user-input-request"
+      className="mt-4 max-w-[72ch] rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:var(--surface-panel)] p-4"
+    >
+      <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        <CircleHelp className="h-4 w-4" />
+        <span>request_user_input</span>
+      </div>
+      <div className="space-y-4">
+        {request.questions.map((question) => (
+          <div key={question.id} className="space-y-2">
+            <div className="text-[11px] font-medium uppercase text-muted-foreground">{question.header}</div>
+            <div className="text-sm font-medium leading-6 text-foreground">{question.question}</div>
+            <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label={question.question}>
+              {question.options.map((option) => {
+                const selected = selections[question.id] === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    aria-pressed={selected}
+                    disabled={disabled}
+                    className={cn(
+                      "min-h-16 rounded-[var(--radius-md)] border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                      selected
+                        ? "border-[color:var(--accent-strong)] bg-[color:var(--accent-soft)] text-foreground"
+                        : "border-[color:var(--border-soft)] bg-[color:var(--surface-base)] text-foreground hover:bg-[color:var(--surface-active)]",
+                    )}
+                    onClick={() => setSelections((current) => ({ ...current, [question.id]: option.id }))}
+                  >
+                    <span className="block text-sm font-medium leading-5">{option.label}</span>
+                    {option.description ? (
+                      <span className="mt-1 block text-xs leading-5 text-muted-foreground">{option.description}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex justify-end">
+        <Button
+          size="sm"
+          disabled={!allSelected || disabled}
+          data-testid="chat-user-input-submit"
+          onClick={() => {
+            if (!allSelected) return;
+            onSubmit(formatUserInputAnswer(request, selections));
+          }}
+        >
+          <ArrowUp className="mr-1.5 h-3.5 w-3.5" />
+          Send answer
+        </Button>
+      </div>
     </div>
   );
 }
@@ -1054,6 +1189,8 @@ function ChatMessageItem({
   onCopyMessageText,
   onEditUserMessage,
   onOpenImage,
+  onSubmitUserInput,
+  userInputRequestDisabled,
   turnBranchControls,
 }: {
   conversation: ChatConversation;
@@ -1068,6 +1205,8 @@ function ChatMessageItem({
   onCopyMessageText: (text: string) => void | Promise<void>;
   onEditUserMessage: (message: ChatMessage) => void;
   onOpenImage: (preview: AttachmentPreviewState) => void;
+  onSubmitUserInput: (answer: string) => void;
+  userInputRequestDisabled?: boolean;
   turnBranchControls?: {
     current: number;
     total: number;
@@ -1106,6 +1245,9 @@ function ChatMessageItem({
 
   const isUser = message.role === "user";
   const statusLabel = !isUser ? assistantStateLabel(message.status) : null;
+  const userInputRequest = message.kind === "user_input_request"
+    ? userInputRequestFromMessage(message)
+    : null;
 
   if (!isUser) {
     return (
@@ -1126,6 +1268,13 @@ function ChatMessageItem({
           <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
             <MarkdownBody>{message.body}</MarkdownBody>
           </div>
+          {userInputRequest ? (
+            <RequestUserInputCard
+              request={userInputRequest}
+              onSubmit={onSubmitUserInput}
+              disabled={userInputRequestDisabled}
+            />
+          ) : null}
           <ChatAttachmentList attachments={message.attachments} onOpenImage={onOpenImage} />
           <div
             className={cn(
@@ -2394,6 +2543,18 @@ function ChatWorkspace() {
   const visibleMessages = activeEditCutoffMs === null
     ? displayedMessages
     : displayedMessages.filter((message) => new Date(message.createdAt).getTime() < activeEditCutoffMs);
+  const messageHasFollowingUserReply = useCallback(
+    (message: ChatMessage) => {
+      const messageCreatedAt = new Date(message.createdAt).getTime();
+      return visibleMessages.some(
+        (candidate) =>
+          candidate.role === "user"
+          && candidate.kind === "message"
+          && new Date(candidate.createdAt).getTime() > messageCreatedAt,
+      );
+    },
+    [visibleMessages],
+  );
   const lastMarkedReadKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -3308,6 +3469,16 @@ function ChatWorkspace() {
                                   onCopyMessageText={copyChatMessageText}
                                   onEditUserMessage={beginEditUserMessage}
                                   onOpenImage={setAttachmentPreview}
+                                  onSubmitUserInput={(answer) => {
+                                    void sendMessage({ bodyOverride: answer });
+                                  }}
+                                  userInputRequestDisabled={
+                                    activeSendInFlight
+                                    || (
+                                      message.kind === "user_input_request"
+                                      && messageHasFollowingUserReply(message)
+                                    )
+                                  }
                                   turnBranchControls={turnBranchControlsFor(message)}
                                 />
                               </Fragment>

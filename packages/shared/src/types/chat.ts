@@ -59,6 +59,23 @@ export interface ChatRuntimeDescriptor {
   error: string | null;
 }
 
+export interface ChatUserInputOption {
+  id: string;
+  label: string;
+  description: string | null;
+}
+
+export interface ChatUserInputQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options: ChatUserInputOption[];
+}
+
+export interface ChatUserInputRequest {
+  questions: ChatUserInputQuestion[];
+}
+
 export interface ChatConversation {
   id: string;
   orgId: string;
@@ -96,6 +113,7 @@ export interface ChatMessage {
     | "issue_proposal"
     | "operation_proposal"
     | "routing_suggestion"
+    | "user_input_request"
     | "system_event";
   status: "completed" | "stopped" | "failed";
   body: string;

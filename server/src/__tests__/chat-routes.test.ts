@@ -535,6 +535,59 @@ describe("chat routes", () => {
     );
   });
 
+  it("persists plan-mode user input requests without creating approvals", async () => {
+    const conversation = createConversation({ planMode: true });
+    const userMessage = createMessage("message-user", "user", "message", "Need a plan");
+    const structuredPayload = {
+      requestUserInput: {
+        questions: [{
+          id: "scope",
+          header: "Scope",
+          question: "Which scope should the plan use?",
+          options: [
+            { id: "minimal", label: "Minimal", description: "Smallest useful change." },
+            { id: "complete", label: "Complete", description: "Cover the whole workflow." },
+          ],
+        }],
+      },
+    };
+    const requestMessage = {
+      ...createMessage("message-request", "assistant", "user_input_request", "Choose the planning scope."),
+      structuredPayload,
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(requestMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Choose the planning scope.",
+      replyingAgentId: "copilot-agent",
+      reply: {
+        kind: "user_input_request",
+        body: "Choose the planning scope.",
+        structuredPayload,
+        replyingAgentId: "copilot-agent",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Need a plan" });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.addMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.objectContaining({
+        kind: "user_input_request",
+        body: "Choose the planning scope.",
+        structuredPayload,
+      }),
+    );
+    expect(mockChatService.createProposalApproval).not.toHaveBeenCalled();
+  });
+
   it("persists the selected agent as replyingAgentId for preferred-agent chats", async () => {
     const conversation = createConversation({
       preferredAgentId: "agent-1",

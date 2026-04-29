@@ -466,6 +466,22 @@ export function chatRoutes(db: Db, storage: StorageService) {
     const createdMessages: ChatMessage[] = [];
     const { chatTurnId, turnVariant } = turnContext;
 
+    if (assistantReply.kind === "user_input_request") {
+      const requestMessage = await svc.addMessage(conversation.id, {
+        orgId: conversation.orgId,
+        role: "assistant",
+        kind: "user_input_request",
+        body: assistantReply.body,
+        structuredPayload: assistantReply.structuredPayload,
+        transcript,
+        replyingAgentId,
+        chatTurnId,
+        turnVariant,
+      });
+      createdMessages.push(requestMessage as ChatMessage);
+      return createdMessages;
+    }
+
     if (assistantReply.kind === "issue_proposal") {
       const shouldAutoCreateIssue = conversation.planMode || conversation.issueCreationMode === "auto_create";
       if (shouldAutoCreateIssue) {

@@ -91,6 +91,16 @@ export interface AgentRuntimeExecutionResult {
       label: string;
       description?: string;
     }>;
+    questions?: Array<{
+      id: string;
+      header: string;
+      question: string;
+      choices: Array<{
+        key: string;
+        label: string;
+        description?: string;
+      }>;
+    }>;
   } | null;
 }
 
