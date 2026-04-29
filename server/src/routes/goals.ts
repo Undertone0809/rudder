@@ -27,6 +27,17 @@ export function goalRoutes(db: Db) {
     res.json(goal);
   });
 
+  router.get("/goals/:id/dependencies", async (req, res) => {
+    const id = req.params.id as string;
+    const goal = await svc.getById(id);
+    if (!goal) {
+      res.status(404).json({ error: "Goal not found" });
+      return;
+    }
+    assertCompanyAccess(req, goal.orgId);
+    res.json(await svc.dependencies(goal));
+  });
+
   router.post("/orgs/:orgId/goals", validate(createGoalSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);

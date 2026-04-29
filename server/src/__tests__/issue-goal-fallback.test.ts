@@ -56,4 +56,15 @@ describe("issue goal fallback", () => {
       }),
     ).toBeNull();
   });
+
+  it("honors explicit goal clearing on update", () => {
+    expect(
+      resolveNextIssueGoalId({
+        currentProjectId: null,
+        currentGoalId: "goal-1",
+        goalId: null,
+        defaultGoalId: "goal-1",
+      }),
+    ).toBeNull();
+  });
 });

@@ -35,6 +35,26 @@ vi.mock("@tanstack/react-query", () => ({
         error: null,
       };
     }
+    if (queryKey[0] === "goals" && queryKey.length === 2) {
+      return {
+        data: [
+          {
+            id: "goal-1",
+            orgId: "org-1",
+            title: "Launch Goal Center",
+            description: null,
+            level: "organization",
+            status: "active",
+            parentId: null,
+            ownerAgentId: null,
+            createdAt: new Date("2026-04-19T08:00:00.000Z"),
+            updatedAt: new Date("2026-04-19T08:00:00.000Z"),
+          },
+        ],
+        isLoading: false,
+        error: null,
+      };
+    }
     return {
       data: [],
       isLoading: false,
@@ -154,5 +174,41 @@ describe("IssueProperties", () => {
 
     expect(container.textContent).not.toContain("Workspace");
     expect(container.textContent).not.toContain("Execution workspace");
+  });
+
+  it("links an issue to a goal from the properties panel", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onUpdate = vi.fn();
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(<IssueProperties issue={baseIssue} onUpdate={onUpdate} />);
+    });
+
+    const trigger = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("No goal"));
+    expect(trigger).toBeTruthy();
+
+    act(() => {
+      trigger!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const option = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Launch Goal Center"));
+    expect(option).toBeTruthy();
+
+    act(() => {
+      option!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith({ goalId: "goal-1" });
   });
 });

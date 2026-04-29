@@ -1,7 +1,10 @@
 import { useEffect } from "react";
-import { useParams } from "@/lib/router";
+import { Link, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { activityApi } from "../api/activity";
+import { agentsApi } from "../api/agents";
 import { goalsApi } from "../api/goals";
+import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { assetsApi } from "../api/assets";
 import { usePanel } from "../context/PanelContext";
@@ -15,11 +18,103 @@ import { StatusBadge } from "../components/StatusBadge";
 import { InlineEditor } from "../components/InlineEditor";
 import { EntityRow } from "../components/EntityRow";
 import { PageSkeleton } from "../components/PageSkeleton";
-import { projectUrl } from "../lib/utils";
+import { formatDate, issueUrl, projectUrl } from "../lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus } from "lucide-react";
-import type { Goal, Project } from "@rudderhq/shared";
+import type { ActivityEvent, Issue, Project } from "@rudderhq/shared";
+
+function SummaryMetric({
+  label,
+  value,
+  to,
+}: {
+  label: string;
+  value: string | number;
+  to?: string;
+}) {
+  const content = (
+    <div className="rounded-md border border-border bg-card px-3 py-2">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="mt-0.5 truncate text-sm font-medium">{value}</div>
+    </div>
+  );
+  return to ? <Link to={to}>{content}</Link> : content;
+}
+
+function WorkSection({
+  linkedProjects,
+  linkedIssues,
+}: {
+  linkedProjects: Project[];
+  linkedIssues: Issue[];
+}) {
+  if (linkedProjects.length === 0 && linkedIssues.length === 0) {
+    return (
+      <div className="rounded-md border border-border bg-card px-4 py-6 text-sm text-muted-foreground">
+        No linked work yet. Link projects or issues to make this goal operational.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <div className="text-sm font-medium">Projects ({linkedProjects.length})</div>
+        {linkedProjects.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No linked projects.</p>
+        ) : (
+          <div className="border border-border">
+            {linkedProjects.map((project) => (
+              <EntityRow
+                key={project.id}
+                title={project.name}
+                subtitle={project.description ?? undefined}
+                to={projectUrl(project)}
+                trailing={<StatusBadge status={project.status} />}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-sm font-medium">Issues ({linkedIssues.length})</div>
+        {linkedIssues.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No linked issues.</p>
+        ) : (
+          <div className="border border-border">
+            {linkedIssues.map((issue) => (
+              <EntityRow
+                key={issue.id}
+                title={issue.title}
+                subtitle={issue.identifier ?? undefined}
+                to={issueUrl(issue)}
+                trailing={<StatusBadge status={issue.status} />}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ActivityList({ events }: { events: ActivityEvent[] }) {
+  if (events.length === 0) {
+    return <p className="text-sm text-muted-foreground">No activity yet.</p>;
+  }
+  return (
+    <div className="border border-border divide-y divide-border">
+      {events.map((event) => (
+        <div key={event.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+          <span>{event.action.replace(/^goal\./, "").replace(/_/g, " ")}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">{formatDate(event.createdAt)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function GoalDetail() {
   const { goalId } = useParams<{ goalId: string }>();
@@ -28,6 +123,7 @@ export function GoalDetail() {
   const { openPanel, closePanel } = usePanel();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const {
     data: goal,
@@ -52,6 +148,37 @@ export function GoalDetail() {
     enabled: !!resolvedCompanyId
   });
 
+  const { data: allIssues } = useQuery({
+    queryKey: queryKeys.issues.list(resolvedCompanyId!),
+    queryFn: () => issuesApi.list(resolvedCompanyId!),
+    enabled: !!resolvedCompanyId
+  });
+
+  const { data: agents } = useQuery({
+    queryKey: queryKeys.agents.list(resolvedCompanyId!),
+    queryFn: () => agentsApi.list(resolvedCompanyId!),
+    enabled: !!resolvedCompanyId
+  });
+
+  const {
+    data: dependencies,
+    isLoading: dependenciesLoading,
+  } = useQuery({
+    queryKey: queryKeys.goals.dependencies(goalId!),
+    queryFn: () => goalsApi.dependencies(goalId!),
+    enabled: !!goalId && !!goal,
+  });
+
+  const { data: activity } = useQuery({
+    queryKey: ["goals", "detail", goalId, "activity"],
+    queryFn: () =>
+      activityApi.list(resolvedCompanyId!, {
+        entityType: "goal",
+        entityId: goalId!,
+      }),
+    enabled: !!resolvedCompanyId && !!goalId,
+  });
+
   useEffect(() => {
     if (!goal?.orgId || goal.orgId === selectedOrganizationId) return;
     setSelectedOrganizationId(goal.orgId, { source: "route_sync" });
@@ -69,6 +196,26 @@ export function GoalDetail() {
           queryKey: queryKeys.goals.list(resolvedCompanyId)
         });
       }
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.goals.dependencies(goalId!)
+      });
+    }
+  });
+
+  const deleteGoal = useMutation({
+    mutationFn: () => goalsApi.remove(goalId!),
+    onSuccess: () => {
+      if (resolvedCompanyId) {
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.goals.list(resolvedCompanyId)
+        });
+      }
+      navigate("/goals");
+    },
+    onError: () => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.goals.dependencies(goalId!)
+      });
     }
   });
 
@@ -90,6 +237,13 @@ export function GoalDetail() {
     if (p.goals.some((goalRef) => goalRef.id === goalId)) return true;
     return p.goalId === goalId;
   });
+  const linkedIssues = (allIssues ?? []).filter((issue) => issue.goalId === goalId);
+  const ownerAgent = goal?.ownerAgentId
+    ? agents?.find((agent) => agent.id === goal.ownerAgentId) ?? null
+    : null;
+  const parentGoal = goal?.parentId
+    ? allGoals?.find((candidate) => candidate.id === goal.parentId) ?? null
+    : null;
 
   useEffect(() => {
     setBreadcrumbs([
@@ -104,11 +258,16 @@ export function GoalDetail() {
         <GoalProperties
           goal={goal}
           onUpdate={(data) => updateGoal.mutate(data)}
+          dependencies={dependencies}
+          dependenciesLoading={dependenciesLoading}
+          onDelete={() => deleteGoal.mutate()}
+          deletePending={deleteGoal.isPending}
+          deleteError={deleteGoal.error instanceof Error ? deleteGoal.error : null}
         />
       );
     }
     return () => closePanel();
-  }, [goal]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [goal, dependencies, dependenciesLoading, deleteGoal.isPending, deleteGoal.error]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isLoading) return <PageSkeleton variant="detail" />;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
@@ -145,15 +304,31 @@ export function GoalDetail() {
         />
       </div>
 
-      <Tabs defaultValue="children">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+        <SummaryMetric label="Owner" value={ownerAgent?.name ?? (goal.ownerAgentId ? goal.ownerAgentId.slice(0, 8) : "None")} />
+        <SummaryMetric label="Parent" value={parentGoal?.title ?? "None"} to={parentGoal ? `/goals/${parentGoal.id}` : undefined} />
+        <SummaryMetric label="Sub-goals" value={childGoals.length} />
+        <SummaryMetric label="Projects" value={linkedProjects.length} />
+        <SummaryMetric label="Issues" value={linkedIssues.length} />
+        <SummaryMetric label="Updated" value={formatDate(goal.updatedAt)} />
+      </div>
+
+      <Tabs defaultValue="work">
         <TabsList>
+          <TabsTrigger value="work">
+            Work ({linkedProjects.length + linkedIssues.length})
+          </TabsTrigger>
           <TabsTrigger value="children">
             Sub-Goals ({childGoals.length})
           </TabsTrigger>
-          <TabsTrigger value="projects">
-            Projects ({linkedProjects.length})
+          <TabsTrigger value="activity">
+            Activity ({activity?.length ?? 0})
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="work" className="mt-4">
+          <WorkSection linkedProjects={linkedProjects} linkedIssues={linkedIssues} />
+        </TabsContent>
 
         <TabsContent value="children" className="mt-4 space-y-3">
           <div className="flex items-center justify-start">
@@ -173,22 +348,8 @@ export function GoalDetail() {
           )}
         </TabsContent>
 
-        <TabsContent value="projects" className="mt-4">
-          {linkedProjects.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No linked projects.</p>
-          ) : (
-            <div className="border border-border">
-              {linkedProjects.map((project) => (
-                <EntityRow
-                  key={project.id}
-                  title={project.name}
-                  subtitle={project.description ?? undefined}
-                  to={projectUrl(project)}
-                  trailing={<StatusBadge status={project.status} />}
-                />
-              ))}
-            </div>
-          )}
+        <TabsContent value="activity" className="mt-4">
+          <ActivityList events={activity ?? []} />
         </TabsContent>
       </Tabs>
     </div>

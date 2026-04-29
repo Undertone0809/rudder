@@ -88,6 +88,7 @@ export const queryKeys = {
   goals: {
     list: (orgId: string) => ["goals", orgId] as const,
     detail: (id: string) => ["goals", "detail", id] as const,
+    dependencies: (id: string) => ["goals", "detail", id, "dependencies"] as const,
   },
   budgets: {
     overview: (orgId: string) => ["budgets", "overview", orgId] as const,

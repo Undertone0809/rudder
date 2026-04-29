@@ -6,6 +6,7 @@ import type { Issue } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
+import { goalsApi } from "../api/goals";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { useOrganization } from "../context/OrganizationContext";
@@ -23,7 +24,7 @@ import { formatDate, formatDateTime, cn, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { User, Hexagon, ArrowUpRight, Tag, Plus } from "lucide-react";
+import { User, Hexagon, ArrowUpRight, Tag, Plus, Target } from "lucide-react";
 import { AgentIcon } from "./AgentIconPicker";
 
 function defaultProjectWorkspaceIdForProject(project: {
@@ -126,6 +127,8 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
   const [assigneeSearch, setAssigneeSearch] = useState("");
   const [projectOpen, setProjectOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
+  const [goalOpen, setGoalOpen] = useState(false);
+  const [goalSearch, setGoalSearch] = useState("");
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [labelSearch, setLabelSearch] = useState("");
 
@@ -144,6 +147,12 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(orgId!),
     queryFn: () => projectsApi.list(orgId!),
+    enabled: !!orgId,
+  });
+
+  const { data: goals } = useQuery({
+    queryKey: queryKeys.goals.list(orgId!),
+    queryFn: () => goalsApi.list(orgId!),
     enabled: !!orgId,
   });
   const activeProjects = useMemo(
@@ -189,6 +198,11 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
     if (!id) return id?.slice(0, 8) ?? "None";
     const project = orderedProjects.find((p) => p.id === id);
     return project?.name ?? id.slice(0, 8);
+  };
+  const goalName = (id: string | null) => {
+    if (!id) return "None";
+    const goal = goals?.find((g) => g.id === id) ?? issue.goal ?? null;
+    return goal?.title ?? id.slice(0, 8);
   };
   const currentProject = issue.projectId
     ? orderedProjects.find((project) => project.id === issue.projectId) ?? null
@@ -475,6 +489,65 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
     </>
   );
 
+  const goalTrigger = issue.goalId ? (
+    <>
+      <Target className="h-3.5 w-3.5 text-muted-foreground" />
+      <span className="text-sm truncate">{goalName(issue.goalId)}</span>
+    </>
+  ) : (
+    <>
+      <Target className="h-3.5 w-3.5 text-muted-foreground" />
+      <span className="text-sm text-muted-foreground">No goal</span>
+    </>
+  );
+
+  const goalContent = (
+    <>
+      <input
+        className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
+        placeholder="Search goals..."
+        value={goalSearch}
+        onChange={(e) => setGoalSearch(e.target.value)}
+        autoFocus={!inline}
+      />
+      <div className="max-h-48 overflow-y-auto overscroll-contain">
+        <button
+          className={cn(
+            "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 whitespace-nowrap",
+            !issue.goalId && "bg-accent"
+          )}
+          onClick={() => {
+            onUpdate({ goalId: null });
+            setGoalOpen(false);
+          }}
+        >
+          No goal
+        </button>
+        {(goals ?? [])
+          .filter((goal) => {
+            if (!goalSearch.trim()) return true;
+            return goal.title.toLowerCase().includes(goalSearch.toLowerCase());
+          })
+          .map((goal) => (
+            <button
+              key={goal.id}
+              className={cn(
+                "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-left",
+                goal.id === issue.goalId && "bg-accent"
+              )}
+              onClick={() => {
+                onUpdate({ goalId: goal.id });
+                setGoalOpen(false);
+              }}
+            >
+              <Target className="h-3 w-3 text-muted-foreground shrink-0" />
+              <span className="truncate">{goal.title}</span>
+            </button>
+          ))}
+      </div>
+    </>
+  );
+
   return (
     <div className="space-y-4">
       <div className="space-y-1">
@@ -537,6 +610,27 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
           ) : undefined}
         >
           {projectContent}
+        </PropertyPicker>
+
+        <PropertyPicker
+          inline={inline}
+          label="Goal"
+          open={goalOpen}
+          onOpenChange={(open) => { setGoalOpen(open); if (!open) setGoalSearch(""); }}
+          triggerContent={goalTrigger}
+          triggerClassName="min-w-0 max-w-full"
+          popoverClassName="w-fit min-w-[11rem]"
+          extra={issue.goalId ? (
+            <Link
+              to={`/goals/${issue.goalId}`}
+              className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ArrowUpRight className="h-3 w-3" />
+            </Link>
+          ) : undefined}
+        >
+          {goalContent}
         </PropertyPicker>
 
         {issue.parentId && (

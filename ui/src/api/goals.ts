@@ -1,4 +1,4 @@
-import type { Goal } from "@rudderhq/shared";
+import type { Goal, GoalDependencies } from "@rudderhq/shared";
 import { api } from "./client";
 
 export const goalsApi = {
@@ -7,5 +7,6 @@ export const goalsApi = {
   create: (orgId: string, data: Record<string, unknown>) =>
     api.post<Goal>(`/orgs/${orgId}/goals`, data),
   update: (id: string, data: Record<string, unknown>) => api.patch<Goal>(`/goals/${id}`, data),
+  dependencies: (id: string) => api.get<GoalDependencies>(`/goals/${id}/dependencies`),
   remove: (id: string) => api.delete<Goal>(`/goals/${id}`),
 };
