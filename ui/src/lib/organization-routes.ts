@@ -13,6 +13,7 @@ const BOARD_ROUTE_ROOTS = new Set([
   "chat",
   "messenger",
   "automations",
+  "calendar",
   "goals",
   "costs",
   "usage",

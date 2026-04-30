@@ -17,6 +17,7 @@ export { chatService } from "./chats.js";
 export { messengerService } from "./messenger.js";
 export { secretService } from "./secrets.js";
 export { automationService } from "./automations.js";
+export { calendarService, type CalendarEventFilters } from "./calendar.js";
 export { costService } from "./costs.js";
 export { financeService } from "./finance.js";
 export { heartbeatService, heartbeatOrchestrator } from "./heartbeat.js";

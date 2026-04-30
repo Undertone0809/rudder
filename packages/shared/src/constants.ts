@@ -130,6 +130,27 @@ export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
 export const ISSUE_ORIGIN_KINDS = ["manual", "automation_execution"] as const;
 export type IssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
 
+export const CALENDAR_SOURCE_TYPES = ["rudder_local", "google_calendar", "agent_work", "system"] as const;
+export type CalendarSourceType = (typeof CALENDAR_SOURCE_TYPES)[number];
+
+export const CALENDAR_OWNER_TYPES = ["user", "agent", "system"] as const;
+export type CalendarOwnerType = (typeof CALENDAR_OWNER_TYPES)[number];
+
+export const CALENDAR_VISIBILITIES = ["full", "busy_only", "private"] as const;
+export type CalendarVisibility = (typeof CALENDAR_VISIBILITIES)[number];
+
+export const CALENDAR_SOURCE_STATUSES = ["active", "paused", "disconnected", "error"] as const;
+export type CalendarSourceStatus = (typeof CALENDAR_SOURCE_STATUSES)[number];
+
+export const CALENDAR_EVENT_KINDS = ["human_event", "agent_work_block", "external_event", "system_event"] as const;
+export type CalendarEventKind = (typeof CALENDAR_EVENT_KINDS)[number];
+
+export const CALENDAR_EVENT_STATUSES = ["planned", "in_progress", "actual", "cancelled", "external"] as const;
+export type CalendarEventStatus = (typeof CALENDAR_EVENT_STATUSES)[number];
+
+export const CALENDAR_SOURCE_MODES = ["manual", "derived", "imported"] as const;
+export type CalendarSourceMode = (typeof CALENDAR_SOURCE_MODES)[number];
+
 export const CHAT_CONVERSATION_STATUSES = ["active", "resolved", "archived"] as const;
 export type ChatConversationStatus = (typeof CHAT_CONVERSATION_STATUSES)[number];
 

@@ -75,6 +75,29 @@ export const queryKeys = {
     runs: (id: string) => ["automations", "runs", id] as const,
     activity: (orgId: string, id: string) => ["automations", "activity", orgId, id] as const,
   },
+  calendar: {
+    sources: (orgId: string) => ["calendar", orgId, "sources"] as const,
+    events: (
+      orgId: string,
+      start: string,
+      end: string,
+      agentIds?: string[],
+      sourceIds?: string[],
+      eventKinds?: string[],
+      statuses?: string[],
+    ) =>
+      [
+        "calendar",
+        orgId,
+        "events",
+        start,
+        end,
+        agentIds?.join(",") ?? "",
+        sourceIds?.join(",") ?? "",
+        eventKinds?.join(",") ?? "",
+        statuses?.join(",") ?? "",
+      ] as const,
+  },
   executionWorkspaces: {
     list: (orgId: string, filters?: Record<string, string | boolean | undefined>) =>
       ["execution-workspaces", orgId, filters ?? {}] as const,

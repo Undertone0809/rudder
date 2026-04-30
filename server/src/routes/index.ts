@@ -6,6 +6,7 @@ export { projectRoutes } from "./projects.js";
 export { issueRoutes } from "./issues.js";
 export { messengerRoutes } from "./messenger.js";
 export { automationRoutes } from "./automations.js";
+export { calendarRoutes } from "./calendar.js";
 export { goalRoutes } from "./goals.js";
 export { approvalRoutes } from "./approvals.js";
 export { secretRoutes } from "./secrets.js";

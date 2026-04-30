@@ -21,6 +21,7 @@ import { Chat } from "./pages/Chat";
 import { Messenger } from "./pages/Messenger";
 import { Automations } from "./pages/Automations";
 import { AutomationDetail } from "./pages/AutomationDetail";
+import { Calendar as CalendarPage } from "./pages/Calendar";
 import { ExecutionWorkspaceDetail } from "./pages/ExecutionWorkspaceDetail";
 import { Goals } from "./pages/Goals";
 import { GoalDetail } from "./pages/GoalDetail";
@@ -231,6 +232,7 @@ function boardRoutes() {
       <Route path="chat/:conversationId" element={<LegacyMessengerRedirect />} />
       <Route path="automations" element={<Automations />} />
       <Route path="automations/:automationId" element={<AutomationDetail />} />
+      <Route path="calendar" element={<CalendarPage />} />
       <Route path="execution-workspaces/:workspaceId" element={<ExecutionWorkspaceDetail />} />
       <Route path="goals" element={<Goals />} />
       <Route path="goals/:goalId" element={<GoalDetail />} />
@@ -521,6 +523,7 @@ export function App() {
           <Route path="chat/:conversationId" element={<LegacyMessengerRedirect />} />
           <Route path="automations" element={<UnprefixedBoardRedirect />} />
           <Route path="automations/:automationId" element={<UnprefixedBoardRedirect />} />
+          <Route path="calendar" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/*" element={<UnprefixedBoardRedirect />} />
           <Route path="heartbeats" element={<UnprefixedBoardRedirect />} />
           <Route path="organization/settings" element={<UnprefixedBoardRedirect />} />

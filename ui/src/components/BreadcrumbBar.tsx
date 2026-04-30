@@ -58,7 +58,7 @@ export function BreadcrumbBar({
   const [issueSearch, setIssueSearch] = useState("");
   const relativePath = useMemo(() => toOrganizationRelativePath(location.pathname), [location.pathname]);
   const isPrimaryRailPage = useMemo(
-    () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|projects|goals|automations)(?:\/|$)/.test(relativePath),
+    () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|projects|goals|automations|calendar)(?:\/|$)/.test(relativePath),
     [relativePath],
   );
   const isAgentDetailRoute = useMemo(
@@ -79,6 +79,7 @@ export function BreadcrumbBar({
     if (/^\/agents(?:\/|$)/.test(relativePath)) return "Agents";
     if (/^\/goals(?:\/|$)/.test(relativePath)) return "Goals";
     if (/^\/automations(?:\/|$)/.test(relativePath)) return "Automations";
+    if (/^\/calendar(?:\/|$)/.test(relativePath)) return "Calendar";
     return null;
   }, [relativePath]);
   const { data: visibleProjects } = useQuery({

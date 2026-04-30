@@ -17,6 +17,7 @@ import {
 const PORT = E2E_PORT;
 const BASE_URL = E2E_BASE_URL;
 const USE_EXISTING_SERVER = process.env.RUDDER_E2E_USE_EXISTING_SERVER === "1";
+const CHROMIUM_EXECUTABLE_PATH = process.env.RUDDER_E2E_CHROMIUM_EXECUTABLE?.trim() || undefined;
 const E2E_CONFIG = path.join(E2E_INSTANCE_ROOT, "config.json");
 const E2E_DATABASE_URL = process.env.RUDDER_E2E_DATABASE_URL?.trim() || null;
 
@@ -92,7 +93,12 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { browserName: "chromium" },
+      use: {
+        browserName: "chromium",
+        ...(CHROMIUM_EXECUTABLE_PATH
+          ? { launchOptions: { executablePath: CHROMIUM_EXECUTABLE_PATH } }
+          : {}),
+      },
     },
   ],
   // The webServer directive starts `rudder run` before tests.
