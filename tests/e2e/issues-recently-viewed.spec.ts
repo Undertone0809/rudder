@@ -41,6 +41,40 @@ async function seedRecentIssues(page: Page, orgId: string, issueIds: string[]) {
 }
 
 test.describe("Issues recently viewed sidebar", () => {
+  test("saves custom issue boards and removes the old starred sidebar view", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Custom-Boards");
+    await createIssue(page, organization.id, "Custom board visible issue");
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto("/issues");
+
+    await expect(page.getByRole("link", { name: /Starred/ })).toHaveCount(0);
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toBe("Name this board");
+      await dialog.accept("Review board");
+    });
+    await page.getByRole("button", { name: /Save board/ }).click();
+
+    await expect(page).toHaveURL(/\/issues\?view=/);
+    await expect(page.getByTestId("issue-custom-views-section")).toContainText("Custom Boards");
+    await expect(page.getByRole("link", { name: /Review board/ })).toBeVisible();
+    await expect(page.getByTestId("issues-view-toolbar")).toContainText("Review board");
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toBe('Delete custom board "Review board"? This cannot be undone.');
+      await dialog.accept();
+    });
+    await page.getByLabel("Delete custom board Review board").click();
+
+    await expect(page).toHaveURL(/\/issues$/);
+    await expect(page.getByRole("link", { name: /Review board/ })).toHaveCount(0);
+  });
+
   test("shows current-org recent issues in the sidebar without turning recent into a main view", async ({ page }) => {
     const organization = await createOrganization(page, "Issues-Recently-Viewed");
     const otherOrganization = await createOrganization(page, "Issues-Recently-Viewed-Other");
@@ -74,6 +108,47 @@ test.describe("Issues recently viewed sidebar", () => {
 
     const recentHref = `/issues/${firstIssue.identifier ?? firstIssue.id}`;
     await expect(page.getByTestId(`issue-recent-row-${firstIssue.id}`)).toHaveAttribute("href", recentHref);
+  });
+
+  test("records direct detail views and promotes sidebar recent clicks", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Recent-Detail");
+    const firstIssue = await createIssue(page, organization.id, "Direct detail recent issue");
+    const secondIssue = await createIssue(page, organization.id, "Sidebar promoted recent issue");
+    const recentKey = recentIssuesStorageKey(organization.id);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/issues/${firstIssue.identifier ?? firstIssue.id}`);
+    await expect(page.getByText("Direct detail recent issue", { exact: true }).first()).toBeVisible();
+    await page.waitForFunction(
+      ({ key, issueId }) => {
+        const values = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+        return values[0] === issueId;
+      },
+      { key: recentKey, issueId: firstIssue.id },
+    );
+
+    await page.goto("/issues");
+    await expect(page.getByTestId(`issue-recent-row-${firstIssue.id}`)).toContainText("Direct detail recent issue");
+
+    await page.evaluate(
+      ({ key, issueIds }) => {
+        window.localStorage.setItem(key, JSON.stringify(issueIds));
+      },
+      { key: recentKey, issueIds: [firstIssue.id, secondIssue.id] },
+    );
+    await page.goto("/issues");
+    await page.getByTestId(`issue-recent-row-${secondIssue.id}`).click();
+    await page.waitForFunction(
+      ({ key, issueId }) => {
+        const values = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+        return values[0] === issueId;
+      },
+      { key: recentKey, issueId: secondIssue.id },
+    );
   });
 
   test("updates the recent issue sidebar when the active organization changes", async ({ page }) => {
@@ -130,7 +205,7 @@ test.describe("Issues recently viewed sidebar", () => {
     expect(projectRes.ok()).toBe(true);
 
     const issues = [];
-    for (let index = 1; index <= 23; index += 1) {
+    for (let index = 1; index <= 13; index += 1) {
       issues.push(await createIssue(page, organization.id, `Recent overflow issue ${String(index).padStart(2, "0")}`));
     }
 
@@ -143,12 +218,12 @@ test.describe("Issues recently viewed sidebar", () => {
     await expect(page.getByTestId("workspace-projects-section")).toContainText("Projects");
     await expect(page.getByRole("link", { name: /Sidebar Project/ })).toBeVisible();
 
-    await expect(page.getByTestId("issue-recent-toggle")).toContainText("Show 15 more");
+    await expect(page.getByTestId("issue-recent-toggle")).toContainText("Show 7 more");
     await page.getByTestId("issue-recent-toggle").click();
 
-    await expect(page.getByTestId(`issue-recent-row-${issues[19].id}`)).toBeVisible();
-    await expect(page.getByTestId(`issue-recent-row-${issues[20].id}`)).toHaveCount(0);
-    await expect(page.getByText("Showing latest 20 of 23")).toBeVisible();
+    await expect(page.getByTestId(`issue-recent-row-${issues[11].id}`)).toBeVisible();
+    await expect(page.getByTestId(`issue-recent-row-${issues[12].id}`)).toHaveCount(0);
+    await expect(page.getByText("Showing latest 12 of 13")).toBeVisible();
     await expect(page.getByRole("link", { name: /Sidebar Project/ })).toBeVisible();
   });
 });

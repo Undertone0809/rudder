@@ -14,6 +14,7 @@ import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 const mockState = vi.hoisted(() => ({
   confirm: vi.fn(),
   openNewIssue: vi.fn(),
+  navigate: vi.fn(),
   pushToast: vi.fn(),
   setSidebarOpen: vi.fn(),
   pathname: "/RUD/issues",
@@ -91,10 +92,21 @@ vi.mock("@/lib/router", () => ({
   }: {
     children: ReactNode;
     to: string;
-    onClick?: () => void;
-  }) => <a href={to} onClick={onClick} {...props}>{children}</a>,
+    onClick?: MouseEventHandler<HTMLAnchorElement>;
+  }) => (
+    <a
+      href={to}
+      onClick={(event) => {
+        event.preventDefault();
+        onClick?.(event);
+      }}
+      {...props}
+    >
+      {children}
+    </a>
+  ),
   useLocation: () => ({ pathname: mockState.pathname, search: mockState.search, key: "issues" }),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mockState.navigate,
 }));
 
 vi.mock("@/lib/organization-routes", () => ({
@@ -191,6 +203,7 @@ beforeEach(() => {
   mockState.confirm.mockReset();
   mockState.confirm.mockReturnValue(true);
   mockState.openNewIssue.mockReset();
+  mockState.navigate.mockReset();
   mockState.pushToast.mockReset();
   mockState.setSidebarOpen.mockReset();
   mockState.pathname = "/RUD/issues";
@@ -231,6 +244,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const followingLink = document.querySelector('a[href="/issues?scope=following"]');
     expect(followingLink?.textContent).toContain("Following");
+    expect(document.querySelector('a[href="/issues?scope=starred"]')).toBeNull();
   });
 
   const savedDraft = {
@@ -291,7 +305,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
   });
 
   it("renders recently viewed issues as bounded sidebar rows instead of an issue view entry", () => {
-    mockState.issues = Array.from({ length: 7 }, (_, index) => ({
+    mockState.issues = Array.from({ length: 13 }, (_, index) => ({
       id: `issue-${index + 1}`,
       identifier: `RUD-${index + 1}`,
       title: `Recent issue ${index + 1}`,
@@ -308,14 +322,63 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector("[data-testid='issue-recent-row-issue-6']")).toBeNull();
 
     const toggle = document.querySelector("[data-testid='issue-recent-toggle']") as HTMLButtonElement | null;
-    expect(toggle?.textContent).toContain("Show 2 more");
+    expect(toggle?.textContent).toContain("Show 7 more");
 
     act(() => {
       toggle?.click();
     });
 
-    expect(document.querySelector("[data-testid='issue-recent-row-issue-7']")?.textContent).toContain("Recent issue 7");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-12']")?.textContent).toContain("Recent issue 12");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-13']")).toBeNull();
+    expect(document.body.textContent).toContain("Showing latest 12 of 13");
     expect(toggle?.textContent).toContain("Show less");
+  });
+
+  it("keeps the expanded recent list scroll-bounded at the expanded limit", () => {
+    mockState.issues = Array.from({ length: 12 }, (_, index) => ({
+      id: `issue-${index + 1}`,
+      identifier: `RUD-${index + 1}`,
+      title: `Recent issue ${index + 1}`,
+      status: "todo",
+    }));
+    window.localStorage.setItem("rudder:recent-issues:org-1", JSON.stringify(mockState.issues.map((issue) => issue.id)));
+
+    renderSidebar();
+
+    const toggle = document.querySelector("[data-testid='issue-recent-toggle']") as HTMLButtonElement | null;
+    act(() => {
+      toggle?.click();
+    });
+
+    const recentList = document.querySelector("[data-testid='issue-recent-list']") as HTMLDivElement | null;
+    expect(recentList?.className).toContain("max-h-72");
+    expect(recentList?.className).toContain("overflow-y-auto");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-12']")?.textContent).toContain("Recent issue 12");
+    expect(document.body.textContent).not.toContain("Showing latest 12 of 12");
+  });
+
+  it("moves a clicked recent sidebar issue to the front of recent history", () => {
+    mockState.issues = Array.from({ length: 3 }, (_, index) => ({
+      id: `issue-${index + 1}`,
+      identifier: `RUD-${index + 1}`,
+      title: `Recent issue ${index + 1}`,
+      status: "todo",
+    }));
+    window.localStorage.setItem("rudder:recent-issues:org-1", JSON.stringify(["issue-1", "issue-2", "issue-3"]));
+
+    renderSidebar();
+
+    const secondRecent = document.querySelector("[data-testid='issue-recent-row-issue-2']") as HTMLAnchorElement | null;
+    act(() => {
+      secondRecent?.click();
+    });
+
+    expect(JSON.parse(window.localStorage.getItem("rudder:recent-issues:org-1") ?? "[]")).toEqual([
+      "issue-2",
+      "issue-1",
+      "issue-3",
+    ]);
+    expect(mockState.setSidebarOpen).toHaveBeenCalledWith(false);
   });
 
   it("marks the active issue detail in the recently viewed sidebar list", () => {
@@ -346,6 +409,77 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(draftEntry?.textContent).toContain("Draft Issues (2)");
     expect(draftEntry?.textContent).not.toContain("Newer draft");
     expect(document.querySelector("[data-testid='issue-sidebar-active-indicator']")).not.toBeNull();
+  });
+
+  it("shows saved custom boards in the issues sidebar", () => {
+    window.localStorage.setItem("rudder:issue-custom-views:org-1", JSON.stringify([
+      {
+        id: "view-1",
+        orgId: "org-1",
+        name: "Review board",
+        state: {
+          statuses: ["in_review"],
+          priorities: [],
+          assignees: [],
+          labels: [],
+          projects: [],
+          displayProperties: ["identifier", "assignee"],
+          sortField: "updated",
+          sortDir: "desc",
+          groupBy: "none",
+          viewMode: "board",
+          collapsedGroups: [],
+        },
+        createdAt: "2026-04-30T01:00:00.000Z",
+        updatedAt: "2026-04-30T01:00:00.000Z",
+      },
+    ]));
+
+    renderSidebar();
+
+    const section = document.querySelector("[data-testid='issue-custom-views-section']");
+    expect(section?.textContent).toContain("Custom Boards");
+    const row = document.querySelector<HTMLAnchorElement>("[data-testid='issue-custom-view-row-view-1'] a");
+    expect(row?.textContent).toContain("Review board");
+    expect(row?.getAttribute("href")).toBe("/issues?view=view-1");
+  });
+
+  it("deletes an active custom board from the issues sidebar", () => {
+    mockState.search = "?view=view-1";
+    window.localStorage.setItem("rudder:issue-custom-views:org-1", JSON.stringify([
+      {
+        id: "view-1",
+        orgId: "org-1",
+        name: "Review board",
+        state: {
+          statuses: ["in_review"],
+          priorities: [],
+          assignees: [],
+          labels: [],
+          projects: [],
+          displayProperties: ["identifier", "assignee"],
+          sortField: "updated",
+          sortDir: "desc",
+          groupBy: "none",
+          viewMode: "board",
+          collapsedGroups: [],
+        },
+        createdAt: "2026-04-30T01:00:00.000Z",
+        updatedAt: "2026-04-30T01:00:00.000Z",
+      },
+    ]));
+
+    renderSidebar();
+
+    const deleteButton = document.querySelector<HTMLButtonElement>("[aria-label='Delete custom board Review board']");
+    act(() => {
+      deleteButton?.click();
+    });
+
+    expect(mockState.confirm).toHaveBeenCalledWith('Delete custom board "Review board"? This cannot be undone.');
+    expect(JSON.parse(window.localStorage.getItem("rudder:issue-custom-views:org-1") ?? "[]")).toEqual([]);
+    expect(mockState.pushToast).toHaveBeenCalledWith({ title: "Custom board deleted", tone: "success" });
+    expect(mockState.navigate).toHaveBeenCalledWith("/issues");
   });
 
   it("shows connected Linear projects as an external issue source group", () => {

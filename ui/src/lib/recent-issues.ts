@@ -1,5 +1,6 @@
 const LEGACY_RECENT_ISSUES_KEY = "rudder:recent-issues";
 const RECENT_ISSUES_LIMIT = 50;
+export const RECENT_ISSUES_CHANGED_EVENT = "rudder:recent-issues-changed";
 
 function dedupeIssueIds(values: string[]): string[] {
   return [...new Set(values.filter((value) => typeof value === "string" && value.length > 0))];
@@ -53,6 +54,12 @@ export function writeRecentIssueIds(orgId: string, values: string[]): string[] {
     window.localStorage.setItem(recentIssuesStorageKey(orgId), JSON.stringify(next));
   } catch {
     // ignore local storage failures
+  }
+
+  try {
+    window.dispatchEvent(new CustomEvent(RECENT_ISSUES_CHANGED_EVENT, { detail: { orgId, issueIds: next } }));
+  } catch {
+    // ignore event dispatch failures
   }
 
   return next;
