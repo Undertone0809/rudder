@@ -442,7 +442,7 @@ describe("RunTranscriptView", () => {
   });
 
   it("keeps errored tool details collapsed by default in detail presentation", () => {
-    const expectedTime = new Date("2026-03-12T00:00:00.000Z").toLocaleTimeString("en-US", {
+    const hiddenHeaderTime = new Date("2026-03-12T00:00:00.000Z").toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
@@ -474,8 +474,8 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Ran pnpm test:run");
-    expect(html).toContain(expectedTime);
-    expect(html).toContain("Tool issue");
+    expect(html).not.toContain(hiddenHeaderTime);
+    expect(html).not.toContain("Tool issue");
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).not.toContain("Needs review");
     expect(html).not.toContain("bg-red-500/[0.04]");
@@ -656,7 +656,7 @@ describe("RunTranscriptView", () => {
   });
 
   it("groups detail transcripts so repeated reads stay collapsed behind one summary", () => {
-    const expectedTime = new Date("2026-03-12T00:00:02.000Z").toLocaleTimeString("en-US", {
+    const hiddenHeaderTime = new Date("2026-03-12T00:00:02.000Z").toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
@@ -718,7 +718,7 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).not.toContain("Model turn");
-    expect(html).toContain(expectedTime);
+    expect(html).not.toContain(hiddenHeaderTime);
     expect(html).toContain("Reviewing the bundled skills before deciding what to change.");
     expect(html).toContain("Explored 2 files");
     expect(html).not.toContain("para-memory-files/SKILL.md");
@@ -767,7 +767,7 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).not.toContain("Model turn");
-    expect(html).toContain("Completed");
+    expect(html).toContain("I checked the repository and completed the work.");
     expect(html).not.toContain("Running");
     expect(html).not.toContain("animate-spin");
   });
