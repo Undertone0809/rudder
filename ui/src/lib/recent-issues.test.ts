@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  RECENT_ISSUES_CHANGED_EVENT,
   readRecentIssueIds,
   recentIssuesStorageKey,
   recordRecentIssue,
@@ -55,10 +56,16 @@ describe("recent issues helpers", () => {
   });
 
   it("records a recent issue once and keeps it at the front", () => {
+    let eventDetail: unknown = null;
+    window.addEventListener(RECENT_ISSUES_CHANGED_EVENT, (event) => {
+      eventDetail = (event as CustomEvent).detail;
+    }, { once: true });
+
     const next = recordRecentIssue("org-1", "issue-2", ["issue-3", "issue-2", "issue-1"]);
 
     expect(next).toEqual(["issue-2", "issue-3", "issue-1"]);
     expect(readRecentIssueIds("org-1")).toEqual(["issue-2", "issue-3", "issue-1"]);
+    expect(eventDetail).toEqual({ orgId: "org-1", issueIds: ["issue-2", "issue-3", "issue-1"] });
   });
 
   it("resolves only currently visible issues while preserving recency order", () => {

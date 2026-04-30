@@ -1,15 +1,33 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import type { ReactNode } from "react";
+import type { MouseEventHandler, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Issue } from "@rudderhq/shared";
 import { KanbanBoard } from "./KanbanBoard";
 
 vi.mock("@/lib/router", () => ({
-  Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
-    <a href={to} {...props}>{children}</a>
+  Link: ({
+    to,
+    children,
+    onClick,
+    ...props
+  }: {
+    to: string;
+    children: ReactNode;
+    onClick?: MouseEventHandler<HTMLAnchorElement>;
+  }) => (
+    <a
+      href={to}
+      onClick={(event) => {
+        event.preventDefault();
+        onClick?.(event);
+      }}
+      {...props}
+    >
+      {children}
+    </a>
   ),
 }));
 
@@ -89,5 +107,24 @@ describe("KanbanBoard", () => {
     const img = container.querySelector('img[src="/api/assets/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/content"]');
     expect(img).toBeTruthy();
     expect(container.textContent).toContain("Alice Smith");
+  });
+
+  it("notifies callers when a board card opens", () => {
+    const onOpenIssue = vi.fn();
+    const container = render(
+      <KanbanBoard
+        issues={[issue]}
+        agents={[{ id: "agent-1", name: "Alice Smith", icon: null, role: "engineer", title: null }]}
+        onOpenIssue={onOpenIssue}
+        onUpdateIssue={() => undefined}
+      />,
+    );
+
+    const cardLink = container.querySelector('a[href="/issues/RUD-1"]') as HTMLAnchorElement | null;
+    act(() => {
+      cardLink?.click();
+    });
+
+    expect(onOpenIssue).toHaveBeenCalledWith(issue);
   });
 });

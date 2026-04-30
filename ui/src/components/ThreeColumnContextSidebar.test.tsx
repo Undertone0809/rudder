@@ -91,8 +91,19 @@ vi.mock("@/lib/router", () => ({
   }: {
     children: ReactNode;
     to: string;
-    onClick?: () => void;
-  }) => <a href={to} onClick={onClick} {...props}>{children}</a>,
+    onClick?: MouseEventHandler<HTMLAnchorElement>;
+  }) => (
+    <a
+      href={to}
+      onClick={(event) => {
+        event.preventDefault();
+        onClick?.(event);
+      }}
+      {...props}
+    >
+      {children}
+    </a>
+  ),
   useLocation: () => ({ pathname: mockState.pathname, search: mockState.search, key: "issues" }),
   useNavigate: () => vi.fn(),
 }));
@@ -291,7 +302,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
   });
 
   it("renders recently viewed issues as bounded sidebar rows instead of an issue view entry", () => {
-    mockState.issues = Array.from({ length: 7 }, (_, index) => ({
+    mockState.issues = Array.from({ length: 13 }, (_, index) => ({
       id: `issue-${index + 1}`,
       identifier: `RUD-${index + 1}`,
       title: `Recent issue ${index + 1}`,
@@ -308,14 +319,63 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector("[data-testid='issue-recent-row-issue-6']")).toBeNull();
 
     const toggle = document.querySelector("[data-testid='issue-recent-toggle']") as HTMLButtonElement | null;
-    expect(toggle?.textContent).toContain("Show 2 more");
+    expect(toggle?.textContent).toContain("Show 7 more");
 
     act(() => {
       toggle?.click();
     });
 
-    expect(document.querySelector("[data-testid='issue-recent-row-issue-7']")?.textContent).toContain("Recent issue 7");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-12']")?.textContent).toContain("Recent issue 12");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-13']")).toBeNull();
+    expect(document.body.textContent).toContain("Showing latest 12 of 13");
     expect(toggle?.textContent).toContain("Show less");
+  });
+
+  it("keeps the expanded recent list scroll-bounded at the expanded limit", () => {
+    mockState.issues = Array.from({ length: 12 }, (_, index) => ({
+      id: `issue-${index + 1}`,
+      identifier: `RUD-${index + 1}`,
+      title: `Recent issue ${index + 1}`,
+      status: "todo",
+    }));
+    window.localStorage.setItem("rudder:recent-issues:org-1", JSON.stringify(mockState.issues.map((issue) => issue.id)));
+
+    renderSidebar();
+
+    const toggle = document.querySelector("[data-testid='issue-recent-toggle']") as HTMLButtonElement | null;
+    act(() => {
+      toggle?.click();
+    });
+
+    const recentList = document.querySelector("[data-testid='issue-recent-list']") as HTMLDivElement | null;
+    expect(recentList?.className).toContain("max-h-72");
+    expect(recentList?.className).toContain("overflow-y-auto");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-12']")?.textContent).toContain("Recent issue 12");
+    expect(document.body.textContent).not.toContain("Showing latest 12 of 12");
+  });
+
+  it("moves a clicked recent sidebar issue to the front of recent history", () => {
+    mockState.issues = Array.from({ length: 3 }, (_, index) => ({
+      id: `issue-${index + 1}`,
+      identifier: `RUD-${index + 1}`,
+      title: `Recent issue ${index + 1}`,
+      status: "todo",
+    }));
+    window.localStorage.setItem("rudder:recent-issues:org-1", JSON.stringify(["issue-1", "issue-2", "issue-3"]));
+
+    renderSidebar();
+
+    const secondRecent = document.querySelector("[data-testid='issue-recent-row-issue-2']") as HTMLAnchorElement | null;
+    act(() => {
+      secondRecent?.click();
+    });
+
+    expect(JSON.parse(window.localStorage.getItem("rudder:recent-issues:org-1") ?? "[]")).toEqual([
+      "issue-2",
+      "issue-1",
+      "issue-3",
+    ]);
+    expect(mockState.setSidebarOpen).toHaveBeenCalledWith(false);
   });
 
   it("marks the active issue detail in the recently viewed sidebar list", () => {

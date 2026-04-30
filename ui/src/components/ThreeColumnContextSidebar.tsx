@@ -42,7 +42,12 @@ import { formatSidebarAgentLabel } from "@/lib/agent-labels";
 import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
 import { relativeTime } from "@/lib/utils";
-import { readRecentIssueIds, resolveRecentIssues } from "@/lib/recent-issues";
+import {
+  RECENT_ISSUES_CHANGED_EVENT,
+  readRecentIssueIds,
+  recordRecentIssue,
+  resolveRecentIssues,
+} from "@/lib/recent-issues";
 import { isFollowingIssue } from "@/lib/issue-scope-filters";
 import {
   ISSUE_DRAFT_CHANGED_EVENT,
@@ -65,7 +70,7 @@ const LINEAR_PLUGIN_KEY = "rudder.linear";
 const LINEAR_CATALOG_DATA_KEY = "linear-catalog";
 const LINEAR_PLUGIN_ROUTE_PATH = "linear";
 const RECENT_ISSUES_COLLAPSED_LIMIT = 5;
-const RECENT_ISSUES_EXPANDED_LIMIT = 20;
+const RECENT_ISSUES_EXPANDED_LIMIT = 12;
 
 type LinearSidebarProject = {
   id: string;
@@ -312,10 +317,12 @@ function RecentIssueListSection({
   issues,
   activeIssueRef,
   closeMobileSidebar,
+  onOpenIssue,
 }: {
   issues: Issue[];
   activeIssueRef: string | null;
   closeMobileSidebar: () => void;
+  onOpenIssue: (issue: Issue) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -332,9 +339,10 @@ function RecentIssueListSection({
         Recently Viewed
       </SectionLabel>
       <div
+        data-testid="issue-recent-list"
         className={cn(
           "mt-2 space-y-0.5",
-          expanded && hasMoreThanExpandedLimit && "max-h-72 overflow-y-auto pr-1",
+          expanded && "max-h-72 overflow-y-auto pr-1",
         )}
       >
         {visibleIssues.map((issue) => {
@@ -344,7 +352,10 @@ function RecentIssueListSection({
             <Link
               key={issue.id}
               to={issueUrl(issue)}
-              onClick={closeMobileSidebar}
+              onClick={() => {
+                onOpenIssue(issue);
+                closeMobileSidebar();
+              }}
               data-testid={`issue-recent-row-${issue.id}`}
               aria-current={active ? "page" : undefined}
               className={cn(
@@ -560,6 +571,19 @@ export function ThreeColumnContextSidebar() {
   }, [location.key, selectedOrganizationId]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const refreshRecentIssueIds = () => {
+      setRecentIssueIds(readRecentIssueIds(selectedOrganizationId));
+    };
+    window.addEventListener(RECENT_ISSUES_CHANGED_EVENT, refreshRecentIssueIds);
+    window.addEventListener("storage", refreshRecentIssueIds);
+    return () => {
+      window.removeEventListener(RECENT_ISSUES_CHANGED_EVENT, refreshRecentIssueIds);
+      window.removeEventListener("storage", refreshRecentIssueIds);
+    };
+  }, [selectedOrganizationId]);
+
+  useEffect(() => {
     const refreshIssueDraftSummaries = () => {
       setIssueDraftSummaries(summarizeIssueDrafts(selectedOrganizationId));
     };
@@ -575,6 +599,11 @@ export function ThreeColumnContextSidebar() {
 
   const closeMobileSidebar = () => {
     if (isMobile) setSidebarOpen(false);
+  };
+
+  const recordRecentIssueOpen = (issue: Issue) => {
+    if (!selectedOrganizationId) return;
+    setRecentIssueIds(recordRecentIssue(selectedOrganizationId, issue.id, readRecentIssueIds(selectedOrganizationId)));
   };
 
   const refreshChatList = async (chatId?: string) => {
@@ -677,8 +706,9 @@ export function ThreeColumnContextSidebar() {
             issues={recentIssueRefs}
             activeIssueRef={activeIssueRef}
             closeMobileSidebar={closeMobileSidebar}
+            onOpenIssue={recordRecentIssueOpen}
           />
-          <SectionLabel>Projects</SectionLabel>
+          <SectionLabel testId="workspace-projects-section">Projects</SectionLabel>
           <SlidingContextNav
             activeIndex={issueProjectActiveIndex}
             ariaLabel="Issue project slices"

@@ -18,6 +18,7 @@ import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildIssueChatPrefillHref } from "../lib/chat-object-prefill";
 import { queryKeys } from "../lib/queryKeys";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
+import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
 import { resolveBoardActorLabel } from "../lib/activity-actors";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
@@ -325,6 +326,11 @@ export function IssueDetail() {
     enabled: !!issueId,
   });
   const resolvedCompanyId = issue?.orgId ?? selectedOrganizationId;
+
+  useEffect(() => {
+    if (!issue?.orgId || !issue.id) return;
+    recordRecentIssue(issue.orgId, issue.id, readRecentIssueIds(issue.orgId));
+  }, [issue?.id, issue?.orgId]);
 
   const { data: comments } = useQuery({
     queryKey: queryKeys.issues.comments(issueId!),

@@ -105,6 +105,7 @@ interface KanbanBoardProps {
   liveIssueIds?: Set<string>;
   projects?: ProjectOption[];
   onCreateIssue?: (status: string) => void;
+  onOpenIssue?: (issue: Issue) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
 }
 
@@ -143,6 +144,7 @@ function KanbanColumn({
   recentlyDroppedIssueIds,
   projects,
   onCreateIssue,
+  onOpenIssue,
 }: {
   status: string;
   issues: Issue[];
@@ -153,6 +155,7 @@ function KanbanColumn({
   recentlyDroppedIssueIds?: Set<string>;
   projects?: ProjectOption[];
   onCreateIssue?: (status: string) => void;
+  onOpenIssue?: (issue: Issue) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const columnScrollRef = useScrollbarActivityRef();
@@ -199,6 +202,7 @@ function KanbanColumn({
               isLive={liveIssueIds?.has(issue.id)}
               justDropped={recentlyDroppedIssueIds?.has(issue.id)}
               projects={projects}
+              onOpenIssue={onOpenIssue}
             />
           ))}
         </SortableContext>
@@ -252,6 +256,7 @@ function KanbanCard({
   isOverlay,
   justDropped,
   projects,
+  onOpenIssue,
 }: {
   issue: Issue;
   agents?: Agent[];
@@ -261,6 +266,7 @@ function KanbanCard({
   isOverlay?: boolean;
   justDropped?: boolean;
   projects?: ProjectOption[];
+  onOpenIssue?: (issue: Issue) => void;
 }) {
   const {
     attributes,
@@ -312,8 +318,11 @@ function KanbanCard({
         to={`/issues/${issue.identifier ?? issue.id}`}
         className="block min-w-0 no-underline text-inherit"
         onClick={(e) => {
-          // Prevent navigation during drag
-          if (isDragging) e.preventDefault();
+          if (isDragging) {
+            e.preventDefault();
+            return;
+          }
+          onOpenIssue?.(issue);
         }}
       >
         {(showIdentifier || isLive) ? (
@@ -417,6 +426,7 @@ export function KanbanBoard({
   liveIssueIds,
   projects,
   onCreateIssue,
+  onOpenIssue,
   onUpdateIssue,
 }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -537,6 +547,7 @@ export function KanbanBoard({
                 recentlyDroppedIssueIds={recentlyDroppedIssueIds}
                 projects={projects}
                 onCreateIssue={onCreateIssue}
+                onOpenIssue={onOpenIssue}
               />
             ))}
             {hiddenStatuses.length > 0 ? (

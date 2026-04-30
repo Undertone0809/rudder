@@ -218,9 +218,6 @@ export function Issues() {
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
-  const [recentIssueIds, setRecentIssueIds] = useState<string[]>(() =>
-    readRecentIssueIds(selectedOrganizationId),
-  );
   const [issueDraftSummaries, setIssueDraftSummaries] = useState<IssueDraftSummary[]>(() =>
     summarizeIssueDrafts(selectedOrganizationId),
   );
@@ -259,10 +256,6 @@ export function Issues() {
   useEffect(() => {
     setBreadcrumbs([{ label: isDraftScope ? "Draft Issues" : "Issue Tracker" }]);
   }, [isDraftScope, setBreadcrumbs]);
-
-  useEffect(() => {
-    setRecentIssueIds(readRecentIssueIds(selectedOrganizationId));
-  }, [location.key, selectedOrganizationId]);
 
   useEffect(() => {
     const refreshIssueDraftSummaries = () => {
@@ -371,7 +364,7 @@ export function Issues() {
         }}
         onOpenIssue={(issue) => {
           if (!selectedOrganizationId) return;
-          setRecentIssueIds(recordRecentIssue(selectedOrganizationId, issue.id, recentIssueIds));
+          recordRecentIssue(selectedOrganizationId, issue.id, readRecentIssueIds(selectedOrganizationId));
         }}
         onSearchChange={handleSearchChange}
         onUpdateIssue={(id, data) => updateIssue.mutate({ id, data })}
