@@ -55,6 +55,14 @@ const AGENT_COLORS = [
   "border-cyan-400 bg-cyan-50 text-cyan-950 dark:border-cyan-500/70 dark:bg-cyan-950 dark:text-cyan-100",
   "border-violet-400 bg-violet-50 text-violet-950 dark:border-violet-500/70 dark:bg-violet-950 dark:text-violet-100",
 ];
+const MONTH_AGENT_DOTS = [
+  "bg-blue-500",
+  "bg-emerald-500",
+  "bg-amber-500",
+  "bg-rose-500",
+  "bg-cyan-500",
+  "bg-violet-500",
+] as const;
 
 function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
@@ -175,6 +183,29 @@ function eventTone(event: CalendarEvent, agents: Agent[]) {
   }
   const index = agents.findIndex((agent) => agent.id === event.ownerAgentId);
   return AGENT_COLORS[Math.max(0, index) % AGENT_COLORS.length]!;
+}
+
+function monthEventDot(event: CalendarEvent, agents: Agent[]) {
+  if (event.eventStatus === "projected") return "bg-sky-500";
+  if (event.eventKind === "external_event") return "bg-slate-500";
+  if (event.eventKind === "human_event") return "bg-zinc-500";
+  const index = agents.findIndex((agent) => agent.id === event.ownerAgentId);
+  return MONTH_AGENT_DOTS[Math.max(0, index) % MONTH_AGENT_DOTS.length]!;
+}
+
+function eventIntersectsDay(event: CalendarEvent, day: Date) {
+  const dayStart = startOfDay(day).getTime();
+  const dayEnd = addDays(startOfDay(day), 1).getTime();
+  const eventStart = new Date(event.startAt).getTime();
+  const eventEnd = new Date(event.endAt).getTime();
+  return eventStart < dayEnd && eventEnd > dayStart;
+}
+
+function formatMonthEventTime(event: CalendarEvent, day: Date) {
+  const eventStart = new Date(event.startAt);
+  if (event.allDay) return "All day";
+  if (eventStart < startOfDay(day)) return "12 AM";
+  return eventStart.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function isWritableEvent(event: CalendarEvent | null) {
@@ -657,32 +688,58 @@ function MonthView({
   const start = startOfMonthGrid(cursor);
   const days = Array.from({ length: 42 }, (_, index) => addDays(start, index));
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-7 overflow-hidden rounded-[var(--radius-sm)] border border-border bg-card">
+    <div
+      className="grid min-h-0 flex-1 grid-cols-7 overflow-hidden rounded-[var(--radius-sm)] border border-border bg-card"
+      style={{ gridTemplateRows: "32px repeat(6, minmax(0, 1fr))" }}
+    >
       {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
         <div key={label} className="border-b border-r border-border bg-muted/30 px-2 py-2 text-xs font-medium last:border-r-0">
           {label}
         </div>
       ))}
       {days.map((day) => {
-        const dayEvents = events.filter((event) => sameDay(event.startAt, day)).slice(0, 4);
+        const dayEvents = events
+          .filter((event) => eventIntersectsDay(event, day))
+          .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+        const visibleEvents = dayEvents.slice(0, 5);
+        const hiddenCount = Math.max(0, dayEvents.length - visibleEvents.length);
         const outside = day.getMonth() !== cursor.getMonth();
         const today = sameDay(day, currentTime);
         return (
           <div
             key={day.toISOString()}
             className={cn(
-              "min-h-[118px] border-b border-r border-border p-2 last:border-r-0",
+              "min-h-0 overflow-hidden border-b border-r border-border p-1.5 last:border-r-0",
               outside && "bg-muted/20 text-muted-foreground",
               today && "bg-primary/6",
             )}
           >
-            <div className={cn("flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold", today && "bg-primary text-primary-foreground")}>
+            <div className={cn("mb-1 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold", today && "bg-primary text-primary-foreground")}>
               {day.getDate()}
             </div>
-            <div className="mt-2 space-y-1">
-              {dayEvents.map((event) => (
-                <EventBlock key={event.id} event={event} agents={agents} onSelect={onSelect} compact />
+            <div className="space-y-0.5">
+              {visibleEvents.map((event) => (
+                <button
+                  key={`${day.toISOString()}-${event.id}`}
+                  type="button"
+                  className={cn(
+                    "flex h-5 w-full min-w-0 items-center gap-1 rounded-[calc(var(--radius-sm)-2px)] px-1 text-left text-[11px] leading-none text-foreground/88 hover:bg-muted/45",
+                    event.eventStatus === "projected" && "border border-dashed border-sky-300/70 text-muted-foreground",
+                  )}
+                  onClick={() => onSelect(event)}
+                >
+                  <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", monthEventDot(event, agents))} />
+                  <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                    {formatMonthEventTime(event, day)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{visibleEventTitle(event)}</span>
+                </button>
               ))}
+              {hiddenCount > 0 ? (
+                <div className="flex h-5 w-full items-center rounded-[calc(var(--radius-sm)-2px)] px-1 text-[11px] font-medium text-muted-foreground">
+                  {hiddenCount} more
+                </div>
+              ) : null}
             </div>
           </div>
         );

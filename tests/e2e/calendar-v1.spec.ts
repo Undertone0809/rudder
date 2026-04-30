@@ -105,8 +105,9 @@ test.describe("Calendar V1", () => {
 
     await expect(page.getByTestId("workspace-context-card")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
-    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Calendar" })).toBeVisible();
-    await expect(page.getByText("Layers and sync")).toBeVisible();
+    await expect(page.getByTestId("workspace-context-header")).toHaveCount(0);
+    await expect(page.getByTestId("calendar-mini-month")).toBeVisible();
+    await expect(page.getByTestId("calendar-sidebar-month")).toHaveCount(0);
     await expect(page.getByTestId("calendar-layers-sidebar")).toHaveCount(0);
     await expect(page.getByTestId("calendar-google-row")).toBeVisible();
     await expect(page.getByText("Imported event titles are visible in Rudder when enabled")).toHaveCount(0);
@@ -145,6 +146,10 @@ test.describe("Calendar V1", () => {
     await expect(page.getByTestId("calendar-google-source-list")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("Work calendar")).toBeVisible();
     await expect(page.getByText("Personal calendar")).toBeVisible();
+    await page.getByLabel("Collapse Google Calendar calendars").click();
+    await expect(page.getByTestId("calendar-google-source-list")).toHaveCount(0);
+    await page.getByLabel("Expand Google Calendar calendars").click();
+    await expect(page.getByTestId("calendar-google-source-list")).toBeVisible();
     await expect(page.getByText("Visible external test event")).toBeVisible();
     await expect(page.getByText("Hidden external test event")).toHaveCount(0);
 
@@ -187,7 +192,7 @@ test.describe("Calendar V1", () => {
     await selectOrganization(page, organization.id);
     await page.goto("/calendar");
 
-    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Calendar" })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("CEO (CEO)", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: /^week$/i })).toBeVisible();
 
@@ -260,7 +265,7 @@ test.describe("Calendar V1", () => {
 
     await selectOrganization(page, organization.id);
     await page.goto("/calendar");
-    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Calendar" })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
 
     const dayColumn = page.getByTestId(`calendar-day-column-${todayKey}`);
     await expect(dayColumn).toBeVisible();
