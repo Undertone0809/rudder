@@ -2,9 +2,12 @@ import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
+  AlertCircle,
   Boxes,
+  CalendarDays,
   ChevronDown,
   ChevronUp,
+  CheckCircle2,
   Circle,
   Clock3,
   Copy,
@@ -20,6 +23,7 @@ import {
   PinOff,
   Plus,
   Star,
+  Settings2,
   Target,
   UserRound,
 } from "lucide-react";
@@ -35,6 +39,7 @@ import { issuesApi } from "@/api/issues";
 import { authApi } from "@/api/auth";
 import { projectsApi } from "@/api/projects";
 import { agentsApi } from "@/api/agents";
+import { calendarApi } from "@/api/calendar";
 import { chatsApi } from "@/api/chats";
 import { heartbeatsApi } from "@/api/heartbeats";
 import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
@@ -59,7 +64,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
-import type { Issue } from "@rudderhq/shared";
+import { Checkbox } from "@/components/ui/checkbox";
+import { CALENDAR_EVENT_STATUS_OPTIONS, useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
+import type { CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
 
 const LINEAR_PLUGIN_KEY = "rudder.linear";
 const LINEAR_CATALOG_DATA_KEY = "linear-catalog";
@@ -129,6 +136,9 @@ function ContextColumnHeader({
 }
 
 function resolveContextColumnHeader(relativePath: string): { title: string; description: string } {
+  if (/^\/calendar(?:\/|$)/.test(relativePath)) {
+    return { title: "Calendar", description: "Layers and sync" };
+  }
   if (/^\/issues(?:\/|$)/.test(relativePath) || /^\/linear(?:\/|$)/.test(relativePath)) {
     return { title: "Issues", description: "Views and project slices" };
   }
@@ -139,6 +149,44 @@ function resolveContextColumnHeader(relativePath: string): { title: string; desc
     return { title: "Org", description: "Organization surfaces" };
   }
   return { title: "Agents", description: "" };
+}
+
+function calendarStatusLabel(status: CalendarEventStatus) {
+  if (status === "in_progress") return "in progress";
+  return status;
+}
+
+function googleSourceConnectionState(source: CalendarSource | null): {
+  label: "Disconnected" | "Connected" | "Needs config" | "Error";
+  tone: string;
+  icon: typeof AlertCircle;
+} {
+  if (!source) {
+    return {
+      label: "Disconnected",
+      tone: "border-border bg-muted/30 text-muted-foreground",
+      icon: AlertCircle,
+    };
+  }
+  if (source.status === "active") {
+    return {
+      label: "Connected",
+      tone: "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+      icon: CheckCircle2,
+    };
+  }
+  if (source.status === "error" && !source.lastSyncedAt) {
+    return {
+      label: "Needs config",
+      tone: "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+      icon: AlertCircle,
+    };
+  }
+  return {
+    label: "Error",
+    tone: "border-destructive/25 bg-destructive/10 text-destructive",
+    icon: AlertCircle,
+  };
 }
 
 function activeConversationIdFromPath(pathname: string): string | null {
@@ -398,14 +446,28 @@ export function ThreeColumnContextSidebar() {
   const isMessengerRoute = /^\/messenger(?:\/|$)/.test(relativePath);
   const isLinearPluginRoute = /^\/linear(?:\/|$)/.test(relativePath);
   const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath) || isLinearPluginRoute;
+  const isCalendarRoute = /^\/calendar(?:\/|$)/.test(relativePath);
   const isOrgWorkspaceRoute = /^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const isChatRoute = /^\/chat(?:\/|$)/.test(relativePath);
-  const isAgentRoute = !isMessengerRoute && !isIssuesRoute && !isOrgWorkspaceRoute && !isChatRoute;
+  const isAgentRoute = !isMessengerRoute && !isIssuesRoute && !isCalendarRoute && !isOrgWorkspaceRoute && !isChatRoute;
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
   const { pushToast } = useToast();
   const { openNewAgent, openNewProject } = useDialog();
   const queryClient = useQueryClient();
+  const {
+    cursor,
+    setCursor,
+    hiddenAgentIds,
+    setHiddenAgentIds,
+    hiddenSourceIds,
+    setHiddenSourceIds,
+    myCalendarVisible,
+    setMyCalendarVisible,
+    visibleStatuses,
+    setVisibleStatuses,
+    setGoogleCalendarModalOpen,
+  } = useCalendarWorkspace();
 
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
@@ -425,6 +487,11 @@ export function ThreeColumnContextSidebar() {
     queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),
     queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
     enabled: !!selectedOrganizationId,
+  });
+  const { data: calendarSources } = useQuery({
+    queryKey: queryKeys.calendar.sources(selectedOrganizationId ?? "__none__"),
+    queryFn: () => calendarApi.sources(selectedOrganizationId!),
+    enabled: !!selectedOrganizationId && isCalendarRoute,
   });
   const { data: liveRuns } = useQuery({
     queryKey: queryKeys.liveRuns(selectedOrganizationId ?? "__none__"),
@@ -554,6 +621,9 @@ export function ThreeColumnContextSidebar() {
   ];
   const activeOrgContextIndex = orgContextItems.findIndex((item) => item.active);
   const activeAgentIndex = visibleAgents.findIndex((agent) => activeAgentRef === agent.urlKey || activeAgentRef === agent.id);
+  const googleSource = (calendarSources ?? []).find((source) => source.type === "google_calendar") ?? null;
+  const googleState = googleSourceConnectionState(googleSource);
+  const GoogleStateIcon = googleState.icon;
 
   useEffect(() => {
     setRecentIssueIds(readRecentIssueIds(selectedOrganizationId));
@@ -643,6 +713,151 @@ export function ThreeColumnContextSidebar() {
 
   if (isMessengerRoute) {
     return <MessengerContextSidebar />;
+  }
+
+  if (isCalendarRoute) {
+    return (
+      <aside
+        data-testid="workspace-sidebar"
+        className="workspace-context-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
+      >
+        <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
+        <div className="min-h-0 flex-1 overflow-y-auto pb-3.5">
+          <SectionLabel>Month</SectionLabel>
+          <div className="mx-3.5 mt-2">
+            <input
+              data-testid="calendar-sidebar-month"
+              aria-label="Calendar month"
+              type="month"
+              value={`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`}
+              onChange={(event) => {
+                const [year, month] = event.target.value.split("-").map(Number);
+                if (year && month) setCursor(new Date(year, month - 1, 1));
+              }}
+              className="h-8 w-full rounded-[calc(var(--radius-sm)-1px)] border border-input bg-background px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+            />
+          </div>
+
+          <SectionLabel>Calendars</SectionLabel>
+          <div className="mt-2 space-y-0.5">
+            <label className="mx-1.5 flex min-h-9 items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-2 text-sm text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]">
+              <Checkbox
+                checked={myCalendarVisible}
+                onCheckedChange={(checked) => setMyCalendarVisible(checked === true)}
+                aria-label="Show My Calendar"
+              />
+              <UserRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">My Calendar</span>
+            </label>
+            <div
+              data-testid="calendar-google-row"
+              className="mx-1.5 flex min-h-9 items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-2 text-sm text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]"
+            >
+              <Checkbox
+                checked={!!googleSource && !hiddenSourceIds.has(googleSource.id)}
+                disabled={!googleSource}
+                onCheckedChange={(checked) => {
+                  if (!googleSource) return;
+                  setHiddenSourceIds((current) => {
+                    const next = new Set(current);
+                    if (checked === true) next.delete(googleSource.id);
+                    else next.add(googleSource.id);
+                    return next;
+                  });
+                }}
+                aria-label="Show Google Calendar"
+              />
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                onClick={() => setGoogleCalendarModalOpen(true)}
+              >
+                <CalendarDays className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate">Google Calendar</span>
+                <span
+                  className={cn(
+                    "inline-flex shrink-0 items-center gap-1 rounded-[calc(var(--radius-sm)-2px)] border px-1.5 py-0.5 text-[10px] font-medium",
+                    googleState.tone,
+                  )}
+                >
+                  <GoogleStateIcon className="h-3 w-3" />
+                  {googleState.label}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground hover:bg-[color:var(--surface-page)] hover:text-foreground"
+                aria-label="Google Calendar settings"
+                onClick={() => setGoogleCalendarModalOpen(true)}
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+
+          <SectionLabel>Agents</SectionLabel>
+          <div className="mt-2 space-y-0.5">
+            {visibleAgents.map((agent, index) => (
+              <label
+                key={agent.id}
+                className="mx-1.5 flex min-h-9 items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-2 text-sm text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]"
+              >
+                <Checkbox
+                  checked={!hiddenAgentIds.has(agent.id)}
+                  onCheckedChange={(checked) => {
+                    setHiddenAgentIds((current) => {
+                      const next = new Set(current);
+                      if (checked === true) next.delete(agent.id);
+                      else next.add(agent.id);
+                      return next;
+                    });
+                  }}
+                  aria-label={`Show ${agent.name}`}
+                />
+                <span
+                  className={cn(
+                    "h-2.5 w-2.5 shrink-0 rounded-sm border",
+                    [
+                      "border-blue-400 bg-blue-500",
+                      "border-emerald-400 bg-emerald-500",
+                      "border-amber-400 bg-amber-500",
+                      "border-rose-400 bg-rose-500",
+                      "border-cyan-400 bg-cyan-500",
+                      "border-violet-400 bg-violet-500",
+                    ][index % 6],
+                  )}
+                />
+                <span className="min-w-0 flex-1 truncate">{agent.name}</span>
+              </label>
+            ))}
+          </div>
+
+          <SectionLabel>Status</SectionLabel>
+          <div className="mt-2 space-y-0.5" data-testid="calendar-status-filters">
+            {CALENDAR_EVENT_STATUS_OPTIONS.map((status) => (
+              <label
+                key={status}
+                className="mx-1.5 flex min-h-8 items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-1.5 text-sm text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]"
+              >
+                <Checkbox
+                  checked={visibleStatuses.has(status)}
+                  onCheckedChange={(checked) => {
+                    setVisibleStatuses((current) => {
+                      const next = new Set(current);
+                      if (checked === true) next.add(status);
+                      else next.delete(status);
+                      return next;
+                    });
+                  }}
+                  aria-label={`Show ${calendarStatusLabel(status)} events`}
+                />
+                <span className="truncate">{calendarStatusLabel(status)}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </aside>
+    );
   }
 
   if (isIssuesRoute) {

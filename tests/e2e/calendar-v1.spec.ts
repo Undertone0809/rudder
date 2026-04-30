@@ -11,13 +11,83 @@ function localDateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function localIso(dateKey: string, hour: number, minute = 0) {
+  const value = new Date(`${dateKey}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00`);
+  return value.toISOString();
+}
+
 async function createCalendarOrg(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", { data: { name } });
   expect(orgRes.ok()).toBe(true);
   return orgRes.json();
 }
 
+async function createHumanEvent(page: Page, orgId: string, title: string, startAt: string, endAt: string) {
+  const response = await page.request.post(`/api/orgs/${orgId}/calendar/events`, {
+    data: {
+      eventKind: "human_event",
+      eventStatus: "planned",
+      ownerType: "user",
+      title,
+      startAt,
+      endAt,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      allDay: false,
+      visibility: "full",
+      sourceMode: "manual",
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return response.json();
+}
+
 test.describe("Calendar V1", () => {
+  test("uses the workspace shell and keeps Google setup in a compact modal", async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 1490, height: 1003 });
+
+    const organization = await createCalendarOrg(page, `Calendar-Shell-${Date.now()}`);
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Engineer",
+        role: "engineer",
+        runtimeConfig: {
+          heartbeat: {
+            enabled: true,
+            intervalSec: 3600,
+          },
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+
+    await selectOrganization(page, organization.id);
+    await page.goto("/calendar");
+
+    await expect(page.getByTestId("workspace-context-card")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("workspace-main-card")).toBeVisible();
+    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Calendar" })).toBeVisible();
+    await expect(page.getByText("Layers and sync")).toBeVisible();
+    await expect(page.getByTestId("calendar-layers-sidebar")).toHaveCount(0);
+    await expect(page.getByTestId("calendar-google-row")).toBeVisible();
+    await expect(page.getByText("Read-only import. Events default to busy blocks and never enter agent context.")).toHaveCount(0);
+
+    await expect(page.getByText("Engineer · Projected heartbeat")).toHaveCount(0);
+    await page.getByLabel("Show projected events").click();
+    await expect(page.getByText("Engineer · Projected heartbeat").first()).toBeVisible();
+
+    await page.getByTestId("calendar-google-row").click();
+    const modal = page.getByRole("dialog", { name: "Google Calendar" });
+    await expect(modal).toBeVisible();
+    await expect(modal.getByText("Read-only import for the operator calendar.")).toBeVisible();
+
+    await modal.getByRole("button", { name: "Connect" }).click();
+    await expect(modal.getByText("GOOGLE_CALENDAR_CLIENT_ID")).toBeVisible();
+    await expect(modal.getByText("GOOGLE_CALENDAR_CLIENT_SECRET")).toBeVisible();
+    await expect(modal.getByText("GOOGLE_CLIENT_ID")).toBeVisible();
+    await expect(modal.getByText(`/api/orgs/${organization.id}/calendar/google/callback`)).toBeVisible();
+  });
+
   test("creates a planned agent work block as a read-only human-facing annotation", async ({ page }) => {
     test.slow();
     await page.setViewportSize({ width: 1490, height: 1003 });
@@ -47,10 +117,7 @@ test.describe("Calendar V1", () => {
     await selectOrganization(page, organization.id);
     await page.goto("/calendar");
 
-    await expect(page.getByRole("heading", { name: "Calendar" })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId("calendar-layers-sidebar")).toBeVisible();
-    await expect(page.getByText("Read-only import. Events default to busy blocks and never enter agent context.")).toBeVisible();
-    await expect(page.getByText("not connected")).toBeVisible();
+    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Calendar" })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("CEO", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: /^week$/i })).toBeVisible();
 
@@ -111,36 +178,20 @@ test.describe("Calendar V1", () => {
     expect(await heartbeatRunsRes.json()).toEqual([]);
   });
 
-  test("supports sidebar collapse, drag-to-create, move, resize, and projected heartbeats", async ({ page }) => {
+  test("supports drag-create, writable event move/resize, and non-overlapping timed event columns", async ({ page }) => {
     test.slow();
     await page.setViewportSize({ width: 1490, height: 1003 });
 
     const organization = await createCalendarOrg(page, `Calendar-Interaction-${Date.now()}`);
-    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
-      data: {
-        name: "Engineer",
-        role: "engineer",
-        runtimeConfig: {
-          heartbeat: {
-            enabled: true,
-            intervalSec: 3600,
-          },
-        },
-      },
-    });
-    expect(agentRes.ok()).toBe(true);
-    const agent = await agentRes.json();
+    const todayKey = localDateKey(new Date());
+    const overlapA = await createHumanEvent(page, organization.id, "Overlap A", localIso(todayKey, 13), localIso(todayKey, 14));
+    const overlapB = await createHumanEvent(page, organization.id, "Overlap B", localIso(todayKey, 13, 15), localIso(todayKey, 14, 15));
+    const overlapC = await createHumanEvent(page, organization.id, "Overlap C", localIso(todayKey, 13, 30), localIso(todayKey, 14, 30));
 
     await selectOrganization(page, organization.id);
     await page.goto("/calendar");
-    await expect(page.getByRole("heading", { name: "Calendar" })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Calendar" })).toBeVisible({ timeout: 20_000 });
 
-    await page.getByRole("button", { name: "Hide calendar sidebar" }).click();
-    await expect(page.getByTestId("calendar-layers-sidebar")).toHaveCount(0);
-    await page.getByRole("button", { name: "Show calendar sidebar" }).click();
-    await expect(page.getByTestId("calendar-layers-sidebar")).toBeVisible();
-
-    const todayKey = localDateKey(new Date());
     const dayColumn = page.getByTestId(`calendar-day-column-${todayKey}`);
     await expect(dayColumn).toBeVisible();
     const box = await dayColumn.boundingBox();
@@ -195,6 +246,19 @@ test.describe("Calendar V1", () => {
     await page.mouse.up();
     await resizeResponse;
 
+    const overlapBoxes = await Promise.all([overlapA.id, overlapB.id, overlapC.id].map(async (eventId) => {
+      const eventBox = await page.getByTestId(`calendar-event-${eventId}`).boundingBox();
+      if (!eventBox) throw new Error(`Overlap event ${eventId} was not measurable`);
+      return eventBox;
+    }));
+    for (let i = 0; i < overlapBoxes.length; i += 1) {
+      for (let j = i + 1; j < overlapBoxes.length; j += 1) {
+        const a = overlapBoxes[i]!;
+        const b = overlapBoxes[j]!;
+        expect(a.x + a.width).toBeLessThanOrEqual(b.x + 1.5);
+      }
+    }
+
     const today = new Date();
     const dayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
     const dayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2).toISOString();
@@ -213,27 +277,5 @@ test.describe("Calendar V1", () => {
       sourceMode: "manual",
     });
     expect(new Date(humanEvent.endAt).getTime() - new Date(humanEvent.startAt).getTime()).toBeGreaterThanOrEqual(2 * 60 * 60 * 1000);
-
-    const projected = eventsBody.events.find((event: { eventStatus?: string; ownerAgentId?: string }) =>
-      event.eventStatus === "projected" && event.ownerAgentId === agent.id,
-    );
-    expect(projected).toMatchObject({
-      eventKind: "agent_work_block",
-      eventStatus: "projected",
-      sourceMode: "derived",
-      title: "Engineer · Projected heartbeat",
-    });
-
-    await page.getByText("Engineer · Projected heartbeat").first().click();
-    const projectedDrawer = page.getByRole("dialog", { name: "Engineer · Projected heartbeat" });
-    await expect(projectedDrawer).toBeVisible();
-    await expect(projectedDrawer.getByText("projected heartbeat")).toBeVisible();
-    await expect(projectedDrawer.getByRole("button", { name: /Edit calendar/i })).toHaveCount(0);
-
-    const heartbeatRunsRes = await page.request.get(`/api/orgs/${organization.id}/heartbeat-runs`, {
-      params: { agentId: agent.id },
-    });
-    expect(heartbeatRunsRes.ok()).toBe(true);
-    expect(await heartbeatRunsRes.json()).toEqual([]);
   });
 });

@@ -45,17 +45,19 @@ import { MobileWorkspaceDrawer } from "@/components/MobileWorkspaceDrawer";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useI18n } from "@/context/I18nContext";
+import { CalendarWorkspaceProvider } from "@/context/CalendarWorkspaceContext";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
 const WORKSPACE_COLUMN_WIDTH_KEY_PREFIX = "rudder.workspace.contextWidth";
 
-type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "projects" | "agents" | "org";
+type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org";
 
 const WORKSPACE_COLUMN_WIDTH_DEFAULTS: Record<WorkspaceColumnFamily, number> = {
   chat: 318,
   messenger: 332,
   issues: 248,
+  calendar: 268,
   projects: 268,
   agents: 268,
   org: 248,
@@ -65,6 +67,7 @@ const WORKSPACE_COLUMN_WIDTH_LIMITS: Record<WorkspaceColumnFamily, { min: number
   chat: { min: 280, max: 420 },
   messenger: { min: 280, max: 420 },
   issues: { min: 220, max: 340 },
+  calendar: { min: 236, max: 360 },
   projects: { min: 236, max: 360 },
   agents: { min: 236, max: 360 },
   org: { min: 220, max: 340 },
@@ -175,6 +178,7 @@ function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily |
   if (/^\/chat(?:\/|$)/.test(relativePath)) return "chat";
   if (/^\/messenger(?:\/|$)/.test(relativePath)) return "messenger";
   if (/^\/issues(?:\/|$)/.test(relativePath)) return "issues";
+  if (/^\/calendar(?:\/|$)/.test(relativePath)) return "calendar";
   if (/^\/projects(?:\/|$)/.test(relativePath)) return "org";
   if (/^\/agents(?:\/|$)/.test(relativePath)) return "agents";
   if (/^\/(?:org|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) return "org";
@@ -227,7 +231,7 @@ export function Layout() {
     [relativeBoardPath],
   );
   const useMiddleContextColumn = useMemo(
-    () => /^\/(?:chat|messenger|issues|agents|projects|org|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
+    () => /^\/(?:chat|messenger|issues|calendar|agents|projects|org|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
     [relativeBoardPath],
   );
   const isChatRoute = useMemo(() => /^\/chat(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
@@ -610,6 +614,7 @@ export function Layout() {
       </a>
       <WorktreeBanner />
       <DevRestartBanner devServer={health?.devServer} />
+      <CalendarWorkspaceProvider>
       <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "flex overflow-hidden")}>
         {isMobile && sidebarOpen && (
           <button
@@ -819,6 +824,7 @@ export function Layout() {
       <NewProjectDialog />
       <NewGoalDialog />
       <NewAgentDialog />
+      </CalendarWorkspaceProvider>
     </div>
   );
 }

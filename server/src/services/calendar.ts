@@ -928,6 +928,9 @@ export function calendarService(db: Db) {
           status: "configuration_required" as const,
           authUrl: null,
           source: sanitizeSource(source),
+          redirectUri,
+          requiredEnv: ["GOOGLE_CALENDAR_CLIENT_ID", "GOOGLE_CALENDAR_CLIENT_SECRET"],
+          acceptedAliases: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
         };
       }
       const state = Buffer.from(JSON.stringify({ orgId, sourceId: source.id })).toString("base64url");

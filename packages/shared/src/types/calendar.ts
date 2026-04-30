@@ -88,6 +88,9 @@ export interface GoogleCalendarConnectResponse {
   status: "configuration_required" | "authorization_required";
   authUrl: string | null;
   source: CalendarSource;
+  redirectUri?: string;
+  requiredEnv?: string[];
+  acceptedAliases?: string[];
 }
 
 export interface GoogleCalendarSyncResponse {

@@ -1,22 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Agent, CalendarEvent, CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
+import type { Agent, CalendarEvent, CalendarSource, GoogleCalendarConnectResponse, Issue } from "@rudderhq/shared";
 import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
-  Bot,
   CalendarDays,
   CheckCircle2,
-  Clock3,
   ExternalLink,
   Loader2,
-  PanelLeftClose,
-  PanelLeftOpen,
   Plus,
   RefreshCw,
   Trash2,
-  User,
   X,
 } from "lucide-react";
 import { Link } from "@/lib/router";
@@ -24,19 +19,19 @@ import { agentsApi } from "@/api/agents";
 import { calendarApi } from "@/api/calendar";
 import { issuesApi } from "@/api/issues";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
+import { useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
 import { useToast } from "@/context/ToastContext";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { agentUrl, cn, formatDateTime, issueUrl } from "@/lib/utils";
 import { queryKeys } from "@/lib/queryKeys";
+import { layoutTimedEvents } from "@/lib/calendar-event-layout";
 
 type CalendarView = "day" | "week" | "month" | "agenda";
 type DraftKind = "human_event" | "agent_work_block";
@@ -48,7 +43,6 @@ const DAY_MIN_WIDTH = 180;
 const SNAP_MINUTES = 15;
 const MIN_EVENT_MINUTES = 15;
 const DAY_HOURS = Array.from({ length: 24 }, (_, hour) => hour);
-const EVENT_STATUS_OPTIONS: CalendarEventStatus[] = ["planned", "in_progress", "actual", "external", "projected", "cancelled"];
 const AGENT_COLORS = [
   "border-blue-400 bg-blue-50 text-blue-950 dark:border-blue-500/60 dark:bg-blue-500/16 dark:text-blue-100",
   "border-emerald-400 bg-emerald-50 text-emerald-950 dark:border-emerald-500/60 dark:bg-emerald-500/16 dark:text-emerald-100",
@@ -56,14 +50,6 @@ const AGENT_COLORS = [
   "border-rose-400 bg-rose-50 text-rose-950 dark:border-rose-500/60 dark:bg-rose-500/16 dark:text-rose-100",
   "border-cyan-400 bg-cyan-50 text-cyan-950 dark:border-cyan-500/60 dark:bg-cyan-500/16 dark:text-cyan-100",
   "border-violet-400 bg-violet-50 text-violet-950 dark:border-violet-500/60 dark:bg-violet-500/16 dark:text-violet-100",
-];
-const AGENT_SWATCHES = [
-  "border-blue-400 bg-blue-500",
-  "border-emerald-400 bg-emerald-500",
-  "border-amber-400 bg-amber-500",
-  "border-rose-400 bg-rose-500",
-  "border-cyan-400 bg-cyan-500",
-  "border-violet-400 bg-violet-500",
 ];
 
 function startOfDay(date: Date) {
@@ -241,12 +227,6 @@ function buildEventPayload(draft: ReturnType<typeof newDraft>, agents: Agent[], 
     issueId: draft.kind === "agent_work_block" ? draft.issueId || null : null,
     sourceMode: "manual",
   };
-}
-
-function sourceStatusTone(status: CalendarSource["status"] | "missing") {
-  if (status === "active") return "text-emerald-600 dark:text-emerald-400";
-  if (status === "error") return "text-destructive";
-  return "text-muted-foreground";
 }
 
 function EventBlock({
@@ -551,6 +531,7 @@ function CalendarGridView({
             </div>
             {days.map((day) => {
               const dayEvents = displayEvents.filter((event) => sameDay(event.startAt, day));
+              const laidOutEvents = layoutTimedEvents(dayEvents);
               const today = sameDay(day, currentTime);
               const todayLineTop = (minuteOfDay(currentTime) / 60) * HOUR_HEIGHT;
               const activeSelection = selection?.dayKey === dateKey(day) ? selection : null;
@@ -589,18 +570,18 @@ function CalendarGridView({
                       style={{ top: selectionTop, height: selectionHeight }}
                     />
                   ) : null}
-                  {dayEvents.map((event, index) => {
+                  {laidOutEvents.map(({ event, leftPct, widthPct }) => {
                     const top = Math.max(0, (minuteOfDay(event.startAt) / 60) * HOUR_HEIGHT);
                     const height = Math.max(28, (durationMinutes(event) / 60) * HOUR_HEIGHT);
                     return (
                       <div
                         key={event.id}
-                        className="absolute px-1.5"
+                        className="absolute px-0.5"
                         style={{
                           top,
                           height,
-                          left: `${2 + (index % 2) * 5}%`,
-                          right: `${2 + ((index + 1) % 2) * 5}%`,
+                          left: `calc(${leftPct}% + 4px)`,
+                          width: `calc(${widthPct}% - 8px)`,
                         }}
                       >
                         <EventBlock
@@ -731,24 +712,26 @@ function AgendaView({
 export function Calendar() {
   const { viewedOrganizationId } = useViewedOrganization();
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
+  const {
+    cursor,
+    setCursor,
+    hiddenAgentIds,
+    hiddenSourceIds,
+    myCalendarVisible,
+    visibleStatuses,
+    googleCalendarModalOpen,
+    setGoogleCalendarModalOpen,
+  } = useCalendarWorkspace();
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const [view, setView] = useState<CalendarView>("week");
-  const [cursor, setCursor] = useState(() => new Date());
   const [currentTime, setCurrentTime] = useState(() => new Date());
-  const [filtersVisible, setFiltersVisible] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return window.localStorage.getItem("rudder.calendar.filtersVisible") !== "false";
-  });
-  const [hiddenAgentIds, setHiddenAgentIds] = useState<Set<string>>(() => new Set());
-  const [hiddenSourceIds, setHiddenSourceIds] = useState<Set<string>>(() => new Set());
-  const [myCalendarVisible, setMyCalendarVisible] = useState(true);
-  const [visibleStatuses, setVisibleStatuses] = useState<Set<string>>(() => new Set(EVENT_STATUS_OPTIONS));
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [quickCreate, setQuickCreate] = useState<null | { x: number; y: number }>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [draft, setDraft] = useState(() => newDraft());
+  const [googleConnectResult, setGoogleConnectResult] = useState<GoogleCalendarConnectResponse | null>(null);
 
   const clampQuickCreatePosition = useCallback((anchor?: { x: number; y: number }) => {
     if (typeof window === "undefined") return { x: 420, y: 96 };
@@ -782,12 +765,6 @@ export function Calendar() {
     const timer = window.setInterval(() => setCurrentTime(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem("rudder.calendar.filtersVisible", String(filtersVisible));
-    }
-  }, [filtersVisible]);
 
   useEffect(() => {
     setHeaderActions(
@@ -912,18 +889,18 @@ export function Calendar() {
   const connectGoogleMutation = useMutation({
     mutationFn: () => calendarApi.connectGoogle(viewedOrganizationId!),
     onSuccess: async (result) => {
+      setGoogleConnectResult(result);
       await invalidateCalendar();
       if (result.authUrl) {
         window.location.href = result.authUrl;
         return;
       }
-      pushToast({
-        title: "Google Calendar needs OAuth credentials",
-        body: "Set Google OAuth credentials on the server to enable read-only import.",
-        tone: "error",
-      });
+      setGoogleCalendarModalOpen(true);
     },
-    onError: (error) => pushToast({ title: "Google Calendar connection failed", body: error instanceof Error ? error.message : undefined, tone: "error" }),
+    onError: (error) => {
+      setGoogleCalendarModalOpen(true);
+      pushToast({ title: "Google Calendar connection failed", body: error instanceof Error ? error.message : undefined, tone: "error" });
+    },
   });
   const syncGoogleMutation = useMutation({
     mutationFn: (sourceId?: string | null) => calendarApi.syncGoogle(viewedOrganizationId!, sourceId),
@@ -975,224 +952,65 @@ export function Calendar() {
     : Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(cursor), index));
   const googleSources = sources.filter((source) => source.type === "google_calendar");
   const googleSource = googleSources[0] ?? null;
-  const googleStatus: CalendarSource["status"] | "missing" = googleSource ? googleSource.status : "missing";
-  const sourceEventsCount = (sourceId: string) =>
-    (eventsQuery.data?.events ?? []).filter((event) => event.sourceId === sourceId).length;
+  const redirectUri = typeof window === "undefined"
+    ? `/api/orgs/${encodeURIComponent(viewedOrganizationId)}/calendar/google/callback`
+    : `${window.location.origin}/api/orgs/${encodeURIComponent(viewedOrganizationId)}/calendar/google/callback`;
+  const googleConfigRequired =
+    googleConnectResult?.status === "configuration_required" ||
+    (googleSource?.status === "error" && !googleSource.lastSyncedAt);
+  const requiredGoogleEnv = googleConnectResult?.requiredEnv ?? [
+    "GOOGLE_CALENDAR_CLIENT_ID",
+    "GOOGLE_CALENDAR_CLIENT_SECRET",
+  ];
+  const acceptedGoogleAliases = googleConnectResult?.acceptedAliases ?? [
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+  ];
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden">
-      {filtersVisible ? (
-        <aside
-          data-testid="calendar-layers-sidebar"
-          className="hidden w-72 shrink-0 flex-col overflow-y-auto border-r border-border bg-card/80 p-4 lg:flex"
-        >
-          <div className="mb-4 flex items-center justify-between gap-2">
-            <div>
-              <div className="text-sm font-semibold">Calendar</div>
-              <div className="text-xs text-muted-foreground">Layers and sync</div>
-            </div>
-            <Button type="button" variant="ghost" size="icon-sm" aria-label="Hide calendar sidebar" onClick={() => setFiltersVisible(false)}>
-              <PanelLeftClose className="h-4 w-4" />
-            </Button>
-          </div>
-
-          <div className="mb-4">
-            <Label htmlFor="calendar-month" className="text-xs text-muted-foreground">Month</Label>
-            <Input
-              id="calendar-month"
-              type="month"
-              value={`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`}
-              onChange={(event) => {
-                const [year, month] = event.target.value.split("-").map(Number);
-                if (year && month) setCursor(new Date(year, month - 1, 1));
-              }}
-              className="mt-1 h-9"
-            />
-          </div>
-
-          <section className="space-y-2">
-            <div className="text-xs font-medium text-muted-foreground">Calendars</div>
-            <label className="flex items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-sm hover:bg-muted/40">
-              <Checkbox checked={myCalendarVisible} onCheckedChange={(checked) => setMyCalendarVisible(checked === true)} />
-              <User className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate">My Calendar</span>
-            </label>
-          </section>
-
-          <section className="mt-4 space-y-3 rounded-[var(--radius-sm)] border border-border bg-muted/20 p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
-                  Google Calendar
-                </div>
-                <div className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Read-only import. Events default to busy blocks and never enter agent context.
-                </div>
-              </div>
-              <div className={cn("mt-0.5 flex items-center gap-1 text-xs", sourceStatusTone(googleStatus))}>
-                {googleStatus === "active" ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertCircle className="h-3.5 w-3.5" />}
-                {googleStatus === "missing" ? "not connected" : googleStatus}
-              </div>
-            </div>
-            {googleSource ? (
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 rounded-[var(--radius-sm)] px-1 py-1.5 text-sm">
-                  <Checkbox
-                    checked={!hiddenSourceIds.has(googleSource.id)}
-                    onCheckedChange={(checked) => {
-                      setHiddenSourceIds((current) => {
-                        const next = new Set(current);
-                        if (checked === true) next.delete(googleSource.id);
-                        else next.add(googleSource.id);
-                        return next;
-                      });
-                    }}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{googleSource.name}</span>
-                  <span className="text-xs text-muted-foreground">{sourceEventsCount(googleSource.id)}</span>
-                </label>
-                <label className="space-y-1 text-xs text-muted-foreground">
-                  <span>Visibility</span>
-                  <select
-                    value={googleSource.visibilityDefault}
-                    onChange={(event) => updateSourceMutation.mutate({
-                      sourceId: googleSource.id,
-                      visibilityDefault: event.target.value as CalendarSource["visibilityDefault"],
-                    })}
-                    className="h-8 w-full rounded-[var(--radius-sm)] border border-input bg-background px-2 text-xs text-foreground"
-                  >
-                    <option value="busy_only">Busy only</option>
-                    <option value="full">Show titles</option>
-                    <option value="private">Private</option>
-                  </select>
-                </label>
-                <div className="text-[11px] text-muted-foreground">
-                  Last synced {googleSource.lastSyncedAt ? formatDateTime(googleSource.lastSyncedAt) : "never"}
-                </div>
-              </div>
-            ) : (
-              <div className="text-xs text-muted-foreground">Connect Google to show external busy blocks beside agent work.</div>
-            )}
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => connectGoogleMutation.mutate()}
-                disabled={connectGoogleMutation.isPending}
-              >
-                {connectGoogleMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="mr-1.5 h-3.5 w-3.5" />}
-                Connect
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => syncGoogleMutation.mutate(googleSource?.id)}
-                disabled={syncGoogleMutation.isPending || !googleSource}
-              >
-                {syncGoogleMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
-                Sync
-              </Button>
-            </div>
-          </section>
-
-          <section className="mt-4 space-y-2">
-            <div className="text-xs font-medium text-muted-foreground">Agents</div>
-            {agents.map((agent, index) => (
-              <label key={agent.id} className="flex items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-sm hover:bg-muted/40">
-                <Checkbox
-                  checked={!hiddenAgentIds.has(agent.id)}
-                  onCheckedChange={(checked) => {
-                    setHiddenAgentIds((current) => {
-                      const next = new Set(current);
-                      if (checked === true) next.delete(agent.id);
-                      else next.add(agent.id);
-                      return next;
-                    });
-                  }}
-                />
-                <span className={cn("h-2.5 w-2.5 shrink-0 rounded-sm border", AGENT_SWATCHES[index % AGENT_SWATCHES.length])} />
-                <span className="min-w-0 flex-1 truncate">{agent.name}</span>
-              </label>
-            ))}
-          </section>
-
-          <section className="mt-4 space-y-2">
-            <div className="text-xs font-medium text-muted-foreground">Status</div>
-            {EVENT_STATUS_OPTIONS.map((status) => (
-              <label key={status} className="flex items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-sm hover:bg-muted/40">
-                <Checkbox
-                  checked={visibleStatuses.has(status)}
-                  onCheckedChange={(checked) => {
-                    setVisibleStatuses((current) => {
-                      const next = new Set(current);
-                      if (checked === true) next.add(status);
-                      else next.delete(status);
-                      return next;
-                    });
-                  }}
-                />
-                <span>{statusLabel(status)}</span>
-              </label>
-            ))}
-          </section>
-        </aside>
-      ) : null}
-
-      <main className="flex min-w-0 flex-1 flex-col gap-3 p-4 md:p-5">
-        <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-sm)] border border-border bg-card px-3 py-2">
-          {!filtersVisible ? (
-            <Button type="button" variant="ghost" size="icon-sm" aria-label="Show calendar sidebar" onClick={() => setFiltersVisible(true)}>
-              <PanelLeftOpen className="h-4 w-4" />
-            </Button>
-          ) : null}
-          <Button variant="outline" size="sm" onClick={() => setCursor(new Date())}>Today</Button>
-          <Button variant="ghost" size="icon-sm" aria-label="Previous range" onClick={() => setCursor((value) => moveCursor(view, value, -1))}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon-sm" aria-label="Next range" onClick={() => setCursor((value) => moveCursor(view, value, 1))}>
-            <ArrowRight className="h-4 w-4" />
-          </Button>
-          <div className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{formatRangeTitle(view, cursor)}</div>
-          <Button type="button" size="sm" variant="outline" className="lg:hidden" onClick={() => setFiltersVisible((value) => !value)}>
-            Layers
-          </Button>
-          <div className="grid grid-cols-4 rounded-[var(--radius-sm)] border border-border p-0.5">
-            {(["day", "week", "month", "agenda"] as CalendarView[]).map((item) => (
-              <button
-                key={item}
-                type="button"
-                className={cn(
-                  "rounded-[calc(var(--radius-sm)-2px)] px-2.5 py-1.5 text-xs font-medium capitalize transition",
-                  view === item ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                )}
-                onClick={() => setView(item)}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
+    <div className="flex h-full min-h-[720px] min-w-0 flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-sm)] border border-border bg-card px-3 py-2">
+        <Button variant="outline" size="sm" onClick={() => setCursor(new Date())}>Today</Button>
+        <Button variant="ghost" size="icon-sm" aria-label="Previous range" onClick={() => setCursor((value) => moveCursor(view, value, -1))}>
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <Button variant="ghost" size="icon-sm" aria-label="Next range" onClick={() => setCursor((value) => moveCursor(view, value, 1))}>
+          <ArrowRight className="h-4 w-4" />
+        </Button>
+        <div className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{formatRangeTitle(view, cursor)}</div>
+        <div className="grid grid-cols-4 rounded-[var(--radius-sm)] border border-border p-0.5">
+          {(["day", "week", "month", "agenda"] as CalendarView[]).map((item) => (
+            <button
+              key={item}
+              type="button"
+              className={cn(
+                "rounded-[calc(var(--radius-sm)-2px)] px-2.5 py-1.5 text-xs font-medium capitalize transition",
+                view === item ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+              )}
+              onClick={() => setView(item)}
+            >
+              {item}
+            </button>
+          ))}
         </div>
+      </div>
 
-        {view === "day" || view === "week" ? (
-          <CalendarGridView
-            view={view}
-            days={days}
-            events={visibleEvents}
-            agents={agents}
-            currentTime={currentTime}
-            onSelect={setSelectedEvent}
-            onCreateSelection={(startAt, endAt, anchor) => openQuickCreate("human_event", startAt, endAt, anchor)}
-            onUpdateEventTime={(event, startAt, endAt) => moveEventMutation.mutate({ event, startAt, endAt })}
-          />
-        ) : view === "month" ? (
-          <MonthView cursor={cursor} events={visibleEvents} agents={agents} currentTime={currentTime} onSelect={setSelectedEvent} />
-        ) : (
-          <AgendaView events={visibleEvents} agents={agents} onSelect={setSelectedEvent} />
-        )}
-      </main>
+      {view === "day" || view === "week" ? (
+        <CalendarGridView
+          view={view}
+          days={days}
+          events={visibleEvents}
+          agents={agents}
+          currentTime={currentTime}
+          onSelect={setSelectedEvent}
+          onCreateSelection={(startAt, endAt, anchor) => openQuickCreate("human_event", startAt, endAt, anchor)}
+          onUpdateEventTime={(event, startAt, endAt) => moveEventMutation.mutate({ event, startAt, endAt })}
+        />
+      ) : view === "month" ? (
+        <MonthView cursor={cursor} events={visibleEvents} agents={agents} currentTime={currentTime} onSelect={setSelectedEvent} />
+      ) : (
+        <AgendaView events={visibleEvents} agents={agents} onSelect={setSelectedEvent} />
+      )}
 
       {quickCreate ? (
         <div
@@ -1298,6 +1116,103 @@ export function Calendar() {
           </div>
         </div>
       ) : null}
+
+      <Dialog open={googleCalendarModalOpen} onOpenChange={setGoogleCalendarModalOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Google Calendar</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-1 text-sm">
+            <div className="rounded-[var(--radius-sm)] border border-border bg-muted/25 p-3 text-xs leading-5 text-muted-foreground">
+              Read-only import for the operator calendar. Imported events default to busy blocks and never enter agent context.
+            </div>
+
+            {googleSource?.status === "active" ? (
+              <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-emerald-500/20 bg-emerald-500/10 p-3 text-emerald-700 dark:text-emerald-300">
+                <CheckCircle2 className="h-4 w-4" />
+                <span className="font-medium">Connected</span>
+              </div>
+            ) : googleConfigRequired ? (
+              <div className="space-y-3 rounded-[var(--radius-sm)] border border-amber-500/25 bg-amber-500/10 p-3">
+                <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
+                  <AlertCircle className="h-4 w-4" />
+                  <span className="font-medium">OAuth configuration required</span>
+                </div>
+                <div className="space-y-2 text-xs leading-5 text-muted-foreground">
+                  <div>Set these server environment variables, then restart Rudder:</div>
+                  <div className="rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background p-2 font-mono text-[11px] text-foreground">
+                    {requiredGoogleEnv.map((name) => <div key={name}>{name}</div>)}
+                  </div>
+                  <div>Accepted aliases:</div>
+                  <div className="rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background p-2 font-mono text-[11px] text-foreground">
+                    {acceptedGoogleAliases.map((name) => <div key={name}>{name}</div>)}
+                  </div>
+                  <div>
+                    Redirect URI:
+                    <div className="mt-1 break-all rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background p-2 font-mono text-[11px] text-foreground">
+                      {googleConnectResult?.redirectUri ?? redirectUri}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-border bg-muted/25 p-3 text-muted-foreground">
+                <AlertCircle className="h-4 w-4" />
+                <span className="font-medium">Disconnected</span>
+              </div>
+            )}
+
+            {googleSource ? (
+              <div className="grid gap-3">
+                <label className="space-y-1.5 text-xs text-muted-foreground">
+                  <span>Visibility</span>
+                  <select
+                    value={googleSource.visibilityDefault}
+                    onChange={(event) => updateSourceMutation.mutate({
+                      sourceId: googleSource.id,
+                      visibilityDefault: event.target.value as CalendarSource["visibilityDefault"],
+                    })}
+                    className="h-9 w-full rounded-[var(--radius-sm)] border border-input bg-background px-3 text-sm text-foreground"
+                  >
+                    <option value="busy_only">Busy only</option>
+                    <option value="full">Show titles</option>
+                    <option value="private">Private</option>
+                  </select>
+                </label>
+                <div className="text-xs text-muted-foreground">
+                  Last synced {googleSource.lastSyncedAt ? formatDateTime(googleSource.lastSyncedAt) : "never"}
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button type="button" variant="ghost" onClick={() => setGoogleCalendarModalOpen(false)}>
+              Close
+            </Button>
+            <div className="flex gap-2">
+              {googleSource ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => syncGoogleMutation.mutate(googleSource.id)}
+                  disabled={syncGoogleMutation.isPending || googleSource.status !== "active"}
+                >
+                  {syncGoogleMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+                  Sync now
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                onClick={() => connectGoogleMutation.mutate()}
+                disabled={connectGoogleMutation.isPending}
+              >
+                {connectGoogleMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="mr-1.5 h-3.5 w-3.5" />}
+                Connect
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Sheet open={!!selectedEvent} onOpenChange={(open) => !open && setSelectedEvent(null)}>
         <SheetContent className="w-full sm:max-w-md">
