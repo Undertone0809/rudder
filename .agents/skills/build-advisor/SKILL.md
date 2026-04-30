@@ -13,7 +13,10 @@ description: >
   or score data but needs help turning that evidence into a product,
   UX, engineering, or workflow diagnosis. When the discussion is grounded in
   Langfuse traces, scores, datasets, or experiment results, combine this skill
-  with `langfuse` instead of reasoning from vague impressions alone.
+  with `langfuse` instead of reasoning from vague impressions alone. For
+  repository, product, UI, workflow, or implementation requests, ground the
+  diagnosis in the relevant local docs, code, screenshots, traces, or prior
+  plans before claiming to understand the user's real need.
 ---
 
 # Build Advisor
@@ -62,6 +65,7 @@ Do not treat this as a direct code-writing skill by default.
 It should not:
 
 - jump into implementation before diagnosis
+- claim "I understand" from the prompt alone when local evidence can be checked
 - pretend every problem is a UI styling issue
 - replace specialized execution skills when the right next step is obvious
 - produce vague "looks better / feels cleaner" advice without criteria
@@ -84,7 +88,35 @@ Use `build-advisor` when the user is blocked on judgment, articulation, or decid
 
 Follow this sequence unless the user explicitly narrows the task.
 
-### 1. Reframe The Ask
+### 1. Evidence Intake Before Reframing
+
+Do a small, targeted context pass before saying the real need is understood.
+This is required even when the user asks "first tell me if you understand" or
+"先说你懂我的需求了吗", unless the user explicitly asks for a no-tools gut check.
+
+For repository, product, UI, workflow, or implementation requests, inspect the
+minimum evidence needed to avoid a surface-level paraphrase:
+
+- the attached screenshot, transcript, trace, benchmark, or artifact the user
+  is reacting to
+- repo instructions such as `AGENTS.md` when they govern the work
+- relevant product, design, architecture, or workflow docs
+- the specific code, component, route, config, or generated artifact under
+  discussion
+- nearby skills or standards when the user invokes them or the topic is
+  practice-driven
+- prior plans when the topic touches an existing feature, workflow, or recurring
+  surface
+
+The context pass should be proportional. A narrow UI complaint might need the
+screenshot, design doc, and component file; an architecture proposal might need
+spec docs, schema/API code, and related plans. Do not scan the whole repository
+by default.
+
+If enough context is not yet available, say so directly and list the exact
+evidence needed. Do not fill the gap with confident interpretation.
+
+### 2. Reframe The Ask
 
 State plainly:
 
@@ -95,7 +127,12 @@ State plainly:
 Example:
 "You do not need another blind iteration. You need a professional diagnosis of why this result feels wrong, plus the right next move."
 
-### 2. Diagnose The Layer
+When the user asks whether you understand, answer with an evidence-grounded
+reframe, not just a restatement of visible symptoms. Name the evidence you used
+briefly, for example "Based on the screenshot, `doc/DESIGN.md`, and the menu
+component...".
+
+### 3. Diagnose The Layer
 
 Classify the problem into one primary layer, and one optional secondary layer:
 
@@ -115,7 +152,7 @@ Rule:
 If a standards gap is causing repeated low-quality output, call that out explicitly.
 If trace or benchmark evidence exists, decide whether the real problem is the product itself, the instrumentation, or the evaluation frame.
 
-### 3. Search Before Advising
+### 4. Search Before Advising
 
 Before giving recommendations, inspect the most relevant local context:
 
@@ -153,7 +190,7 @@ When the user mentions Langfuse, or when the available evidence lives in Langfus
 
 Do not guess if you can verify quickly.
 
-### 4. Build An Evaluation Frame
+### 5. Build An Evaluation Frame
 
 Create a short decision rubric tailored to the problem.
 
@@ -171,7 +208,7 @@ Good rubrics usually have 4-8 dimensions, for example:
 Do not stay abstract.
 Say what good and bad look like in this context.
 
-### 5. Produce Options
+### 6. Produce Options
 
 Always provide at least 2 options:
 
@@ -188,7 +225,7 @@ For each option include:
 
 If traces, scores, or evals are in play, say whether the option fixes the product, the instrumentation, the benchmark design, or only the interpretation layer.
 
-### 6. Expand The Recommended Proposal
+### 7. Expand The Recommended Proposal
 
 After listing options, expand the recommended option into a decision-ready
 proposal.
@@ -244,7 +281,7 @@ mostly implemented." Produce one of: accept as-is, accept with gaps, or
 redesign. Include a gap assessment covering evidence, missing behavior, risk,
 and acceptance signal.
 
-### 7. Recommend The Next Move
+### 8. Recommend The Next Move
 
 Choose one option.
 Say why.
@@ -259,7 +296,7 @@ Possible next moves:
 
 The recommendation should be explicit, not "it depends" by default.
 
-### 8. Write Plan doc before run
+### 9. Write Plan doc before run
 
 Before you run, write your detail plan in `doc/plans`, then start your work.
 - DO NOT write your plan before user confirm.
@@ -291,6 +328,11 @@ Default to this structure:
 ### What You're Actually Asking
 
 One short paragraph reframing the real need.
+
+Include the evidence used when the request is grounded in a repo, product,
+UI surface, workflow, implementation, trace, benchmark, or prior artifact.
+If you have not inspected enough evidence yet, say "not enough evidence yet"
+and identify the missing context instead of claiming full understanding.
 
 ### Diagnosis
 
@@ -409,6 +451,39 @@ missing behavior, risk, and acceptance signal before the recommended proposal.
 Must not:
 Stop after listing discovered files or saying the current implementation mostly
 matches the direction.
+
+### Case: Evidence-Grounded "Do You Understand?"
+
+Input:
+"优化 UI，Run transcript 这里先告诉我你懂我的需求了吗" plus screenshots of
+the current surface and a repository skill invocation.
+
+Expected behavior:
+Before saying the need is understood, inspect the screenshot plus the relevant
+design docs and likely component files. The response says what evidence was
+reviewed, identifies the real issue as an information hierarchy / density
+problem if supported by that evidence, and separates symptoms from the deeper
+need.
+
+Must not:
+Reply only with "懂了" and a surface paraphrase of the screenshot before
+checking the local docs or code.
+
+### Case: Shared Interaction Request
+
+Input:
+"UX 优化，chat 这里，我希望点击这些会弹 menu 选项的，我希望这个 menu 需要加一个动画，一个弹出的动画，生动的感觉。build-advisor 先说说懂我需求了吗"
+plus a screenshot of several menu triggers.
+
+Expected behavior:
+Inspect the screenshot, the relevant chat/menu components, and design guidance
+before concluding. The response should distinguish whether this is a single CSS
+animation, a shared menu primitive, or a broader interaction-standard gap, and
+name the evidence behind that diagnosis.
+
+Must not:
+Infer a final implementation direction such as "add scale + opacity + translate
+to all dropdowns" without first checking how menus are actually implemented.
 
 ### Case: Explicit Quick Take
 
