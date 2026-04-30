@@ -113,4 +113,5 @@ describe("KanbanBoard", () => {
 
     expect(onOpenIssue).toHaveBeenCalledWith(issue);
   });
+
 });

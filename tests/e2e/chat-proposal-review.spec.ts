@@ -113,7 +113,14 @@ test.describe("Chat proposal review block", () => {
       structuredPayload: {
         issueProposal: {
           title: "Review block approval test",
-          description: "Verify approved chat proposals remain visible as completed review blocks.",
+          description: [
+            "## Execution plan",
+            "",
+            "- Render the issue proposal description with markdown.",
+            "- Keep the review block visible after approval.",
+            "",
+            "Run `pnpm test:e2e` before landing.",
+          ].join("\n"),
           priority: "medium",
         },
       },
@@ -129,6 +136,9 @@ test.describe("Chat proposal review block", () => {
     const reviewBlock = page.getByTestId("proposal-review-block").last();
     await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
     await expect(reviewBlock).toHaveAttribute("data-status", "pending");
+    await expect(reviewBlock.locator("h2")).toHaveText("Execution plan");
+    await expect(reviewBlock.locator("ul li")).toHaveCount(2);
+    await expect(reviewBlock.locator("code")).toContainText("pnpm test:e2e");
 
     await reviewBlock.getByRole("button", { name: "Approve" }).click();
 
