@@ -110,6 +110,8 @@ test.describe("Calendar V1", () => {
     await expect(page.getByTestId("calendar-sidebar-month")).toHaveCount(0);
     await expect(page.getByTestId("calendar-layers-sidebar")).toHaveCount(0);
     await expect(page.getByTestId("calendar-google-row")).toBeVisible();
+    await expect(page.getByTestId("calendar-google-row").getByText("Connected")).toHaveCount(0);
+    await expect(page.getByLabel("Import Google Calendar")).toBeVisible();
     await expect(page.getByText("Imported event titles are visible in Rudder when enabled")).toHaveCount(0);
 
     await expect(page.getByText("Engineer · Projected heartbeat")).toHaveCount(0);

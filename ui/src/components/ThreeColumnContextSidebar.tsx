@@ -2,14 +2,12 @@ import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
-  AlertCircle,
   Boxes,
   CalendarDays,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  CheckCircle2,
   Circle,
   Clock3,
   Copy,
@@ -160,46 +158,6 @@ function calendarStatusLabel(status: CalendarEventStatus) {
   return status;
 }
 
-function googleSourceConnectionState(sources: CalendarSource[]): {
-  label: "Disconnected" | "Connected" | "Needs config" | "Error";
-  tone: string;
-  icon: typeof AlertCircle;
-} {
-  if (sources.length === 0) {
-    return {
-      label: "Disconnected",
-      tone: "border-border bg-muted/30 text-muted-foreground",
-      icon: AlertCircle,
-    };
-  }
-  if (sources.some((source) => source.status === "error" && !source.lastSyncedAt)) {
-    return {
-      label: "Needs config",
-      tone: "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-      icon: AlertCircle,
-    };
-  }
-  if (sources.some((source) => source.status === "error")) {
-    return {
-      label: "Error",
-      tone: "border-destructive/25 bg-destructive/10 text-destructive",
-      icon: AlertCircle,
-    };
-  }
-  if (sources.some((source) => source.status === "active" || source.status === "paused" || source.lastSyncedAt)) {
-    return {
-      label: "Connected",
-      tone: "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-      icon: CheckCircle2,
-    };
-  }
-  return {
-    label: "Error",
-    tone: "border-destructive/25 bg-destructive/10 text-destructive",
-    icon: AlertCircle,
-  };
-}
-
 const CALENDAR_LAYER_COLORS = [
   "border-blue-400 bg-blue-500",
   "border-emerald-400 bg-emerald-500",
@@ -309,6 +267,7 @@ function CalendarMiniMonth({
           const selected = key === selectedKey;
           const today = key === todayKey;
           const completedCount = completedIssueCountByDay.get(key) ?? 0;
+          const showHeat = completedCount > 0 && !today && !selected;
           return (
             <button
               key={key}
@@ -317,11 +276,11 @@ function CalendarMiniMonth({
               title={completedCount > 0 ? `${completedCount} completed agent issue${completedCount === 1 ? "" : "s"}` : undefined}
               className={cn(
                 "mx-auto flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-xs transition-[background-color,color,box-shadow]",
-                outside ? "text-muted-foreground/45" : "text-foreground/88",
-                calendarHeatClass(completedCount),
-                today && "ring-1 ring-primary/70",
-                selected && "bg-primary text-primary-foreground shadow-sm",
-                !selected && "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)]",
+                outside && !today ? "text-muted-foreground/45" : "text-foreground/88",
+                showHeat && calendarHeatClass(completedCount),
+                today && "bg-primary text-primary-foreground shadow-sm ring-2 ring-background",
+                !today && selected && "bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,var(--surface-active))] text-foreground ring-1 ring-primary/65",
+                !today && !selected && "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)]",
               )}
               onClick={() => setCursor(calendarStartOfDay(day))}
             >
@@ -841,8 +800,6 @@ export function ThreeColumnContextSidebar() {
       return primaryDelta !== 0 ? primaryDelta : a.name.localeCompare(b.name);
     });
   const activeGoogleSources = googleSources.filter((source) => source.status === "active");
-  const googleState = googleSourceConnectionState(googleSources);
-  const GoogleStateIcon = googleState.icon;
   const googleVisible = googleSources.some((source) => source.status === "active" && !hiddenSourceIds.has(source.id));
   const completedIssueCountByDay = useMemo(() => {
     const counts = new Map<string, number>();
@@ -985,7 +942,20 @@ export function ThreeColumnContextSidebar() {
             completedIssueCountByDay={completedIssueCountByDay}
           />
 
-          <SectionLabel>Calendars</SectionLabel>
+          <SectionLabel
+            action={(
+              <button
+                type="button"
+                aria-label="Import Google Calendar"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
+                onClick={() => setGoogleCalendarModalOpen(true)}
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            )}
+          >
+            Calendars
+          </SectionLabel>
           <div className="mt-2 space-y-0.5">
             <VisibilityLayerRow
               label="My Calendar"
@@ -1012,15 +982,6 @@ export function ThreeColumnContextSidebar() {
               >
                 <CalendarDays className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate">Google Calendar</span>
-                <span
-                  className={cn(
-                    "inline-flex shrink-0 items-center gap-1 rounded-[calc(var(--radius-sm)-2px)] border px-1.5 py-0.5 text-[10px] font-medium",
-                    googleState.tone,
-                  )}
-                >
-                  <GoogleStateIcon className="h-3 w-3" />
-                  {googleState.label}
-                </span>
               </button>
               <button
                 type="button"
