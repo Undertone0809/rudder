@@ -138,6 +138,9 @@ type DesktopIdeTarget = {
 };
 
 type DesktopWorkspaceLaunchTargetId = DesktopWorkspaceLaunchTarget["id"];
+type DesktopWorkspaceLaunchTargetWithIcon = Omit<DesktopWorkspaceLaunchTarget, "iconPath"> & {
+  iconDataUrl?: string;
+};
 
 type ActiveRunSummary = {
   totalRuns: number;
@@ -154,6 +157,32 @@ type OpenNotificationSettingsResult = {
   opened: boolean;
   platform: NodeJS.Platform;
 };
+
+async function addWorkspaceLaunchTargetIcon(
+  target: DesktopWorkspaceLaunchTarget,
+): Promise<DesktopWorkspaceLaunchTargetWithIcon> {
+  const baseTarget = {
+    id: target.id,
+    label: target.label,
+    kind: target.kind,
+  };
+  if (!target.iconPath) return baseTarget;
+  try {
+    const image = await app.getFileIcon(target.iconPath, { size: "normal" });
+    if (image.isEmpty()) return baseTarget;
+    return {
+      ...baseTarget,
+      iconDataUrl: image.toDataURL(),
+    };
+  } catch {
+    return baseTarget;
+  }
+}
+
+async function listWorkspaceLaunchTargetsWithIcons(): Promise<DesktopWorkspaceLaunchTargetWithIcon[]> {
+  const targets = await listWorkspaceLaunchTargets();
+  return await Promise.all(targets.map((target) => addWorkspaceLaunchTargetIcon(target)));
+}
 
 const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
@@ -1209,8 +1238,8 @@ function registerIpc(): void {
   ipcMain.handle("desktop:list-available-ides", async (): Promise<DesktopIdeTarget[]> => {
     return await listAvailableIdeTargets();
   });
-  ipcMain.handle("desktop:list-workspace-launch-targets", async (): Promise<DesktopWorkspaceLaunchTarget[]> => {
-    return await listWorkspaceLaunchTargets();
+  ipcMain.handle("desktop:list-workspace-launch-targets", async (): Promise<DesktopWorkspaceLaunchTargetWithIcon[]> => {
+    return await listWorkspaceLaunchTargetsWithIcons();
   });
   ipcMain.handle(
     "desktop:open-workspace",

@@ -56,7 +56,7 @@ describe("listWorkspaceLaunchTargets", () => {
       commandExists: async () => false,
     });
 
-    expect(targets).toEqual([
+    expect(targets.map(({ id, label, kind }) => ({ id, label, kind }))).toEqual([
       { id: "vscode", label: "VS Code", kind: "ide" },
       { id: "cursor", label: "Cursor", kind: "ide" },
       { id: "xcode", label: "Xcode", kind: "ide" },
@@ -64,6 +64,10 @@ describe("listWorkspaceLaunchTargets", () => {
       { id: "warp", label: "Warp", kind: "terminal" },
       { id: "finder", label: "Finder", kind: "folder" },
     ]);
+    expect(targets.find((target) => target.id === "vscode")?.iconPath)
+      .toBe("/Applications/Visual Studio Code.app");
+    expect(targets.find((target) => target.id === "finder")?.iconPath)
+      .toBe("/System/Library/CoreServices/Finder.app");
   });
 
   it("keeps folder fallback available when no app or command is detected", async () => {

@@ -25,6 +25,8 @@ export type DesktopWorkspaceLaunchTarget = {
   id: DesktopWorkspaceLaunchTargetId;
   label: string;
   kind: "ide" | "terminal" | "folder";
+  iconPath?: string;
+  iconDataUrl?: string;
 };
 
 type DesktopWorkspaceLaunchDetection = DesktopWorkspaceLaunchTarget & {
@@ -115,14 +117,18 @@ function macAppCandidates(appName: string, homeDir: string) {
   return [
     path.join("/Applications", `${appName}.app`),
     path.join(homeDir, "Applications", `${appName}.app`),
+    path.join("/System/Applications", `${appName}.app`),
+    path.join("/System/Applications/Utilities", `${appName}.app`),
   ];
 }
 
 function folderLaunchDetection(platform: NodeJS.Platform): DesktopWorkspaceLaunchDetection {
+  const finderPath = "/System/Library/CoreServices/Finder.app";
   return {
     id: "finder",
     label: platform === "darwin" ? "Finder" : "Folder",
     kind: "folder",
+    iconPath: platform === "darwin" ? finderPath : undefined,
     strategy: {
       kind: "folder",
     },
@@ -155,6 +161,7 @@ async function detectAvailableWorkspaceLaunchTargetsInternal(
           id: spec.id,
           label: spec.label,
           kind: spec.kind,
+          iconPath: matchedAppPath,
           strategy: {
             kind: "darwin-app",
             appPath: matchedAppPath,
@@ -194,7 +201,7 @@ export async function listWorkspaceLaunchTargets(
   options: DetectAvailableWorkspaceLaunchTargetsOptions = {},
 ): Promise<DesktopWorkspaceLaunchTarget[]> {
   const detections = await detectAvailableWorkspaceLaunchTargetsInternal(options);
-  return detections.map(({ id, label, kind }) => ({ id, label, kind }));
+  return detections.map(({ id, label, kind, iconPath }) => ({ id, label, kind, iconPath }));
 }
 
 export async function listAvailableIdeTargets(

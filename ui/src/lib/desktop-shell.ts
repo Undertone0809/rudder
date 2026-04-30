@@ -76,6 +76,7 @@ export type DesktopWorkspaceLaunchTarget = {
   id: "vscode" | "cursor" | "xcode" | "windsurf" | "zed" | "webstorm" | "intellij" | "terminal" | "warp" | "finder";
   label: string;
   kind: "ide" | "terminal" | "folder";
+  iconDataUrl?: string;
 };
 
 export type DesktopShellApi = {

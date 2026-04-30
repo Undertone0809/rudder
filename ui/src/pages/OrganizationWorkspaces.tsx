@@ -21,15 +21,12 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import {
   ChevronDown,
   ChevronRight,
-  Code2,
   HardDrive,
   Folder,
-  FolderOpen,
   FileCode2,
   RefreshCw,
   Save,
   Loader2,
-  Terminal,
 } from "lucide-react";
 
 const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
@@ -68,8 +65,25 @@ function WorkspaceLaunchTargetIcon({
   target: DesktopWorkspaceLaunchTarget;
   className?: string;
 }) {
-  const Icon = target.kind === "terminal" ? Terminal : target.kind === "folder" ? FolderOpen : Code2;
-  return <Icon className={className} />;
+  if (target.iconDataUrl) {
+    return (
+      <img
+        src={target.iconDataUrl}
+        alt=""
+        aria-hidden="true"
+        className={className}
+      />
+    );
+  }
+
+  return (
+    <span
+      aria-hidden="true"
+      className={`inline-flex items-center justify-center rounded-sm border border-border bg-background text-[10px] font-medium text-muted-foreground ${className ?? ""}`}
+    >
+      {target.label.slice(0, 1)}
+    </span>
+  );
 }
 
 function parentDirectories(filePath: string) {
@@ -410,21 +424,20 @@ export function OrganizationWorkspaces() {
             <Button
               type="button"
               variant="outline"
-              size="sm"
-              className="rounded-r-none border-r-0"
+              size="icon"
+              className="h-8 w-10 cursor-pointer rounded-r-none border-r-0"
               aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
               onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
               disabled={openingWorkspaceTargetId !== null}
             >
               {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <WorkspaceLaunchTargetIcon
                   target={selectedWorkspaceLaunchTarget}
-                  className="mr-1.5 h-3.5 w-3.5"
+                  className="h-4 w-4"
                 />
               )}
-              {selectedWorkspaceLaunchTarget.label}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -432,7 +445,7 @@ export function OrganizationWorkspaces() {
                   type="button"
                   variant="outline"
                   size="icon"
-                  className="h-8 w-8 rounded-l-none"
+                  className="h-8 w-8 cursor-pointer rounded-l-none"
                   aria-label="Open workspace menu"
                   disabled={openingWorkspaceTargetId !== null}
                 >
@@ -443,6 +456,7 @@ export function OrganizationWorkspaces() {
                 {workspaceLaunchTargets.map((target) => (
                   <DropdownMenuItem
                     key={target.id}
+                    className="cursor-pointer"
                     data-testid={`org-workspaces-launch-target-${target.id}`}
                     onSelect={() => void handleOpenWorkspace(target)}
                   >
