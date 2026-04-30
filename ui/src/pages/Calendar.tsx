@@ -19,6 +19,7 @@ import { agentsApi } from "@/api/agents";
 import { calendarApi } from "@/api/calendar";
 import { issuesApi } from "@/api/issues";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -32,6 +33,8 @@ import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { agentUrl, cn, formatDateTime, issueUrl } from "@/lib/utils";
 import { queryKeys } from "@/lib/queryKeys";
 import { layoutTimedEvents } from "@/lib/calendar-event-layout";
+import { timedEventSegmentsForDay, type TimedDaySegment } from "@/lib/calendar-day-segments";
+import { formatSidebarAgentLabel } from "@/lib/agent-labels";
 
 type CalendarView = "day" | "week" | "month" | "agenda";
 type DraftKind = "human_event" | "agent_work_block";
@@ -45,12 +48,12 @@ const SNAP_MINUTES = 15;
 const MIN_EVENT_MINUTES = 15;
 const DAY_HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const AGENT_COLORS = [
-  "border-blue-400 bg-blue-50 text-blue-950 dark:border-blue-500/60 dark:bg-blue-500/16 dark:text-blue-100",
-  "border-emerald-400 bg-emerald-50 text-emerald-950 dark:border-emerald-500/60 dark:bg-emerald-500/16 dark:text-emerald-100",
-  "border-amber-400 bg-amber-50 text-amber-950 dark:border-amber-500/60 dark:bg-amber-500/16 dark:text-amber-100",
-  "border-rose-400 bg-rose-50 text-rose-950 dark:border-rose-500/60 dark:bg-rose-500/16 dark:text-rose-100",
-  "border-cyan-400 bg-cyan-50 text-cyan-950 dark:border-cyan-500/60 dark:bg-cyan-500/16 dark:text-cyan-100",
-  "border-violet-400 bg-violet-50 text-violet-950 dark:border-violet-500/60 dark:bg-violet-500/16 dark:text-violet-100",
+  "border-blue-400 bg-blue-50 text-blue-950 dark:border-blue-500/70 dark:bg-blue-950 dark:text-blue-100",
+  "border-emerald-400 bg-emerald-50 text-emerald-950 dark:border-emerald-500/70 dark:bg-emerald-950 dark:text-emerald-100",
+  "border-amber-400 bg-amber-50 text-amber-950 dark:border-amber-500/70 dark:bg-amber-950 dark:text-amber-100",
+  "border-rose-400 bg-rose-50 text-rose-950 dark:border-rose-500/70 dark:bg-rose-950 dark:text-rose-100",
+  "border-cyan-400 bg-cyan-50 text-cyan-950 dark:border-cyan-500/70 dark:bg-cyan-950 dark:text-cyan-100",
+  "border-violet-400 bg-violet-50 text-violet-950 dark:border-violet-500/70 dark:bg-violet-950 dark:text-violet-100",
 ];
 
 function startOfDay(date: Date) {
@@ -162,13 +165,13 @@ function statusLabel(status: string) {
 
 function eventTone(event: CalendarEvent, agents: Agent[]) {
   if (event.eventStatus === "projected") {
-    return "border-sky-300 bg-sky-50/70 text-sky-950 dark:border-sky-400/50 dark:bg-sky-400/12 dark:text-sky-100";
+    return "border-sky-300 bg-sky-50 text-sky-950 dark:border-sky-400/70 dark:bg-sky-950 dark:text-sky-100";
   }
   if (event.eventKind === "external_event") {
-    return "border-slate-300 bg-slate-50 text-slate-800 dark:border-slate-500/50 dark:bg-slate-500/14 dark:text-slate-100";
+    return "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-500/70 dark:bg-slate-800 dark:text-slate-100";
   }
   if (event.eventKind === "human_event") {
-    return "border-zinc-300 bg-zinc-50 text-zinc-950 dark:border-zinc-500/60 dark:bg-zinc-500/14 dark:text-zinc-100";
+    return "border-zinc-300 bg-zinc-50 text-zinc-950 dark:border-zinc-500/70 dark:bg-zinc-800 dark:text-zinc-100";
   }
   const index = agents.findIndex((agent) => agent.id === event.ownerAgentId);
   return AGENT_COLORS[Math.max(0, index) % AGENT_COLORS.length]!;
@@ -237,6 +240,9 @@ function EventBlock({
   onPointerStart,
   onPointerMove,
   onPointerEnd,
+  displayStartAt,
+  continuation,
+  testId,
   compact = false,
 }: {
   event: CalendarEvent;
@@ -245,6 +251,9 @@ function EventBlock({
   onPointerStart?: (event: ReactPointerEvent<HTMLDivElement>, mode: DragMode) => void;
   onPointerMove?: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerEnd?: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  displayStartAt?: Date | string;
+  continuation?: Pick<TimedDaySegment<CalendarEvent>, "startsBeforeDay" | "endsAfterDay">;
+  testId?: string;
   compact?: boolean;
 }) {
   const writable = isWritableEvent(event);
@@ -253,7 +262,7 @@ function EventBlock({
       role="button"
       tabIndex={0}
       data-calendar-event="true"
-      data-testid={`calendar-event-${event.id}`}
+      data-testid={testId ?? `calendar-event-${event.id}`}
       onClick={() => onSelect(event)}
       onPointerDown={writable && onPointerStart ? (pointerEvent) => onPointerStart(pointerEvent, "move") : undefined}
       onPointerMove={writable ? onPointerMove : undefined}
@@ -269,6 +278,8 @@ function EventBlock({
         "group relative h-full w-full min-w-0 select-none overflow-hidden rounded-[calc(var(--radius-sm)-1px)] border px-2 py-1 text-left shadow-[0_10px_18px_-18px_rgba(15,23,42,0.45)] transition hover:brightness-[0.98]",
         eventTone(event, agents),
         event.eventStatus === "projected" && "border-dashed",
+        continuation?.startsBeforeDay && "rounded-t-none border-t-0",
+        continuation?.endsAfterDay && "rounded-b-none border-b-0",
         writable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
         compact ? "text-[11px]" : "text-xs",
       )}
@@ -285,7 +296,7 @@ function EventBlock({
       ) : null}
       <div className="truncate font-medium">{visibleEventTitle(event)}</div>
       <div className="mt-0.5 truncate text-[10px] opacity-78">
-        {statusLabel(event.eventStatus)} · {new Date(event.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        {statusLabel(event.eventStatus)} · {new Date(displayStartAt ?? event.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
       </div>
       {writable && onPointerStart ? (
         <div
@@ -533,8 +544,8 @@ function CalendarGridView({
               ))}
             </div>
             {days.map((day) => {
-              const dayEvents = displayEvents.filter((event) => sameDay(event.startAt, day));
-              const laidOutEvents = layoutTimedEvents(dayEvents);
+              const daySegments = timedEventSegmentsForDay(displayEvents, day);
+              const laidOutEvents = layoutTimedEvents(daySegments);
               const today = sameDay(day, currentTime);
               const todayLineTop = (minuteOfDay(currentTime) / 60) * HOUR_HEIGHT;
               const previewSelection = createPreview && sameDay(createPreview.startAt, day)
@@ -583,12 +594,13 @@ function CalendarGridView({
                       style={{ top: selectionTop, height: selectionHeight }}
                     />
                   ) : null}
-                  {laidOutEvents.map(({ event, leftPct, widthPct }) => {
-                    const top = Math.max(0, (minuteOfDay(event.startAt) / 60) * HOUR_HEIGHT);
-                    const height = Math.max(28, (durationMinutes(event) / 60) * HOUR_HEIGHT);
+                  {laidOutEvents.map(({ event: segment, leftPct, widthPct }) => {
+                    const event = segment.event;
+                    const top = Math.max(0, (minuteOfDay(segment.startAt) / 60) * HOUR_HEIGHT);
+                    const height = Math.max(28, (durationMinutes(segment) / 60) * HOUR_HEIGHT);
                     return (
                       <div
-                        key={event.id}
+                        key={segment.id}
                         className="absolute px-0.5"
                         style={{
                           top,
@@ -601,6 +613,9 @@ function CalendarGridView({
                           event={event}
                           agents={agents}
                           onSelect={selectEvent}
+                          displayStartAt={segment.startAt}
+                          continuation={segment}
+                          testId={segment.startsBeforeDay ? `calendar-event-${segment.id}` : undefined}
                           compact={view === "week"}
                           onPointerStart={(pointerEvent, mode) => beginEventDrag(pointerEvent, event, mode)}
                           onPointerMove={moveEventDrag}
@@ -829,6 +844,10 @@ export function Calendar() {
   );
   const issues = issuesQuery.data ?? [];
   const sources = sourcesQuery.data ?? [];
+  const sourceById = useMemo(
+    () => new Map(sources.map((source) => [source.id, source])),
+    [sources],
+  );
 
   const visibleEvents = useMemo(() => {
     return (eventsQuery.data?.events ?? []).filter((event) => {
@@ -838,11 +857,12 @@ export function Calendar() {
         return !event.ownerAgentId || !hiddenAgentIds.has(event.ownerAgentId);
       }
       if (event.eventKind === "external_event") {
-        return !!event.sourceId && !hiddenSourceIds.has(event.sourceId);
+        if (!event.sourceId || hiddenSourceIds.has(event.sourceId)) return false;
+        return sourceById.get(event.sourceId)?.status === "active";
       }
       return true;
     });
-  }, [eventsQuery.data?.events, hiddenAgentIds, hiddenSourceIds, myCalendarVisible, visibleStatuses]);
+  }, [eventsQuery.data?.events, hiddenAgentIds, hiddenSourceIds, myCalendarVisible, sourceById, visibleStatuses]);
 
   const visibleCreatePreview = useMemo<CreatePreview>(() => {
     if (!createPreview || editingEvent || (!quickCreate && !dialogOpen)) return null;
@@ -913,13 +933,18 @@ export function Calendar() {
     mutationFn: async ({
       sourceId,
       visibilityDefault,
+      status,
       syncAfter,
     }: {
       sourceId: string;
-      visibilityDefault: CalendarSource["visibilityDefault"];
+      visibilityDefault?: CalendarSource["visibilityDefault"];
+      status?: CalendarSource["status"];
       syncAfter?: boolean;
     }) => {
-      const source = await calendarApi.updateSource(viewedOrganizationId!, sourceId, { visibilityDefault });
+      const source = await calendarApi.updateSource(viewedOrganizationId!, sourceId, {
+        ...(visibilityDefault ? { visibilityDefault } : {}),
+        ...(status ? { status } : {}),
+      });
       if (syncAfter && source.status === "active") {
         await calendarApi.syncGoogle(viewedOrganizationId!, sourceId);
       }
@@ -995,8 +1020,18 @@ export function Calendar() {
   const days = view === "day"
     ? [startOfDay(cursor)]
     : Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(cursor), index));
-  const googleSources = sources.filter((source) => source.type === "google_calendar");
-  const googleSource = googleSources[0] ?? null;
+  const googleSources = sources
+    .filter((source) => source.type === "google_calendar")
+    .sort((a, b) => {
+      const primaryDelta = (a.externalCalendarId === "primary" ? 0 : 1) - (b.externalCalendarId === "primary" ? 0 : 1);
+      return primaryDelta !== 0 ? primaryDelta : a.name.localeCompare(b.name);
+    });
+  const googleSource = googleSources.find((source) => source.externalCalendarId === "primary") ?? googleSources[0] ?? null;
+  const googleEnabledCount = googleSources.filter((source) => source.status === "active").length;
+  const googleLastSyncedAt = googleSources
+    .map((source) => source.lastSyncedAt)
+    .filter((value): value is NonNullable<CalendarSource["lastSyncedAt"]> => !!value)
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null;
   const redirectUri = typeof window === "undefined"
     ? `/api/orgs/${encodeURIComponent(viewedOrganizationId)}/calendar/google/callback`
     : `${window.location.origin}/api/orgs/${encodeURIComponent(viewedOrganizationId)}/calendar/google/callback`;
@@ -1118,7 +1153,7 @@ export function Calendar() {
                 >
                   <option value="">Choose agent</option>
                   {agents.map((agent) => (
-                    <option key={agent.id} value={agent.id}>{agent.name}</option>
+                    <option key={agent.id} value={agent.id}>{formatSidebarAgentLabel(agent)}</option>
                   ))}
                 </select>
                 <select
@@ -1217,9 +1252,9 @@ export function Calendar() {
             )}
 
             {googleSource ? (
-              <div className="grid gap-3">
+              <div className="grid gap-4">
                 <label className="space-y-1.5 text-xs text-muted-foreground">
-                  <span>Visibility</span>
+                  <span>Imported visibility</span>
                   <select
                     value={googleSource.visibilityDefault}
                     onChange={(event) => updateSourceMutation.mutate({
@@ -1234,8 +1269,67 @@ export function Calendar() {
                     <option value="private">Private</option>
                   </select>
                 </label>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-medium text-foreground">Calendars</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {googleEnabledCount} of {googleSources.length} enabled
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => syncGoogleMutation.mutate(null)}
+                      disabled={syncGoogleMutation.isPending || googleSource.status === "error"}
+                    >
+                      {syncGoogleMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                      Refresh
+                    </Button>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto rounded-[var(--radius-sm)] border border-border">
+                    {googleSources.map((source, index) => (
+                      <label
+                        key={source.id}
+                        className="flex min-h-10 items-center gap-2 border-b border-border px-3 py-2 text-sm last:border-b-0 hover:bg-muted/35"
+                      >
+                        <Checkbox
+                          checked={source.status === "active"}
+                          disabled={updateSourceMutation.isPending}
+                          onCheckedChange={(checked) => updateSourceMutation.mutate({
+                            sourceId: source.id,
+                            status: checked === true ? "active" : "paused",
+                            syncAfter: checked === true,
+                          })}
+                          aria-label={`Enable ${source.name}`}
+                        />
+                        <span
+                          className={cn(
+                            "h-2.5 w-2.5 shrink-0 rounded-sm border",
+                            [
+                              "border-blue-400 bg-blue-500",
+                              "border-emerald-400 bg-emerald-500",
+                              "border-amber-400 bg-amber-500",
+                              "border-rose-400 bg-rose-500",
+                              "border-cyan-400 bg-cyan-500",
+                              "border-violet-400 bg-violet-500",
+                            ][index % 6],
+                          )}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{source.name}</span>
+                        {source.status !== "active" ? (
+                          <span className="shrink-0 rounded-[calc(var(--radius-sm)-2px)] border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            Off
+                          </span>
+                        ) : null}
+                      </label>
+                    ))}
+                  </div>
+                </div>
                 <div className="text-xs text-muted-foreground">
-                  Last synced {googleSource.lastSyncedAt ? formatDateTime(googleSource.lastSyncedAt) : "never"}
+                  Last synced {googleLastSyncedAt ? formatDateTime(googleLastSyncedAt) : "never"}
                 </div>
               </div>
             ) : null}
@@ -1249,8 +1343,8 @@ export function Calendar() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => syncGoogleMutation.mutate(googleSource.id)}
-                  disabled={syncGoogleMutation.isPending || googleSource.status !== "active"}
+                  onClick={() => syncGoogleMutation.mutate(null)}
+                  disabled={syncGoogleMutation.isPending || googleSource.status === "error"}
                 >
                   {syncGoogleMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
                   Sync now

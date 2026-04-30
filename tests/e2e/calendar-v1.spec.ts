@@ -41,6 +41,45 @@ async function createHumanEvent(page: Page, orgId: string, title: string, startA
   return response.json();
 }
 
+async function createGoogleSource(page: Page, orgId: string, name: string, status: "active" | "paused") {
+  const response = await page.request.post(`/api/orgs/${orgId}/calendar/sources`, {
+    data: {
+      type: "google_calendar",
+      name,
+      ownerType: "user",
+      externalProvider: "google_calendar",
+      externalCalendarId: name.toLowerCase().replace(/\s+/g, "-"),
+      visibilityDefault: "full",
+      status,
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return response.json();
+}
+
+async function createExternalEvent(page: Page, orgId: string, sourceId: string, title: string, startAt: string, endAt: string) {
+  const response = await page.request.post(`/api/orgs/${orgId}/calendar/events`, {
+    data: {
+      sourceId,
+      eventKind: "external_event",
+      eventStatus: "external",
+      ownerType: "user",
+      title,
+      startAt,
+      endAt,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      allDay: false,
+      visibility: "full",
+      sourceMode: "imported",
+      externalProvider: "google_calendar",
+      externalCalendarId: sourceId,
+      externalEventId: `${sourceId}-${title}`,
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return response.json();
+}
+
 test.describe("Calendar V1", () => {
   test("uses the workspace shell and keeps Google setup in a compact modal", async ({ page }) => {
     test.slow();
@@ -89,6 +128,36 @@ test.describe("Calendar V1", () => {
     await expect(modal.getByText(`/api/orgs/${organization.id}/calendar/google/callback`)).toBeVisible();
   });
 
+  test("lets operators enable individual Google calendars", async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 1490, height: 1003 });
+
+    const organization = await createCalendarOrg(page, `Calendar-Google-Sources-${Date.now()}`);
+    const todayKey = localDateKey(new Date());
+    const workSource = await createGoogleSource(page, organization.id, "Work calendar", "active");
+    const personalSource = await createGoogleSource(page, organization.id, "Personal calendar", "paused");
+    await createExternalEvent(page, organization.id, workSource.id, "Visible external test event", localIso(todayKey, 9), localIso(todayKey, 10));
+    await createExternalEvent(page, organization.id, personalSource.id, "Hidden external test event", localIso(todayKey, 10), localIso(todayKey, 11));
+
+    await selectOrganization(page, organization.id);
+    await page.goto("/calendar");
+
+    await expect(page.getByTestId("calendar-google-source-list")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Work calendar")).toBeVisible();
+    await expect(page.getByText("Personal calendar")).toBeVisible();
+    await expect(page.getByText("Visible external test event")).toBeVisible();
+    await expect(page.getByText("Hidden external test event")).toHaveCount(0);
+
+    await page.getByLabel("Enable Personal calendar").click();
+    await expect(page.getByText("Hidden external test event")).toBeVisible();
+
+    await page.getByTestId("calendar-google-row").click();
+    const modal = page.getByRole("dialog", { name: "Google Calendar" });
+    await expect(modal.getByText("Calendars")).toBeVisible();
+    await expect(modal.getByText("Work calendar")).toBeVisible();
+    await expect(modal.getByText("Personal calendar")).toBeVisible();
+  });
+
   test("creates a planned agent work block as a read-only human-facing annotation", async ({ page }) => {
     test.slow();
     await page.setViewportSize({ width: 1490, height: 1003 });
@@ -119,7 +188,7 @@ test.describe("Calendar V1", () => {
     await page.goto("/calendar");
 
     await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Calendar" })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText("CEO", { exact: true })).toBeVisible();
+    await expect(page.getByText("CEO (CEO)", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: /^week$/i })).toBeVisible();
 
     await page.getByRole("button", { name: "Create" }).click();

@@ -156,30 +156,37 @@ function calendarStatusLabel(status: CalendarEventStatus) {
   return status;
 }
 
-function googleSourceConnectionState(source: CalendarSource | null): {
+function googleSourceConnectionState(sources: CalendarSource[]): {
   label: "Disconnected" | "Connected" | "Needs config" | "Error";
   tone: string;
   icon: typeof AlertCircle;
 } {
-  if (!source) {
+  if (sources.length === 0) {
     return {
       label: "Disconnected",
       tone: "border-border bg-muted/30 text-muted-foreground",
       icon: AlertCircle,
     };
   }
-  if (source.status === "active") {
-    return {
-      label: "Connected",
-      tone: "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-      icon: CheckCircle2,
-    };
-  }
-  if (source.status === "error" && !source.lastSyncedAt) {
+  if (sources.some((source) => source.status === "error" && !source.lastSyncedAt)) {
     return {
       label: "Needs config",
       tone: "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300",
       icon: AlertCircle,
+    };
+  }
+  if (sources.some((source) => source.status === "error")) {
+    return {
+      label: "Error",
+      tone: "border-destructive/25 bg-destructive/10 text-destructive",
+      icon: AlertCircle,
+    };
+  }
+  if (sources.some((source) => source.status === "active" || source.status === "paused" || source.lastSyncedAt)) {
+    return {
+      label: "Connected",
+      tone: "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+      icon: CheckCircle2,
     };
   }
   return {
@@ -188,6 +195,15 @@ function googleSourceConnectionState(source: CalendarSource | null): {
     icon: AlertCircle,
   };
 }
+
+const CALENDAR_LAYER_COLORS = [
+  "border-blue-400 bg-blue-500",
+  "border-emerald-400 bg-emerald-500",
+  "border-amber-400 bg-amber-500",
+  "border-rose-400 bg-rose-500",
+  "border-cyan-400 bg-cyan-500",
+  "border-violet-400 bg-violet-500",
+] as const;
 
 function activeConversationIdFromPath(pathname: string): string | null {
   const match = pathname.match(/\/(?:messenger\/chat|chat)\/([^/]+)\/?/);
@@ -493,6 +509,24 @@ export function ThreeColumnContextSidebar() {
     queryFn: () => calendarApi.sources(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && isCalendarRoute,
   });
+  const updateCalendarSourceMutation = useMutation({
+    mutationFn: ({ sourceId, status }: { sourceId: string; status: CalendarSource["status"] }) =>
+      calendarApi.updateSource(selectedOrganizationId!, sourceId, { status }),
+    onSuccess: async () => {
+      if (!selectedOrganizationId) return;
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.calendar.sources(selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: ["calendar", selectedOrganizationId] }),
+      ]);
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to update calendar source",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
   const { data: liveRuns } = useQuery({
     queryKey: queryKeys.liveRuns(selectedOrganizationId ?? "__none__"),
     queryFn: () => heartbeatsApi.liveRunsForCompany(selectedOrganizationId!),
@@ -621,8 +655,14 @@ export function ThreeColumnContextSidebar() {
   ];
   const activeOrgContextIndex = orgContextItems.findIndex((item) => item.active);
   const activeAgentIndex = visibleAgents.findIndex((agent) => activeAgentRef === agent.urlKey || activeAgentRef === agent.id);
-  const googleSource = (calendarSources ?? []).find((source) => source.type === "google_calendar") ?? null;
-  const googleState = googleSourceConnectionState(googleSource);
+  const googleSources = (calendarSources ?? [])
+    .filter((source) => source.type === "google_calendar")
+    .sort((a, b) => {
+      const primaryDelta = (a.externalCalendarId === "primary" ? 0 : 1) - (b.externalCalendarId === "primary" ? 0 : 1);
+      return primaryDelta !== 0 ? primaryDelta : a.name.localeCompare(b.name);
+    });
+  const activeGoogleSources = googleSources.filter((source) => source.status === "active");
+  const googleState = googleSourceConnectionState(googleSources);
   const GoogleStateIcon = googleState.icon;
 
   useEffect(() => {
@@ -754,16 +794,24 @@ export function ThreeColumnContextSidebar() {
               className="mx-1.5 flex min-h-9 items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-2 text-sm text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]"
             >
               <Checkbox
-                checked={!!googleSource && !hiddenSourceIds.has(googleSource.id)}
-                disabled={!googleSource}
+                checked={activeGoogleSources.length > 0 && activeGoogleSources.some((source) => !hiddenSourceIds.has(source.id))}
+                disabled={googleSources.length === 0}
                 onCheckedChange={(checked) => {
-                  if (!googleSource) return;
+                  const targetSources = checked === true ? googleSources : activeGoogleSources;
                   setHiddenSourceIds((current) => {
                     const next = new Set(current);
-                    if (checked === true) next.delete(googleSource.id);
-                    else next.add(googleSource.id);
+                    for (const source of targetSources) {
+                      if (checked === true) next.delete(source.id);
+                      else next.add(source.id);
+                    }
                     return next;
                   });
+                  for (const source of targetSources) {
+                    updateCalendarSourceMutation.mutate({
+                      sourceId: source.id,
+                      status: checked === true ? "active" : "paused",
+                    });
+                  }
                 }}
                 aria-label="Show Google Calendar"
               />
@@ -793,6 +841,43 @@ export function ThreeColumnContextSidebar() {
                 <Settings2 className="h-3.5 w-3.5" />
               </button>
             </div>
+            {googleSources.length > 0 ? (
+              <div className="ml-9 mr-2 space-y-0.5" data-testid="calendar-google-source-list">
+                {googleSources.map((source, index) => {
+                  const checked = source.status === "active" && !hiddenSourceIds.has(source.id);
+                  return (
+                    <label
+                      key={source.id}
+                      data-testid={`calendar-google-source-row-${source.id}`}
+                      className="flex min-h-7 items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-1 text-xs text-foreground/82 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]"
+                    >
+                      <Checkbox
+                        checked={checked}
+                        disabled={updateCalendarSourceMutation.isPending}
+                        onCheckedChange={(nextChecked) => {
+                          setHiddenSourceIds((current) => {
+                            const next = new Set(current);
+                            if (nextChecked === true) next.delete(source.id);
+                            else next.add(source.id);
+                            return next;
+                          });
+                          updateCalendarSourceMutation.mutate({
+                            sourceId: source.id,
+                            status: nextChecked === true ? "active" : "paused",
+                          });
+                        }}
+                        aria-label={`Enable ${source.name}`}
+                      />
+                      <span className={cn("h-2 w-2 shrink-0 rounded-sm border", CALENDAR_LAYER_COLORS[index % CALENDAR_LAYER_COLORS.length])} />
+                      <span className="min-w-0 flex-1 truncate" title={source.name}>{source.name}</span>
+                      {source.status !== "active" ? (
+                        <span className="shrink-0 text-[10px] text-muted-foreground">Off</span>
+                      ) : null}
+                    </label>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
 
           <SectionLabel>Agents</SectionLabel>
@@ -812,22 +897,12 @@ export function ThreeColumnContextSidebar() {
                       return next;
                     });
                   }}
-                  aria-label={`Show ${agent.name}`}
+                  aria-label={`Show ${formatSidebarAgentLabel(agent)}`}
                 />
-                <span
-                  className={cn(
-                    "h-2.5 w-2.5 shrink-0 rounded-sm border",
-                    [
-                      "border-blue-400 bg-blue-500",
-                      "border-emerald-400 bg-emerald-500",
-                      "border-amber-400 bg-amber-500",
-                      "border-rose-400 bg-rose-500",
-                      "border-cyan-400 bg-cyan-500",
-                      "border-violet-400 bg-violet-500",
-                    ][index % 6],
-                  )}
-                />
-                <span className="min-w-0 flex-1 truncate">{agent.name}</span>
+                <span className={cn("h-2.5 w-2.5 shrink-0 rounded-sm border", CALENDAR_LAYER_COLORS[index % CALENDAR_LAYER_COLORS.length])} />
+                <span className="min-w-0 flex-1 truncate" title={formatSidebarAgentLabel(agent)}>
+                  {formatSidebarAgentLabel(agent)}
+                </span>
               </label>
             ))}
           </div>

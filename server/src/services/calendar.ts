@@ -29,6 +29,7 @@ import { parseHeartbeatPolicy } from "./runtime-kernel/wakeup-queue.js";
 type Actor = { userId?: string | null };
 const PROJECTED_HEARTBEAT_DURATION_MS = 15 * 60 * 1000;
 const PROJECTED_HEARTBEAT_MAX_PER_AGENT = 96;
+type CalendarSourceRow = typeof calendarSources.$inferSelect;
 
 export interface CalendarEventFilters {
   start: Date;
@@ -71,6 +72,15 @@ function googleCredentials() {
   const clientId = process.env.GOOGLE_CALENDAR_CLIENT_ID?.trim() || process.env.GOOGLE_CLIENT_ID?.trim() || "";
   const clientSecret = process.env.GOOGLE_CALENDAR_CLIENT_SECRET?.trim() || process.env.GOOGLE_CLIENT_SECRET?.trim() || "";
   return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+function googleCalendarIdForListItem(item: { id?: string; primary?: boolean }) {
+  return item.primary ? "primary" : item.id?.trim() || null;
+}
+
+function sourceHasGoogleToken(source: CalendarSourceRow | null | undefined) {
+  const cursor = parseSyncCursor(source?.syncCursorJson);
+  return typeof cursor.accessToken === "string" || typeof cursor.refreshToken === "string";
 }
 
 function eventSummary(event: Pick<typeof calendarEvents.$inferSelect, "title" | "eventKind" | "eventStatus" | "startAt" | "endAt" | "ownerAgentId" | "issueId">) {
@@ -745,6 +755,243 @@ export function calendarService(db: Db) {
     return created!;
   }
 
+  async function listGoogleSourceRows(orgId: string) {
+    const rows = await db
+      .select()
+      .from(calendarSources)
+      .where(
+        and(
+          eq(calendarSources.orgId, orgId),
+          eq(calendarSources.type, "google_calendar"),
+          eq(calendarSources.externalProvider, "google_calendar"),
+        ),
+      );
+    return rows.sort((a, b) => {
+      const aPrimary = a.externalCalendarId === "primary" ? 0 : 1;
+      const bPrimary = b.externalCalendarId === "primary" ? 0 : 1;
+      if (aPrimary !== bPrimary) return aPrimary - bPrimary;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  async function findGoogleCredentialSource(orgId: string, preferred?: CalendarSourceRow | null) {
+    if (preferred && preferred.type === "google_calendar" && sourceHasGoogleToken(preferred)) return preferred;
+    const sources = await listGoogleSourceRows(orgId);
+    return sources.find(sourceHasGoogleToken) ?? preferred ?? sources[0] ?? null;
+  }
+
+  async function ensureGoogleAccessToken(orgId: string, source: CalendarSourceRow | null) {
+    if (!source) return null;
+    const cursor = parseSyncCursor(source.syncCursorJson);
+    const accessToken = typeof cursor.accessToken === "string" ? cursor.accessToken : null;
+    const refreshToken = typeof cursor.refreshToken === "string" ? cursor.refreshToken : null;
+    const expiresAt = typeof cursor.expiresAt === "string" ? new Date(cursor.expiresAt).getTime() : null;
+    if (accessToken && source.status !== "error" && (!expiresAt || expiresAt > Date.now() + 60_000)) {
+      return { source, accessToken };
+    }
+    if (!refreshToken) {
+      return accessToken ? { source, accessToken } : null;
+    }
+    const credentials = googleCredentials();
+    if (!credentials) return null;
+
+    const response = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: credentials.clientId,
+        client_secret: credentials.clientSecret,
+        refresh_token: refreshToken,
+        grant_type: "refresh_token",
+      }),
+    });
+    if (!response.ok) {
+      await db
+        .update(calendarSources)
+        .set({ status: "error", updatedAt: new Date() })
+        .where(eq(calendarSources.id, source.id));
+      return null;
+    }
+    const token = await response.json() as {
+      access_token?: string;
+      expires_in?: number;
+      token_type?: string;
+      scope?: string;
+    };
+    const nextAccessToken = token.access_token ?? accessToken;
+    if (!nextAccessToken) return null;
+    const [updated] = await db
+      .update(calendarSources)
+      .set({
+        syncCursorJson: {
+          ...cursor,
+          accessToken: nextAccessToken,
+          refreshToken,
+          tokenType: token.token_type ?? cursor.tokenType,
+          scope: token.scope ?? cursor.scope,
+          expiresAt: token.expires_in ? new Date(Date.now() + token.expires_in * 1000).toISOString() : cursor.expiresAt ?? null,
+        },
+        status: source.status === "paused" ? "paused" : "active",
+        updatedAt: new Date(),
+      })
+      .where(eq(calendarSources.id, source.id))
+      .returning();
+    return { source: updated!, accessToken: nextAccessToken };
+  }
+
+  async function refreshGoogleCalendarSources(orgId: string, credentialSource: CalendarSourceRow, accessToken: string, actor?: Actor) {
+    const response = await fetch("https://www.googleapis.com/calendar/v3/users/me/calendarList", {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) return [];
+    const body = await response.json() as {
+      items?: Array<{
+        id?: string;
+        summary?: string;
+        primary?: boolean;
+        selected?: boolean;
+        hidden?: boolean;
+        backgroundColor?: string;
+      }>;
+    };
+    const existingSources = await listGoogleSourceRows(orgId);
+    const existingByExternalId = new Map(
+      existingSources
+        .filter((source) => source.externalCalendarId)
+        .map((source) => [source.externalCalendarId!, source]),
+    );
+    const refreshed: CalendarSourceRow[] = [];
+    for (const item of body.items ?? []) {
+      const externalCalendarId = googleCalendarIdForListItem(item);
+      if (!externalCalendarId) continue;
+      const existing = existingByExternalId.get(externalCalendarId)
+        ?? (item.primary ? credentialSource : null);
+      const name = item.summary?.trim() || (item.primary ? "Primary calendar" : externalCalendarId);
+      const metadataCursor = {
+        ...(existing?.syncCursorJson ?? {}),
+        googleCalendarPrimary: item.primary === true,
+        googleCalendarHidden: item.hidden === true,
+        googleCalendarColor: item.backgroundColor ?? null,
+      };
+      const shouldEnableByDefault = item.primary === true || item.selected !== false;
+      const status: CalendarSourceStatus = existing
+        ? existing.status === "paused" ? "paused" : "active"
+        : shouldEnableByDefault ? "active" : "paused";
+      const values = {
+        orgId,
+        type: "google_calendar",
+        name,
+        ownerType: "user",
+        ownerUserId: existing?.ownerUserId ?? credentialSource.ownerUserId ?? actor?.userId ?? "board",
+        ownerAgentId: null,
+        externalProvider: "google_calendar",
+        externalCalendarId,
+        visibilityDefault: existing?.visibilityDefault ?? credentialSource.visibilityDefault ?? "full",
+        status,
+        syncCursorJson: externalCalendarId === "primary"
+          ? {
+            ...metadataCursor,
+            ...parseSyncCursor(credentialSource.syncCursorJson),
+            googleCalendarPrimary: true,
+            googleCalendarHidden: item.hidden === true,
+            googleCalendarColor: item.backgroundColor ?? null,
+          }
+          : metadataCursor,
+        updatedAt: new Date(),
+      } satisfies Partial<typeof calendarSources.$inferInsert>;
+
+      if (existing) {
+        const [updated] = await db
+          .update(calendarSources)
+          .set(values)
+          .where(eq(calendarSources.id, existing.id))
+          .returning();
+        refreshed.push(updated!);
+      } else {
+        const [created] = await db
+          .insert(calendarSources)
+          .values(values as typeof calendarSources.$inferInsert)
+          .returning();
+        refreshed.push(created!);
+      }
+    }
+    return refreshed;
+  }
+
+  async function syncOneGoogleCalendar(orgId: string, source: CalendarSourceRow, accessToken: string) {
+    const timeMin = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const timeMax = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+    const params = new URLSearchParams({
+      singleEvents: "true",
+      orderBy: "startTime",
+      timeMin,
+      timeMax,
+    });
+    const calendarId = source.externalCalendarId ?? "primary";
+    const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) {
+      const [updated] = await db
+        .update(calendarSources)
+        .set({ status: "error", updatedAt: new Date() })
+        .where(eq(calendarSources.id, source.id))
+        .returning();
+      return { source: updated!, importedCount: 0 };
+    }
+    const body = await response.json() as {
+      items?: Array<{
+        id?: string;
+        summary?: string;
+        visibility?: string;
+        status?: string;
+        etag?: string;
+        updated?: string;
+        start?: { dateTime?: string; date?: string; timeZone?: string };
+        end?: { dateTime?: string; date?: string; timeZone?: string };
+      }>;
+    };
+    let importedCount = 0;
+    for (const item of body.items ?? []) {
+      if (!item.id || item.status === "cancelled") continue;
+      const startRaw = item.start?.dateTime ?? item.start?.date;
+      const endRaw = item.end?.dateTime ?? item.end?.date;
+      if (!startRaw || !endRaw) continue;
+      const allDay = !item.start?.dateTime;
+      const visibility: CalendarVisibility = item.visibility === "private"
+        ? "private"
+        : source.visibilityDefault as CalendarVisibility;
+      const title = visibility !== "full"
+        ? "Busy"
+        : item.summary?.trim() || "Busy";
+      const created = await upsertImportedGoogleEvent({
+        orgId,
+        sourceId: source.id,
+        calendarId,
+        title,
+        startAt: new Date(startRaw),
+        endAt: new Date(endRaw),
+        timezone: item.start?.timeZone ?? "UTC",
+        allDay,
+        visibility,
+        externalEventId: item.id,
+        externalEtag: item.etag ?? null,
+        externalUpdatedAt: item.updated ? new Date(item.updated) : null,
+      });
+      if (created) importedCount += 1;
+    }
+    const [updated] = await db
+      .update(calendarSources)
+      .set({
+        status: "active",
+        lastSyncedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(calendarSources.id, source.id))
+      .returning();
+    return { source: updated!, importedCount };
+  }
+
   async function upsertImportedGoogleEvent(params: {
     orgId: string;
     sourceId: string;
@@ -1006,93 +1253,45 @@ export function calendarService(db: Db) {
         })
         .where(eq(calendarSources.id, source!.id))
         .returning();
+      if (token.access_token) {
+        await refreshGoogleCalendarSources(orgId, updated!, token.access_token, actor);
+      }
       return sanitizeSource(updated!);
     },
 
     async syncGoogle(orgId: string, sourceId?: string | null) {
-      const source = sourceId
+      const requestedSource = sourceId
         ? await assertSourceOrg(orgId, sourceId)
         : await getOrCreateGoogleSource(orgId);
-      if (!source || source.type !== "google_calendar") {
+      if (!requestedSource || requestedSource.type !== "google_calendar") {
         throw unprocessable("Calendar source is not a Google Calendar source");
       }
-      const cursor = parseSyncCursor(source.syncCursorJson);
-      const accessToken = typeof cursor.accessToken === "string" ? cursor.accessToken : null;
-      if (!accessToken) {
-        return { source: sanitizeSource(source), importedCount: 0 };
+      const credentialSource = await findGoogleCredentialSource(orgId, requestedSource);
+      const token = await ensureGoogleAccessToken(orgId, credentialSource);
+      if (!token) {
+        return { source: sanitizeSource(requestedSource), importedCount: 0, syncedSourceCount: 0 };
       }
 
-      const timeMin = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      const timeMax = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
-      const params = new URLSearchParams({
-        singleEvents: "true",
-        orderBy: "startTime",
-        timeMin,
-        timeMax,
-      });
-      const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(source.externalCalendarId ?? "primary")}/events?${params.toString()}`, {
-        headers: { authorization: `Bearer ${accessToken}` },
-      });
-      if (!response.ok) {
-        const [updated] = await db
-          .update(calendarSources)
-          .set({ status: "error", updatedAt: new Date() })
-          .where(eq(calendarSources.id, source.id))
-          .returning();
-        return { source: sanitizeSource(updated!), importedCount: 0 };
-      }
-      const body = await response.json() as {
-        items?: Array<{
-          id?: string;
-          summary?: string;
-          transparency?: string;
-          visibility?: string;
-          status?: string;
-          etag?: string;
-          updated?: string;
-          start?: { dateTime?: string; date?: string; timeZone?: string };
-          end?: { dateTime?: string; date?: string; timeZone?: string };
-        }>;
-      };
+      await refreshGoogleCalendarSources(orgId, token.source, token.accessToken);
+      const refreshedRequestedSource = sourceId
+        ? (await assertSourceOrg(orgId, sourceId))!
+        : requestedSource;
+      const targets = sourceId
+        ? [refreshedRequestedSource]
+        : (await listGoogleSourceRows(orgId)).filter((source) => source.status === "active");
       let importedCount = 0;
-      for (const item of body.items ?? []) {
-        if (!item.id || item.status === "cancelled") continue;
-        const startRaw = item.start?.dateTime ?? item.start?.date;
-        const endRaw = item.end?.dateTime ?? item.end?.date;
-        if (!startRaw || !endRaw) continue;
-        const allDay = !item.start?.dateTime;
-        const visibility: CalendarVisibility = item.visibility === "private"
-          ? "private"
-          : source.visibilityDefault as CalendarVisibility;
-        const title = visibility !== "full"
-          ? "Busy"
-          : item.summary?.trim() || "Busy";
-        const created = await upsertImportedGoogleEvent({
-          orgId,
-          sourceId: source.id,
-          calendarId: source.externalCalendarId ?? "primary",
-          title,
-          startAt: new Date(startRaw),
-          endAt: new Date(endRaw),
-          timezone: item.start?.timeZone ?? "UTC",
-          allDay,
-          visibility,
-          externalEventId: item.id,
-          externalEtag: item.etag ?? null,
-          externalUpdatedAt: item.updated ? new Date(item.updated) : null,
-        });
-        if (created) importedCount += 1;
+      let responseSource = refreshedRequestedSource;
+      let syncedSourceCount = 0;
+      for (const target of targets) {
+        if (target.type !== "google_calendar") continue;
+        const result = await syncOneGoogleCalendar(orgId, target, token.accessToken);
+        importedCount += result.importedCount;
+        syncedSourceCount += 1;
+        if (target.id === refreshedRequestedSource.id || !sourceId) {
+          responseSource = result.source;
+        }
       }
-      const [updated] = await db
-        .update(calendarSources)
-        .set({
-          status: "active",
-          lastSyncedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(calendarSources.id, source.id))
-        .returning();
-      return { source: sanitizeSource(updated!), importedCount };
+      return { source: sanitizeSource(responseSource), importedCount, syncedSourceCount };
     },
   };
 }

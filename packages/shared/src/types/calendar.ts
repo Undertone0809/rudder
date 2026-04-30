@@ -96,4 +96,5 @@ export interface GoogleCalendarConnectResponse {
 export interface GoogleCalendarSyncResponse {
   source: CalendarSource;
   importedCount: number;
+  syncedSourceCount?: number;
 }
