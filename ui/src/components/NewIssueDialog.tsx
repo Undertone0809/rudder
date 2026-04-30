@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type DragEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { pickTextColorForPillBg, pickTextColorForSolidBg } from "@/lib/color-contrast";
+import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
@@ -73,6 +73,7 @@ import { resolveRuntimeModels } from "../lib/runtime-models";
 import { issueStatusText, issueStatusTextDefault, priorityColor, priorityColorDefault } from "../lib/status-colors";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import { AgentIcon } from "./AgentIconPicker";
+import { IssueLabelChip } from "./IssueLabelChip";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 
 const DEBOUNCE_MS = 800;
@@ -826,17 +827,7 @@ export function NewIssueDialog() {
       <Tag className="h-3 w-3" />
       <div className="flex items-center gap-1 flex-wrap">
         {selectedLabels.slice(0, 2).map((label) => (
-          <span
-            key={label.id}
-            className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium border"
-            style={{
-              borderColor: label.color,
-              backgroundColor: `${label.color}22`,
-              color: pickTextColorForPillBg(label.color, 0.13),
-            }}
-          >
-            {label.name}
-          </span>
+          <IssueLabelChip key={label.id} label={label} />
         ))}
         {selectedLabels.length > 2 ? (
           <span className="text-[11px] text-muted-foreground">+{selectedLabels.length - 2}</span>

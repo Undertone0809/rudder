@@ -50,7 +50,12 @@ describe("gemini execute", () => {
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "gemini");
     const capturePath = path.join(root, "capture.json");
+    const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    const memoryPath = path.join(root, "instructions", "MEMORY.md");
     await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
+    await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Use concise updates.\n", "utf8");
     await writeFakeGeminiCommand(commandPath);
 
     const previousHome = process.env.HOME;
@@ -80,6 +85,7 @@ describe("gemini execute", () => {
           env: {
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
+          instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
         context: {},
@@ -101,6 +107,8 @@ describe("gemini execute", () => {
       expect(capture.argv).toContain("yolo");
       const promptFlagIndex = capture.argv.indexOf("--prompt");
       const promptArg = promptFlagIndex >= 0 ? capture.argv[promptFlagIndex + 1] : "";
+      expect(promptArg).toContain("# Agent Instructions");
+      expect(promptArg).toContain("# Tacit Memory");
       expect(promptArg).toContain("Follow the rudder heartbeat.");
       expect(promptArg).toContain("Rudder runtime note:");
       expect(capture.rudderEnvKeys).toEqual(
@@ -113,6 +121,7 @@ describe("gemini execute", () => {
         ]),
       );
       expect(invocationPrompt).toContain("Rudder runtime note:");
+      expect(invocationPrompt).toContain("# Tacit Memory");
       expect(invocationPrompt).toContain("RUDDER_API_URL");
       expect(invocationPrompt).toContain("Rudder CLI access note:");
       expect(invocationPrompt).toContain("run_shell_command");

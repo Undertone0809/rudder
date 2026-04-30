@@ -1679,6 +1679,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const attachment = await svc.createAttachment({
       issueId,
       issueCommentId: parsedMeta.data.issueCommentId ?? null,
+      usage: parsedMeta.data.usage ?? "issue",
       provider: stored.provider,
       objectKey: stored.objectKey,
       contentType: stored.contentType,
@@ -1689,22 +1690,25 @@ export function issueRoutes(db: Db, storage: StorageService) {
       createdByUserId: actor.actorType === "user" ? actor.actorId : null,
     });
 
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "issue.attachment_added",
-      entityType: "issue",
-      entityId: issueId,
-      details: {
-        attachmentId: attachment.id,
-        originalFilename: attachment.originalFilename,
-        contentType: attachment.contentType,
-        byteSize: attachment.byteSize,
-      },
-    });
+    if (attachment.usage === "issue") {
+      await logActivity(db, {
+        orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.attachment_added",
+        entityType: "issue",
+        entityId: issueId,
+        details: {
+          attachmentId: attachment.id,
+          usage: attachment.usage,
+          originalFilename: attachment.originalFilename,
+          contentType: attachment.contentType,
+          byteSize: attachment.byteSize,
+        },
+      });
+    }
 
     res.status(201).json(withContentPath(attachment));
   });

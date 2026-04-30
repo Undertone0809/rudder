@@ -12,6 +12,8 @@ const path = require("node:path");
 const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
 const addDirIndex = process.argv.indexOf("--add-dir");
 const addDir = addDirIndex >= 0 ? process.argv[addDirIndex + 1] : null;
+const appendSystemPromptFileIndex = process.argv.indexOf("--append-system-prompt-file");
+const appendSystemPromptFile = appendSystemPromptFileIndex >= 0 ? process.argv[appendSystemPromptFileIndex + 1] : null;
 const addDirSkillsPath = addDir ? path.join(addDir, ".claude", "skills") : null;
 const managedClaudeSettingsPath = process.env.HOME
   ? path.join(process.env.HOME, ".claude", "settings.json")
@@ -26,6 +28,10 @@ const payload = {
   managedClaudeSettings:
     managedClaudeSettingsPath && fs.existsSync(managedClaudeSettingsPath)
       ? fs.readFileSync(managedClaudeSettingsPath, "utf8")
+      : null,
+  appendedSystemPrompt:
+    appendSystemPromptFile && fs.existsSync(appendSystemPromptFile)
+      ? fs.readFileSync(appendSystemPromptFile, "utf8")
       : null,
   addDirSkillEntries:
     addDirSkillsPath && fs.existsSync(addDirSkillsPath)
@@ -74,10 +80,13 @@ describe("claude execute", () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-execute-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "claude");
+    const capturePath = path.join(root, "capture.json");
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    const memoryPath = path.join(root, "instructions", "MEMORY.md");
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
+    await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer concise status.\n", "utf8");
     await writeFakeClaudeCommand(commandPath);
 
     const previousHome = process.env.HOME;
@@ -103,6 +112,9 @@ describe("claude execute", () => {
         config: {
           command: commandPath,
           cwd: workspace,
+          env: {
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
           instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
@@ -121,12 +133,23 @@ describe("claude execute", () => {
           chunk: expect.stringContaining(`[rudder] Loaded agent instructions file: ${instructionsPath}`),
         }),
       );
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          stream: "stdout",
+          chunk: expect.stringContaining(`[rudder] Loaded agent memory instructions file: ${memoryPath}`),
+        }),
+      );
       expect(logs).not.toContainEqual(
         expect.objectContaining({
           stream: "stderr",
           chunk: expect.stringContaining(`[rudder] Loaded agent instructions file: ${instructionsPath}`),
         }),
       );
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        appendedSystemPrompt: string | null;
+      };
+      expect(capture.appendedSystemPrompt).toContain("# Agent Instructions");
+      expect(capture.appendedSystemPrompt).toContain("# Tacit Memory");
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;

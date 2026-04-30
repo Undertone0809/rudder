@@ -17,6 +17,8 @@ import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
 import { formatDateTime } from "../lib/utils";
 import { PluginSlotOutlet } from "@/plugins/slots";
 
+const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
+
 interface CommentWithRunMeta extends IssueComment {
   runId?: string | null;
   runAgentId?: string | null;
@@ -47,7 +49,7 @@ interface CommentThreadProps {
   issueStatus?: string;
   agentMap?: Map<string, Agent>;
   imageUploadHandler?: (file: File) => Promise<string>;
-  /** Callback to attach an image file to the parent issue (not inline in a comment). */
+  /** Fallback callback for consumers that upload files without inserting a markdown link. */
   onAttachImage?: (file: File) => Promise<void>;
   draftKey?: string;
   liveRunSlot?: React.ReactNode;
@@ -341,7 +343,8 @@ export function CommentThread({
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
-  const hasScrolledRef = useRef(false);
+  const lastHandledCommentHashRef = useRef<string | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const timeline = useMemo<TimelineItem[]>(() => {
     const commentItems: TimelineItem[] = comments.map((comment) => ({
@@ -419,6 +422,7 @@ export function CommentThread({
   useEffect(() => {
     return () => {
       if (draftTimer.current) clearTimeout(draftTimer.current);
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     };
   }, []);
 
@@ -430,23 +434,25 @@ export function CommentThread({
     setReopen(canReopen);
   }, [canReopen]);
 
-  // Scroll to comment when URL hash matches #comment-{id}
   useEffect(() => {
     const hash = location.hash;
     if (!hash.startsWith("#comment-") || comments.length === 0) return;
     const commentId = hash.slice("#comment-".length);
-    // Only scroll once per hash
-    if (hasScrolledRef.current) return;
+    const navigationKey = `${location.key}:${hash}`;
+    if (lastHandledCommentHashRef.current === navigationKey) return;
+
     const el = document.getElementById(`comment-${commentId}`);
     if (el) {
-      hasScrolledRef.current = true;
+      lastHandledCommentHashRef.current = navigationKey;
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
       setHighlightCommentId(commentId);
       el.scrollIntoView({ behavior: "smooth", block: "center" });
-      // Clear highlight after animation
-      const timer = setTimeout(() => setHighlightCommentId(null), 3000);
-      return () => clearTimeout(timer);
+      highlightTimerRef.current = setTimeout(() => {
+        setHighlightCommentId(null);
+        highlightTimerRef.current = null;
+      }, 3000);
     }
-  }, [location.hash, comments]);
+  }, [location.hash, location.key, comments.length]);
 
   async function handleSubmit() {
     const trimmed = body.trim();
@@ -475,7 +481,9 @@ export function CommentThread({
       if (imageUploadHandler) {
         const url = await imageUploadHandler(file);
         const safeName = file.name.replace(/[[\]]/g, "\\$&");
-        const markdown = `![${safeName}](${url})`;
+        const markdown = file.type.startsWith("image/")
+          ? `![${safeName}](${url})`
+          : `[${safeName}](${url})`;
         setBody((prev) => prev ? `${prev}\n\n${markdown}` : markdown);
       } else if (onAttachImage) {
         await onAttachImage(file);
@@ -521,7 +529,7 @@ export function CommentThread({
               <input
                 ref={attachInputRef}
                 type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
+                accept={COMMENT_ATTACHMENT_ACCEPT}
                 className="hidden"
                 onChange={handleAttachFile}
               />
@@ -530,7 +538,7 @@ export function CommentThread({
                 size="icon-sm"
                 onClick={() => attachInputRef.current?.click()}
                 disabled={attaching}
-                title="Attach image"
+                title="Attach file"
               >
                 <Paperclip className="h-4 w-4" />
               </Button>

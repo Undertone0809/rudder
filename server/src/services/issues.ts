@@ -1448,6 +1448,7 @@ export function issueService(db: Db) {
     createAttachment: async (input: {
       issueId: string;
       issueCommentId?: string | null;
+      usage?: string;
       provider: string;
       objectKey: string;
       contentType: string;
@@ -1499,6 +1500,7 @@ export function issueService(db: Db) {
             issueId: issue.id,
             assetId: asset.id,
             issueCommentId: input.issueCommentId ?? null,
+            usage: input.usage ?? "issue",
           })
           .returning();
 
@@ -1508,6 +1510,7 @@ export function issueService(db: Db) {
           issueId: attachment.issueId,
           issueCommentId: attachment.issueCommentId,
           assetId: attachment.assetId,
+          usage: attachment.usage,
           provider: asset.provider,
           objectKey: asset.objectKey,
           contentType: asset.contentType,
@@ -1530,6 +1533,7 @@ export function issueService(db: Db) {
           issueId: issueAttachments.issueId,
           issueCommentId: issueAttachments.issueCommentId,
           assetId: issueAttachments.assetId,
+          usage: issueAttachments.usage,
           provider: assets.provider,
           objectKey: assets.objectKey,
           contentType: assets.contentType,
@@ -1543,7 +1547,7 @@ export function issueService(db: Db) {
         })
         .from(issueAttachments)
         .innerJoin(assets, eq(issueAttachments.assetId, assets.id))
-        .where(eq(issueAttachments.issueId, issueId))
+        .where(and(eq(issueAttachments.issueId, issueId), eq(issueAttachments.usage, "issue")))
         .orderBy(desc(issueAttachments.createdAt)),
 
     getAttachmentById: async (id: string) =>
@@ -1554,6 +1558,7 @@ export function issueService(db: Db) {
           issueId: issueAttachments.issueId,
           issueCommentId: issueAttachments.issueCommentId,
           assetId: issueAttachments.assetId,
+          usage: issueAttachments.usage,
           provider: assets.provider,
           objectKey: assets.objectKey,
           contentType: assets.contentType,
@@ -1579,6 +1584,7 @@ export function issueService(db: Db) {
             issueId: issueAttachments.issueId,
             issueCommentId: issueAttachments.issueCommentId,
             assetId: issueAttachments.assetId,
+            usage: issueAttachments.usage,
             provider: assets.provider,
             objectKey: assets.objectKey,
             contentType: assets.contentType,

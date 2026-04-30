@@ -5,6 +5,7 @@ import {
   Boxes,
   Circle,
   Clock3,
+  Columns3,
   Copy,
   DollarSign,
   FolderTree,
@@ -16,8 +17,8 @@ import {
   Pin,
   PinOff,
   Plus,
-  Star,
   Target,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
@@ -27,7 +28,6 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useToast } from "@/context/ToastContext";
 import { useDialog } from "@/context/DialogContext";
-import { useIssueFollows } from "@/hooks/useIssueFollows";
 import { issuesApi } from "@/api/issues";
 import { authApi } from "@/api/auth";
 import { projectsApi } from "@/api/projects";
@@ -39,6 +39,12 @@ import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-c
 import { queryKeys } from "@/lib/queryKeys";
 import { relativeTime } from "@/lib/utils";
 import { readRecentIssueIds, resolveRecentIssues } from "@/lib/recent-issues";
+import {
+  deleteIssueCustomView,
+  ISSUE_CUSTOM_VIEWS_CHANGED_EVENT,
+  readIssueCustomViews,
+  type IssueCustomView,
+} from "@/lib/issue-custom-views";
 import { isFollowingIssue } from "@/lib/issue-scope-filters";
 import {
   ISSUE_DRAFT_CHANGED_EVENT,
@@ -275,6 +281,77 @@ function ProjectListSection({
   );
 }
 
+function CustomIssueViewsSection({
+  views,
+  activeViewId,
+  closeMobileSidebar,
+  onDeleteView,
+}: {
+  views: IssueCustomView[];
+  activeViewId: string;
+  closeMobileSidebar: () => void;
+  onDeleteView: (view: IssueCustomView) => void;
+}) {
+  if (views.length === 0) return null;
+
+  const activeIndex = views.findIndex((view) => view.id === activeViewId);
+
+  return (
+    <section aria-label="Custom issue boards" className="mt-1">
+      <SectionLabel testId="issue-custom-views-section">Custom Boards</SectionLabel>
+      <SlidingContextNav
+        activeIndex={activeIndex}
+        ariaLabel="Custom issue boards"
+        className="mt-2"
+        indicatorTestId="issue-custom-view-sidebar-active-indicator"
+      >
+        {views.map((view) => {
+          const active = view.id === activeViewId;
+          return (
+            <div
+              key={view.id}
+              data-testid={`issue-custom-view-row-${view.id}`}
+              className={cn(
+                "group/custom-view relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center rounded-[calc(var(--radius-sm)-1px)] border border-transparent text-sm transition-[background-color,border-color,color]",
+                active
+                  ? "font-medium text-foreground"
+                  : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
+              )}
+            >
+              <Link
+                to={`/issues?view=${encodeURIComponent(view.id)}`}
+                onClick={closeMobileSidebar}
+                className="flex min-w-0 flex-1 items-center gap-3 self-stretch py-2 pl-3 pr-1 no-underline text-inherit"
+                aria-current={active ? "page" : undefined}
+              >
+                <Columns3 className="h-4 w-4 shrink-0" />
+                <span className="truncate">{view.name}</span>
+              </Link>
+              <button
+                type="button"
+                aria-label={`Delete custom board ${view.name}`}
+                title="Delete custom board"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onDeleteView(view);
+                }}
+                className={cn(
+                  "mr-2 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground transition-[opacity,background-color,color]",
+                  "hover:bg-[color:color-mix(in_oklab,var(--destructive)_14%,transparent)] hover:text-destructive",
+                  "opacity-100 md:opacity-0 md:group-hover/custom-view:opacity-100 md:group-focus-within/custom-view:opacity-100",
+                )}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        })}
+      </SlidingContextNav>
+    </section>
+  );
+}
+
 export function ThreeColumnContextSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -313,7 +390,7 @@ export function ThreeColumnContextSidebar() {
   const { data: liveRuns } = useQuery({
     queryKey: queryKeys.liveRuns(selectedOrganizationId ?? "__none__"),
     queryFn: () => heartbeatsApi.liveRunsForCompany(selectedOrganizationId!),
-    enabled: !!selectedOrganizationId && isAgentRoute,
+    enabled: !!selectedOrganizationId && (isAgentRoute || isIssuesRoute),
     refetchInterval: 10_000,
   });
   const { data: allIssues } = useQuery({
@@ -321,10 +398,9 @@ export function ThreeColumnContextSidebar() {
     queryFn: () => issuesApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && isIssuesRoute,
   });
-  const { followedIssueIds } = useIssueFollows(selectedOrganizationId);
-
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   const scope = new URLSearchParams(location.search).get("scope") ?? "";
+  const activeCustomViewId = new URLSearchParams(location.search).get("view") ?? "";
   const selectedProjectId = new URLSearchParams(location.search).get("projectId") ?? "";
   const activeConversationId = activeConversationIdFromPath(location.pathname);
   const activeAgentRef = location.pathname.match(/\/agents\/([^/]+)/)?.[1] ?? null;
@@ -345,11 +421,26 @@ export function ThreeColumnContextSidebar() {
     }
     return counts;
   }, [liveRuns]);
+  const liveCountByProject = useMemo(() => {
+    const issueProjectIds = new Map<string, string>();
+    for (const issue of allIssues ?? []) {
+      if (issue.projectId) issueProjectIds.set(issue.id, issue.projectId);
+    }
+
+    const counts = new Map<string, number>();
+    for (const run of liveRuns ?? []) {
+      if (!run.issueId) continue;
+      const projectId = issueProjectIds.get(run.issueId);
+      if (!projectId) continue;
+      counts.set(projectId, (counts.get(projectId) ?? 0) + 1);
+    }
+    return counts;
+  }, [allIssues, liveRuns]);
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [issueDraftSummaries, setIssueDraftSummaries] = useState(() => summarizeIssueDrafts(selectedOrganizationId));
   const [recentIssueIds, setRecentIssueIds] = useState<string[]>(() => readRecentIssueIds(selectedOrganizationId));
-  const starredIssueRefs = useMemo(() => [...followedIssueIds], [followedIssueIds]);
+  const [customIssueViews, setCustomIssueViews] = useState<IssueCustomView[]>(() => readIssueCustomViews(selectedOrganizationId));
   const recentIssueRefs = useMemo(
     () => resolveRecentIssues(recentIssueIds, allIssues ?? []),
     [allIssues, recentIssueIds],
@@ -364,7 +455,7 @@ export function ThreeColumnContextSidebar() {
       to: "/issues",
       icon: Circle,
       label: "All Issues",
-      active: scope === "" && !selectedProjectId,
+      active: scope === "" && !selectedProjectId && !activeCustomViewId,
     },
     ...(issueDraftSummaries.length > 0
       ? [{
@@ -382,13 +473,6 @@ export function ThreeColumnContextSidebar() {
       icon: UserRound,
       label: `Following${followingIssueCount > 0 ? ` (${followingIssueCount})` : ""}`,
       active: scope === "following",
-    },
-    {
-      key: "starred",
-      to: "/issues?scope=starred",
-      icon: Star,
-      label: `Starred${starredIssueRefs.length > 0 ? ` (${starredIssueRefs.length})` : ""}`,
-      active: scope === "starred",
     },
     {
       key: "recent",
@@ -434,8 +518,34 @@ export function ThreeColumnContextSidebar() {
     };
   }, [selectedOrganizationId]);
 
+  useEffect(() => {
+    const refreshCustomIssueViews = () => {
+      setCustomIssueViews(readIssueCustomViews(selectedOrganizationId));
+    };
+    refreshCustomIssueViews();
+    if (typeof window === "undefined") return;
+    window.addEventListener(ISSUE_CUSTOM_VIEWS_CHANGED_EVENT, refreshCustomIssueViews);
+    window.addEventListener("storage", refreshCustomIssueViews);
+    return () => {
+      window.removeEventListener(ISSUE_CUSTOM_VIEWS_CHANGED_EVENT, refreshCustomIssueViews);
+      window.removeEventListener("storage", refreshCustomIssueViews);
+    };
+  }, [selectedOrganizationId]);
+
   const closeMobileSidebar = () => {
     if (isMobile) setSidebarOpen(false);
+  };
+
+  const deleteCustomIssueView = (view: IssueCustomView) => {
+    if (!selectedOrganizationId) return;
+    const confirmed = window.confirm(`Delete custom board "${view.name}"? This cannot be undone.`);
+    if (!confirmed) return;
+    const nextViews = deleteIssueCustomView(selectedOrganizationId, view.id);
+    setCustomIssueViews(nextViews);
+    pushToast({ title: "Custom board deleted", tone: "success" });
+    if (activeCustomViewId === view.id) {
+      navigate("/issues");
+    }
   };
 
   const refreshChatList = async (chatId?: string) => {
@@ -533,38 +643,49 @@ export function ThreeColumnContextSidebar() {
           ))}
         </SlidingContextNav>
 
-        <SectionLabel>Projects</SectionLabel>
-        <SlidingContextNav
-          activeIndex={issueProjectActiveIndex}
-          ariaLabel="Issue project slices"
-          className="mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
-          indicatorTestId="issue-project-sidebar-active-indicator"
-        >
-          {visibleProjects.map((project) => {
-            const routeRef = projectRouteRef(project);
-            const active = selectedProjectId === project.id || activeProjectRef === routeRef;
-            return (
-              <Link
-                key={project.id}
-                to={`/issues?projectId=${project.id}`}
-                onClick={closeMobileSidebar}
-                className={cn(
-                  "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
-                  active
-                    ? "font-medium text-foreground"
-                    : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
-                )}
-              >
-                <Circle
-                  data-testid={`issue-project-color-${project.id}`}
-                  className="h-2.5 w-2.5 shrink-0 fill-current"
-                  style={{ color: projectColorAccent(project.color) }}
-                />
-                <span className="truncate">{project.name}</span>
-              </Link>
-            );
-          })}
-        </SlidingContextNav>
+        <div className="min-h-0 flex-1 overflow-y-auto pb-3.5">
+          <CustomIssueViewsSection
+            views={customIssueViews}
+            activeViewId={activeCustomViewId}
+            closeMobileSidebar={closeMobileSidebar}
+            onDeleteView={deleteCustomIssueView}
+          />
+          <SectionLabel testId="workspace-projects-section">Projects</SectionLabel>
+          <SlidingContextNav
+            activeIndex={issueProjectActiveIndex}
+            ariaLabel="Issue project slices"
+            className="mt-2"
+            indicatorTestId="issue-project-sidebar-active-indicator"
+          >
+            {visibleProjects.map((project) => {
+              const routeRef = projectRouteRef(project);
+              const active = selectedProjectId === project.id || activeProjectRef === routeRef;
+              const liveCount = liveCountByProject.get(project.id) ?? 0;
+              return (
+                <Link
+                  key={project.id}
+                  to={`/issues?projectId=${project.id}`}
+                  onClick={closeMobileSidebar}
+                  data-testid={`issue-project-row-${project.id}`}
+                  className={cn(
+                    "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                    active
+                      ? "font-medium text-foreground"
+                      : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
+                  )}
+                >
+                  <Circle
+                    data-testid={`issue-project-color-${project.id}`}
+                    className="h-2.5 w-2.5 shrink-0 fill-current"
+                    style={{ color: projectColorAccent(project.color) }}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                  {liveCount > 0 ? <SidebarLiveCount count={liveCount} /> : null}
+                </Link>
+              );
+            })}
+          </SlidingContextNav>
+        </div>
       </aside>
     );
   }

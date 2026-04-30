@@ -157,12 +157,20 @@ export interface IssueComment {
   updatedAt: Date;
 }
 
+export type IssueAttachmentUsage =
+  | "issue"
+  | "description_inline"
+  | "document_inline"
+  | "comment_inline"
+  | "comment_attachment";
+
 export interface IssueAttachment {
   id: string;
   orgId: string;
   issueId: string;
   issueCommentId: string | null;
   assetId: string;
+  usage: IssueAttachmentUsage;
   provider: string;
   objectKey: string;
   contentType: string;

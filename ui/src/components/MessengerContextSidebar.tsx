@@ -16,7 +16,7 @@ import {
   UserPlus,
   XCircle,
 } from "lucide-react";
-import type { ChatConversation } from "@rudderhq/shared";
+import { formatMessengerPreview, type ChatConversation } from "@rudderhq/shared";
 import { chatsApi } from "@/api/chats";
 import { messengerApi } from "@/api/messenger";
 import { Link, useLocation, useNavigate } from "@/lib/router";
@@ -83,8 +83,8 @@ function threadConversationId(threadKey: string) {
 
 function conversationSubtitle(conversation: ChatConversation) {
   return (
-    conversation.latestReplyPreview ||
-    conversation.summary ||
+    formatMessengerPreview(conversation.latestReplyPreview) ||
+    formatMessengerPreview(conversation.summary) ||
     (conversation.primaryIssue
       ? `${conversation.primaryIssue.identifier ?? conversation.primaryIssue.id} · ${conversation.primaryIssue.title}`
       : null) ||
@@ -289,6 +289,7 @@ function ThreadRow({
   onSelect: (href: string) => void;
 }) {
   const Icon = threadIcon(thread.kind);
+  const preview = formatMessengerPreview(thread.preview) || formatMessengerPreview(thread.subtitle) || messengerThreadKindLabel(thread.kind);
   const row = (
     <Link
       to={thread.href}
@@ -330,7 +331,7 @@ function ThreadRow({
             thread.unreadCount > 0 ? "text-foreground/76" : "text-muted-foreground",
           )}
         >
-          {thread.preview || thread.subtitle || messengerThreadKindLabel(thread.kind)}
+          {preview}
         </span>
       </span>
     </Link>

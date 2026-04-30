@@ -135,6 +135,8 @@ const issueStatusOptions = [
   "blocked",
 ] as const;
 
+const ISSUE_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
+
 function issueStatusLabel(status: string) {
   return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
@@ -740,14 +742,22 @@ export function IssueDetail() {
   });
 
   const uploadAttachment = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({
+      file,
+      usage = "issue",
+    }: {
+      file: File;
+      usage?: IssueAttachment["usage"];
+    }) => {
       const issueOrgId = issue?.orgId ?? resolvedCompanyId ?? selectedOrganizationId;
       if (!issueOrgId) throw new Error("No organization selected");
-      return issuesApi.uploadAttachment(issueOrgId, issueId!, file);
+      return issuesApi.uploadAttachment(issueOrgId, issueId!, file, { usage });
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       setAttachmentError(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.attachments(issueId!) });
+      if (variables.usage === undefined || variables.usage === "issue") {
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.attachments(issueId!) });
+      }
       invalidateIssue();
     },
     onError: (err) => {
@@ -890,7 +900,7 @@ export function IssueDetail() {
       if (isMarkdownFile(file)) {
         await importMarkdownDocument.mutateAsync(file);
       } else {
-        await uploadAttachment.mutateAsync(file);
+        await uploadAttachment.mutateAsync({ file, usage: "issue" });
       }
     }
     if (fileInputRef.current) {
@@ -907,7 +917,7 @@ export function IssueDetail() {
       if (isMarkdownFile(file)) {
         await importMarkdownDocument.mutateAsync(file);
       } else {
-        await uploadAttachment.mutateAsync(file);
+        await uploadAttachment.mutateAsync({ file, usage: "issue" });
       }
     }
   };
@@ -921,7 +931,7 @@ export function IssueDetail() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown"
+        accept={ISSUE_ATTACHMENT_ACCEPT}
         className="hidden"
         onChange={handleFilePicked}
         multiple
@@ -1124,7 +1134,7 @@ export function IssueDetail() {
           multiline
           mentions={mentionOptions}
           imageUploadHandler={async (file) => {
-            const attachment = await uploadAttachment.mutateAsync(file);
+            const attachment = await uploadAttachment.mutateAsync({ file, usage: "description_inline" });
             return attachment.contentPath;
           }}
         />
@@ -1341,7 +1351,7 @@ export function IssueDetail() {
         canDeleteDocuments={Boolean(session?.user?.id)}
         mentions={mentionOptions}
         imageUploadHandler={async (file) => {
-          const attachment = await uploadAttachment.mutateAsync(file);
+          const attachment = await uploadAttachment.mutateAsync({ file, usage: "document_inline" });
           return attachment.contentPath;
         }}
         extraActions={!hasAttachments ? attachmentUploadButton : undefined}
@@ -1456,11 +1466,11 @@ export function IssueDetail() {
               await addComment.mutateAsync({ body, reopen });
             }}
             imageUploadHandler={async (file) => {
-              const attachment = await uploadAttachment.mutateAsync(file);
+              const attachment = await uploadAttachment.mutateAsync({ file, usage: "comment_inline" });
               return attachment.contentPath;
             }}
             onAttachImage={async (file) => {
-              await uploadAttachment.mutateAsync(file);
+              await uploadAttachment.mutateAsync({ file, usage: "comment_attachment" });
             }}
             liveRunSlot={<LiveRunWidget issueId={issueId!} orgId={issue.orgId} />}
           />

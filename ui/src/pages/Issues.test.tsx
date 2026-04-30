@@ -42,6 +42,7 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("@/lib/router", () => ({
   useLocation: () => ({ pathname: "/RUD/issues", search: mockState.search, hash: "", key: "issues" }),
+  useNavigate: () => vi.fn(),
   useSearchParams: () => [new URLSearchParams(mockState.search)],
 }));
 

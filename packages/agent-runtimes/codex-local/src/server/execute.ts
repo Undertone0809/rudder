@@ -18,6 +18,7 @@ import {
   resolveRudderDesiredSkillNames,
   renderTemplate,
   joinPromptSections,
+  loadAgentInstructionsPrefix,
   runChildProcess,
   selectPromptTemplate,
 } from "@rudderhq/agent-runtime-utils/server-utils";
@@ -349,29 +350,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     );
   }
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
-  const instructionsDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
-  let instructionsPrefix = "";
-  let instructionsChars = 0;
-  if (instructionsFilePath) {
-    try {
-      const instructionsContents = await fs.readFile(instructionsFilePath, "utf8");
-      instructionsPrefix =
-        `${instructionsContents}\n\n` +
-        `The above agent instructions were loaded from ${instructionsFilePath}. ` +
-        `Resolve any relative file references from ${instructionsDir}.\n\n`;
-      instructionsChars = instructionsPrefix.length;
-      await onLog(
-        "stdout",
-        `[rudder] Loaded agent instructions file: ${instructionsFilePath}\n`,
-      );
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      await onLog(
-        "stdout",
-        `[rudder] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
-      );
-    }
-  }
+  const loadedInstructions = await loadAgentInstructionsPrefix({
+    instructionsFilePath,
+    onLog,
+  });
+  const instructionsPrefix = loadedInstructions.prefix;
+  const instructionsDir = loadedInstructions.instructionsDir;
   const repoAgentsNote =
     "Codex exec automatically applies repo-scoped AGENTS.md instructions from the current workspace; Rudder does not currently suppress that discovery.";
   const commandNotes = (() => {
@@ -380,13 +364,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
     if (instructionsPrefix.length > 0) {
       return [
-        `Loaded agent instructions from ${instructionsFilePath}`,
+        ...loadedInstructions.commandNotes,
         `Prepended instructions + path directive to stdin prompt (relative references from ${instructionsDir}).`,
         repoAgentsNote,
       ];
     }
     return [
-      `Configured instructionsFilePath ${instructionsFilePath}, but file could not be read; continuing without injected instructions.`,
+      ...loadedInstructions.commandNotes,
       repoAgentsNote,
     ];
   })();
@@ -446,7 +430,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   ]);
   const promptMetrics = {
     promptChars: prompt.length,
-    instructionsChars,
+    ...loadedInstructions.metrics,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,

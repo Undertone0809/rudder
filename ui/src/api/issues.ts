@@ -92,12 +92,18 @@ export const issuesApi = {
     orgId: string,
     issueId: string,
     file: File,
-    issueCommentId?: string | null,
+    options?: {
+      issueCommentId?: string | null;
+      usage?: IssueAttachment["usage"];
+    },
   ) => {
     const form = new FormData();
     form.append("file", file);
-    if (issueCommentId) {
-      form.append("issueCommentId", issueCommentId);
+    if (options?.issueCommentId) {
+      form.append("issueCommentId", options.issueCommentId);
+    }
+    if (options?.usage) {
+      form.append("usage", options.usage);
     }
     return api.postForm<IssueAttachment>(`/orgs/${orgId}/issues/${issueId}/attachments`, form);
   },

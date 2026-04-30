@@ -2,7 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { renderTemplate, runChildProcess, selectPromptTemplate } from "./server-utils.js";
+import {
+  loadAgentInstructionsPrefix,
+  renderTemplate,
+  runChildProcess,
+  selectPromptTemplate,
+} from "./server-utils.js";
 
 const ORIGINAL_HOME = process.env.HOME;
 const ORIGINAL_ZDOTDIR = process.env.ZDOTDIR;
@@ -122,6 +127,103 @@ describe("selectPromptTemplate", () => {
     expect(rendered).toContain("Continue your Rudder work.");
     expect(rendered).toContain("## Organization Resources");
     expect(rendered).toContain("Locator: `~/projects/rudder`");
+  });
+});
+
+describe("loadAgentInstructionsPrefix", () => {
+  it("loads only the entry instructions file when no sibling memory file exists", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-entry-"));
+    const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    const logs: Array<{ stream: "stdout" | "stderr"; chunk: string }> = [];
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
+
+    try {
+      const loaded = await loadAgentInstructionsPrefix({
+        instructionsFilePath: instructionsPath,
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(loaded.prefix).toContain("# Agent Instructions");
+      expect(loaded.prefix).toContain(`loaded from ${instructionsPath}`);
+      expect(loaded.prefix).not.toContain("Tacit Memory");
+      expect(loaded.commandNotes).toEqual([`Loaded agent instructions from ${instructionsPath}`]);
+      expect(loaded.memoryFilePath).toBeNull();
+      expect(loaded.metrics.instructionsChars).toBe(loaded.prefix.length);
+      expect(loaded.metrics.instructionEntryChars).toBeGreaterThan(0);
+      expect(loaded.metrics.memoryChars).toBe(0);
+      expect(logs).toContainEqual(expect.objectContaining({
+        stream: "stdout",
+        chunk: expect.stringContaining(`[rudder] Loaded agent instructions file: ${instructionsPath}`),
+      }));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("loads the entry instructions file plus sibling MEMORY.md", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-memory-"));
+    const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    const memoryPath = path.join(root, "instructions", "MEMORY.md");
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
+    await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer concise updates.\n", "utf8");
+
+    try {
+      const loaded = await loadAgentInstructionsPrefix({
+        instructionsFilePath: instructionsPath,
+        onLog: async () => {},
+      });
+
+      expect(loaded.prefix).toContain("# Agent Instructions");
+      expect(loaded.prefix).toContain("# Tacit Memory");
+      expect(loaded.commandNotes).toContain(`Loaded agent instructions from ${instructionsPath}`);
+      expect(loaded.commandNotes).toContain(`Loaded agent memory instructions from ${memoryPath}`);
+      expect(loaded.memoryFilePath).toBe(memoryPath);
+      expect(loaded.metrics.instructionsChars).toBe(loaded.prefix.length);
+      expect(loaded.metrics.instructionEntryChars).toBeGreaterThan(0);
+      expect(loaded.metrics.memoryChars).toBeGreaterThan(0);
+      expect(loaded.metrics.instructionsChars).toBe(
+        loaded.metrics.instructionEntryChars + loaded.metrics.memoryChars + 2,
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the existing warning behavior when the entry file is missing", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-missing-"));
+    const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    const logs: Array<{ stream: "stdout" | "stderr"; chunk: string }> = [];
+
+    try {
+      const loaded = await loadAgentInstructionsPrefix({
+        instructionsFilePath: instructionsPath,
+        warningStream: "stderr",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(loaded.prefix).toBe("");
+      expect(loaded.readFailed).toBe(true);
+      expect(loaded.commandNotes).toEqual([
+        `Configured instructionsFilePath ${instructionsPath}, but file could not be read; continuing without injected instructions.`,
+      ]);
+      expect(loaded.metrics).toEqual({
+        instructionsChars: 0,
+        instructionEntryChars: 0,
+        memoryChars: 0,
+      });
+      expect(logs).toContainEqual(expect.objectContaining({
+        stream: "stderr",
+        chunk: expect.stringContaining(`could not read agent instructions file "${instructionsPath}"`),
+      }));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });
 

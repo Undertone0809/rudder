@@ -1,10 +1,78 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 function recentIssuesStorageKey(orgId: string): string {
   return `rudder:recent-issues:${orgId}`;
 }
 
+async function createOrganization(page: Page, name: string) {
+  const response = await page.request.post("/api/orgs", {
+    data: { name: `${name}-${Date.now()}` },
+  });
+  expect(response.ok()).toBe(true);
+  return response.json();
+}
+
+async function createIssue(page: Page, orgId: string, title: string, data: Record<string, unknown> = {}) {
+  const response = await page.request.post(`/api/orgs/${orgId}/issues`, {
+    data: {
+      title,
+      description: `${title} description`,
+      status: "todo",
+      priority: "medium",
+      ...data,
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return response.json() as Promise<{ id: string; identifier?: string | null; title: string }>;
+}
+
+async function createProject(page: Page, orgId: string, name: string) {
+  const response = await page.request.post(`/api/orgs/${orgId}/projects`, {
+    data: {
+      name,
+      description: `${name} description`,
+      color: "#3b82f6",
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return response.json() as Promise<{ id: string; name: string }>;
+}
+
 test.describe("Issues recently viewed scope", () => {
+  test("saves custom issue boards and removes the old starred sidebar view", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Custom-Boards");
+    await createIssue(page, organization.id, "Custom board visible issue");
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto("/issues");
+
+    await expect(page.getByRole("link", { name: /Starred/ })).toHaveCount(0);
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toBe("Name this board");
+      await dialog.accept("Review board");
+    });
+    await page.getByRole("button", { name: /Save board/ }).click();
+
+    await expect(page).toHaveURL(/\/issues\?view=/);
+    await expect(page.getByTestId("issue-custom-views-section")).toContainText("Custom Boards");
+    await expect(page.getByRole("link", { name: /Review board/ })).toBeVisible();
+    await expect(page.getByTestId("issues-view-toolbar")).toContainText("Review board");
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toBe('Delete custom board "Review board"? This cannot be undone.');
+      await dialog.accept();
+    });
+    await page.getByLabel("Delete custom board Review board").click();
+
+    await expect(page).toHaveURL(/\/issues$/);
+    await expect(page.getByRole("link", { name: /Review board/ })).toHaveCount(0);
+  });
+
   test("shows only current-org visible recent issues in the badge and list", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: `Issues-Recently-Viewed-${Date.now()}` },
@@ -128,5 +196,56 @@ test.describe("Issues recently viewed scope", () => {
     await expect(page.getByText("Org two first recent issue", { exact: true })).toBeVisible();
     await expect(page.getByText("Org two second recent issue", { exact: true })).toBeVisible();
     await expect(page.getByText("Org one recent issue", { exact: true })).toHaveCount(0);
+  });
+
+  test("shows live run counts on issue project slices", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Project-Live");
+    const project = await createProject(page, organization.id, "Sidebar Live Project");
+    const firstIssue = await createIssue(page, organization.id, "Project live issue 1", { projectId: project.id });
+    const secondIssue = await createIssue(page, organization.id, "Project live issue 2", { projectId: project.id });
+
+    await page.route(`**/api/orgs/${organization.id}/live-runs`, async (route) => {
+      await route.fulfill({
+        json: [
+          {
+            id: "run-live-1",
+            status: "running",
+            invocationSource: "manual",
+            triggerDetail: "Manual wakeup",
+            startedAt: "2026-04-30T10:00:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-04-30T10:00:00.000Z",
+            agentId: "agent-1",
+            agentName: "Live Agent",
+            agentRuntimeType: "codex_local",
+            issueId: firstIssue.id,
+          },
+          {
+            id: "run-live-2",
+            status: "running",
+            invocationSource: "manual",
+            triggerDetail: "Manual wakeup",
+            startedAt: "2026-04-30T10:01:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-04-30T10:01:00.000Z",
+            agentId: "agent-2",
+            agentName: "Live Agent Two",
+            agentRuntimeType: "codex_local",
+            issueId: secondIssue.id,
+          },
+        ],
+      });
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto("/issues");
+
+    const projectRow = page.getByTestId(`issue-project-row-${project.id}`);
+    await expect(projectRow).toContainText("Sidebar Live Project");
+    await expect(projectRow).toContainText("2 live");
   });
 });

@@ -12,23 +12,24 @@ import {
   joinRequests,
   messengerThreadUserStates,
 } from "@rudderhq/db";
-import type {
-  Approval,
-  BudgetIncident,
-  ChatConversation,
-  ChatMessage,
-  HeartbeatRun,
-  JoinRequest,
-  MessengerApprovalThreadItem,
-  MessengerBudgetThreadItem,
-  MessengerEvent,
-  MessengerHeartbeatRunThreadItem,
-  MessengerIssueThreadItem,
-  MessengerJoinRequestThreadItem,
-  MessengerSystemThreadKind,
-  MessengerThreadAction,
-  MessengerThreadDetail,
-  MessengerThreadSummary,
+import {
+  formatMessengerPreview,
+  type Approval,
+  type BudgetIncident,
+  type ChatConversation,
+  type ChatMessage,
+  type HeartbeatRun,
+  type JoinRequest,
+  type MessengerApprovalThreadItem,
+  type MessengerBudgetThreadItem,
+  type MessengerEvent,
+  type MessengerHeartbeatRunThreadItem,
+  type MessengerIssueThreadItem,
+  type MessengerJoinRequestThreadItem,
+  type MessengerSystemThreadKind,
+  type MessengerThreadAction,
+  type MessengerThreadDetail,
+  type MessengerThreadSummary,
 } from "@rudderhq/shared";
 import { issueService } from "./issues.js";
 import { chatService } from "./chats.js";
@@ -171,17 +172,8 @@ type FailedRunRow = {
   updatedAt: Date;
 };
 
-function firstLine(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const line = value.split("\n").map((part) => part.trim()).find(Boolean);
-  return line ?? null;
-}
-
 function truncate(value: string | null | undefined, max = 140): string | null {
-  const text = firstLine(value);
-  if (!text) return null;
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 1)}…`;
+  return formatMessengerPreview(value, { max });
 }
 
 function normalizeDate(value: Date | string | null | undefined): Date | null {
@@ -422,6 +414,7 @@ function issueCard(
   followed: boolean,
   latestPreview: string | null,
   latestActivityAt: Date,
+  sourceComment: Pick<IssueCommentRow, "id" | "body"> | null,
 ): MessengerIssueThreadItem {
   const createdByMe = issue.createdByUserId === currentUserId;
   const assignedToMe = issue.assigneeUserId === currentUserId;
@@ -447,6 +440,8 @@ function issueCard(
     },
     issueId: issue.id,
     issueIdentifier: issue.identifier,
+    sourceCommentId: sourceComment?.id ?? null,
+    sourceCommentBody: sourceComment?.body ?? null,
   };
 }
 
@@ -699,13 +694,14 @@ export function messengerService(db: Db) {
       const latestCommentAt = normalizeDate(latestComment?.createdAt ?? null);
       const latestEventAt = maxDate(latestCommentAt, latestActivity?.createdAt);
       const latestActivityAt = maxDate(issue.updatedAt, latestEventAt);
-      const latestPreview =
+      const latestSourceIsComment =
         latestCommentAt &&
-        (!latestActivity?.createdAt || latestCommentAt.getTime() >= new Date(latestActivity.createdAt).getTime())
-          ? truncate(latestComment?.body)
-          : latestActivity
-            ? summarizeIssueActivity(latestActivity, issue)
-            : null;
+        (!latestActivity?.createdAt || latestCommentAt.getTime() >= new Date(latestActivity.createdAt).getTime());
+      const latestPreview = latestSourceIsComment
+        ? truncate(latestComment?.body)
+        : latestActivity
+          ? summarizeIssueActivity(latestActivity, issue)
+          : null;
 
       const latestExternalComment = latestExternalCommentByIssue.get(issue.id) ?? null;
       const latestExternalActivity = latestExternalActivityByIssue.get(issue.id) ?? null;
@@ -736,6 +732,7 @@ export function messengerService(db: Db) {
           issue.followed,
           latestPreview,
           latestActivityAt ?? issue.updatedAt,
+          latestSourceIsComment ? latestComment : null,
         ),
         attentionActivityAt,
         attentionPreview,
