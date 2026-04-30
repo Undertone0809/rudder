@@ -93,6 +93,8 @@ describe("ActiveAgentsPanel", () => {
     expect(liveCard).toBeTruthy();
     expect(liveCard?.classList.contains("motion-list-enter")).toBe(true);
     expect(liveCard?.querySelector(".motion-live-dot")).toBeTruthy();
+    expect(container.textContent).toContain("Live for");
+    expect(container.textContent).not.toContain("Live now");
 
     const transcript = container.querySelector('[data-testid="run-transcript-view"]');
     expect(transcript?.getAttribute("data-streaming")).toBe("true");

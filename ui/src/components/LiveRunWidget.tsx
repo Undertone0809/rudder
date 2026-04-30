@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "../api/agents";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
-import { formatDateTime } from "../lib/utils";
+import { formatDateTime, formatRunElapsedDuration } from "../lib/utils";
 import { ExternalLink, Square } from "lucide-react";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
@@ -110,6 +110,10 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
           const isActive = isRunActive(run.status);
           const transcript = transcriptByRun.get(run.id) ?? [];
           const agent = agentById.get(run.agentId) ?? null;
+          const elapsed = formatRunElapsedDuration(
+            run.startedAt ?? run.createdAt,
+            isActive ? null : run.finishedAt,
+          );
           return (
             <section key={run.id} className="px-4 py-4">
               <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -130,6 +134,7 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
                     </Link>
                     <StatusBadge status={run.status} />
                     <span>{formatDateTime(run.startedAt ?? run.createdAt)}</span>
+                    {elapsed ? <span>{isActive ? `Live for ${elapsed}` : `Ran for ${elapsed}`}</span> : null}
                   </div>
                 </div>
 
@@ -161,6 +166,7 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
                   limit={8}
                   streaming={isActive}
                   collapseStdout
+                  presentation="chat"
                   emptyMessage={hasOutputForRun(run.id) ? "Waiting for transcript parsing..." : "Waiting for run output..."}
                 />
               </div>

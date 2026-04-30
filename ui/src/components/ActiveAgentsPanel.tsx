@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, Issue } from "@rudderhq/shared";
@@ -7,7 +7,7 @@ import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { issuesApi } from "../api/issues";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { queryKeys } from "../lib/queryKeys";
-import { cn, relativeTime } from "../lib/utils";
+import { cn, formatRunElapsedDuration, relativeTime } from "../lib/utils";
 import { ExternalLink } from "lucide-react";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
@@ -106,6 +106,16 @@ function AgentRunCard({
   hasOutput: boolean;
   isActive: boolean;
 }) {
+  const [, setElapsedTick] = useState(0);
+
+  useEffect(() => {
+    if (!isActive) return;
+    const id = window.setInterval(() => setElapsedTick((tick) => tick + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [isActive]);
+
+  const activeDuration = formatRunElapsedDuration(run.startedAt ?? run.createdAt);
+
   return (
     <div className={cn(
       "motion-list-enter flex h-[320px] flex-col overflow-hidden rounded-[var(--radius-lg)] border",
@@ -131,7 +141,7 @@ function AgentRunCard({
               )}
             </div>
             <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-              <span>{isActive ? "Live now" : run.finishedAt ? `Finished ${relativeTime(run.finishedAt)}` : `Started ${relativeTime(run.createdAt)}`}</span>
+              <span>{isActive ? `Live for ${activeDuration ?? "now"}` : run.finishedAt ? `Finished ${relativeTime(run.finishedAt)}` : `Started ${relativeTime(run.createdAt)}`}</span>
             </div>
           </div>
 
@@ -167,6 +177,7 @@ function AgentRunCard({
           limit={5}
           streaming={isActive}
           collapseStdout
+          presentation="chat"
           thinkingClassName="!text-[10px] !leading-4"
           emptyMessage={hasOutput ? "Waiting for transcript parsing..." : isActive ? "Waiting for output..." : "No transcript captured."}
         />

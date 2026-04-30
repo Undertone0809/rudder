@@ -76,6 +76,34 @@ export function relativeTime(date: Date | string): string {
   return formatDate(date);
 }
 
+export function formatElapsedDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "0s";
+  if (ms < 1000) return "under 1s";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const remainingSec = sec % 60;
+  if (min < 60) return remainingSec > 0 ? `${min}m ${remainingSec}s` : `${min}m`;
+  const hr = Math.floor(min / 60);
+  const remainingMin = min % 60;
+  if (hr < 24) return remainingMin > 0 ? `${hr}h ${remainingMin}m` : `${hr}h`;
+  const days = Math.floor(hr / 24);
+  const remainingHr = hr % 24;
+  return remainingHr > 0 ? `${days}d ${remainingHr}h` : `${days}d`;
+}
+
+export function formatRunElapsedDuration(
+  startedAt: Date | string | null | undefined,
+  endedAt?: Date | string | null,
+  now = Date.now(),
+): string | null {
+  if (!startedAt) return null;
+  const start = new Date(startedAt).getTime();
+  const end = endedAt ? new Date(endedAt).getTime() : now;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return formatElapsedDuration(end - start);
+}
+
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
