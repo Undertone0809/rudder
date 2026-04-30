@@ -25,6 +25,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { CircleDot, Plus, Filter, ArrowUpDown, Layers, Check, X, ChevronRight, List, Columns3, User, Search, Star, SlidersHorizontal } from "lucide-react";
 import { KanbanBoard, type IssueDisplayProperty } from "./KanbanBoard";
+import type { IssueCustomViewState } from "@/lib/issue-custom-views";
 import type { AgentRole, Issue } from "@rudderhq/shared";
 
 /* ── Helpers ── */
@@ -38,18 +39,8 @@ function statusLabel(status: string): string {
 
 /* ── View state ── */
 
-export type IssueViewState = {
-  statuses: string[];
-  priorities: string[];
-  assignees: string[];
-  labels: string[];
-  projects: string[];
+export type IssueViewState = Omit<IssueCustomViewState, "displayProperties"> & {
   displayProperties: IssueDisplayProperty[];
-  sortField: "status" | "priority" | "title" | "created" | "updated";
-  sortDir: "asc" | "desc";
-  groupBy: "status" | "priority" | "assignee" | "project" | "none";
-  viewMode: "list" | "board";
-  collapsedGroups: string[];
 };
 
 const displayPropertyOptions: Array<{ value: IssueDisplayProperty; label: string }> = [
@@ -94,11 +85,7 @@ function getViewState(key: string): IssueViewState {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<IssueViewState>;
-      return {
-        ...defaultViewState,
-        ...parsed,
-        displayProperties: normalizeDisplayProperties(parsed.displayProperties),
-      };
+      return normalizeViewState(parsed);
     }
   } catch { /* ignore */ }
   return { ...defaultViewState };
@@ -120,6 +107,20 @@ function normalizeDisplayProperties(value: unknown): IssueDisplayProperty[] {
     properties.push(property);
   }
   return properties;
+}
+
+function normalizeViewState(value: Partial<IssueViewState> | IssueCustomViewState): IssueViewState {
+  return {
+    ...defaultViewState,
+    ...value,
+    statuses: Array.isArray(value.statuses) ? [...value.statuses] : [],
+    priorities: Array.isArray(value.priorities) ? [...value.priorities] : [],
+    assignees: Array.isArray(value.assignees) ? [...value.assignees] : [],
+    labels: Array.isArray(value.labels) ? [...value.labels] : [],
+    projects: Array.isArray(value.projects) ? [...value.projects] : [],
+    collapsedGroups: Array.isArray(value.collapsedGroups) ? [...value.collapsedGroups] : [],
+    displayProperties: normalizeDisplayProperties(value.displayProperties),
+  };
 }
 
 function arraysEqual(a: string[], b: string[]): boolean {
@@ -212,10 +213,15 @@ interface IssuesListProps {
   initialAssignees?: string[];
   initialSearch?: string;
   initialGroupBy?: IssueViewState["groupBy"];
+  initialViewState?: IssueCustomViewState | null;
+  activeCustomViewName?: string | null;
   toolbarMode?: "full" | "controls-only" | "hidden";
   starredIssueIds?: string[];
   onToggleStarredIssue?: (issueId: string) => void;
   onOpenIssue?: (issue: Issue) => void;
+  onSaveCustomView?: (name: string, state: IssueViewState) => void;
+  onDeleteCustomView?: () => void;
+  onViewStateChange?: (state: IssueViewState) => void;
   searchFilters?: {
     participantAgentId?: string;
   };
@@ -236,10 +242,15 @@ export function IssuesList({
   initialAssignees,
   initialSearch,
   initialGroupBy,
+  initialViewState,
+  activeCustomViewName,
   toolbarMode = "full",
   starredIssueIds = [],
   onToggleStarredIssue,
   onOpenIssue,
+  onSaveCustomView,
+  onDeleteCustomView,
+  onViewStateChange,
   searchFilters,
   onSearchChange,
   onUpdateIssue,
@@ -256,11 +267,13 @@ export function IssuesList({
   const scopedKey = selectedOrganizationId ? `${viewStateKey}:${selectedOrganizationId}` : viewStateKey;
 
   const getInitialViewState = useCallback((): IssueViewState => {
-    const baseState = initialAssignees
+    const baseState = initialViewState
+      ? normalizeViewState(initialViewState)
+      : initialAssignees
       ? { ...defaultViewState, assignees: initialAssignees, statuses: [] }
       : getViewState(scopedKey);
     return initialGroupBy ? { ...baseState, groupBy: initialGroupBy } : baseState;
-  }, [initialAssignees, initialGroupBy, scopedKey]);
+  }, [initialAssignees, initialGroupBy, initialViewState, scopedKey]);
 
   const [viewState, setViewState] = useState<IssueViewState>(() => getInitialViewState());
   const [assigneePickerIssueId, setAssigneePickerIssueId] = useState<string | null>(null);
@@ -293,9 +306,10 @@ export function IssuesList({
     setViewState((prev) => {
       const next = { ...prev, ...patch };
       saveViewState(scopedKey, next);
+      onViewStateChange?.(next);
       return next;
     });
-  }, [scopedKey]);
+  }, [onViewStateChange, scopedKey]);
 
   const { data: searchedIssues = [] } = useQuery({
     queryKey: [
@@ -455,6 +469,16 @@ export function IssuesList({
     setAssigneeSearch("");
   };
 
+  const saveCustomView = () => {
+    if (!onSaveCustomView || typeof window === "undefined") return;
+    const defaultName = activeCustomViewName ?? selectedProjectName ?? "Custom board";
+    const name = window.prompt("Name this board", defaultName);
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    onSaveCustomView(trimmed, viewState);
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       {toolbarMode !== "hidden" && (
@@ -484,13 +508,37 @@ export function IssuesList({
               </div>
             </>
           ) : (
-            <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              Issue views
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="truncate text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                {activeCustomViewName ?? "Issue views"}
+              </div>
             </div>
           )}
         </div>
 
         <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+          {onSaveCustomView ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs"
+              onClick={saveCustomView}
+            >
+              <Plus className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+              <span className="hidden sm:inline">Save board</span>
+            </Button>
+          ) : null}
+          {activeCustomViewName && onDeleteCustomView ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-destructive"
+              onClick={onDeleteCustomView}
+            >
+              <X className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+              <span className="hidden sm:inline">Delete</span>
+            </Button>
+          ) : null}
           <div className="mr-1 flex items-center overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_82%,transparent)]">
             <button
               className={`p-1.5 transition-colors ${viewState.viewMode === "list" ? "bg-[color:var(--surface-active)] text-foreground" : "text-muted-foreground hover:text-foreground"}`}

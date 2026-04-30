@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
-import { useLocation, useSearchParams } from "@/lib/router";
+import { useLocation, useNavigate, useSearchParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Agent, Project } from "@rudderhq/shared";
 import { issuesApi } from "../api/issues";
@@ -25,7 +25,16 @@ import {
 } from "../lib/new-issue-dialog";
 import { relativeTime } from "../lib/utils";
 import { EmptyState } from "../components/EmptyState";
-import { IssuesList } from "../components/IssuesList";
+import { IssuesList, type IssueViewState } from "../components/IssuesList";
+import {
+  createIssueCustomView,
+  deleteIssueCustomView,
+  findIssueCustomView,
+  ISSUE_CUSTOM_VIEWS_CHANGED_EVENT,
+  readIssueCustomViews,
+  updateIssueCustomViewState,
+  type IssueCustomView,
+} from "../lib/issue-custom-views";
 import { CircleDot, Clock3, Flag, FolderKanban, PencilLine, Trash2, UserRound } from "lucide-react";
 import { useIssueFollows } from "@/hooks/useIssueFollows";
 
@@ -156,6 +165,7 @@ export function Issues() {
   const { openNewIssue } = useDialog();
   const { pushToast } = useToast();
   const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
 
@@ -163,6 +173,7 @@ export function Issues() {
   const issueScope = searchParams.get("scope") ?? "";
   const effectiveIssueScope = issueScope === "recent" ? "" : issueScope;
   const isDraftScope = effectiveIssueScope === "drafts";
+  const customViewId = searchParams.get("view") ?? "";
   const projectId = searchParams.get("projectId") ?? undefined;
   const participantAgentId = searchParams.get("participantAgentId") ?? undefined;
   const requestedGroupBy = searchParams.get("groupBy");
@@ -221,7 +232,14 @@ export function Issues() {
   const [issueDraftSummaries, setIssueDraftSummaries] = useState<IssueDraftSummary[]>(() =>
     summarizeIssueDrafts(selectedOrganizationId),
   );
+  const [customViews, setCustomViews] = useState<IssueCustomView[]>(() =>
+    readIssueCustomViews(selectedOrganizationId),
+  );
   const { followedIssueIds, toggleFollowIssue } = useIssueFollows(selectedOrganizationId);
+  const activeCustomView = useMemo(
+    () => customViews.find((view) => view.id === customViewId) ?? findIssueCustomView(selectedOrganizationId, customViewId),
+    [customViewId, customViews, selectedOrganizationId],
+  );
 
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(selectedOrganizationId!),
@@ -272,12 +290,26 @@ export function Issues() {
   }, [selectedOrganizationId]);
 
   useEffect(() => {
-    if (!selectedOrganizationId || participantAgentId || isDraftScope) return;
+    const refreshCustomViews = () => {
+      setCustomViews(readIssueCustomViews(selectedOrganizationId));
+    };
+    refreshCustomViews();
+    if (typeof window === "undefined") return;
+    window.addEventListener(ISSUE_CUSTOM_VIEWS_CHANGED_EVENT, refreshCustomViews);
+    window.addEventListener("storage", refreshCustomViews);
+    return () => {
+      window.removeEventListener(ISSUE_CUSTOM_VIEWS_CHANGED_EVENT, refreshCustomViews);
+      window.removeEventListener("storage", refreshCustomViews);
+    };
+  }, [selectedOrganizationId]);
+
+  useEffect(() => {
+    if (!selectedOrganizationId || participantAgentId || isDraftScope || customViewId) return;
     rememberIssueNavigation(selectedOrganizationId, {
       scope: effectiveIssueScope || undefined,
       projectId,
     });
-  }, [effectiveIssueScope, isDraftScope, participantAgentId, projectId, selectedOrganizationId]);
+  }, [customViewId, effectiveIssueScope, isDraftScope, participantAgentId, projectId, selectedOrganizationId]);
 
   const issueFilters = useMemo(
     () => getIssueScopeFilters(effectiveIssueScope, currentUserId),
@@ -318,6 +350,29 @@ export function Issues() {
     },
   });
 
+  const saveCustomView = useCallback((name: string, state: IssueViewState) => {
+    if (!selectedOrganizationId) return;
+    const view = createIssueCustomView(selectedOrganizationId, name, state);
+    setCustomViews(readIssueCustomViews(selectedOrganizationId));
+    pushToast({ title: "Custom board saved", tone: "success" });
+    navigate(`/issues?view=${encodeURIComponent(view.id)}`);
+  }, [navigate, pushToast, selectedOrganizationId]);
+
+  const updateActiveCustomView = useCallback((state: IssueViewState) => {
+    if (!selectedOrganizationId || !activeCustomView) return;
+    updateIssueCustomViewState(selectedOrganizationId, activeCustomView.id, state);
+  }, [activeCustomView, selectedOrganizationId]);
+
+  const deleteActiveCustomView = useCallback(() => {
+    if (!selectedOrganizationId || !activeCustomView) return;
+    const confirmed = window.confirm(`Delete custom board "${activeCustomView.name}"? This cannot be undone.`);
+    if (!confirmed) return;
+    deleteIssueCustomView(selectedOrganizationId, activeCustomView.id);
+    setCustomViews(readIssueCustomViews(selectedOrganizationId));
+    pushToast({ title: "Custom board deleted", tone: "success" });
+    navigate("/issues");
+  }, [activeCustomView, navigate, pushToast, selectedOrganizationId]);
+
   if (!selectedOrganizationId) {
     return <EmptyState icon={CircleDot} message="Select a organization to view issues." />;
   }
@@ -352,7 +407,9 @@ export function Issues() {
         projects={projects}
         liveIssueIds={liveIssueIds}
         projectId={projectId}
-        viewStateKey="rudder:issues-view"
+        viewStateKey={activeCustomView ? `rudder:issues-view:${activeCustomView.id}` : "rudder:issues-view"}
+        initialViewState={activeCustomView?.state ?? null}
+        activeCustomViewName={activeCustomView?.name ?? null}
         issueLinkState={issueLinkState}
         initialAssignees={searchParams.get("assignee") ? [searchParams.get("assignee")!] : undefined}
         initialSearch={initialSearch}
@@ -367,6 +424,9 @@ export function Issues() {
           recordRecentIssue(selectedOrganizationId, issue.id, readRecentIssueIds(selectedOrganizationId));
         }}
         onSearchChange={handleSearchChange}
+        onSaveCustomView={saveCustomView}
+        onDeleteCustomView={activeCustomView ? deleteActiveCustomView : undefined}
+        onViewStateChange={activeCustomView ? updateActiveCustomView : undefined}
         onUpdateIssue={(id, data) => updateIssue.mutate({ id, data })}
         searchFilters={participantAgentId ? { participantAgentId } : undefined}
       />

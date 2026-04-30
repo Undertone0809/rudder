@@ -14,6 +14,7 @@ import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 const mockState = vi.hoisted(() => ({
   confirm: vi.fn(),
   openNewIssue: vi.fn(),
+  navigate: vi.fn(),
   pushToast: vi.fn(),
   setSidebarOpen: vi.fn(),
   pathname: "/RUD/issues",
@@ -24,6 +25,27 @@ const mockState = vi.hoisted(() => ({
     identifier: string;
     title: string;
     status: string;
+    projectId?: string | null;
+  }>,
+  projects: [] as Array<{
+    id: string;
+    name: string;
+    archivedAt?: string | null;
+    color?: string | null;
+    urlKey?: string | null;
+  }>,
+  liveRuns: [] as Array<{
+    id: string;
+    agentId: string;
+    agentName: string;
+    agentRuntimeType: string;
+    status: string;
+    invocationSource: string;
+    triggerDetail: string | null;
+    startedAt: string | null;
+    finishedAt: string | null;
+    createdAt: string;
+    issueId?: string | null;
   }>,
   linearContributions: [] as unknown[],
   linearCatalog: null as null | { orgId: string; projects: Array<{ id: string; name: string }> },
@@ -62,8 +84,14 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "agents" && queryKey[1] === "org-1") {
       return { data: [sidebarAgent], isLoading: false, error: null };
     }
+    if (queryKey[0] === "projects" && queryKey[1] === "org-1") {
+      return { data: mockState.projects, isLoading: false, error: null };
+    }
     if (queryKey[0] === "issues" && queryKey[1] === "org-1") {
       return { data: mockState.issues, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "live-runs" && queryKey[1] === "org-1") {
+      return { data: mockState.liveRuns, isLoading: false, error: null };
     }
     if (queryKey[0] === "plugins" && queryKey[1] === "ui-contributions") {
       return { data: mockState.linearContributions, isLoading: false, error: null };
@@ -105,7 +133,7 @@ vi.mock("@/lib/router", () => ({
     </a>
   ),
   useLocation: () => ({ pathname: mockState.pathname, search: mockState.search, key: "issues" }),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mockState.navigate,
 }));
 
 vi.mock("@/lib/organization-routes", () => ({
@@ -202,12 +230,15 @@ beforeEach(() => {
   mockState.confirm.mockReset();
   mockState.confirm.mockReturnValue(true);
   mockState.openNewIssue.mockReset();
+  mockState.navigate.mockReset();
   mockState.pushToast.mockReset();
   mockState.setSidebarOpen.mockReset();
   mockState.pathname = "/RUD/issues";
   mockState.search = "";
   mockState.relativePath = "/issues";
   mockState.issues = [];
+  mockState.projects = [];
+  mockState.liveRuns = [];
   mockState.linearContributions = [];
   mockState.linearCatalog = null;
   vi.stubGlobal("confirm", mockState.confirm);
@@ -242,6 +273,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const followingLink = document.querySelector('a[href="/issues?scope=following"]');
     expect(followingLink?.textContent).toContain("Following");
+    expect(document.querySelector('a[href="/issues?scope=starred"]')).toBeNull();
   });
 
   const savedDraft = {
@@ -407,6 +439,122 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(draftEntry?.textContent).toContain("Draft Issues (2)");
     expect(draftEntry?.textContent).not.toContain("Newer draft");
     expect(document.querySelector("[data-testid='issue-sidebar-active-indicator']")).not.toBeNull();
+  });
+
+  it("shows saved custom boards in the issues sidebar", () => {
+    window.localStorage.setItem("rudder:issue-custom-views:org-1", JSON.stringify([
+      {
+        id: "view-1",
+        orgId: "org-1",
+        name: "Review board",
+        state: {
+          statuses: ["in_review"],
+          priorities: [],
+          assignees: [],
+          labels: [],
+          projects: [],
+          displayProperties: ["identifier", "assignee"],
+          sortField: "updated",
+          sortDir: "desc",
+          groupBy: "none",
+          viewMode: "board",
+          collapsedGroups: [],
+        },
+        createdAt: "2026-04-30T01:00:00.000Z",
+        updatedAt: "2026-04-30T01:00:00.000Z",
+      },
+    ]));
+
+    renderSidebar();
+
+    const section = document.querySelector("[data-testid='issue-custom-views-section']");
+    expect(section?.textContent).toContain("Custom Boards");
+    const row = document.querySelector<HTMLAnchorElement>("[data-testid='issue-custom-view-row-view-1'] a");
+    expect(row?.textContent).toContain("Review board");
+    expect(row?.getAttribute("href")).toBe("/issues?view=view-1");
+  });
+
+  it("shows live run counts on issue project rows", () => {
+    mockState.projects = [
+      { id: "project-1", name: "Launch Prep", color: "blue", archivedAt: null, urlKey: "launch-prep" },
+      { id: "project-2", name: "Platform", color: "green", archivedAt: null, urlKey: "platform" },
+    ];
+    mockState.issues = [
+      { id: "issue-1", identifier: "RUD-1", title: "First issue", status: "todo", projectId: "project-1" },
+      { id: "issue-2", identifier: "RUD-2", title: "Second issue", status: "in_progress", projectId: "project-1" },
+      { id: "issue-3", identifier: "RUD-3", title: "Third issue", status: "todo", projectId: "project-2" },
+    ];
+    mockState.liveRuns = [
+      {
+        id: "run-1",
+        agentId: "agent-1",
+        agentName: "Penelope",
+        agentRuntimeType: "codex_local",
+        status: "running",
+        invocationSource: "manual",
+        triggerDetail: "Manual wakeup",
+        startedAt: "2026-04-30T10:00:00.000Z",
+        finishedAt: null,
+        createdAt: "2026-04-30T10:00:00.000Z",
+        issueId: "issue-1",
+      },
+      {
+        id: "run-2",
+        agentId: "agent-1",
+        agentName: "Penelope",
+        agentRuntimeType: "codex_local",
+        status: "running",
+        invocationSource: "manual",
+        triggerDetail: "Manual wakeup",
+        startedAt: "2026-04-30T10:05:00.000Z",
+        finishedAt: null,
+        createdAt: "2026-04-30T10:05:00.000Z",
+        issueId: "issue-2",
+      },
+    ];
+
+    renderSidebar();
+
+    expect(document.querySelector("[data-testid='issue-project-row-project-1']")?.textContent).toContain("2 live");
+    expect(document.querySelector("[data-testid='issue-project-row-project-2']")?.textContent).not.toContain("live");
+  });
+
+  it("deletes an active custom board from the issues sidebar", () => {
+    mockState.search = "?view=view-1";
+    window.localStorage.setItem("rudder:issue-custom-views:org-1", JSON.stringify([
+      {
+        id: "view-1",
+        orgId: "org-1",
+        name: "Review board",
+        state: {
+          statuses: ["in_review"],
+          priorities: [],
+          assignees: [],
+          labels: [],
+          projects: [],
+          displayProperties: ["identifier", "assignee"],
+          sortField: "updated",
+          sortDir: "desc",
+          groupBy: "none",
+          viewMode: "board",
+          collapsedGroups: [],
+        },
+        createdAt: "2026-04-30T01:00:00.000Z",
+        updatedAt: "2026-04-30T01:00:00.000Z",
+      },
+    ]));
+
+    renderSidebar();
+
+    const deleteButton = document.querySelector<HTMLButtonElement>("[aria-label='Delete custom board Review board']");
+    act(() => {
+      deleteButton?.click();
+    });
+
+    expect(mockState.confirm).toHaveBeenCalledWith('Delete custom board "Review board"? This cannot be undone.');
+    expect(JSON.parse(window.localStorage.getItem("rudder:issue-custom-views:org-1") ?? "[]")).toEqual([]);
+    expect(mockState.pushToast).toHaveBeenCalledWith({ title: "Custom board deleted", tone: "success" });
+    expect(mockState.navigate).toHaveBeenCalledWith("/issues");
   });
 
   it("shows connected Linear projects as an external issue source group", () => {

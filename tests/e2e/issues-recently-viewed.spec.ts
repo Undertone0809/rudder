@@ -25,6 +25,18 @@ async function createIssue(page: Page, orgId: string, title: string) {
   return response.json() as Promise<{ id: string; identifier?: string | null; title: string }>;
 }
 
+async function createProject(page: Page, orgId: string, name: string) {
+  const response = await page.request.post(`/api/orgs/${orgId}/projects`, {
+    data: {
+      name,
+      description: `${name} description`,
+      color: "#3b82f6",
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return response.json() as Promise<{ id: string; name: string }>;
+}
+
 async function seedRecentIssues(page: Page, orgId: string, issueIds: string[]) {
   await page.goto("/");
   await page.evaluate(
@@ -41,6 +53,40 @@ async function seedRecentIssues(page: Page, orgId: string, issueIds: string[]) {
 }
 
 test.describe("Issues recently viewed sidebar", () => {
+  test("saves custom issue boards and removes the old starred sidebar view", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Custom-Boards");
+    await createIssue(page, organization.id, "Custom board visible issue");
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto("/issues");
+
+    await expect(page.getByRole("link", { name: /Starred/ })).toHaveCount(0);
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toBe("Name this board");
+      await dialog.accept("Review board");
+    });
+    await page.getByRole("button", { name: /Save board/ }).click();
+
+    await expect(page).toHaveURL(/\/issues\?view=/);
+    await expect(page.getByTestId("issue-custom-views-section")).toContainText("Custom Boards");
+    await expect(page.getByRole("link", { name: /Review board/ })).toBeVisible();
+    await expect(page.getByTestId("issues-view-toolbar")).toContainText("Review board");
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toBe('Delete custom board "Review board"? This cannot be undone.');
+      await dialog.accept();
+    });
+    await page.getByLabel("Delete custom board Review board").click();
+
+    await expect(page).toHaveURL(/\/issues$/);
+    await expect(page.getByRole("link", { name: /Review board/ })).toHaveCount(0);
+  });
+
   test("shows current-org recent issues in the sidebar without turning recent into a main view", async ({ page }) => {
     const organization = await createOrganization(page, "Issues-Recently-Viewed");
     const otherOrganization = await createOrganization(page, "Issues-Recently-Viewed-Other");
@@ -161,14 +207,7 @@ test.describe("Issues recently viewed sidebar", () => {
 
   test("bounds long recent histories so project slices remain reachable", async ({ page }) => {
     const organization = await createOrganization(page, "Issues-Recent-Bounds");
-    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
-      data: {
-        name: "Sidebar Project",
-        description: "Project should remain reachable below recent history.",
-        color: "blue",
-      },
-    });
-    expect(projectRes.ok()).toBe(true);
+    await createProject(page, organization.id, "Sidebar Project");
 
     const issues = [];
     for (let index = 1; index <= 13; index += 1) {
@@ -191,5 +230,76 @@ test.describe("Issues recently viewed sidebar", () => {
     await expect(page.getByTestId(`issue-recent-row-${issues[12].id}`)).toHaveCount(0);
     await expect(page.getByText("Showing latest 12 of 13")).toBeVisible();
     await expect(page.getByRole("link", { name: /Sidebar Project/ })).toBeVisible();
+  });
+
+  test("shows live run counts on issue project slices", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Project-Live");
+    const project = await createProject(page, organization.id, "Sidebar Live Project");
+    const issueOne = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Project live issue 1",
+        description: "First live project issue",
+        status: "todo",
+        priority: "medium",
+        projectId: project.id,
+      },
+    });
+    const issueTwo = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Project live issue 2",
+        description: "Second live project issue",
+        status: "todo",
+        priority: "medium",
+        projectId: project.id,
+      },
+    });
+    expect(issueOne.ok()).toBe(true);
+    expect(issueTwo.ok()).toBe(true);
+    const firstIssue = await issueOne.json() as { id: string };
+    const secondIssue = await issueTwo.json() as { id: string };
+
+    await page.route(`**/api/orgs/${organization.id}/live-runs`, async (route) => {
+      await route.fulfill({
+        json: [
+          {
+            id: "run-live-1",
+            status: "running",
+            invocationSource: "manual",
+            triggerDetail: "Manual wakeup",
+            startedAt: "2026-04-30T10:00:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-04-30T10:00:00.000Z",
+            agentId: "agent-1",
+            agentName: "Live Agent",
+            agentRuntimeType: "codex_local",
+            issueId: firstIssue.id,
+          },
+          {
+            id: "run-live-2",
+            status: "running",
+            invocationSource: "manual",
+            triggerDetail: "Manual wakeup",
+            startedAt: "2026-04-30T10:01:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-04-30T10:01:00.000Z",
+            agentId: "agent-2",
+            agentName: "Live Agent Two",
+            agentRuntimeType: "codex_local",
+            issueId: secondIssue.id,
+          },
+        ],
+      });
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto("/issues");
+
+    const projectRow = page.getByTestId(`issue-project-row-${project.id}`);
+    await expect(projectRow).toContainText("Sidebar Live Project");
+    await expect(projectRow).toContainText("2 live");
   });
 });
