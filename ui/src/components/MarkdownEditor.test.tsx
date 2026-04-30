@@ -125,12 +125,10 @@ vi.mock("@mdxeditor/editor", async () => {
     headingsPlugin: () => ({}),
     imagePlugin: mdxEditorMocks.imagePlugin,
     linkDialogPlugin: () => ({}),
-    linkDialogState$: Symbol("linkDialogState$"),
     linkPlugin: () => ({}),
     listsPlugin: () => ({}),
     markdownShortcutPlugin: () => ({}),
     quotePlugin: () => ({}),
-    realmPlugin: () => () => ({}),
     tablePlugin: () => ({}),
     thematicBreakPlugin: () => ({}),
   };

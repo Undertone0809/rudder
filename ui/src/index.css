@@ -938,35 +938,6 @@
   background: color-mix(in oklab, var(--ink-faint) 72%, transparent) !important;
 }
 
-/* Hover-reveal scrollbar: keep bounded lists quiet until the user targets them. */
-.scrollbar-hover-reveal {
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-}
-.scrollbar-hover-reveal:hover,
-.scrollbar-hover-reveal:focus-within {
-  scrollbar-color: color-mix(in oklab, var(--border-strong) 72%, transparent) transparent;
-}
-.scrollbar-hover-reveal::-webkit-scrollbar {
-  width: 8px !important;
-  background: transparent !important;
-}
-.scrollbar-hover-reveal::-webkit-scrollbar-track {
-  background: transparent !important;
-}
-.scrollbar-hover-reveal::-webkit-scrollbar-thumb {
-  background: transparent !important;
-  border-radius: 999px;
-}
-.scrollbar-hover-reveal:hover::-webkit-scrollbar-thumb,
-.scrollbar-hover-reveal:focus-within::-webkit-scrollbar-thumb {
-  background: color-mix(in oklab, var(--border-strong) 72%, transparent) !important;
-}
-.scrollbar-hover-reveal:hover::-webkit-scrollbar-thumb:hover,
-.scrollbar-hover-reveal:focus-within::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklab, var(--ink-faint) 72%, transparent) !important;
-}
-
 /* Expandable dialog transition for max-width changes */
 [data-slot="dialog-content"] {
   transition: max-width 200ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -1281,23 +1252,14 @@ a.rudder-mention-chip::before {
 
 .rudder-mdxeditor-content a.rudder-mention-chip[data-mention-kind="project"]::before,
 a.rudder-mention-chip[data-mention-kind="project"]::before {
-  width: 0.75rem;
-  height: 0.75rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
   background: var(--rudder-mention-project-color, currentColor);
-  -webkit-mask-image: var(--rudder-mention-icon-mask);
-  mask-image: var(--rudder-mention-icon-mask);
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-size: contain;
-  mask-size: contain;
 }
 
 .rudder-mdxeditor-content a.rudder-mention-chip[data-mention-kind="agent"]::before,
-.rudder-mdxeditor-content a.rudder-mention-chip[data-mention-kind="issue"]::before,
-a.rudder-mention-chip[data-mention-kind="agent"]::before,
-a.rudder-mention-chip[data-mention-kind="issue"]::before {
+a.rudder-mention-chip[data-mention-kind="agent"]::before {
   width: 0.75rem;
   height: 0.75rem;
   background-color: currentColor;

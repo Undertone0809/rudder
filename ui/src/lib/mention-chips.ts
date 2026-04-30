@@ -1,5 +1,4 @@
 import type { CSSProperties } from "react";
-import { CircleDot, Folder } from "lucide-react";
 import { parseAgentMentionHref, parseIssueMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
 import { getAgentIcon } from "./agent-icons";
 
@@ -65,21 +64,7 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
   }
 
   if (mention.kind === "agent") {
-    const iconMask = buildIconMask(`agent:${mention.icon ?? "__default__"}`, getAgentIcon(mention.icon));
-    if (iconMask) {
-      style["--rudder-mention-icon-mask"] = iconMask;
-    }
-  }
-
-  if (mention.kind === "project") {
-    const iconMask = buildIconMask("project:folder", Folder);
-    if (iconMask) {
-      style["--rudder-mention-icon-mask"] = iconMask;
-    }
-  }
-
-  if (mention.kind === "issue") {
-    const iconMask = buildIconMask("issue:circle-dot", CircleDot);
+    const iconMask = buildAgentIconMask(mention.icon);
     if (iconMask) {
       style["--rudder-mention-icon-mask"] = iconMask;
     }
@@ -97,8 +82,6 @@ export function applyMentionChipDecoration(element: HTMLElement, mention: Parsed
   }
   element.dataset.mentionKind = mention.kind;
   element.setAttribute("contenteditable", "false");
-  element.setAttribute("tabindex", "-1");
-  element.setAttribute("draggable", "false");
   element.classList.add("rudder-mention-chip", `rudder-mention-chip--${mention.kind}`);
   if (mention.kind === "project") {
     element.classList.add("rudder-project-mention-chip");
@@ -127,8 +110,6 @@ export function clearMentionChipDecoration(element: HTMLElement) {
     "rudder-project-mention-chip",
   );
   element.removeAttribute("contenteditable");
-  element.removeAttribute("tabindex");
-  element.removeAttribute("draggable");
   element.style.removeProperty("border-color");
   element.style.removeProperty("background-color");
   element.style.removeProperty("color");
@@ -136,11 +117,13 @@ export function clearMentionChipDecoration(element: HTMLElement) {
   element.style.removeProperty("--rudder-mention-icon-mask");
 }
 
-function buildIconMask(cacheKey: string, icon: unknown): string | null {
+function buildAgentIconMask(iconName: string | null): string | null {
+  const cacheKey = iconName ?? "__default__";
   const cached = iconMaskCache.get(cacheKey);
   if (cached) return cached;
 
-  const iconNode = resolveLucideIconNode(icon);
+  const Icon = getAgentIcon(iconName);
+  const iconNode = resolveLucideIconNode(Icon);
   if (!Array.isArray(iconNode) || iconNode.length === 0) return null;
 
   const body = iconNode.map(([tag, attrs]) => {

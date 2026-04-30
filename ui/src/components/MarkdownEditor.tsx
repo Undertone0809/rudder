@@ -20,12 +20,10 @@ import {
   headingsPlugin,
   imagePlugin,
   linkDialogPlugin,
-  linkDialogState$,
   linkPlugin,
   listsPlugin,
   markdownShortcutPlugin,
   quotePlugin,
-  realmPlugin,
   tablePlugin,
   thematicBreakPlugin,
   type RealmPlugin,
@@ -137,26 +135,6 @@ function getLastCaretTarget(node: Node): CaretTarget {
 
   return { kind: "inside", node, offset: node.childNodes.length };
 }
-
-function isSpecialInlineTokenTarget(target: EventTarget | null) {
-  return target instanceof HTMLElement
-    && Boolean(target.closest("[data-skill-token='true'], [data-mention-kind]"));
-}
-
-const mentionLinkDialogSuppressorPlugin = realmPlugin({
-  init(realm) {
-    realm.sub(realm.pipe(linkDialogState$), (state) => {
-      if (state.type === "inactive") return;
-      if (!("url" in state) || !parseMentionChipHref(state.url)) return;
-      setTimeout(() => {
-        const current = realm.getValue(linkDialogState$);
-        if (current.type === "inactive") return;
-        if (!("url" in current) || !parseMentionChipHref(current.url)) return;
-        realm.pub(linkDialogState$, { type: "inactive" });
-      }, 0);
-    });
-  },
-});
 
 /* ---- Mention detection helpers ---- */
 
@@ -636,7 +614,6 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       tablePlugin(),
       linkPlugin({ validateUrl: isSafeMarkdownLinkUrl }),
       linkDialogPlugin(),
-      mentionLinkDialogSuppressorPlugin(),
       skillTokenPlugin(),
       mentionDeletionPlugin(),
       thematicBreakPlugin(),
@@ -990,12 +967,18 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         setIsDragOver(true);
       }}
       onMouseDownCapture={(event) => {
-        if (!isSpecialInlineTokenTarget(event.target)) return;
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const skillToken = target.closest("[data-skill-token='true']");
+        if (!skillToken) return;
         event.preventDefault();
         event.stopPropagation();
       }}
       onClickCapture={(event) => {
-        if (!isSpecialInlineTokenTarget(event.target)) return;
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const skillToken = target.closest("[data-skill-token='true']");
+        if (!skillToken) return;
         event.preventDefault();
         event.stopPropagation();
       }}

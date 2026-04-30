@@ -19,7 +19,6 @@ import { queryKeys } from "@/lib/queryKeys";
 import { Link, useNavigate, useSearchParams } from "@/lib/router";
 import { resolveBoardActorLabel } from "@/lib/activity-actors";
 import { Identity } from "./Identity";
-import { AgentIdentity } from "./AgentAvatar";
 import { MarkdownBody } from "./MarkdownBody";
 import {
   ApprovalPayloadRenderer,
@@ -94,10 +93,11 @@ export function ApprovalDetailDialog({
     setSelectedOrganizationId(approval.orgId, { source: "route_sync" });
   }, [approval?.orgId, selectedOrganizationId, setSelectedOrganizationId]);
 
-  const agentById = useMemo(
-    () => new Map((agents ?? []).map((agent) => [agent.id, agent])),
-    [agents],
-  );
+  const agentNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const agent of agents ?? []) map.set(agent.id, agent.name);
+    return map;
+  }, [agents]);
 
   const refresh = () => {
     if (!approvalId) return;
@@ -278,9 +278,8 @@ export function ApprovalDetailDialog({
                     {approval.requestedByAgentId ? (
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground">Requested by</span>
-                        <AgentIdentity
-                          name={agentById.get(approval.requestedByAgentId)?.name ?? approval.requestedByAgentId.slice(0, 8)}
-                          icon={agentById.get(approval.requestedByAgentId)?.icon}
+                        <Identity
+                          name={agentNameById.get(approval.requestedByAgentId) ?? approval.requestedByAgentId.slice(0, 8)}
                           size="sm"
                         />
                       </div>
@@ -431,9 +430,8 @@ export function ApprovalDetailDialog({
                         <div className="mb-1 flex items-center justify-between">
                           {comment.authorAgentId ? (
                             <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
-                              <AgentIdentity
-                                name={agentById.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
-                                icon={agentById.get(comment.authorAgentId)?.icon}
+                              <Identity
+                                name={agentNameById.get(comment.authorAgentId) ?? comment.authorAgentId.slice(0, 8)}
                                 size="sm"
                               />
                             </Link>
