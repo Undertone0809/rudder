@@ -18,6 +18,7 @@ interface EmitExecutionTranscriptTreeInput {
   context: ExecutionObservabilityContext;
   parentObservation: LangfuseObservation | null;
   transcript: TranscriptEntry[];
+  generationInput?: Record<string, unknown> | null;
   fallbackResult?: TranscriptFallbackResult | null;
 }
 
@@ -172,6 +173,7 @@ export function emitExecutionTranscriptTree(
       name: `model_turn:${turnCount}`,
       asType: "generation",
       startTime: parseTs(ts),
+      input: input.generationInput ?? undefined,
       model: pendingModel ?? undefined,
       metadata: {
         turnIndex: turnCount,
@@ -224,6 +226,7 @@ export function emitExecutionTranscriptTree(
     const hasError = turn.hasError || result?.isError === true || Boolean(errors?.length);
 
     updateExecutionObservation(turn.observation, input.context, {
+      input: input.generationInput ?? undefined,
       output,
       model: turn.model ?? result?.model ?? undefined,
       usageDetails: usage ?? undefined,

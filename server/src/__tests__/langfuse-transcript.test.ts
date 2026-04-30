@@ -57,6 +57,13 @@ describe("emitExecutionTranscriptTree", () => {
     const stats = emitExecutionTranscriptTree({
       context: makeContext(),
       parentObservation: parent,
+      generationInput: {
+        agentId: "agent-1",
+        instruction: "Follow the loaded agent instructions.",
+        promptMetrics: {
+          promptChars: 37,
+        },
+      },
       transcript: [
         { kind: "init", ts: "2026-04-12T10:00:00.000Z", model: "gpt-5.4", sessionId: "session-1" },
         { kind: "assistant", ts: "2026-04-12T10:00:01.000Z", text: "Inspecting the issue.", delta: true },
@@ -108,10 +115,31 @@ describe("emitExecutionTranscriptTree", () => {
       "model_turn:1",
       "read_file",
     ]);
+    expect(mockStartExecutionChildObservation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "obs-root" }),
+      expect.objectContaining({ surface: "chat_turn" }),
+      expect.objectContaining({
+        name: "model_turn:1",
+        input: {
+          agentId: "agent-1",
+          instruction: "Follow the loaded agent instructions.",
+          promptMetrics: {
+            promptChars: 37,
+          },
+        },
+      }),
+    );
     expect(mockUpdateExecutionObservation).toHaveBeenCalledWith(
       expect.objectContaining({ id: "obs-model_turn:1" }),
       expect.objectContaining({ surface: "chat_turn" }),
       expect.objectContaining({
+        input: {
+          agentId: "agent-1",
+          instruction: "Follow the loaded agent instructions.",
+          promptMetrics: {
+            promptChars: 37,
+          },
+        },
         model: "gpt-5.4",
         output: "Inspecting the issue.",
         usageDetails: {

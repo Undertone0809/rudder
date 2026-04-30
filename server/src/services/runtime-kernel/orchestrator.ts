@@ -2589,7 +2589,7 @@ export function heartbeatService(db: Db) {
           executionWorkspacePreference: issueContext.executionWorkspacePreference,
         }
       : null;
-    const rootObservationInput = {
+    const rootObservationInput: Record<string, unknown> = {
       agentId: agent.id,
       agentName: agent.name,
       invocationSource: run.invocationSource,
@@ -2602,10 +2602,11 @@ export function heartbeatService(db: Db) {
         }
         : null,
     };
+    let currentObservationInput = rootObservationInput;
     updateExecutionObservation(observation, heartbeatObservationContext, {
-      input: rootObservationInput,
+      input: currentObservationInput,
     });
-    updateExecutionTraceIO(observation, { input: rootObservationInput });
+    updateExecutionTraceIO(observation, { input: currentObservationInput });
     if (issueRef) {
       updateExecutionTraceName(
         observation,
@@ -3057,9 +3058,15 @@ export function heartbeatService(db: Db) {
             adapterMeta: meta,
           }),
         };
+        currentObservationInput = {
+          ...rootObservationInput,
+          instruction: readNonEmptyString(meta.prompt) ?? null,
+          promptMetrics: meta.promptMetrics ?? null,
+        };
         updateExecutionObservation(observation, heartbeatObservationContext, {
-          input: rootObservationInput,
+          input: currentObservationInput,
         });
+        updateExecutionTraceIO(observation, { input: currentObservationInput });
         await appendRunEvent(currentRun, seq++, {
           eventType: "adapter.invoke",
           stream: "system",
@@ -3412,6 +3419,7 @@ export function heartbeatService(db: Db) {
           context: heartbeatObservationContext,
           parentObservation: observation,
           transcript: executionTranscript,
+          generationInput: currentObservationInput,
           fallbackResult: transcriptFallbackResult,
         });
         finalObservationOutput = transcriptStats.finalOutput ?? transcriptFallbackResult?.output ?? null;
@@ -3426,14 +3434,14 @@ export function heartbeatService(db: Db) {
         );
       }
       updateExecutionObservation(observation, heartbeatObservationContext, {
-        input: rootObservationInput,
+        input: currentObservationInput,
         output: finalObservationOutput,
         level:
           finalObservationStatus === "failed" || finalObservationStatus === "timed_out" ? "ERROR" : "DEFAULT",
         statusMessage: finalObservationStatus ?? undefined,
       });
       updateExecutionTraceIO(observation, {
-        input: rootObservationInput,
+        input: currentObservationInput,
         output: finalObservationOutput,
       });
       updateExecutionTraceSession(observation, finalObservationSessionId);
