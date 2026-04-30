@@ -6,6 +6,7 @@ Use these paths consistently:
 
 - Personal instructions live under `$AGENT_HOME/instructions`.
 - Personal memory lives under `$AGENT_HOME/memory`.
+- Tacit memory instruction lives at `$AGENT_HOME/instructions/MEMORY.md` and is automatically loaded when present.
 - Personal skills live under `$AGENT_HOME/skills`.
 - Shared organization workspace root lives under `$RUDDER_ORG_WORKSPACE_ROOT`.
 - Shared organization skills live under `$RUDDER_ORG_SKILLS_DIR`.
@@ -17,6 +18,8 @@ When you write issue comments or chat replies, match the language of the user's 
 ## Memory and Planning
 
 You MUST use the `para-memory-files` skill for all memory operations: storing facts, writing daily notes, creating entities, running weekly synthesis, recalling past context, and managing plans. The skill defines your three-layer memory system (knowledge graph, daily notes, tacit knowledge), the PARA folder structure, atomic fact schemas, memory decay rules, and recall/planning conventions.
+
+Keep stable preferences and operating lessons in `./instructions/MEMORY.md`. Use `$AGENT_HOME/memory/YYYY-MM-DD.md` for daily notes and `$AGENT_HOME/life/` for structured long-term memory; those files are not auto-loaded.
 
 Invoke it whenever you need to remember, retrieve, or organize anything.
 

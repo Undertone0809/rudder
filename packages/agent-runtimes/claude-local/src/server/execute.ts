@@ -20,6 +20,7 @@ import {
   ensureRudderCliInPath,
   ensurePathInEnv,
   renderTemplate,
+  loadAgentInstructionsPrefix,
   runChildProcess,
   selectPromptTemplate,
 } from "@rudderhq/agent-runtime-utils/server-utils";
@@ -427,14 +428,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const chrome = asBoolean(config.chrome, false);
   const maxTurns = asNumber(config.maxTurnsPerRun, 0);
   const dangerouslySkipPermissions = asBoolean(config.dangerouslySkipPermissions, false);
-  const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
-  const instructionsFileDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
-  const commandNotes = instructionsFilePath
-    ? [
-        `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended)`,
-      ]
-    : [];
-
   const runtimeConfig = await buildClaudeRuntimeConfig({
     runId,
     agent,
@@ -461,28 +454,31 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   );
   const billingType = resolveClaudeBillingType(effectiveEnv);
   const skillsDir = await buildSkillsDir(config);
+  const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
+  const loadedInstructions = await loadAgentInstructionsPrefix({
+    instructionsFilePath,
+    onLog,
+    warningStream: "stderr",
+  });
+  const instructionsFileDir = loadedInstructions.instructionsDir;
 
   // When instructionsFilePath is configured, create a combined temp file that
   // includes both the file content and the path directive, so we only need
   // --append-system-prompt-file (Claude CLI forbids using both flags together).
-  let effectiveInstructionsFilePath: string | undefined = instructionsFilePath;
-  if (instructionsFilePath) {
-    try {
-      const instructionsContent = await fs.readFile(instructionsFilePath, "utf-8");
-      const pathDirective = `\nThe above agent instructions were loaded from ${instructionsFilePath}. Resolve any relative file references from ${instructionsFileDir}.`;
-      const combinedPath = path.join(skillsDir, "agent-instructions.md");
-      await fs.writeFile(combinedPath, instructionsContent + pathDirective, "utf-8");
-      effectiveInstructionsFilePath = combinedPath;
-      await onLog("stdout", `[rudder] Loaded agent instructions file: ${instructionsFilePath}\n`);
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      await onLog(
-        "stderr",
-        `[rudder] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
-      );
-      effectiveInstructionsFilePath = undefined;
-    }
+  let effectiveInstructionsFilePath: string | undefined;
+  if (loadedInstructions.prefix) {
+    const combinedPath = path.join(skillsDir, "agent-instructions.md");
+    await fs.writeFile(combinedPath, loadedInstructions.prefix, "utf-8");
+    effectiveInstructionsFilePath = combinedPath;
   }
+  const commandNotes = (() => {
+    if (!instructionsFilePath) return [] as string[];
+    if (!loadedInstructions.prefix) return loadedInstructions.commandNotes;
+    return [
+      ...loadedInstructions.commandNotes,
+      `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended; relative references from ${instructionsFileDir}).`,
+    ];
+  })();
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
   const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
@@ -550,6 +546,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   ]);
   const promptMetrics = {
     promptChars: prompt.length,
+    ...loadedInstructions.metrics,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,

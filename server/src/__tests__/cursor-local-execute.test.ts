@@ -83,12 +83,19 @@ describe("cursor execute", () => {
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "agent");
     const capturePath = path.join(root, "capture.json");
+    const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    const memoryPath = path.join(root, "instructions", "MEMORY.md");
     await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
+    await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer direct status updates.\n", "utf8");
     await writeFakeCursorCommand(commandPath);
 
     const restoreEnv = setManagedCursorEnv(root);
 
     let invocationPrompt = "";
+    let commandNotes: string[] = [];
+    let promptMetrics: Record<string, number> = {};
     try {
       const result = await execute({
         runId: "run-1",
@@ -112,6 +119,7 @@ describe("cursor execute", () => {
           env: {
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
+          instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
         context: {},
@@ -119,6 +127,8 @@ describe("cursor execute", () => {
         onLog: async () => {},
         onMeta: async (meta) => {
           invocationPrompt = meta.prompt ?? "";
+          commandNotes = Array.isArray(meta.commandNotes) ? meta.commandNotes : [];
+          promptMetrics = meta.promptMetrics ?? {};
         },
       });
 
@@ -129,6 +139,8 @@ describe("cursor execute", () => {
       expect(capture.argv).not.toContain("Follow the rudder heartbeat.");
       expect(capture.argv).not.toContain("--mode");
       expect(capture.argv).not.toContain("ask");
+      expect(capture.prompt).toContain("# Agent Instructions");
+      expect(capture.prompt).toContain("# Tacit Memory");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining([
           "RUDDER_AGENT_ID",
@@ -139,8 +151,12 @@ describe("cursor execute", () => {
         ]),
       );
       expect(capture.prompt).toContain("Rudder runtime note:");
+      expect(commandNotes).toContain(`Loaded agent memory instructions from ${memoryPath}`);
+      expect(promptMetrics.memoryChars).toBeGreaterThan(0);
+      expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
       expect(capture.prompt).toContain("RUDDER_API_KEY");
       expect(invocationPrompt).toContain("Rudder runtime note:");
+      expect(invocationPrompt).toContain("# Tacit Memory");
       expect(invocationPrompt).toContain("RUDDER_API_URL");
     } finally {
       restoreEnv();

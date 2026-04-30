@@ -8,6 +8,7 @@ import {
 } from "../home-paths.js";
 
 const ENTRY_FILE_DEFAULT = "AGENTS.md";
+const MEMORY_FILE_NAME = "MEMORY.md";
 const MODE_KEY = "instructionsBundleMode";
 const ROOT_KEY = "instructionsRootPath";
 const ENTRY_KEY = "instructionsEntryFile";
@@ -159,6 +160,18 @@ async function statIfExists(targetPath: string) {
   return fs.stat(targetPath).catch(() => null);
 }
 
+async function copyLegacyRootMemoryIntoManagedInstructions(agent: AgentLike): Promise<boolean> {
+  const layout = await ensureAgentWorkspaceLayout(agent);
+  const sourcePath = path.join(layout.root, MEMORY_FILE_NAME);
+  const targetPath = path.join(layout.instructionsDir, MEMORY_FILE_NAME);
+  const targetStat = await statIfExists(targetPath);
+  if (targetStat?.isFile()) return false;
+  const sourceStat = await statIfExists(sourcePath);
+  if (!sourceStat?.isFile()) return false;
+  await fs.copyFile(sourcePath, targetPath);
+  return true;
+}
+
 function shouldIgnoreInstructionsEntry(entry: { name: string; isDirectory(): boolean; isFile(): boolean }) {
   if (entry.name === "." || entry.name === "..") return true;
   if (entry.isDirectory()) {
@@ -282,8 +295,11 @@ async function recoverManagedBundleState(agent: AgentLike, state: BundleState): 
   const stat = await statIfExists(managedRootPath);
   if (!stat?.isDirectory()) return state;
 
-  const files = await listFilesRecursive(managedRootPath);
+  let files = await listFilesRecursive(managedRootPath);
   if (files.length === 0) return state;
+  if (await copyLegacyRootMemoryIntoManagedInstructions(agent)) {
+    files = await listFilesRecursive(managedRootPath);
+  }
 
   const recoveredEntryFile = files.includes(state.entryFile)
     ? state.entryFile
@@ -728,6 +744,7 @@ export function agentInstructionsService() {
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(absolutePath, content, "utf8");
     }
+    await copyLegacyRootMemoryIntoManagedInstructions(agent);
     if (!normalizedEntries.some(([relativePath]) => relativePath === entryFile)) {
       await fs.writeFile(resolvePathWithinRoot(rootPath, entryFile), "", "utf8");
     }

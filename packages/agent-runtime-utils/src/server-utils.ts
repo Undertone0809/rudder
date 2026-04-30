@@ -463,6 +463,112 @@ export function joinPromptSections(
     .join(separator);
 }
 
+export interface LoadedAgentInstructionsPrefix {
+  prefix: string;
+  commandNotes: string[];
+  instructionsFilePath: string;
+  instructionsDir: string;
+  memoryFilePath: string | null;
+  readFailed: boolean;
+  metrics: {
+    instructionsChars: number;
+    instructionEntryChars: number;
+    memoryChars: number;
+  };
+}
+
+export async function loadAgentInstructionsPrefix(input: {
+  instructionsFilePath: string;
+  onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
+  warningStream?: "stdout" | "stderr";
+}): Promise<LoadedAgentInstructionsPrefix> {
+  const instructionsFilePath = input.instructionsFilePath.trim();
+  const instructionsDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
+  const warningStream = input.warningStream ?? "stdout";
+  const empty = {
+    prefix: "",
+    commandNotes: [],
+    instructionsFilePath,
+    instructionsDir,
+    memoryFilePath: null,
+    readFailed: false,
+    metrics: {
+      instructionsChars: 0,
+      instructionEntryChars: 0,
+      memoryChars: 0,
+    },
+  } satisfies LoadedAgentInstructionsPrefix;
+
+  if (!instructionsFilePath) return empty;
+
+  let entrySection = "";
+  try {
+    const instructionsContents = await fs.readFile(instructionsFilePath, "utf8");
+    entrySection =
+      `${instructionsContents}\n\n` +
+      `The above agent instructions were loaded from ${instructionsFilePath}. ` +
+      `Resolve any relative file references from ${instructionsDir}.`;
+    await input.onLog(
+      "stdout",
+      `[rudder] Loaded agent instructions file: ${instructionsFilePath}\n`,
+    );
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await input.onLog(
+      warningStream,
+      `[rudder] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
+    );
+    return {
+      ...empty,
+      readFailed: true,
+      commandNotes: [
+        `Configured instructionsFilePath ${instructionsFilePath}, but file could not be read; continuing without injected instructions.`,
+      ],
+    };
+  }
+
+  const memoryFilePath = path.join(path.dirname(instructionsFilePath), "MEMORY.md");
+  let memorySection = "";
+  try {
+    const memoryContents = await fs.readFile(memoryFilePath, "utf8");
+    memorySection =
+      `${memoryContents}\n\n` +
+      `The above agent memory instructions were loaded from ${memoryFilePath}. ` +
+      `Resolve any relative file references from ${instructionsDir}.`;
+    await input.onLog(
+      "stdout",
+      `[rudder] Loaded agent memory instructions file: ${memoryFilePath}\n`,
+    );
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      const reason = err instanceof Error ? err.message : String(err);
+      await input.onLog(
+        warningStream,
+        `[rudder] Warning: could not read agent memory instructions file "${memoryFilePath}": ${reason}\n`,
+      );
+    }
+  }
+
+  const prefix = joinPromptSections([entrySection, memorySection]);
+  const commandNotes = [
+    `Loaded agent instructions from ${instructionsFilePath}`,
+    ...(memorySection ? [`Loaded agent memory instructions from ${memoryFilePath}`] : []),
+  ];
+  return {
+    prefix,
+    commandNotes,
+    instructionsFilePath,
+    instructionsDir,
+    memoryFilePath: memorySection ? memoryFilePath : null,
+    readFailed: false,
+    metrics: {
+      instructionsChars: prefix.length,
+      instructionEntryChars: entrySection.length,
+      memoryChars: memorySection.length,
+    },
+  };
+}
+
 export function redactEnvForLogs(env: Record<string, string>): Record<string, string> {
   const redacted: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {

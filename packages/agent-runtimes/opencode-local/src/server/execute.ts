@@ -21,6 +21,7 @@ import {
   readRudderRuntimeSkillEntries,
   resolveRudderDesiredSkillNames,
   selectPromptTemplate,
+  loadAgentInstructionsPrefix,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";
@@ -301,39 +302,22 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const resolvedInstructionsFilePath = instructionsFilePath
     ? path.resolve(cwd, instructionsFilePath)
     : "";
-  const instructionsDir = resolvedInstructionsFilePath ? `${path.dirname(resolvedInstructionsFilePath)}/` : "";
-  let instructionsPrefix = "";
-  if (resolvedInstructionsFilePath) {
-    try {
-      const instructionsContents = await fs.readFile(resolvedInstructionsFilePath, "utf8");
-      instructionsPrefix =
-        `${instructionsContents}\n\n` +
-        `The above agent instructions were loaded from ${resolvedInstructionsFilePath}. ` +
-        `Resolve any relative file references from ${instructionsDir}.\n\n`;
-      await onLog(
-        "stdout",
-        `[rudder] Loaded agent instructions file: ${resolvedInstructionsFilePath}\n`,
-      );
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      await onLog(
-        "stdout",
-        `[rudder] Warning: could not read agent instructions file "${resolvedInstructionsFilePath}": ${reason}\n`,
-      );
-    }
-  }
+  const loadedInstructions = await loadAgentInstructionsPrefix({
+    instructionsFilePath: resolvedInstructionsFilePath,
+    onLog,
+  });
+  const instructionsPrefix = loadedInstructions.prefix;
+  const instructionsDir = loadedInstructions.instructionsDir;
 
   const commandNotes = (() => {
     if (!resolvedInstructionsFilePath) return [] as string[];
     if (instructionsPrefix.length > 0) {
       return [
-        `Loaded agent instructions from ${resolvedInstructionsFilePath}`,
+        ...loadedInstructions.commandNotes,
         `Prepended instructions + path directive to stdin prompt (relative references from ${instructionsDir}).`,
       ];
     }
-    return [
-      `Configured instructionsFilePath ${resolvedInstructionsFilePath}, but file could not be read; continuing without injected instructions.`,
-    ];
+    return loadedInstructions.commandNotes;
   })();
 
   /**
@@ -391,7 +375,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   ]);
   const promptMetrics = {
     promptChars: prompt.length,
-    instructionsChars: instructionsPrefix.length,
+    ...loadedInstructions.metrics,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
