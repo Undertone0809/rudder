@@ -1,10 +1,11 @@
 // @vitest-environment node
 
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BreadcrumbBar } from "./BreadcrumbBar";
 
 let pathname = "/RUD/messenger/issues";
+let breadcrumbs: Array<{ label: string; href?: string }> = [];
 
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: import("react").ReactNode }) => (
@@ -15,7 +16,7 @@ vi.mock("@/lib/router", () => ({
 }));
 
 vi.mock("../context/BreadcrumbContext", () => ({
-  useBreadcrumbs: () => ({ breadcrumbs: [] }),
+  useBreadcrumbs: () => ({ breadcrumbs, headerActions: null }),
 }));
 
 vi.mock("../context/SidebarContext", () => ({
@@ -56,6 +57,11 @@ vi.mock("@/plugins/launchers", () => ({
 }));
 
 describe("BreadcrumbBar", () => {
+  beforeEach(() => {
+    pathname = "/RUD/messenger/issues";
+    breadcrumbs = [];
+  });
+
   it("hides the integrated card header on messenger routes", () => {
     const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
 
@@ -76,5 +82,20 @@ describe("BreadcrumbBar", () => {
     const html = renderToStaticMarkup(<BreadcrumbBar />);
 
     expect(html).toContain("Messenger");
+  });
+
+  it("renders the goal detail breadcrumb trail instead of the generic goals header", () => {
+    pathname = "/RUD/goals/goal-2";
+    breadcrumbs = [
+      { label: "Goals", href: "/goals" },
+      { label: "Goal Center rollout", href: "/goals/goal-1" },
+      { label: "Lifecycle controls hardening" },
+    ];
+
+    const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(html).toContain("Goal Center rollout");
+    expect(html).toContain("Lifecycle controls hardening");
+    expect(html).not.toContain("<h1");
   });
 });

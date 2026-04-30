@@ -65,6 +65,10 @@ export function BreadcrumbBar({
     () => /^\/agents\/[^/]+(?:\/|$)/.test(relativePath),
     [relativePath],
   );
+  const isGoalDetailRoute = useMemo(
+    () => /^\/goals\/[^/]+(?:\/|$)/.test(relativePath),
+    [relativePath],
+  );
   const threeColumnTitle = useMemo(() => {
     if (/^\/dashboard(?:\/|$)/.test(relativePath)) return "Dashboard";
     if (/^\/messenger(?:\/|$)/.test(relativePath)) return "Messenger";
@@ -171,7 +175,7 @@ export function BreadcrumbBar({
     return null;
   }
 
-  if (threeColumnTitle) {
+  if (threeColumnTitle && !(isGoalDetailRoute && breadcrumbs.length > 1)) {
     const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath);
     const isProjectsRoute = /^\/projects(?:\/|$)/.test(relativePath);
     const isProjectsIndex = isProjectsRoute && !/^\/projects\/[^/]+/.test(relativePath);
