@@ -71,12 +71,13 @@ Raw timeline of events -- the "when" layer.
 - Write continuously during conversations.
 - Extract durable facts to Layer 1 during heartbeats.
 
-### Layer 3: Tacit Knowledge (`$AGENT_HOME/MEMORY.md`)
+### Layer 3: Tacit Knowledge (`$AGENT_HOME/instructions/MEMORY.md`)
 
 How the user operates -- patterns, preferences, lessons learned.
 
 - Not facts about the world; facts about the user.
 - Update whenever you learn new operating patterns.
+- This file is part of the instruction bundle and is automatically loaded at runtime when present.
 
 ## Write It Down -- No Mental Notes
 
@@ -84,6 +85,7 @@ Memory does not survive session restarts. Files do.
 
 - Want to remember something -> WRITE IT TO A FILE.
 - "Remember this" -> update `$AGENT_HOME/memory/YYYY-MM-DD.md` or the relevant entity file.
+- Stable user preferences or operating lessons -> update `$AGENT_HOME/instructions/MEMORY.md`.
 - Learn a lesson -> update AGENTS.md, TOOLS.md, or the relevant skill file.
 - Make a mistake -> document it so future-you does not repeat it.
 - On-disk text files are always better than holding it in temporary context.

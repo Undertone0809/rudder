@@ -340,6 +340,7 @@ describe("AutomationDetail", () => {
     expect(container.textContent).not.toContain("Pause automation");
     expect(container.textContent).not.toContain("Run now");
     expect(container.textContent).not.toContain("Open issue");
+    expect(container.querySelector('[role="switch"]')).toBeNull();
     expect(container.querySelector("aside")?.className).toContain("lg:sticky");
   });
 

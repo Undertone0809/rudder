@@ -15,6 +15,7 @@ import {
   ensureRudderSkillSymlink,
   ensureRudderCliInPath,
   joinPromptSections,
+  loadAgentInstructionsPrefix,
   ensurePathInEnv,
   readRudderRuntimeSkillEntries,
   resolveRudderDesiredSkillNames,
@@ -360,41 +361,24 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
 
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
-  const instructionsDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
-  let instructionsPrefix = "";
-  if (instructionsFilePath) {
-    try {
-      const instructionsContents = await fs.readFile(instructionsFilePath, "utf8");
-      instructionsPrefix =
-        `${instructionsContents}\n\n` +
-        `The above agent instructions were loaded from ${instructionsFilePath}. ` +
-        `Resolve any relative file references from ${instructionsDir}.\n\n`;
-      await onLog(
-        "stdout",
-        `[rudder] Loaded agent instructions file: ${instructionsFilePath}\n`,
-      );
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      await onLog(
-        "stdout",
-        `[rudder] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
-      );
-    }
-  }
+  const loadedInstructions = await loadAgentInstructionsPrefix({
+    instructionsFilePath,
+    onLog,
+  });
+  const instructionsPrefix = loadedInstructions.prefix;
+  const instructionsDir = loadedInstructions.instructionsDir;
   const commandNotes = (() => {
     const notes: string[] = ["Prompt is passed to Gemini via --prompt for non-interactive execution."];
     notes.push("Added --approval-mode yolo for unattended execution.");
     if (!instructionsFilePath) return notes;
     if (instructionsPrefix.length > 0) {
       notes.push(
-        `Loaded agent instructions from ${instructionsFilePath}`,
+        ...loadedInstructions.commandNotes,
         `Prepended instructions + path directive to prompt (relative references from ${instructionsDir}).`,
       );
       return notes;
     }
-    notes.push(
-      `Configured instructionsFilePath ${instructionsFilePath}, but file could not be read; continuing without injected instructions.`,
-    );
+    notes.push(...loadedInstructions.commandNotes);
     return notes;
   })();
 
@@ -459,7 +443,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   ]);
   const promptMetrics = {
     promptChars: prompt.length,
-    instructionsChars: instructionsPrefix.length,
+    ...loadedInstructions.metrics,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     runtimeNoteChars: rudderEnvNote.length + apiAccessNote.length,

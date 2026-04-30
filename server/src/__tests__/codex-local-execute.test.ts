@@ -705,13 +705,19 @@ describe("codex execute", () => {
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
     const capturePath = path.join(root, "capture.json");
+    const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    const memoryPath = path.join(root, "instructions", "MEMORY.md");
     await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
+    await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
+    await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Keep updates concise.\n", "utf8");
     await writeFakeCodexCommand(commandPath);
 
     const previousHome = process.env.HOME;
     process.env.HOME = root;
 
     let commandNotes: string[] = [];
+    let promptMetrics: Record<string, number> = {};
     try {
       const result = await execute({
         runId: "run-notes",
@@ -737,6 +743,7 @@ describe("codex execute", () => {
           rudderSkillSync: {
             desiredSkills: ["rudder/rudder"],
           },
+          instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
         context: {},
@@ -744,14 +751,21 @@ describe("codex execute", () => {
         onLog: async () => {},
         onMeta: async (meta) => {
           commandNotes = Array.isArray(meta.commandNotes) ? meta.commandNotes : [];
+          promptMetrics = meta.promptMetrics ?? {};
         },
       });
 
       expect(result.exitCode).toBe(0);
       expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.prompt).toContain("# Agent Instructions");
+      expect(capture.prompt).toContain("# Tacit Memory");
+      expect(commandNotes).toContain(`Loaded agent memory instructions from ${memoryPath}`);
       expect(commandNotes).toContain(
         "Codex exec automatically applies repo-scoped AGENTS.md instructions from the current workspace; Rudder does not currently suppress that discovery.",
       );
+      expect(promptMetrics.memoryChars).toBeGreaterThan(0);
+      expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

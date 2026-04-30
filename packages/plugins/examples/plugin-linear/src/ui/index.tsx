@@ -387,15 +387,6 @@ function pageHref(orgPrefix: string | null, query?: string): string {
   return `${url.pathname}${url.search}`;
 }
 
-function readLinearPageUrlFilters(): { query: string; projectId: string } {
-  if (typeof window === "undefined") return { query: "", projectId: "" };
-  const search = new URLSearchParams(window.location.search);
-  return {
-    query: search.get("q") ?? "",
-    projectId: search.get("linearProjectId") ?? "",
-  };
-}
-
 type FilterState = {
   teamId: string;
   stateId: string;
@@ -404,11 +395,11 @@ type FilterState = {
   query: string;
 };
 
-function useLinearFilters(initialQuery: string, initialProjectId = ""): [FilterState, Dispatch<SetStateAction<FilterState>>] {
+function useLinearFilters(initialQuery: string): [FilterState, Dispatch<SetStateAction<FilterState>>] {
   const [filters, setFilters] = useState<FilterState>({
     teamId: "",
     stateId: "",
-    projectId: initialProjectId,
+    projectId: "",
     assigneeId: "",
     query: initialQuery,
   });
@@ -422,27 +413,18 @@ export function LinearPluginPage({ context }: PluginPageProps) {
   ) => Promise<ImportLinearIssuesActionResult>;
   const orgId = context.orgId ?? "__missing__";
   const orgPrefix = getOrgPrefix(context as unknown as Record<string, unknown>);
-  const urlFilters = readLinearPageUrlFilters();
+  const initialQuery = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("q") ?? ""
+    : "";
 
   const bootstrap = usePluginData<PageBootstrapData>(DATA_KEYS.pageBootstrap, { orgId });
   const catalog = usePluginData<LinearCatalogData>(DATA_KEYS.catalog, { orgId });
-  const [filters, setFilters] = useLinearFilters(urlFilters.query, urlFilters.projectId);
+  const [filters, setFilters] = useLinearFilters(initialQuery);
   const [targetProjectId, setTargetProjectId] = useState("");
   const [afterCursor, setAfterCursor] = useState<string | null>(null);
   const [cursorHistory, setCursorHistory] = useState<string[]>([]);
   const [selectedIssueIds, setSelectedIssueIds] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
-
-  useEffect(() => {
-    setFilters((current) => {
-      if (current.query === urlFilters.query && current.projectId === urlFilters.projectId) return current;
-      return {
-        ...current,
-        query: urlFilters.query,
-        projectId: urlFilters.projectId,
-      };
-    });
-  }, [setFilters, urlFilters.projectId, urlFilters.query]);
 
   const issues = usePluginData<LinearIssuesData>(DATA_KEYS.issues, {
     orgId,

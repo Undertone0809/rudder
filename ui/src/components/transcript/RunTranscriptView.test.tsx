@@ -111,7 +111,7 @@ describe("RunTranscriptView", () => {
     });
   });
 
-  it("groups chat transcripts into model turns and keeps tool activity collapsed by default", () => {
+  it("groups chat transcripts into readable progress chunks and keeps tool activity collapsed by default", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <RunTranscriptView
@@ -153,7 +153,7 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Model turn 1");
+    expect(html).not.toContain("Model turn");
     expect(html).toContain("Read README.md");
     expect(html).toContain("I will inspect the transcript before replying.");
     expect(countOccurrences(html, "I will inspect the transcript before replying.")).toBe(1);
@@ -242,6 +242,54 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("data-testid=\"command-terminal-detail\"");
     expect(html).not.toContain("README contents hidden until expanded");
     expect(html).not.toContain("Expand tool activity");
+  });
+
+  it("renders Rudder issue close-out commands as one human-readable event", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="detail"
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "I have enough evidence to close the issue.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:02.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-close-1",
+              input: {
+                command: "rudder issue done \"RUD-38\" --comment $ '## Review Summary\\n\\nCompleted validation.'",
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.354Z",
+              toolUseId: "cmd-close-1",
+              content: "command: rudder issue done \"RUD-38\" --comment ...\nstatus: completed\nexit_code: 0\n\nIssue RUD-38 marked done.",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Marked RUD-38 done");
+    expect(html).toContain("added review summary comment");
+    expect(countOccurrences(html, "Marked RUD-38 done")).toBe(1);
+    expect(html).toContain("aria-expanded=\"false\"");
+    expect(html).not.toContain("Ran rudder issue done");
+    expect(html).not.toContain("Command activity");
+    expect(html).not.toContain("Review Summary\\n\\n");
+    expect(html).not.toContain("data-testid=\"command-terminal-detail\"");
   });
 
   it("filters routine Rudder-managed runtime home logs from nice transcript views", () => {
@@ -394,7 +442,7 @@ describe("RunTranscriptView", () => {
   });
 
   it("keeps errored tool details collapsed by default in detail presentation", () => {
-    const expectedTime = new Date("2026-03-12T00:00:00.000Z").toLocaleTimeString("en-US", {
+    const hiddenHeaderTime = new Date("2026-03-12T00:00:00.000Z").toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
@@ -426,8 +474,8 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Ran pnpm test:run");
-    expect(html).toContain(expectedTime);
-    expect(html).toContain("Tool issue");
+    expect(html).not.toContain(hiddenHeaderTime);
+    expect(html).not.toContain("Tool issue");
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).not.toContain("Needs review");
     expect(html).not.toContain("bg-red-500/[0.04]");
@@ -486,7 +534,7 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("status: failed");
   });
 
-  it("keeps model-turn transcript blocks in chronological order", () => {
+  it("keeps transcript progress chunks in chronological order", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <RunTranscriptView
@@ -536,7 +584,7 @@ describe("RunTranscriptView", () => {
     expect(finalIndex).toBeGreaterThan(commandIndex);
   });
 
-  it("falls back to an implicit model turn for chat transcripts without turn markers", () => {
+  it("falls back to an implicit progress chunk for chat transcripts without turn markers", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <RunTranscriptView
@@ -567,7 +615,7 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Model turn 1");
+    expect(html).not.toContain("Model turn");
     expect(html).toContain("Ran pwd");
     expect(html).not.toContain("Activity details");
   });
@@ -607,8 +655,8 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("Searched 1 location");
   });
 
-  it("groups detail transcripts by model turn so repeated reads stay collapsed behind one turn summary", () => {
-    const expectedTime = new Date("2026-03-12T00:00:02.000Z").toLocaleTimeString("en-US", {
+  it("groups detail transcripts so repeated reads stay collapsed behind one summary", () => {
+    const hiddenHeaderTime = new Date("2026-03-12T00:00:02.000Z").toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
@@ -669,15 +717,15 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Model turn 1");
-    expect(html).toContain(expectedTime);
+    expect(html).not.toContain("Model turn");
+    expect(html).not.toContain(hiddenHeaderTime);
     expect(html).toContain("Reviewing the bundled skills before deciding what to change.");
     expect(html).toContain("Explored 2 files");
     expect(html).not.toContain("para-memory-files/SKILL.md");
     expect(html).not.toContain("rudder-create-agent/SKILL.md");
   });
 
-  it("does not keep a detail model turn running after a terminal run with missing tool results", () => {
+  it("does not keep a detail progress chunk running after a terminal run with missing tool results", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <RunTranscriptView
@@ -718,8 +766,8 @@ describe("RunTranscriptView", () => {
       </ThemeProvider>,
     );
 
-    expect(html).toContain("Model turn 1");
-    expect(html).toContain("Completed");
+    expect(html).not.toContain("Model turn");
+    expect(html).toContain("I checked the repository and completed the work.");
     expect(html).not.toContain("Running");
     expect(html).not.toContain("animate-spin");
   });

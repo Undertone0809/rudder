@@ -15,7 +15,8 @@ Current desktop scope is intentionally narrow:
 - bundled local instance only
 - `local_trusted` only
 - packaged app uses a resident shell lifecycle
-- no update detection or auto-update yet
+- update detection is available; automatic in-place update installation is not
+  implemented yet
 - no launch-at-login
 - no remote-instance connection mode
 
@@ -218,6 +219,9 @@ The current Desktop channel is an unsigned portable alpha; signed/notarized
 installer distribution can be restored after Apple and Windows code signing are
 available.
 
-Packaged Desktop checks for updates on startup against stable GitHub Releases
-only. Canary and beta prereleases are ignored; if a newer stable version exists,
-the app prompts the user to open the release page.
+Packaged Desktop checks for updates on startup against GitHub Releases. Stable
+builds compare against the latest stable release, and canary builds compare
+against the latest canary release. Beta prereleases are ignored; if a newer
+matching release exists, the app prompts the user to open the release page.
+The manual About-page check uses the same release comparison and falls back to
+the GitHub releases page when the unauthenticated GitHub API is rate-limited.

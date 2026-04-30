@@ -1238,7 +1238,7 @@ export function AgentDetail() {
   });
 
   const updateIcon = useMutation({
-    mutationFn: (icon: string) => agentsApi.update(agentLookupRef, { icon }, resolvedCompanyId ?? undefined),
+    mutationFn: (icon: string | null) => agentsApi.update(agentLookupRef, { icon }, resolvedCompanyId ?? undefined),
     onSuccess: () => {
       setActionError(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(routeAgentRef) });
@@ -1399,7 +1399,7 @@ export function AgentDetail() {
               className="shrink-0 flex items-center justify-center h-12 w-12 rounded-lg bg-accent hover:bg-accent/80 transition-colors"
               aria-label="Change agent avatar"
             >
-              <AgentIcon icon={agent.icon} className="h-7 w-7" />
+              <AgentIcon icon={agent.icon} role={agent.role} className="h-7 w-7" />
             </button>
           </AgentIconPicker>
           <div className="min-w-0">
@@ -1829,12 +1829,12 @@ function AgentOverview({
             <div>
               <h3 className="text-sm font-medium">Skills</h3>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Loaded skills per run for {rangeLabel}. Hover a day to inspect the breakdown.
+                Explicitly used skills per run for {rangeLabel}. Hover a day to inspect the breakdown.
               </p>
             </div>
             <div className="text-right text-[11px] text-muted-foreground tabular-nums">
-              <div>{visibleSkillAnalytics.totalCount} skill loads</div>
-              <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill metadata</div>
+              <div>{visibleSkillAnalytics.totalCount} skill uses</div>
+              <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill use</div>
             </div>
           </div>
           <SkillsUsageChart analytics={visibleSkillAnalytics} />

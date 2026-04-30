@@ -1,5 +1,5 @@
 {
-  "id": "ac1c4468-05f4-4c21-a167-974363b6ccef",
+  "id": "fe92e22f-95ee-42f4-8906-2a6a8cdbde21",
   "prevId": "1fb7f735-31fe-4bfe-ab14-768dd357178e",
   "version": "7",
   "dialect": "postgresql",
@@ -7997,6 +7997,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "usage": {
+          "name": "usage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'issue'"
         }
       },
       "indexes": {
@@ -8047,6 +8054,21 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "issue_attachments_usage_idx": {
+          "name": "issue_attachments_usage_idx",
+          "columns": [
+            {
+              "expression": "usage",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}

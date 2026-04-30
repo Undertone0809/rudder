@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import type { ChatMessageKind, ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { formatMessengerPreview, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import {
   agents,
   approvals,
@@ -20,11 +20,9 @@ import { agentService } from "./agents.js";
 import { logActivity } from "./activity-log.js";
 import { approvalService } from "./approvals.js";
 import { documentService } from "./documents.js";
-import { queueIssueAssignmentWakeup } from "./issue-assignment-wakeup.js";
 import { organizationService } from "./orgs.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
-import { heartbeatService } from "./heartbeat.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -43,20 +41,8 @@ function safeTrim(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
-function firstLine(value: string | null | undefined) {
-  if (!value) return null;
-  const line = value
-    .split(/\r?\n/)
-    .map((part) => part.trim())
-    .find(Boolean);
-  return line ?? null;
-}
-
 function truncatePreview(value: string | null | undefined, max = 140) {
-  const text = firstLine(value)?.replace(/\s+/g, " ");
-  if (!text) return null;
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 1)}…`;
+  return formatMessengerPreview(value, { max });
 }
 
 function chatTranscriptFromPayload(
@@ -98,14 +84,6 @@ function issueProposalFromPayload(payload: Record<string, unknown> | null | unde
   const description = safeTrim(typeof proposal.description === "string" ? proposal.description : null);
   if (!title || !description) return null;
 
-  const assigneeAgentId = safeTrim(typeof proposal.assigneeAgentId === "string" ? proposal.assigneeAgentId : null);
-  const assigneeUserId = safeTrim(typeof proposal.assigneeUserId === "string" ? proposal.assigneeUserId : null);
-  const explicitStatus =
-    typeof proposal.status === "string" &&
-    ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"].includes(proposal.status)
-      ? proposal.status
-      : null;
-
   return {
     title,
     description,
@@ -114,12 +92,11 @@ function issueProposalFromPayload(payload: Record<string, unknown> | null | unde
       ["critical", "high", "medium", "low"].includes(proposal.priority)
         ? proposal.priority
         : "medium",
-    status: explicitStatus ?? (assigneeAgentId || assigneeUserId ? "todo" : undefined),
     projectId: safeTrim(typeof proposal.projectId === "string" ? proposal.projectId : null),
     goalId: safeTrim(typeof proposal.goalId === "string" ? proposal.goalId : null),
     parentId: safeTrim(typeof proposal.parentId === "string" ? proposal.parentId : null),
-    assigneeAgentId,
-    assigneeUserId,
+    assigneeAgentId: safeTrim(typeof proposal.assigneeAgentId === "string" ? proposal.assigneeAgentId : null),
+    assigneeUserId: safeTrim(typeof proposal.assigneeUserId === "string" ? proposal.assigneeUserId : null),
   };
 }
 
@@ -219,7 +196,6 @@ export function chatService(db: Db) {
   const organizationsSvc = organizationService(db);
   const agentsSvc = agentService(db);
   const documentsSvc = documentService(db);
-  const heartbeat = heartbeatService(db);
 
   async function resolveContextEntities(rows: ContextLinkRow[]) {
     const issueIds = rows.filter((row) => row.entityType === "issue").map((row) => row.entityId);
@@ -905,7 +881,7 @@ export function chatService(db: Db) {
       input: {
         orgId: string;
         role: "user" | "assistant" | "system";
-        kind: ChatMessageKind;
+        kind: "message" | "issue_proposal" | "operation_proposal" | "routing_suggestion" | "system_event";
         status?: "completed" | "stopped" | "failed";
         body: string;
         structuredPayload?: Record<string, unknown> | null;
@@ -1136,15 +1112,6 @@ export function chatService(db: Db) {
       const issue = await issuesSvc.create(conversation.orgId, {
         ...issueProposal,
         createdByUserId: input.actorUserId,
-      });
-      void queueIssueAssignmentWakeup({
-        heartbeat,
-        issue,
-        reason: "issue_assigned",
-        mutation: "create",
-        contextSource: "chat.convert_to_issue",
-        requestedByActorType: input.actorUserId ? "user" : "system",
-        requestedByActorId: input.actorUserId ?? "chat-assistant",
       });
       const planDocument = planDocumentFromPayload(
         sourceMessage?.structuredPayload ?? input.proposal ?? null,

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
+import { loadDefaultAgentInstructionsBundle } from "../services/default-agent-instructions.js";
 import { agentInstructionsService } from "../services/agent-instructions.js";
 
 type TestAgent = {
@@ -105,6 +106,17 @@ describe("agent instructions service", () => {
     await expect(fs.readFile(path.join(result.bundle.managedRootPath, "docs", "TOOLS.md"), "utf8")).resolves.toBe("## Tools\n");
   });
 
+  it("includes MEMORY.md in default managed instruction bundles", async () => {
+    await expect(loadDefaultAgentInstructionsBundle("default")).resolves.toEqual(expect.objectContaining({
+      "AGENTS.md": expect.any(String),
+      "MEMORY.md": expect.stringContaining("# Tacit Memory"),
+    }));
+    await expect(loadDefaultAgentInstructionsBundle("ceo")).resolves.toEqual(expect.objectContaining({
+      "AGENTS.md": expect.any(String),
+      "MEMORY.md": expect.stringContaining("# Tacit Memory"),
+    }));
+  });
+
   it("creates the target entry file when switching to a new external root", async () => {
     const paperclipHome = await makeTempDir("rudder-agent-instructions-home-");
     const managedRoot = managedInstructionsRoot(paperclipHome);
@@ -197,6 +209,50 @@ describe("agent instructions service", () => {
     expect(bundle.rootPath).toBe(managedRoot);
     expect(bundle.files.map((file) => file.path)).toEqual(["AGENTS.md"]);
     expect(exported.files).toEqual({ "AGENTS.md": "# Recovered Agent\n" });
+  });
+
+  it("copies legacy root MEMORY.md into managed instructions when missing", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-memory-copy-");
+    cleanupDirs.add(paperclipHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const managedRoot = managedInstructionsRoot(paperclipHome);
+    const agentRoot = path.dirname(managedRoot);
+    await fs.mkdir(managedRoot, { recursive: true });
+    await fs.writeFile(path.join(managedRoot, "AGENTS.md"), "# Managed Agent\n", "utf8");
+    await fs.writeFile(path.join(agentRoot, "MEMORY.md"), "# Legacy Memory\n", "utf8");
+
+    const svc = agentInstructionsService();
+    const agent = makeAgent({});
+
+    const bundle = await svc.getBundle(agent);
+
+    expect(bundle.files.map((file) => file.path)).toEqual(["AGENTS.md", "MEMORY.md"]);
+    await expect(fs.readFile(path.join(managedRoot, "MEMORY.md"), "utf8")).resolves.toBe("# Legacy Memory\n");
+    await expect(fs.readFile(path.join(agentRoot, "MEMORY.md"), "utf8")).resolves.toBe("# Legacy Memory\n");
+  });
+
+  it("does not overwrite managed instructions MEMORY.md with legacy root memory", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-memory-keep-");
+    cleanupDirs.add(paperclipHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const managedRoot = managedInstructionsRoot(paperclipHome);
+    const agentRoot = path.dirname(managedRoot);
+    await fs.mkdir(managedRoot, { recursive: true });
+    await fs.writeFile(path.join(managedRoot, "AGENTS.md"), "# Managed Agent\n", "utf8");
+    await fs.writeFile(path.join(managedRoot, "MEMORY.md"), "# Managed Memory\n", "utf8");
+    await fs.writeFile(path.join(agentRoot, "MEMORY.md"), "# Legacy Memory\n", "utf8");
+
+    const svc = agentInstructionsService();
+    const agent = makeAgent({});
+
+    const bundle = await svc.getBundle(agent);
+
+    expect(bundle.files.map((file) => file.path)).toEqual(["AGENTS.md", "MEMORY.md"]);
+    await expect(fs.readFile(path.join(managedRoot, "MEMORY.md"), "utf8")).resolves.toBe("# Managed Memory\n");
   });
 
   it("prefers the managed bundle on disk when managed metadata points at a stale root", async () => {

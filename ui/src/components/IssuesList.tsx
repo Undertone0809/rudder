@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { useDialog, type NewIssueDefaults } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { issuesApi } from "../api/issues";
@@ -16,8 +15,15 @@ import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
 import { AssigneeLabel } from "./AssigneeLabel";
 import { EmptyState } from "./EmptyState";
+import { IssueLabelChip } from "./IssueLabelChip";
 import { IssueRow } from "./IssueRow";
 import { PageSkeleton } from "./PageSkeleton";
+import {
+  issuePriorityOrder as priorityOrder,
+  issueSortOptions,
+  issueStatusOrder as statusOrder,
+  sortIssues,
+} from "../lib/issue-sort";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverAnchor, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -25,12 +31,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { CircleDot, Plus, Filter, ArrowUpDown, Layers, Check, X, ChevronRight, List, Columns3, User, Search, Star, SlidersHorizontal } from "lucide-react";
 import { KanbanBoard, type IssueDisplayProperty } from "./KanbanBoard";
+import type { IssueCustomViewState } from "@/lib/issue-custom-views";
 import type { AgentRole, Issue } from "@rudderhq/shared";
 
 /* ── Helpers ── */
-
-const statusOrder = ["in_progress", "todo", "backlog", "in_review", "blocked", "done", "cancelled"];
-const priorityOrder = ["critical", "high", "medium", "low"];
 
 function statusLabel(status: string): string {
   return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -38,18 +42,8 @@ function statusLabel(status: string): string {
 
 /* ── View state ── */
 
-export type IssueViewState = {
-  statuses: string[];
-  priorities: string[];
-  assignees: string[];
-  labels: string[];
-  projects: string[];
+export type IssueViewState = Omit<IssueCustomViewState, "displayProperties"> & {
   displayProperties: IssueDisplayProperty[];
-  sortField: "status" | "priority" | "title" | "created" | "updated";
-  sortDir: "asc" | "desc";
-  groupBy: "status" | "priority" | "assignee" | "project" | "none";
-  viewMode: "list" | "board";
-  collapsedGroups: string[];
 };
 
 const displayPropertyOptions: Array<{ value: IssueDisplayProperty; label: string }> = [
@@ -94,11 +88,7 @@ function getViewState(key: string): IssueViewState {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<IssueViewState>;
-      return {
-        ...defaultViewState,
-        ...parsed,
-        displayProperties: normalizeDisplayProperties(parsed.displayProperties),
-      };
+      return normalizeViewState(parsed);
     }
   } catch { /* ignore */ }
   return { ...defaultViewState };
@@ -120,6 +110,20 @@ function normalizeDisplayProperties(value: unknown): IssueDisplayProperty[] {
     properties.push(property);
   }
   return properties;
+}
+
+function normalizeViewState(value: Partial<IssueViewState> | IssueCustomViewState): IssueViewState {
+  return {
+    ...defaultViewState,
+    ...value,
+    statuses: Array.isArray(value.statuses) ? [...value.statuses] : [],
+    priorities: Array.isArray(value.priorities) ? [...value.priorities] : [],
+    assignees: Array.isArray(value.assignees) ? [...value.assignees] : [],
+    labels: Array.isArray(value.labels) ? [...value.labels] : [],
+    projects: Array.isArray(value.projects) ? [...value.projects] : [],
+    collapsedGroups: Array.isArray(value.collapsedGroups) ? [...value.collapsedGroups] : [],
+    displayProperties: normalizeDisplayProperties(value.displayProperties),
+  };
 }
 
 function arraysEqual(a: string[], b: string[]): boolean {
@@ -150,28 +154,6 @@ function applyFilters(issues: Issue[], state: IssueViewState, currentUserId?: st
   if (state.labels.length > 0) result = result.filter((i) => (i.labelIds ?? []).some((id) => state.labels.includes(id)));
   if (state.projects.length > 0) result = result.filter((i) => i.projectId != null && state.projects.includes(i.projectId));
   return result;
-}
-
-function sortIssues(issues: Issue[], state: IssueViewState): Issue[] {
-  const sorted = [...issues];
-  const dir = state.sortDir === "asc" ? 1 : -1;
-  sorted.sort((a, b) => {
-    switch (state.sortField) {
-      case "status":
-        return dir * (statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status));
-      case "priority":
-        return dir * (priorityOrder.indexOf(a.priority) - priorityOrder.indexOf(b.priority));
-      case "title":
-        return dir * a.title.localeCompare(b.title);
-      case "created":
-        return dir * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-      case "updated":
-        return dir * (new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
-      default:
-        return 0;
-    }
-  });
-  return sorted;
 }
 
 function countActiveFilters(state: IssueViewState): number {
@@ -212,10 +194,15 @@ interface IssuesListProps {
   initialAssignees?: string[];
   initialSearch?: string;
   initialGroupBy?: IssueViewState["groupBy"];
+  initialViewState?: IssueCustomViewState | null;
+  activeCustomViewName?: string | null;
   toolbarMode?: "full" | "controls-only" | "hidden";
   starredIssueIds?: string[];
   onToggleStarredIssue?: (issueId: string) => void;
   onOpenIssue?: (issue: Issue) => void;
+  onSaveCustomView?: (name: string, state: IssueViewState) => void;
+  onDeleteCustomView?: () => void;
+  onViewStateChange?: (state: IssueViewState) => void;
   searchFilters?: {
     participantAgentId?: string;
   };
@@ -236,10 +223,15 @@ export function IssuesList({
   initialAssignees,
   initialSearch,
   initialGroupBy,
+  initialViewState,
+  activeCustomViewName,
   toolbarMode = "full",
   starredIssueIds = [],
   onToggleStarredIssue,
   onOpenIssue,
+  onSaveCustomView,
+  onDeleteCustomView,
+  onViewStateChange,
   searchFilters,
   onSearchChange,
   onUpdateIssue,
@@ -256,11 +248,13 @@ export function IssuesList({
   const scopedKey = selectedOrganizationId ? `${viewStateKey}:${selectedOrganizationId}` : viewStateKey;
 
   const getInitialViewState = useCallback((): IssueViewState => {
-    const baseState = initialAssignees
+    const baseState = initialViewState
+      ? normalizeViewState(initialViewState)
+      : initialAssignees
       ? { ...defaultViewState, assignees: initialAssignees, statuses: [] }
       : getViewState(scopedKey);
     return initialGroupBy ? { ...baseState, groupBy: initialGroupBy } : baseState;
-  }, [initialAssignees, initialGroupBy, scopedKey]);
+  }, [initialAssignees, initialGroupBy, initialViewState, scopedKey]);
 
   const [viewState, setViewState] = useState<IssueViewState>(() => getInitialViewState());
   const [assigneePickerIssueId, setAssigneePickerIssueId] = useState<string | null>(null);
@@ -293,9 +287,10 @@ export function IssuesList({
     setViewState((prev) => {
       const next = { ...prev, ...patch };
       saveViewState(scopedKey, next);
+      onViewStateChange?.(next);
       return next;
     });
-  }, [scopedKey]);
+  }, [onViewStateChange, scopedKey]);
 
   const { data: searchedIssues = [] } = useQuery({
     queryKey: [
@@ -455,6 +450,16 @@ export function IssuesList({
     setAssigneeSearch("");
   };
 
+  const saveCustomView = () => {
+    if (!onSaveCustomView || typeof window === "undefined") return;
+    const defaultName = activeCustomViewName ?? selectedProjectName ?? "Custom board";
+    const name = window.prompt("Name this board", defaultName);
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    onSaveCustomView(trimmed, viewState);
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       {toolbarMode !== "hidden" && (
@@ -484,13 +489,37 @@ export function IssuesList({
               </div>
             </>
           ) : (
-            <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              Issue views
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="truncate text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                {activeCustomViewName ?? "Issue views"}
+              </div>
             </div>
           )}
         </div>
 
         <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+          {onSaveCustomView ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs"
+              onClick={saveCustomView}
+            >
+              <Plus className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+              <span className="hidden sm:inline">Save board</span>
+            </Button>
+          ) : null}
+          {activeCustomViewName && onDeleteCustomView ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-destructive"
+              onClick={onDeleteCustomView}
+            >
+              <X className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+              <span className="hidden sm:inline">Delete</span>
+            </Button>
+          ) : null}
           <div className="mr-1 flex items-center overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_82%,transparent)]">
             <button
               className={`p-1.5 transition-colors ${viewState.viewMode === "list" ? "bg-[color:var(--surface-active)] text-foreground" : "text-muted-foreground hover:text-foreground"}`}
@@ -632,7 +661,7 @@ export function IssuesList({
                               checked={viewState.assignees.includes(agent.id)}
                               onCheckedChange={() => updateView({ assignees: toggleInArray(viewState.assignees, agent.id) })}
                             />
-                            <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                             <span className="text-sm">{formatChatAgentLabel(agent)}</span>
                           </label>
                         ))}
@@ -679,6 +708,41 @@ export function IssuesList({
             </PopoverContent>
           </Popover>
 
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-xs">
+                <ArrowUpDown className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+                <span className="hidden sm:inline">Sort</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-48 p-0">
+              <div className="p-2 space-y-0.5">
+                {issueSortOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    className={`flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-sm ${
+                      viewState.sortField === option.value ? "bg-accent/50 text-foreground" : "hover:bg-accent/50 text-muted-foreground"
+                    }`}
+                    onClick={() => {
+                      if (viewState.sortField === option.value) {
+                        updateView({ sortDir: viewState.sortDir === "asc" ? "desc" : "asc" });
+                      } else {
+                        updateView({ sortField: option.value, sortDir: "asc" });
+                      }
+                    }}
+                  >
+                    <span>{option.label}</span>
+                    {viewState.sortField === option.value && (
+                      <span className="text-xs text-muted-foreground">
+                        {viewState.sortDir === "asc" ? "\u2191" : "\u2193"}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+
           {viewState.viewMode === "board" && (
             <Popover>
               <PopoverTrigger asChild>
@@ -705,50 +769,6 @@ export function IssuesList({
                       />
                       <span>{option.label}</span>
                     </label>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-          )}
-
-          {/* Sort (list view only) */}
-          {viewState.viewMode === "list" && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="text-xs">
-                  <ArrowUpDown className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
-                  <span className="hidden sm:inline">Sort</span>
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-48 p-0">
-                <div className="p-2 space-y-0.5">
-                  {([
-                    ["status", "Status"],
-                    ["priority", "Priority"],
-                    ["title", "Title"],
-                    ["created", "Created"],
-                    ["updated", "Updated"],
-                  ] as const).map(([field, label]) => (
-                    <button
-                      key={field}
-                      className={`flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-sm ${
-                        viewState.sortField === field ? "bg-accent/50 text-foreground" : "hover:bg-accent/50 text-muted-foreground"
-                      }`}
-                      onClick={() => {
-                        if (viewState.sortField === field) {
-                          updateView({ sortDir: viewState.sortDir === "asc" ? "desc" : "asc" });
-                        } else {
-                          updateView({ sortField: field, sortDir: "asc" });
-                        }
-                      }}
-                    >
-                      <span>{label}</span>
-                      {viewState.sortField === field && (
-                        <span className="text-xs text-muted-foreground">
-                          {viewState.sortDir === "asc" ? "\u2191" : "\u2193"}
-                        </span>
-                      )}
-                    </button>
                   ))}
                 </div>
               </PopoverContent>
@@ -818,9 +838,11 @@ export function IssuesList({
             agents={agents}
             currentUserId={currentUserId}
             displayProperties={viewState.displayProperties}
+            sortState={{ sortField: viewState.sortField, sortDir: viewState.sortDir }}
             liveIssueIds={liveIssueIds}
             projects={projects}
             onCreateIssue={(status) => openNewIssue({ ...contextNewIssueDefaults, status })}
+            onOpenIssue={onOpenIssue}
             onUpdateIssue={onUpdateIssue}
           />
         </div>
@@ -932,17 +954,7 @@ export function IssuesList({
                       {(issue.labels ?? []).length > 0 && (
                         <span className="hidden items-center gap-1 overflow-hidden md:flex md:max-w-[240px]">
                           {(issue.labels ?? []).slice(0, 3).map((label) => (
-                            <span
-                              key={label.id}
-                              className="inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
-                              style={{
-                                borderColor: label.color,
-                                color: pickTextColorForPillBg(label.color, 0.12),
-                                backgroundColor: `${label.color}1f`,
-                              }}
-                            >
-                              {label.name}
-                            </span>
+                            <IssueLabelChip key={label.id} label={label} />
                           ))}
                           {(issue.labels ?? []).length > 3 && (
                             <span className="text-[10px] text-muted-foreground">
@@ -973,6 +985,7 @@ export function IssuesList({
                                 kind="agent"
                                 label={formatChatAgentLabel(agentById.get(issue.assigneeAgentId)!)}
                                 agentIcon={agentById.get(issue.assigneeAgentId)?.icon}
+                                agentRole={agentById.get(issue.assigneeAgentId)?.role}
                               />
                             ) : issue.assigneeUserId ? (
                               <AssigneeLabel
@@ -1050,6 +1063,7 @@ export function IssuesList({
                                     kind="agent"
                                     label={formatChatAgentLabel(agent)}
                                     agentIcon={agent.icon}
+                                    agentRole={agent.role}
                                     className="min-w-0"
                                   />
                                 </button>

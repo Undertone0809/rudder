@@ -20,6 +20,31 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+async function transformNestedFallbackConfigs(
+  config: Record<string, unknown>,
+  transformConfig: (config: Record<string, unknown>) => Promise<Record<string, unknown>>,
+): Promise<Record<string, unknown>> {
+  const transformed = await transformConfig(config);
+  if (!Array.isArray(transformed.modelFallbacks)) {
+    return transformed;
+  }
+
+  const nextFallbacks = await Promise.all(transformed.modelFallbacks.map(async (fallback) => {
+    const fallbackRecord = asRecord(fallback);
+    const nestedConfig = asRecord(fallbackRecord?.config);
+    if (!fallbackRecord || !nestedConfig) return fallback;
+    return {
+      ...fallbackRecord,
+      config: await transformNestedFallbackConfigs(nestedConfig, transformConfig),
+    };
+  }));
+
+  return {
+    ...transformed,
+    modelFallbacks: nextFallbacks,
+  };
+}
+
 function isSensitiveEnvKey(key: string) {
   return SENSITIVE_ENV_KEY_RE.test(key);
 }
@@ -139,12 +164,14 @@ export function secretService(db: Db) {
     agentRuntimeConfig: Record<string, unknown>,
     opts?: { strictMode?: boolean },
   ) {
-    const normalized = { ...agentRuntimeConfig };
-    if (!Object.prototype.hasOwnProperty.call(agentRuntimeConfig, "env")) {
+    return transformNestedFallbackConfigs(agentRuntimeConfig, async (config) => {
+      const normalized = { ...config };
+      if (!Object.prototype.hasOwnProperty.call(config, "env")) {
+        return normalized;
+      }
+      normalized.env = await normalizeEnvConfig(orgId, config.env, opts);
       return normalized;
-    }
-    normalized.env = await normalizeEnvConfig(orgId, agentRuntimeConfig.env, opts);
-    return normalized;
+    });
   }
 
   return {
@@ -335,34 +362,37 @@ export function secretService(db: Db) {
     },
 
     resolveAdapterConfigForRuntime: async (orgId: string, agentRuntimeConfig: Record<string, unknown>): Promise<{ config: Record<string, unknown>; secretKeys: Set<string> }> => {
-      const resolved = { ...agentRuntimeConfig };
       const secretKeys = new Set<string>();
-      if (!Object.prototype.hasOwnProperty.call(agentRuntimeConfig, "env")) {
-        return { config: resolved, secretKeys };
-      }
-      const record = asRecord(agentRuntimeConfig.env);
-      if (!record) {
-        resolved.env = {};
-        return { config: resolved, secretKeys };
-      }
-      const env: Record<string, string> = {};
-      for (const [key, rawBinding] of Object.entries(record)) {
-        if (!ENV_KEY_RE.test(key)) {
-          throw unprocessable(`Invalid environment variable name: ${key}`);
+      const resolved = await transformNestedFallbackConfigs(agentRuntimeConfig, async (config) => {
+        const next = { ...config };
+        if (!Object.prototype.hasOwnProperty.call(config, "env")) {
+          return next;
         }
-        const parsed = envBindingSchema.safeParse(rawBinding);
-        if (!parsed.success) {
-          throw unprocessable(`Invalid environment binding for key: ${key}`);
+        const record = asRecord(config.env);
+        if (!record) {
+          next.env = {};
+          return next;
         }
-        const binding = canonicalizeBinding(parsed.data as EnvBinding);
-        if (binding.type === "plain") {
-          env[key] = binding.value;
-        } else {
-          env[key] = await resolveSecretValue(orgId, binding.secretId, binding.version);
-          secretKeys.add(key);
+        const env: Record<string, string> = {};
+        for (const [key, rawBinding] of Object.entries(record)) {
+          if (!ENV_KEY_RE.test(key)) {
+            throw unprocessable(`Invalid environment variable name: ${key}`);
+          }
+          const parsed = envBindingSchema.safeParse(rawBinding);
+          if (!parsed.success) {
+            throw unprocessable(`Invalid environment binding for key: ${key}`);
+          }
+          const binding = canonicalizeBinding(parsed.data as EnvBinding);
+          if (binding.type === "plain") {
+            env[key] = binding.value;
+          } else {
+            env[key] = await resolveSecretValue(orgId, binding.secretId, binding.version);
+            secretKeys.add(key);
+          }
         }
-      }
-      resolved.env = env;
+        next.env = env;
+        return next;
+      });
       return { config: resolved, secretKeys };
     },
   };

@@ -52,6 +52,10 @@ vi.mock("@/components/ApprovalDetailDialog", () => ({
   ApprovalDetailDialog: () => null,
 }));
 
+vi.mock("./Chat", () => ({
+  Chat: () => <div data-testid="messenger-chat-panel">Chat panel</div>,
+}));
+
 describe("Messenger auto-scroll", () => {
   beforeEach(() => {
     messengerRoute = { kind: "system", threadKind: "failed-runs" };
@@ -114,5 +118,33 @@ describe("Messenger auto-scroll", () => {
 
     expect(scrollTo).toHaveBeenCalledWith({ top: 1200, behavior: "auto" });
     expect(setBreadcrumbs).toHaveBeenCalledWith([{ label: "failed-runs" }]);
+  });
+
+  it("renders the Chat workspace for Messenger chat routes", async () => {
+    messengerRoute = { kind: "chat" };
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: [],
+      isLoading: false,
+      error: null,
+    };
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<Messenger />);
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='messenger-chat-panel']")).not.toBeNull();
+    expect(container.textContent).not.toContain("Opening Messenger");
   });
 });

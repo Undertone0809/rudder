@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { agents, type Db } from "@rudderhq/db";
 import type {
+  AgentRole,
   OrganizationWorkspaceFileDetail,
   OrganizationWorkspaceFileEntry,
   OrganizationWorkspaceFileList,
@@ -72,6 +73,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
       .select({
         id: agents.id,
         name: agents.name,
+        role: agents.role,
         icon: agents.icon,
         workspaceKey: agents.workspaceKey,
       })
@@ -86,6 +88,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
           {
             id: row.id,
             name: row.name,
+            role: row.role as AgentRole,
             icon: row.icon ?? null,
             workspaceKey,
           },
@@ -124,6 +127,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
         entityType: "agent_workspace",
         agentId: agentDirectory.id,
         agentIcon: agentDirectory.icon,
+        agentRole: agentDirectory.role,
         workspaceKey: agentDirectory.workspaceKey,
       };
     });

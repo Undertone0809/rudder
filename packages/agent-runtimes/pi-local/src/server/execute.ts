@@ -10,6 +10,7 @@ import {
   parseObject,
   buildRudderEnv,
   joinPromptSections,
+  loadAgentInstructionsPrefix,
   redactEnvForLogs,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
@@ -384,40 +385,21 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
   }
 
-  // Handle instructions file and build system prompt extension
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const resolvedInstructionsFilePath = instructionsFilePath
     ? path.resolve(cwd, instructionsFilePath)
     : "";
-  const instructionsFileDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
-  
-  let systemPromptExtension = "";
-  let instructionsReadFailed = false;
-  if (resolvedInstructionsFilePath) {
-    try {
-      const instructionsContents = await fs.readFile(resolvedInstructionsFilePath, "utf8");
-      systemPromptExtension =
-        `${instructionsContents}\n\n` +
-        `The above agent instructions were loaded from ${resolvedInstructionsFilePath}. ` +
-        `Resolve any relative file references from ${instructionsFileDir}.\n\n` +
-        `You are agent {{agent.id}} ({{agent.name}}). Continue your Rudder work.`;
-      await onLog(
-        "stdout",
-        `[rudder] Loaded agent instructions file: ${resolvedInstructionsFilePath}\n`,
-      );
-    } catch (err) {
-      instructionsReadFailed = true;
-      const reason = err instanceof Error ? err.message : String(err);
-      await onLog(
-        "stdout",
-        `[rudder] Warning: could not read agent instructions file "${resolvedInstructionsFilePath}": ${reason}\n`,
-      );
-      // Fall back to base prompt template
-      systemPromptExtension = promptTemplate;
-    }
-  } else {
-    systemPromptExtension = promptTemplate;
-  }
+  const loadedInstructions = await loadAgentInstructionsPrefix({
+    instructionsFilePath: resolvedInstructionsFilePath,
+    onLog,
+  });
+  const systemPromptExtension = loadedInstructions.prefix
+    ? joinPromptSections([
+      loadedInstructions.prefix,
+      "You are agent {{agent.id}} ({{agent.name}}). Continue your Rudder work.",
+    ])
+    : promptTemplate;
+  const instructionsFileDir = loadedInstructions.instructionsDir;
 
   /**
    * Final prompt assembly order is intentional and shared across runtimes:
@@ -475,6 +457,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     systemPromptChars: renderedSystemPromptExtension.length,
     promptChars: userPrompt.length,
+    ...loadedInstructions.metrics,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedHeartbeatPrompt.length,
@@ -482,13 +465,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const commandNotes = (() => {
     if (!resolvedInstructionsFilePath) return [] as string[];
-    if (instructionsReadFailed) {
-      return [
-        `Configured instructionsFilePath ${resolvedInstructionsFilePath}, but file could not be read; continuing without injected instructions.`,
-      ];
-    }
+    if (loadedInstructions.readFailed) return loadedInstructions.commandNotes;
     return [
-      `Loaded agent instructions from ${resolvedInstructionsFilePath}`,
+      ...loadedInstructions.commandNotes,
       `Appended instructions + path directive to system prompt (relative references from ${instructionsFileDir}).`,
     ];
   })();

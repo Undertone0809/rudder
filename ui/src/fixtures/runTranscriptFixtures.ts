@@ -211,6 +211,33 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
     text: "Implemented the transcript UI refactor and switched the run detail page, issue live widget, and dashboard agent card onto the same rendering language.",
   },
   {
+    kind: "system",
+    ts: "2026-03-11T15:25:01.200Z",
+    text: "turn started",
+  },
+  {
+    kind: "assistant",
+    ts: "2026-03-11T15:25:01.908Z",
+    text: "I have the evidence needed to close out the tracked work and leave the review summary on the issue.",
+  },
+  {
+    kind: "tool_call",
+    ts: "2026-03-11T15:25:02.504Z",
+    name: "command_execution",
+    toolUseId: "item_8",
+    input: {
+      command: "rudder issue done \"PAP-473\" --comment $ '## Review Summary\\n\\nCompleted transcript rollout with shared nice/raw rendering.'",
+      cwd: "/workspace/rudder",
+    },
+  },
+  {
+    kind: "tool_result",
+    ts: "2026-03-11T15:25:02.858Z",
+    toolUseId: "item_8",
+    content: "command: rudder issue done \"PAP-473\" --comment ...\nstatus: completed\nexit_code: 0\n\nIssue PAP-473 marked done.",
+    isError: false,
+  },
+  {
     kind: "result",
     ts: "2026-03-11T15:25:05.440Z",
     text: "Transcript rollout complete with shared nice/raw rendering and compact live variants.",
@@ -223,4 +250,3 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
     errors: [],
   },
 ];
-

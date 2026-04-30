@@ -140,6 +140,7 @@ export function ActivityRow({
           <AgentIdentity
             name={actorName}
             icon={actor.icon}
+            role={actor.role}
             size="xs"
             className="align-baseline"
           />

@@ -8,13 +8,7 @@ import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml } from "./boot-screen.js";
 import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
-import {
-  listAvailableIdeTargets,
-  listWorkspaceLaunchTargets,
-  openWorkspace,
-  openWorkspaceFileInIde,
-  type DesktopWorkspaceLaunchTarget,
-} from "./ide-opener.js";
+import { listAvailableIdeTargets, openWorkspaceFileInIde } from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import { resolveDesktopSystemPermissions, type DesktopSystemPermissions } from "./system-permissions.js";
 import {
@@ -23,7 +17,7 @@ import {
   type DesktopAppearance,
   type DesktopThemePreference,
 } from "./theme-preference.js";
-import { checkForStableUpdates, type DesktopUpdateCheckResult } from "./update-check.js";
+import { checkForRudderDesktopUpdates, type DesktopUpdateCheckResult } from "./update-check.js";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -137,11 +131,6 @@ type DesktopIdeTarget = {
   label: string;
 };
 
-type DesktopWorkspaceLaunchTargetId = DesktopWorkspaceLaunchTarget["id"];
-type DesktopWorkspaceLaunchTargetWithIcon = Omit<DesktopWorkspaceLaunchTarget, "iconPath"> & {
-  iconDataUrl?: string;
-};
-
 type ActiveRunSummary = {
   totalRuns: number;
   organizations: Array<{
@@ -157,32 +146,6 @@ type OpenNotificationSettingsResult = {
   opened: boolean;
   platform: NodeJS.Platform;
 };
-
-async function addWorkspaceLaunchTargetIcon(
-  target: DesktopWorkspaceLaunchTarget,
-): Promise<DesktopWorkspaceLaunchTargetWithIcon> {
-  const baseTarget = {
-    id: target.id,
-    label: target.label,
-    kind: target.kind,
-  };
-  if (!target.iconPath) return baseTarget;
-  try {
-    const image = await app.getFileIcon(target.iconPath, { size: "normal" });
-    if (image.isEmpty()) return baseTarget;
-    return {
-      ...baseTarget,
-      iconDataUrl: image.toDataURL(),
-    };
-  } catch {
-    return baseTarget;
-  }
-}
-
-async function listWorkspaceLaunchTargetsWithIcons(): Promise<DesktopWorkspaceLaunchTargetWithIcon[]> {
-  const targets = await listWorkspaceLaunchTargets();
-  return await Promise.all(targets.map((target) => addWorkspaceLaunchTargetIcon(target)));
-}
 
 const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
@@ -232,7 +195,7 @@ function resolveDesktopCapabilities(): DesktopCapabilities {
 }
 
 async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
-  return checkForStableUpdates({
+  return checkForRudderDesktopUpdates({
     currentVersion: resolveRudderAppVersion(),
     appName: app.getName(),
     repo: DESKTOP_GITHUB_REPO,
@@ -1238,15 +1201,6 @@ function registerIpc(): void {
   ipcMain.handle("desktop:list-available-ides", async (): Promise<DesktopIdeTarget[]> => {
     return await listAvailableIdeTargets();
   });
-  ipcMain.handle("desktop:list-workspace-launch-targets", async (): Promise<DesktopWorkspaceLaunchTargetWithIcon[]> => {
-    return await listWorkspaceLaunchTargetsWithIcons();
-  });
-  ipcMain.handle(
-    "desktop:open-workspace",
-    async (_event, payload: { rootPath: string; targetId?: DesktopWorkspaceLaunchTargetId }) => {
-      await openWorkspace(payload.rootPath, payload.targetId);
-    },
-  );
   ipcMain.handle(
     "desktop:open-workspace-file-in-ide",
     async (_event, payload: { rootPath: string; filePath: string; ideId?: DesktopIdeTarget["id"] }) => {

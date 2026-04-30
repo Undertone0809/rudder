@@ -5,6 +5,7 @@ import { agentsApi } from "../api/agents";
 import { useOrganization } from "../context/OrganizationContext";
 import { queryKeys } from "../lib/queryKeys";
 import { StatusBadge } from "./StatusBadge";
+import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
 import { formatDate, agentUrl } from "../lib/utils";
 import { Separator } from "@/components/ui/separator";
@@ -90,7 +91,7 @@ export function AgentProperties({ agent, runtimeState }: AgentPropertiesProps) {
           <PropertyRow label="Reports To">
             {reportsToAgent ? (
               <Link to={agentUrl(reportsToAgent)} className="hover:underline">
-                <AgentIdentity name={reportsToAgent.name} icon={reportsToAgent.icon} size="sm" />
+                <AgentIdentity name={reportsToAgent.name} icon={reportsToAgent.icon} role={reportsToAgent.role} size="sm" />
               </Link>
             ) : (
               <span className="text-sm font-mono">{agent.reportsTo.slice(0, 8)}</span>

@@ -25,7 +25,8 @@ import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { cn } from "@/lib/utils";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { formatAssigneeUserLabel } from "@/lib/assignees";
-import { pickTextColorForPillBg } from "@/lib/color-contrast";
+import { sortIssues, type IssueSortState } from "@/lib/issue-sort";
+import { IssueLabelChip } from "./IssueLabelChip";
 import { timeAgo } from "@/lib/timeAgo";
 import { CalendarClock, FolderKanban, Plus, User } from "lucide-react";
 import type { AgentRole, Issue } from "@rudderhq/shared";
@@ -102,9 +103,11 @@ interface KanbanBoardProps {
   agents?: Agent[];
   currentUserId?: string | null;
   displayProperties?: IssueDisplayProperty[];
+  sortState?: IssueSortState;
   liveIssueIds?: Set<string>;
   projects?: ProjectOption[];
   onCreateIssue?: (status: string) => void;
+  onOpenIssue?: (issue: Issue) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
 }
 
@@ -143,6 +146,7 @@ function KanbanColumn({
   recentlyDroppedIssueIds,
   projects,
   onCreateIssue,
+  onOpenIssue,
 }: {
   status: string;
   issues: Issue[];
@@ -153,6 +157,7 @@ function KanbanColumn({
   recentlyDroppedIssueIds?: Set<string>;
   projects?: ProjectOption[];
   onCreateIssue?: (status: string) => void;
+  onOpenIssue?: (issue: Issue) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const columnScrollRef = useScrollbarActivityRef();
@@ -199,6 +204,7 @@ function KanbanColumn({
               isLive={liveIssueIds?.has(issue.id)}
               justDropped={recentlyDroppedIssueIds?.has(issue.id)}
               projects={projects}
+              onOpenIssue={onOpenIssue}
             />
           ))}
         </SortableContext>
@@ -252,6 +258,7 @@ function KanbanCard({
   isOverlay,
   justDropped,
   projects,
+  onOpenIssue,
 }: {
   issue: Issue;
   agents?: Agent[];
@@ -261,6 +268,7 @@ function KanbanCard({
   isOverlay?: boolean;
   justDropped?: boolean;
   projects?: ProjectOption[];
+  onOpenIssue?: (issue: Issue) => void;
 }) {
   const {
     attributes,
@@ -312,8 +320,11 @@ function KanbanCard({
         to={`/issues/${issue.identifier ?? issue.id}`}
         className="block min-w-0 no-underline text-inherit"
         onClick={(e) => {
-          // Prevent navigation during drag
-          if (isDragging) e.preventDefault();
+          if (isDragging) {
+            e.preventDefault();
+            return;
+          }
+          onOpenIssue?.(issue);
         }}
       >
         {(showIdentifier || isLive) ? (
@@ -339,6 +350,7 @@ function KanbanCard({
                 <AgentIdentity
                   name={formatChatAgentLabel(agent)}
                   icon={agent.icon}
+                  role={agent.role}
                   size="xs"
                   className="min-w-0 flex-1 text-muted-foreground"
                 />
@@ -361,17 +373,7 @@ function KanbanCard({
         {showLabels ? (
           <div className="mt-2 flex flex-wrap gap-1">
             {(issue.labels ?? []).slice(0, 3).map((label) => (
-              <span
-                key={label.id}
-                className="inline-flex max-w-full items-center truncate rounded-[calc(var(--radius-sm)-2px)] border px-1.5 py-0.5 text-[10px] font-medium"
-                style={{
-                  borderColor: label.color,
-                  color: pickTextColorForPillBg(label.color, 0.12),
-                  backgroundColor: `${label.color}1f`,
-                }}
-              >
-                {label.name}
-              </span>
+              <IssueLabelChip key={label.id} label={label} />
             ))}
             {(issue.labels ?? []).length > 3 ? (
               <span className="text-[10px] text-muted-foreground">
@@ -414,9 +416,11 @@ export function KanbanBoard({
   agents,
   currentUserId,
   displayProperties,
+  sortState,
   liveIssueIds,
   projects,
   onCreateIssue,
+  onOpenIssue,
   onUpdateIssue,
 }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -438,8 +442,13 @@ export function KanbanBoard({
         grouped[issue.status].push(issue);
       }
     }
+    if (sortState) {
+      for (const status of boardStatuses) {
+        grouped[status] = sortIssues(grouped[status] ?? [], sortState);
+      }
+    }
     return grouped;
-  }, [issues]);
+  }, [issues, sortState]);
 
   const visibleStatuses = useMemo(
     () => boardStatuses.filter((status) => (columnIssues[status]?.length ?? 0) > 0),
@@ -537,6 +546,7 @@ export function KanbanBoard({
                 recentlyDroppedIssueIds={recentlyDroppedIssueIds}
                 projects={projects}
                 onCreateIssue={onCreateIssue}
+                onOpenIssue={onOpenIssue}
               />
             ))}
             {hiddenStatuses.length > 0 ? (

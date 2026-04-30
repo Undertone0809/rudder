@@ -281,6 +281,7 @@ export function ApprovalDetailDialog({
                         <AgentIdentity
                           name={agentById.get(approval.requestedByAgentId)?.name ?? approval.requestedByAgentId.slice(0, 8)}
                           icon={agentById.get(approval.requestedByAgentId)?.icon}
+                          role={agentById.get(approval.requestedByAgentId)?.role}
                           size="sm"
                         />
                       </div>
@@ -434,6 +435,7 @@ export function ApprovalDetailDialog({
                               <AgentIdentity
                                 name={agentById.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
                                 icon={agentById.get(comment.authorAgentId)?.icon}
+                                role={agentById.get(comment.authorAgentId)?.role}
                                 size="sm"
                               />
                             </Link>

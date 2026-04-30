@@ -27,6 +27,7 @@ import {
   History,
   Clock3,
 } from "lucide-react";
+import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
 import { agentUrl, projectUrl } from "../lib/utils";
 
@@ -71,6 +72,7 @@ export function CommandPalette() {
     queryFn: () => agentsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && open,
   });
+  const agentById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
 
   const { data: allProjects = [] } = useQuery({
     queryKey: queryKeys.projects.list(selectedOrganizationId!),
@@ -87,7 +89,10 @@ export function CommandPalette() {
     navigate(path);
   }
 
-  const agentById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
+  const agentName = (id: string | null) => {
+    if (!id) return null;
+    return agentById.get(id)?.name ?? null;
+  };
 
   const visibleIssues = useMemo(
     () => (searchQuery.length > 0 ? searchedIssues : issues),
@@ -168,7 +173,7 @@ export function CommandPalette() {
                   <span className="flex-1 truncate">{issue.title}</span>
                   {issue.assigneeAgentId && (() => {
                     const agent = agentById.get(issue.assigneeAgentId);
-                    return agent ? <AgentIdentity name={agent.name} icon={agent.icon} size="sm" className="ml-2 hidden sm:inline-flex" /> : null;
+                    return agent ? <AgentIdentity name={agent.name} icon={agent.icon} role={agent.role} size="sm" className="ml-2 hidden sm:inline-flex" /> : null;
                   })()}
                 </CommandItem>
               ))}

@@ -5,7 +5,7 @@ import {
   Smile,
   type LucideIcon,
 } from "lucide-react";
-import { AGENT_ICON_NAMES, type AgentIconName } from "@rudderhq/shared";
+import { AGENT_ICON_NAMES, type AgentIconName, type AgentRole } from "@rudderhq/shared";
 import {
   Popover,
   PopoverContent,
@@ -13,15 +13,22 @@ import {
 } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { AgentIcon, getAgentAvatarImageSrc } from "./AgentAvatar";
-import { AGENT_ICONS } from "../lib/agent-icons";
+import { AGENT_ICONS, getAgentIcon, getDefaultAgentIconForRole } from "../lib/agent-icons";
 
 const DEFAULT_ICON: AgentIconName = "bot";
+const AGENT_ASSET_ICON_RE =
+  /^asset:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 const MAX_CUSTOM_ICON_LENGTH = 24;
 
 function normalizeIconValue(icon: string | null | undefined) {
   const normalized = icon?.trim();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+export function getAgentAvatarImageSrc(icon: string | null | undefined): string | null {
+  const normalized = normalizeIconValue(icon);
+  const assetId = normalized?.match(AGENT_ASSET_ICON_RE)?.[1] ?? null;
+  return assetId ? `/api/assets/${assetId}/content` : null;
 }
 
 function isNamedAgentIcon(icon: string | null | undefined): icon is AgentIconName {
@@ -33,9 +40,40 @@ function isCustomTextIcon(icon: string | null | undefined) {
   return Boolean(normalized && !isNamedAgentIcon(normalized) && !getAgentAvatarImageSrc(normalized));
 }
 
+interface AgentIconProps {
+  icon: string | null | undefined;
+  role?: AgentRole | null;
+  className?: string;
+}
+
+export function AgentIcon({ icon, role, className }: AgentIconProps) {
+  const normalized = normalizeIconValue(icon);
+  const effectiveIcon = normalized ?? getDefaultAgentIconForRole(role);
+  const imageSrc = getAgentAvatarImageSrc(effectiveIcon);
+  if (imageSrc) {
+    return (
+      <img
+        src={imageSrc}
+        alt=""
+        className={cn("inline-flex rounded-full object-cover", className)}
+        loading="lazy"
+      />
+    );
+  }
+  if (effectiveIcon && !isNamedAgentIcon(effectiveIcon)) {
+    return (
+      <span className={cn("inline-flex items-center justify-center leading-none", className)}>
+        {effectiveIcon}
+      </span>
+    );
+  }
+  const Icon = getAgentIcon(effectiveIcon);
+  return <Icon className={className} />;
+}
+
 interface AgentIconPickerProps {
   value: string | null | undefined;
-  onChange: (icon: string) => void;
+  onChange: (icon: string | null) => void;
   onUpload?: (file: File) => void;
   uploadPending?: boolean;
   uploadError?: string | null;
@@ -68,7 +106,7 @@ export function AgentIconPicker({
     trimmedEmoji.length > MAX_CUSTOM_ICON_LENGTH ||
     /[<>\u0000-\u001f\u007f]/u.test(trimmedEmoji);
 
-  function selectIcon(icon: string) {
+  function selectIcon(icon: string | null) {
     onChange(icon);
     setOpen(false);
     setSearch("");
@@ -104,7 +142,7 @@ export function AgentIconPicker({
             <div className="text-sm font-medium text-foreground">Avatar</div>
             <button
               type="button"
-              onClick={() => selectIcon(DEFAULT_ICON)}
+              onClick={() => selectIcon(null)}
               className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <RotateCcw className="h-3.5 w-3.5" />
@@ -200,5 +238,3 @@ export function AgentIconPicker({
     </Popover>
   );
 }
-
-export { AgentIcon, getAgentAvatarImageSrc } from "./AgentAvatar";

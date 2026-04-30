@@ -31,13 +31,27 @@ test.describe("Issue detail documents UX", () => {
     await page.getByRole("button", { name: "New document" }).click();
     await expect(page.getByPlaceholder("Document title")).toBeVisible();
     await expect(page.getByPlaceholder("Document key")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Expand editor" })).toBeVisible();
 
-    await page.getByPlaceholder("Document title").fill("Ops checklist");
-    const editor = page.locator('[contenteditable="true"]').last();
+    await page.getByRole("button", { name: "Expand editor" }).click();
+    const expandedEditor = page.getByRole("dialog", { name: "New document" });
+    await expect(expandedEditor).toBeVisible();
+    await expect(expandedEditor.getByRole("button", { name: "Collapse editor" })).toBeVisible();
+
+    const viewport = page.viewportSize();
+    const expandedBox = await expandedEditor.boundingBox();
+    expect(expandedBox).not.toBeNull();
+    if (viewport && expandedBox) {
+      expect(expandedBox.width).toBeGreaterThan(viewport.width * 0.9);
+      expect(expandedBox.height).toBeGreaterThan(viewport.height * 0.9);
+    }
+
+    await expandedEditor.getByPlaceholder("Document title").fill("Ops checklist");
+    const editor = expandedEditor.locator('[contenteditable="true"]').last();
     await editor.click();
     await editor.fill("Confirm staging is healthy before handoff.");
 
-    await page.getByRole("button", { name: "Create" }).click();
+    await expandedEditor.getByRole("button", { name: "Create" }).click();
 
     await expect(page.getByText("Ops checklist")).toBeVisible();
     await expect(page.getByText("Confirm staging is healthy before handoff.")).toBeVisible();

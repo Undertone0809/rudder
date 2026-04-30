@@ -24,7 +24,7 @@ import type {
   UpdateCalendarSource,
 } from "@rudderhq/shared";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
-import { parseHeartbeatPolicy } from "./runtime-kernel/wakeup-queue.js";
+import { asBoolean, asNumber, parseObject } from "../agent-runtimes/utils.js";
 
 type Actor = { userId?: string | null };
 const PROJECTED_HEARTBEAT_DURATION_MS = 15 * 60 * 1000;
@@ -81,6 +81,15 @@ function googleCalendarIdForListItem(item: { id?: string; primary?: boolean }) {
 function sourceHasGoogleToken(source: CalendarSourceRow | null | undefined) {
   const cursor = parseSyncCursor(source?.syncCursorJson);
   return typeof cursor.accessToken === "string" || typeof cursor.refreshToken === "string";
+}
+
+function parseHeartbeatPolicy(agent: Pick<typeof agents.$inferSelect, "runtimeConfig">) {
+  const runtimeConfig = parseObject(agent.runtimeConfig);
+  const heartbeat = parseObject(runtimeConfig.heartbeat);
+  return {
+    enabled: asBoolean(heartbeat.enabled, true),
+    intervalSec: Math.max(0, asNumber(heartbeat.intervalSec, 0)),
+  };
 }
 
 function eventSummary(event: Pick<typeof calendarEvents.$inferSelect, "title" | "eventKind" | "eventStatus" | "startAt" | "endAt" | "ownerAgentId" | "issueId">) {

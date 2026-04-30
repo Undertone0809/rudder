@@ -452,7 +452,7 @@ export const en = {
     "Manage inbox alerts, badge behavior, and permission repair from the dedicated Notifications settings page.",
   "about.notifications.open": "Open notifications",
   "about.updates.title": "Check for updates",
-  "about.updates.description": "Compare this desktop build against the latest stable GitHub release.",
+  "about.updates.description": "Compare this desktop build against the latest matching GitHub release.",
   "about.updates.check": "Check for updates",
   "about.updates.openRelease": "Open release",
   "about.updates.available.inline": "A newer release is available: {{latestVersion}}.",

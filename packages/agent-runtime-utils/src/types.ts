@@ -91,16 +91,6 @@ export interface AgentRuntimeExecutionResult {
       label: string;
       description?: string;
     }>;
-    questions?: Array<{
-      id: string;
-      header: string;
-      question: string;
-      choices: Array<{
-        key: string;
-        label: string;
-        description?: string;
-      }>;
-    }>;
   } | null;
 }
 
@@ -127,6 +117,7 @@ export interface AgentRuntimeInvocationMeta {
   prompt?: string;
   promptMetrics?: Record<string, number>;
   loadedSkills?: AgentRuntimeLoadedSkillMeta[];
+  usedSkills?: AgentRuntimeLoadedSkillMeta[];
   context?: Record<string, unknown>;
 }
 

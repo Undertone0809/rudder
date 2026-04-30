@@ -19,7 +19,8 @@ related_code:
   - ui/src/api/agents.ts
   - server/src/routes/agents.ts
   - server/src/services/heartbeat.ts
-commit_refs: []
+commit_refs:
+  - b80dc7a
 updated_at: 2026-04-22
 ---
 
@@ -63,6 +64,12 @@ available evidence:
 - aggregate loaded skills per run/day from `adapter.invoke` events
 - avoid claiming exact per-invocation skill execution when that telemetry does
   not exist yet
+
+2026-04-30 correction: dashboard analytics should not aggregate the full
+loaded-skill set as if it were meaningful usage. The runtime payload now records
+`usedSkills` when it can, and historical events are interpreted from explicit
+skill references in the adapter prompt. Loaded skills remain trace metadata; the
+dashboard surface should describe this section as skill use, not skill loads.
 
 ## Scope
 

@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
-export type IdentitySize = "xs" | "sm" | "default" | "lg";
+type IdentitySize = "xs" | "sm" | "default" | "lg";
 
 export interface IdentityProps {
   name: string;
@@ -12,9 +12,10 @@ export interface IdentityProps {
 }
 
 function deriveInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
+  const baseName = name.replace(/\s*\([^)]*\)\s*/g, " ").trim() || name.trim();
+  const parts = baseName.split(/\s+/);
   if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  return name.slice(0, 2).toUpperCase();
+  return baseName.slice(0, 2).toUpperCase();
 }
 
 const textSize: Record<IdentitySize, string> = {

@@ -35,6 +35,7 @@ type BootState = {
 
 type DesktopUpdateCheckResult = {
   status: "update-available" | "up-to-date" | "unavailable";
+  channel: "stable" | "canary";
   currentVersion: string;
   latestVersion?: string;
   releaseUrl?: string;
@@ -66,13 +67,6 @@ type DesktopPathPickResult = {
 type DesktopIdeTarget = {
   id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij";
   label: string;
-};
-
-type DesktopWorkspaceLaunchTarget = {
-  id: "vscode" | "cursor" | "xcode" | "windsurf" | "zed" | "webstorm" | "intellij" | "terminal" | "warp" | "finder";
-  label: string;
-  kind: "ide" | "terminal" | "folder";
-  iconDataUrl?: string;
 };
 
 let desktopCapabilitiesPromise: Promise<DesktopCapabilities> | null = null;
@@ -112,10 +106,6 @@ contextBridge.exposeInMainWorld("desktopShell", {
   },
   openPath: (targetPath: string) => ipcRenderer.invoke("desktop:open-path", targetPath),
   listAvailableIdes: () => ipcRenderer.invoke("desktop:list-available-ides") as Promise<DesktopIdeTarget[]>,
-  listWorkspaceLaunchTargets: () =>
-    ipcRenderer.invoke("desktop:list-workspace-launch-targets") as Promise<DesktopWorkspaceLaunchTarget[]>,
-  openWorkspace: (rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]) =>
-    ipcRenderer.invoke("desktop:open-workspace", { rootPath, targetId }) as Promise<void>,
   openWorkspaceFileInIde: (rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]) =>
     ipcRenderer.invoke("desktop:open-workspace-file-in-ide", { rootPath, filePath, ideId }) as Promise<void>,
   copyText: (value: string) => ipcRenderer.invoke("desktop:copy-text", value),
@@ -143,8 +133,6 @@ declare global {
       onBootState(listener: (state: BootState) => void): () => void;
       openPath(targetPath: string): Promise<void>;
       listAvailableIdes(): Promise<DesktopIdeTarget[]>;
-      listWorkspaceLaunchTargets(): Promise<DesktopWorkspaceLaunchTarget[]>;
-      openWorkspace(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
       openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
       copyText(value: string): Promise<void>;
       setAppearance(theme: "light" | "dark" | "system"): Promise<void>;

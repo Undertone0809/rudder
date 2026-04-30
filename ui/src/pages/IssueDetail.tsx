@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
+import { chatsApi } from "../api/chats";
 import { activityApi } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
@@ -15,9 +16,9 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { assigneeValueFromSelection, suggestedCommentAssigneeValue } from "../lib/assignees";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatChatAgentLabel } from "../lib/agent-labels";
-import { buildIssueChatPrefillHref } from "../lib/chat-object-prefill";
 import { queryKeys } from "../lib/queryKeys";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
+import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
 import { resolveBoardActorLabel } from "../lib/activity-actors";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
@@ -135,6 +136,8 @@ const issueStatusOptions = [
   "cancelled",
   "blocked",
 ] as const;
+
+const ISSUE_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 
 function issueStatusLabel(status: string) {
   return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
@@ -289,7 +292,7 @@ function ActorIdentity({
   const id = evt.actorId;
   if (evt.actorType === "agent") {
     const agent = agentMap.get(id);
-    return <AgentIdentity name={agent?.name ?? id.slice(0, 8)} icon={agent?.icon} size="sm" />;
+    return <AgentIdentity name={agent?.name ?? id.slice(0, 8)} icon={agent?.icon} role={agent?.role} size="sm" />;
   }
   return <Identity name={resolveBoardActorLabel(evt.actorType, id, currentBoardUserId)} size="sm" />;
 }
@@ -325,6 +328,11 @@ export function IssueDetail() {
     enabled: !!issueId,
   });
   const resolvedCompanyId = issue?.orgId ?? selectedOrganizationId;
+
+  useEffect(() => {
+    if (!issue?.orgId || !issue.id) return;
+    recordRecentIssue(issue.orgId, issue.id, readRecentIssueIds(issue.orgId));
+  }, [issue?.id, issue?.orgId]);
 
   const { data: comments } = useQuery({
     queryKey: queryKeys.issues.comments(issueId!),
@@ -503,6 +511,7 @@ export function IssueDetail() {
         kind: "agent",
         agentId: agent.id,
         agentIcon: agent.icon,
+        agentRole: agent.role,
       });
     }
     for (const project of orderedProjects) {
@@ -741,14 +750,22 @@ export function IssueDetail() {
   });
 
   const uploadAttachment = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({
+      file,
+      usage = "issue",
+    }: {
+      file: File;
+      usage?: IssueAttachment["usage"];
+    }) => {
       const issueOrgId = issue?.orgId ?? resolvedCompanyId ?? selectedOrganizationId;
       if (!issueOrgId) throw new Error("No organization selected");
-      return issuesApi.uploadAttachment(issueOrgId, issueId!, file);
+      return issuesApi.uploadAttachment(issueOrgId, issueId!, file, { usage });
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       setAttachmentError(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.attachments(issueId!) });
+      if (variables.usage === undefined || variables.usage === "issue") {
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.attachments(issueId!) });
+      }
       invalidateIssue();
     },
     onError: (err) => {
@@ -792,10 +809,27 @@ export function IssueDetail() {
     },
   });
 
-  const openInChat = () => {
-    if (!issue) return;
-    navigate(buildIssueChatPrefillHref(issue));
-  };
+  const openInChat = useMutation({
+    mutationFn: async () => {
+      if (!resolvedCompanyId || !issue) throw new Error("Issue is not ready");
+      return chatsApi.create(resolvedCompanyId, {
+        title: `Discuss ${issue.identifier ?? "issue"}`,
+        contextLinks: [{ entityType: "issue", entityId: issue.id }],
+      });
+    },
+    onSuccess: (conversation) => {
+      if (resolvedCompanyId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(resolvedCompanyId) });
+      }
+      navigate(`/chat/${conversation.id}`);
+    },
+    onError: (err) => {
+      pushToast({
+        title: err instanceof Error ? err.message : "Failed to open chat",
+        tone: "error",
+      });
+    },
+  });
 
   const createSubIssue = useMutation({
     mutationFn: async (title: string) => {
@@ -874,7 +908,7 @@ export function IssueDetail() {
       if (isMarkdownFile(file)) {
         await importMarkdownDocument.mutateAsync(file);
       } else {
-        await uploadAttachment.mutateAsync(file);
+        await uploadAttachment.mutateAsync({ file, usage: "issue" });
       }
     }
     if (fileInputRef.current) {
@@ -891,7 +925,7 @@ export function IssueDetail() {
       if (isMarkdownFile(file)) {
         await importMarkdownDocument.mutateAsync(file);
       } else {
-        await uploadAttachment.mutateAsync(file);
+        await uploadAttachment.mutateAsync({ file, usage: "issue" });
       }
     }
   };
@@ -905,7 +939,7 @@ export function IssueDetail() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown"
+        accept={ISSUE_ATTACHMENT_ACCEPT}
         className="hidden"
         onChange={handleFilePicked}
         multiple
@@ -961,7 +995,8 @@ export function IssueDetail() {
         variant="ghost"
         size="sm"
         className="h-7 px-2 text-xs"
-        onClick={openInChat}
+        onClick={() => openInChat.mutate()}
+        disabled={openInChat.isPending}
       >
         <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
         Chat
@@ -1068,7 +1103,7 @@ export function IssueDetail() {
             <Button
               variant="ghost"
               size="icon-xs"
-              onClick={openInChat}
+              onClick={() => openInChat.mutate()}
               title="Open in chat"
             >
               <MessageSquare className="h-4 w-4" />
@@ -1107,7 +1142,7 @@ export function IssueDetail() {
           multiline
           mentions={mentionOptions}
           imageUploadHandler={async (file) => {
-            const attachment = await uploadAttachment.mutateAsync(file);
+            const attachment = await uploadAttachment.mutateAsync({ file, usage: "description_inline" });
             return attachment.contentPath;
           }}
         />
@@ -1306,6 +1341,7 @@ export function IssueDetail() {
                           <AgentIdentity
                             name={agentMap.get(child.assigneeAgentId)?.name ?? child.assigneeAgentId.slice(0, 8)}
                             icon={agentMap.get(child.assigneeAgentId)?.icon}
+                            role={agentMap.get(child.assigneeAgentId)?.role}
                             size="sm"
                           />
                         ) : (
@@ -1328,7 +1364,7 @@ export function IssueDetail() {
         canDeleteDocuments={Boolean(session?.user?.id)}
         mentions={mentionOptions}
         imageUploadHandler={async (file) => {
-          const attachment = await uploadAttachment.mutateAsync(file);
+          const attachment = await uploadAttachment.mutateAsync({ file, usage: "document_inline" });
           return attachment.contentPath;
         }}
         extraActions={!hasAttachments ? attachmentUploadButton : undefined}
@@ -1443,11 +1479,11 @@ export function IssueDetail() {
               await addComment.mutateAsync({ body, reopen });
             }}
             imageUploadHandler={async (file) => {
-              const attachment = await uploadAttachment.mutateAsync(file);
+              const attachment = await uploadAttachment.mutateAsync({ file, usage: "comment_inline" });
               return attachment.contentPath;
             }}
             onAttachImage={async (file) => {
-              await uploadAttachment.mutateAsync(file);
+              await uploadAttachment.mutateAsync({ file, usage: "comment_attachment" });
             }}
             liveRunSlot={<LiveRunWidget issueId={issueId!} orgId={issue.orgId} />}
           />

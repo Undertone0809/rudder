@@ -176,23 +176,66 @@ test.describe("Messenger unified threads contract", () => {
     await expect(mainContent.getByRole("heading", { name: "Issues" })).toBeVisible({ timeout: 15_000 });
     await expect(mainContent.getByTestId("messenger-panel-header")).not.toContainText(/\b\d+\s+unread\b/i);
     const issueCard = page.locator(`[data-testid="messenger-issue-card-${issue.id}"]`);
+    const longIssueComment = [
+      "## Review Summary",
+      "",
+      "- Messenger should render the comment as **markdown**.",
+      "- The card should show enough context before collapsing.",
+      "- Line 3 keeps the preview dense but readable.",
+      "- Line 4 validates multiline rendering.",
+      "- Line 5 validates the measured height.",
+      "- Line 6 keeps us below modal territory.",
+      "- Line 7 is still useful operational context.",
+      "- Line 8 should remain visible in the collapsed area.",
+      "- Line 9 is close to the limit.",
+      "- Line 10 is the target preview depth.",
+      "- Line 11 should require expansion.",
+      "- Line 12 proves the full comment is still available.",
+    ].join("\n");
+
     await issueCard.getByRole("button", { name: "Quick comment" }).click();
-    await issueCard.getByPlaceholder("Add a quick comment").fill("Quick comment from Messenger contract test.");
+    await issueCard.getByPlaceholder("Add a quick comment").fill(longIssueComment);
     await issueCard.getByRole("button", { name: "Comment" }).click();
 
+    let createdCommentId = "";
     await expect.poll(async () => {
       const commentsRes = await page.request.get(`/api/issues/${issue.id}/comments`);
       const comments = await commentsRes.json();
-      return comments.some((comment: { body: string }) => comment.body.includes("Quick comment from Messenger contract test."));
-    }).toBe(true);
+      createdCommentId = comments.find((comment: { id: string; body: string }) => comment.body === longIssueComment)?.id ?? "";
+      return createdCommentId;
+    }).not.toBe("");
+
+    const commentPreview = issueCard.getByTestId(`messenger-issue-comment-preview-${issue.id}`);
+    const commentPreviewBody = issueCard.getByTestId(`messenger-issue-comment-preview-${issue.id}-body`);
+    await expect(commentPreview).toContainText("Review Summary");
+    await expect(commentPreview.locator("h2", { hasText: "Review Summary" })).toBeVisible();
+    await expect(commentPreview.locator("strong", { hasText: "markdown" })).toBeVisible();
+    await expect(commentPreview.getByRole("button", { name: "Show full comment" })).toBeVisible();
+    const collapsedMetrics = await commentPreviewBody.evaluate((node) => ({
+      clientHeight: node.clientHeight,
+      scrollHeight: node.scrollHeight,
+    }));
+    expect(collapsedMetrics.scrollHeight).toBeGreaterThan(collapsedMetrics.clientHeight + 8);
+
+    await commentPreview.getByRole("button", { name: "Show full comment" }).click();
+    await expect(commentPreview.getByRole("button", { name: "Show less" })).toBeVisible();
+    await expect.poll(async () => {
+      return await commentPreviewBody.evaluate((node) => node.clientHeight);
+    }).toBeGreaterThan(collapsedMetrics.clientHeight + 8);
 
     const openIssueLink = issueCard.getByRole("link", { name: "Open issue" });
     await expect(openIssueLink).toHaveAttribute(
       "href",
-      new RegExp(`/issues/${issue.identifier ?? issue.id}$`),
+      new RegExp(`/issues/${issue.identifier ?? issue.id}#comment-${createdCommentId}$`),
     );
     await expect(issueCard.getByRole("button", { name: "Assign to me" })).toHaveCount(0);
     await expect(issueCard.getByRole("button", { name: "Unassign me" })).toHaveCount(0);
+
+    await openIssueLink.click();
+    await expect(page).toHaveURL(new RegExp(`/${organizationPrefix}/issues/${issue.identifier ?? issue.id}#comment-${createdCommentId}$`));
+    const highlightedComment = page.locator(`#comment-${createdCommentId}`);
+    await expect(highlightedComment).toBeVisible({ timeout: 15_000 });
+    await expect(highlightedComment).toHaveClass(/bg-primary\/5/);
 
     await page.goto(`/${organizationPrefix}/messenger/approvals`, { waitUntil: "commit" });
     await expect(mainContent.getByRole("heading", { name: "Approvals" })).toBeVisible({ timeout: 15_000 });

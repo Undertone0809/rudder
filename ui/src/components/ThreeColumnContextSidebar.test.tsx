@@ -14,19 +14,27 @@ import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 const mockState = vi.hoisted(() => ({
   confirm: vi.fn(),
   openNewIssue: vi.fn(),
+  navigate: vi.fn(),
   pushToast: vi.fn(),
   setSidebarOpen: vi.fn(),
   pathname: "/RUD/issues",
   search: "",
   relativePath: "/issues",
-  issues: [] as Array<{
+  issues: [] as Array<{ id: string; identifier: string; title: string; status: string; projectId?: string | null }>,
+  projects: [] as Array<{ id: string; name: string; archivedAt?: string | null; color?: string | null; urlKey?: string | null }>,
+  liveRuns: [] as Array<{
     id: string;
-    identifier: string;
-    title: string;
+    agentId: string;
+    agentName: string;
+    agentRuntimeType: string;
     status: string;
+    invocationSource: string;
+    triggerDetail: string | null;
+    startedAt: string | null;
+    finishedAt: string | null;
+    createdAt: string;
+    issueId?: string | null;
   }>,
-  linearContributions: [] as unknown[],
-  linearCatalog: null as null | { orgId: string; projects: Array<{ id: string; name: string }> },
 }));
 
 const sidebarAgent = {
@@ -62,14 +70,14 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "agents" && queryKey[1] === "org-1") {
       return { data: [sidebarAgent], isLoading: false, error: null };
     }
+    if (queryKey[0] === "projects" && queryKey[1] === "org-1") {
+      return { data: mockState.projects, isLoading: false, error: null };
+    }
     if (queryKey[0] === "issues" && queryKey[1] === "org-1") {
       return { data: mockState.issues, isLoading: false, error: null };
     }
-    if (queryKey[0] === "plugins" && queryKey[1] === "ui-contributions") {
-      return { data: mockState.linearContributions, isLoading: false, error: null };
-    }
-    if (queryKey[0] === "plugins" && queryKey[1] === "rudder.linear") {
-      return { data: mockState.linearCatalog, isLoading: false, error: null };
+    if (queryKey[0] === "live-runs" && queryKey[1] === "org-1") {
+      return { data: mockState.liveRuns, isLoading: false, error: null };
     }
     return { data: [], isLoading: false, error: null };
   },
@@ -94,7 +102,7 @@ vi.mock("@/lib/router", () => ({
     onClick?: () => void;
   }) => <a href={to} onClick={onClick} {...props}>{children}</a>,
   useLocation: () => ({ pathname: mockState.pathname, search: mockState.search, key: "issues" }),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mockState.navigate,
 }));
 
 vi.mock("@/lib/organization-routes", () => ({
@@ -191,14 +199,15 @@ beforeEach(() => {
   mockState.confirm.mockReset();
   mockState.confirm.mockReturnValue(true);
   mockState.openNewIssue.mockReset();
+  mockState.navigate.mockReset();
   mockState.pushToast.mockReset();
   mockState.setSidebarOpen.mockReset();
   mockState.pathname = "/RUD/issues";
   mockState.search = "";
   mockState.relativePath = "/issues";
   mockState.issues = [];
-  mockState.linearContributions = [];
-  mockState.linearCatalog = null;
+  mockState.projects = [];
+  mockState.liveRuns = [];
   vi.stubGlobal("confirm", mockState.confirm);
 });
 
@@ -231,6 +240,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const followingLink = document.querySelector('a[href="/issues?scope=following"]');
     expect(followingLink?.textContent).toContain("Following");
+    expect(document.querySelector('a[href="/issues?scope=starred"]')).toBeNull();
   });
 
   const savedDraft = {
@@ -290,8 +300,23 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(draftEntry?.textContent).not.toContain("Recovered draft issue");
   });
 
+  it("shows the saved draft issue count and active state for the draft issues view", () => {
+    mockState.search = "?scope=drafts";
+    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([
+      { ...savedDraft, id: "draft-2", title: "Newer draft", updatedAt: "2026-04-26T11:00:00.000Z" },
+      savedDraft,
+    ]));
+
+    renderSidebar();
+
+    const draftEntry = document.querySelector("[data-testid='issue-draft-sidebar-entry']") as HTMLButtonElement | null;
+    expect(draftEntry?.textContent).toContain("Draft Issues (2)");
+    expect(draftEntry?.textContent).not.toContain("Newer draft");
+    expect(document.querySelector("[data-testid='issue-sidebar-active-indicator']")).not.toBeNull();
+  });
+
   it("renders recently viewed issues as bounded sidebar rows instead of an issue view entry", () => {
-    mockState.issues = Array.from({ length: 7 }, (_, index) => ({
+    mockState.issues = Array.from({ length: 13 }, (_, index) => ({
       id: `issue-${index + 1}`,
       identifier: `RUD-${index + 1}`,
       title: `Recent issue ${index + 1}`,
@@ -308,22 +333,71 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector("[data-testid='issue-recent-row-issue-6']")).toBeNull();
 
     const toggle = document.querySelector("[data-testid='issue-recent-toggle']") as HTMLButtonElement | null;
-    expect(toggle?.textContent).toContain("Show 2 more");
+    expect(toggle?.textContent).toContain("Show 7 more");
 
     act(() => {
       toggle?.click();
     });
 
-    expect(document.querySelector("[data-testid='issue-recent-row-issue-7']")?.textContent).toContain("Recent issue 7");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-12']")?.textContent).toContain("Recent issue 12");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-13']")).toBeNull();
+    expect(document.body.textContent).toContain("Showing latest 12 of 13");
     expect(toggle?.textContent).toContain("Show less");
+  });
+
+  it("keeps the expanded recent list scroll-bounded at the expanded limit", () => {
+    mockState.issues = Array.from({ length: 12 }, (_, index) => ({
+      id: `issue-${index + 1}`,
+      identifier: `RUD-${index + 1}`,
+      title: `Recent issue ${index + 1}`,
+      status: "todo",
+    }));
+    window.localStorage.setItem("rudder:recent-issues:org-1", JSON.stringify(mockState.issues.map((issue) => issue.id)));
+
+    renderSidebar();
+
+    const toggle = document.querySelector("[data-testid='issue-recent-toggle']") as HTMLButtonElement | null;
+    act(() => {
+      toggle?.click();
+    });
+
+    const recentList = document.querySelector("[data-testid='issue-recent-list']") as HTMLDivElement | null;
+    expect(recentList?.className).toContain("max-h-72");
+    expect(recentList?.className).toContain("overflow-y-auto");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-12']")?.textContent).toContain("Recent issue 12");
+    expect(document.body.textContent).not.toContain("Showing latest 12 of 12");
+  });
+
+  it("moves a clicked recent sidebar issue to the front of recent history", () => {
+    mockState.issues = Array.from({ length: 3 }, (_, index) => ({
+      id: `issue-${index + 1}`,
+      identifier: `RUD-${index + 1}`,
+      title: `Recent issue ${index + 1}`,
+      status: "todo",
+    }));
+    window.localStorage.setItem("rudder:recent-issues:org-1", JSON.stringify(["issue-1", "issue-2", "issue-3"]));
+
+    renderSidebar();
+
+    const secondRecent = document.querySelector("[data-testid='issue-recent-row-issue-2']") as HTMLAnchorElement | null;
+    act(() => {
+      secondRecent?.click();
+    });
+
+    expect(JSON.parse(window.localStorage.getItem("rudder:recent-issues:org-1") ?? "[]")).toEqual([
+      "issue-2",
+      "issue-1",
+      "issue-3",
+    ]);
+    expect(mockState.setSidebarOpen).toHaveBeenCalledWith(false);
   });
 
   it("marks the active issue detail in the recently viewed sidebar list", () => {
     mockState.pathname = "/RUD/issues/RUD-2";
     mockState.relativePath = "/issues/RUD-2";
     mockState.issues = [
-      { id: "issue-1", identifier: "RUD-1", title: "First issue", status: "todo" },
-      { id: "issue-2", identifier: "RUD-2", title: "Second issue", status: "in_progress" },
+      { id: "issue-1", identifier: "RUD-1", title: "Recent issue 1", status: "todo" },
+      { id: "issue-2", identifier: "RUD-2", title: "Recent issue 2", status: "todo" },
     ];
     window.localStorage.setItem("rudder:recent-issues:org-1", JSON.stringify(["issue-1", "issue-2"]));
 
@@ -333,92 +407,120 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(activeRow?.getAttribute("aria-current")).toBe("page");
   });
 
-  it("shows the saved draft issue count and active state for the draft issues view", () => {
-    mockState.search = "?scope=drafts";
-    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([
-      { ...savedDraft, id: "draft-2", title: "Newer draft", updatedAt: "2026-04-26T11:00:00.000Z" },
-      savedDraft,
+  it("shows saved custom boards in the issues sidebar", () => {
+    window.localStorage.setItem("rudder:issue-custom-views:org-1", JSON.stringify([
+      {
+        id: "view-1",
+        orgId: "org-1",
+        name: "Review board",
+        state: {
+          statuses: ["in_review"],
+          priorities: [],
+          assignees: [],
+          labels: [],
+          projects: [],
+          displayProperties: ["identifier", "assignee"],
+          sortField: "updated",
+          sortDir: "desc",
+          groupBy: "none",
+          viewMode: "board",
+          collapsedGroups: [],
+        },
+        createdAt: "2026-04-30T01:00:00.000Z",
+        updatedAt: "2026-04-30T01:00:00.000Z",
+      },
     ]));
 
     renderSidebar();
 
-    const draftEntry = document.querySelector("[data-testid='issue-draft-sidebar-entry']") as HTMLButtonElement | null;
-    expect(draftEntry?.textContent).toContain("Draft Issues (2)");
-    expect(draftEntry?.textContent).not.toContain("Newer draft");
-    expect(document.querySelector("[data-testid='issue-sidebar-active-indicator']")).not.toBeNull();
+    const section = document.querySelector("[data-testid='issue-custom-views-section']");
+    expect(section?.textContent).toContain("Custom Boards");
+    const row = document.querySelector<HTMLAnchorElement>("[data-testid='issue-custom-view-row-view-1'] a");
+    expect(row?.textContent).toContain("Review board");
+    expect(row?.getAttribute("href")).toBe("/issues?view=view-1");
   });
 
-  it("shows connected Linear projects as an external issue source group", () => {
-    mockState.linearContributions = [
+  it("shows live run counts on issue project rows", () => {
+    mockState.projects = [
+      { id: "project-1", name: "Launch Prep", color: "blue", archivedAt: null, urlKey: "launch-prep" },
+      { id: "project-2", name: "Platform", color: "green", archivedAt: null, urlKey: "platform" },
+    ];
+    mockState.issues = [
+      { id: "issue-1", identifier: "RUD-1", title: "First issue", status: "todo", projectId: "project-1" },
+      { id: "issue-2", identifier: "RUD-2", title: "Second issue", status: "in_progress", projectId: "project-1" },
+      { id: "issue-3", identifier: "RUD-3", title: "Third issue", status: "todo", projectId: "project-2" },
+    ];
+    mockState.liveRuns = [
       {
-        pluginId: "plugin-linear",
-        pluginKey: "rudder.linear",
-        displayName: "Linear",
-        version: "0.1.0",
-        uiEntryFile: "index.js",
-        slots: [
-          {
-            type: "page",
-            id: "linear-page",
-            displayName: "Linear",
-            exportName: "LinearPluginPage",
-            routePath: "linear",
-          },
-        ],
-        launchers: [],
+        id: "run-1",
+        agentId: "agent-1",
+        agentName: "Penelope",
+        agentRuntimeType: "codex_local",
+        status: "running",
+        invocationSource: "manual",
+        triggerDetail: "Manual wakeup",
+        startedAt: "2026-04-30T10:00:00.000Z",
+        finishedAt: null,
+        createdAt: "2026-04-30T10:00:00.000Z",
+        issueId: "issue-1",
+      },
+      {
+        id: "run-2",
+        agentId: "agent-1",
+        agentName: "Penelope",
+        agentRuntimeType: "codex_local",
+        status: "running",
+        invocationSource: "manual",
+        triggerDetail: "Manual wakeup",
+        startedAt: "2026-04-30T10:05:00.000Z",
+        finishedAt: null,
+        createdAt: "2026-04-30T10:05:00.000Z",
+        issueId: "issue-2",
       },
     ];
-    mockState.linearCatalog = {
-      orgId: "org-1",
-      projects: [
-        { id: "proj-roadmap", name: "Roadmap" },
-        { id: "proj-platform", name: "Platform" },
-      ],
-    };
 
     renderSidebar();
 
-    const section = document.querySelector("[data-testid='issue-linear-section']");
-    expect(section?.textContent).toContain("Linear");
-    expect(section?.textContent).toContain("External");
-
-    const roadmap = document.querySelector<HTMLAnchorElement>("[data-testid='issue-linear-project-proj-roadmap']");
-    expect(roadmap?.textContent).toContain("Roadmap");
-    expect(roadmap?.getAttribute("href")).toBe("/linear?linearProjectId=proj-roadmap");
+    expect(document.querySelector("[data-testid='issue-project-row-project-1']")?.textContent).toContain("2 live");
+    expect(document.querySelector("[data-testid='issue-project-row-project-2']")?.textContent).not.toContain("live");
   });
 
-  it("keeps the Linear source group active on a selected Linear project route", () => {
-    mockState.pathname = "/RUD/linear";
-    mockState.relativePath = "/linear";
-    mockState.search = "?linearProjectId=proj-roadmap";
-    mockState.linearContributions = [
+  it("deletes an active custom board from the issues sidebar", () => {
+    mockState.search = "?view=view-1";
+    window.localStorage.setItem("rudder:issue-custom-views:org-1", JSON.stringify([
       {
-        pluginId: "plugin-linear",
-        pluginKey: "rudder.linear",
-        displayName: "Linear",
-        version: "0.1.0",
-        uiEntryFile: "index.js",
-        slots: [
-          {
-            type: "page",
-            id: "linear-page",
-            displayName: "Linear",
-            exportName: "LinearPluginPage",
-            routePath: "linear",
-          },
-        ],
-        launchers: [],
+        id: "view-1",
+        orgId: "org-1",
+        name: "Review board",
+        state: {
+          statuses: ["in_review"],
+          priorities: [],
+          assignees: [],
+          labels: [],
+          projects: [],
+          displayProperties: ["identifier", "assignee"],
+          sortField: "updated",
+          sortDir: "desc",
+          groupBy: "none",
+          viewMode: "board",
+          collapsedGroups: [],
+        },
+        createdAt: "2026-04-30T01:00:00.000Z",
+        updatedAt: "2026-04-30T01:00:00.000Z",
       },
-    ];
-    mockState.linearCatalog = {
-      orgId: "org-1",
-      projects: [{ id: "proj-roadmap", name: "Roadmap" }],
-    };
+    ]));
 
     renderSidebar();
 
-    expect(document.querySelector("[data-testid='issue-linear-project-sidebar-active-indicator']")).not.toBeNull();
-    expect(document.querySelector("[data-testid='workspace-context-header']")?.textContent).toContain("Issues");
+    const deleteButton = document.querySelector<HTMLButtonElement>("[aria-label='Delete custom board Review board']");
+    act(() => {
+      deleteButton?.click();
+    });
+
+    expect(mockState.confirm).toHaveBeenCalledWith('Delete custom board "Review board"? This cannot be undone.');
+    expect(JSON.parse(window.localStorage.getItem("rudder:issue-custom-views:org-1") ?? "[]")).toEqual([]);
+    expect(mockState.pushToast).toHaveBeenCalledWith({ title: "Custom board deleted", tone: "success" });
+    expect(mockState.navigate).toHaveBeenCalledWith("/issues");
   });
 });
 

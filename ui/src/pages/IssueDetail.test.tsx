@@ -389,27 +389,71 @@ vi.mock("@/components/ui/tabs", () => ({
   TabsTrigger: ({ children }: { children: ReactNode }) => <button>{children}</button>,
 }));
 
-vi.mock("lucide-react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("lucide-react")>();
+vi.mock("lucide-react", () => {
   const Icon = () => <span />;
-  return {
-    ...actual,
+  const icons = {
     Activity: Icon,
+    Atom: Icon,
+    Bot: Icon,
+    Brain: Icon,
+    Bug: Icon,
     Check: Icon,
     ChevronDown: Icon,
     ChevronRight: Icon,
+    CircuitBoard: Icon,
+    Code: Icon,
+    Cog: Icon,
     Copy: Icon,
+    Cpu: Icon,
+    Crown: Icon,
+    Database: Icon,
+    Eye: Icon,
     EyeOff: Icon,
+    FileCode: Icon,
+    Fingerprint: Icon,
+    Flame: Icon,
+    Gem: Icon,
+    GitBranch: Icon,
+    Globe: Icon,
+    Hammer: Icon,
+    Heart: Icon,
     Hexagon: Icon,
+    Lightbulb: Icon,
     ListTree: Icon,
+    Lock: Icon,
+    Mail: Icon,
     MessageSquare: Icon,
+    Microscope: Icon,
     MoreHorizontal: Icon,
+    Package: Icon,
     Paperclip: Icon,
+    Pentagon: Icon,
     Plus: Icon,
+    Puzzle: Icon,
+    Radar: Icon,
     Repeat: Icon,
+    Rocket: Icon,
+    Search: Icon,
+    Shield: Icon,
     SlidersHorizontal: Icon,
+    Sparkles: Icon,
+    Star: Icon,
+    Swords: Icon,
+    Target: Icon,
+    Telescope: Icon,
+    Terminal: Icon,
     Trash2: Icon,
+    Wand2: Icon,
+    Wrench: Icon,
+    Zap: Icon,
   };
+  return new Proxy(icons, {
+    get: (target, prop: string) => {
+      if (prop === "then") return undefined;
+      if (prop === "__esModule") return true;
+      return target[prop as keyof typeof target] ?? Icon;
+    },
+  });
 });
 
 describe("IssueDetail", () => {

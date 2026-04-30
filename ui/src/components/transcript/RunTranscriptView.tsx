@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { MarkdownBody } from "../MarkdownBody";
 import { cn, formatTokens } from "../../lib/utils";
@@ -496,7 +495,67 @@ function summarizeCommandPhrase(command: string): string {
   return tokens.length > 3 ? `${phrase}…` : phrase;
 }
 
+function extractShellFlagValue(tokens: string[], flag: string): string | null {
+  const index = tokens.indexOf(flag);
+  if (index === -1) return null;
+  const value = tokens[index + 1];
+  if (!value) return null;
+  if (value === "$") {
+    return tokens[index + 2] ?? null;
+  }
+  return value;
+}
+
+function summarizeIssueComment(command: string): string | null {
+  const tokens = tokenizeShell(command);
+  const comment = extractShellFlagValue(tokens, "--comment");
+  if (!comment) return null;
+
+  const normalized = comment
+    .replace(/\\r\\n|\\n|\\r/g, "\n")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^#+\s*/, "").trim())
+    .find(Boolean);
+
+  if (!normalized) return "added comment";
+  if (/review\s+summary/i.test(normalized)) return "added review summary comment";
+  return `added ${quoteSummaryText(normalized, 36)} comment`;
+}
+
+function describeRudderCommandSemanticInfo(command: string): TranscriptToolSemanticInfo | null {
+  const tokens = tokenizeShell(command);
+  const rudderIndex = tokens.findIndex((token) => token === "rudder");
+  if (rudderIndex === -1) return null;
+
+  const subcommand = tokens[rudderIndex + 1];
+  const action = tokens[rudderIndex + 2];
+  const target = tokens[rudderIndex + 3];
+  if (subcommand !== "issue" || !action || !target) return null;
+
+  const issueKey = target.replace(/^#/, "");
+  const commentSummary = summarizeIssueComment(command);
+  const suffix = commentSummary ? ` · ${commentSummary}` : "";
+  const actionLabel =
+    action === "done" || action === "close" || action === "complete"
+      ? `Marked ${issueKey} done`
+      : action === "comment"
+        ? `Commented on ${issueKey}`
+        : `Updated ${issueKey}`;
+
+  return {
+    category: "script",
+    label: "Issue update",
+    summary: `${actionLabel}${suffix}`,
+    bucket: "run",
+    quantity: 1,
+    noun: "command",
+  };
+}
+
 function describeCommandSemanticInfo(command: string): TranscriptToolSemanticInfo {
+  const rudderInfo = describeRudderCommandSemanticInfo(command);
+  if (rudderInfo) return rudderInfo;
+
   const invocation = classifyShellCommand(command);
   const normalized = stripWrappedShell(command);
   const positionalArgs = getShellPositionalArgs(command);
@@ -2053,10 +2112,14 @@ function TranscriptChatToolActionRow({
   block,
   density,
   inline = false,
+  defaultOpenOnError = true,
+  highlightError = true,
 }: {
   block: TranscriptToolCardEntry;
   density: TranscriptDensity;
   inline?: boolean;
+  defaultOpenOnError?: boolean;
+  highlightError?: boolean;
 }) {
   const semantic = describeToolSemanticInfo(block.name, block.input);
   const isCommand = isCommandTool(block.name, block.input);
@@ -2072,7 +2135,7 @@ function TranscriptChatToolActionRow({
           ? "Waiting for result..."
           : null;
   const canExpand = Boolean(command || responseText || (!isCommand && requestText !== "<empty>"));
-  const [open, setOpen] = useState(inline || block.status === "error");
+  const [open, setOpen] = useState(inline || (defaultOpenOnError && block.status === "error"));
   const duration = formatTranscriptDuration(block.ts, block.endTs);
   const statusText =
     block.status === "error"
@@ -2087,7 +2150,7 @@ function TranscriptChatToolActionRow({
       : "text-muted-foreground";
 
   return (
-    <div className={cn("py-1.5", block.status === "error" && "rounded-lg bg-red-500/[0.04] px-2")}>
+    <div className={cn("py-1.5", highlightError && block.status === "error" && "rounded-lg bg-red-500/[0.04] px-2")}>
       <button
         type="button"
         className="flex w-full items-start gap-2 text-left"
@@ -2175,16 +2238,28 @@ function TranscriptChatActionRow({
   action,
   density,
   inline = false,
+  defaultOpenOnError = true,
+  highlightError = true,
 }: {
   action: ChatTranscriptAction;
   density: TranscriptDensity;
   inline?: boolean;
+  defaultOpenOnError?: boolean;
+  highlightError?: boolean;
 }) {
   if (action.type === "stdout") {
     return <TranscriptChatStdoutActionRow block={action.entry} density={density} inline={inline} />;
   }
 
-  return <TranscriptChatToolActionRow block={action.entry} density={density} inline={inline} />;
+  return (
+    <TranscriptChatToolActionRow
+      block={action.entry}
+      density={density}
+      inline={inline}
+      defaultOpenOnError={defaultOpenOnError}
+      highlightError={highlightError}
+    />
+  );
 }
 
 type ChatTranscriptTurnSegment =
@@ -2250,14 +2325,12 @@ function TranscriptChatActionGroup({
   actions,
   density,
   detailVariant,
-  turnIndex,
   groupIndex,
   groupCount,
 }: {
   actions: ChatTranscriptAction[];
   density: TranscriptDensity;
   detailVariant: boolean;
-  turnIndex: number;
   groupIndex: number;
   groupCount: number;
 }) {
@@ -2267,7 +2340,7 @@ function TranscriptChatActionGroup({
   const hasError = actions.some((action) => action.type === "tool" && action.entry.status === "error");
   const hasRunning = actions.some((action) => action.type === "tool" && action.entry.status === "running");
   const shouldInlineSingleStdoutAction = hasSingleAction && singleAction?.type === "stdout";
-  const shouldRenderSingleToolAction = hasSingleAction && singleAction?.type === "tool" && !detailVariant;
+  const shouldRenderSingleToolAction = hasSingleAction && singleAction?.type === "tool";
   const summary = formatChatActionSummary(actions);
   const highlightGroupError = hasError && !detailVariant;
   const [detailsOpen, setDetailsOpen] = useState(() => (detailVariant ? false : hasError));
@@ -2296,6 +2369,8 @@ function TranscriptChatActionGroup({
         <TranscriptChatActionRow
           action={singleAction}
           density={density}
+          defaultOpenOnError={!detailVariant}
+          highlightError={!detailVariant}
         />
       </div>
     );
@@ -2303,8 +2378,8 @@ function TranscriptChatActionGroup({
 
   const labelSuffix = groupCount > 1 ? ` group ${groupIndex + 1}` : "";
   const expandedLabel = detailsOpen
-    ? `Collapse tool activity${labelSuffix} for model turn ${turnIndex}`
-    : `Expand tool activity${labelSuffix} for model turn ${turnIndex}`;
+    ? `Collapse tool activity${labelSuffix}`
+    : `Expand tool activity${labelSuffix}`;
 
   return (
     <div>
@@ -2375,15 +2450,44 @@ function TranscriptChatTurn({
   thinkingClassName?: string;
   variant?: "chat" | "detail";
 }) {
-  const compact = density === "compact";
   const detailVariant = variant === "detail";
-  const actions = flattenChatTranscriptActions(turn.blocks);
-  const failedActionCount = actions.filter((action) => action.type === "tool" && action.entry.status === "error").length;
   const segments = segmentChatTranscriptBlocks(turn.blocks);
   const actionGroupCount = segments.filter((segment) => segment.type === "actions").length;
-  const showPreview = Boolean(turn.preview) && detailVariant;
   const highlightTurnError = turn.hasError && !detailVariant;
-  const showToolIssue = turn.hasError && detailVariant && !turn.hasRunning;
+  const statusTone = highlightTurnError
+    ? "text-red-700 dark:text-red-300"
+    : turn.hasRunning
+      ? "text-cyan-700 dark:text-cyan-300"
+      : "text-muted-foreground";
+  const content = segments.length > 0 ? (
+    <div className={cn(detailVariant ? "space-y-3" : "mt-3 space-y-3 border-l border-border/35 pl-3")}>
+      {segments.map((segment, index) => (
+        segment.type === "block"
+          ? renderTranscriptBlock({
+              block: segment.block,
+              index,
+              density,
+              presentation: detailVariant ? "detail" : "chat",
+              collapseStdout: true,
+              thinkingClassName,
+            })
+          : (
+            <TranscriptChatActionGroup
+              key={segment.key}
+              actions={segment.actions}
+              density={density}
+              detailVariant={detailVariant}
+              groupIndex={segments.slice(0, index).filter((item) => item.type === "actions").length}
+              groupCount={actionGroupCount}
+            />
+          )
+      ))}
+    </div>
+  ) : null;
+
+  if (detailVariant) {
+    return content;
+  }
 
   return (
     <section
@@ -2399,16 +2503,6 @@ function TranscriptChatTurn({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className={cn(
-              "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]",
-              highlightTurnError
-                ? "border-red-500/20 bg-red-500/[0.08] text-red-700 dark:text-red-300"
-                : turn.hasRunning
-                  ? "border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-700 dark:text-cyan-300"
-                  : "border-border/60 bg-background/80 text-muted-foreground",
-            )}>
-              Model turn {turn.index}
-            </span>
             {turn.hasRunning ? (
               <span className="inline-flex items-center gap-1 text-[11px] text-cyan-700 dark:text-cyan-300">
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -2416,54 +2510,17 @@ function TranscriptChatTurn({
               </span>
             ) : highlightTurnError ? (
               <span className="text-[11px] text-red-700 dark:text-red-300">Needs review</span>
-            ) : showToolIssue ? (
-              <span className="text-[11px] text-muted-foreground">
-                {failedActionCount > 1 ? `${failedActionCount} tool issues` : "Tool issue"}
-              </span>
             ) : (
               <span className="text-[11px] text-muted-foreground">Completed</span>
             )}
-            <span className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground">
+            <span className={cn("font-mono text-[10px] tracking-[0.08em]", statusTone)}>
               {formatTranscriptTimestamp(turn.ts)}
             </span>
           </div>
-          {showPreview ? (
-            <p className={cn(
-              "mt-2 break-words text-foreground/78",
-              compact ? "text-[12px] leading-5" : "text-[13px] leading-6",
-            )}>
-              {turn.preview}
-            </p>
-          ) : null}
         </div>
       </div>
 
-      {segments.length > 0 ? (
-        <div className="mt-3 space-y-3 border-l border-border/35 pl-3">
-          {segments.map((segment, index) => (
-            segment.type === "block"
-              ? renderTranscriptBlock({
-                  block: segment.block,
-                  index,
-                  density,
-                  presentation: "chat",
-                  collapseStdout: true,
-                  thinkingClassName,
-                })
-              : (
-                <TranscriptChatActionGroup
-                  key={segment.key}
-                  actions={segment.actions}
-                  density={density}
-                  detailVariant={detailVariant}
-                  turnIndex={turn.index}
-                  groupIndex={segments.slice(0, index).filter((item) => item.type === "actions").length}
-                  groupCount={actionGroupCount}
-                />
-              )
-          ))}
-        </div>
-      ) : null}
+      {content}
     </section>
   );
 }
@@ -2508,13 +2565,8 @@ function TranscriptChatTimeline({
   );
 }
 
-type DetailTimelineTone = "neutral" | "accent" | "success" | "warning" | "danger";
-
 interface DetailTimelineRow {
   key: string;
-  ts: string;
-  label: string;
-  tone: DetailTimelineTone;
   block:
     | Extract<TranscriptBlock, { type: "message" }>
     | Extract<TranscriptBlock, { type: "thinking" }>
@@ -2522,65 +2574,6 @@ interface DetailTimelineRow {
     | Extract<TranscriptBlock, { type: "activity" }>
     | Extract<TranscriptBlock, { type: "event" }>
     | Extract<TranscriptBlock, { type: "stdout" }>;
-}
-
-function detailToneClasses(tone: DetailTimelineTone): { badge: string } {
-  switch (tone) {
-    case "accent":
-      return {
-        badge: "border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-700 dark:text-cyan-300",
-      };
-    case "success":
-      return {
-        badge: "border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-700 dark:text-emerald-300",
-      };
-    case "warning":
-      return {
-        badge: "border-amber-500/20 bg-amber-500/[0.08] text-amber-700 dark:text-amber-300",
-      };
-    case "danger":
-      return {
-        badge: "border-red-500/20 bg-red-500/[0.08] text-red-700 dark:text-red-300",
-      };
-    case "neutral":
-    default:
-      return {
-        badge: "border-border/60 bg-background/70 text-muted-foreground",
-      };
-  }
-}
-
-function TranscriptDetailRow({
-  ts,
-  label,
-  tone,
-  children,
-}: {
-  ts: string;
-  label?: string | null;
-  tone: DetailTimelineTone;
-  children: ReactNode;
-}) {
-  const styles = detailToneClasses(tone);
-
-  return (
-    <div className="rounded-xl border border-border/50 bg-background/35 px-3 py-2.5">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        {label ? (
-          <span className={cn(
-            "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em]",
-            styles.badge,
-          )}>
-            {label}
-          </span>
-        ) : null}
-        <span className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground">
-          {formatTranscriptTimestamp(ts)}
-        </span>
-      </div>
-      {children}
-    </div>
-  );
 }
 
 function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTimelineRow[] {
@@ -2591,14 +2584,6 @@ function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTimelineRo
       block.items.forEach((item, index) => {
         rows.push({
           key: `${block.ts}-command-${index}-${item.ts}`,
-          ts: item.ts,
-          label: "command",
-          tone:
-            item.status === "error"
-              ? "danger"
-              : item.status === "running"
-                ? "accent"
-                : "success",
           block: {
             type: "tool",
             ts: item.ts,
@@ -2617,9 +2602,6 @@ function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTimelineRo
     if (block.type === "message") {
       rows.push({
         key: `${block.type}-${block.ts}-${rows.length}`,
-        ts: block.ts,
-        label: block.role,
-        tone: block.role === "assistant" ? "success" : "neutral",
         block,
       });
       continue;
@@ -2628,9 +2610,6 @@ function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTimelineRo
     if (block.type === "thinking") {
       rows.push({
         key: `${block.type}-${block.ts}-${rows.length}`,
-        ts: block.ts,
-        label: "thinking",
-        tone: "warning",
         block,
       });
       continue;
@@ -2639,14 +2618,6 @@ function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTimelineRo
     if (block.type === "tool") {
       rows.push({
         key: `${block.type}-${block.ts}-${rows.length}`,
-        ts: block.ts,
-        label: "tool",
-        tone:
-          block.status === "error"
-            ? "danger"
-            : block.status === "running"
-              ? "accent"
-              : "success",
         block,
       });
       continue;
@@ -2655,9 +2626,6 @@ function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTimelineRo
     if (block.type === "activity") {
       rows.push({
         key: `${block.type}-${block.ts}-${rows.length}`,
-        ts: block.ts,
-        label: "activity",
-        tone: block.status === "completed" ? "success" : "accent",
         block,
       });
       continue;
@@ -2666,16 +2634,6 @@ function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTimelineRo
     if (block.type === "event") {
       rows.push({
         key: `${block.type}-${block.ts}-${rows.length}`,
-        ts: block.ts,
-        label: block.label,
-        tone:
-          block.tone === "error"
-            ? "danger"
-            : block.tone === "warn"
-              ? "warning"
-              : block.tone === "info"
-                ? "accent"
-                : "neutral",
         block,
       });
       continue;
@@ -2683,9 +2641,6 @@ function expandDetailTimelineBlocks(blocks: TranscriptBlock[]): DetailTimelineRo
 
     rows.push({
       key: `${block.type}-${block.ts}-${rows.length}`,
-      ts: block.ts,
-      label: "stdout",
-      tone: "neutral",
       block,
     });
   }
@@ -2714,12 +2669,7 @@ function TranscriptDetailTimeline({
     <div className="space-y-3">
       {rows.map((row) => {
         return (
-          <TranscriptDetailRow
-            key={row.key}
-            ts={row.ts}
-            label={row.label}
-            tone={row.tone}
-          >
+          <Fragment key={row.key}>
             {row.block.type === "message" && (
               <TranscriptMessageBlock
                 block={row.block}
@@ -2752,7 +2702,7 @@ function TranscriptDetailTimeline({
                 presentation="detail"
               />
             )}
-          </TranscriptDetailRow>
+          </Fragment>
         );
       })}
       {turns.map((turn, index) => {

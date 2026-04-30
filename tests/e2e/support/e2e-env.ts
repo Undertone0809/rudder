@@ -2,8 +2,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const E2E_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULT_APP_PORT = 3190;
-const DEFAULT_DB_PORT = 54339;
+// Keep E2E defaults away from the local desktop instance defaults (3200 / 54339)
+// so isolated Playwright runs do not collide with an already-running Rudder app.
+const DEFAULT_APP_PORT = 3290;
+const DEFAULT_DB_PORT = 55429;
 
 function nonEmpty(value: string | undefined): string | null {
   const normalized = value?.trim() ?? "";
