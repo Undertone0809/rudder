@@ -581,7 +581,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         stderr: attempt.proc.stderr,
       },
       summary: attempt.parsed.summary,
-      question: attempt.parsed.question,
       clearSession: Boolean(clearSessionOnMissingSession && !resolvedSessionId),
     };
   };

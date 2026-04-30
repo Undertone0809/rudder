@@ -15,9 +15,6 @@ export type {
   ChatLinkedEntity,
   ChatPrimaryIssueSummary,
   ChatRuntimeDescriptor,
-  ChatUserInputOption,
-  ChatUserInputQuestion,
-  ChatUserInputRequest,
   ChatOperationProposalDecision,
   ChatOperationProposalDecisionAction,
   ChatOperationProposalDecisionStatus,
@@ -160,7 +157,7 @@ export type {
   IssueAttachment,
   IssueLabel,
 } from "./issue.js";
-export type { Goal, GoalDependencies, GoalDependencyPreview } from "./goal.js";
+export type { Goal } from "./goal.js";
 export type { Approval, ApprovalComment } from "./approval.js";
 export type {
   MessengerThreadUserState,
