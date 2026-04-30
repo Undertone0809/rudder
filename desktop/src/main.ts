@@ -17,7 +17,7 @@ import {
   type DesktopAppearance,
   type DesktopThemePreference,
 } from "./theme-preference.js";
-import { checkForStableUpdates, type DesktopUpdateCheckResult } from "./update-check.js";
+import { checkForRudderDesktopUpdates, type DesktopUpdateCheckResult } from "./update-check.js";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -195,7 +195,7 @@ function resolveDesktopCapabilities(): DesktopCapabilities {
 }
 
 async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
-  return checkForStableUpdates({
+  return checkForRudderDesktopUpdates({
     currentVersion: resolveRudderAppVersion(),
     appName: app.getName(),
     repo: DESKTOP_GITHUB_REPO,

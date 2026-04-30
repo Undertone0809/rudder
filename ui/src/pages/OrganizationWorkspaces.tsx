@@ -156,7 +156,7 @@ function WorkspaceTreeNode({
               data-testid="org-workspaces-agent-icon"
               className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground"
             >
-              <AgentIcon icon={entry.agentIcon} className="h-3.5 w-3.5 text-[12px]" />
+              <AgentIcon icon={entry.agentIcon} role={entry.agentRole} className="h-3.5 w-3.5 text-[12px]" />
             </span>
           ) : (
             <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

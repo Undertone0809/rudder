@@ -33,6 +33,7 @@ import { StatusIcon } from "../components/StatusIcon";
 import { PriorityIcon } from "../components/PriorityIcon";
 import { StatusBadge } from "../components/StatusBadge";
 import { Identity } from "../components/Identity";
+import { AgentIdentity } from "../components/AgentAvatar";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { Separator } from "@/components/ui/separator";
@@ -291,7 +292,7 @@ function ActorIdentity({
   const id = evt.actorId;
   if (evt.actorType === "agent") {
     const agent = agentMap.get(id);
-    return <Identity name={agent?.name ?? id.slice(0, 8)} size="sm" />;
+    return <AgentIdentity name={agent?.name ?? id.slice(0, 8)} icon={agent?.icon} role={agent?.role} size="sm" />;
   }
   return <Identity name={resolveBoardActorLabel(evt.actorType, id, currentBoardUserId)} size="sm" />;
 }
@@ -510,6 +511,7 @@ export function IssueDetail() {
         kind: "agent",
         agentId: agent.id,
         agentIcon: agent.icon,
+        agentRole: agent.role,
       });
     }
     for (const project of orderedProjects) {
@@ -1336,7 +1338,12 @@ export function IssueDetail() {
                     <div className="shrink-0">
                       {child.assigneeAgentId ? (
                         agentMap.get(child.assigneeAgentId)?.name ? (
-                          <Identity name={agentMap.get(child.assigneeAgentId)?.name ?? child.assigneeAgentId.slice(0, 8)} size="sm" />
+                          <AgentIdentity
+                            name={agentMap.get(child.assigneeAgentId)?.name ?? child.assigneeAgentId.slice(0, 8)}
+                            icon={agentMap.get(child.assigneeAgentId)?.icon}
+                            role={agentMap.get(child.assigneeAgentId)?.role}
+                            size="sm"
+                          />
                         ) : (
                           <span className="font-mono text-xs text-muted-foreground">{child.assigneeAgentId.slice(0, 8)}</span>
                         )

@@ -1,3 +1,4 @@
+import type { AgentRole } from "@rudderhq/shared";
 import { Minus, User } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AgentIcon } from "./AgentIconPicker";
@@ -9,11 +10,12 @@ interface AssigneeLabelProps {
   kind: AssigneeLabelKind;
   label: string;
   agentIcon?: string | null;
+  agentRole?: AgentRole | null;
   className?: string;
   muted?: boolean;
 }
 
-export function AssigneeLabel({ kind, label, agentIcon, className, muted = false }: AssigneeLabelProps) {
+export function AssigneeLabel({ kind, label, agentIcon, agentRole, className, muted = false }: AssigneeLabelProps) {
   return (
     <span
       data-slot="assignee-label"
@@ -22,7 +24,7 @@ export function AssigneeLabel({ kind, label, agentIcon, className, muted = false
     >
       {kind === "agent" ? (
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
-          <AgentIcon icon={agentIcon} className="h-3.5 w-3.5" />
+          <AgentIcon icon={agentIcon} role={agentRole} className="h-3.5 w-3.5" />
         </span>
       ) : (
         <Avatar size="sm">

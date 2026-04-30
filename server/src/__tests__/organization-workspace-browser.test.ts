@@ -192,6 +192,7 @@ describe("organization workspace browser", () => {
         entityType: "agent_workspace",
         agentId,
         agentIcon: "🦊",
+        agentRole: "engineer",
         workspaceKey: originalWorkspaceKey,
       }),
     ]);

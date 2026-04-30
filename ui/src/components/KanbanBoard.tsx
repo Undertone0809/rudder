@@ -19,12 +19,13 @@ import {
 } from "@dnd-kit/sortable";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
-import { Identity } from "./Identity";
+import { AgentIdentity } from "./AgentAvatar";
 import { Button } from "@/components/ui/button";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { cn } from "@/lib/utils";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { formatAssigneeUserLabel } from "@/lib/assignees";
+import { sortIssues, type IssueSortState } from "@/lib/issue-sort";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { timeAgo } from "@/lib/timeAgo";
 import { CalendarClock, FolderKanban, Plus, User } from "lucide-react";
@@ -102,6 +103,7 @@ interface KanbanBoardProps {
   agents?: Agent[];
   currentUserId?: string | null;
   displayProperties?: IssueDisplayProperty[];
+  sortState?: IssueSortState;
   liveIssueIds?: Set<string>;
   projects?: ProjectOption[];
   onCreateIssue?: (status: string) => void;
@@ -345,8 +347,10 @@ function KanbanCard({
             {showPriority ? <PriorityIcon priority={issue.priority} /> : null}
             {showAssignee && issue.assigneeAgentId ? (
               agent ? (
-                <Identity
+                <AgentIdentity
                   name={formatChatAgentLabel(agent)}
+                  icon={agent.icon}
+                  role={agent.role}
                   size="xs"
                   className="min-w-0 flex-1 text-muted-foreground"
                 />
@@ -412,6 +416,7 @@ export function KanbanBoard({
   agents,
   currentUserId,
   displayProperties,
+  sortState,
   liveIssueIds,
   projects,
   onCreateIssue,
@@ -437,8 +442,13 @@ export function KanbanBoard({
         grouped[issue.status].push(issue);
       }
     }
+    if (sortState) {
+      for (const status of boardStatuses) {
+        grouped[status] = sortIssues(grouped[status] ?? [], sortState);
+      }
+    }
     return grouped;
-  }, [issues]);
+  }, [issues, sortState]);
 
   const visibleStatuses = useMemo(
     () => boardStatuses.filter((status) => (columnIssues[status]?.length ?? 0) > 0),

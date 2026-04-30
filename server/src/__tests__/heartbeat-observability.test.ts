@@ -144,6 +144,42 @@ describe("heartbeat observability surface", () => {
           description: null,
         },
       ],
+      usedSkillCount: 0,
+      usedSkillKeys: [],
+      usedSkills: [],
+    });
+  });
+
+  it("infers used skills from explicit skill references in adapter prompts", () => {
+    expect(buildHeartbeatAdapterInvokePayload({
+      meta: {
+        agentRuntimeType: "codex_local",
+        command: "codex",
+        prompt: "Please use [$build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md).",
+      },
+      runtimeSkills: [
+        {
+          key: "rudder/build-advisor",
+          runtimeName: "build-advisor",
+          name: "Build Advisor",
+          description: "Diagnose build quality",
+        },
+        {
+          key: "rudder/screenshot",
+          runtimeName: "screenshot",
+          name: "Screenshot",
+          description: null,
+        },
+      ],
+    })).toMatchObject({
+      usedSkillCount: 1,
+      usedSkillKeys: ["rudder/build-advisor"],
+      usedSkills: [
+        {
+          key: "rudder/build-advisor",
+          label: "build-advisor",
+        },
+      ],
     });
   });
 });

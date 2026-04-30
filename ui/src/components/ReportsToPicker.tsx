@@ -55,7 +55,7 @@ export function ReportsToPicker({
             </>
           ) : current ? (
             <>
-              <AgentIcon icon={current.icon} className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <AgentIcon icon={current.icon} role={current.role} className="h-3 w-3 shrink-0 text-muted-foreground" />
               <span
                 className={cn(
                   "min-w-0 truncate",
@@ -91,7 +91,7 @@ export function ReportsToPicker({
         </button>
         {terminatedManager && (
           <div className="flex min-w-0 items-center gap-2 overflow-hidden px-2 py-1.5 text-xs text-muted-foreground border-b border-border mb-0.5">
-            <AgentIcon icon={current.icon} className="shrink-0 h-3 w-3" />
+            <AgentIcon icon={current.icon} role={current.role} className="shrink-0 h-3 w-3" />
             <span className="min-w-0 truncate">
               Current: {current.name} (terminated)
             </span>
@@ -115,7 +115,7 @@ export function ReportsToPicker({
               setOpen(false);
             }}
           >
-            <AgentIcon icon={a.icon} className="shrink-0 h-3 w-3 text-muted-foreground" />
+            <AgentIcon icon={a.icon} role={a.role} className="shrink-0 h-3 w-3 text-muted-foreground" />
             <span className="min-w-0 truncate">{a.name}</span>
             <span className="text-muted-foreground ml-auto shrink-0">{roleLabels[a.role] ?? a.role}</span>
           </button>

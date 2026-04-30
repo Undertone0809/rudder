@@ -805,7 +805,7 @@ function ChatAssistantAttributionRow({
     <div className="mb-2 flex items-center gap-2.5">
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/90 text-foreground shadow-sm">
         {agent ? (
-          <AgentIcon icon={agent.icon} className="h-4 w-4" />
+          <AgentIcon icon={agent.icon} role={agent.role} className="h-4 w-4" />
         ) : sourceType === "copilot" ? (
           <Sparkles className="h-4 w-4 text-muted-foreground" />
         ) : replyingAgentId ? (
@@ -2508,6 +2508,7 @@ function ChatWorkspace() {
         kind: "agent",
         agentId: agent.id,
         agentIcon: agent.icon,
+        agentRole: agent.role,
       });
     }
     for (const project of projects ?? []) {
@@ -2541,6 +2542,7 @@ function ChatWorkspace() {
         issueProjectColor: issueProject?.color ?? null,
         issueAssigneeName,
         issueAssigneeIcon: assigneeAgent?.icon ?? null,
+        issueAssigneeRole: assigneeAgent?.role ?? null,
       });
     }
     for (const skill of availableChatSkills) {
@@ -2813,7 +2815,7 @@ function ChatWorkspace() {
                 className="chat-composer-menu-row"
                 onClick={() => applyPreferredAgent(agent.id)}
               >
-                <AgentIcon icon={agent.icon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <AgentIcon icon={agent.icon} role={agent.role} className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate font-medium">{formatChatAgentLabel(agent)}</span>
               </button>
             ))}

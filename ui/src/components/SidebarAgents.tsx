@@ -108,7 +108,7 @@ export function SidebarAgents() {
                   active: activeAgentId === agentRouteRef(agent),
                 })}
               >
-                <AgentIcon icon={agent.icon} className="shrink-0 h-3.5 w-3.5 text-muted-foreground" />
+                <AgentIcon icon={agent.icon} role={agent.role} className="shrink-0 h-3.5 w-3.5 text-muted-foreground" />
                 <span className="flex-1 truncate" title={formatSidebarAgentLabel(agent)}>
                   {formatSidebarAgentLabel(agent)}
                 </span>

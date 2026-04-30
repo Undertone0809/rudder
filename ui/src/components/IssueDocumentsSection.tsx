@@ -10,6 +10,11 @@ import { cn, relativeTime } from "../lib/utils";
 import { MarkdownBody } from "./MarkdownBody";
 import { MarkdownEditor, type MentionOption } from "./MarkdownEditor";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { semanticNoticeToneClasses, semanticTextToneClasses } from "@/components/ui/semanticTones";
 import {
@@ -19,7 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Check, ChevronDown, ChevronRight, Copy, Download, FileText, MoreHorizontal, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, Download, FileText, Maximize2, Minimize2, MoreHorizontal, Plus, Trash2, X } from "lucide-react";
 
 type DraftState = {
   key: string;
@@ -171,6 +176,7 @@ export function IssueDocumentsSection({
   const [autosaveDocumentKey, setAutosaveDocumentKey] = useState<string | null>(null);
   const [copiedDocumentKey, setCopiedDocumentKey] = useState<string | null>(null);
   const [highlightDocumentKey, setHighlightDocumentKey] = useState<string | null>(null);
+  const [newDocumentModalOpen, setNewDocumentModalOpen] = useState(false);
   const autosaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedDocumentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasScrolledToHashRef = useRef(false);
@@ -268,6 +274,7 @@ export function IssueDocumentsSection({
     if (autosaveDebounceRef.current) {
       clearTimeout(autosaveDebounceRef.current);
     }
+    setNewDocumentModalOpen(false);
     resetAutosaveState();
     setDocumentConflict(null);
     setDraft(null);
@@ -338,7 +345,11 @@ export function IssueDocumentsSection({
       setError(null);
       setDocumentConflict((current) => current?.key === normalizedKey ? null : current);
       setDraft((value) => {
-        if (!value || value.key !== normalizedKey) return value;
+        if (!value) return value;
+        const isCurrentDraft = currentDraft.isNew
+          ? value.isNew && value.key === currentDraft.key
+          : value.key === normalizedKey;
+        if (!isCurrentDraft) return value;
         if (options?.clearAfterSave) return null;
         return {
           key: saved.key,
@@ -472,6 +483,26 @@ export function IssueDocumentsSection({
     }
   };
 
+  const createDraftDocument = useCallback(async (options?: { trackAutosave?: boolean }) => {
+    const saved = await commitDraft(draft, {
+      clearAfterSave: true,
+      trackAutosave: options?.trackAutosave ?? false,
+    });
+    if (saved) {
+      setNewDocumentModalOpen(false);
+    }
+  }, [commitDraft, draft]);
+
+  const handleNewDocumentModalKeyDown = async (event: React.KeyboardEvent) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      if (autosaveDebounceRef.current) {
+        clearTimeout(autosaveDebounceRef.current);
+      }
+      await createDraftDocument();
+    }
+  };
+
   useEffect(() => {
     setFoldedDocumentKeys(loadFoldedDocumentKeys(issue.id));
   }, [issue.id]);
@@ -536,6 +567,7 @@ export function IssueDocumentsSection({
 
   useEffect(() => {
     if (!draft || draft.isNew) return;
+    setNewDocumentModalOpen(false);
     if (documentConflict?.key === draft.key) return;
     const existing = sortedDocuments.find((doc) => doc.key === draft.key);
     if (!existing) return;
@@ -607,14 +639,27 @@ export function IssueDocumentsSection({
           onBlurCapture={handleDraftBlur}
           onKeyDown={handleDraftKeyDown}
         >
-          <Input
-            autoFocus
-            value={draft.title}
-            onChange={(event) =>
-              setDraft((current) => current ? { ...current, title: event.target.value } : current)
-            }
-            placeholder="Document title"
-          />
+          <div className="flex items-center gap-2">
+            <Input
+              autoFocus
+              value={draft.title}
+              onChange={(event) =>
+                setDraft((current) => current ? { ...current, title: event.target.value } : current)
+              }
+              placeholder="Document title"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 text-muted-foreground"
+              title="Expand editor"
+              aria-label="Expand editor"
+              onClick={() => setNewDocumentModalOpen(true)}
+            >
+              <Maximize2 className="h-4 w-4" />
+            </Button>
+          </div>
           <MarkdownEditor
             value={draft.body}
             onChange={(body) =>
@@ -626,7 +671,7 @@ export function IssueDocumentsSection({
             contentClassName="min-h-[220px] text-[15px] leading-7"
             mentions={mentions}
             imageUploadHandler={imageUploadHandler}
-            onSubmit={() => void commitDraft(draft, { clearAfterSave: false, trackAutosave: false })}
+            onSubmit={() => void createDraftDocument()}
           />
           <div className="flex items-center justify-end gap-2">
             <Button variant="outline" size="sm" onClick={cancelDraft}>
@@ -635,7 +680,7 @@ export function IssueDocumentsSection({
             </Button>
             <Button
               size="sm"
-              onClick={() => void commitDraft(draft, { clearAfterSave: false, trackAutosave: false })}
+              onClick={() => void createDraftDocument()}
               disabled={upsertDocument.isPending}
             >
               {upsertDocument.isPending ? "Saving..." : "Create"}
@@ -939,6 +984,82 @@ export function IssueDocumentsSection({
           );
         })}
       </div>
+
+      <Dialog
+        open={newDocumentModalOpen && Boolean(draft?.isNew)}
+        onOpenChange={(open) => setNewDocumentModalOpen(open)}
+      >
+        <DialogContent
+          showCloseButton={false}
+          className="grid h-[calc(100dvh-1.5rem)] max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] max-w-[calc(100vw-1.5rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-[calc(100vw-2rem)]"
+          onKeyDown={handleNewDocumentModalKeyDown}
+        >
+          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+            <DialogTitle className="truncate text-sm font-medium">New document</DialogTitle>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-muted-foreground"
+                title="Collapse editor"
+                aria-label="Collapse editor"
+                onClick={() => setNewDocumentModalOpen(false)}
+              >
+                <Minimize2 className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="text-muted-foreground"
+                title="Close editor"
+                aria-label="Close editor"
+                onClick={() => setNewDocumentModalOpen(false)}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+          <div className="min-h-0 overflow-y-auto px-4 py-4">
+            <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col gap-3">
+              <Input
+                value={draft?.title ?? ""}
+                onChange={(event) =>
+                  setDraft((current) => current ? { ...current, title: event.target.value } : current)
+                }
+                placeholder="Document title"
+              />
+              <MarkdownEditor
+                value={draft?.body ?? ""}
+                onChange={(body) =>
+                  setDraft((current) => current ? { ...current, body } : current)
+                }
+                placeholder="Write the document..."
+                bordered={false}
+                className="min-h-0 flex-1 rounded-md border border-border bg-background/40"
+                contentClassName="min-h-[calc(100dvh-14rem)] px-3 py-3 text-[15px] leading-7"
+                mentions={mentions}
+                imageUploadHandler={imageUploadHandler}
+                onSubmit={() => void createDraftDocument()}
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
+            <Button variant="outline" size="sm" onClick={cancelDraft}>
+              <X className="mr-1.5 h-3.5 w-3.5" />
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => void createDraftDocument()}
+              disabled={upsertDocument.isPending}
+            >
+              {upsertDocument.isPending ? "Saving..." : "Create"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -18,6 +18,7 @@ import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
 import { AssigneeLabel } from "./AssigneeLabel";
 import { Identity } from "./Identity";
+import { AgentIdentity } from "./AgentAvatar";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { formatDate, formatDateTime, cn, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
@@ -184,6 +185,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
     const agent = agents.find((a) => a.id === id);
     return agent?.name ?? id.slice(0, 8);
   };
+  const agentById = useMemo(() => new Map((agents ?? []).map((agent) => [agent.id, agent])), [agents]);
 
   const projectName = (id: string | null) => {
     if (!id) return id?.slice(0, 8) ?? "None";
@@ -313,7 +315,12 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
   );
 
   const assigneeTrigger = assignee ? (
-    <AssigneeLabel kind="agent" label={formatChatAgentLabel(assignee)} agentIcon={assignee.icon} />
+    <AssigneeLabel
+      kind="agent"
+      label={formatChatAgentLabel(assignee)}
+      agentIcon={assignee.icon}
+      agentRole={assignee.role}
+    />
   ) : assigneeUserLabel ? (
     <AssigneeLabel kind="user" label={assigneeUserLabel} />
   ) : (
@@ -385,7 +392,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
             )}
             onClick={() => { trackRecentAssignee(a.id); onUpdate({ assigneeAgentId: a.id, assigneeUserId: null }); setAssigneeOpen(false); }}
           >
-            <AssigneeLabel kind="agent" label={formatChatAgentLabel(a)} agentIcon={a.icon} />
+            <AssigneeLabel kind="agent" label={formatChatAgentLabel(a)} agentIcon={a.icon} agentRole={a.role} />
           </button>
         ))}
       </div>
@@ -556,7 +563,12 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
                 to={`/agents/${issue.createdByAgentId}`}
                 className="hover:underline"
               >
-                <Identity name={agentName(issue.createdByAgentId) ?? issue.createdByAgentId.slice(0, 8)} size="sm" />
+                <AgentIdentity
+                  name={agentName(issue.createdByAgentId) ?? issue.createdByAgentId.slice(0, 8)}
+                  icon={issue.createdByAgentId ? agentById.get(issue.createdByAgentId)?.icon : null}
+                  role={issue.createdByAgentId ? agentById.get(issue.createdByAgentId)?.role : null}
+                  size="sm"
+                />
               </Link>
             ) : (
               <>

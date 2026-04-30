@@ -20,6 +20,7 @@ import { StatusBadge } from "../components/StatusBadge";
 
 import { ActivityRow } from "../components/ActivityRow";
 import { Identity } from "../components/Identity";
+import { AgentIdentity } from "../components/AgentAvatar";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { timeAgo } from "../lib/timeAgo";
@@ -672,12 +673,12 @@ export function Dashboard() {
                 <div>
                   <h3 className="text-sm font-medium">Skills</h3>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    Loaded skills per run for {rangeLabel} across all agents. Hover a day to inspect the breakdown.
+                    Explicitly used skills per run for {rangeLabel} across all agents. Hover a day to inspect the breakdown.
                   </p>
                 </div>
                 <div className="text-right text-[11px] text-muted-foreground tabular-nums">
-                  <div>{visibleSkillAnalytics.totalCount} skill loads</div>
-                  <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill metadata</div>
+                  <div>{visibleSkillAnalytics.totalCount} skill uses</div>
+                  <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill use</div>
                 </div>
               </div>
               <SkillsUsageChart analytics={visibleSkillAnalytics} />
@@ -750,6 +751,7 @@ export function Dashboard() {
                         : null;
                       const displayAgentId = liveRun?.agentId ?? issue.assigneeAgentId;
                       const displayAgentName = displayAgentId ? agentName(displayAgentId) : null;
+                      const displayAgent = displayAgentId ? agentMap.get(displayAgentId) ?? null : null;
 
                       return (
                         <Link
@@ -773,7 +775,18 @@ export function Dashboard() {
                                     {issue.identifier ?? issue.id.slice(0, 8)}
                                   </span>
                                   <StatusBadge status={effectiveStatus} />
-                                  {displayAgentName ? <Identity name={displayAgentName} size="sm" /> : null}
+                                  {displayAgentName ? (
+                                    displayAgent ? (
+                                      <AgentIdentity
+                                        name={displayAgentName}
+                                        icon={displayAgent.icon}
+                                        role={displayAgent.role}
+                                        size="sm"
+                                      />
+                                    ) : (
+                                      <Identity name={displayAgentName} size="sm" />
+                                    )
+                                  ) : null}
                                   <span className="shrink-0">{timeAgo(issue.updatedAt)}</span>
                                 </div>
                               </div>

@@ -117,6 +117,7 @@ export interface AgentRuntimeInvocationMeta {
   prompt?: string;
   promptMetrics?: Record<string, number>;
   loadedSkills?: AgentRuntimeLoadedSkillMeta[];
+  usedSkills?: AgentRuntimeLoadedSkillMeta[];
   context?: Record<string, unknown>;
 }
 

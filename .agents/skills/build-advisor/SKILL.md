@@ -224,6 +224,26 @@ explicitly asks to proceed. If repo rules require a plan document before
 implementation, the proposal should make that plan easy to write after
 confirmation.
 
+#### Depth Floor
+
+For engineering, platform, workflow, or product-behavior proposals, the
+recommended proposal must not be only a summary paragraph. Include these
+sections unless the user explicitly asks for a quick take:
+
+- concept, terminology, and non-goals
+- user/operator flow
+- source of truth and API/data/config contract
+- execution flow and state transitions
+- edge cases, failure, recovery, permissions, and concurrency concerns
+- implementation surface across modules, docs, tests, and UI
+- validation bar with concrete acceptance checks
+- open decisions that still need human judgment
+
+If existing plans or implementation already exist, do not stop at "this is
+mostly implemented." Produce one of: accept as-is, accept with gaps, or
+redesign. Include a gap assessment covering evidence, missing behavior, risk,
+and acceptance signal.
+
 ### 7. Recommend The Next Move
 
 Choose one option.
@@ -295,9 +315,24 @@ When relevant, also include:
 
 ### Recommended Proposal
 
-Expand the chosen option enough for review and approval. Include user
-interaction flow and technical architecture when the request touches both
-product behavior and implementation shape.
+Expand the chosen option enough for review and approval.
+
+For engineering, platform, workflow, or product-behavior requests, use
+subsections instead of a compact paragraph:
+
+- Gap Assessment, when existing code or plans are present
+- Concept And Non-Goals
+- User Or Operator Flow
+- Technical Architecture
+- Execution And State Transitions
+- Edge Cases And Recovery
+- Implementation Surface
+- Validation Bar
+- Open Decisions
+
+For visual or interaction critique, use the relevant subset of those headings
+and replace technical sections with concrete UI states, hierarchy, density,
+copy, responsiveness, and inspection criteria.
 
 ### Recommendation
 
@@ -344,6 +379,48 @@ After diagnosis, route decisively:
 
 When a direct local answer is enough, provide it.
 When a specialist is the right next move, say so clearly.
+
+## Validation Cases
+
+### Case: Engineering Proposal Depth
+
+Input:
+"Agent 可以并发执行任务，可以在 Agent config 里配置 run 并发度，默认 3。用 build-advisor 设计一下这个功能。"
+
+Expected behavior:
+The response includes a decision-ready proposal with user/operator flow,
+source of truth, API/data/config contract, execution flow, state transitions,
+edge cases, implementation surface, validation bar, and open decisions.
+
+Must not:
+Return only a short recommended option, a few bullets, or a generic
+"direction is right, next validate it" answer.
+
+### Case: Existing Implementation Found
+
+Input:
+"这个功能好像已经有 plan 和一部分代码了，帮我判断怎么做。"
+
+Expected behavior:
+The response first states whether the existing work should be accepted as-is,
+accepted with gaps, or redesigned. It includes a gap assessment with evidence,
+missing behavior, risk, and acceptance signal before the recommended proposal.
+
+Must not:
+Stop after listing discovered files or saying the current implementation mostly
+matches the direction.
+
+### Case: Explicit Quick Take
+
+Input:
+"快速看下这个方向有没有大问题，不要写长方案。"
+
+Expected behavior:
+The response stays concise, calls out the main risk, and names the next move.
+
+Must not:
+Force the full proposal template when the user explicitly asked for a quick
+take.
 
 ## Completion Standard
 

@@ -42,7 +42,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { AGENT_ICON_NAMES, type AgentIconName } from "@rudderhq/shared";
+import { AGENT_ICON_NAMES, type AgentIconName, type AgentRole } from "@rudderhq/shared";
 
 export const AGENT_ICONS: Record<AgentIconName, LucideIcon> = {
   bot: Bot,
@@ -89,6 +89,32 @@ export const AGENT_ICONS: Record<AgentIconName, LucideIcon> = {
 };
 
 const DEFAULT_ICON: AgentIconName = "bot";
+
+export function getDefaultAgentIconForRole(role: AgentRole | null | undefined): AgentIconName {
+  switch (role) {
+    case "ceo":
+      return "crown";
+    case "cto":
+    case "engineer":
+      return "code";
+    case "cmo":
+      return "globe";
+    case "cfo":
+      return "database";
+    case "designer":
+      return "wand";
+    case "pm":
+      return "target";
+    case "qa":
+      return "shield";
+    case "devops":
+      return "terminal";
+    case "researcher":
+      return "search";
+    default:
+      return DEFAULT_ICON;
+  }
+}
 
 export function getAgentIcon(iconName: string | null | undefined): LucideIcon {
   if (iconName && AGENT_ICON_NAMES.includes(iconName as AgentIconName)) {
