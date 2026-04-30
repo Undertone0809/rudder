@@ -3,24 +3,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useSearchParams } from "@/lib/router";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { organizationsApi } from "../api/orgs";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
-import { readDesktopShell, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
+import { readDesktopShell, type DesktopIdeTarget } from "../lib/desktop-shell";
 import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import {
   ChevronDown,
   ChevronRight,
+  ExternalLink,
   HardDrive,
   Folder,
   FileCode2,
@@ -28,63 +24,6 @@ import {
   Save,
   Loader2,
 } from "lucide-react";
-
-const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
-const WORKSPACE_LAUNCH_TARGET_IDS = [
-  "vscode",
-  "cursor",
-  "xcode",
-  "windsurf",
-  "zed",
-  "webstorm",
-  "intellij",
-  "terminal",
-  "warp",
-  "finder",
-] as const satisfies readonly DesktopWorkspaceLaunchTarget["id"][];
-
-function isWorkspaceLaunchTargetId(value: string | null): value is DesktopWorkspaceLaunchTarget["id"] {
-  return WORKSPACE_LAUNCH_TARGET_IDS.includes(value as DesktopWorkspaceLaunchTarget["id"]);
-}
-
-function readStoredWorkspaceLaunchTargetId() {
-  if (typeof window === "undefined") return null;
-  const value = window.localStorage.getItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY);
-  return isWorkspaceLaunchTargetId(value) ? value : null;
-}
-
-function writeStoredWorkspaceLaunchTargetId(targetId: DesktopWorkspaceLaunchTarget["id"]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY, targetId);
-}
-
-function WorkspaceLaunchTargetIcon({
-  target,
-  className,
-}: {
-  target: DesktopWorkspaceLaunchTarget;
-  className?: string;
-}) {
-  if (target.iconDataUrl) {
-    return (
-      <img
-        src={target.iconDataUrl}
-        alt=""
-        aria-hidden="true"
-        className={className}
-      />
-    );
-  }
-
-  return (
-    <span
-      aria-hidden="true"
-      className={`inline-flex items-center justify-center rounded-sm border border-border bg-background text-[10px] font-medium text-muted-foreground ${className ?? ""}`}
-    >
-      {target.label.slice(0, 1)}
-    </span>
-  );
-}
 
 function parentDirectories(filePath: string) {
   const segments = filePath.split("/").filter(Boolean);
@@ -277,13 +216,8 @@ export function OrganizationWorkspaces() {
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(requestedFilePath);
   const [draftContent, setDraftContent] = useState("");
   const [refreshingWorkspace, setRefreshingWorkspace] = useState(false);
-  const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
-  const [lastWorkspaceLaunchTargetId, setLastWorkspaceLaunchTargetId] = useState<
-    DesktopWorkspaceLaunchTarget["id"] | null
-  >(() => readStoredWorkspaceLaunchTargetId());
-  const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<
-    DesktopWorkspaceLaunchTarget["id"] | null
-  >(null);
+  const [availableIdes, setAvailableIdes] = useState<DesktopIdeTarget[]>([]);
+  const [openingInIde, setOpeningInIde] = useState(false);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Workspaces" }]);
@@ -292,17 +226,17 @@ export function OrganizationWorkspaces() {
   useEffect(() => {
     const desktopShell = readDesktopShell();
     if (!desktopShell) {
-      setWorkspaceLaunchTargets([]);
+      setAvailableIdes([]);
       return;
     }
 
     let cancelled = false;
-    desktopShell.listWorkspaceLaunchTargets()
+    desktopShell.listAvailableIdes()
       .then((targets) => {
-        if (!cancelled) setWorkspaceLaunchTargets(targets);
+        if (!cancelled) setAvailableIdes(targets);
       })
       .catch(() => {
-        if (!cancelled) setWorkspaceLaunchTargets([]);
+        if (!cancelled) setAvailableIdes([]);
       });
 
     return () => {
@@ -382,116 +316,22 @@ export function OrganizationWorkspaces() {
     }
   }, [queryClient, viewedOrganizationId]);
 
-  const workspaceRootPath = rootQuery.data?.rootExists ? rootQuery.data.rootPath : null;
-  const selectedWorkspaceLaunchTarget = (
-    lastWorkspaceLaunchTargetId
-      ? workspaceLaunchTargets.find((target) => target.id === lastWorkspaceLaunchTargetId)
-      : null
-  ) ?? workspaceLaunchTargets[0] ?? null;
-
-  const handleOpenWorkspace = useCallback(async (
-    target: DesktopWorkspaceLaunchTarget,
-  ) => {
-    if (!workspaceRootPath) return;
-    const desktopShell = readDesktopShell();
-    if (!desktopShell) return;
-
-    setOpeningWorkspaceTargetId(target.id);
-    try {
-      await desktopShell.openWorkspace(workspaceRootPath, target.id);
-      setLastWorkspaceLaunchTargetId(target.id);
-      writeStoredWorkspaceLaunchTargetId(target.id);
-      pushToast({
-        title: `Opened workspace in ${target.label}`,
-        tone: "info",
-      });
-    } catch (error) {
-      pushToast({
-        title: "Failed to open workspace",
-        body: error instanceof Error ? error.message : `Could not open the workspace in ${target.label}.`,
-        tone: "error",
-      });
-    } finally {
-      setOpeningWorkspaceTargetId(null);
-    }
-  }, [pushToast, workspaceRootPath]);
-
   useEffect(() => {
     setHeaderActions(
-      <div className="flex items-center gap-2">
-        {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
-          <div className="flex items-center" data-testid="org-workspaces-launcher">
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className="h-8 w-10 cursor-pointer rounded-r-none border-r-0"
-              aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
-              onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
-              disabled={openingWorkspaceTargetId !== null}
-            >
-              {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <WorkspaceLaunchTargetIcon
-                  target={selectedWorkspaceLaunchTarget}
-                  className="h-4 w-4"
-                />
-              )}
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 cursor-pointer rounded-l-none"
-                  aria-label="Open workspace menu"
-                  disabled={openingWorkspaceTargetId !== null}
-                >
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                {workspaceLaunchTargets.map((target) => (
-                  <DropdownMenuItem
-                    key={target.id}
-                    className="cursor-pointer"
-                    data-testid={`org-workspaces-launch-target-${target.id}`}
-                    onSelect={() => void handleOpenWorkspace(target)}
-                  >
-                    <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
-                    <span>{target.label}</span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        ) : null}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => void refreshWorkspace()}
-          disabled={refreshingWorkspace}
-        >
-          <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${refreshingWorkspace ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
-      </div>,
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => void refreshWorkspace()}
+        disabled={refreshingWorkspace}
+      >
+        <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${refreshingWorkspace ? "animate-spin" : ""}`} />
+        Refresh
+      </Button>,
     );
 
     return () => setHeaderActions(null);
-  }, [
-    handleOpenWorkspace,
-    openingWorkspaceTargetId,
-    refreshWorkspace,
-    refreshingWorkspace,
-    selectedWorkspaceLaunchTarget,
-    setHeaderActions,
-    workspaceLaunchTargets,
-    workspaceRootPath,
-  ]);
+  }, [refreshWorkspace, refreshingWorkspace, setHeaderActions]);
 
   if (!viewedOrganizationId || !viewedOrganization) {
     return <EmptyState icon={HardDrive} message="Select an organization to browse its shared workspace." />;
@@ -522,6 +362,42 @@ export function OrganizationWorkspaces() {
   );
   const hasUnsavedChanges = canEditSelectedFile && draftContent !== (selectedFileDetail?.content ?? "");
   const selectedLanguage = inferLanguageFromPath(selectedFilePath);
+  const primaryIde = availableIdes[0] ?? null;
+  const workspaceRootPath = workspace.rootExists ? workspace.rootPath : null;
+  const hasLoadedSelectedFile = Boolean(
+    selectedFilePath
+    && selectedFileDetail
+    && selectedFileDetail.filePath === selectedFilePath,
+  );
+  const canOpenInIde = Boolean(
+    primaryIde
+    && workspaceRootPath
+    && hasLoadedSelectedFile,
+  );
+
+  async function handleOpenInIde() {
+    if (!primaryIde || !selectedFilePath || !workspaceRootPath || !hasLoadedSelectedFile) return;
+    const desktopShell = readDesktopShell();
+    if (!desktopShell) return;
+
+    setOpeningInIde(true);
+    try {
+      await desktopShell.openWorkspaceFileInIde(workspaceRootPath, selectedFilePath, primaryIde.id);
+      pushToast({
+        title: "Opened in IDE",
+        body: `Opened ${selectedFilePath} in ${primaryIde.label}.`,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to open in IDE",
+        body: error instanceof Error ? error.message : "Could not open the selected workspace file in a local IDE.",
+        tone: "error",
+      });
+    } finally {
+      setOpeningInIde(false);
+    }
+  }
 
   return (
     <div className="flex min-h-full flex-col gap-4">
@@ -580,6 +456,29 @@ export function OrganizationWorkspaces() {
                   <span className="rounded-full border border-border px-2 py-0.5 font-mono">
                     {selectedLanguage}
                   </span>
+                ) : null}
+                {canOpenInIde && primaryIde ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        aria-label={`Open in ${primaryIde.label}`}
+                        data-testid="org-workspaces-open-in-ide-button"
+                        onClick={() => void handleOpenInIde()}
+                        disabled={openingInIde}
+                      >
+                        {openingInIde ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{`Open in ${primaryIde.label}`}</TooltipContent>
+                  </Tooltip>
                 ) : null}
                 <Button
                   type="button"

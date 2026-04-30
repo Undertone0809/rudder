@@ -108,15 +108,9 @@ async function expectDualCardWorkspace(page: Page) {
 async function installDesktopShellWorkspaceIdeStub(page: Page) {
   await page.addInitScript(() => {
     const ideCalls: Array<{ rootPath: string; filePath: string; ideId?: string }> = [];
-    const workspaceCalls: Array<{ rootPath: string; targetId?: string }> = [];
     Object.defineProperty(window, "__rudderWorkspaceIdeCalls", {
       configurable: true,
       value: ideCalls,
-      writable: false,
-    });
-    Object.defineProperty(window, "__rudderWorkspaceLaunchCalls", {
-      configurable: true,
-      value: workspaceCalls,
       writable: false,
     });
 
@@ -125,14 +119,6 @@ async function installDesktopShellWorkspaceIdeStub(page: Page) {
       onBootState: () => () => {},
       openPath: async () => {},
       listAvailableIdes: async () => [{ id: "cursor", label: "Cursor" }],
-      listWorkspaceLaunchTargets: async () => [
-        { id: "cursor", label: "Cursor", kind: "ide" },
-        { id: "terminal", label: "Terminal", kind: "terminal" },
-        { id: "finder", label: "Finder", kind: "folder" },
-      ],
-      openWorkspace: async (rootPath: string, targetId?: string) => {
-        workspaceCalls.push({ rootPath, targetId });
-      },
       openWorkspaceFileInIde: async (rootPath: string, filePath: string, ideId?: string) => {
         ideCalls.push({ rootPath, filePath, ideId });
       },
@@ -731,8 +717,6 @@ test.describe("Workspace shell", () => {
     const workspaceHelp = workspacesHeader.getByRole("button", { name: "About organization workspaces" });
     await expect(sidebar.getByRole("link", { name: "Workspaces" })).toHaveClass(/font-medium/);
     await expect(workspacesHeader.getByRole("heading", { name: "Workspaces", exact: true })).toBeVisible();
-    await expect(page.getByTestId("org-workspaces-launcher")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Open workspace in Cursor" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible();
     await expect(filesCard.getByText("/", { exact: true })).toBeVisible();
     await workspaceHelp.hover();
@@ -784,10 +768,10 @@ test.describe("Workspace shell", () => {
     });
   });
 
-  test("opens the workspace root from the desktop launcher", async ({ page }) => {
+  test("shows an IDE open action in workspaces when the desktop shell exposes a local editor", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
-        name: `Workspace-Shell-Desktop-Launcher-${Date.now()}`,
+        name: `Workspace-Shell-Desktop-IDE-${Date.now()}`,
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -798,32 +782,28 @@ test.describe("Workspace shell", () => {
     await gotoOrganizationPath(page, organization, "/workspaces");
 
     await page.getByRole("button", { name: "notes.md", exact: true }).click();
-    await expect(page.getByTestId("org-workspaces-open-in-ide-button")).toHaveCount(0);
-    await page.getByRole("button", { name: "Open workspace in Cursor" }).click();
-    await expect(page.getByText("Opened workspace in Cursor")).toBeVisible();
+    const openInIdeButton = page.getByTestId("org-workspaces-open-in-ide-button");
+    await expect(openInIdeButton).toBeVisible();
+    await expect(openInIdeButton).toHaveAttribute("aria-label", "Open in Cursor");
 
-    await page.getByRole("button", { name: "Open workspace menu" }).click();
-    await page.getByTestId("org-workspaces-launch-target-terminal").click();
-    await expect(page.getByText("Opened workspace in Terminal")).toBeVisible();
+    await openInIdeButton.click();
+    await expect(page.getByText("Opened in IDE")).toBeVisible();
 
-    const workspaceCalls = await page.evaluate(() =>
+    const ideCalls = await page.evaluate(() =>
       (window as typeof window & {
-        __rudderWorkspaceLaunchCalls?: Array<{ rootPath: string; targetId?: string }>;
-      }).__rudderWorkspaceLaunchCalls ?? [],
+        __rudderWorkspaceIdeCalls?: Array<{ rootPath: string; filePath: string; ideId?: string }>;
+      }).__rudderWorkspaceIdeCalls ?? [],
     );
-    expect(workspaceCalls).toEqual([
+    expect(ideCalls).toEqual([
       {
         rootPath: resolveOrganizationWorkspaceRoot(organization.id),
-        targetId: "cursor",
-      },
-      {
-        rootPath: resolveOrganizationWorkspaceRoot(organization.id),
-        targetId: "terminal",
+        filePath: "notes.md",
+        ideId: "cursor",
       },
     ]);
   });
 
-  test("keeps the root launcher independent from selected file loading", async ({ page }) => {
+  test("does not show the IDE action for workspace paths that fail file loading", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Workspace-Shell-Desktop-IDE-Guard-${Date.now()}`,
@@ -839,7 +819,6 @@ test.describe("Workspace shell", () => {
     await expect(page.getByText("../outside.md")).toBeVisible();
     await expect(page.getByText("Loading file…")).toBeVisible();
     await expect(page.getByTestId("org-workspaces-open-in-ide-button")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Open workspace in Cursor" })).toBeVisible();
   });
 
   test("renders goals inside the org workspace shell", async ({ page }, testInfo) => {
