@@ -56,4 +56,11 @@ describe("AgentIdentity", () => {
     expect(fallback?.textContent).toContain("🧪");
     expect(fallback?.textContent).not.toContain("AS");
   });
+
+  it("derives fallback initials without parenthetical role suffixes", () => {
+    const container = render(<AgentIdentity name="Penelope (CEO)" size="sm" />);
+
+    const fallback = container.querySelector('[data-slot="avatar-fallback"]');
+    expect(fallback?.textContent).toBe("PE");
+  });
 });
