@@ -24,8 +24,11 @@ import type {
   UpdateCalendarSource,
 } from "@rudderhq/shared";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { parseHeartbeatPolicy } from "./runtime-kernel/wakeup-queue.js";
 
 type Actor = { userId?: string | null };
+const PROJECTED_HEARTBEAT_DURATION_MS = 15 * 60 * 1000;
+const PROJECTED_HEARTBEAT_MAX_PER_AGENT = 96;
 
 export interface CalendarEventFilters {
   start: Date;
@@ -572,6 +575,103 @@ export function calendarService(db: Db) {
     });
   }
 
+  async function listProjectedHeartbeatEvents(orgId: string, filters: CalendarEventFilters) {
+    if (filters.sourceIds?.length) return [];
+    if (!csvIncludes(filters.eventKinds, "agent_work_block")) return [];
+    if (!csvIncludes(filters.statuses, "projected")) return [];
+
+    const now = new Date();
+    const projectionStart = new Date(Math.max(filters.start.getTime(), now.getTime()));
+    if (filters.end.getTime() <= projectionStart.getTime()) return [];
+
+    const conditions = [
+      eq(agents.orgId, orgId),
+      sql`${agents.status} not in ('paused', 'terminated', 'pending_approval')`,
+    ];
+    if (filters.agentIds?.length) {
+      conditions.push(inArray(agents.id, filters.agentIds));
+    }
+
+    const rows = await db
+      .select()
+      .from(agents)
+      .where(and(...conditions))
+      .orderBy(asc(agents.name));
+
+    const projected: CalendarEvent[] = [];
+    for (const row of rows) {
+      const policy = parseHeartbeatPolicy(row as typeof agents.$inferSelect);
+      if (!policy.enabled || policy.intervalSec <= 0) continue;
+
+      const intervalMs = policy.intervalSec * 1000;
+      const baselineMs = new Date(row.lastHeartbeatAt ?? row.createdAt).getTime();
+      let nextMs = baselineMs + intervalMs;
+      if (nextMs < projectionStart.getTime()) {
+        const elapsed = projectionStart.getTime() - baselineMs;
+        nextMs = baselineMs + Math.ceil(elapsed / intervalMs) * intervalMs;
+      }
+
+      let count = 0;
+      while (nextMs < filters.end.getTime() && count < PROJECTED_HEARTBEAT_MAX_PER_AGENT) {
+        const startAt = new Date(nextMs);
+        const endAt = new Date(Math.min(nextMs + PROJECTED_HEARTBEAT_DURATION_MS, filters.end.getTime()));
+        projected.push({
+          id: `projected-heartbeat:${row.id}:${startAt.toISOString()}`,
+          orgId: row.orgId,
+          sourceId: null,
+          eventKind: "agent_work_block",
+          eventStatus: "projected",
+          ownerType: "agent",
+          ownerUserId: null,
+          ownerAgentId: row.id,
+          title: `${row.name} · Projected heartbeat`,
+          description: `Projected from this agent's ${policy.intervalSec}s timer heartbeat. This does not schedule or guarantee execution.`,
+          startAt,
+          endAt,
+          timezone: "UTC",
+          allDay: false,
+          visibility: "full",
+          issueId: null,
+          projectId: null,
+          goalId: null,
+          approvalId: null,
+          heartbeatRunId: null,
+          activityId: null,
+          sourceMode: "derived",
+          externalProvider: null,
+          externalCalendarId: null,
+          externalEventId: null,
+          externalEtag: null,
+          externalUpdatedAt: null,
+          createdByUserId: null,
+          updatedByUserId: null,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          deletedAt: null,
+          source: {
+            id: "derived:projected-heartbeats",
+            type: "system",
+            name: "Projected heartbeats",
+            visibilityDefault: "full",
+            externalProvider: null,
+          },
+          agent: {
+            id: row.id,
+            name: row.name,
+            role: row.role,
+            title: row.title,
+            urlKey: row.workspaceKey,
+          },
+          issue: null,
+        });
+        nextMs += intervalMs;
+        count += 1;
+      }
+    }
+
+    return projected;
+  }
+
   async function getPersistedEvent(orgId: string, id: string) {
     const rows = await db
       .select({
@@ -607,6 +707,9 @@ export function calendarService(db: Db) {
     if (!event) throw notFound("Calendar event not found");
     if (event.sourceMode !== "manual") {
       throw conflict("Imported and derived calendar events are read-only");
+    }
+    if (event.eventKind !== "human_event") {
+      throw conflict("Only My Calendar events can be edited");
     }
     return event;
   }
@@ -752,11 +855,12 @@ export function calendarService(db: Db) {
     },
 
     async listEvents(orgId: string, filters: CalendarEventFilters) {
-      const [persisted, derived] = await Promise.all([
+      const [persisted, derived, projected] = await Promise.all([
         listPersistedEvents(orgId, filters),
         listDerivedRunEvents(orgId, filters),
+        listProjectedHeartbeatEvents(orgId, filters),
       ]);
-      return [...persisted, ...derived].sort((a, b) => {
+      return [...persisted, ...derived, ...projected].sort((a, b) => {
         const time = new Date(a.startAt).getTime() - new Date(b.startAt).getTime();
         return time !== 0 ? time : a.title.localeCompare(b.title);
       });

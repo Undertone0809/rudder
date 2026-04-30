@@ -145,7 +145,7 @@ export type CalendarSourceStatus = (typeof CALENDAR_SOURCE_STATUSES)[number];
 export const CALENDAR_EVENT_KINDS = ["human_event", "agent_work_block", "external_event", "system_event"] as const;
 export type CalendarEventKind = (typeof CALENDAR_EVENT_KINDS)[number];
 
-export const CALENDAR_EVENT_STATUSES = ["planned", "in_progress", "actual", "cancelled", "external"] as const;
+export const CALENDAR_EVENT_STATUSES = ["planned", "in_progress", "actual", "cancelled", "external", "projected"] as const;
 export type CalendarEventStatus = (typeof CALENDAR_EVENT_STATUSES)[number];
 
 export const CALENDAR_SOURCE_MODES = ["manual", "derived", "imported"] as const;
