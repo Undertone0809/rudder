@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import type { ChatMessageKind, ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { formatMessengerPreview, type ChatMessageKind, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import {
   agents,
   approvals,
@@ -43,20 +43,8 @@ function safeTrim(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
-function firstLine(value: string | null | undefined) {
-  if (!value) return null;
-  const line = value
-    .split(/\r?\n/)
-    .map((part) => part.trim())
-    .find(Boolean);
-  return line ?? null;
-}
-
 function truncatePreview(value: string | null | undefined, max = 140) {
-  const text = firstLine(value)?.replace(/\s+/g, " ");
-  if (!text) return null;
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 1)}…`;
+  return formatMessengerPreview(value, { max });
 }
 
 function chatTranscriptFromPayload(

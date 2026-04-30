@@ -12,23 +12,24 @@ import {
   joinRequests,
   messengerThreadUserStates,
 } from "@rudderhq/db";
-import type {
-  Approval,
-  BudgetIncident,
-  ChatConversation,
-  ChatMessage,
-  HeartbeatRun,
-  JoinRequest,
-  MessengerApprovalThreadItem,
-  MessengerBudgetThreadItem,
-  MessengerEvent,
-  MessengerHeartbeatRunThreadItem,
-  MessengerIssueThreadItem,
-  MessengerJoinRequestThreadItem,
-  MessengerSystemThreadKind,
-  MessengerThreadAction,
-  MessengerThreadDetail,
-  MessengerThreadSummary,
+import {
+  formatMessengerPreview,
+  type Approval,
+  type BudgetIncident,
+  type ChatConversation,
+  type ChatMessage,
+  type HeartbeatRun,
+  type JoinRequest,
+  type MessengerApprovalThreadItem,
+  type MessengerBudgetThreadItem,
+  type MessengerEvent,
+  type MessengerHeartbeatRunThreadItem,
+  type MessengerIssueThreadItem,
+  type MessengerJoinRequestThreadItem,
+  type MessengerSystemThreadKind,
+  type MessengerThreadAction,
+  type MessengerThreadDetail,
+  type MessengerThreadSummary,
 } from "@rudderhq/shared";
 import { issueService } from "./issues.js";
 import { chatService } from "./chats.js";
@@ -171,17 +172,8 @@ type FailedRunRow = {
   updatedAt: Date;
 };
 
-function firstLine(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const line = value.split("\n").map((part) => part.trim()).find(Boolean);
-  return line ?? null;
-}
-
 function truncate(value: string | null | undefined, max = 140): string | null {
-  const text = firstLine(value);
-  if (!text) return null;
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 1)}…`;
+  return formatMessengerPreview(value, { max });
 }
 
 function normalizeDate(value: Date | string | null | undefined): Date | null {

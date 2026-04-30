@@ -11,6 +11,7 @@ import {
   approvalComments,
   approvals,
   chatConversations,
+  chatMessages,
   createDb,
   ensurePostgresDatabase,
   heartbeatRuns,
@@ -109,6 +110,8 @@ describe("messengerService and issue follows", () => {
   afterEach(async () => {
     await db.delete(issueFollows);
     await db.delete(messengerThreadUserStates);
+    await db.delete(chatMessages);
+    await db.delete(chatConversations);
     await db.delete(approvalComments);
     await db.delete(approvals);
     await db.delete(heartbeatRuns);
@@ -200,11 +203,11 @@ describe("messengerService and issue follows", () => {
     expect(itemIds.has(unrelatedIssueId)).toBe(false);
     expect(followedItem?.sourceCommentId).toBe(followedComment.id);
     expect(followedItem?.sourceCommentBody).toBe(followedCommentBody);
-    expect(followedItem?.preview).toBe("## Review Summary");
+    expect(followedItem?.preview).toBe("Review Summary: render enough comment body to judge the issue update");
     expect(assignedItem?.metadata).toMatchObject({ assignedToMe: true, createdByMe: false });
     expect(assignedItem?.body).toContain("assigned to me");
     expect(createdItem?.metadata).toMatchObject({ assignedToMe: false, createdByMe: true });
-    expect(issuesSummary?.preview).toBe("## Review Summary");
+    expect(issuesSummary?.preview).toBe("Review Summary: render enough comment body to judge the issue update");
   });
 
   it("does not count self-authored issue activity as Messenger attention", async () => {
@@ -500,6 +503,47 @@ describe("messengerService and issue follows", () => {
 
     expect(summaries.map((item) => item.threadKey)).toContain(`chat:${activeChatId}`);
     expect(summaries.map((item) => item.threadKey)).not.toContain(`chat:${archivedChatId}`);
+  });
+
+  it("formats markdown headings in chat thread previews", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-chat-preview";
+    const chatId = randomUUID();
+    const activityAt = new Date("2026-04-12T12:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Chat Preview Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Chat Preview Org"),
+      issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(chatConversations).values({
+      id: chatId,
+      orgId,
+      title: "Chat preview",
+      status: "active",
+      lastMessageAt: activityAt,
+      createdAt: activityAt,
+      updatedAt: activityAt,
+    });
+
+    await db.insert(chatMessages).values({
+      orgId,
+      conversationId: chatId,
+      role: "assistant",
+      kind: "message",
+      body: "## 需求\n把 Agent 的处理流程规范化",
+      createdAt: activityAt,
+      updatedAt: activityAt,
+    });
+
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const chatSummary = summaries.find((item) => item.threadKey === `chat:${chatId}`);
+
+    expect(chatSummary?.preview).toBe("需求: 把 Agent 的处理流程规范化");
+    expect(chatSummary?.subtitle).toBe("需求: 把 Agent 的处理流程规范化");
   });
 
   it("hides empty synthetic threads for a brand-new organization", async () => {
