@@ -19,6 +19,12 @@ const mockState = vi.hoisted(() => ({
   pathname: "/RUD/issues",
   search: "",
   relativePath: "/issues",
+  issues: [] as Array<{
+    id: string;
+    identifier: string;
+    title: string;
+    status: string;
+  }>,
   linearContributions: [] as unknown[],
   linearCatalog: null as null | { orgId: string; projects: Array<{ id: string; name: string }> },
 }));
@@ -55,6 +61,9 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (queryKey[0] === "agents" && queryKey[1] === "org-1") {
       return { data: [sidebarAgent], isLoading: false, error: null };
+    }
+    if (queryKey[0] === "issues" && queryKey[1] === "org-1") {
+      return { data: mockState.issues, isLoading: false, error: null };
     }
     if (queryKey[0] === "plugins" && queryKey[1] === "ui-contributions") {
       return { data: mockState.linearContributions, isLoading: false, error: null };
@@ -187,6 +196,7 @@ beforeEach(() => {
   mockState.pathname = "/RUD/issues";
   mockState.search = "";
   mockState.relativePath = "/issues";
+  mockState.issues = [];
   mockState.linearContributions = [];
   mockState.linearCatalog = null;
   vi.stubGlobal("confirm", mockState.confirm);
@@ -278,6 +288,49 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(draftEntry?.textContent).toContain("Draft Issues (1)");
     expect(draftEntry?.getAttribute("href")).toBe("/issues?scope=drafts");
     expect(draftEntry?.textContent).not.toContain("Recovered draft issue");
+  });
+
+  it("renders recently viewed issues as bounded sidebar rows instead of an issue view entry", () => {
+    mockState.issues = Array.from({ length: 7 }, (_, index) => ({
+      id: `issue-${index + 1}`,
+      identifier: `RUD-${index + 1}`,
+      title: `Recent issue ${index + 1}`,
+      status: "todo",
+    }));
+    window.localStorage.setItem("rudder:recent-issues:org-1", JSON.stringify(mockState.issues.map((issue) => issue.id)));
+
+    renderSidebar();
+
+    expect(document.querySelector('a[href="/issues?scope=recent"]')).toBeNull();
+    expect(document.querySelector("[data-testid='issue-recent-section']")?.textContent).toContain("Recently Viewed");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-1']")?.textContent).toContain("Recent issue 1");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-5']")?.textContent).toContain("Recent issue 5");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-6']")).toBeNull();
+
+    const toggle = document.querySelector("[data-testid='issue-recent-toggle']") as HTMLButtonElement | null;
+    expect(toggle?.textContent).toContain("Show 2 more");
+
+    act(() => {
+      toggle?.click();
+    });
+
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-7']")?.textContent).toContain("Recent issue 7");
+    expect(toggle?.textContent).toContain("Show less");
+  });
+
+  it("marks the active issue detail in the recently viewed sidebar list", () => {
+    mockState.pathname = "/RUD/issues/RUD-2";
+    mockState.relativePath = "/issues/RUD-2";
+    mockState.issues = [
+      { id: "issue-1", identifier: "RUD-1", title: "First issue", status: "todo" },
+      { id: "issue-2", identifier: "RUD-2", title: "Second issue", status: "in_progress" },
+    ];
+    window.localStorage.setItem("rudder:recent-issues:org-1", JSON.stringify(["issue-1", "issue-2"]));
+
+    renderSidebar();
+
+    const activeRow = document.querySelector("[data-testid='issue-recent-row-issue-2']") as HTMLAnchorElement | null;
+    expect(activeRow?.getAttribute("aria-current")).toBe("page");
   });
 
   it("shows the saved draft issue count and active state for the draft issues view", () => {

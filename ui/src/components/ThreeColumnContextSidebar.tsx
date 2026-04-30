@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   Boxes,
+  ChevronDown,
+  ChevronUp,
   Circle,
   Clock3,
   Copy,
@@ -22,7 +24,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { cn, agentUrl, projectRouteRef } from "@/lib/utils";
+import { cn, agentUrl, issueUrl, projectRouteRef } from "@/lib/utils";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
@@ -49,6 +51,7 @@ import {
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentActionsMenu } from "@/components/AgentActionsMenu";
 import { MessengerContextSidebar } from "@/components/MessengerContextSidebar";
+import { StatusIcon } from "@/components/StatusIcon";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,10 +59,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
+import type { Issue } from "@rudderhq/shared";
 
 const LINEAR_PLUGIN_KEY = "rudder.linear";
 const LINEAR_CATALOG_DATA_KEY = "linear-catalog";
 const LINEAR_PLUGIN_ROUTE_PATH = "linear";
+const RECENT_ISSUES_COLLAPSED_LIMIT = 5;
+const RECENT_ISSUES_EXPANDED_LIMIT = 20;
 
 type LinearSidebarProject = {
   id: string;
@@ -302,6 +308,88 @@ function ProjectListSection({
   );
 }
 
+function RecentIssueListSection({
+  issues,
+  activeIssueRef,
+  closeMobileSidebar,
+}: {
+  issues: Issue[];
+  activeIssueRef: string | null;
+  closeMobileSidebar: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (issues.length === 0) return null;
+
+  const visibleLimit = expanded ? RECENT_ISSUES_EXPANDED_LIMIT : RECENT_ISSUES_COLLAPSED_LIMIT;
+  const visibleIssues = issues.slice(0, visibleLimit);
+  const expandCount = Math.min(issues.length, RECENT_ISSUES_EXPANDED_LIMIT) - RECENT_ISSUES_COLLAPSED_LIMIT;
+  const hasMoreThanExpandedLimit = issues.length > RECENT_ISSUES_EXPANDED_LIMIT;
+
+  return (
+    <section aria-label="Recently viewed issues" className="mt-1">
+      <SectionLabel testId="issue-recent-section">
+        Recently Viewed
+      </SectionLabel>
+      <div
+        className={cn(
+          "mt-2 space-y-0.5",
+          expanded && hasMoreThanExpandedLimit && "max-h-72 overflow-y-auto pr-1",
+        )}
+      >
+        {visibleIssues.map((issue) => {
+          const issueRef = issue.identifier ?? issue.id;
+          const active = activeIssueRef === issueRef || activeIssueRef === issue.id;
+          return (
+            <Link
+              key={issue.id}
+              to={issueUrl(issue)}
+              onClick={closeMobileSidebar}
+              data-testid={`issue-recent-row-${issue.id}`}
+              aria-current={active ? "page" : undefined}
+              className={cn(
+                "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-2.5 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                active
+                  ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
+                  : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
+              )}
+            >
+              <span className="shrink-0">
+                <StatusIcon status={issue.status} />
+              </span>
+              <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                <span className="shrink-0 font-mono text-[11px] text-muted-foreground/78">{issueRef}</span>
+                <span className="shrink-0 text-muted-foreground/55">·</span>
+                <span className="min-w-0 truncate">{issue.title}</span>
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+      {expanded && hasMoreThanExpandedLimit ? (
+        <div className="mx-4 mt-1 truncate text-[11px] text-muted-foreground/70">
+          Showing latest {RECENT_ISSUES_EXPANDED_LIMIT} of {issues.length}
+        </div>
+      ) : null}
+      {issues.length > RECENT_ISSUES_COLLAPSED_LIMIT ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((current) => !current)}
+          data-testid="issue-recent-toggle"
+          className="mx-1.5 mt-1 flex min-h-8 w-[calc(100%-0.75rem)] items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
+        >
+          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          <span>
+            {expanded
+              ? "Show less"
+              : `Show ${expandCount} more`}
+          </span>
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
 export function ThreeColumnContextSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -357,12 +445,14 @@ export function ThreeColumnContextSidebar() {
   const { followedIssueIds } = useIssueFollows(selectedOrganizationId);
 
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
-  const scope = new URLSearchParams(location.search).get("scope") ?? "";
+  const rawScope = new URLSearchParams(location.search).get("scope") ?? "";
+  const scope = rawScope === "recent" ? "" : rawScope;
   const selectedProjectId = new URLSearchParams(location.search).get("projectId") ?? "";
   const selectedLinearProjectId = new URLSearchParams(location.search).get("linearProjectId") ?? "";
   const activeConversationId = activeConversationIdFromPath(location.pathname);
   const activeAgentRef = location.pathname.match(/\/agents\/([^/]+)/)?.[1] ?? null;
   const activeProjectRef = location.pathname.match(/\/projects\/([^/]+)/)?.[1] ?? null;
+  const activeIssueRef = location.pathname.match(/\/issues\/([^/]+)/)?.[1] ?? null;
 
   const visibleProjects = useMemo(
     () => (projects ?? []).filter((project) => !project.archivedAt),
@@ -444,13 +534,6 @@ export function ThreeColumnContextSidebar() {
       icon: Star,
       label: `Starred${starredIssueRefs.length > 0 ? ` (${starredIssueRefs.length})` : ""}`,
       active: scope === "starred",
-    },
-    {
-      key: "recent",
-      to: `/issues${currentUserId ? "?scope=recent" : ""}`,
-      icon: Clock3,
-      label: `Recently Viewed${recentIssueRefs.length > 0 ? ` (${recentIssueRefs.length})` : ""}`,
-      active: scope === "recent",
     },
   ];
   const activeIssueContextIndex = issueContextItems.findIndex((item) => item.active);
@@ -590,6 +673,11 @@ export function ThreeColumnContextSidebar() {
         </SlidingContextNav>
 
         <div className="min-h-0 flex-1 overflow-y-auto pb-3.5">
+          <RecentIssueListSection
+            issues={recentIssueRefs}
+            activeIssueRef={activeIssueRef}
+            closeMobileSidebar={closeMobileSidebar}
+          />
           <SectionLabel>Projects</SectionLabel>
           <SlidingContextNav
             activeIndex={issueProjectActiveIndex}

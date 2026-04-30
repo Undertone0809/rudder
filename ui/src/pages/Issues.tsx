@@ -15,7 +15,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { createIssueDetailLocationState } from "../lib/issueDetailBreadcrumb";
 import { rememberIssueNavigation } from "../lib/issue-navigation";
 import { getIssueScopeFilters, isFollowingIssue } from "../lib/issue-scope-filters";
-import { readRecentIssueIds, recordRecentIssue, resolveRecentIssues } from "../lib/recent-issues";
+import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
 import { formatAssigneeUserLabel, parseAssigneeValue } from "../lib/assignees";
 import {
   deleteIssueDraft,
@@ -161,7 +161,8 @@ export function Issues() {
 
   const initialSearch = searchParams.get("q") ?? "";
   const issueScope = searchParams.get("scope") ?? "";
-  const isDraftScope = issueScope === "drafts";
+  const effectiveIssueScope = issueScope === "recent" ? "" : issueScope;
+  const isDraftScope = effectiveIssueScope === "drafts";
   const projectId = searchParams.get("projectId") ?? undefined;
   const participantAgentId = searchParams.get("participantAgentId") ?? undefined;
   const requestedGroupBy = searchParams.get("groupBy");
@@ -195,6 +196,16 @@ export function Issues() {
   useEffect(() => {
     return () => clearTimeout(debounceRef.current);
   }, []);
+
+  useEffect(() => {
+    if (issueScope !== "recent" || typeof window === "undefined") return;
+
+    const params = new URLSearchParams(location.search);
+    params.delete("scope");
+    const search = params.toString();
+    const nextUrl = `${location.pathname}${search ? `?${search}` : ""}${location.hash}`;
+    window.history.replaceState(window.history.state, "", nextUrl);
+  }, [issueScope, location.hash, location.pathname, location.search]);
 
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(selectedOrganizationId!),
@@ -270,14 +281,14 @@ export function Issues() {
   useEffect(() => {
     if (!selectedOrganizationId || participantAgentId || isDraftScope) return;
     rememberIssueNavigation(selectedOrganizationId, {
-      scope: issueScope || undefined,
+      scope: effectiveIssueScope || undefined,
       projectId,
     });
-  }, [isDraftScope, issueScope, participantAgentId, projectId, selectedOrganizationId]);
+  }, [effectiveIssueScope, isDraftScope, participantAgentId, projectId, selectedOrganizationId]);
 
   const issueFilters = useMemo(
-    () => getIssueScopeFilters(issueScope, currentUserId),
-    [currentUserId, issueScope],
+    () => getIssueScopeFilters(effectiveIssueScope, currentUserId),
+    [currentUserId, effectiveIssueScope],
   );
 
   const { data: issues, isLoading, error } = useQuery({
@@ -286,7 +297,7 @@ export function Issues() {
       "participant-agent",
       participantAgentId ?? "__all__",
       "scope",
-      issueScope || "__default__",
+      effectiveIssueScope || "__default__",
       "user",
       currentUserId ?? "__none__",
       "project",
@@ -297,17 +308,14 @@ export function Issues() {
   });
   const visibleIssues = useMemo(() => {
     const allIssues = issues ?? [];
-    if (issueScope === "starred") {
+    if (effectiveIssueScope === "starred") {
       return allIssues.filter((issue) => followedIssueIds.has(issue.id));
     }
-    if (issueScope === "recent") {
-      return resolveRecentIssues(recentIssueIds, allIssues);
-    }
-    if (issueScope === "following" && currentUserId) {
+    if (effectiveIssueScope === "following" && currentUserId) {
       return allIssues.filter((issue) => isFollowingIssue(issue, currentUserId));
     }
     return allIssues;
-  }, [currentUserId, followedIssueIds, issues, issueScope, recentIssueIds]);
+  }, [currentUserId, effectiveIssueScope, followedIssueIds, issues]);
 
   const updateIssue = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
