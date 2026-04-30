@@ -821,7 +821,6 @@ export function IssuesList({
             liveIssueIds={liveIssueIds}
             projects={projects}
             onCreateIssue={(status) => openNewIssue({ ...contextNewIssueDefaults, status })}
-            onOpenIssue={onOpenIssue}
             onUpdateIssue={onUpdateIssue}
           />
         </div>

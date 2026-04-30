@@ -1,6 +1,6 @@
 const ISSUE_NAVIGATION_KEY = "rudder:issue-navigation";
 
-const SUPPORTED_SCOPES = new Set(["assigned", "starred"]);
+const SUPPORTED_SCOPES = new Set(["assigned", "starred", "recent"]);
 
 type StoredIssueNavigationState = {
   scope?: string;

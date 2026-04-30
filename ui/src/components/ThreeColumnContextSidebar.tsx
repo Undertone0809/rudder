@@ -3,13 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   Boxes,
-  ChevronDown,
-  ChevronUp,
   Circle,
   Clock3,
   Copy,
   DollarSign,
-  ExternalLink,
   FolderTree,
   History,
   MessageSquare,
@@ -24,7 +21,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { cn, agentUrl, issueUrl, projectRouteRef } from "@/lib/utils";
+import { cn, agentUrl, projectRouteRef } from "@/lib/utils";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
@@ -37,17 +34,11 @@ import { projectsApi } from "@/api/projects";
 import { agentsApi } from "@/api/agents";
 import { chatsApi } from "@/api/chats";
 import { heartbeatsApi } from "@/api/heartbeats";
-import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
 import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
 import { relativeTime } from "@/lib/utils";
-import {
-  RECENT_ISSUES_CHANGED_EVENT,
-  readRecentIssueIds,
-  recordRecentIssue,
-  resolveRecentIssues,
-} from "@/lib/recent-issues";
+import { readRecentIssueIds, resolveRecentIssues } from "@/lib/recent-issues";
 import { isFollowingIssue } from "@/lib/issue-scope-filters";
 import {
   ISSUE_DRAFT_CHANGED_EVENT,
@@ -56,7 +47,6 @@ import {
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentActionsMenu } from "@/components/AgentActionsMenu";
 import { MessengerContextSidebar } from "@/components/MessengerContextSidebar";
-import { StatusIcon } from "@/components/StatusIcon";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,34 +54,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
-import type { Issue } from "@rudderhq/shared";
-
-const LINEAR_PLUGIN_KEY = "rudder.linear";
-const LINEAR_CATALOG_DATA_KEY = "linear-catalog";
-const LINEAR_PLUGIN_ROUTE_PATH = "linear";
-const RECENT_ISSUES_COLLAPSED_LIMIT = 5;
-const RECENT_ISSUES_EXPANDED_LIMIT = 12;
-
-type LinearSidebarProject = {
-  id: string;
-  name: string;
-};
-
-type LinearSidebarCatalog = {
-  orgId: string;
-  projects: LinearSidebarProject[];
-};
-
-function resolveLinearPageContribution(contributions: PluginUiContribution[] | undefined) {
-  const contribution = contributions?.find((entry) => entry.pluginKey === LINEAR_PLUGIN_KEY);
-  if (!contribution) return null;
-  const pageSlot = contribution.slots.find((slot) => slot.type === "page");
-  if (!pageSlot) return null;
-  return {
-    pluginId: contribution.pluginId,
-    routePath: pageSlot?.routePath || LINEAR_PLUGIN_ROUTE_PATH,
-  };
-}
 
 function SectionLabel({
   children,
@@ -134,7 +96,7 @@ function ContextColumnHeader({
 }
 
 function resolveContextColumnHeader(relativePath: string): { title: string; description: string } {
-  if (/^\/issues(?:\/|$)/.test(relativePath) || /^\/linear(?:\/|$)/.test(relativePath)) {
+  if (/^\/issues(?:\/|$)/.test(relativePath)) {
     return { title: "Issues", description: "Views and project slices" };
   }
   if (/^\/chat(?:\/|$)/.test(relativePath)) {
@@ -313,102 +275,13 @@ function ProjectListSection({
   );
 }
 
-function RecentIssueListSection({
-  issues,
-  activeIssueRef,
-  closeMobileSidebar,
-  onOpenIssue,
-}: {
-  issues: Issue[];
-  activeIssueRef: string | null;
-  closeMobileSidebar: () => void;
-  onOpenIssue: (issue: Issue) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  if (issues.length === 0) return null;
-
-  const visibleLimit = expanded ? RECENT_ISSUES_EXPANDED_LIMIT : RECENT_ISSUES_COLLAPSED_LIMIT;
-  const visibleIssues = issues.slice(0, visibleLimit);
-  const expandCount = Math.min(issues.length, RECENT_ISSUES_EXPANDED_LIMIT) - RECENT_ISSUES_COLLAPSED_LIMIT;
-  const hasMoreThanExpandedLimit = issues.length > RECENT_ISSUES_EXPANDED_LIMIT;
-
-  return (
-    <section aria-label="Recently viewed issues" className="mt-1">
-      <SectionLabel testId="issue-recent-section">
-        Recently Viewed
-      </SectionLabel>
-      <div
-        data-testid="issue-recent-list"
-        className={cn(
-          "mt-2 space-y-0.5",
-          expanded && "scrollbar-hover-reveal max-h-72 overflow-y-auto pr-1",
-        )}
-      >
-        {visibleIssues.map((issue) => {
-          const issueRef = issue.identifier ?? issue.id;
-          const active = activeIssueRef === issueRef || activeIssueRef === issue.id;
-          return (
-            <Link
-              key={issue.id}
-              to={issueUrl(issue)}
-              onClick={() => {
-                onOpenIssue(issue);
-                closeMobileSidebar();
-              }}
-              data-testid={`issue-recent-row-${issue.id}`}
-              aria-current={active ? "page" : undefined}
-              className={cn(
-                "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-2.5 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
-                active
-                  ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
-                  : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
-              )}
-            >
-              <span className="shrink-0">
-                <StatusIcon status={issue.status} />
-              </span>
-              <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-                <span className="shrink-0 font-mono text-[11px] text-muted-foreground/78">{issueRef}</span>
-                <span className="shrink-0 text-muted-foreground/55">·</span>
-                <span className="min-w-0 truncate">{issue.title}</span>
-              </span>
-            </Link>
-          );
-        })}
-      </div>
-      {expanded && hasMoreThanExpandedLimit ? (
-        <div className="mx-4 mt-1 truncate text-[11px] text-muted-foreground/70">
-          Showing latest {RECENT_ISSUES_EXPANDED_LIMIT} of {issues.length}
-        </div>
-      ) : null}
-      {issues.length > RECENT_ISSUES_COLLAPSED_LIMIT ? (
-        <button
-          type="button"
-          onClick={() => setExpanded((current) => !current)}
-          data-testid="issue-recent-toggle"
-          className="mx-1.5 mt-1 flex min-h-8 w-[calc(100%-0.75rem)] items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
-        >
-          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-          <span>
-            {expanded
-              ? "Show less"
-              : `Show ${expandCount} more`}
-          </span>
-        </button>
-      ) : null}
-    </section>
-  );
-}
-
 export function ThreeColumnContextSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const relativePath = toOrganizationRelativePath(location.pathname);
   const contextHeader = useMemo(() => resolveContextColumnHeader(relativePath), [relativePath]);
   const isMessengerRoute = /^\/messenger(?:\/|$)/.test(relativePath);
-  const isLinearPluginRoute = /^\/linear(?:\/|$)/.test(relativePath);
-  const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath) || isLinearPluginRoute;
+  const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath);
   const isOrgWorkspaceRoute = /^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const isChatRoute = /^\/chat(?:\/|$)/.test(relativePath);
   const isAgentRoute = !isMessengerRoute && !isIssuesRoute && !isOrgWorkspaceRoute && !isChatRoute;
@@ -448,47 +321,18 @@ export function ThreeColumnContextSidebar() {
     queryFn: () => issuesApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && isIssuesRoute,
   });
-  const { data: pluginContributions } = useQuery({
-    queryKey: queryKeys.plugins.uiContributions,
-    queryFn: () => pluginsApi.listUiContributions(),
-    enabled: !!selectedOrganizationId && isIssuesRoute,
-  });
   const { followedIssueIds } = useIssueFollows(selectedOrganizationId);
 
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
-  const rawScope = new URLSearchParams(location.search).get("scope") ?? "";
-  const scope = rawScope === "recent" ? "" : rawScope;
+  const scope = new URLSearchParams(location.search).get("scope") ?? "";
   const selectedProjectId = new URLSearchParams(location.search).get("projectId") ?? "";
-  const selectedLinearProjectId = new URLSearchParams(location.search).get("linearProjectId") ?? "";
   const activeConversationId = activeConversationIdFromPath(location.pathname);
   const activeAgentRef = location.pathname.match(/\/agents\/([^/]+)/)?.[1] ?? null;
   const activeProjectRef = location.pathname.match(/\/projects\/([^/]+)/)?.[1] ?? null;
-  const activeIssueRef = location.pathname.match(/\/issues\/([^/]+)/)?.[1] ?? null;
 
   const visibleProjects = useMemo(
     () => (projects ?? []).filter((project) => !project.archivedAt),
     [projects],
-  );
-  const linearPageContribution = useMemo(
-    () => resolveLinearPageContribution(pluginContributions),
-    [pluginContributions],
-  );
-  const { data: linearCatalog } = useQuery({
-    queryKey: ["plugins", LINEAR_PLUGIN_KEY, "catalog", selectedOrganizationId ?? "__none__", linearPageContribution?.pluginId ?? "__none__"] as const,
-    queryFn: async () => {
-      const response = await pluginsApi.bridgeGetData(
-        linearPageContribution!.pluginId,
-        LINEAR_CATALOG_DATA_KEY,
-        { orgId: selectedOrganizationId! },
-        selectedOrganizationId,
-      );
-      return response.data as LinearSidebarCatalog;
-    },
-    enabled: !!selectedOrganizationId && !!linearPageContribution?.pluginId && isIssuesRoute,
-  });
-  const linearProjects = useMemo(
-    () => [...(linearCatalog?.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
-    [linearCatalog?.projects],
   );
   const visibleAgents = useMemo(
     () => (agents ?? []).filter((agent) => agent.status !== "terminated").sort((a, b) => a.name.localeCompare(b.name)),
@@ -546,13 +390,19 @@ export function ThreeColumnContextSidebar() {
       label: `Starred${starredIssueRefs.length > 0 ? ` (${starredIssueRefs.length})` : ""}`,
       active: scope === "starred",
     },
+    {
+      key: "recent",
+      to: `/issues${currentUserId ? "?scope=recent" : ""}`,
+      icon: Clock3,
+      label: `Recently Viewed${recentIssueRefs.length > 0 ? ` (${recentIssueRefs.length})` : ""}`,
+      active: scope === "recent",
+    },
   ];
   const activeIssueContextIndex = issueContextItems.findIndex((item) => item.active);
   const issueProjectActiveIndex = visibleProjects.findIndex((project) => {
     const routeRef = projectRouteRef(project);
     return selectedProjectId === project.id || activeProjectRef === routeRef;
   });
-  const issueLinearProjectActiveIndex = linearProjects.findIndex((project) => selectedLinearProjectId === project.id);
   const orgContextItems = [
     { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
     { key: "resources", to: "/resources", icon: Boxes, label: "Resources", active: /^\/resources(?:\/|$)/.test(relativePath) },
@@ -571,19 +421,6 @@ export function ThreeColumnContextSidebar() {
   }, [location.key, selectedOrganizationId]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const refreshRecentIssueIds = () => {
-      setRecentIssueIds(readRecentIssueIds(selectedOrganizationId));
-    };
-    window.addEventListener(RECENT_ISSUES_CHANGED_EVENT, refreshRecentIssueIds);
-    window.addEventListener("storage", refreshRecentIssueIds);
-    return () => {
-      window.removeEventListener(RECENT_ISSUES_CHANGED_EVENT, refreshRecentIssueIds);
-      window.removeEventListener("storage", refreshRecentIssueIds);
-    };
-  }, [selectedOrganizationId]);
-
-  useEffect(() => {
     const refreshIssueDraftSummaries = () => {
       setIssueDraftSummaries(summarizeIssueDrafts(selectedOrganizationId));
     };
@@ -599,11 +436,6 @@ export function ThreeColumnContextSidebar() {
 
   const closeMobileSidebar = () => {
     if (isMobile) setSidebarOpen(false);
-  };
-
-  const recordRecentIssueOpen = (issue: Issue) => {
-    if (!selectedOrganizationId) return;
-    setRecentIssueIds(recordRecentIssue(selectedOrganizationId, issue.id, readRecentIssueIds(selectedOrganizationId)));
   };
 
   const refreshChatList = async (chatId?: string) => {
@@ -701,92 +533,38 @@ export function ThreeColumnContextSidebar() {
           ))}
         </SlidingContextNav>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pb-3.5">
-          <RecentIssueListSection
-            issues={recentIssueRefs}
-            activeIssueRef={activeIssueRef}
-            closeMobileSidebar={closeMobileSidebar}
-            onOpenIssue={recordRecentIssueOpen}
-          />
-          <SectionLabel testId="workspace-projects-section">Projects</SectionLabel>
-          <SlidingContextNav
-            activeIndex={issueProjectActiveIndex}
-            ariaLabel="Issue project slices"
-            className="mt-2"
-            indicatorTestId="issue-project-sidebar-active-indicator"
-          >
-            {visibleProjects.map((project) => {
-              const routeRef = projectRouteRef(project);
-              const active = selectedProjectId === project.id || activeProjectRef === routeRef;
-              return (
-                <Link
-                  key={project.id}
-                  to={`/issues?projectId=${project.id}`}
-                  onClick={closeMobileSidebar}
-                  className={cn(
-                    "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
-                    active
-                      ? "font-medium text-foreground"
-                      : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
-                  )}
-                >
-                  <Circle
-                    data-testid={`issue-project-color-${project.id}`}
-                    className="h-2.5 w-2.5 shrink-0 fill-current"
-                    style={{ color: projectColorAccent(project.color) }}
-                  />
-                  <span className="truncate">{project.name}</span>
-                </Link>
-              );
-            })}
-          </SlidingContextNav>
-
-          {linearProjects.length > 0 ? (
-            <>
-              <SectionLabel
-                testId="issue-linear-section"
-                action={(
-                  <span
-                    title="External source"
-                    className="inline-flex items-center gap-1 rounded-[calc(var(--radius-sm)-2px)] border border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-muted-foreground/78"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    External
-                  </span>
+        <SectionLabel>Projects</SectionLabel>
+        <SlidingContextNav
+          activeIndex={issueProjectActiveIndex}
+          ariaLabel="Issue project slices"
+          className="mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
+          indicatorTestId="issue-project-sidebar-active-indicator"
+        >
+          {visibleProjects.map((project) => {
+            const routeRef = projectRouteRef(project);
+            const active = selectedProjectId === project.id || activeProjectRef === routeRef;
+            return (
+              <Link
+                key={project.id}
+                to={`/issues?projectId=${project.id}`}
+                onClick={closeMobileSidebar}
+                className={cn(
+                  "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                  active
+                    ? "font-medium text-foreground"
+                    : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
                 )}
               >
-                Linear
-              </SectionLabel>
-              <SlidingContextNav
-                activeIndex={issueLinearProjectActiveIndex}
-                ariaLabel="Linear issue project slices"
-                className="mt-2"
-                indicatorTestId="issue-linear-project-sidebar-active-indicator"
-              >
-                {linearProjects.map((project) => {
-                  const active = selectedLinearProjectId === project.id;
-                  return (
-                    <Link
-                      key={project.id}
-                      to={`/${linearPageContribution?.routePath ?? LINEAR_PLUGIN_ROUTE_PATH}?linearProjectId=${encodeURIComponent(project.id)}`}
-                      onClick={closeMobileSidebar}
-                      data-testid={`issue-linear-project-${project.id}`}
-                      className={cn(
-                        "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
-                        active
-                          ? "font-medium text-foreground"
-                          : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
-                      )}
-                    >
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-[calc(var(--radius-sm)-4px)] border border-[color:color-mix(in_oklab,var(--muted-foreground)_54%,transparent)] bg-[color:color-mix(in_oklab,var(--muted-foreground)_18%,transparent)]" />
-                      <span className="truncate">{project.name}</span>
-                    </Link>
-                  );
-                })}
-              </SlidingContextNav>
-            </>
-          ) : null}
-        </div>
+                <Circle
+                  data-testid={`issue-project-color-${project.id}`}
+                  className="h-2.5 w-2.5 shrink-0 fill-current"
+                  style={{ color: projectColorAccent(project.color) }}
+                />
+                <span className="truncate">{project.name}</span>
+              </Link>
+            );
+          })}
+        </SlidingContextNav>
       </aside>
     );
   }

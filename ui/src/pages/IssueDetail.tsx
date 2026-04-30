@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
+import { chatsApi } from "../api/chats";
 import { activityApi } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
@@ -15,10 +16,8 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { assigneeValueFromSelection, suggestedCommentAssigneeValue } from "../lib/assignees";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatChatAgentLabel } from "../lib/agent-labels";
-import { buildIssueChatPrefillHref } from "../lib/chat-object-prefill";
 import { queryKeys } from "../lib/queryKeys";
 import { readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
-import { readRecentIssueIds, recordRecentIssue } from "../lib/recent-issues";
 import { resolveBoardActorLabel } from "../lib/activity-actors";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
@@ -33,7 +32,6 @@ import { StatusIcon } from "../components/StatusIcon";
 import { PriorityIcon } from "../components/PriorityIcon";
 import { StatusBadge } from "../components/StatusBadge";
 import { Identity } from "../components/Identity";
-import { AgentIdentity } from "../components/AgentAvatar";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { Separator } from "@/components/ui/separator";
@@ -290,7 +288,7 @@ function ActorIdentity({
   const id = evt.actorId;
   if (evt.actorType === "agent") {
     const agent = agentMap.get(id);
-    return <AgentIdentity name={agent?.name ?? id.slice(0, 8)} icon={agent?.icon} size="sm" />;
+    return <Identity name={agent?.name ?? id.slice(0, 8)} size="sm" />;
   }
   return <Identity name={resolveBoardActorLabel(evt.actorType, id, currentBoardUserId)} size="sm" />;
 }
@@ -326,11 +324,6 @@ export function IssueDetail() {
     enabled: !!issueId,
   });
   const resolvedCompanyId = issue?.orgId ?? selectedOrganizationId;
-
-  useEffect(() => {
-    if (!issue?.orgId || !issue.id) return;
-    recordRecentIssue(issue.orgId, issue.id, readRecentIssueIds(issue.orgId));
-  }, [issue?.id, issue?.orgId]);
 
   const { data: comments } = useQuery({
     queryKey: queryKeys.issues.comments(issueId!),
@@ -798,10 +791,27 @@ export function IssueDetail() {
     },
   });
 
-  const openInChat = () => {
-    if (!issue) return;
-    navigate(buildIssueChatPrefillHref(issue));
-  };
+  const openInChat = useMutation({
+    mutationFn: async () => {
+      if (!resolvedCompanyId || !issue) throw new Error("Issue is not ready");
+      return chatsApi.create(resolvedCompanyId, {
+        title: `Discuss ${issue.identifier ?? "issue"}`,
+        contextLinks: [{ entityType: "issue", entityId: issue.id }],
+      });
+    },
+    onSuccess: (conversation) => {
+      if (resolvedCompanyId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(resolvedCompanyId) });
+      }
+      navigate(`/chat/${conversation.id}`);
+    },
+    onError: (err) => {
+      pushToast({
+        title: err instanceof Error ? err.message : "Failed to open chat",
+        tone: "error",
+      });
+    },
+  });
 
   const createSubIssue = useMutation({
     mutationFn: async (title: string) => {
@@ -967,7 +977,8 @@ export function IssueDetail() {
         variant="ghost"
         size="sm"
         className="h-7 px-2 text-xs"
-        onClick={openInChat}
+        onClick={() => openInChat.mutate()}
+        disabled={openInChat.isPending}
       >
         <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
         Chat
@@ -1074,7 +1085,7 @@ export function IssueDetail() {
             <Button
               variant="ghost"
               size="icon-xs"
-              onClick={openInChat}
+              onClick={() => openInChat.mutate()}
               title="Open in chat"
             >
               <MessageSquare className="h-4 w-4" />
@@ -1309,11 +1320,7 @@ export function IssueDetail() {
                     <div className="shrink-0">
                       {child.assigneeAgentId ? (
                         agentMap.get(child.assigneeAgentId)?.name ? (
-                          <AgentIdentity
-                            name={agentMap.get(child.assigneeAgentId)?.name ?? child.assigneeAgentId.slice(0, 8)}
-                            icon={agentMap.get(child.assigneeAgentId)?.icon}
-                            size="sm"
-                          />
+                          <Identity name={agentMap.get(child.assigneeAgentId)?.name ?? child.assigneeAgentId.slice(0, 8)} size="sm" />
                         ) : (
                           <span className="font-mono text-xs text-muted-foreground">{child.assigneeAgentId.slice(0, 8)}</span>
                         )

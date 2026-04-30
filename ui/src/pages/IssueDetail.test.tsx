@@ -389,11 +389,9 @@ vi.mock("@/components/ui/tabs", () => ({
   TabsTrigger: ({ children }: { children: ReactNode }) => <button>{children}</button>,
 }));
 
-vi.mock("lucide-react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("lucide-react")>();
+vi.mock("lucide-react", () => {
   const Icon = () => <span />;
   return {
-    ...actual,
     Activity: Icon,
     Check: Icon,
     ChevronDown: Icon,
