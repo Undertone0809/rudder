@@ -1,3 +1,10 @@
+import type { ChatMessage } from "@rudderhq/shared";
+
+export type ActiveChatStreamVisibilityState = {
+  userCreatedAt: Date;
+  chatTurnId: string | null;
+};
+
 export function setChatFlagState(
   current: Record<string, true>,
   chatId: string,
@@ -38,4 +45,13 @@ export function readChatScopedState<T>(
 ): T | null {
   if (!chatId) return null;
   return current[chatId] ?? null;
+}
+
+export function shouldShowMessageDuringActiveStream(
+  message: Pick<ChatMessage, "role" | "chatTurnId" | "createdAt">,
+  activeStream: ActiveChatStreamVisibilityState,
+): boolean {
+  if (message.role === "user") return true;
+  if (activeStream.chatTurnId && message.chatTurnId === activeStream.chatTurnId) return false;
+  return new Date(message.createdAt).getTime() < activeStream.userCreatedAt.getTime();
 }

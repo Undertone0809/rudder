@@ -4,6 +4,7 @@ import {
   readChatScopedState,
   setChatFlagState,
   setChatScopedState,
+  shouldShowMessageDuringActiveStream,
 } from "./chat-stream-state";
 
 describe("chat stream state helpers", () => {
@@ -53,5 +54,36 @@ describe("chat stream state helpers", () => {
     );
 
     expect(next).toEqual({ "chat-b": { body: "reply B" } });
+  });
+
+  it("hides finalized assistant messages for the active stream turn", () => {
+    const activeStream = {
+      userCreatedAt: new Date("2026-04-30T10:00:00.000Z"),
+      chatTurnId: "turn-active",
+    };
+
+    expect(shouldShowMessageDuringActiveStream({
+      role: "user",
+      chatTurnId: "turn-active",
+      createdAt: new Date("2026-04-30T10:00:00.000Z"),
+    }, activeStream)).toBe(true);
+
+    expect(shouldShowMessageDuringActiveStream({
+      role: "assistant",
+      chatTurnId: "turn-active",
+      createdAt: new Date("2026-04-30T10:00:01.000Z"),
+    }, activeStream)).toBe(false);
+
+    expect(shouldShowMessageDuringActiveStream({
+      role: "assistant",
+      chatTurnId: "turn-previous",
+      createdAt: new Date("2026-04-30T09:59:59.000Z"),
+    }, activeStream)).toBe(true);
+
+    expect(shouldShowMessageDuringActiveStream({
+      role: "assistant",
+      chatTurnId: null,
+      createdAt: new Date("2026-04-30T10:00:02.000Z"),
+    }, activeStream)).toBe(false);
   });
 });

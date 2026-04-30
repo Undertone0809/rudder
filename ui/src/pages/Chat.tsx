@@ -85,6 +85,7 @@ import {
   readChatScopedState,
   setChatFlagState,
   setChatScopedState,
+  shouldShowMessageDuringActiveStream,
 } from "@/lib/chat-stream-state";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
@@ -113,6 +114,7 @@ type StreamDraft = {
   userBody: string;
   userCreatedAt: Date;
   userMessageId: string | null;
+  chatTurnId: string | null;
   editedFromCreatedAt: Date | null;
   body: string;
   state: StreamDraftState;
@@ -1304,14 +1306,18 @@ function StreamTranscriptItem({
   state,
   streamStartedAt,
   streamEndedAt,
+  defaultOpen = false,
+  onOpenChange,
 }: {
   entries: TranscriptEntry[];
   state: StreamDraftState | ChatMessage["status"];
   streamStartedAt: Date;
   streamEndedAt?: Date | null;
+  defaultOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const streamingActive = state === "streaming" || state === "finalizing";
-  const [processOpen, setProcessOpen] = useState(() => streamingActive);
+  const [processOpen, setProcessOpen] = useState(() => streamingActive || defaultOpen);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -1319,6 +1325,10 @@ function StreamTranscriptItem({
     const id = window.setInterval(() => setTick((n) => n + 1), 500);
     return () => clearInterval(id);
   }, [streamingActive]);
+
+  useEffect(() => {
+    if (defaultOpen) setProcessOpen(true);
+  }, [defaultOpen]);
 
   const durationMs = useMemo(() => {
     const start = streamStartedAt.getTime();
@@ -1351,7 +1361,13 @@ function StreamTranscriptItem({
             )}
             disabled={streamingActive}
             onClick={() => {
-              if (!streamingActive) setProcessOpen((open) => !open);
+              if (!streamingActive) {
+                setProcessOpen((open) => {
+                  const next = !open;
+                  onOpenChange?.(next);
+                  return next;
+                });
+              }
             }}
             aria-expanded={showBody}
           >
@@ -1495,6 +1511,7 @@ function ChatWorkspace() {
   const [sendInFlightByChatId, setSendInFlightByChatId] = useState<Record<string, true>>({});
   const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false);
   const [streamDrafts, setStreamDrafts] = useState<Record<string, StreamDraft>>({});
+  const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, true>>({});
   const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>("__none__");
   const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
   const [draftPlanMode, setDraftPlanMode] = useState(false);
@@ -1983,6 +2000,43 @@ function ChatWorkspace() {
     });
   }, []);
 
+  const setProcessOpenForMessage = useCallback((messageId: string, open: boolean) => {
+    setOpenProcessMessageIds((current) => {
+      if (open) {
+        if (current[messageId]) return current;
+        return { ...current, [messageId]: true };
+      }
+      if (!(messageId in current)) return current;
+      const { [messageId]: _removed, ...rest } = current;
+      return rest;
+    });
+  }, []);
+
+  const keepProcessOpenForMessages = useCallback((messages: ChatMessage[]) => {
+    const messageIds = messages
+      .filter((message) => {
+        const transcript = (message.transcript ?? []) as TranscriptEntry[];
+        return transcript.length > 0
+          && (
+            message.role === "assistant"
+            || message.kind === "issue_proposal"
+            || message.kind === "operation_proposal"
+          );
+      })
+      .map((message) => message.id);
+    if (messageIds.length === 0) return;
+    setOpenProcessMessageIds((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const messageId of messageIds) {
+        if (next[messageId]) continue;
+        next[messageId] = true;
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, []);
+
   const clearAbortControllerForChat = useCallback((chatId: string) => {
     if (!(chatId in streamAbortControllersRef.current)) return;
     const { [chatId]: _removed, ...rest } = streamAbortControllersRef.current;
@@ -2231,6 +2285,7 @@ function ChatWorkspace() {
         userBody: body,
         userCreatedAt: startedAt,
         userMessageId: null,
+        chatTurnId: null,
         editedFromCreatedAt: editTargetMessage ? new Date(editTargetMessage.createdAt) : null,
         body: "",
         state: "streaming",
@@ -2248,7 +2303,11 @@ function ChatWorkspace() {
             upsertMessages(chatId, [event.userMessage]);
             setStreamDraftForChat(
               chatId,
-              (current) => (current ? { ...current, userMessageId: event.userMessage.id } : current),
+              (current) => (current ? {
+                ...current,
+                userMessageId: event.userMessage.id,
+                chatTurnId: event.userMessage.chatTurnId ?? null,
+              } : current),
             );
             return;
           }
@@ -2280,7 +2339,9 @@ function ChatWorkspace() {
           }
 
           if (event.type === "final") {
+            keepProcessOpenForMessages(event.messages);
             upsertMessages(chatId, event.messages);
+            setStreamDraftForChat(chatId, null);
           }
         },
       });
@@ -2389,9 +2450,12 @@ function ChatWorkspace() {
   const activeEditCutoffMs = activeStream?.editedFromCreatedAt
     ? activeStream.editedFromCreatedAt.getTime()
     : null;
-  const visibleMessages = activeEditCutoffMs === null
+  const activeStreamFilteredMessages = activeEditCutoffMs === null
     ? displayedMessages
     : displayedMessages.filter((message) => new Date(message.createdAt).getTime() < activeEditCutoffMs);
+  const visibleMessages = activeStream
+    ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(message, activeStream))
+    : activeStreamFilteredMessages;
   const lastMarkedReadKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -3281,6 +3345,8 @@ function ChatWorkspace() {
                                     state={message.status}
                                     streamStartedAt={persistedProcessStartedAt!}
                                     streamEndedAt={persistedProcessEndedAt}
+                                    defaultOpen={Boolean(openProcessMessageIds[message.id])}
+                                    onOpenChange={(open) => setProcessOpenForMessage(message.id, open)}
                                   />
                                 ) : null}
                                 <ChatMessageItem

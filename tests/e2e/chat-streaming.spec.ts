@@ -86,6 +86,8 @@ test.describe("Chat streaming", () => {
     await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: /Worked for/ })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("chat-transcript-item").last().getByText("Inspecting current chat state", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "Streaming reply for chat." })).toHaveCount(1);
+    await expect(page.getByTestId("chat-transcript-item")).toHaveCount(1);
 
     await page.reload();
     await expect(page.getByText("Streaming reply for chat.", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
