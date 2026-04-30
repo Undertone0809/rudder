@@ -31,8 +31,19 @@ describe("mention chips", () => {
     }) as Record<string, string>;
 
     expect(style["--rudder-mention-project-color"]).toBe("#336699");
+    expect(style["--rudder-mention-icon-mask"]).toContain("data:image/svg+xml");
     expect(style.color).toBeUndefined();
     expect(style.borderColor).toBeUndefined();
     expect(style.backgroundColor).toBeUndefined();
+  });
+
+  it("marks issue mentions with the shared icon mask", () => {
+    const style = mentionChipInlineStyle({
+      kind: "issue",
+      issueId: "issue-123",
+      ref: "RUD-123",
+    }) as Record<string, string>;
+
+    expect(style["--rudder-mention-icon-mask"]).toContain("data:image/svg+xml");
   });
 });

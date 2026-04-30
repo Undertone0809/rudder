@@ -47,6 +47,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/projects/project-456"');
     expect(html).toContain('data-mention-kind="project"');
     expect(html).toContain("--rudder-mention-project-color:#336699");
+    expect(html).toContain("--rudder-mention-icon-mask");
     expect(html).toContain(">Rudder App</a>");
     expect(html).not.toContain(">@Rudder App</a>");
   });
@@ -62,6 +63,7 @@ describe("MarkdownBody", () => {
 
     expect(html).toContain('href="/issues/PAP-123"');
     expect(html).toContain('data-mention-kind="issue"');
+    expect(html).toContain("--rudder-mention-icon-mask");
     expect(html).toContain(">PAP-123 auth flow</a>");
     expect(html).not.toContain(">@PAP-123 auth flow</a>");
   });

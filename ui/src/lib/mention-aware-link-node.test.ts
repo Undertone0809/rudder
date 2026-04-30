@@ -47,4 +47,16 @@ describe("getMentionAwareLinkNodeInit", () => {
 
     expect(created).toBeInstanceOf(MentionAwareLinkNode);
   });
+
+  it("allows issue mention links through the custom URL sanitizer", () => {
+    const editor = createTestEditor();
+    let sanitized: string | null = null;
+
+    editor.update(() => {
+      const node = new MentionAwareLinkNode("issue://issue-123?r=RUD-123");
+      sanitized = node.sanitizeUrl("issue://issue-123?r=RUD-123");
+    });
+
+    expect(sanitized).toBe("issue://issue-123?r=RUD-123");
+  });
 });

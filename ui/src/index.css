@@ -1252,14 +1252,23 @@ a.rudder-mention-chip::before {
 
 .rudder-mdxeditor-content a.rudder-mention-chip[data-mention-kind="project"]::before,
 a.rudder-mention-chip[data-mention-kind="project"]::before {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 999px;
+  width: 0.75rem;
+  height: 0.75rem;
   background: var(--rudder-mention-project-color, currentColor);
+  -webkit-mask-image: var(--rudder-mention-icon-mask);
+  mask-image: var(--rudder-mention-icon-mask);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
 }
 
 .rudder-mdxeditor-content a.rudder-mention-chip[data-mention-kind="agent"]::before,
-a.rudder-mention-chip[data-mention-kind="agent"]::before {
+.rudder-mdxeditor-content a.rudder-mention-chip[data-mention-kind="issue"]::before,
+a.rudder-mention-chip[data-mention-kind="agent"]::before,
+a.rudder-mention-chip[data-mention-kind="issue"]::before {
   width: 0.75rem;
   height: 0.75rem;
   background-color: currentColor;
