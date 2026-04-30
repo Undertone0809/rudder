@@ -19,7 +19,8 @@ related_code:
   - ui/src/api/agents.ts
   - server/src/routes/agents.ts
   - server/src/services/heartbeat.ts
-commit_refs: []
+commit_refs:
+  - b80dc7a
 updated_at: 2026-04-22
 ---
 
