@@ -46,7 +46,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import type { AutomationTrigger } from "@rudderhq/shared";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
@@ -780,13 +779,17 @@ export function AutomationDetail() {
   }
 
   const automationEnabled = automation.status === "active";
-  const automationToggleDisabled = updateAutomationStatus.isPending || automation.status === "archived";
   const automationLabel = automation.status === "archived" ? "Archived" : automationEnabled ? "Active" : "Paused";
   const automationLabelClassName = automation.status === "archived"
     ? "text-muted-foreground"
     : automationEnabled
       ? "text-emerald-400"
       : "text-muted-foreground";
+  const automationBadgeClassName = automation.status === "archived"
+    ? "border-border/70 text-muted-foreground"
+    : automationEnabled
+      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      : "border-border/70 bg-muted/20 text-muted-foreground";
   const editSyncLabel = saveAutomation.isPending
     ? "Saving..."
     : !canAutoSaveAutomation
@@ -1003,17 +1006,9 @@ export function AutomationDetail() {
         <aside className="space-y-8 border-t border-border/70 pt-5 lg:sticky lg:top-24 lg:self-start lg:border-l lg:border-t-0 lg:pl-7 lg:pr-2 lg:pt-8">
           <SidebarSection title="Status">
             <SidebarRow label="State">
-              <div className="flex items-center justify-end gap-2">
+              <Badge variant="outline" className={automationBadgeClassName}>
                 <span className={automationLabelClassName}>{automationLabel}</span>
-                <ToggleSwitch
-                  checked={automationEnabled}
-                  size="md"
-                  tone="success"
-                  aria-label={automationEnabled ? "Pause automatic triggers" : "Enable automatic triggers"}
-                  disabled={automationToggleDisabled}
-                  onClick={() => updateAutomationStatus.mutate(automationEnabled ? "paused" : "active")}
-                />
-              </div>
+              </Badge>
             </SidebarRow>
             <SidebarRow label="Next run">
               <span className="truncate">{formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}</span>

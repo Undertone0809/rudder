@@ -28,12 +28,41 @@ const blockedDependencies: GoalDependencies = {
   goalId: "goal-1",
   orgId: "org-1",
   canDelete: false,
-  blockers: ["linked_issues", "last_root_organization_goal"],
+  blockers: ["child_goals", "linked_projects", "linked_issues", "last_root_organization_goal"],
   isLastRootOrganizationGoal: true,
+  counts: {
+    childGoals: 1,
+    linkedProjects: 1,
+    linkedIssues: 2,
+    automations: 0,
+    costEvents: 0,
+    financeEvents: 0,
+  },
+  previews: {
+    childGoals: [
+      { id: "child-1", title: "Child Goal", subtitle: "active" },
+    ],
+    linkedProjects: [
+      { id: "project-1", title: "Launch Rollout", subtitle: "in_progress" },
+    ],
+    linkedIssues: [
+      { id: "issue-1", title: "Confirm delete blocker copy", subtitle: "RAA-7" },
+      { id: "issue-2", title: "Follow-up regression check", subtitle: "RAA-8" },
+    ],
+    automations: [],
+  },
+};
+
+const safeDependencies: GoalDependencies = {
+  goalId: "goal-1",
+  orgId: "org-1",
+  canDelete: true,
+  blockers: [],
+  isLastRootOrganizationGoal: false,
   counts: {
     childGoals: 0,
     linkedProjects: 0,
-    linkedIssues: 2,
+    linkedIssues: 0,
     automations: 0,
     costEvents: 0,
     financeEvents: 0,
@@ -123,6 +152,35 @@ function renderGoalProperties(props: Partial<ComponentProps<typeof GoalPropertie
 }
 
 describe("GoalProperties", () => {
+  it("confirms hard delete for a safe unused goal", () => {
+    const onDelete = vi.fn();
+    const { container } = renderGoalProperties({
+      dependencies: safeDependencies,
+      onDelete,
+    });
+
+    const deleteButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Delete goal"));
+    expect(deleteButton).toBeTruthy();
+
+    act(() => {
+      deleteButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Confirm delete");
+
+    const confirmButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Confirm delete"));
+    expect(confirmButton).toBeTruthy();
+
+    act(() => {
+      confirmButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onDelete).toHaveBeenCalledTimes(1);
+  });
+
   it("offers cancellation instead of hard delete when dependencies block deletion", () => {
     const onDelete = vi.fn();
     const { container, onUpdate } = renderGoalProperties({
@@ -131,7 +189,12 @@ describe("GoalProperties", () => {
     });
 
     expect(container.textContent).toContain("Delete blocked by");
+    expect(container.textContent).toContain("Child goals");
+    expect(container.textContent).toContain("Child Goal");
+    expect(container.textContent).toContain("Linked projects");
+    expect(container.textContent).toContain("Launch Rollout");
     expect(container.textContent).toContain("Linked issues");
+    expect(container.textContent).toContain("Confirm delete blocker copy");
     expect(container.textContent).toContain("Last root organization goal");
     expect(container.textContent).toContain("Cancel goal");
     expect(container.textContent).not.toContain("Delete goal");

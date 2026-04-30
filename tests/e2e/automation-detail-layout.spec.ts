@@ -81,6 +81,7 @@ test.describe("Automation detail layout", () => {
     await expect(statusButton).toBeVisible();
     await expect(deleteButton).toBeVisible();
     await expect(runButton).toBeVisible();
+    await expect(page.getByRole("switch")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Run now" })).toHaveCount(1);
     await expect(page.getByRole("button", { name: /^Save$/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);

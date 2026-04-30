@@ -97,6 +97,21 @@ function dependencyLabel(blocker: string) {
   }
 }
 
+function dependencyPreviewLabel(key: keyof GoalDependencies["previews"]) {
+  switch (key) {
+    case "childGoals":
+      return "Child goals";
+    case "linkedProjects":
+      return "Linked projects";
+    case "linkedIssues":
+      return "Linked issues";
+    case "automations":
+      return "Automations";
+    default:
+      return label(key);
+  }
+}
+
 function descendantIds(goal: Goal, allGoals: Goal[]) {
   const result = new Set<string>();
   const visit = (parentId: string) => {
@@ -132,6 +147,30 @@ function GoalDangerZone({
 
   const canDelete = dependencies?.canDelete === true;
   const blocked = dependencies && !dependencies.canDelete;
+  const dependencyPreviewSections = dependencies
+    ? ([
+        {
+          key: "childGoals",
+          count: dependencies.counts.childGoals,
+          items: dependencies.previews.childGoals,
+        },
+        {
+          key: "linkedProjects",
+          count: dependencies.counts.linkedProjects,
+          items: dependencies.previews.linkedProjects,
+        },
+        {
+          key: "linkedIssues",
+          count: dependencies.counts.linkedIssues,
+          items: dependencies.previews.linkedIssues,
+        },
+        {
+          key: "automations",
+          count: dependencies.counts.automations,
+          items: dependencies.previews.automations,
+        },
+      ] as const).filter((section) => section.count > 0 && section.items.length > 0)
+    : [];
 
   return (
     <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-3">
@@ -162,6 +201,40 @@ function GoalDangerZone({
               </span>
             ))}
           </div>
+          {dependencyPreviewSections.length > 0 && (
+            <div className="space-y-2 pt-1">
+              {dependencyPreviewSections.map((section) => {
+                const hiddenCount = Math.max(section.count - section.items.length, 0);
+                return (
+                  <div key={section.key} className="space-y-1">
+                    <div className="text-[11px] font-medium text-muted-foreground">
+                      {dependencyPreviewLabel(section.key)} ({section.count})
+                    </div>
+                    <div className="overflow-hidden rounded-md border border-border">
+                      {section.items.map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center justify-between gap-3 border-b border-border px-2 py-1.5 text-xs last:border-b-0"
+                        >
+                          <span className="truncate">{item.title}</span>
+                          {item.subtitle ? (
+                            <span className="shrink-0 text-[11px] text-muted-foreground">
+                              {item.subtitle}
+                            </span>
+                          ) : null}
+                        </div>
+                      ))}
+                      {hiddenCount > 0 && (
+                        <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                          +{hiddenCount} more
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

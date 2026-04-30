@@ -1036,8 +1036,8 @@ function ProposalCard({
           <div className="mt-1 text-xs font-medium text-muted-foreground">
             Priority · {String(issueProposal.priority ?? "medium")}
           </div>
-          <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-            {String(issueProposal.description)}
+          <div className="mt-3 text-sm leading-6 text-muted-foreground">
+            <MarkdownBody>{String(issueProposal.description)}</MarkdownBody>
           </div>
         </div>
       ) : null}

@@ -130,7 +130,7 @@ test.describe("Issues recently viewed sidebar", () => {
     expect(projectRes.ok()).toBe(true);
 
     const issues = [];
-    for (let index = 1; index <= 23; index += 1) {
+    for (let index = 1; index <= 13; index += 1) {
       issues.push(await createIssue(page, organization.id, `Recent overflow issue ${String(index).padStart(2, "0")}`));
     }
 
@@ -143,12 +143,12 @@ test.describe("Issues recently viewed sidebar", () => {
     await expect(page.getByTestId("workspace-projects-section")).toContainText("Projects");
     await expect(page.getByRole("link", { name: /Sidebar Project/ })).toBeVisible();
 
-    await expect(page.getByTestId("issue-recent-toggle")).toContainText("Show 15 more");
+    await expect(page.getByTestId("issue-recent-toggle")).toContainText("Show 7 more");
     await page.getByTestId("issue-recent-toggle").click();
 
-    await expect(page.getByTestId(`issue-recent-row-${issues[19].id}`)).toBeVisible();
-    await expect(page.getByTestId(`issue-recent-row-${issues[20].id}`)).toHaveCount(0);
-    await expect(page.getByText("Showing latest 20 of 23")).toBeVisible();
+    await expect(page.getByTestId(`issue-recent-row-${issues[11].id}`)).toBeVisible();
+    await expect(page.getByTestId(`issue-recent-row-${issues[12].id}`)).toHaveCount(0);
+    await expect(page.getByText("Showing latest 12 of 13")).toBeVisible();
     await expect(page.getByRole("link", { name: /Sidebar Project/ })).toBeVisible();
   });
 });

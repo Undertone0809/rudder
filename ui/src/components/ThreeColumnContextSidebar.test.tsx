@@ -291,7 +291,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
   });
 
   it("renders recently viewed issues as bounded sidebar rows instead of an issue view entry", () => {
-    mockState.issues = Array.from({ length: 7 }, (_, index) => ({
+    mockState.issues = Array.from({ length: 13 }, (_, index) => ({
       id: `issue-${index + 1}`,
       identifier: `RUD-${index + 1}`,
       title: `Recent issue ${index + 1}`,
@@ -308,13 +308,15 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector("[data-testid='issue-recent-row-issue-6']")).toBeNull();
 
     const toggle = document.querySelector("[data-testid='issue-recent-toggle']") as HTMLButtonElement | null;
-    expect(toggle?.textContent).toContain("Show 2 more");
+    expect(toggle?.textContent).toContain("Show 7 more");
 
     act(() => {
       toggle?.click();
     });
 
-    expect(document.querySelector("[data-testid='issue-recent-row-issue-7']")?.textContent).toContain("Recent issue 7");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-12']")?.textContent).toContain("Recent issue 12");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-13']")).toBeNull();
+    expect(document.body.textContent).toContain("Showing latest 12 of 13");
     expect(toggle?.textContent).toContain("Show less");
   });
 
