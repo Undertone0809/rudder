@@ -422,6 +422,7 @@ function issueCard(
   followed: boolean,
   latestPreview: string | null,
   latestActivityAt: Date,
+  sourceComment: Pick<IssueCommentRow, "id" | "body"> | null,
 ): MessengerIssueThreadItem {
   const createdByMe = issue.createdByUserId === currentUserId;
   const assignedToMe = issue.assigneeUserId === currentUserId;
@@ -447,6 +448,8 @@ function issueCard(
     },
     issueId: issue.id,
     issueIdentifier: issue.identifier,
+    sourceCommentId: sourceComment?.id ?? null,
+    sourceCommentBody: sourceComment?.body ?? null,
   };
 }
 
@@ -699,13 +702,14 @@ export function messengerService(db: Db) {
       const latestCommentAt = normalizeDate(latestComment?.createdAt ?? null);
       const latestEventAt = maxDate(latestCommentAt, latestActivity?.createdAt);
       const latestActivityAt = maxDate(issue.updatedAt, latestEventAt);
-      const latestPreview =
+      const latestSourceIsComment =
         latestCommentAt &&
-        (!latestActivity?.createdAt || latestCommentAt.getTime() >= new Date(latestActivity.createdAt).getTime())
-          ? truncate(latestComment?.body)
-          : latestActivity
-            ? summarizeIssueActivity(latestActivity, issue)
-            : null;
+        (!latestActivity?.createdAt || latestCommentAt.getTime() >= new Date(latestActivity.createdAt).getTime());
+      const latestPreview = latestSourceIsComment
+        ? truncate(latestComment?.body)
+        : latestActivity
+          ? summarizeIssueActivity(latestActivity, issue)
+          : null;
 
       const latestExternalComment = latestExternalCommentByIssue.get(issue.id) ?? null;
       const latestExternalActivity = latestExternalActivityByIssue.get(issue.id) ?? null;
@@ -736,6 +740,7 @@ export function messengerService(db: Db) {
           issue.followed,
           latestPreview,
           latestActivityAt ?? issue.updatedAt,
+          latestSourceIsComment ? latestComment : null,
         ),
         attentionActivityAt,
         attentionPreview,

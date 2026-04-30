@@ -175,12 +175,20 @@ describe("messengerService and issue follows", () => {
       },
     ]);
 
+    const followedCommentBody = [
+      "## Review Summary",
+      "",
+      "- render enough comment body to judge the issue update",
+      "- preserve markdown for Messenger issue previews",
+    ].join("\n");
+
     await issueSvc.followIssue(orgId, followedIssueId, userId);
-    await issueSvc.addComment(followedIssueId, "Followed issue needs review", {});
+    const followedComment = await issueSvc.addComment(followedIssueId, followedCommentBody, {});
     expect(await issueSvc.isFollowedByUser(orgId, followedIssueId, userId)).toBe(true);
 
     const thread = await messengerSvc.getIssuesThread(orgId, userId);
     const itemIds = new Set(thread.detail.items.map((item) => item.issueId));
+    const followedItem = thread.detail.items.find((item) => item.issueId === followedIssueId);
     const assignedItem = thread.detail.items.find((item) => item.issueId === assignedIssueId);
     const createdItem = thread.detail.items.find((item) => item.issueId === createdIssueId);
     const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
@@ -190,10 +198,13 @@ describe("messengerService and issue follows", () => {
     expect(itemIds.has(assignedIssueId)).toBe(true);
     expect(itemIds.has(createdIssueId)).toBe(true);
     expect(itemIds.has(unrelatedIssueId)).toBe(false);
+    expect(followedItem?.sourceCommentId).toBe(followedComment.id);
+    expect(followedItem?.sourceCommentBody).toBe(followedCommentBody);
+    expect(followedItem?.preview).toBe("## Review Summary");
     expect(assignedItem?.metadata).toMatchObject({ assignedToMe: true, createdByMe: false });
     expect(assignedItem?.body).toContain("assigned to me");
     expect(createdItem?.metadata).toMatchObject({ assignedToMe: false, createdByMe: true });
-    expect(issuesSummary?.preview).toBe("Followed issue needs review");
+    expect(issuesSummary?.preview).toBe("## Review Summary");
   });
 
   it("does not count self-authored issue activity as Messenger attention", async () => {
@@ -281,6 +292,8 @@ describe("messengerService and issue follows", () => {
 
     expect(thread.detail.items.map((item) => item.issueId)).toEqual([issueId]);
     expect(thread.detail.items[0]?.preview).toBe("Status changed to in review");
+    expect(thread.detail.items[0]?.sourceCommentId).toBeNull();
+    expect(thread.detail.items[0]?.sourceCommentBody).toBeNull();
     expect(thread.detail.unreadCount).toBe(0);
     expect(thread.detail.needsAttention).toBe(false);
     expect(thread.summary.latestActivityAt).toBeNull();

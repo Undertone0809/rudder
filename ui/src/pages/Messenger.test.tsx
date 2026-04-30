@@ -8,6 +8,7 @@ import {
   MessengerIssuesView,
   MessengerSystemView,
 } from "./Messenger";
+import { ThemeProvider } from "@/context/ThemeContext";
 
 const invalidateQueries = vi.fn();
 const mutate = vi.fn();
@@ -78,6 +79,14 @@ function baseModel() {
   };
 }
 
+function renderIssueThread() {
+  return renderToStaticMarkup(
+    <ThemeProvider>
+      <MessengerIssuesView />
+    </ThemeProvider>,
+  );
+}
+
 describe("Messenger page headers", () => {
   beforeEach(() => {
     messengerModel = baseModel();
@@ -118,8 +127,47 @@ describe("Messenger page headers", () => {
     expect(html).toContain("Issues");
     expect(html).toContain("Followed issues, issues I created, and issues assigned to me.");
     expect(html).toContain("Messenger issue follow");
+    expect(html).toContain('href="/issues/RUD-1"');
+    expect(html).not.toContain("#comment-");
     expect(html).not.toContain("Assign to me");
     expect(html).not.toContain("3 unread");
+  });
+
+  it("renders comment-backed issue cards as markdown and links directly to the source comment", () => {
+    messengerModel.issueThreadDetail = {
+      title: "Issues",
+      description: "Followed issues, issues I created, and issues assigned to me.",
+      unreadCount: 1,
+      items: [
+        {
+          id: "issue-item-4",
+          issueId: "issue-4",
+          issueIdentifier: "RUD-4",
+          sourceCommentId: "comment-4",
+          sourceCommentBody: "## Review Summary\n\n- **Rendered** from markdown",
+          title: "RUD-4 · Render markdown comments",
+          subtitle: "commented",
+          body: "## Review Summary",
+          preview: "## Review Summary",
+          href: "/issues/RUD-4",
+          latestActivityAt: "2026-04-19T03:00:00.000Z",
+          actions: [],
+          metadata: {
+            status: "todo",
+            priority: "medium",
+            followed: true,
+            createdByMe: false,
+            assignedToMe: false,
+          },
+        },
+      ],
+    };
+
+    const html = renderIssueThread();
+
+    expect(html).toContain("<h2>Review Summary</h2>");
+    expect(html).toContain("<strong>Rendered</strong>");
+    expect(html).toContain('href="/issues/RUD-4#comment-comment-4"');
   });
 
   it("suppresses the self-assigned label when the issue was also created by me", () => {

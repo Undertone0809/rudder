@@ -2,6 +2,8 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
   CircleAlert,
   MessageSquare,
   RefreshCcw,
@@ -16,6 +18,7 @@ import { heartbeatsApi } from "@/api/heartbeats";
 import { issuesApi } from "@/api/issues";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { ApprovalDetailDialog } from "@/components/ApprovalDetailDialog";
+import { MarkdownBody } from "@/components/MarkdownBody";
 import { Button } from "@/components/ui/button";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,7 +34,11 @@ import { queryKeys } from "@/lib/queryKeys";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { getRememberedMessengerPath, rememberMessengerPath, resolveRememberedMessengerEntry } from "@/lib/messenger-memory";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
-import { relativeTime } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
+
+const ISSUE_COMMENT_PREVIEW_LINES = 10;
+const ISSUE_COMMENT_PREVIEW_LINE_HEIGHT = 20;
+const ISSUE_COMMENT_PREVIEW_COLLAPSED_HEIGHT = ISSUE_COMMENT_PREVIEW_LINES * ISSUE_COMMENT_PREVIEW_LINE_HEIGHT;
 
 function firstNonEmptyLine(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -96,6 +103,13 @@ function issueDisplayTitle(item: MessengerIssueThreadItem) {
   if (!item.issueIdentifier) return item.title;
   const prefix = `${item.issueIdentifier} · `;
   return item.title.startsWith(prefix) ? item.title.slice(prefix.length) : item.title;
+}
+
+function issueOpenHref(item: MessengerIssueThreadItem) {
+  const href = item.href ?? `/issues/${item.issueIdentifier ?? item.issueId}`;
+  if (!item.sourceCommentId) return href;
+  const hashlessHref = href.split("#")[0] ?? href;
+  return `${hashlessHref}#comment-${item.sourceCommentId}`;
 }
 
 function issueContextLabel(item: MessengerIssueThreadItem) {
@@ -174,7 +188,7 @@ function ObjectMessageCard({
 }: {
   eyebrow: string;
   title: string;
-  description: string | null;
+  description: ReactNode | null;
   status?: ReactNode;
   children?: ReactNode;
   footer?: ReactNode;
@@ -194,11 +208,74 @@ function ObjectMessageCard({
       <div className="space-y-3 px-4 py-3.5">
         <div className="space-y-1">
           <h2 className="text-[15px] font-semibold tracking-tight text-foreground">{title}</h2>
-          {description ? <p className="text-sm leading-5 text-muted-foreground">{description}</p> : null}
+          {typeof description === "string" ? (
+            <p className="text-sm leading-5 text-muted-foreground">{description}</p>
+          ) : description}
         </div>
         {children}
       </div>
       {footer ? <div className="border-t border-border/60 px-4 py-2.5">{footer}</div> : null}
+    </div>
+  );
+}
+
+function MessengerIssueCommentPreview({
+  body,
+  testId,
+}: {
+  body: string;
+  testId: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const element = contentRef.current;
+    if (!element) return;
+
+    const measure = () => {
+      setOverflowing(element.scrollHeight > ISSUE_COMMENT_PREVIEW_COLLAPSED_HEIGHT + 2);
+    };
+    measure();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [body]);
+
+  const collapsed = !expanded;
+
+  return (
+    <div data-testid={testId} className="space-y-2">
+      <div className="relative">
+        <div
+          ref={contentRef}
+          data-testid={`${testId}-body`}
+          className={cn("min-w-0", collapsed && "overflow-hidden")}
+          style={collapsed ? { maxHeight: ISSUE_COMMENT_PREVIEW_COLLAPSED_HEIGHT } : undefined}
+        >
+          <MarkdownBody className="text-sm leading-5 text-foreground/90">{body}</MarkdownBody>
+        </div>
+        {overflowing && collapsed ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-background" />
+        ) : null}
+      </div>
+      {overflowing ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          className="-ml-2 h-7 px-2"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+          data-testid={`${testId}-toggle`}
+        >
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {expanded ? "Show less" : "Show full comment"}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -284,6 +361,7 @@ function MessengerIssueCard({
     priority?: string;
   };
   const contextLabel = issueContextLabel(item);
+  const sourceCommentBody = item.sourceCommentBody?.trim() ? item.sourceCommentBody : null;
 
   const invalidateIssueViews = async () => {
     await Promise.all([
@@ -320,14 +398,23 @@ function MessengerIssueCard({
       <ObjectMessageCard
         eyebrow="Issue update"
         title={issueDisplayTitle(item)}
-        description={firstNonEmptyLine(item.body) ?? firstNonEmptyLine(item.preview) ?? "New issue activity in your watched scope."}
+        description={
+          sourceCommentBody ? (
+            <MessengerIssueCommentPreview
+              body={sourceCommentBody}
+              testId={`messenger-issue-comment-preview-${item.issueId}`}
+            />
+          ) : (
+            firstNonEmptyLine(item.body) ?? firstNonEmptyLine(item.preview) ?? "New issue activity in your watched scope."
+          )
+        }
         status={typeof metadata.status === "string" ? <StatusBadge status={metadata.status} /> : undefined}
         testId={`messenger-issue-card-${item.issueId}`}
         footer={
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <Button asChild size="sm" variant="outline">
-                <Link to={item.href ?? `/issues/${item.issueIdentifier ?? item.issueId}`}>Open issue</Link>
+                <Link to={issueOpenHref(item)}>Open issue</Link>
               </Button>
               <Button
                 size="sm"
