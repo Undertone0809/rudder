@@ -35,6 +35,7 @@ import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { getRememberedMessengerPath, rememberMessengerPath, resolveRememberedMessengerEntry } from "@/lib/messenger-memory";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { cn, relativeTime } from "@/lib/utils";
+import { Chat } from "./Chat";
 
 const ISSUE_COMMENT_PREVIEW_LINES = 10;
 const ISSUE_COMMENT_PREVIEW_LINE_HEIGHT = 20;
@@ -909,6 +910,7 @@ export function Messenger() {
     return <div className="mx-auto max-w-3xl py-10 text-sm text-destructive">{error.message}</div>;
   }
 
+  if (route.kind === "chat") return <Chat />;
   if (route.kind === "issues") return <MessengerIssuesView />;
   if (route.kind === "approvals") return <MessengerApprovalsView />;
   if (route.kind === "system") return <MessengerSystemView threadKind={route.threadKind} />;
