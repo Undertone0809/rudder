@@ -403,7 +403,7 @@ export const zhCN: Messages = {
   "about.notifications.description": "Inbox 提醒、角标行为和权限修复入口现在都集中在独立的通知设置页中管理。",
   "about.notifications.open": "打开通知设置",
   "about.updates.title": "检查更新",
-  "about.updates.description": "将当前桌面构建与最新的稳定 GitHub Release 做对比。",
+  "about.updates.description": "将当前桌面构建与对应渠道的最新 GitHub Release 做对比。",
   "about.updates.check": "检查更新",
   "about.updates.openRelease": "打开发布页",
   "about.updates.available.inline": "发现新版本：{{latestVersion}}。",

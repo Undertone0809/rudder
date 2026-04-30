@@ -39,6 +39,7 @@ export type DesktopBootState = {
 
 export type DesktopUpdateCheckResult = {
   status: "update-available" | "up-to-date" | "unavailable";
+  channel: "stable" | "canary";
   currentVersion: string;
   latestVersion?: string;
   releaseUrl?: string;
