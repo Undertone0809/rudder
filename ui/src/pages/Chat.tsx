@@ -1375,7 +1375,7 @@ function StreamTranscriptItem({
           <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
         </div>
         {showBody ? (
-          <div className="mt-3 border-l border-border/35 pl-3">
+          <div className="mt-3">
             <RunTranscriptView
               entries={entries}
               mode="nice"
@@ -1383,8 +1383,6 @@ function StreamTranscriptItem({
               streaming={streamingActive}
               collapseStdout
               presentation="chat"
-              className="space-y-2"
-              thinkingClassName="rounded-md border border-border/30 bg-muted/10 px-2 py-2 [&>*:first-child]:mt-0"
             />
           </div>
         ) : null}

@@ -197,6 +197,10 @@ function formatTranscriptTimestamp(ts: string): string {
   });
 }
 
+function getTranscriptTimestampTitle(ts: string): string | undefined {
+  return formatTranscriptTimestamp(ts) || undefined;
+}
+
 function formatTranscriptDuration(startTs: string, endTs?: string): string | null {
   if (!endTs) return null;
   const start = new Date(startTs).getTime();
@@ -1420,7 +1424,7 @@ function TranscriptMessageBlock({
 
   if (!isUser || !collapsibleSummary) {
     return (
-      <div>
+      <div title={getTranscriptTimestampTitle(block.ts)}>
         {showRoleLabel && (
           <div className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold tracking-[0.06em] text-muted-foreground">
             <User className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
@@ -1433,7 +1437,7 @@ function TranscriptMessageBlock({
   }
 
   return (
-    <div className="rounded-lg border border-border/30 bg-muted/10">
+    <div className="rounded-lg border border-border/30 bg-muted/10" title={getTranscriptTimestampTitle(block.ts)}>
       <button
         type="button"
         className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
@@ -1495,7 +1499,7 @@ function TranscriptThinkingBlock({
   }
 
   return (
-    <div className="rounded-lg border border-border/30 bg-muted/10">
+    <div className="rounded-lg border border-border/30 bg-muted/10" title={getTranscriptTimestampTitle(block.ts)}>
       <button
         type="button"
         className="flex w-full items-start gap-2 px-2.5 py-2 text-left"
@@ -1676,7 +1680,7 @@ function TranscriptToolCard({
   );
 
   return (
-    <div className={outerClass}>
+    <div className={outerClass} title={getTranscriptTimestampTitle(block.ts)}>
       <div className="flex items-start gap-2">
         {block.status === "error" ? (
           <CircleAlert className={iconClass} />
@@ -1780,7 +1784,7 @@ function TranscriptCommandGroup({
   const summary = formatSemanticDigest(semanticItems, 0, { preferDirectSummary: true });
 
   return (
-    <div className={cn(showExpandedErrorState && "rounded-xl border border-red-500/20 bg-red-500/[0.04] p-3")}>
+    <div className={cn(showExpandedErrorState && "rounded-xl border border-red-500/20 bg-red-500/[0.04] p-3")} title={getTranscriptTimestampTitle(block.ts)}>
       <div
         role="button"
         tabIndex={0}
@@ -1857,7 +1861,7 @@ function TranscriptActivityRow({
   density: TranscriptDensity;
 }) {
   return (
-    <div className="flex items-start gap-2">
+    <div className="flex items-start gap-2" title={getTranscriptTimestampTitle(block.ts)}>
       {block.status === "completed" ? (
         <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-300" />
       ) : (
@@ -1897,7 +1901,7 @@ function TranscriptEventRow({
           : "text-foreground/75";
 
   return (
-    <div className={toneClasses}>
+    <div className={toneClasses} title={getTranscriptTimestampTitle(block.ts)}>
       <div className="flex items-start gap-2">
         {block.tone === "error" ? (
           <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -1949,7 +1953,7 @@ function TranscriptStdoutRow({
   const detail = presentation === "detail";
 
   return (
-    <div>
+    <div title={getTranscriptTimestampTitle(block.ts)}>
       {detail ? (
         <div className="flex items-center gap-2">
           <button
@@ -2065,7 +2069,7 @@ function TranscriptChatStdoutActionRow({
 
   if (inline) {
     return (
-      <div className="py-1.5">
+      <div className="py-1.5" title={getTranscriptTimestampTitle(block.ts)}>
         <div className="flex w-full items-start gap-2 text-left">
           <TerminalSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <pre className={cn(
@@ -2080,7 +2084,7 @@ function TranscriptChatStdoutActionRow({
   }
 
   return (
-    <div className="py-1.5">
+    <div className="py-1.5" title={getTranscriptTimestampTitle(block.ts)}>
       <button
         type="button"
         className="flex w-full items-start gap-2 text-left"
@@ -2150,7 +2154,10 @@ function TranscriptChatToolActionRow({
       : "text-muted-foreground";
 
   return (
-    <div className={cn("py-1.5", highlightError && block.status === "error" && "rounded-lg bg-red-500/[0.04] px-2")}>
+    <div
+      className={cn("py-1.5", highlightError && block.status === "error" && "rounded-lg bg-red-500/[0.04] px-2")}
+      title={getTranscriptTimestampTitle(block.ts)}
+    >
       <button
         type="button"
         className="flex w-full items-start gap-2 text-left"
@@ -2453,14 +2460,8 @@ function TranscriptChatTurn({
   const detailVariant = variant === "detail";
   const segments = segmentChatTranscriptBlocks(turn.blocks);
   const actionGroupCount = segments.filter((segment) => segment.type === "actions").length;
-  const highlightTurnError = turn.hasError && !detailVariant;
-  const statusTone = highlightTurnError
-    ? "text-red-700 dark:text-red-300"
-    : turn.hasRunning
-      ? "text-cyan-700 dark:text-cyan-300"
-      : "text-muted-foreground";
   const content = segments.length > 0 ? (
-    <div className={cn(detailVariant ? "space-y-3" : "mt-3 space-y-3 border-l border-border/35 pl-3")}>
+    <div className="space-y-3" title={getTranscriptTimestampTitle(turn.ts)}>
       {segments.map((segment, index) => (
         segment.type === "block"
           ? renderTranscriptBlock({
@@ -2484,45 +2485,7 @@ function TranscriptChatTurn({
       ))}
     </div>
   ) : null;
-
-  if (detailVariant) {
-    return content;
-  }
-
-  return (
-    <section
-      className={cn(
-        "rounded-[18px] border px-3.5 py-3",
-        highlightTurnError
-          ? "border-red-500/20 bg-red-500/[0.04]"
-          : turn.hasRunning
-            ? "border-cyan-500/20 bg-cyan-500/[0.035]"
-            : "border-border/50 bg-background/45",
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            {turn.hasRunning ? (
-              <span className="inline-flex items-center gap-1 text-[11px] text-cyan-700 dark:text-cyan-300">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Running
-              </span>
-            ) : highlightTurnError ? (
-              <span className="text-[11px] text-red-700 dark:text-red-300">Needs review</span>
-            ) : (
-              <span className="text-[11px] text-muted-foreground">Completed</span>
-            )}
-            <span className={cn("font-mono text-[10px] tracking-[0.08em]", statusTone)}>
-              {formatTranscriptTimestamp(turn.ts)}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {content}
-    </section>
-  );
+  return content;
 }
 
 function TranscriptChatTimeline({

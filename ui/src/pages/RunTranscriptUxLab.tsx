@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { cn, formatDateTime } from "../lib/utils";
+import { cn, formatDateTime, formatRunElapsedDuration } from "../lib/utils";
 import { Identity } from "../components/Identity";
 import { StatusBadge } from "../components/StatusBadge";
 import { RunTranscriptView, type TranscriptDensity, type TranscriptMode } from "../components/transcript/RunTranscriptView";
@@ -60,6 +60,17 @@ function previewEntries(surface: SurfaceId) {
   return runTranscriptFixtureEntries;
 }
 
+function fixtureElapsedLabel(streaming: boolean) {
+  const lastEntryTs = runTranscriptFixtureEntries[runTranscriptFixtureEntries.length - 1]?.ts
+    ?? runTranscriptFixtureMeta.finishedAt
+    ?? runTranscriptFixtureMeta.startedAt;
+  const duration = formatRunElapsedDuration(
+    runTranscriptFixtureMeta.startedAt,
+    streaming ? lastEntryTs : runTranscriptFixtureMeta.finishedAt ?? lastEntryTs,
+  );
+  return streaming ? `Live for ${duration ?? "now"}` : `Ran for ${duration ?? "0s"}`;
+}
+
 function RunDetailPreview({
   mode,
   streaming,
@@ -80,6 +91,7 @@ function RunDetailPreview({
           <span className="text-xs text-muted-foreground">
             {formatDateTime(runTranscriptFixtureMeta.startedAt)}
           </span>
+          <span className="text-xs text-muted-foreground">{fixtureElapsedLabel(streaming)}</span>
         </div>
         <div className="mt-2 text-sm font-medium">
           Transcript ({runTranscriptFixtureEntries.length})
@@ -128,6 +140,7 @@ function LiveWidgetPreview({
               </span>
               <StatusBadge status={streaming ? "running" : "succeeded"} />
               <span>{formatDateTime(runTranscriptFixtureMeta.startedAt)}</span>
+              <span>{fixtureElapsedLabel(streaming)}</span>
             </div>
           </div>
           <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-[11px] text-muted-foreground">
@@ -142,6 +155,7 @@ function LiveWidgetPreview({
             density={density}
             limit={density === "compact" ? 10 : 12}
             streaming={streaming}
+            presentation="chat"
           />
         </div>
       </div>
@@ -177,7 +191,7 @@ function DashboardPreview({
                 <Identity name={runTranscriptFixtureMeta.agentName} size="sm" />
               </div>
               <div className="mt-2 text-[11px] text-muted-foreground">
-                {streaming ? "Live now" : "Finished 2m ago"}
+                {fixtureElapsedLabel(streaming)}
               </div>
             </div>
             <span className="rounded-full border border-border/70 bg-background/70 px-2 py-1 text-[10px] text-muted-foreground">
@@ -195,6 +209,7 @@ function DashboardPreview({
             density={density}
             limit={density === "compact" ? 6 : 8}
             streaming={streaming}
+            presentation="chat"
           />
         </div>
       </div>
@@ -220,7 +235,7 @@ function ChatPreview({
           </Badge>
           <span className="text-xs text-muted-foreground">Transcript in the messenger flow</span>
         </div>
-        <div className="mt-2 text-sm font-medium">{streaming ? "Working for 1m 25s" : "Worked for 1m 25s"}</div>
+        <div className="mt-2 text-sm font-medium">{fixtureElapsedLabel(streaming)}</div>
       </div>
       <div className="space-y-4 px-5 py-5">
         <div className="rounded-[20px] bg-background/90 px-5 py-4 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
@@ -228,18 +243,14 @@ function ChatPreview({
             按你的要求我先在当前 workspace 建上下文，并先检查 repo 根目录是否有 AGENTS.md；然后我会直接测试本地是否能调用 codex，不先口头假设。
           </div>
         </div>
-        <div className="border-l border-border/40 pl-4">
-          <RunTranscriptView
-            entries={previewEntries("chat")}
-            mode={mode}
-            density={density}
-            streaming={streaming}
-            collapseStdout
-            presentation="chat"
-            className="space-y-2"
-            thinkingClassName="rounded-md border border-border/30 bg-muted/10 px-2 py-2 [&>*:first-child]:mt-0"
-          />
-        </div>
+        <RunTranscriptView
+          entries={previewEntries("chat")}
+          mode={mode}
+          density={density}
+          streaming={streaming}
+          collapseStdout
+          presentation="chat"
+        />
         <div className="rounded-[20px] bg-background/90 px-5 py-4 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
           <div className="mb-2 text-sm font-medium">Founding Engineer</div>
           <div className="text-sm leading-7 text-foreground/88">
