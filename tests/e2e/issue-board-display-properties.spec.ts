@@ -83,4 +83,66 @@ test.describe("Issue board display properties", () => {
     expect(savedDisplayProperties).toContain("project");
     expect(savedDisplayProperties).not.toContain("identifier");
   });
+
+  test("sorts issue cards inside each board status lane", async ({ page }) => {
+    await page.goto("/");
+
+    const organization = await apiPost<{ id: string; issuePrefix: string }>(
+      page,
+      "/api/orgs",
+      {
+        name: `Issue-Board-Sort-${Date.now()}`,
+      },
+    );
+
+    await apiPost(
+      page,
+      `/api/orgs/${organization.id}/issues`,
+      {
+        title: "Low priority board issue",
+        status: "todo",
+        priority: "low",
+      },
+    );
+    await apiPost(
+      page,
+      `/api/orgs/${organization.id}/issues`,
+      {
+        title: "Critical priority board issue",
+        status: "todo",
+        priority: "critical",
+      },
+    );
+    await apiPost(
+      page,
+      `/api/orgs/${organization.id}/issues`,
+      {
+        title: "High priority board issue",
+        status: "todo",
+        priority: "high",
+      },
+    );
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`/${organization.issuePrefix}/issues`);
+    await page.getByTitle("Board view").click();
+
+    await page.getByRole("button", { name: /Sort/ }).click();
+    await page.getByRole("button", { name: "Priority" }).click();
+
+    const todoCards = page.locator('[data-testid="kanban-column-todo"] [data-testid^="kanban-card-"]');
+    await expect(todoCards.nth(0)).toContainText("Critical priority board issue");
+    await expect(todoCards.nth(1)).toContainText("High priority board issue");
+    await expect(todoCards.nth(2)).toContainText("Low priority board issue");
+
+    const savedSort = await page.evaluate((orgId) => {
+      const raw = window.localStorage.getItem(`rudder:issues-view:${orgId}`);
+      return raw ? JSON.parse(raw) : null;
+    }, organization.id);
+    expect(savedSort).toMatchObject({
+      viewMode: "board",
+      sortField: "priority",
+      sortDir: "asc",
+    });
+  });
 });

@@ -18,6 +18,12 @@ import { EmptyState } from "./EmptyState";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { IssueRow } from "./IssueRow";
 import { PageSkeleton } from "./PageSkeleton";
+import {
+  issuePriorityOrder as priorityOrder,
+  issueSortOptions,
+  issueStatusOrder as statusOrder,
+  sortIssues,
+} from "../lib/issue-sort";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverAnchor, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -29,9 +35,6 @@ import type { IssueCustomViewState } from "@/lib/issue-custom-views";
 import type { AgentRole, Issue } from "@rudderhq/shared";
 
 /* ── Helpers ── */
-
-const statusOrder = ["in_progress", "todo", "backlog", "in_review", "blocked", "done", "cancelled"];
-const priorityOrder = ["critical", "high", "medium", "low"];
 
 function statusLabel(status: string): string {
   return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -151,28 +154,6 @@ function applyFilters(issues: Issue[], state: IssueViewState, currentUserId?: st
   if (state.labels.length > 0) result = result.filter((i) => (i.labelIds ?? []).some((id) => state.labels.includes(id)));
   if (state.projects.length > 0) result = result.filter((i) => i.projectId != null && state.projects.includes(i.projectId));
   return result;
-}
-
-function sortIssues(issues: Issue[], state: IssueViewState): Issue[] {
-  const sorted = [...issues];
-  const dir = state.sortDir === "asc" ? 1 : -1;
-  sorted.sort((a, b) => {
-    switch (state.sortField) {
-      case "status":
-        return dir * (statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status));
-      case "priority":
-        return dir * (priorityOrder.indexOf(a.priority) - priorityOrder.indexOf(b.priority));
-      case "title":
-        return dir * a.title.localeCompare(b.title);
-      case "created":
-        return dir * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-      case "updated":
-        return dir * (new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
-      default:
-        return 0;
-    }
-  });
-  return sorted;
 }
 
 function countActiveFilters(state: IssueViewState): number {
@@ -727,6 +708,41 @@ export function IssuesList({
             </PopoverContent>
           </Popover>
 
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-xs">
+                <ArrowUpDown className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+                <span className="hidden sm:inline">Sort</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-48 p-0">
+              <div className="p-2 space-y-0.5">
+                {issueSortOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    className={`flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-sm ${
+                      viewState.sortField === option.value ? "bg-accent/50 text-foreground" : "hover:bg-accent/50 text-muted-foreground"
+                    }`}
+                    onClick={() => {
+                      if (viewState.sortField === option.value) {
+                        updateView({ sortDir: viewState.sortDir === "asc" ? "desc" : "asc" });
+                      } else {
+                        updateView({ sortField: option.value, sortDir: "asc" });
+                      }
+                    }}
+                  >
+                    <span>{option.label}</span>
+                    {viewState.sortField === option.value && (
+                      <span className="text-xs text-muted-foreground">
+                        {viewState.sortDir === "asc" ? "\u2191" : "\u2193"}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+
           {viewState.viewMode === "board" && (
             <Popover>
               <PopoverTrigger asChild>
@@ -753,50 +769,6 @@ export function IssuesList({
                       />
                       <span>{option.label}</span>
                     </label>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-          )}
-
-          {/* Sort (list view only) */}
-          {viewState.viewMode === "list" && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="text-xs">
-                  <ArrowUpDown className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
-                  <span className="hidden sm:inline">Sort</span>
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-48 p-0">
-                <div className="p-2 space-y-0.5">
-                  {([
-                    ["status", "Status"],
-                    ["priority", "Priority"],
-                    ["title", "Title"],
-                    ["created", "Created"],
-                    ["updated", "Updated"],
-                  ] as const).map(([field, label]) => (
-                    <button
-                      key={field}
-                      className={`flex items-center justify-between w-full px-2 py-1.5 text-sm rounded-sm ${
-                        viewState.sortField === field ? "bg-accent/50 text-foreground" : "hover:bg-accent/50 text-muted-foreground"
-                      }`}
-                      onClick={() => {
-                        if (viewState.sortField === field) {
-                          updateView({ sortDir: viewState.sortDir === "asc" ? "desc" : "asc" });
-                        } else {
-                          updateView({ sortField: field, sortDir: "asc" });
-                        }
-                      }}
-                    >
-                      <span>{label}</span>
-                      {viewState.sortField === field && (
-                        <span className="text-xs text-muted-foreground">
-                          {viewState.sortDir === "asc" ? "\u2191" : "\u2193"}
-                        </span>
-                      )}
-                    </button>
                   ))}
                 </div>
               </PopoverContent>
@@ -866,6 +838,7 @@ export function IssuesList({
             agents={agents}
             currentUserId={currentUserId}
             displayProperties={viewState.displayProperties}
+            sortState={{ sortField: viewState.sortField, sortDir: viewState.sortDir }}
             liveIssueIds={liveIssueIds}
             projects={projects}
             onCreateIssue={(status) => openNewIssue({ ...contextNewIssueDefaults, status })}

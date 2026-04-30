@@ -124,6 +124,13 @@ const secondIssue: Issue = {
   identifier: "RUD-2",
 };
 
+function issueFixture(overrides: Partial<Issue>): Issue {
+  return {
+    ...baseIssue,
+    ...overrides,
+  };
+}
+
 const label = {
   id: "label-1",
   orgId: "org-1",
@@ -529,6 +536,115 @@ describe("IssuesList", () => {
     expect(container.textContent).toContain("Operator console");
     expect(JSON.parse(window.localStorage.getItem("test:issues:org-1") ?? "{}")).toMatchObject({
       displayProperties: ["identifier", "project"],
+    });
+  });
+
+  it("sorts each board status lane using the saved sort order", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({
+        viewMode: "board",
+        sortField: "priority",
+        sortDir: "asc",
+      }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[
+            issueFixture({ id: "todo-low", identifier: "RUD-10", title: "Todo low", status: "todo", priority: "low" }),
+            issueFixture({ id: "todo-critical", identifier: "RUD-11", title: "Todo critical", status: "todo", priority: "critical" }),
+            issueFixture({ id: "todo-high", identifier: "RUD-12", title: "Todo high", status: "todo", priority: "high" }),
+            issueFixture({ id: "done-low", identifier: "RUD-13", title: "Done low", status: "done", priority: "low" }),
+            issueFixture({ id: "done-high", identifier: "RUD-14", title: "Done high", status: "done", priority: "high" }),
+          ]}
+          viewStateKey="test:issues"
+          toolbarMode="hidden"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    const todoCards = Array.from(
+      container.querySelectorAll('[data-testid="kanban-column-todo"] [data-testid^="kanban-card-"]'),
+    ).map((card) => card.textContent);
+    const doneCards = Array.from(
+      container.querySelectorAll('[data-testid="kanban-column-done"] [data-testid^="kanban-card-"]'),
+    ).map((card) => card.textContent);
+
+    expect(todoCards[0]).toContain("Todo critical");
+    expect(todoCards[1]).toContain("Todo high");
+    expect(todoCards[2]).toContain("Todo low");
+    expect(doneCards[0]).toContain("Done high");
+    expect(doneCards[1]).toContain("Done low");
+  });
+
+  it("shows the sort control in board mode and persists board card sorting", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({
+        viewMode: "board",
+        sortField: "updated",
+        sortDir: "desc",
+      }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[baseIssue]}
+          viewStateKey="test:issues"
+          toolbarMode="controls-only"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    const sortButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Sort"),
+    );
+    expect(sortButton).toBeTruthy();
+
+    act(() => {
+      sortButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const priorityButton = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Priority"),
+    );
+    expect(priorityButton).toBeTruthy();
+
+    act(() => {
+      priorityButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(JSON.parse(window.localStorage.getItem("test:issues:org-1") ?? "{}")).toMatchObject({
+      viewMode: "board",
+      sortField: "priority",
+      sortDir: "asc",
     });
   });
 });
