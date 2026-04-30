@@ -2745,7 +2745,7 @@ function ChatWorkspace() {
         ref={composerContextMenuRef}
         data-testid={`chat-${activeMenu}-menu`}
         role="menu"
-        className="chat-composer-context-menu surface-overlay fixed z-50 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
+        className="chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay fixed z-50 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
         style={composerMenuPosition}
       >
         {projectMenuOpen ? (
@@ -2755,6 +2755,7 @@ function ChatWorkspace() {
               type="button"
               role="menuitemradio"
               aria-checked={activeProjectId === NO_PROJECT_ID}
+              data-chat-composer-menu-item
               className="chat-composer-menu-row project-context-menu-item"
               onClick={() => applyProjectContext(NO_PROJECT_ID)}
             >
@@ -2769,6 +2770,7 @@ function ChatWorkspace() {
                     type="button"
                     role="menuitemradio"
                     aria-checked={activeProjectId === project.id}
+                    data-chat-composer-menu-item
                     className="chat-composer-menu-row project-context-menu-item"
                     onClick={() => applyProjectContext(project.id)}
                   >
@@ -2797,6 +2799,7 @@ function ChatWorkspace() {
               type="button"
               role="menuitemradio"
               aria-checked={activeAgentId === "__none__"}
+              data-chat-composer-menu-item
               className="chat-composer-menu-row"
               onClick={() => applyPreferredAgent("__none__")}
             >
@@ -2812,6 +2815,7 @@ function ChatWorkspace() {
                 type="button"
                 role="menuitemradio"
                 aria-checked={activeAgentId === agent.id}
+                data-chat-composer-menu-item
                 className="chat-composer-menu-row"
                 onClick={() => applyPreferredAgent(agent.id)}
               >
@@ -2860,6 +2864,7 @@ function ChatWorkspace() {
                       key={entry.id}
                       type="button"
                       role="menuitem"
+                      data-chat-composer-menu-item
                       className="chat-composer-menu-row"
                       onClick={() => insertSkillReference(entry)}
                     >

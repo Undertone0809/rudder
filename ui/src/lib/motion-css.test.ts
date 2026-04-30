@@ -10,6 +10,7 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain('.motion-kanban-card[data-live="true"]');
     expect(motionCss).toContain('.motion-org-edge[data-active="true"]');
     expect(motionCss).toContain(".motion-chat-options-pop");
+    expect(motionCss).toContain(".motion-chat-composer-menu-pop");
     expect(motionCss).toContain(".motion-organization-menu-pop");
     expect(motionCss).toContain(".motion-rail-active-indicator");
     expect(motionCss).toContain(".motion-context-active-indicator");
@@ -24,6 +25,14 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("scale(1.035)");
     expect(motionCss).toContain("@keyframes rudder-chat-option-enter");
     expect(motionCss).toContain("[data-chat-option]:nth-child(2)");
+  });
+
+  it("defines a focused pop animation for chat composer menus", () => {
+    expect(motionCss).toContain("@keyframes rudder-chat-composer-menu-pop");
+    expect(motionCss).toContain("@keyframes rudder-chat-composer-menu-item-enter");
+    expect(motionCss).toContain("[data-chat-composer-menu-item]");
+    expect(motionCss).toContain("clip-path: inset(18% 12% 0 12% round var(--radius-lg))");
+    expect(motionCss).toContain("transform-origin: bottom center");
   });
 
   it("defines sliding active indicators for navigation surfaces", () => {
