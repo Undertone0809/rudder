@@ -38,7 +38,7 @@ async function createProject(page: Page, orgId: string, name: string) {
   return response.json() as Promise<{ id: string; name: string }>;
 }
 
-test.describe("Issues recently viewed scope", () => {
+test.describe("Issues recently viewed sidebar", () => {
   test("saves custom issue boards and removes the old starred sidebar view", async ({ page }) => {
     const organization = await createOrganization(page, "Issues-Custom-Boards");
     await createIssue(page, organization.id, "Custom board visible issue");
@@ -73,36 +73,13 @@ test.describe("Issues recently viewed scope", () => {
     await expect(page.getByRole("link", { name: /Review board/ })).toHaveCount(0);
   });
 
-  test("shows only current-org visible recent issues in the badge and list", async ({ page }) => {
-    const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Issues-Recently-Viewed-${Date.now()}` },
-    });
-    expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json();
-
-    const otherOrgRes = await page.request.post("/api/orgs", {
-      data: { name: `Issues-Recently-Viewed-Other-${Date.now()}` },
-    });
-    expect(otherOrgRes.ok()).toBe(true);
-    const otherOrganization = await otherOrgRes.json();
-
-    const createIssue = async (orgId: string, title: string) => {
-      const response = await page.request.post(`/api/orgs/${orgId}/issues`, {
-        data: {
-          title,
-          description: `${title} description`,
-          status: "todo",
-          priority: "medium",
-        },
-      });
-      expect(response.ok()).toBe(true);
-      return response.json();
-    };
-
-    const firstIssue = await createIssue(organization.id, "Recently viewed first issue");
-    const secondIssue = await createIssue(organization.id, "Recently viewed second issue");
-    const thirdIssue = await createIssue(organization.id, "Recently viewed third issue");
-    const otherOrgIssue = await createIssue(otherOrganization.id, "Other organization recent issue");
+  test("shows current-org recent issues in the sidebar without turning recent into a main view", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Recently-Viewed");
+    const otherOrganization = await createOrganization(page, "Issues-Recently-Viewed-Other");
+    const firstIssue = await createIssue(page, organization.id, "Recently viewed first issue");
+    const secondIssue = await createIssue(page, organization.id, "Recently viewed second issue");
+    const thirdIssue = await createIssue(page, organization.id, "Recently viewed third issue");
+    const otherOrgIssue = await createIssue(page, otherOrganization.id, "Other organization recent issue");
 
     await page.goto("/");
     await page.evaluate(
@@ -126,42 +103,66 @@ test.describe("Issues recently viewed scope", () => {
 
     await page.goto("/issues?scope=recent");
 
-    await expect(page.getByRole("link", { name: /Recently Viewed \(3\)/ })).toBeVisible();
+    await expect(page).toHaveURL(/\/issues(?:\?|$)/);
+    await expect(page).not.toHaveURL(/scope=recent/);
+    await expect(page.getByRole("link", { name: /Recently Viewed/ })).toHaveCount(0);
+    await expect(page.getByTestId("issue-recent-section")).toContainText("Recently Viewed");
     await expect(page.getByText("Recently viewed first issue", { exact: true })).toBeVisible();
     await expect(page.getByText("Recently viewed second issue", { exact: true })).toBeVisible();
     await expect(page.getByText("Recently viewed third issue", { exact: true })).toBeVisible();
     await expect(page.getByText("Other organization recent issue", { exact: true })).toHaveCount(0);
+
+    const recentHref = `/issues/${firstIssue.identifier ?? firstIssue.id}`;
+    await expect(page.getByTestId(`issue-recent-row-${firstIssue.id}`)).toHaveAttribute("href", recentHref);
   });
 
-  test("updates the recently viewed badge when the active organization changes", async ({ page }) => {
-    const firstOrgRes = await page.request.post("/api/orgs", {
-      data: { name: `Issues-Recent-Switch-A-${Date.now()}` },
-    });
-    expect(firstOrgRes.ok()).toBe(true);
-    const firstOrganization = await firstOrgRes.json();
+  test("records direct detail views and promotes sidebar recent clicks", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Recent-Detail");
+    const firstIssue = await createIssue(page, organization.id, "Direct detail recent issue");
+    const secondIssue = await createIssue(page, organization.id, "Sidebar promoted recent issue");
+    const recentKey = recentIssuesStorageKey(organization.id);
 
-    const secondOrgRes = await page.request.post("/api/orgs", {
-      data: { name: `Issues-Recent-Switch-B-${Date.now()}` },
-    });
-    expect(secondOrgRes.ok()).toBe(true);
-    const secondOrganization = await secondOrgRes.json();
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
 
-    const createIssue = async (orgId: string, title: string) => {
-      const response = await page.request.post(`/api/orgs/${orgId}/issues`, {
-        data: {
-          title,
-          description: `${title} description`,
-          status: "todo",
-          priority: "medium",
-        },
-      });
-      expect(response.ok()).toBe(true);
-      return response.json();
-    };
+    await page.goto(`/issues/${firstIssue.identifier ?? firstIssue.id}`);
+    await expect(page.getByText("Direct detail recent issue", { exact: true }).first()).toBeVisible();
+    await page.waitForFunction(
+      ({ key, issueId }) => {
+        const values = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+        return values[0] === issueId;
+      },
+      { key: recentKey, issueId: firstIssue.id },
+    );
 
-    const firstOrgIssue = await createIssue(firstOrganization.id, "Org one recent issue");
-    const secondOrgIssueA = await createIssue(secondOrganization.id, "Org two first recent issue");
-    const secondOrgIssueB = await createIssue(secondOrganization.id, "Org two second recent issue");
+    await page.goto("/issues");
+    await expect(page.getByTestId(`issue-recent-row-${firstIssue.id}`)).toContainText("Direct detail recent issue");
+
+    await page.evaluate(
+      ({ key, issueIds }) => {
+        window.localStorage.setItem(key, JSON.stringify(issueIds));
+      },
+      { key: recentKey, issueIds: [firstIssue.id, secondIssue.id] },
+    );
+    await page.goto("/issues");
+    await page.getByTestId(`issue-recent-row-${secondIssue.id}`).click();
+    await page.waitForFunction(
+      ({ key, issueId }) => {
+        const values = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+        return values[0] === issueId;
+      },
+      { key: recentKey, issueId: secondIssue.id },
+    );
+  });
+
+  test("updates the recent issue sidebar when the active organization changes", async ({ page }) => {
+    const firstOrganization = await createOrganization(page, "Issues-Recent-Switch-A");
+    const secondOrganization = await createOrganization(page, "Issues-Recent-Switch-B");
+    const firstOrgIssue = await createIssue(page, firstOrganization.id, "Org one recent issue");
+    const secondOrgIssueA = await createIssue(page, secondOrganization.id, "Org two first recent issue");
+    const secondOrgIssueB = await createIssue(page, secondOrganization.id, "Org two second recent issue");
 
     await page.goto("/");
     await page.evaluate(
@@ -181,21 +182,59 @@ test.describe("Issues recently viewed scope", () => {
       },
     );
 
-    await page.goto("/issues?scope=recent");
+    await page.goto("/issues");
 
-    await expect(page.getByRole("link", { name: /Recently Viewed \(1\)/ })).toBeVisible();
+    await expect(page.getByTestId("issue-recent-section")).toContainText("Recently Viewed");
     await expect(page.getByText("Org one recent issue", { exact: true })).toBeVisible();
 
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, secondOrganization.id);
 
-    await page.goto("/issues?scope=recent");
+    await page.goto("/issues");
 
-    await expect(page.getByRole("link", { name: /Recently Viewed \(2\)/ })).toBeVisible();
+    await expect(page.getByTestId("issue-recent-section")).toContainText("Recently Viewed");
     await expect(page.getByText("Org two first recent issue", { exact: true })).toBeVisible();
     await expect(page.getByText("Org two second recent issue", { exact: true })).toBeVisible();
     await expect(page.getByText("Org one recent issue", { exact: true })).toHaveCount(0);
+  });
+
+  test("bounds long recent issue lists without hiding projects", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Recent-Overflow");
+    const project = await createProject(page, organization.id, "Sidebar Project");
+    const issues = [];
+    for (let index = 1; index <= 13; index += 1) {
+      issues.push(await createIssue(page, organization.id, `Recent overflow issue ${String(index).padStart(2, "0")}`));
+    }
+
+    await page.goto("/");
+    await page.evaluate(
+      ({ orgId, recentKey, issueIds }) => {
+        window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+        window.localStorage.setItem(recentKey, JSON.stringify(issueIds));
+      },
+      {
+        orgId: organization.id,
+        recentKey: recentIssuesStorageKey(organization.id),
+        issueIds: issues.map((issue) => issue.id),
+      },
+    );
+
+    await page.goto("/issues");
+
+    await expect(page.getByTestId(`issue-recent-row-${issues[0].id}`)).toBeVisible();
+    await expect(page.getByTestId(`issue-recent-row-${issues[4].id}`)).toBeVisible();
+    await expect(page.getByTestId(`issue-recent-row-${issues[5].id}`)).toHaveCount(0);
+    await expect(page.getByTestId("workspace-projects-section")).toContainText("Projects");
+    await expect(page.getByRole("link", { name: project.name })).toBeVisible();
+
+    await expect(page.getByTestId("issue-recent-toggle")).toContainText("Show 7 more");
+    await page.getByTestId("issue-recent-toggle").click();
+
+    await expect(page.getByTestId(`issue-recent-row-${issues[11].id}`)).toBeVisible();
+    await expect(page.getByTestId(`issue-recent-row-${issues[12].id}`)).toHaveCount(0);
+    await expect(page.getByText("Showing latest 12 of 13")).toBeVisible();
+    await expect(page.getByRole("link", { name: project.name })).toBeVisible();
   });
 
   test("shows live run counts on issue project slices", async ({ page }) => {
