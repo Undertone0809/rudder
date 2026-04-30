@@ -17,7 +17,7 @@ async function createOrganization(page: Page, name: string) {
 }
 
 test.describe("Run transcript detail", () => {
-  test("renders detail transcripts as chat-style model turns with collapsed tool activity", async ({ page }) => {
+  test("renders detail transcripts as readable progress chunks with collapsed grouped tool activity", async ({ page }) => {
     const organization = await createOrganization(page, `Run-Detail-${Date.now()}`);
 
     await page.goto("/");
@@ -32,19 +32,19 @@ test.describe("Run transcript detail", () => {
     await page.getByRole("button", { name: "Show settled state" }).click();
     await expect(page.getByRole("button", { name: "Show streaming state" })).toBeVisible({ timeout: 15_000 });
 
-    const firstTurn = page.locator("section").filter({ hasText: "Model turn 1" });
-    await expect(firstTurn).toHaveCount(1);
-    await expect(firstTurn.getByText(/\d{2}:\d{2}:\d{2}/)).toBeVisible();
-    await expect(firstTurn).toContainText("Explored 2 files");
+    const firstProgressChunk = page.locator("section").filter({ hasText: "Explored 2 files" });
+    await expect(firstProgressChunk).toHaveCount(1);
+    await expect(firstProgressChunk.getByText("Model turn", { exact: false })).toHaveCount(0);
+    await expect(firstProgressChunk.getByText(/\d{2}:\d{2}:\d{2}/)).toBeVisible();
     await expect(page.getByText("Read", { exact: true })).toHaveCount(0);
     await expect(page.getByText("doc/GOAL.md", { exact: true })).toHaveCount(0);
     await expect(page.getByText("doc/SPEC-implementation.md", { exact: true })).toHaveCount(0);
 
-    await firstTurn.getByRole("button", { name: "Expand tool activity for model turn 1" }).click();
-    await expect(firstTurn.getByRole("button", { name: "Expand command details" })).toHaveCount(2);
+    await firstProgressChunk.getByRole("button", { name: "Expand tool activity" }).click();
+    await expect(firstProgressChunk.getByRole("button", { name: "Expand command details" })).toHaveCount(2);
 
     await page.screenshot({
-      path: "tests/e2e/test-results/run-transcript-detail-expanded.png",
+      path: "/tmp/rudder-run-transcript-detail-expanded.png",
       fullPage: true,
     });
   });
