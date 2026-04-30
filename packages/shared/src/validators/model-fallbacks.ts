@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AGENT_RUNTIME_TYPES } from "../constants.js";
+import { envConfigSchema } from "./secret.js";
 
 const agentRuntimeTypes = new Set<string>(AGENT_RUNTIME_TYPES);
 
@@ -71,6 +72,15 @@ export function validateModelFallbacksConfig(
         message: "modelFallbacks entry config must be an object",
         path: [...pathPrefix, "modelFallbacks", index, "config"],
       });
+    } else if (isRecord(fallback.config) && fallback.config.env !== undefined) {
+      const parsed = envConfigSchema.safeParse(fallback.config.env);
+      if (!parsed.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "modelFallbacks entry config.env must be a map of valid env bindings",
+          path: [...pathPrefix, "modelFallbacks", index, "config", "env"],
+        });
+      }
     }
   });
 }
