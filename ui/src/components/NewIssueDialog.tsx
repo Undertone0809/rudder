@@ -1431,7 +1431,7 @@ export function NewIssueDialog() {
                 {labelsTrigger}
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-56 p-1" align="start">
+            <PopoverContent className="w-56 p-1" align="start" disablePortal>
               <input
                 className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
                 placeholder="Search labels..."

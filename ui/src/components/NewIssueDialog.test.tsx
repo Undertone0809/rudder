@@ -140,7 +140,9 @@ vi.mock("@/components/ui/dialog", () => ({
 vi.mock("@/components/ui/popover", () => ({
   Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   PopoverTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
-  PopoverContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  PopoverContent: ({ children, disablePortal }: { children: ReactNode; disablePortal?: boolean }) => (
+    <div data-disable-portal={disablePortal ? "true" : undefined}>{children}</div>
+  ),
 }));
 
 vi.mock("./MarkdownEditor", () => ({
@@ -212,6 +214,13 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("Search labels...");
     expect(html).toContain("backend");
     expect(html).toContain("Labels");
+  });
+
+  it("keeps the label picker inside the dialog tree so its scroll area can receive wheel and touch events", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain('data-disable-portal="true"');
+    expect(html).toContain("max-h-44 overflow-y-auto overscroll-contain");
   });
 
   it("keeps the save draft control visible when nothing can be saved", () => {
