@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
   agents,
+  assets,
   applyPendingMigrations,
   organizations,
   createDb,
@@ -104,6 +105,7 @@ describe("issueService.list participantAgentId", () => {
     await db.delete(issueComments);
     await db.delete(activityLog);
     await db.delete(issues);
+    await db.delete(assets);
     await db.delete(heartbeatRuns);
     await db.delete(projects);
     await db.delete(agents);
@@ -288,6 +290,56 @@ describe("issueService.list participantAgentId", () => {
     });
 
     expect(result.map((issue) => issue.id)).toEqual([matchedIssueId]);
+  });
+
+  it("lists only issue-level attachments", async () => {
+    const orgId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Attachment semantics",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await svc.createAttachment({
+      issueId,
+      usage: "issue",
+      provider: "local_disk",
+      objectKey: "issues/issue-level.pdf",
+      contentType: "application/pdf",
+      byteSize: 12,
+      sha256: "sha256-issue",
+      originalFilename: "issue-level.pdf",
+    });
+    await svc.createAttachment({
+      issueId,
+      usage: "comment_inline",
+      provider: "local_disk",
+      objectKey: "issues/comment-inline.png",
+      contentType: "image/png",
+      byteSize: 14,
+      sha256: "sha256-comment",
+      originalFilename: "comment-inline.png",
+    });
+
+    const attachments = await svc.listAttachments(issueId);
+
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]).toMatchObject({
+      usage: "issue",
+      originalFilename: "issue-level.pdf",
+    });
   });
 
   it("clears execution lock fields when releasing an in-progress issue", async () => {

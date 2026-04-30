@@ -10,6 +10,7 @@ const mockIssueService = vi.hoisted(() => ({
   assertCheckoutOwner: vi.fn(),
   checkout: vi.fn(),
   create: vi.fn(),
+  createAttachment: vi.fn(),
   findMentionedAgents: vi.fn(),
   getById: vi.fn(),
   update: vi.fn(),
@@ -175,6 +176,72 @@ describe("issue lifecycle routes", () => {
       }),
     );
     expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("stores inline comment uploads without logging them as issue attachments", async () => {
+    const app = express();
+    const storage = {
+      provider: "local_disk" as const,
+      putFile: vi.fn(async (input: {
+        orgId: string;
+        namespace: string;
+        originalFilename: string | null;
+        contentType: string;
+        body: Buffer;
+      }) => ({
+        provider: "local_disk" as const,
+        objectKey: `${input.namespace}/${input.originalFilename ?? "upload"}`,
+        contentType: input.contentType,
+        byteSize: input.body.length,
+        sha256: "sha256-sample",
+        originalFilename: input.originalFilename,
+      })),
+      getObject: vi.fn(),
+      headObject: vi.fn(),
+      deleteObject: vi.fn(),
+    };
+    app.use((req, _res, next) => {
+      (req as any).actor = createBoardActor();
+      next();
+    });
+    app.use("/api", issueRoutes({} as any, storage));
+    app.use(errorHandler);
+
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+    mockIssueService.createAttachment.mockResolvedValue({
+      id: "attachment-1",
+      orgId: "organization-1",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      issueCommentId: null,
+      assetId: "asset-1",
+      usage: "comment_inline",
+      provider: "local_disk",
+      objectKey: "issues/11111111-1111-4111-8111-111111111111/note.txt",
+      contentType: "text/plain",
+      byteSize: 5,
+      sha256: "sha256-sample",
+      originalFilename: "note.txt",
+      createdByAgentId: null,
+      createdByUserId: "local-board",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const res = await request(app)
+      .post("/api/orgs/organization-1/issues/11111111-1111-4111-8111-111111111111/attachments")
+      .field("usage", "comment_inline")
+      .attach("file", Buffer.from("hello"), { filename: "note.txt", contentType: "text/plain" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.createAttachment).toHaveBeenCalledWith(expect.objectContaining({
+      issueId: "11111111-1111-4111-8111-111111111111",
+      usage: "comment_inline",
+      contentType: "text/plain",
+      originalFilename: "note.txt",
+    }));
+    expect(mockLogActivity).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "issue.attachment_added",
+    }));
   });
 
   it("queues an assignment wakeup when a new assigned issue is created", async () => {

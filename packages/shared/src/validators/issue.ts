@@ -104,6 +104,7 @@ export type LinkIssueApproval = z.infer<typeof linkIssueApprovalSchema>;
 
 export const createIssueAttachmentMetadataSchema = z.object({
   issueCommentId: z.string().uuid().optional().nullable(),
+  usage: z.enum(["issue", "description_inline", "document_inline", "comment_inline", "comment_attachment"]).optional(),
 });
 
 export type CreateIssueAttachmentMetadata = z.infer<typeof createIssueAttachmentMetadataSchema>;

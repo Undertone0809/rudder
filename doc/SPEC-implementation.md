@@ -338,6 +338,14 @@ Operational policy:
   - `issue_id` uuid fk not null
   - `asset_id` uuid fk not null
   - `issue_comment_id` uuid fk null
+  - `usage` text not null default `issue`
+
+`usage` distinguishes issue-level supplemental files from inline content. Only
+`issue` attachments are rendered in the issue Attachments section. Images/files
+uploaded into issue descriptions, issue documents, or comment bodies are stored
+as assets for authenticated access, but remain visually attached to the content
+that references them instead of being duplicated in the issue-level attachment
+list.
 
 ## 7.15 `documents` + `document_revisions` + `issue_documents`
 

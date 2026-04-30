@@ -449,6 +449,13 @@
       "when": 1777399665467,
       "tag": "0063_flawless_toad",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1777546061916,
+      "tag": "0064_lush_the_fury",
+      "breakpoints": true
     }
   ]
 }
