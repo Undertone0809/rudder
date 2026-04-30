@@ -1,4 +1,4 @@
-import { AGENT_ICON_NAMES, type AgentIconName } from "@rudderhq/shared";
+import { AGENT_ICON_NAMES, type AgentIconName, type AgentRole } from "@rudderhq/shared";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { getAgentIcon } from "../lib/agent-icons";
@@ -22,16 +22,35 @@ const iconSize: Record<IdentitySize, string> = {
   lg: "h-4.5 w-4.5 text-base",
 };
 
-function deriveInitials(name: string): string {
-  const baseName = name.replace(/\s*\([^)]*\)\s*/g, " ").trim() || name.trim();
-  const parts = baseName.split(/\s+/);
-  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  return baseName.slice(0, 2).toUpperCase();
-}
-
 function normalizeIconValue(icon: string | null | undefined) {
   const normalized = icon?.trim();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function defaultAgentIconForRole(role: AgentRole | null | undefined): AgentIconName {
+  switch (role) {
+    case "ceo":
+      return "crown";
+    case "cto":
+    case "engineer":
+      return "code";
+    case "cmo":
+      return "globe";
+    case "cfo":
+      return "database";
+    case "designer":
+      return "wand";
+    case "pm":
+      return "target";
+    case "qa":
+      return "shield";
+    case "devops":
+      return "terminal";
+    case "researcher":
+      return "search";
+    default:
+      return "bot";
+  }
 }
 
 export function getAgentAvatarImageSrc(icon: string | null | undefined): string | null {
@@ -76,7 +95,7 @@ export function AgentIcon({ icon, className }: AgentIconProps) {
 export interface AgentIdentityProps {
   name: string;
   icon?: string | null;
-  initials?: string;
+  role?: AgentRole | null;
   size?: IdentitySize;
   className?: string;
 }
@@ -84,13 +103,12 @@ export interface AgentIdentityProps {
 export function AgentIdentity({
   name,
   icon,
-  initials,
+  role,
   size = "default",
   className,
 }: AgentIdentityProps) {
-  const normalizedIcon = normalizeIconValue(icon);
+  const normalizedIcon = normalizeIconValue(icon) ?? defaultAgentIconForRole(role);
   const imageSrc = getAgentAvatarImageSrc(normalizedIcon);
-  const displayInitials = initials ?? deriveInitials(name);
 
   return (
     <span
@@ -104,12 +122,10 @@ export function AgentIdentity({
       <Avatar size={size} className={size === "xs" ? "relative -top-px" : undefined}>
         {imageSrc ? (
           <AgentIcon icon={normalizedIcon} className="size-full" />
-        ) : normalizedIcon ? (
+        ) : (
           <AvatarFallback>
             <AgentIcon icon={normalizedIcon} className={iconSize[size]} />
           </AvatarFallback>
-        ) : (
-          <AvatarFallback>{displayInitials}</AvatarFallback>
         )}
       </Avatar>
       <span className={cn("truncate", textSize[size])}>{name}</span>

@@ -348,6 +348,7 @@ function KanbanCard({
                 <AgentIdentity
                   name={formatChatAgentLabel(agent)}
                   icon={agent.icon}
+                  role={agent.role}
                   size="xs"
                   className="min-w-0 flex-1 text-muted-foreground"
                 />
