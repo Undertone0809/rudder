@@ -36,6 +36,7 @@ import { layoutTimedEvents } from "@/lib/calendar-event-layout";
 type CalendarView = "day" | "week" | "month" | "agenda";
 type DraftKind = "human_event" | "agent_work_block";
 type DragMode = "move" | "resize-start" | "resize-end";
+type CreatePreview = { startAt: Date; endAt: Date } | null;
 
 const HOUR_HEIGHT = 52;
 const TIME_GUTTER_WIDTH = 56;
@@ -178,8 +179,8 @@ function isWritableEvent(event: CalendarEvent | null) {
 }
 
 function visibleEventTitle(event: CalendarEvent) {
+  if (event.eventKind === "external_event" && event.visibility !== "full") return "Busy";
   if (event.visibility === "private") return "Private";
-  if (event.visibility === "busy_only" && event.eventKind === "external_event") return "Busy";
   return event.title;
 }
 
@@ -309,6 +310,7 @@ function CalendarGridView({
   onSelect,
   onCreateSelection,
   onUpdateEventTime,
+  createPreview,
 }: {
   view: "day" | "week";
   days: Date[];
@@ -318,6 +320,7 @@ function CalendarGridView({
   onSelect: (event: CalendarEvent) => void;
   onCreateSelection: (startAt: Date, endAt: Date, anchor: { x: number; y: number }) => void;
   onUpdateEventTime: (event: CalendarEvent, startAt: Date, endAt: Date) => void;
+  createPreview?: CreatePreview;
 }) {
   const gridTemplate = `${TIME_GUTTER_WIDTH}px repeat(${days.length}, minmax(${DAY_MIN_WIDTH}px, 1fr))`;
   const minGridWidth = TIME_GUTTER_WIDTH + days.length * DAY_MIN_WIDTH;
@@ -534,7 +537,16 @@ function CalendarGridView({
               const laidOutEvents = layoutTimedEvents(dayEvents);
               const today = sameDay(day, currentTime);
               const todayLineTop = (minuteOfDay(currentTime) / 60) * HOUR_HEIGHT;
-              const activeSelection = selection?.dayKey === dateKey(day) ? selection : null;
+              const previewSelection = createPreview && sameDay(createPreview.startAt, day)
+                ? {
+                  dayKey: dateKey(day),
+                  startMinute: minuteOfDay(createPreview.startAt),
+                  endMinute: minuteOfDay(createPreview.endAt),
+                  startY: 0,
+                  moved: true,
+                }
+                : null;
+              const activeSelection = selection?.dayKey === dateKey(day) ? selection : previewSelection;
               const selectionTop = activeSelection
                 ? (Math.min(activeSelection.startMinute, activeSelection.endMinute) / 60) * HOUR_HEIGHT
                 : 0;
@@ -566,6 +578,7 @@ function CalendarGridView({
                   ) : null}
                   {activeSelection ? (
                     <div
+                      data-testid={`calendar-create-preview-${dateKey(day)}`}
                       className="pointer-events-none absolute left-2 right-2 z-20 rounded-[var(--radius-sm)] border border-primary/60 bg-primary/12"
                       style={{ top: selectionTop, height: selectionHeight }}
                     />
@@ -729,6 +742,7 @@ export function Calendar() {
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [quickCreate, setQuickCreate] = useState<null | { x: number; y: number }>(null);
+  const [createPreview, setCreatePreview] = useState<CreatePreview>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [draft, setDraft] = useState(() => newDraft());
   const [googleConnectResult, setGoogleConnectResult] = useState<GoogleCalendarConnectResponse | null>(null);
@@ -754,8 +768,15 @@ export function Calendar() {
       endAt: toInputDateTime(end),
     });
     setDialogOpen(false);
+    setCreatePreview(startAt && endAt ? { startAt, endAt } : null);
     setQuickCreate(clampQuickCreatePosition(anchor));
   }, [clampQuickCreatePosition]);
+
+  const closeCreateFlow = useCallback(() => {
+    setQuickCreate(null);
+    setDialogOpen(false);
+    setCreatePreview(null);
+  }, []);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Calendar" }]);
@@ -823,6 +844,16 @@ export function Calendar() {
     });
   }, [eventsQuery.data?.events, hiddenAgentIds, hiddenSourceIds, myCalendarVisible, visibleStatuses]);
 
+  const visibleCreatePreview = useMemo<CreatePreview>(() => {
+    if (!createPreview || editingEvent || (!quickCreate && !dialogOpen)) return null;
+    const startAt = new Date(draft.startAt);
+    const endAt = new Date(draft.endAt);
+    if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt.getTime() <= startAt.getTime()) {
+      return createPreview;
+    }
+    return { startAt, endAt };
+  }, [createPreview, dialogOpen, draft.endAt, draft.startAt, editingEvent, quickCreate]);
+
   const invalidateCalendar = async () => {
     if (!viewedOrganizationId) return;
     await Promise.all([
@@ -837,6 +868,7 @@ export function Calendar() {
     onSuccess: async (event) => {
       setQuickCreate(null);
       setDialogOpen(false);
+      setCreatePreview(null);
       setSelectedEvent(event);
       await invalidateCalendar();
       pushToast({ title: "Calendar block created", tone: "success" });
@@ -878,8 +910,21 @@ export function Calendar() {
     onError: (error) => pushToast({ title: "Failed to delete calendar block", body: error instanceof Error ? error.message : undefined, tone: "error" }),
   });
   const updateSourceMutation = useMutation({
-    mutationFn: ({ sourceId, visibilityDefault }: { sourceId: string; visibilityDefault: CalendarSource["visibilityDefault"] }) =>
-      calendarApi.updateSource(viewedOrganizationId!, sourceId, { visibilityDefault }),
+    mutationFn: async ({
+      sourceId,
+      visibilityDefault,
+      syncAfter,
+    }: {
+      sourceId: string;
+      visibilityDefault: CalendarSource["visibilityDefault"];
+      syncAfter?: boolean;
+    }) => {
+      const source = await calendarApi.updateSource(viewedOrganizationId!, sourceId, { visibilityDefault });
+      if (syncAfter && source.status === "active") {
+        await calendarApi.syncGoogle(viewedOrganizationId!, sourceId);
+      }
+      return source;
+    },
     onSuccess: async () => {
       await invalidateCalendar();
       pushToast({ title: "Calendar source updated", tone: "success" });
@@ -906,7 +951,7 @@ export function Calendar() {
     mutationFn: (sourceId?: string | null) => calendarApi.syncGoogle(viewedOrganizationId!, sourceId),
     onSuccess: async (result) => {
       await invalidateCalendar();
-      pushToast({ title: "Google Calendar synced", body: `${result.importedCount} new busy block${result.importedCount === 1 ? "" : "s"} imported.`, tone: "success" });
+      pushToast({ title: "Google Calendar synced", body: `${result.importedCount} new event${result.importedCount === 1 ? "" : "s"} imported.`, tone: "success" });
     },
     onError: (error) => pushToast({ title: "Google Calendar sync failed", body: error instanceof Error ? error.message : undefined, tone: "error" }),
   });
@@ -1005,6 +1050,7 @@ export function Calendar() {
           onSelect={setSelectedEvent}
           onCreateSelection={(startAt, endAt, anchor) => openQuickCreate("human_event", startAt, endAt, anchor)}
           onUpdateEventTime={(event, startAt, endAt) => moveEventMutation.mutate({ event, startAt, endAt })}
+          createPreview={visibleCreatePreview}
         />
       ) : view === "month" ? (
         <MonthView cursor={cursor} events={visibleEvents} agents={agents} currentTime={currentTime} onSelect={setSelectedEvent} />
@@ -1015,12 +1061,12 @@ export function Calendar() {
       {quickCreate ? (
         <div
           data-testid="calendar-quick-create"
-          className="fixed z-50 w-[360px] rounded-[var(--radius-sm)] border border-border bg-popover p-3 text-popover-foreground shadow-xl"
+          className="fixed z-50 w-[360px] rounded-[var(--radius-sm)] border border-border bg-popover p-3 text-popover-foreground shadow-xl animate-in fade-in-0 zoom-in-95 slide-in-from-top-1 duration-150"
           style={{ left: quickCreate.x, top: quickCreate.y }}
         >
           <div className="mb-3 flex items-center justify-between gap-2">
             <div className="text-sm font-semibold">Create</div>
-            <Button type="button" variant="ghost" size="icon-sm" aria-label="Close create popover" onClick={() => setQuickCreate(null)}>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="Close create popover" onClick={closeCreateFlow}>
               <X className="h-4 w-4" />
             </Button>
           </div>
@@ -1030,6 +1076,14 @@ export function Calendar() {
               value={draft.title}
               onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))}
               placeholder={draft.kind === "agent_work_block" ? "CEO · Plan roadmap" : "Add title"}
+            />
+            <Textarea
+              aria-label="Description"
+              value={draft.description}
+              onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))}
+              placeholder="Add description"
+              rows={2}
+              className="resize-none"
             />
             <div className="grid grid-cols-2 rounded-[var(--radius-sm)] border border-border p-0.5">
               {([
@@ -1124,7 +1178,7 @@ export function Calendar() {
           </DialogHeader>
           <div className="space-y-4 py-1 text-sm">
             <div className="rounded-[var(--radius-sm)] border border-border bg-muted/25 p-3 text-xs leading-5 text-muted-foreground">
-              Read-only import for the operator calendar. Imported events default to busy blocks and never enter agent context.
+              Read-only import for the operator calendar. Imported event titles are visible in Rudder when enabled; private Google events stay Busy, descriptions are not imported, and calendar data never enters agent context.
             </div>
 
             {googleSource?.status === "active" ? (
@@ -1171,6 +1225,7 @@ export function Calendar() {
                     onChange={(event) => updateSourceMutation.mutate({
                       sourceId: googleSource.id,
                       visibilityDefault: event.target.value as CalendarSource["visibilityDefault"],
+                      syncAfter: googleSource.type === "google_calendar",
                     })}
                     className="h-9 w-full rounded-[var(--radius-sm)] border border-input bg-background px-3 text-sm text-foreground"
                   >
@@ -1287,7 +1342,10 @@ export function Calendar() {
         </SheetContent>
       </Sheet>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen} onOpenChange={(open) => {
+        setDialogOpen(open);
+        if (!open && !quickCreate) setCreatePreview(null);
+      }}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editingEvent ? "Edit calendar event" : "New calendar block"}</DialogTitle>

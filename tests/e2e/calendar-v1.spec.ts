@@ -70,7 +70,7 @@ test.describe("Calendar V1", () => {
     await expect(page.getByText("Layers and sync")).toBeVisible();
     await expect(page.getByTestId("calendar-layers-sidebar")).toHaveCount(0);
     await expect(page.getByTestId("calendar-google-row")).toBeVisible();
-    await expect(page.getByText("Read-only import. Events default to busy blocks and never enter agent context.")).toHaveCount(0);
+    await expect(page.getByText("Imported event titles are visible in Rudder when enabled")).toHaveCount(0);
 
     await expect(page.getByText("Engineer · Projected heartbeat")).toHaveCount(0);
     await page.getByLabel("Show projected events").click();
@@ -80,6 +80,7 @@ test.describe("Calendar V1", () => {
     const modal = page.getByRole("dialog", { name: "Google Calendar" });
     await expect(modal).toBeVisible();
     await expect(modal.getByText("Read-only import for the operator calendar.")).toBeVisible();
+    await expect(modal.getByText("calendar data never enters agent context")).toBeVisible();
 
     await modal.getByRole("button", { name: "Connect" }).click();
     await expect(modal.getByText("GOOGLE_CALENDAR_CLIENT_ID")).toBeVisible();
@@ -204,7 +205,9 @@ test.describe("Calendar V1", () => {
 
     const popover = page.getByTestId("calendar-quick-create");
     await expect(popover).toBeVisible();
+    await expect(page.getByTestId(`calendar-create-preview-${todayKey}`)).toBeVisible();
     await popover.getByPlaceholder("Add title").fill("Review CEO output");
+    await popover.getByPlaceholder("Add description").fill("Check the agent output before the afternoon review.");
 
     const createResponse = page.waitForResponse((response) =>
       response.request().method() === "POST" &&
@@ -275,6 +278,7 @@ test.describe("Calendar V1", () => {
       eventKind: "human_event",
       eventStatus: "planned",
       sourceMode: "manual",
+      description: "Check the agent output before the afternoon review.",
     });
     expect(new Date(humanEvent.endAt).getTime() - new Date(humanEvent.startAt).getTime()).toBeGreaterThanOrEqual(2 * 60 * 60 * 1000);
   });

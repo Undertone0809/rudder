@@ -738,7 +738,7 @@ export function calendarService(db: Db) {
         ownerUserId: actor?.userId ?? "board",
         externalProvider: "google_calendar",
         externalCalendarId: "primary",
-        visibilityDefault: "busy_only",
+        visibilityDefault: "full",
         status,
       })
       .returning();
@@ -1061,8 +1061,10 @@ export function calendarService(db: Db) {
         const endRaw = item.end?.dateTime ?? item.end?.date;
         if (!startRaw || !endRaw) continue;
         const allDay = !item.start?.dateTime;
-        const visibility: CalendarVisibility = source.visibilityDefault as CalendarVisibility;
-        const title = visibility === "busy_only" || item.visibility === "private"
+        const visibility: CalendarVisibility = item.visibility === "private"
+          ? "private"
+          : source.visibilityDefault as CalendarVisibility;
+        const title = visibility !== "full"
           ? "Busy"
           : item.summary?.trim() || "Busy";
         const created = await upsertImportedGoogleEvent({
