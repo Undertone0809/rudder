@@ -41,8 +41,8 @@ const surfaceOptions: Array<{
   {
     id: "chat",
     label: "Chat Transcript",
-    eyebrow: "Progress stream",
-    description: "The messenger middle-state transcript, grouped into readable progress chunks while tool output stays tucked behind secondary disclosure.",
+    eyebrow: "Turn grouped",
+    description: "The messenger middle-state transcript, grouped by model turn so progress stays readable and tool output stays tucked behind secondary disclosure.",
     icon: LayoutPanelLeft,
   },
 ];
