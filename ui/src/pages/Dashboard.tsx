@@ -673,12 +673,12 @@ export function Dashboard() {
                 <div>
                   <h3 className="text-sm font-medium">Skills</h3>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    Loaded skills per run for {rangeLabel} across all agents. Hover a day to inspect the breakdown.
+                    Explicitly used skills per run for {rangeLabel} across all agents. Hover a day to inspect the breakdown.
                   </p>
                 </div>
                 <div className="text-right text-[11px] text-muted-foreground tabular-nums">
-                  <div>{visibleSkillAnalytics.totalCount} skill loads</div>
-                  <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill metadata</div>
+                  <div>{visibleSkillAnalytics.totalCount} skill uses</div>
+                  <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill use</div>
                 </div>
               </div>
               <SkillsUsageChart analytics={visibleSkillAnalytics} />

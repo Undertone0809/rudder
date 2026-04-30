@@ -94,6 +94,7 @@ import {
 import {
   buildDateKeysBetween,
   buildRecentDateKeys,
+  inferUsedSkillsFromPrompt,
   normalizeLoadedSkill,
 } from "./analytics.js";
 import {
@@ -4777,10 +4778,13 @@ export function heartbeatService(db: Db) {
 
       const payload = parseObject(row.payload);
       const loadedSkills = Array.isArray(payload.loadedSkills) ? payload.loadedSkills : [];
-      if (loadedSkills.length === 0) continue;
+      const usedSkills = Array.isArray(payload.usedSkills)
+        ? payload.usedSkills
+        : inferUsedSkillsFromPrompt(payload.prompt, loadedSkills);
+      if (usedSkills.length === 0) continue;
 
       const eventSkills = new Map<string, string>();
-      for (const entry of loadedSkills) {
+      for (const entry of usedSkills) {
         const normalized = normalizeLoadedSkill(entry);
         if (!normalized) continue;
         if (!eventSkills.has(normalized.key)) {

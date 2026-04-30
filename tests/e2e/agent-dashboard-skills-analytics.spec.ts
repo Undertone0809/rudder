@@ -39,7 +39,7 @@ function escapeRegExp(value: string): string {
 }
 
 test.describe("Agent dashboard skills analytics", () => {
-  test("shows a 7-day loaded-skills chart when all recent activity is within the last week", async ({ page, request }, testInfo) => {
+  test("shows a 7-day used-skills chart when all recent activity is within the last week", async ({ page, request }, testInfo) => {
     const orgRes = await request.post("/api/orgs", {
       data: {
         name: `Agent-Skills-Analytics-${Date.now()}`,
@@ -117,6 +117,7 @@ test.describe("Agent dashboard skills analytics", () => {
         level: "info",
         message: "adapter invocation",
         payload: {
+          prompt: "Use [$build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md) and [$screenshot](/workspace/.agents/skills/screenshot/SKILL.md)",
           loadedSkills: [
             { key: "rudder/build-advisor", runtimeName: "build-advisor", name: "Build Advisor" },
             { key: "screenshot", runtimeName: "screenshot", name: "Screenshot" },
@@ -134,6 +135,7 @@ test.describe("Agent dashboard skills analytics", () => {
         level: "info",
         message: "adapter invocation",
         payload: {
+          prompt: "Use [$build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md) and [$pua](/workspace/.agents/skills/pua/SKILL.md)",
           loadedSkills: [
             { key: "rudder/build-advisor", runtimeName: "build-advisor", name: "Build Advisor" },
             { key: "pua", runtimeName: "pua", name: "PUA" },
@@ -151,6 +153,7 @@ test.describe("Agent dashboard skills analytics", () => {
         level: "info",
         message: "adapter invocation",
         payload: {
+          prompt: "Use [$screenshot](/workspace/.agents/skills/screenshot/SKILL.md)",
           loadedSkills: [
             { key: "screenshot", runtimeName: "screenshot", name: "Screenshot" },
           ],
@@ -174,22 +177,22 @@ test.describe("Agent dashboard skills analytics", () => {
     await expect(page.getByRole("button", { name: "15D" })).toBeVisible();
     await expect(page.getByRole("button", { name: "1M" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Custom/ })).toBeVisible();
-    await expect(mainContent.getByText("Loaded skills per run for Last 7 days. Hover a day to inspect the breakdown.")).toBeVisible();
-    await expect(mainContent.getByText("5 skill loads")).toBeVisible();
-    await expect(mainContent.getByText("3 runs with skill metadata")).toBeVisible();
-    await expect(mainContent.getByText("Skill Distribution")).toBeVisible();
-    await expect(mainContent.getByText("Skill Usage Timeline")).toBeVisible();
-    const distributionPie = mainContent.getByRole("button", { name: /Skill distribution: 5 skill loads across 3 skills/ });
+    await expect(mainContent.getByText("Explicitly used skills per run for Last 7 days. Hover a day to inspect the breakdown.")).toBeVisible();
+    await expect(mainContent.getByText("5 skill uses")).toBeVisible();
+    await expect(mainContent.getByText("3 runs with skill use")).toBeVisible();
+    await expect(mainContent.getByText("Skill Use Distribution")).toBeVisible();
+    await expect(mainContent.getByText("Skill Use Timeline")).toBeVisible();
+    const distributionPie = mainContent.getByRole("button", { name: /Skill use distribution: 5 skill uses across 3 skills/ });
     await expect(distributionPie).toBeVisible();
     await distributionPie.hover();
-    await expect(page.getByText("Skill distribution")).toBeVisible();
-    await expect(page.getByText("5 skill loads across 3 runs")).toBeVisible();
+    await expect(page.getByText("Skill use distribution")).toBeVisible();
+    await expect(page.getByText("5 skill uses across 3 runs")).toBeVisible();
 
-    const recentDayColumn = mainContent.getByLabel(new RegExp(`${escapeRegExp(formatDayTitle(recentDateKey))}: 4 skill loads across 2 runs`));
+    const recentDayColumn = mainContent.getByLabel(new RegExp(`${escapeRegExp(formatDayTitle(recentDateKey))}: 4 skill uses across 2 runs`));
     await expect(recentDayColumn).toBeVisible();
     await recentDayColumn.hover();
 
-    await expect(page.getByText("Skill loads")).toBeVisible();
+    await expect(page.getByText("Skill uses")).toBeVisible();
     await expect(page.getByText("Runs with skills")).toBeVisible();
     await expect(page.getByText("build-advisor")).toBeVisible();
     await expect(page.getByText("screenshot")).toBeVisible();
@@ -201,7 +204,7 @@ test.describe("Agent dashboard skills analytics", () => {
     });
   });
 
-  test("shows organization-wide loaded-skills analytics on the dashboard", async ({ page, request }, testInfo) => {
+  test("shows organization-wide used-skills analytics on the dashboard", async ({ page, request }, testInfo) => {
     const orgRes = await request.post("/api/orgs", {
       data: {
         name: `Dashboard-Skills-Analytics-${Date.now()}`,
@@ -281,6 +284,7 @@ test.describe("Agent dashboard skills analytics", () => {
         level: "info",
         message: "adapter invocation",
         payload: {
+          prompt: "Use [$build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md) and [$screenshot](/workspace/.agents/skills/screenshot/SKILL.md)",
           loadedSkills: [
             { key: "rudder/build-advisor", runtimeName: "build-advisor", name: "Build Advisor" },
             { key: "screenshot", runtimeName: "screenshot", name: "Screenshot" },
@@ -298,6 +302,7 @@ test.describe("Agent dashboard skills analytics", () => {
         level: "info",
         message: "adapter invocation",
         payload: {
+          prompt: "Use [$build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md) and [$deep-research](/workspace/.agents/skills/deep-research/SKILL.md)",
           loadedSkills: [
             { key: "rudder/build-advisor", runtimeName: "build-advisor", name: "Build Advisor" },
             { key: "deep-research", runtimeName: "deep-research", name: "Deep Research" },
@@ -317,17 +322,17 @@ test.describe("Agent dashboard skills analytics", () => {
 
     const mainContent = page.locator("#main-content");
     await expect(mainContent.getByRole("heading", { name: "Skills" })).toBeVisible();
-    await expect(mainContent.getByText("Loaded skills per run for Last 7 days across all agents. Hover a day to inspect the breakdown.")).toBeVisible();
-    await expect(mainContent.getByText("4 skill loads")).toBeVisible();
-    await expect(mainContent.getByText("2 runs with skill metadata")).toBeVisible();
+    await expect(mainContent.getByText("Explicitly used skills per run for Last 7 days across all agents. Hover a day to inspect the breakdown.")).toBeVisible();
+    await expect(mainContent.getByText("4 skill uses")).toBeVisible();
+    await expect(mainContent.getByText("2 runs with skill use")).toBeVisible();
 
-    const distributionPie = mainContent.getByRole("button", { name: /Skill distribution: 4 skill loads across 3 skills/ });
+    const distributionPie = mainContent.getByRole("button", { name: /Skill use distribution: 4 skill uses across 3 skills/ });
     await expect(distributionPie).toBeVisible();
     await distributionPie.hover();
-    await expect(page.getByText("Skill distribution")).toBeVisible();
-    await expect(page.getByText("4 skill loads across 2 runs")).toBeVisible();
+    await expect(page.getByText("Skill use distribution")).toBeVisible();
+    await expect(page.getByText("4 skill uses across 2 runs")).toBeVisible();
 
-    const recentDayColumn = mainContent.getByLabel(new RegExp(`${escapeRegExp(formatDayTitle(recentDateKey))}: 4 skill loads across 2 runs`));
+    const recentDayColumn = mainContent.getByLabel(new RegExp(`${escapeRegExp(formatDayTitle(recentDateKey))}: 4 skill uses across 2 runs`));
     await expect(recentDayColumn).toBeVisible();
     await recentDayColumn.hover();
     await expect(page.getByText("build-advisor")).toBeVisible();
@@ -340,7 +345,7 @@ test.describe("Agent dashboard skills analytics", () => {
     });
   });
 
-  test("hides the skills section for a new agent without skill metadata", async ({ page, request }) => {
+  test("hides the skills section for a new agent without skill use", async ({ page, request }) => {
     const orgRes = await request.post("/api/orgs", {
       data: {
         name: `Agent-Skills-Hidden-${Date.now()}`,
@@ -380,6 +385,6 @@ test.describe("Agent dashboard skills analytics", () => {
     const mainContent = page.locator("#main-content");
     await expect(mainContent.getByRole("heading", { name: "New Agent", exact: true })).toBeVisible();
     await expect(mainContent.locator("h3").filter({ hasText: "Skills" })).toHaveCount(0);
-    await expect(mainContent.getByText(/skill metadata/i)).toHaveCount(0);
+    await expect(mainContent.getByText(/skill use/i)).toHaveCount(0);
   });
 });

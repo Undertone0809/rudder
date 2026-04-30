@@ -110,7 +110,7 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
     }
   });
 
-  it("aggregates recent loaded skills from adapter invoke events", async () => {
+  it("aggregates recent used skills from adapter invoke events", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
     const secondAgentId = randomUUID();
@@ -211,6 +211,7 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
         level: "info",
         message: "adapter invocation",
         payload: {
+          prompt: "Use these skills [$build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md) [$screenshot](/workspace/.agents/skills/screenshot/SKILL.md)",
           loadedSkills: [
             { key: "rudder/build-advisor", runtimeName: "build-advisor", name: "Build Advisor" },
             { key: "rudder/build-advisor", runtimeName: "build-advisor", name: "Build Advisor" },
@@ -229,6 +230,7 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
         level: "info",
         message: "adapter invocation",
         payload: {
+          prompt: "Use [$build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md) and [$pua](/workspace/.agents/skills/pua/SKILL.md)",
           loadedSkills: [
             { key: "rudder/build-advisor", runtimeName: "build-advisor", name: "Build Advisor" },
             { key: "pua", runtimeName: "pua", name: "PUA" },
@@ -246,6 +248,7 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
         level: "info",
         message: "adapter invocation",
         payload: {
+          prompt: "Use [$pua](/workspace/.agents/skills/pua/SKILL.md)",
           loadedSkills: [
             { key: "pua", runtimeName: "pua", name: "PUA" },
           ],
@@ -261,7 +264,11 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
         stream: "system",
         level: "info",
         message: "adapter invocation",
-        payload: {},
+        payload: {
+          loadedSkills: [
+            { key: "unused-skill", runtimeName: "unused-skill", name: "Unused Skill" },
+          ],
+        },
         createdAt: new Date("2026-04-18T09:00:10.000Z"),
       },
       {
@@ -274,6 +281,7 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
         level: "info",
         message: "adapter invocation",
         payload: {
+          prompt: "Use [$old-skill](/workspace/.agents/skills/old-skill/SKILL.md)",
           loadedSkills: [
             { key: "old-skill", runtimeName: "old-skill", name: "Old Skill" },
           ],
@@ -290,6 +298,7 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
         level: "info",
         message: "adapter invocation",
         payload: {
+          prompt: "Use [$deep-research](/workspace/.agents/skills/deep-research/SKILL.md) and [$pua](/workspace/.agents/skills/pua/SKILL.md)",
           loadedSkills: [
             { key: "deep-research", runtimeName: "deep-research", name: "Deep Research" },
             { key: "pua", runtimeName: "pua", name: "PUA" },

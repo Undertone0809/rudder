@@ -64,6 +64,12 @@ available evidence:
 - avoid claiming exact per-invocation skill execution when that telemetry does
   not exist yet
 
+2026-04-30 correction: dashboard analytics should not aggregate the full
+loaded-skill set as if it were meaningful usage. The runtime payload now records
+`usedSkills` when it can, and historical events are interpreted from explicit
+skill references in the adapter prompt. Loaded skills remain trace metadata; the
+dashboard surface should describe this section as skill use, not skill loads.
+
 ## Scope
 
 - in scope:

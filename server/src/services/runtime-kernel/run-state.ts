@@ -5,6 +5,7 @@ import type {
 } from "@rudderhq/shared";
 import type { heartbeatRuns } from "@rudderhq/db";
 import { summarizeRuntimeSkillsForTrace } from "../runtime-trace-metadata.js";
+import { inferUsedSkillsFromPrompt, normalizeLoadedSkill } from "./analytics.js";
 import { readNonEmptyString } from "./common.js";
 
 export function resolveHeartbeatObservabilitySurface(
@@ -69,8 +70,20 @@ export function buildHeartbeatAdapterInvokePayload(input: {
     description: string | null;
   }>;
 }): Record<string, unknown> {
+  const explicitUsedSkills = Array.isArray(input.meta.usedSkills)
+    ? input.meta.usedSkills
+      .map((entry) => normalizeLoadedSkill(entry))
+      .filter((entry): entry is { key: string; label: string } => Boolean(entry))
+    : [];
+  const usedSkills = explicitUsedSkills.length > 0
+    ? explicitUsedSkills
+    : inferUsedSkillsFromPrompt(input.meta.prompt, input.runtimeSkills);
+
   return {
     ...input.meta,
     ...summarizeRuntimeSkillsForTrace(input.runtimeSkills),
+    usedSkillCount: usedSkills.length,
+    usedSkillKeys: usedSkills.map((entry) => entry.key),
+    usedSkills,
   } as Record<string, unknown>;
 }
