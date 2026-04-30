@@ -1253,7 +1253,7 @@ export function ThreeColumnContextSidebar() {
                 onClick={closeMobileSidebar}
                 className="flex min-w-0 flex-1 items-center gap-3 self-stretch py-2.5 pl-3.5 pr-1 no-underline text-inherit"
               >
-                <AgentIcon icon={agent.icon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <AgentIcon icon={agent.icon} role={agent.role} className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="flex-1 truncate" title={formatSidebarAgentLabel(agent)}>
                   {formatSidebarAgentLabel(agent)}
                 </span>

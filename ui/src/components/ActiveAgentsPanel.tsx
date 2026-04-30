@@ -125,7 +125,7 @@ function AgentRunCard({
                 <span className="inline-flex h-2.5 w-2.5 rounded-full bg-muted-foreground/35" />
               )}
               {agent ? (
-                <AgentIdentity name={agent.name} icon={agent.icon} size="sm" className="[&>span:last-child]:!text-[11px]" />
+                <AgentIdentity name={agent.name} icon={agent.icon} role={agent.role} size="sm" className="[&>span:last-child]:!text-[11px]" />
               ) : (
                 <Identity name={run.agentName} size="sm" className="[&>span:last-child]:!text-[11px]" />
               )}

@@ -1,4 +1,4 @@
-import type { AgentRuntimeType, OrganizationStatus, PauseReason } from "../constants.js";
+import type { AgentRole, AgentRuntimeType, OrganizationStatus, PauseReason } from "../constants.js";
 import type { ChatIssueCreationMode } from "../constants.js";
 import type { ProjectWorkspaceSourceType } from "./project.js";
 
@@ -22,6 +22,7 @@ export interface OrganizationWorkspaceFileEntry {
   entityType?: OrganizationWorkspaceFileEntryEntityType;
   agentId?: string;
   agentIcon?: string | null;
+  agentRole?: AgentRole | null;
   workspaceKey?: string;
 }
 

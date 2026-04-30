@@ -1,7 +1,7 @@
 import { AGENT_ICON_NAMES, type AgentIconName, type AgentRole } from "@rudderhq/shared";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { getAgentIcon } from "../lib/agent-icons";
+import { getAgentIcon, getDefaultAgentIconForRole } from "../lib/agent-icons";
 
 type IdentitySize = "xs" | "sm" | "default" | "lg";
 
@@ -27,32 +27,6 @@ function normalizeIconValue(icon: string | null | undefined) {
   return normalized && normalized.length > 0 ? normalized : null;
 }
 
-function defaultAgentIconForRole(role: AgentRole | null | undefined): AgentIconName {
-  switch (role) {
-    case "ceo":
-      return "crown";
-    case "cto":
-    case "engineer":
-      return "code";
-    case "cmo":
-      return "globe";
-    case "cfo":
-      return "database";
-    case "designer":
-      return "wand";
-    case "pm":
-      return "target";
-    case "qa":
-      return "shield";
-    case "devops":
-      return "terminal";
-    case "researcher":
-      return "search";
-    default:
-      return "bot";
-  }
-}
-
 export function getAgentAvatarImageSrc(icon: string | null | undefined): string | null {
   const normalized = normalizeIconValue(icon);
   const assetId = normalized?.match(AGENT_ASSET_ICON_RE)?.[1] ?? null;
@@ -65,12 +39,14 @@ function isNamedAgentIcon(icon: string | null | undefined): icon is AgentIconNam
 
 interface AgentIconProps {
   icon: string | null | undefined;
+  role?: AgentRole | null;
   className?: string;
 }
 
-export function AgentIcon({ icon, className }: AgentIconProps) {
+export function AgentIcon({ icon, role, className }: AgentIconProps) {
   const normalized = normalizeIconValue(icon);
-  const imageSrc = getAgentAvatarImageSrc(normalized);
+  const effectiveIcon = normalized ?? getDefaultAgentIconForRole(role);
+  const imageSrc = getAgentAvatarImageSrc(effectiveIcon);
   if (imageSrc) {
     return (
       <img
@@ -81,14 +57,14 @@ export function AgentIcon({ icon, className }: AgentIconProps) {
       />
     );
   }
-  if (normalized && !isNamedAgentIcon(normalized)) {
+  if (effectiveIcon && !isNamedAgentIcon(effectiveIcon)) {
     return (
       <span className={cn("inline-flex items-center justify-center leading-none", className)}>
-        {normalized}
+        {effectiveIcon}
       </span>
     );
   }
-  const Icon = getAgentIcon(normalized);
+  const Icon = getAgentIcon(effectiveIcon);
   return <Icon className={className} />;
 }
 
@@ -107,7 +83,7 @@ export function AgentIdentity({
   size = "default",
   className,
 }: AgentIdentityProps) {
-  const normalizedIcon = normalizeIconValue(icon) ?? defaultAgentIconForRole(role);
+  const normalizedIcon = normalizeIconValue(icon) ?? getDefaultAgentIconForRole(role);
   const imageSrc = getAgentAvatarImageSrc(normalizedIcon);
 
   return (

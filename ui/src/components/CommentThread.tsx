@@ -184,6 +184,7 @@ const TimelineList = memo(function TimelineList({
                   <AgentIdentity
                     name={agentMap?.get(run.agentId)?.name ?? run.agentId.slice(0, 8)}
                     icon={agentMap?.get(run.agentId)?.icon}
+                    role={agentMap?.get(run.agentId)?.role}
                     size="sm"
                   />
                 </Link>
@@ -242,6 +243,7 @@ const TimelineList = memo(function TimelineList({
                   <AgentIdentity
                     name={agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
                     icon={agentMap?.get(comment.authorAgentId)?.icon}
+                    role={agentMap?.get(comment.authorAgentId)?.role}
                     size="sm"
                   />
                 </Link>
@@ -406,6 +408,7 @@ export function CommentThread({
         kind: "agent",
         agentId: a.id,
         agentIcon: a.icon,
+        agentRole: a.role,
       }));
   }, [agentMap, providedMentions]);
 
@@ -575,7 +578,7 @@ export function CommentThread({
                 return (
                   <>
                     {agent ? (
-                      <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     ) : null}
                     <span className="truncate">{option.label}</span>
                   </>
@@ -588,7 +591,7 @@ export function CommentThread({
                 return (
                   <>
                     {agent ? (
-                      <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     ) : null}
                     <span className="truncate">{option.label}</span>
                   </>

@@ -777,7 +777,12 @@ export function Dashboard() {
                                   <StatusBadge status={effectiveStatus} />
                                   {displayAgentName ? (
                                     displayAgent ? (
-                                      <AgentIdentity name={displayAgentName} icon={displayAgent.icon} size="sm" />
+                                      <AgentIdentity
+                                        name={displayAgentName}
+                                        icon={displayAgent.icon}
+                                        role={displayAgent.role}
+                                        size="sm"
+                                      />
                                     ) : (
                                       <Identity name={displayAgentName} size="sm" />
                                     )

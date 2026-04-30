@@ -1067,7 +1067,7 @@ export function AutomationDetail() {
                     <SidebarSelectValue>
                       {currentAssignee ? (
                         <>
-                          <AgentIcon icon={currentAssignee.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                           <span className="truncate">{option.label}</span>
                         </>
                       ) : (
@@ -1085,7 +1085,7 @@ export function AutomationDetail() {
                   const assignee = agentById.get(option.id);
                   return (
                     <>
-                      {assignee ? <AgentIcon icon={assignee.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                      {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
                       <span className="truncate">{option.label}</span>
                     </>
                   );

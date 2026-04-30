@@ -680,7 +680,7 @@ export function IssuesList({
                               checked={viewState.assignees.includes(agent.id)}
                               onCheckedChange={() => updateView({ assignees: toggleInArray(viewState.assignees, agent.id) })}
                             />
-                            <AgentIcon icon={agent.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                             <span className="text-sm">{formatChatAgentLabel(agent)}</span>
                           </label>
                         ))}
@@ -1012,6 +1012,7 @@ export function IssuesList({
                                 kind="agent"
                                 label={formatChatAgentLabel(agentById.get(issue.assigneeAgentId)!)}
                                 agentIcon={agentById.get(issue.assigneeAgentId)?.icon}
+                                agentRole={agentById.get(issue.assigneeAgentId)?.role}
                               />
                             ) : issue.assigneeUserId ? (
                               <AssigneeLabel
@@ -1089,6 +1090,7 @@ export function IssuesList({
                                     kind="agent"
                                     label={formatChatAgentLabel(agent)}
                                     agentIcon={agent.icon}
+                                    agentRole={agent.role}
                                     className="min-w-0"
                                   />
                                 </button>

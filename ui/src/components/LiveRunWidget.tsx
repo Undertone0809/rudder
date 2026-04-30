@@ -116,7 +116,7 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
                 <div className="min-w-0">
                   <Link to={`/agents/${run.agentId}`} className="inline-flex hover:underline">
                     {agent ? (
-                      <AgentIdentity name={agent.name} icon={agent.icon} size="sm" />
+                      <AgentIdentity name={agent.name} icon={agent.icon} role={agent.role} size="sm" />
                     ) : (
                       <Identity name={run.agentName} size="sm" />
                     )}

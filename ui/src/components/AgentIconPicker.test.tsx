@@ -51,4 +51,11 @@ describe("AgentIcon", () => {
     expect(container.textContent).toBe("🧪");
     expect(container.querySelector("img")).toBeNull();
   });
+
+  it("uses the agent role avatar when no custom icon is set", () => {
+    const container = render(<AgentIcon icon={null} role="ceo" />);
+
+    expect(container.textContent).toBe("");
+    expect(container.querySelector("svg")).toBeTruthy();
+  });
 });

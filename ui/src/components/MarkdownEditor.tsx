@@ -31,7 +31,7 @@ import {
   type RealmPlugin,
 } from "@mdxeditor/editor";
 import { Sparkles } from "lucide-react";
-import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
@@ -65,6 +65,7 @@ export interface MentionOption {
   searchText?: string;
   agentId?: string;
   agentIcon?: string | null;
+  agentRole?: AgentRole | null;
   projectId?: string;
   projectColor?: string | null;
   issueId?: string;
@@ -74,6 +75,7 @@ export interface MentionOption {
   issueProjectColor?: string | null;
   issueAssigneeName?: string | null;
   issueAssigneeIcon?: string | null;
+  issueAssigneeRole?: AgentRole | null;
   skillRefLabel?: string | null;
   skillMarkdownTarget?: string | null;
   skillDisplayName?: string | null;
@@ -1114,6 +1116,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                           ) : (
                             <AgentIcon
                               icon={option.agentIcon}
+                              role={option.agentRole}
                               className="h-4 w-4 shrink-0 text-muted-foreground"
                             />
                           )}
@@ -1136,6 +1139,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                                   {option.issueAssigneeIcon ? (
                                     <AgentIcon
                                       icon={option.issueAssigneeIcon}
+                                      role={option.issueAssigneeRole}
                                       className="h-3 w-3 shrink-0 text-muted-foreground"
                                     />
                                   ) : null}

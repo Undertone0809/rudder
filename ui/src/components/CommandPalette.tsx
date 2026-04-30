@@ -168,7 +168,7 @@ export function CommandPalette() {
                   <span className="flex-1 truncate">{issue.title}</span>
                   {issue.assigneeAgentId && (() => {
                     const agent = agentById.get(issue.assigneeAgentId);
-                    return agent ? <AgentIdentity name={agent.name} icon={agent.icon} size="sm" className="ml-2 hidden sm:inline-flex" /> : null;
+                    return agent ? <AgentIdentity name={agent.name} icon={agent.icon} role={agent.role} size="sm" className="ml-2 hidden sm:inline-flex" /> : null;
                   })()}
                 </CommandItem>
               ))}

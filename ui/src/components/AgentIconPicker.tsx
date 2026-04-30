@@ -35,7 +35,7 @@ function isCustomTextIcon(icon: string | null | undefined) {
 
 interface AgentIconPickerProps {
   value: string | null | undefined;
-  onChange: (icon: string) => void;
+  onChange: (icon: string | null) => void;
   onUpload?: (file: File) => void;
   uploadPending?: boolean;
   uploadError?: string | null;
@@ -68,7 +68,7 @@ export function AgentIconPicker({
     trimmedEmoji.length > MAX_CUSTOM_ICON_LENGTH ||
     /[<>\u0000-\u001f\u007f]/u.test(trimmedEmoji);
 
-  function selectIcon(icon: string) {
+  function selectIcon(icon: string | null) {
     onChange(icon);
     setOpen(false);
     setSearch("");
@@ -104,7 +104,7 @@ export function AgentIconPicker({
             <div className="text-sm font-medium text-foreground">Avatar</div>
             <button
               type="button"
-              onClick={() => selectIcon(DEFAULT_ICON)}
+              onClick={() => selectIcon(null)}
               className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <RotateCcw className="h-3.5 w-3.5" />

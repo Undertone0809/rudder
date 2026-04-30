@@ -328,7 +328,12 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
   );
 
   const assigneeTrigger = assignee ? (
-    <AssigneeLabel kind="agent" label={formatChatAgentLabel(assignee)} agentIcon={assignee.icon} />
+    <AssigneeLabel
+      kind="agent"
+      label={formatChatAgentLabel(assignee)}
+      agentIcon={assignee.icon}
+      agentRole={assignee.role}
+    />
   ) : assigneeUserLabel ? (
     <AssigneeLabel kind="user" label={assigneeUserLabel} />
   ) : (
@@ -400,7 +405,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
             )}
             onClick={() => { trackRecentAssignee(a.id); onUpdate({ assigneeAgentId: a.id, assigneeUserId: null }); setAssigneeOpen(false); }}
           >
-            <AssigneeLabel kind="agent" label={formatChatAgentLabel(a)} agentIcon={a.icon} />
+            <AssigneeLabel kind="agent" label={formatChatAgentLabel(a)} agentIcon={a.icon} agentRole={a.role} />
           </button>
         ))}
       </div>
@@ -654,6 +659,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
                 <AgentIdentity
                   name={agentName(issue.createdByAgentId) ?? issue.createdByAgentId.slice(0, 8)}
                   icon={issue.createdByAgentId ? agentById.get(issue.createdByAgentId)?.icon : null}
+                  role={issue.createdByAgentId ? agentById.get(issue.createdByAgentId)?.role : null}
                   size="sm"
                 />
               </Link>

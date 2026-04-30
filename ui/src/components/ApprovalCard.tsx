@@ -54,7 +54,7 @@ export function ApprovalCard({
             </div>
             {requesterAgent && (
               <span className="text-xs text-muted-foreground">
-                requested by <AgentIdentity name={requesterAgent.name} icon={requesterAgent.icon} size="sm" className="inline-flex" />
+                requested by <AgentIdentity name={requesterAgent.name} icon={requesterAgent.icon} role={requesterAgent.role} size="sm" className="inline-flex" />
               </span>
             )}
           </div>
