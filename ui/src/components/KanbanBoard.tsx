@@ -25,7 +25,7 @@ import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { cn } from "@/lib/utils";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { formatAssigneeUserLabel } from "@/lib/assignees";
-import { pickTextColorForPillBg } from "@/lib/color-contrast";
+import { IssueLabelChip } from "./IssueLabelChip";
 import { timeAgo } from "@/lib/timeAgo";
 import { CalendarClock, FolderKanban, Plus, User } from "lucide-react";
 import type { AgentRole, Issue } from "@rudderhq/shared";
@@ -370,17 +370,7 @@ function KanbanCard({
         {showLabels ? (
           <div className="mt-2 flex flex-wrap gap-1">
             {(issue.labels ?? []).slice(0, 3).map((label) => (
-              <span
-                key={label.id}
-                className="inline-flex max-w-full items-center truncate rounded-[calc(var(--radius-sm)-2px)] border px-1.5 py-0.5 text-[10px] font-medium"
-                style={{
-                  borderColor: label.color,
-                  color: pickTextColorForPillBg(label.color, 0.12),
-                  backgroundColor: `${label.color}1f`,
-                }}
-              >
-                {label.name}
-              </span>
+              <IssueLabelChip key={label.id} label={label} />
             ))}
             {(issue.labels ?? []).length > 3 ? (
               <span className="text-[10px] text-muted-foreground">

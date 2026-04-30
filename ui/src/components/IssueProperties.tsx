@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useState } from "react";
-import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { Link } from "@/lib/router";
 import type { Issue } from "@rudderhq/shared";
@@ -20,6 +19,7 @@ import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
 import { AssigneeLabel } from "./AssigneeLabel";
 import { AgentIdentity } from "./AgentAvatar";
+import { IssueLabelChip } from "./IssueLabelChip";
 import { formatDate, formatDateTime, cn, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
 import { Separator } from "@/components/ui/separator";
@@ -230,17 +230,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
   const labelsTrigger = (issue.labels ?? []).length > 0 ? (
     <div className="flex items-center gap-1 flex-wrap">
       {(issue.labels ?? []).slice(0, 3).map((label) => (
-        <span
-          key={label.id}
-          className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border"
-          style={{
-            borderColor: label.color,
-            backgroundColor: `${label.color}22`,
-            color: pickTextColorForPillBg(label.color, 0.13),
-          }}
-        >
-          {label.name}
-        </span>
+        <IssueLabelChip key={label.id} label={label} size="sm" />
       ))}
       {(issue.labels ?? []).length > 3 && (
         <span className="text-xs text-muted-foreground">+{(issue.labels ?? []).length - 3}</span>

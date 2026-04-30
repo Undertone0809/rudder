@@ -127,4 +127,33 @@ describe("KanbanBoard", () => {
 
     expect(onOpenIssue).toHaveBeenCalledWith(issue);
   });
+
+  it("renders issue labels as neutral chips with a color dot", () => {
+    const container = render(
+      <KanbanBoard
+        issues={[{
+          ...issue,
+          labels: [{
+            id: "label-1",
+            orgId: "org-1",
+            name: "Bug",
+            color: "#ef4444",
+            createdAt: new Date("2026-04-19T08:00:00.000Z"),
+            updatedAt: new Date("2026-04-19T08:00:00.000Z"),
+          }],
+          labelIds: ["label-1"],
+        }]}
+        agents={[{ id: "agent-1", name: "Alice Smith", icon: null, role: "engineer", title: null }]}
+        displayProperties={["labels"]}
+        onUpdateIssue={() => undefined}
+      />,
+    );
+
+    const chip = container.querySelector('[data-slot="issue-label-chip"]') as HTMLElement | null;
+    const dot = chip?.querySelector("span") as HTMLElement | null;
+
+    expect(chip?.textContent).toContain("Bug");
+    expect(chip?.getAttribute("style")).toBeNull();
+    expect(dot?.style.backgroundColor).toBe("rgb(239, 68, 68)");
+  });
 });

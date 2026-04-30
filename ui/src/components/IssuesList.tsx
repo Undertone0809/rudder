@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { useDialog, type NewIssueDefaults } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { issuesApi } from "../api/issues";
@@ -16,6 +15,7 @@ import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
 import { AssigneeLabel } from "./AssigneeLabel";
 import { EmptyState } from "./EmptyState";
+import { IssueLabelChip } from "./IssueLabelChip";
 import { IssueRow } from "./IssueRow";
 import { PageSkeleton } from "./PageSkeleton";
 import { Button } from "@/components/ui/button";
@@ -933,17 +933,7 @@ export function IssuesList({
                       {(issue.labels ?? []).length > 0 && (
                         <span className="hidden items-center gap-1 overflow-hidden md:flex md:max-w-[240px]">
                           {(issue.labels ?? []).slice(0, 3).map((label) => (
-                            <span
-                              key={label.id}
-                              className="inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
-                              style={{
-                                borderColor: label.color,
-                                color: pickTextColorForPillBg(label.color, 0.12),
-                                backgroundColor: `${label.color}1f`,
-                              }}
-                            >
-                              {label.name}
-                            </span>
+                            <IssueLabelChip key={label.id} label={label} />
                           ))}
                           {(issue.labels ?? []).length > 3 && (
                             <span className="text-[10px] text-muted-foreground">
