@@ -85,9 +85,7 @@ test.describe("Chat streaming", () => {
     await expect(assistantReply).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: /Worked for/ })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("chat-transcript-item").last().getByText("Model turn 1", { exact: false })).toBeVisible({
-      timeout: 15_000,
-    });
+    await expect(page.getByTestId("chat-transcript-item").last().getByText("Inspecting current chat state", { exact: false })).toBeVisible({ timeout: 15_000 });
 
     await page.reload();
     await expect(page.getByText("Streaming reply for chat.", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
@@ -96,16 +94,12 @@ test.describe("Chat streaming", () => {
     await expect(transcriptToggle).toBeVisible({ timeout: 15_000 });
     await expect(transcriptToggle).toHaveAttribute("aria-expanded", "true");
     const transcriptItem = page.getByTestId("chat-transcript-item").last();
-    await expect(transcriptItem.getByText("Model turn 1", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(transcriptItem.getByText("Model turn", { exact: false })).toHaveCount(0);
     await expect(transcriptItem.getByText("Inspecting current chat state", { exact: false })).toBeVisible({ timeout: 15_000 });
-    const toolActivityToggle = transcriptItem.locator('button[aria-label$="tool activity for model turn 1"]');
-    await expect(toolActivityToggle).toBeVisible({ timeout: 15_000 });
-    await expect(toolActivityToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(transcriptItem.locator('button[aria-label^="Expand tool activity"]')).toHaveCount(0);
     await expect(transcriptItem.getByText("Ran echo chat", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
     await expect(transcriptItem.getByText("Activity details", { exact: false })).toHaveCount(0);
     await expect(transcriptItem.getByText("TRANSCRIPT_TOOL_OUTPUT_E2E", { exact: false })).toHaveCount(0);
-    await toolActivityToggle.click();
-    await expect(toolActivityToggle).toHaveAttribute("aria-expanded", "true");
     await expect(transcriptItem.getByText("Command activity", { exact: false })).toHaveCount(0);
     await expect(transcriptItem.getByText("Ran echo chat", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
     await expect(transcriptItem.locator('button[aria-label="Expand command details"]').first()).toBeVisible({ timeout: 15_000 });
@@ -176,9 +170,9 @@ test.describe("Chat streaming", () => {
     await expect(transcriptToggle).toBeVisible({ timeout: 15_000 });
     await expect(transcriptToggle).toHaveAttribute("aria-expanded", "true");
     const transcriptItem = page.getByTestId("chat-transcript-item").last();
-    await expect(transcriptItem.getByText("Model turn 1", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(transcriptItem.getByText("Model turn", { exact: false })).toHaveCount(0);
     await expect(transcriptItem.getByText("Inspecting current chat state", { exact: false })).toBeVisible({ timeout: 15_000 });
-    await expect(transcriptItem.locator('button[aria-label$="tool activity for model turn 1"]')).toHaveAttribute("aria-expanded", "false");
+    await expect(transcriptItem.locator('button[aria-label^="Expand tool activity"]')).toHaveCount(0);
     await expect(transcriptItem.getByText("Ran echo chat", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
     await expect(transcriptItem.getByText("TRANSCRIPT_TOOL_OUTPUT_E2E", { exact: false })).toHaveCount(0);
     await expect(page.getByText("Streaming reply for chat.", { exact: false })).toHaveCount(0);

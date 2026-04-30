@@ -41,7 +41,7 @@ describe("StreamTranscriptItem", () => {
 
     expect(html).toContain("aria-expanded=\"true\"");
     expect(html).toContain("Worked for 15s");
-    expect(html).toContain("Model turn 1");
+    expect(html).not.toContain("Model turn");
     expect(html).toContain("Reviewing the request and preparing a concise reply.");
   });
 });
