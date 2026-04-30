@@ -5,7 +5,7 @@ description: >
   cannot yet express the right product, design, or engineering critique. Use
   when the user says a feature feels off, the AI-built result is poor, they do
   not know how to give better feedback, they want professional diagnosis before
-  more implementation, or they want help translating vague dissatisfaction into
+  more implementation, or they want help turning vague dissatisfaction into
   explicit standards, recommendations, and next steps. Especially useful when
   the user says the result feels wrong, asks for a professional critique before
   more implementation, wants best-practice research first, wants help deciding
@@ -21,7 +21,7 @@ description: >
 This skill exists for the moment after "something was built" but before the user has a clean professional critique.
 
 It is not an implementation skill first.
-It is a diagnosis, translation, and routing skill.
+It is a diagnosis, proposal, and routing skill.
 
 Use it when the user needs an expert advisor to turn fuzzy discomfort into:
 
@@ -51,7 +51,7 @@ Examples:
 - "You built a version, but it's not good. Help me critique it professionally."
 - "Before you keep coding, research best practices and tell me what we're missing."
 - "Should we keep patching this or write a design or architecture doc first?"
-- "I know the result is too big / too noisy / too complicated, but I need better language."
+- "I know the result is too big / too noisy / too complicated, but I need a concrete proposal."
 - "The trace or benchmark says one thing, but the result still feels wrong. Help me make sense of it."
 - "We have Langfuse traces / scores / evals, but I need help deciding what they actually imply."
 
@@ -153,25 +153,7 @@ When the user mentions Langfuse, or when the available evidence lives in Langfus
 
 Do not guess if you can verify quickly.
 
-### 4. Translate Vague Dissatisfaction Into Professional Language
-
-Turn the user's intuition into explicit critique.
-
-Examples:
-
-- "too big" -> poor surface ratio, oversized controls, inflated internal whitespace
-- "too noisy" -> weak hierarchy, too many competing accents, helper copy overexposed
-- "too complicated" -> poor progressive disclosure, secondary settings shown too early
-- "feels generic" -> no visual thesis, weak product character, interchangeable patterns
-- "hard to trust" -> unclear states, weak feedback, missing operational context
-- "trace looks messy" -> span hierarchy is not revealing decision boundaries, so failure analysis is shallow
-- "benchmark improved but quality feels worse" -> the eval rubric is rewarding the wrong behavior or averaging away the failure mode that matters
-- "agent eval is unstable" -> dataset segmentation, score naming, or review criteria are too coarse to distinguish real regressions from noise
-
-This translation step is mandatory.
-It is the main value of the skill.
-
-### 5. Build An Evaluation Frame
+### 4. Build An Evaluation Frame
 
 Create a short decision rubric tailored to the problem.
 
@@ -189,7 +171,7 @@ Good rubrics usually have 4-8 dimensions, for example:
 Do not stay abstract.
 Say what good and bad look like in this context.
 
-### 6. Produce Options
+### 5. Produce Options
 
 Always provide at least 2 options:
 
@@ -206,7 +188,7 @@ For each option include:
 
 If traces, scores, or evals are in play, say whether the option fixes the product, the instrumentation, the benchmark design, or only the interpretation layer.
 
-### 7. Expand The Recommended Proposal
+### 6. Expand The Recommended Proposal
 
 After listing options, expand the recommended option into a decision-ready
 proposal.
@@ -242,7 +224,7 @@ explicitly asks to proceed. If repo rules require a plan document before
 implementation, the proposal should make that plan easy to write after
 confirmation.
 
-### 8. Recommend The Next Move
+### 7. Recommend The Next Move
 
 Choose one option.
 Say why.
@@ -257,7 +239,7 @@ Possible next moves:
 
 The recommendation should be explicit, not "it depends" by default.
 
-### 9. Write Plan doc before run
+### 8. Write Plan doc before run
 
 Before you run, write your detail plan in `doc/plans`, then start your work.
 - DO NOT write your plan before user confirm.
@@ -300,10 +282,6 @@ When relevant, also include:
 
 - evidence source: trace, benchmark, score, dataset, or qualitative review
 - evidence quality: strong enough, missing, or misleading
-
-### Professional Translation
-
-3-6 bullets translating the user's discomfort into explicit critique.
 
 ### Evaluation Criteria
 
