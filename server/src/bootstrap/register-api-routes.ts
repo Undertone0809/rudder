@@ -7,6 +7,7 @@ import { agentRoutes } from "../routes/agents.js";
 import { approvalRoutes } from "../routes/approvals.js";
 import { assetRoutes } from "../routes/assets.js";
 import { automationRoutes } from "../routes/automations.js";
+import { calendarRoutes } from "../routes/calendar.js";
 import { chatRoutes } from "../routes/chats.js";
 import { costRoutes } from "../routes/costs.js";
 import { dashboardRoutes } from "../routes/dashboard.js";
@@ -55,6 +56,7 @@ export function registerApiRoutes(
   api.use(messengerRoutes(db));
   api.use(chatRoutes(db, opts.storageService));
   api.use(automationRoutes(db));
+  api.use(calendarRoutes(db));
   api.use(executionWorkspaceRoutes(db));
   api.use(goalRoutes(db));
   api.use(approvalRoutes(db));

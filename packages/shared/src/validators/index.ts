@@ -272,6 +272,21 @@ export {
 } from "./automation.js";
 
 export {
+  createCalendarSourceSchema,
+  updateCalendarSourceSchema,
+  createCalendarEventSchema,
+  updateCalendarEventSchema,
+  calendarEventListQuerySchema,
+  googleCalendarSyncSchema,
+  type CreateCalendarSource,
+  type UpdateCalendarSource,
+  type CreateCalendarEvent,
+  type UpdateCalendarEvent,
+  type CalendarEventListQuery,
+  type GoogleCalendarSync,
+} from "./calendar.js";
+
+export {
   createCostEventSchema,
   updateBudgetSchema,
   type CreateCostEvent,

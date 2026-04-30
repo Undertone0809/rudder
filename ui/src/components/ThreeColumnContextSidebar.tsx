@@ -3,13 +3,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   Boxes,
+  CalendarDays,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   Circle,
   Clock3,
   Columns3,
   Copy,
   DollarSign,
+  Eye,
+  EyeOff,
   FolderTree,
   History,
   MessageSquare,
@@ -19,6 +24,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  Settings2,
   Target,
   Trash2,
   UserRound,
@@ -34,6 +40,7 @@ import { issuesApi } from "@/api/issues";
 import { authApi } from "@/api/auth";
 import { projectsApi } from "@/api/projects";
 import { agentsApi } from "@/api/agents";
+import { calendarApi } from "@/api/calendar";
 import { chatsApi } from "@/api/chats";
 import { heartbeatsApi } from "@/api/heartbeats";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
@@ -68,7 +75,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
-import type { Issue } from "@rudderhq/shared";
+import { Checkbox } from "@/components/ui/checkbox";
+import { CALENDAR_EVENT_STATUS_OPTIONS, useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
+import type { CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
 
 const RECENT_ISSUES_COLLAPSED_LIMIT = 5;
 const RECENT_ISSUES_EXPANDED_LIMIT = 12;
@@ -124,6 +133,190 @@ function resolveContextColumnHeader(relativePath: string): { title: string; desc
     return { title: "Org", description: "Organization surfaces" };
   }
   return { title: "Agents", description: "" };
+}
+
+function calendarStatusLabel(status: CalendarEventStatus) {
+  if (status === "in_progress") return "in progress";
+  return status;
+}
+
+const CALENDAR_LAYER_COLORS = [
+  "border-blue-400 bg-blue-500",
+  "border-emerald-400 bg-emerald-500",
+  "border-amber-400 bg-amber-500",
+  "border-rose-400 bg-rose-500",
+  "border-cyan-400 bg-cyan-500",
+  "border-violet-400 bg-violet-500",
+] as const;
+
+const CALENDAR_WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"] as const;
+
+function calendarStartOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+}
+
+function calendarAddDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function calendarDateKey(date: Date | string) {
+  const value = new Date(date);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+}
+
+function calendarStartOfMonthGrid(date: Date) {
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const day = first.getDay();
+  return calendarStartOfDay(calendarAddDays(first, day === 0 ? -6 : 1 - day));
+}
+
+function calendarMonthTitle(date: Date) {
+  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(date);
+}
+
+function calendarHeatClass(count: number) {
+  if (count >= 8) return "bg-emerald-700 text-white";
+  if (count >= 5) return "bg-emerald-600 text-white";
+  if (count >= 3) return "bg-emerald-500/80 text-white";
+  if (count >= 1) return "bg-emerald-500/35 text-emerald-950 dark:text-emerald-50";
+  return "";
+}
+
+function setStringSetValue(setter: React.Dispatch<React.SetStateAction<Set<string>>>, id: string, visible: boolean) {
+  setter((current) => {
+    const next = new Set(current);
+    if (visible) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+}
+
+function CalendarMiniMonth({
+  cursor,
+  setCursor,
+  completedIssueCountByDay,
+}: {
+  cursor: Date;
+  setCursor: React.Dispatch<React.SetStateAction<Date>>;
+  completedIssueCountByDay: Map<string, number>;
+}) {
+  const gridStart = calendarStartOfMonthGrid(cursor);
+  const days = Array.from({ length: 42 }, (_, index) => calendarAddDays(gridStart, index));
+  const todayKey = calendarDateKey(new Date());
+  const selectedKey = calendarDateKey(cursor);
+
+  return (
+    <section className="px-3.5 pt-3" data-testid="calendar-mini-month">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          className="inline-flex min-w-0 items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-1.5 py-1 text-left text-sm font-medium text-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]"
+          onClick={() => setCursor((current) => new Date(current.getFullYear(), current.getMonth(), 1))}
+        >
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="truncate">{calendarMonthTitle(cursor)}</span>
+        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            aria-label="Previous month"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
+            onClick={() => setCursor((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Next month"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
+            onClick={() => setCursor((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-7 gap-y-1 text-center">
+        {CALENDAR_WEEKDAY_LABELS.map((label, index) => (
+          <div key={`${label}-${index}`} className="text-[10px] font-medium text-muted-foreground/72">
+            {label}
+          </div>
+        ))}
+        {days.map((day) => {
+          const key = calendarDateKey(day);
+          const outside = day.getMonth() !== cursor.getMonth();
+          const selected = key === selectedKey;
+          const today = key === todayKey;
+          const completedCount = completedIssueCountByDay.get(key) ?? 0;
+          const showHeat = completedCount > 0 && !today && !selected;
+          return (
+            <button
+              key={key}
+              type="button"
+              aria-label={`${key}${completedCount > 0 ? `, ${completedCount} completed agent issue${completedCount === 1 ? "" : "s"}` : ""}`}
+              title={completedCount > 0 ? `${completedCount} completed agent issue${completedCount === 1 ? "" : "s"}` : undefined}
+              className={cn(
+                "mx-auto flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-xs transition-[background-color,color,box-shadow]",
+                outside && !today ? "text-muted-foreground/45" : "text-foreground/88",
+                showHeat && calendarHeatClass(completedCount),
+                today && "bg-primary text-primary-foreground shadow-sm ring-2 ring-background",
+                !today && selected && "bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,var(--surface-active))] text-foreground ring-1 ring-primary/65",
+                !today && !selected && "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)]",
+              )}
+              onClick={() => setCursor(calendarStartOfDay(day))}
+            >
+              {day.getDate()}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function VisibilityLayerRow({
+  label,
+  visible,
+  onToggle,
+  icon: Icon,
+  colorClass,
+}: {
+  label: string;
+  visible: boolean;
+  onToggle: () => void;
+  icon?: typeof UserRound;
+  colorClass?: string;
+}) {
+  const EyeIcon = visible ? Eye : EyeOff;
+  return (
+    <button
+      type="button"
+      aria-pressed={visible}
+      aria-label={`${visible ? "Hide" : "Show"} ${label}`}
+      onClick={onToggle}
+      className={cn(
+        "group mx-1.5 flex min-h-9 w-[calc(100%-0.75rem)] items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-2 text-left text-sm transition-[background-color,color]",
+        "text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]",
+        !visible && "text-muted-foreground",
+      )}
+    >
+      {colorClass ? (
+        <span className={cn("h-2.5 w-2.5 shrink-0 rounded-sm border", colorClass, !visible && "opacity-35 grayscale")} />
+      ) : Icon ? (
+        <Icon className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground", !visible && "opacity-45")} />
+      ) : null}
+      <span className="min-w-0 flex-1 truncate" title={label}>{label}</span>
+      <span
+        className={cn(
+          "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-[color:var(--surface-page)] hover:text-foreground group-hover:opacity-100 group-focus-visible:opacity-100",
+          !visible && "text-muted-foreground/70",
+        )}
+      >
+        <EyeIcon className="h-3.5 w-3.5" />
+      </span>
+    </button>
+  );
 }
 
 function activeConversationIdFromPath(pathname: string): string | null {
@@ -452,15 +645,29 @@ export function ThreeColumnContextSidebar() {
   const relativePath = toOrganizationRelativePath(location.pathname);
   const contextHeader = useMemo(() => resolveContextColumnHeader(relativePath), [relativePath]);
   const isMessengerRoute = /^\/messenger(?:\/|$)/.test(relativePath);
+  const isCalendarRoute = /^\/calendar(?:\/|$)/.test(relativePath);
   const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath);
   const isOrgWorkspaceRoute = /^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const isChatRoute = /^\/chat(?:\/|$)/.test(relativePath);
-  const isAgentRoute = !isMessengerRoute && !isIssuesRoute && !isOrgWorkspaceRoute && !isChatRoute;
+  const isAgentRoute = !isMessengerRoute && !isIssuesRoute && !isCalendarRoute && !isOrgWorkspaceRoute && !isChatRoute;
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
   const { pushToast } = useToast();
   const { openNewAgent, openNewProject } = useDialog();
   const queryClient = useQueryClient();
+  const {
+    cursor,
+    setCursor,
+    hiddenAgentIds,
+    setHiddenAgentIds,
+    hiddenSourceIds,
+    setHiddenSourceIds,
+    myCalendarVisible,
+    setMyCalendarVisible,
+    visibleStatuses,
+    setVisibleStatuses,
+    setGoogleCalendarModalOpen,
+  } = useCalendarWorkspace();
 
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
@@ -481,6 +688,29 @@ export function ThreeColumnContextSidebar() {
     queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
     enabled: !!selectedOrganizationId,
   });
+  const { data: calendarSources } = useQuery({
+    queryKey: queryKeys.calendar.sources(selectedOrganizationId ?? "__none__"),
+    queryFn: () => calendarApi.sources(selectedOrganizationId!),
+    enabled: !!selectedOrganizationId && isCalendarRoute,
+  });
+  const updateCalendarSourceMutation = useMutation({
+    mutationFn: ({ sourceId, status }: { sourceId: string; status: CalendarSource["status"] }) =>
+      calendarApi.updateSource(selectedOrganizationId!, sourceId, { status }),
+    onSuccess: async () => {
+      if (!selectedOrganizationId) return;
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.calendar.sources(selectedOrganizationId) }),
+        queryClient.invalidateQueries({ queryKey: ["calendar", selectedOrganizationId] }),
+      ]);
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to update calendar source",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    },
+  });
   const { data: liveRuns } = useQuery({
     queryKey: queryKeys.liveRuns(selectedOrganizationId ?? "__none__"),
     queryFn: () => heartbeatsApi.liveRunsForCompany(selectedOrganizationId!),
@@ -491,6 +721,11 @@ export function ThreeColumnContextSidebar() {
     queryKey: queryKeys.issues.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => issuesApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && isIssuesRoute,
+  });
+  const { data: calendarCompletedIssues } = useQuery({
+    queryKey: ["calendar", selectedOrganizationId ?? "__none__", "completed-issue-heatmap"],
+    queryFn: () => issuesApi.list(selectedOrganizationId!, { status: "done" }),
+    enabled: !!selectedOrganizationId && isCalendarRoute,
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   const rawScope = new URLSearchParams(location.search).get("scope") ?? "";
@@ -534,6 +769,7 @@ export function ThreeColumnContextSidebar() {
   }, [allIssues, liveRuns]);
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [googleExpanded, setGoogleExpanded] = useState(true);
   const [issueDraftSummaries, setIssueDraftSummaries] = useState(() => summarizeIssueDrafts(selectedOrganizationId));
   const [recentIssueIds, setRecentIssueIds] = useState<string[]>(() => readRecentIssueIds(selectedOrganizationId));
   const [customIssueViews, setCustomIssueViews] = useState<IssueCustomView[]>(() => readIssueCustomViews(selectedOrganizationId));
@@ -588,6 +824,23 @@ export function ThreeColumnContextSidebar() {
   ];
   const activeOrgContextIndex = orgContextItems.findIndex((item) => item.active);
   const activeAgentIndex = visibleAgents.findIndex((agent) => activeAgentRef === agent.urlKey || activeAgentRef === agent.id);
+  const googleSources = (calendarSources ?? [])
+    .filter((source) => source.type === "google_calendar")
+    .sort((a, b) => {
+      const primaryDelta = (a.externalCalendarId === "primary" ? 0 : 1) - (b.externalCalendarId === "primary" ? 0 : 1);
+      return primaryDelta !== 0 ? primaryDelta : a.name.localeCompare(b.name);
+    });
+  const activeGoogleSources = googleSources.filter((source) => source.status === "active");
+  const googleVisible = googleSources.some((source) => source.status === "active" && !hiddenSourceIds.has(source.id));
+  const completedIssueCountByDay = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const issue of calendarCompletedIssues ?? []) {
+      if (!issue.completedAt || !issue.assigneeAgentId) continue;
+      const key = calendarDateKey(issue.completedAt);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [calendarCompletedIssues]);
 
   useEffect(() => {
     setRecentIssueIds(readRecentIssueIds(selectedOrganizationId));
@@ -719,8 +972,182 @@ export function ThreeColumnContextSidebar() {
     }
   };
 
+  const toggleGoogleVisibility = () => {
+    const nextVisible = !googleVisible;
+    const targetSources = nextVisible ? googleSources : activeGoogleSources;
+    setHiddenSourceIds((current) => {
+      const next = new Set(current);
+      for (const source of targetSources) {
+        if (nextVisible) next.delete(source.id);
+        else next.add(source.id);
+      }
+      return next;
+    });
+    for (const source of targetSources) {
+      updateCalendarSourceMutation.mutate({
+        sourceId: source.id,
+        status: nextVisible ? "active" : "paused",
+      });
+    }
+  };
+
+  const toggleGoogleSourceVisibility = (source: CalendarSource) => {
+    const nextVisible = !(source.status === "active" && !hiddenSourceIds.has(source.id));
+    setStringSetValue(setHiddenSourceIds, source.id, nextVisible);
+    updateCalendarSourceMutation.mutate({
+      sourceId: source.id,
+      status: nextVisible ? "active" : "paused",
+    });
+  };
+
   if (isMessengerRoute) {
     return <MessengerContextSidebar />;
+  }
+
+  if (isCalendarRoute) {
+    return (
+      <aside
+        data-testid="workspace-sidebar"
+        className="workspace-context-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
+      >
+        <div className="min-h-0 flex-1 overflow-y-auto pb-3.5">
+          <CalendarMiniMonth
+            cursor={cursor}
+            setCursor={setCursor}
+            completedIssueCountByDay={completedIssueCountByDay}
+          />
+
+          <SectionLabel
+            action={(
+              <button
+                type="button"
+                aria-label="Import Google Calendar"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
+                onClick={() => setGoogleCalendarModalOpen(true)}
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            )}
+          >
+            Calendars
+          </SectionLabel>
+          <div className="mt-2 space-y-0.5">
+            <VisibilityLayerRow
+              label="My Calendar"
+              visible={myCalendarVisible}
+              onToggle={() => setMyCalendarVisible((current) => !current)}
+              icon={UserRound}
+            />
+            <div
+              className="group mx-1.5 flex min-h-9 items-center gap-1 rounded-[calc(var(--radius-sm)-1px)] px-1.5 py-1 text-sm text-foreground/88 transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]"
+            >
+              <button
+                type="button"
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground hover:bg-[color:var(--surface-page)] hover:text-foreground"
+                aria-label={googleExpanded ? "Collapse Google Calendar calendars" : "Expand Google Calendar calendars"}
+                onClick={() => setGoogleExpanded((current) => !current)}
+              >
+                {googleExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              </button>
+              <button
+                type="button"
+                data-testid="calendar-google-row"
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-[calc(var(--radius-sm)-2px)] px-1.5 py-1 text-left"
+                onClick={() => setGoogleCalendarModalOpen(true)}
+              >
+                <CalendarDays className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate">Google Calendar</span>
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-[color:var(--surface-page)] hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+                aria-label={`${googleVisible ? "Hide" : "Show"} Google Calendar`}
+                disabled={googleSources.length === 0 || updateCalendarSourceMutation.isPending}
+                onClick={toggleGoogleVisibility}
+              >
+                {googleVisible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-[color:var(--surface-page)] hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
+                aria-label="Google Calendar settings"
+                onClick={() => setGoogleCalendarModalOpen(true)}
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {googleExpanded && googleSources.length > 0 ? (
+              <div className="ml-9 mr-2 space-y-0.5" data-testid="calendar-google-source-list">
+                {googleSources.map((source, index) => {
+                  const visible = source.status === "active" && !hiddenSourceIds.has(source.id);
+                  const EyeIcon = visible ? Eye : EyeOff;
+                  return (
+                    <button
+                      type="button"
+                      key={source.id}
+                      data-testid={`calendar-google-source-row-${source.id}`}
+                      disabled={updateCalendarSourceMutation.isPending}
+                      aria-label={`${visible ? "Disable" : "Enable"} ${source.name}`}
+                      className={cn(
+                        "group/source flex min-h-7 w-full items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-2 py-1 text-left text-xs text-foreground/82 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] disabled:cursor-not-allowed disabled:opacity-60",
+                        !visible && "text-muted-foreground",
+                      )}
+                      onClick={() => toggleGoogleSourceVisibility(source)}
+                    >
+                      <span className={cn("h-2 w-2 shrink-0 rounded-sm border", CALENDAR_LAYER_COLORS[index % CALENDAR_LAYER_COLORS.length], !visible && "opacity-35 grayscale")} />
+                      <span className="min-w-0 flex-1 truncate" title={source.name}>{source.name}</span>
+                      {source.status !== "active" ? (
+                        <span className="shrink-0 text-[10px] text-muted-foreground">Off</span>
+                      ) : null}
+                      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-[color:var(--surface-page)] hover:text-foreground group-hover/source:opacity-100 group-focus-visible/source:opacity-100">
+                        <EyeIcon className="h-3 w-3" />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+
+          <SectionLabel>Agents</SectionLabel>
+          <div className="mt-2 space-y-0.5">
+            {visibleAgents.map((agent, index) => (
+              <VisibilityLayerRow
+                key={agent.id}
+                label={formatSidebarAgentLabel(agent)}
+                visible={!hiddenAgentIds.has(agent.id)}
+                onToggle={() => setStringSetValue(setHiddenAgentIds, agent.id, hiddenAgentIds.has(agent.id))}
+                colorClass={CALENDAR_LAYER_COLORS[index % CALENDAR_LAYER_COLORS.length]}
+              />
+            ))}
+          </div>
+
+          <SectionLabel>Status</SectionLabel>
+          <div className="mt-2 space-y-0.5" data-testid="calendar-status-filters">
+            {CALENDAR_EVENT_STATUS_OPTIONS.map((status) => (
+              <label
+                key={status}
+                className="mx-1.5 flex min-h-8 items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-1.5 text-sm text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]"
+              >
+                <Checkbox
+                  checked={visibleStatuses.has(status)}
+                  onCheckedChange={(checked) => {
+                    setVisibleStatuses((current) => {
+                      const next = new Set(current);
+                      if (checked === true) next.add(status);
+                      else next.delete(status);
+                      return next;
+                    });
+                  }}
+                  aria-label={`Show ${calendarStatusLabel(status)} events`}
+                />
+                <span className="truncate">{calendarStatusLabel(status)}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </aside>
+    );
   }
 
   if (isIssuesRoute) {

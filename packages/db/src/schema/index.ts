@@ -35,6 +35,8 @@ export { chatConversationUserStates } from "./chat_conversation_user_states.js";
 export { chatMessages } from "./chat_messages.js";
 export { chatContextLinks } from "./chat_context_links.js";
 export { chatAttachments } from "./chat_attachments.js";
+export { calendarSources } from "./calendar_sources.js";
+export { calendarEvents } from "./calendar_events.js";
 export { automations, automationTriggers, automationRuns } from "./automations.js";
 export { issueWorkProducts } from "./issue_work_products.js";
 export { labels } from "./labels.js";
