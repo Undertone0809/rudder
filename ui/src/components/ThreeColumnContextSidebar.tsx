@@ -342,7 +342,7 @@ function RecentIssueListSection({
         data-testid="issue-recent-list"
         className={cn(
           "mt-2 space-y-0.5",
-          expanded && "max-h-72 overflow-y-auto pr-1",
+          expanded && "scrollbar-hover-reveal max-h-72 overflow-y-auto pr-1",
         )}
       >
         {visibleIssues.map((issue) => {

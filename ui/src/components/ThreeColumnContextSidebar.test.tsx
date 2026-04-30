@@ -350,6 +350,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     const recentList = document.querySelector("[data-testid='issue-recent-list']") as HTMLDivElement | null;
     expect(recentList?.className).toContain("max-h-72");
     expect(recentList?.className).toContain("overflow-y-auto");
+    expect(recentList?.className).toContain("scrollbar-hover-reveal");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-12']")?.textContent).toContain("Recent issue 12");
     expect(document.body.textContent).not.toContain("Showing latest 12 of 12");
   });
