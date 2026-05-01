@@ -20,7 +20,8 @@ related_code:
   - ui/src/pages/InstanceAboutSettings.tsx
   - ui/src/lib/desktop-shell.ts
   - doc/DESKTOP.md
-commit_refs: []
+commit_refs:
+  - feat: add desktop update action
 updated_at: 2026-05-01
 ---
 
