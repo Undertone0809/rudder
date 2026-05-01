@@ -6,6 +6,7 @@ import {
   CircleDot,
   Copy,
   DollarSign,
+  ListFilter,
   MessageSquare,
   MoreHorizontal,
   PencilLine,
@@ -30,9 +31,23 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
+
+type ThreadOrganizationRule = "latest" | "project" | "kind" | "attention";
+
+const THREAD_ORGANIZATION_STORAGE_KEY = "rudder.messengerThreadOrganizationByOrg";
+const DEFAULT_THREAD_ORGANIZATION_RULE: ThreadOrganizationRule = "latest";
+const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label: string }> = [
+  { value: "latest", label: "Latest activity" },
+  { value: "project", label: "Project" },
+  { value: "kind", label: "Thread type" },
+  { value: "attention", label: "Needs attention" },
+];
 
 function ContextColumnHeader({
   title,
@@ -81,6 +96,34 @@ function threadConversationId(threadKey: string) {
   return threadKey.startsWith("chat:") ? threadKey.slice("chat:".length) : null;
 }
 
+function readThreadOrganizationRule(orgId: string | null | undefined): ThreadOrganizationRule {
+  if (!orgId || typeof window === "undefined") return DEFAULT_THREAD_ORGANIZATION_RULE;
+  try {
+    const raw = window.localStorage.getItem(THREAD_ORGANIZATION_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    const value = parsed[orgId];
+    if (value === "latest" || value === "project" || value === "kind" || value === "attention") return value;
+  } catch {
+    // Ignore storage failures; the default latest-activity list remains usable.
+  }
+  return DEFAULT_THREAD_ORGANIZATION_RULE;
+}
+
+function writeThreadOrganizationRule(orgId: string, rule: ThreadOrganizationRule) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(THREAD_ORGANIZATION_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    window.localStorage.setItem(THREAD_ORGANIZATION_STORAGE_KEY, JSON.stringify({ ...parsed, [orgId]: rule }));
+  } catch {
+    // Ignore storage failures; the in-memory selection still applies for this view.
+  }
+}
+
+function threadOrganizationLabel(rule: ThreadOrganizationRule) {
+  return THREAD_ORGANIZATION_OPTIONS.find((option) => option.value === rule)?.label ?? "Latest activity";
+}
+
 function conversationSubtitle(conversation: ChatConversation) {
   return (
     formatMessengerPreview(conversation.latestReplyPreview) ||
@@ -90,6 +133,11 @@ function conversationSubtitle(conversation: ChatConversation) {
       : null) ||
     "Start the conversation"
   );
+}
+
+function chatProjectGroupLabel(conversation: ChatConversation | null) {
+  const projectLink = conversation?.contextLinks?.find((link) => link.entityType === "project") ?? null;
+  return projectLink?.entity?.label || projectLink?.entity?.identifier || (projectLink ? "Unknown project" : "No project");
 }
 
 function ThreadAvatar({
@@ -124,6 +172,48 @@ function ThreadAvatar({
         <span className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full border-2 border-[color:var(--surface-elevated)] bg-red-500" />
       ) : null}
     </span>
+  );
+}
+
+function MessengerThreadSectionHeader({
+  rule,
+  onRuleChange,
+}: {
+  rule: ThreadOrganizationRule;
+  onRuleChange: (rule: ThreadOrganizationRule) => void;
+}) {
+  const activeRule = rule !== DEFAULT_THREAD_ORGANIZATION_RULE;
+  return (
+    <div className="group/section flex items-center justify-between px-3.5 pt-3.5">
+      <div className="min-w-0 truncate text-[11px] font-semibold text-muted-foreground/72">
+        Threads{activeRule ? <span className="text-muted-foreground"> · {threadOrganizationLabel(rule)}</span> : null}
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            data-testid="messenger-thread-organization-trigger"
+            className={cn(
+              "flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+              activeRule ? "opacity-100" : "opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100",
+            )}
+            aria-label="Organize threads"
+          >
+            <ListFilter className="h-3.5 w-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="surface-overlay w-44 text-foreground">
+          <DropdownMenuLabel className="text-xs text-muted-foreground">Organize by</DropdownMenuLabel>
+          <DropdownMenuRadioGroup value={rule} onValueChange={(value) => onRuleChange(value as ThreadOrganizationRule)}>
+            {THREAD_ORGANIZATION_OPTIONS.map((option) => (
+              <DropdownMenuRadioItem key={option.value} value={option.value}>
+                {option.label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 
@@ -340,6 +430,86 @@ function ThreadRow({
   return row;
 }
 
+type MessengerThreadSummaryItem = ReturnType<typeof useMessengerModel>["threadSummaries"][number];
+
+interface OrganizedThreadEntry {
+  thread: MessengerThreadSummaryItem;
+  conversation: ChatConversation | null;
+}
+
+interface OrganizedThreadSection {
+  key: string;
+  label: string | null;
+  entries: OrganizedThreadEntry[];
+}
+
+function isPinnedEntry(entry: OrganizedThreadEntry) {
+  return Boolean(entry.conversation?.isPinned);
+}
+
+function entryActivityTime(entry: OrganizedThreadEntry) {
+  const value = entry.thread.kind === "chat" && entry.conversation
+    ? entry.conversation.lastMessageAt ?? entry.conversation.updatedAt
+    : entry.thread.latestActivityAt;
+  return value ? new Date(value).getTime() : Number.NEGATIVE_INFINITY;
+}
+
+function compareThreadEntries(a: OrganizedThreadEntry, b: OrganizedThreadEntry) {
+  if (isPinnedEntry(a) !== isPinnedEntry(b)) return isPinnedEntry(a) ? -1 : 1;
+  const timeDiff = entryActivityTime(b) - entryActivityTime(a);
+  if (timeDiff !== 0) return timeDiff;
+  return a.thread.title.localeCompare(b.thread.title);
+}
+
+function groupEntries(
+  entries: OrganizedThreadEntry[],
+  labelForEntry: (entry: OrganizedThreadEntry) => string,
+) {
+  const sections = new Map<string, OrganizedThreadEntry[]>();
+  for (const entry of entries) {
+    const label = labelForEntry(entry);
+    sections.set(label, [...(sections.get(label) ?? []), entry]);
+  }
+  return Array.from(sections.entries())
+    .sort(([a], [b]) => {
+      if (a === "Needs attention") return -1;
+      if (b === "Needs attention") return 1;
+      if (a === "No project") return 1;
+      if (b === "No project") return -1;
+      if (a === "System") return 1;
+      if (b === "System") return -1;
+      return a.localeCompare(b);
+    })
+    .map(([label, sectionEntries]) => ({
+      key: label,
+      label,
+      entries: [...sectionEntries].sort(compareThreadEntries),
+    }));
+}
+
+function organizeThreadEntries(entries: OrganizedThreadEntry[], rule: ThreadOrganizationRule): OrganizedThreadSection[] {
+  const sorted = [...entries].sort(compareThreadEntries);
+  if (rule === "latest") {
+    const pinned = sorted.filter(isPinnedEntry);
+    const recent = sorted.filter((entry) => !isPinnedEntry(entry));
+    if (pinned.length === 0) return [{ key: "latest", label: null, entries: recent }];
+    return [
+      { key: "pinned", label: "Pinned", entries: pinned },
+      { key: "recent", label: "Recent", entries: recent },
+    ].filter((section) => section.entries.length > 0);
+  }
+  if (rule === "project") {
+    return groupEntries(sorted, (entry) => {
+      if (entry.thread.kind !== "chat") return "System";
+      return chatProjectGroupLabel(entry.conversation);
+    });
+  }
+  if (rule === "kind") {
+    return groupEntries(sorted, (entry) => messengerThreadKindLabel(entry.thread.kind));
+  }
+  return groupEntries(sorted, (entry) => entry.thread.unreadCount > 0 || entry.thread.needsAttention ? "Needs attention" : "Other threads");
+}
+
 export function MessengerContextSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -352,6 +522,13 @@ export function MessengerContextSidebar() {
   const sidebarScrollRef = useScrollbarActivityRef("rudder:sidebar-scroll:messenger");
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [threadOrganizationRule, setThreadOrganizationRule] = useState<ThreadOrganizationRule>(() =>
+    readThreadOrganizationRule(model.selectedOrganizationId),
+  );
+
+  useEffect(() => {
+    setThreadOrganizationRule(readThreadOrganizationRule(model.selectedOrganizationId));
+  }, [model.selectedOrganizationId]);
 
   const chatsQuery = useQuery({
     queryKey: queryKeys.chats.list(model.selectedOrganizationId ?? "__none__", "all"),
@@ -366,6 +543,17 @@ export function MessengerContextSidebar() {
     }
     return map;
   }, [chatsQuery.data]);
+
+  const organizedThreadSections = useMemo(() => {
+    const entries = model.threadSummaries.map((thread) => {
+      const conversationId = threadConversationId(thread.threadKey);
+      return {
+        thread,
+        conversation: conversationId ? conversationsById.get(conversationId) ?? null : null,
+      };
+    });
+    return organizeThreadEntries(entries, threadOrganizationRule);
+  }, [conversationsById, model.threadSummaries, threadOrganizationRule]);
 
   const activeThreadKey = useMemo(() => {
     if (route.kind === "chat" && route.conversationId) return `chat:${route.conversationId}`;
@@ -406,6 +594,13 @@ export function MessengerContextSidebar() {
       rememberMessengerPath(model.selectedOrganizationId, href);
     }
     closeMobileSidebar();
+  };
+
+  const handleThreadOrganizationRuleChange = (rule: ThreadOrganizationRule) => {
+    setThreadOrganizationRule(rule);
+    if (model.selectedOrganizationId) {
+      writeThreadOrganizationRule(model.selectedOrganizationId, rule);
+    }
   };
 
   const refreshChatViews = async (chatId?: string) => {
@@ -505,8 +700,16 @@ export function MessengerContextSidebar() {
       data-testid="workspace-sidebar"
       className="workspace-context-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
     >
-      <ContextColumnHeader title="Messenger" description="Threads sorted by latest activity" />
-      <div className="px-3.5 pt-3.5 text-[10px] font-semibold tracking-[0.08em] text-muted-foreground/72">Threads</div>
+      <ContextColumnHeader
+        title="Messenger"
+        description={threadOrganizationRule === "latest"
+          ? "Threads sorted by latest activity"
+          : `Threads organized by ${threadOrganizationLabel(threadOrganizationRule).toLowerCase()}`}
+      />
+      <MessengerThreadSectionHeader
+        rule={threadOrganizationRule}
+        onRuleChange={handleThreadOrganizationRuleChange}
+      />
       <nav
         ref={sidebarScrollRef}
         className="scrollbar-auto-hide mt-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-3.5"
@@ -536,52 +739,62 @@ export function MessengerContextSidebar() {
             ))}
           </div>
         ) : null}
-        {model.threadSummaries.map((thread) => {
-          const active = activeThreadKey === thread.threadKey;
-          const conversationId = threadConversationId(thread.threadKey);
-          const conversation = conversationId ? conversationsById.get(conversationId) ?? null : null;
-          if (thread.kind === "chat" && conversation) {
-            return (
-              <ChatThreadRow
-                key={thread.threadKey}
-                conversation={conversation}
-                href={thread.href}
-                active={active}
-                renaming={renamingConversationId === conversation.id}
-                renameDraft={renameDraft}
-                onRenameDraftChange={setRenameDraft}
-                onCommitRename={submitRename}
-                onStartRename={() => {
-                  setRenamingConversationId(conversation.id);
-                  setRenameDraft(conversation.title);
-                }}
-                onArchive={() => {
-                  updateConversationMutation.mutate({
-                    chatId: conversation.id,
-                    data: { status: "archived" },
-                  });
-                }}
-                onTogglePin={() => {
-                  updateConversationUserStateMutation.mutate({
-                    chatId: conversation.id,
-                    pinned: !conversation.isPinned,
-                  });
-                }}
-                onCopyConversationId={() => void copyConversationId(conversation.id)}
-                onSelect={handleMessengerEntrySelect}
-              />
-            );
-          }
+        {organizedThreadSections.map((section) => (
+          <div key={section.key} className="flex flex-col gap-1">
+            {section.label ? (
+              <div
+                data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
+                className="px-3 pb-1 pt-2 text-[11px] font-semibold text-muted-foreground/72"
+              >
+                {section.label}
+              </div>
+            ) : null}
+            {section.entries.map(({ thread, conversation }) => {
+              const active = activeThreadKey === thread.threadKey;
+              if (thread.kind === "chat" && conversation) {
+                return (
+                  <ChatThreadRow
+                    key={thread.threadKey}
+                    conversation={conversation}
+                    href={thread.href}
+                    active={active}
+                    renaming={renamingConversationId === conversation.id}
+                    renameDraft={renameDraft}
+                    onRenameDraftChange={setRenameDraft}
+                    onCommitRename={submitRename}
+                    onStartRename={() => {
+                      setRenamingConversationId(conversation.id);
+                      setRenameDraft(conversation.title);
+                    }}
+                    onArchive={() => {
+                      updateConversationMutation.mutate({
+                        chatId: conversation.id,
+                        data: { status: "archived" },
+                      });
+                    }}
+                    onTogglePin={() => {
+                      updateConversationUserStateMutation.mutate({
+                        chatId: conversation.id,
+                        pinned: !conversation.isPinned,
+                      });
+                    }}
+                    onCopyConversationId={() => void copyConversationId(conversation.id)}
+                    onSelect={handleMessengerEntrySelect}
+                  />
+                );
+              }
 
-          return (
-            <ThreadRow
-              key={thread.threadKey}
-              thread={thread}
-              active={active}
-              onSelect={handleMessengerEntrySelect}
-            />
-          );
-        })}
+              return (
+                <ThreadRow
+                  key={thread.threadKey}
+                  thread={thread}
+                  active={active}
+                  onSelect={handleMessengerEntrySelect}
+                />
+              );
+            })}
+          </div>
+        ))}
       </nav>
     </aside>
   );

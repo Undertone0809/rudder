@@ -98,6 +98,63 @@ test.describe("Messenger unified threads contract", () => {
     }).toBe("archived");
   });
 
+  test("pins a Messenger chat from the sidebar and promotes it above recent threads", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Pin-${Date.now()}`);
+
+    const olderChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Pinned older chat",
+        summary: "This chat should move above newer activity after pinning.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(olderChatRes.ok()).toBe(true);
+    const olderChat = await olderChatRes.json();
+    await page.waitForTimeout(25);
+
+    const newerChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Recent unpinned chat",
+        summary: "This chat is newer but not pinned.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(newerChatRes.ok()).toBe(true);
+    const newerChat = await newerChatRes.json();
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${olderChat.id}`, { waitUntil: "commit" });
+
+    const olderRow = page.getByTestId(threadTestId(`chat:${olderChat.id}`));
+    const newerRow = page.getByTestId(threadTestId(`chat:${newerChat.id}`));
+    await expect(olderRow).toBeVisible({ timeout: 15_000 });
+    await expect(newerRow).toBeVisible({ timeout: 15_000 });
+    await expect(newerRow).toContainText("Recent unpinned chat");
+
+    await olderRow.hover();
+    await olderRow.getByRole("button", { name: "Chat actions" }).click();
+    await page.getByRole("menuitem", { name: "Pin" }).click();
+
+    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    const chatRows = page.locator(
+      `[data-testid="${threadTestId(`chat:${olderChat.id}`)}"], [data-testid="${threadTestId(`chat:${newerChat.id}`)}"]`,
+    );
+    await expect.poll(async () => {
+      return await chatRows.evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-testid")),
+      );
+    }).toEqual([
+      threadTestId(`chat:${olderChat.id}`),
+      threadTestId(`chat:${newerChat.id}`),
+    ]);
+  });
+
   test("renders the mixed Messenger directory and supports issue + approval actions", async ({ page }, testInfo) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);
@@ -107,12 +164,22 @@ test.describe("Messenger unified threads contract", () => {
 
     const organization = await createOrganization(page, `Messenger-${Date.now()}`);
 
+    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Project Atlas",
+        status: "in_progress",
+      },
+    });
+    expect(projectRes.ok()).toBe(true);
+    const project = await projectRes.json();
+
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
         title: "Messenger intake",
         summary: "Clarify, route, and keep the conversation lightweight.",
         issueCreationMode: "manual_approval",
         planMode: false,
+        contextLinks: [{ entityType: "project", entityId: project.id }],
       },
     });
     expect(chatRes.ok()).toBe(true);
@@ -171,6 +238,14 @@ test.describe("Messenger unified threads contract", () => {
     await expect(page.getByTestId("issues-unread-badge")).toHaveText("1");
     await expect(page.getByTestId("rail-badge-messenger")).toHaveText("2");
     await expect(page.getByTestId("rail-badge-messenger")).toHaveClass(/bg-red-500/);
+
+    await page.getByTestId("messenger-thread-organization-trigger").click();
+    await page.getByRole("menuitemradio", { name: "Project" }).click();
+    await expect(page.getByTestId("workspace-context-header")).toContainText("Threads organized by project");
+    await expect(page.getByText("Threads · Project")).toBeVisible();
+    await expect(page.getByTestId("messenger-thread-section-Project-Atlas")).toBeVisible();
+    await expect(page.getByTestId("messenger-thread-section-System")).toBeVisible();
+    await expect(page.getByTestId(threadTestId(`chat:${chat.id}`))).toContainText("Messenger intake");
 
     await page.goto(`/${organizationPrefix}/messenger/issues`, { waitUntil: "commit" });
     await expect(mainContent.getByRole("heading", { name: "Issues" })).toBeVisible({ timeout: 15_000 });
