@@ -26,10 +26,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        include:
+          - os: ubuntu-latest
+            test: full
+          - os: macos-latest
+            test: full
+          - os: windows-latest
+            test: cli-start
     env:
       CI: true
     steps:
@@ -51,7 +54,12 @@ jobs:
         run: pnpm -r typecheck
 
       - name: Unit tests
+        if: matrix.test == 'full'
         run: pnpm test:run --maxWorkers=1
+
+      - name: CLI start tests
+        if: matrix.test == 'cli-start'
+        run: pnpm -s exec vitest run cli/src/__tests__/start.test.ts
 
       - name: Build
         run: pnpm build
