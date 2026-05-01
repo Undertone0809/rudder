@@ -42,6 +42,12 @@ type DesktopUpdateCheckResult = {
   checkedAt: string;
 };
 
+type DesktopUpdateInstallResult =
+  | { status: "started"; version: string }
+  | { status: "unavailable"; message: string }
+  | { status: "blocked"; totalRuns: number; message: string }
+  | { status: "failed"; message: string };
+
 type OpenNotificationSettingsResult = {
   opened: boolean;
   platform: NodeJS.Platform;
@@ -113,6 +119,8 @@ contextBridge.exposeInMainWorld("desktopShell", {
   restart: () => ipcRenderer.invoke("desktop:restart"),
   getAppVersion: () => ipcRenderer.invoke("desktop:get-app-version") as Promise<string>,
   checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates") as Promise<DesktopUpdateCheckResult>,
+  installUpdate: (version: string) =>
+    ipcRenderer.invoke("desktop:install-update", version) as Promise<DesktopUpdateInstallResult>,
   getSystemPermissions: () =>
     ipcRenderer.invoke("desktop:get-system-permissions") as Promise<DesktopSystemPermissions>,
   sendFeedback: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
@@ -139,6 +147,7 @@ declare global {
       restart(): Promise<void>;
       getAppVersion(): Promise<string>;
       checkForUpdates(): Promise<DesktopUpdateCheckResult>;
+      installUpdate(version: string): Promise<DesktopUpdateInstallResult>;
       getSystemPermissions(): Promise<DesktopSystemPermissions>;
       sendFeedback(): Promise<void>;
       openExternal(target: string): Promise<void>;

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,7 +7,7 @@ import { Notification, app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMai
 import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electron";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml } from "./boot-screen.js";
-import { ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
+import { DESKTOP_CLI_FLAG, ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
 import { listAvailableIdeTargets, openWorkspaceFileInIde } from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
@@ -147,6 +148,12 @@ type OpenNotificationSettingsResult = {
   platform: NodeJS.Platform;
 };
 
+type DesktopUpdateInstallResult =
+  | { status: "started"; version: string }
+  | { status: "unavailable"; message: string }
+  | { status: "blocked"; totalRuns: number; message: string }
+  | { status: "failed"; message: string };
+
 const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
 const DESKTOP_FEEDBACK_EMAIL = "zeeland4work@gmail.com";
@@ -225,21 +232,94 @@ async function maybeShowStartupUpdateNotice(): Promise<void> {
   const options: Electron.MessageBoxOptions = {
     type: "info",
     title: APP_NAME,
-    buttons: ["Open Release", "Later"],
+    buttons: ["Update", "Later"],
     defaultId: 0,
     cancelId: 1,
     noLink: true,
     message: `Rudder ${formatVersionForDisplay(result.latestVersion)} is available.`,
     detail:
       `You are running ${formatVersionForDisplay(result.currentVersion)}. `
-      + "This reminder only follows stable Rudder releases and ignores canary or beta releases.",
+      + (result.channel === "canary"
+        ? "Canary builds update to newer canary releases."
+        : "Stable builds update to stable releases."),
   };
   const response = window
     ? await dialog.showMessageBox(window, options)
     : await dialog.showMessageBox(options);
 
-  if (response.response === 0) {
-    await shell.openExternal(result.releaseUrl ?? DESKTOP_RELEASES_URL);
+  if (response.response !== 0) return;
+
+  const installResult = await installUpdate(result.latestVersion);
+  if (installResult.status === "started") return;
+
+  const fallbackOptions: Electron.MessageBoxOptions = {
+    type: installResult.status === "blocked" ? "warning" : "error",
+    title: APP_NAME,
+    buttons: ["OK"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    message: installResult.status === "blocked" ? "Update paused." : "Update could not start.",
+    detail: installResult.message,
+  };
+  if (window) {
+    await dialog.showMessageBox(window, fallbackOptions);
+  } else {
+    await dialog.showMessageBox(fallbackOptions);
+  }
+}
+
+async function installUpdate(version: string | null | undefined): Promise<DesktopUpdateInstallResult> {
+  const normalizedVersion = version?.trim();
+  if (!app.isPackaged) {
+    return {
+      status: "unavailable",
+      message: "In-app updates are available only from packaged Rudder Desktop builds.",
+    };
+  }
+  if (!normalizedVersion) {
+    return {
+      status: "unavailable",
+      message: "The update check did not return a target version.",
+    };
+  }
+
+  try {
+    const activeRuns = await listActiveRunsForQuit();
+    if (activeRuns.totalRuns > 0) {
+      return {
+        status: "blocked",
+        totalRuns: activeRuns.totalRuns,
+        message:
+          `Rudder has ${activeRuns.totalRuns} active run${activeRuns.totalRuns === 1 ? "" : "s"}.\n\n`
+          + `${formatQuitRunDetail(activeRuns)}\n\nStop active work, then run the update again.`,
+      };
+    }
+
+    const profileName = currentBootState.runtime?.localEnv;
+    const args = [
+      DESKTOP_CLI_FLAG,
+      ...(profileName ? ["--local-env", profileName] : []),
+      "start",
+      "--no-cli",
+      "--version",
+      normalizedVersion,
+      "--repo",
+      DESKTOP_GITHUB_REPO,
+      "--no-version-check",
+    ];
+    const child = spawn(process.execPath, args, {
+      detached: true,
+      env: process.env,
+      stdio: "ignore",
+    });
+    child.unref();
+    return { status: "started", version: normalizedVersion };
+  } catch (error) {
+    return {
+      status: "failed",
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -1217,6 +1297,7 @@ function registerIpc(): void {
     await restartFromResidentControls();
   });
   ipcMain.handle("desktop:check-for-updates", async () => checkForUpdates());
+  ipcMain.handle("desktop:install-update", async (_event, version: string) => installUpdate(version));
   ipcMain.handle("desktop:send-feedback", async () => {
     await shell.openExternal(createFeedbackMailtoUrl());
   });

@@ -46,6 +46,12 @@ export type DesktopUpdateCheckResult = {
   checkedAt: string;
 };
 
+export type DesktopUpdateInstallResult =
+  | { status: "started"; version: string }
+  | { status: "unavailable"; message: string }
+  | { status: "blocked"; totalRuns: number; message: string }
+  | { status: "failed"; message: string };
+
 export type OpenNotificationSettingsResult = {
   opened: boolean;
   platform: string;
@@ -84,6 +90,7 @@ export type DesktopShellApi = {
   restart(): Promise<void>;
   getAppVersion(): Promise<string>;
   checkForUpdates(): Promise<DesktopUpdateCheckResult>;
+  installUpdate(version: string): Promise<DesktopUpdateInstallResult>;
   getSystemPermissions?(): Promise<DesktopSystemPermissions>;
   sendFeedback(): Promise<void>;
   openExternal(target: string): Promise<void>;

@@ -102,6 +102,7 @@ export function InstanceAboutSettings() {
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [updateResult, setUpdateResult] = useState<DesktopUpdateCheckResult | null>(null);
   const [checkUpdatesPending, setCheckUpdatesPending] = useState(false);
+  const [installUpdatePending, setInstallUpdatePending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -187,6 +188,52 @@ export function InstanceAboutSettings() {
       });
     } finally {
       setCheckUpdatesPending(false);
+    }
+  }
+
+  async function handleInstallUpdate() {
+    const desktopShell = readDesktopShell();
+    const latestVersion = updateResult?.latestVersion;
+    setActionError(null);
+
+    if (!desktopShell || !latestVersion) {
+      setActionError(t("about.updates.installUnavailable"));
+      return;
+    }
+
+    setInstallUpdatePending(true);
+    try {
+      const result = await desktopShell.installUpdate(latestVersion);
+      if (result.status === "started") {
+        pushToast({
+          title: t("about.updates.installStarted.toastTitle"),
+          body: t("about.updates.installStarted.toastBody", {
+            latestVersion: formatVersion(result.version, t("common.unknown")),
+          }),
+          tone: "info",
+        });
+        return;
+      }
+
+      const message = result.message || t("about.updates.installFailed");
+      setActionError(message);
+      pushToast({
+        title: result.status === "blocked"
+          ? t("about.updates.installBlocked.toastTitle")
+          : t("about.updates.installFailedToastTitle"),
+        body: message,
+        tone: result.status === "blocked" ? "warn" : "error",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("about.updates.installFailed");
+      setActionError(message);
+      pushToast({
+        title: t("about.updates.installFailedToastTitle"),
+        body: message,
+        tone: "error",
+      });
+    } finally {
+      setInstallUpdatePending(false);
     }
   }
 
@@ -318,20 +365,21 @@ export function InstanceAboutSettings() {
           )}
           action={(
             <div className="flex items-center gap-2">
-              {updateResult?.status === "update-available" && updateResult.releaseUrl ? (
+              {updateResult?.status === "update-available" && updateResult.latestVersion ? (
                 <Button
-                  variant="outline"
+                  variant="default"
                   size="sm"
-                  onClick={() => void openExternal(updateResult.releaseUrl!)}
+                  onClick={() => void handleInstallUpdate()}
+                  disabled={installUpdatePending}
                 >
-                  {t("about.updates.openRelease")}
+                  {installUpdatePending ? t("about.updates.installing") : t("about.updates.install")}
                 </Button>
               ) : null}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => void handleCheckForUpdates()}
-                disabled={checkUpdatesPending}
+                disabled={checkUpdatesPending || installUpdatePending}
               >
                 <RefreshCw className={`mr-2 h-4 w-4 ${checkUpdatesPending ? "animate-spin" : ""}`} />
                 {t("about.updates.check")}

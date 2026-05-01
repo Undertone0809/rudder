@@ -15,8 +15,8 @@ Current desktop scope is intentionally narrow:
 - bundled local instance only
 - `local_trusted` only
 - packaged app uses a resident shell lifecycle
-- update detection is available; automatic in-place update installation is not
-  implemented yet
+- update detection and Rudder-managed portable replacement are available;
+  binary-delta incremental updates are not implemented yet
 - no launch-at-login
 - no remote-instance connection mode
 
@@ -222,6 +222,14 @@ available.
 Packaged Desktop checks for updates on startup against GitHub Releases. Stable
 builds compare against the latest stable release, and canary builds compare
 against the latest canary release. Beta prereleases are ignored; if a newer
-matching release exists, the app prompts the user to open the release page.
-The manual About-page check uses the same release comparison and falls back to
-the GitHub releases page when the unauthenticated GitHub API is rate-limited.
+matching release exists, the app prompts the user to update.
+The manual About-page check uses the same release comparison. When the operator
+chooses Update, Desktop starts the bundled CLI `start --no-cli` portable
+replacement flow for the discovered version. That flow downloads the matching
+release asset, verifies `SHASUMS256.txt`, requests the running Desktop shell to
+quit, replaces the per-user portable app, refreshes launchers, and reopens
+Rudder. If active agent runs exist, the update is blocked until active work is
+stopped.
+
+This is a full portable asset replacement. It is not a binary-delta incremental
+update path.
