@@ -1,87 +1,226 @@
 ---
-title: Issue Reviewer Selection
-date: 2026-04-30
+title: Issue Reviewer Routing
+date: 2026-05-02
 kind: proposal
 status: proposed
-area: ui
+area: api
 entities:
   - issue_reviewer
-  - issue_create_dialog
   - review_routing
+  - issue_attention
+  - issue_create_dialog
 issue:
-related_plans: []
+related_plans:
+  - 2026-02-21-humans-and-permissions.md
+  - 2026-02-21-humans-and-permissions-implementation.md
+  - 2026-03-13-workspace-product-model-and-work-product.md
+  - 2026-04-10-messenger-unification.md
+  - 2026-04-24-passive-issue-closeout-watchdog.md
 supersedes: []
 related_code:
   - packages/db/src/schema/issues.ts
   - packages/shared/src/validators/issue.ts
   - packages/shared/src/types/issue.ts
+  - packages/shared/src/types/messenger.ts
   - server/src/services/issues.ts
   - server/src/routes/issues.ts
+  - server/src/services/issue-assignment-wakeup.ts
+  - server/src/services/messenger.ts
+  - ui/src/api/issues.ts
+  - ui/src/lib/assignees.ts
+  - ui/src/lib/new-issue-dialog.ts
   - ui/src/components/NewIssueDialog.tsx
   - ui/src/components/IssueProperties.tsx
-commit_refs: []
-updated_at: 2026-04-30
+  - ui/src/pages/Inbox.tsx
+  - tests/e2e/issues-assigned-to-me.spec.ts
+  - tests/e2e/issues-inline-assignee.spec.ts
+commit_refs:
+  - docs: refine issue reviewer routing proposal
+updated_at: 2026-05-02
 ---
 
-# Issue Reviewer Selection
+# Issue Reviewer Routing
 
-## Problem
+## Overview
 
-Issue creation currently supports ownership through an assignee, but it does not let the operator specify who should review the result when the work is ready. This makes review ownership implicit. The operator has to remember who should review the issue, mention them later, or rely on the assignee to route the review manually.
+Add a first-class optional reviewer to issues, and make that reviewer an
+attention target when work is ready for review.
 
-Rudder should make review ownership explicit at issue creation time.
+This is not an approval workflow. It is the smallest durable control-plane
+primitive that answers: when an assignee finishes work, who is responsible for
+checking the result?
 
-The desired user experience is:
+The key product decision is that reviewer selection must not stop at storage
+and UI. A reviewer only has product value if the issue reaches that reviewer
+when the issue enters `in_review`, and if the reviewer has an obvious way to
+leave feedback, request changes, or complete the issue.
 
-- while creating an issue, the operator can choose `Reviewer`
-- the default state is `No reviewer`
-- the reviewer is saved on the issue
-- the issue detail surface shows and allows editing the reviewer
-- when the issue reaches review state, Rudder can route attention to the reviewer
+## What Is The Problem?
 
-This should remain lightweight. Reviewer selection should not turn issues into a heavyweight approval workflow.
+Current state:
 
-## Goals
+- Issues already have execution ownership through `assigneeAgentId` and
+  `assigneeUserId`.
+- Issues already have an `in_review` status.
+- Messenger and Inbox already surface issue attention for followed issues,
+  created issues, assigned user issues, approvals, failed runs, and other
+  operational signals.
+- Agent close-out governance can emit `issue.closure_needs_operator_review`
+  when successful runs fail to leave a closure signal.
 
-1. Add a first-class optional reviewer field to issues.
-2. Allow reviewer selection during issue creation.
-3. Allow reviewer editing from the issue properties panel.
-4. Support both human users and agents as reviewers, matching the existing assignee model.
-5. Keep the existing single-assignee invariant unchanged.
-6. Add organization-scoped validation so reviewers cannot be selected across organization boundaries.
-7. Add activity logging for reviewer changes.
-8. Add E2E coverage for creating an issue with a reviewer.
+Problem:
 
-## Non-goals
+- `in_review` has no explicit target. The system can say "this needs review",
+  but not "this needs review by this person or reviewer agent".
+- Operators must remember the intended reviewer, mention them later, or rely on
+  the assignee to route review manually.
+- Human review ownership is not represented in attention surfaces unless the
+  human also created, followed, or was assigned the issue.
+- Agent reviewers can be woken only through ad hoc assignment or mention paths,
+  which confuses execution ownership with review responsibility.
 
-1. Do not implement multiple reviewers in this version.
-2. Do not implement a separate approval workflow.
-3. Do not merge `Reviewer` with `Approver`.
-4. Do not require every issue to have a reviewer.
-5. Do not block issue completion solely because a reviewer is missing.
-6. Do not add external GitHub/GitLab reviewer sync in this version.
+Impact:
 
-## Product Semantics
+- Real agent-work loops can stall after implementation because the check step
+  is implicit.
+- "Assignee" risks becoming overloaded as both implementer and checker.
+- Review work is less auditable than assignment and approval work.
+- Rudder's north-star loop, completed real agent work, is weakened at the point
+  where output quality should be verified.
 
-An issue reviewer is the person or agent responsible for checking the output when the issue is ready for review.
+## What Will Be Changed?
 
-Reviewer is different from assignee:
+This proposal changes issue storage, API contracts, attention routing, and the
+issue create/detail UI.
 
-- `Assignee` owns execution.
-- `Reviewer` owns review.
-- `Approver` remains a separate governance concept and should not be introduced as part of this change.
+1. Add optional reviewer fields to issues:
+   - `reviewerAgentId`
+   - `reviewerUserId`
 
-For V1, reviewer selection is a routing and visibility field. The existing issue status model remains unchanged. When work is ready, the issue can move to `in_review`; the reviewer can then comment, request changes by moving the issue back to `todo` or `in_progress`, or mark the issue `done`.
+2. Enforce reviewer invariants:
+   - an issue may have no reviewer
+   - an issue may have one reviewer agent
+   - an issue may have one reviewer user
+   - an issue must not have both reviewer fields set
+   - reviewer principals must belong to the same organization
+   - terminated or pending-approval agents cannot be selected as reviewer agents
 
-## Data Model
+3. Extend issue API contracts:
+   - create issue accepts optional reviewer fields
+   - update issue accepts optional reviewer fields, including explicit `null`
+     to clear reviewer
+   - issue responses include reviewer fields
+   - issue list filters support `reviewerAgentId` and `reviewerUserId`
+   - board `reviewerUserId=me` filter resolves to the current board user
 
-Add two nullable columns to `issues`:
+4. Route review attention:
+   - creating an issue with a reviewer does not wake anyone immediately
+   - entering `in_review` with `reviewerAgentId` queues a reviewer wakeup
+   - entering `in_review` with `reviewerUserId` makes the issue appear in
+     reviewer-oriented human attention surfaces
+   - changing reviewer while an issue is already `in_review` routes attention to
+     the new reviewer
+
+5. Add issue UI:
+   - New Issue dialog exposes a `Reviewer` selector
+   - Issue Properties shows, edits, and clears reviewer
+   - dense issue rows and board cards do not show reviewer by default in this
+     iteration
+
+6. Add activity logging:
+   - reviewer changes are logged through `issue.updated`
+   - `_previous` includes old reviewer fields when they change
+
+## Success Criteria For Change
+
+- A user can create an issue with no reviewer.
+- A user can create an issue with a reviewer agent or reviewer user.
+- The reviewer is persisted and returned by issue APIs.
+- The reviewer is visible and editable on issue detail.
+- Invalid reviewer combinations are rejected with a 422 response.
+- Reviewers are organization-scoped.
+- Existing issue creation and assignee behavior continue to work.
+- When an issue transitions into `in_review`, the selected reviewer receives
+  attention through the correct surface:
+  - reviewer agent receives one review wakeup
+  - reviewer user sees the issue in reviewer issue filters and human attention
+    surfaces
+- Reviewer wakeups are not confused with assignment wakeups.
+- E2E coverage proves the create and detail reviewer path.
+
+## Out Of Scope
+
+- Multiple reviewers.
+- Required reviewers.
+- A separate `review_requests` table.
+- A separate review state machine.
+- Blocking `done` solely because no reviewer is set.
+- Merging Reviewer with Approver.
+- External GitHub, GitLab, or Linear reviewer sync.
+- Showing reviewer in default dense issue rows or board cards.
+- Implementing full My Work redesign beyond the minimal filters needed for
+  reviewer attention.
+
+## Non-Functional Requirements
+
+- Maintainability: reviewer selection should mirror the existing assignee
+  shape where that reduces complexity, but review wakeups must use distinct
+  naming so execution and review responsibilities stay separate.
+- Security: reviewer selection must enforce organization boundaries for users
+  and agents.
+- Observability: review routing should be auditable through activity log entries
+  and heartbeat run context.
+- Usability: default state must be `No reviewer`, and the selector must not make
+  issue creation feel like an approval form.
+- Compatibility: additive nullable columns and optional API fields must preserve
+  existing clients.
+
+## User Experience Walkthrough
+
+1. The operator opens New Issue.
+2. The operator chooses assignee, project, and optionally `Reviewer`.
+3. `Reviewer` defaults to `No reviewer`.
+4. The operator may choose:
+   - the current board user
+   - another eligible organization user, if user listing is available
+   - an active organization agent
+5. The issue is created. No reviewer is woken at create time.
+6. The assignee works the issue normally.
+7. When work is ready, the assignee or board moves the issue to `in_review` and
+   leaves the relevant output signal: comment, document, work product, PR, or
+   preview.
+8. If the reviewer is a human user:
+   - the issue appears in reviewer issue filters
+   - Inbox or Messenger issue attention treats the issue as relevant to that
+     user
+   - the reviewer opens the issue, reads the output, and comments, requests
+     changes, or marks the issue done
+9. If the reviewer is an agent:
+   - Rudder queues an `issue_review_requested` wakeup
+   - the wakeup context says the agent is reviewing, not implementing
+   - the agent reviews output, comments with feedback, requests changes by
+     moving the issue back to `in_progress`, or marks it `done`
+10. If the reviewer changes while the issue is already `in_review`, the new
+    reviewer receives attention. The old reviewer no longer matches reviewer
+    filters for that issue.
+
+## Implementation
+
+### Product Or Technical Architecture Changes
+
+The source of truth is the `issues` row. Reviewer fields are issue-level routing
+metadata, not separate approval or review-request objects.
+
+Add nullable DB columns:
 
 ```ts
 reviewerAgentId: uuid("reviewer_agent_id").references(() => agents.id),
 reviewerUserId: text("reviewer_user_id"),
+```
+
 Add indexes:
 
+```ts
 reviewerAgentStatusIdx: index("issues_company_reviewer_agent_status_idx").on(
   table.orgId,
   table.reviewerAgentId,
@@ -93,216 +232,326 @@ reviewerUserStatusIdx: index("issues_company_reviewer_user_status_idx").on(
   table.reviewerUserId,
   table.status,
 ),
+```
 
-Validation rules:
+Extend shared validators:
 
-an issue may have no reviewer
-an issue may have one reviewer agent
-an issue may have one reviewer user
-an issue must not have both reviewerAgentId and reviewerUserId
-reviewer agent must belong to the same organization
-reviewer user must be a member of the same organization
-
-This mirrors the existing assignee shape while keeping reviewer independent from assignee.
-
-API Contract
-
-Extend createIssueSchema and updateIssueSchema with:
-
+```ts
 reviewerAgentId: z.string().uuid().optional().nullable(),
 reviewerUserId: z.string().optional().nullable(),
+```
 
-Extend shared issue types with:
+Extend shared issue types:
 
+```ts
 reviewerAgentId: string | null;
 reviewerUserId: string | null;
+```
 
-Extend issue filters with:
+Extend issue filters:
 
+```ts
 reviewerAgentId?: string;
 reviewerUserId?: string;
+```
 
-Routes impacted:
+Review routing triggers:
 
-POST /api/orgs/:orgId/issues
-PATCH /api/issues/:id
-GET /api/orgs/:orgId/issues
-GET /api/issues/:id
+- Status changed from any non-`in_review` value to `in_review`.
+- Reviewer changed while current issue status is already `in_review`.
 
-Create and update should reject invalid reviewer combinations with 422.
+Review routing does not trigger:
 
-Server Behavior
+- issue create
+- reviewer change while issue is not `in_review`
+- repeated patches that leave status and reviewer unchanged
+- self-authored comments alone
 
-In issueService.create:
+### Breaking Change
 
-validate reviewer exclusivity
-validate reviewer agent or user membership
-insert reviewer fields with the issue
+No breaking change is expected.
 
-In issueService.update:
+This is an additive nullable schema change. Existing issues receive
+`reviewer_agent_id = null` and `reviewer_user_id = null`. Existing clients do
+not need to send reviewer fields.
 
-validate the next reviewer state
-allow clearing reviewer with null
-include reviewer fields in update patch
-preserve current reviewer when fields are omitted
+### Design
 
-In routes:
+#### Reviewer Semantics
 
-reviewer changes should be treated as mutating issue updates
-write an activity log entry through the existing issue.updated path
-include _previous details when reviewer fields change
+Reviewer means:
 
-Suggested activity detail shape:
+- responsible for checking output when the issue is ready for review
+- allowed to leave feedback through comments
+- allowed to request changes through the existing issue status model
+- allowed to mark done when review passes, if the actor otherwise has issue
+  update permission
 
+Reviewer does not mean:
+
+- execution assignee
+- approval gate owner
+- required compliance approver
+- automatic blocker for completion
+
+`Assignee` owns execution. `Reviewer` owns checking. `Approver` remains a
+governance concept and is not introduced here.
+
+#### API And Service Validation
+
+In `issueService.create`:
+
+- reject both reviewer fields at once
+- validate reviewer agent organization and status
+- validate reviewer user active organization membership
+- insert reviewer fields
+
+In `issueService.update`:
+
+- compute next reviewer state from patch plus existing row
+- reject both reviewer fields at once
+- allow clearing reviewer with explicit `null`
+- preserve current reviewer when fields are omitted
+- validate changed reviewer principals
+
+Reviewer validation should reuse or factor the existing assignee validation
+shape, but error messages should say `Reviewer`, not `Assignee`.
+
+#### Permissions
+
+Board context may set reviewer when creating or updating an issue if the board
+actor has normal task assignment/routing permission.
+
+Agent context may set or change reviewer only when it can assign or route tasks
+under the existing permission model. Moving an issue to `in_review` should not
+require assignment permission if the reviewer is already set and the actor can
+update the issue.
+
+For V1, avoid introducing a new permission key unless implementation reveals
+that `tasks:assign` is too broad. Reviewer routing is assignment-like because it
+can wake agents and route human attention.
+
+#### Agent Reviewer Wakeup
+
+Reviewer wakeups must be semantically distinct from assignee wakeups.
+
+Recommended wakeup properties:
+
+```ts
 {
-  "reviewerAgentId": "new-agent-id-or-null",
-  "reviewerUserId": "new-user-id-or-null",
-  "_previous": {
-    "reviewerAgentId": "old-agent-id-or-null",
-    "reviewerUserId": "old-user-id-or-null"
+  source: "review",
+  triggerDetail: "system",
+  reason: "issue_review_requested",
+  payload: {
+    issueId,
+    mutation: "status_to_in_review" | "reviewer_changed_in_review"
+  },
+  contextSnapshot: {
+    issueId,
+    source: "issue.review_request",
+    wakeSource: "review",
+    wakeReason: "issue_review_requested",
+    role: "reviewer",
+    issue: {
+      id,
+      identifier,
+      title,
+      description,
+      status,
+      priority
+    },
+    reviewInstructions:
+      "You are the reviewer for this issue. Review the result and leave feedback, request changes, or mark the issue done. Do not take over implementation unless explicitly asked."
   }
 }
-Review Routing Behavior
+```
 
-This proposal should introduce reviewer storage and UI first. Routing can be minimal but should leave the right seams.
+If the existing heartbeat wakeup source type cannot accept `review`, extend the
+type. Do not reuse `issue_assigned` for reviewer wakeups.
 
-V1 routing behavior:
+Idempotency rule:
 
-If an issue is created with a reviewer, no agent wakeup is required immediately.
-If an issue transitions into in_review and has reviewerAgentId, enqueue a wakeup for that reviewer agent with reason issue_review_requested.
-If an issue transitions into in_review and has reviewerUserId, the issue should appear in review-oriented user surfaces such as Inbox or My Work once those filters are wired.
+- one wakeup per reviewer agent per qualifying transition or reviewer change
+- no wakeup for repeated identical `PATCH` calls
+- no wakeup when the reviewer agent is the actor currently making the update
 
-Wakeup context for reviewer agents should make the role clear:
+#### Human Reviewer Attention
 
-You are the reviewer for this issue. Review the result and leave feedback, request changes, or mark the issue done. Do not take over implementation unless explicitly asked.
+Human reviewer support is part of the V1 acceptance bar, not a deferred
+"future once wired" behavior.
 
-This avoids confusing reviewer agents with assignee agents.
+At minimum:
 
-UI
-New Issue Dialog
+- `GET /api/orgs/:orgId/issues?reviewerUserId=me` works for board actors
+- `touchedByUserCondition` treats `reviewerUserId` as user-relevant
+- `deriveIssueUserContext` includes reviewer user touch state
+- Messenger issue universe includes reviewer user issues
+- Inbox can surface reviewer issues through the same issue attention pipeline
 
-Add a Reviewer selector to the issue create dialog.
+If a dedicated "Review requested" category is too large for this iteration,
+reuse the current issue attention row, but ensure the issue is retrievable and
+visible for the reviewer.
 
-Placement:
+#### UI
 
-near the existing assignee/project/task metadata controls
-visible by default if space allows
-otherwise placed under the same progressive disclosure area as other routing metadata
+New Issue dialog:
 
-Default value:
+- add `Reviewer` near the existing assignee/project metadata controls
+- default to `No reviewer`
+- use the same interaction style as assignee where practical
+- options include `No reviewer`, eligible users, and active agents
+- do not allow both user and agent reviewer fields at the same time
 
-No reviewer
+Issue Properties:
 
-Picker options:
+- add `Reviewer` near `Assignee`
+- show selected reviewer
+- support changing reviewer
+- support clearing reviewer
+- show `No reviewer` when empty
 
-No reviewer
-current user / eligible organization users
-active agents in the current organization
+If `reviewerAgentId` equals `assigneeAgentId` or `reviewerUserId` equals
+`assigneeUserId`, allow it for V1 but show a lightweight warning in UI when
+space allows. Do not block this in the API.
 
-Display rules:
+Issue List / Board:
 
-show user display name when available
-show agent name and role/title for agents
-use the same combobox/select interaction style as assignee
-do not allow selecting both user reviewer and agent reviewer
+- do not add reviewer to default dense issue rows in this iteration
+- add reviewer later through optional display properties if needed
 
-Request payload examples:
+### Security
 
-{
-  "title": "Implement system chores V2",
-  "description": "...",
-  "assigneeAgentId": "agent-id",
-  "reviewerUserId": "user-id"
-}
-{
-  "title": "Implement system chores V2",
-  "description": "...",
-  "assigneeAgentId": "agent-id",
-  "reviewerAgentId": "reviewer-agent-id"
-}
-Issue Properties Panel
+This proposal adds no external dependencies and no remote API calls.
 
-Add a Reviewer property below or near Assignee.
+It extends existing issue endpoints:
 
-The property should support:
+- `POST /api/orgs/:orgId/issues`
+- `PATCH /api/issues/:id`
+- `GET /api/orgs/:orgId/issues`
+- `GET /api/issues/:id`
 
-view selected reviewer
-change reviewer
-clear reviewer
-show No reviewer when empty
-Issue List / Board
+Security requirements:
 
-Do not add reviewer to the default dense issue row in this version unless the display settings already support optional properties.
+- board and agent actors must pass existing organization access checks
+- reviewer agents must belong to the same organization
+- reviewer users must be active members of the same organization
+- agent reviewer wakeups must not be created for agents outside the issue
+  organization
+- activity log details must not include sensitive payloads beyond principal ids
 
-Recommended V1 behavior:
+## What Is Your Testing Plan (QA)?
 
-issue detail always shows reviewer
-list/board can add reviewer later as an optional display property
-Permissions
+### Goal
 
-Board/user context may set reviewer when creating or updating an issue.
+Prove that reviewer routing is persisted, visible, organization-scoped, and
+attention-producing when an issue enters review.
 
-Agent context may set reviewer only if it already has permission to update the issue and assignment-like task routing is allowed for that actor. This should follow existing task assignment permission patterns instead of introducing a new permission model.
+### Prerequisites
 
-Organization boundary enforcement is required for both user and agent reviewers.
+- Embedded PostgreSQL dev/test environment.
+- One organization with:
+  - at least one active assignee agent
+  - at least one active reviewer agent
+  - a board user or local implicit user
+- Existing issue create and update test fixtures.
 
-Migration
+### Test Scenarios / Cases
 
-This is an additive nullable schema change.
+DB/service tests:
 
-Migration behavior:
+- create issue with `reviewerAgentId`
+- create issue with `reviewerUserId`
+- reject both reviewer fields at once
+- reject reviewer agent from another organization
+- reject reviewer user without active organization membership
+- clear reviewer on update
+- preserve reviewer when update omits reviewer fields
+- change reviewer while status remains `in_review`
 
-existing issues get reviewer_agent_id = null
-existing issues get reviewer_user_id = null
-no backfill is required
-existing create/update clients continue to work because reviewer fields are optional
-Testing
+Route tests:
 
-Required automated coverage:
+- `POST /api/orgs/:orgId/issues` persists reviewer
+- `PATCH /api/issues/:id` updates reviewer
+- `GET /api/orgs/:orgId/issues?reviewerUserId=me` resolves current board user
+- `GET /api/orgs/:orgId/issues?reviewerAgentId=...` filters reviewer agent
+  issues
+- `issue.updated` activity includes `_previous` reviewer fields when reviewer
+  changes
+- entering `in_review` with reviewer agent enqueues `issue_review_requested`
+- repeated identical patch does not enqueue duplicate reviewer wakeups
 
-DB/service test:
-create issue with reviewerAgentId
-create issue with reviewerUserId
-reject both reviewer fields at once
-reject reviewer from another organization
-clear reviewer on update
-Route test:
-POST /api/orgs/:orgId/issues persists reviewer
-PATCH /api/issues/:id updates reviewer
-activity log contains previous reviewer fields on update
-UI component test:
-New Issue dialog defaults to No reviewer
-selecting reviewer sends the correct request payload
-clearing reviewer sends null
-E2E test:
-create an issue from the UI
-select a reviewer
-submit
-open issue detail
-verify reviewer is shown in properties
+UI component tests:
 
-Optional follow-up E2E:
+- New Issue dialog defaults to `No reviewer`
+- selecting reviewer sends the correct request payload
+- clearing reviewer sends `null`
+- Issue Properties displays reviewer
+- Issue Properties can change and clear reviewer
 
-create issue with reviewer agent
-move issue to in_review
-verify reviewer agent receives review wakeup
-Acceptance Criteria
-A user can create an issue with no reviewer.
-A user can create an issue with a reviewer.
-The reviewer is persisted and returned by the issue API.
-The reviewer is visible on the issue detail page.
-The reviewer can be changed or cleared after creation.
-Invalid reviewer combinations are rejected.
-Reviewers are organization-scoped.
-Existing issue creation flows continue to work unchanged.
-Existing assignee behavior is not changed.
-The implementation includes E2E coverage for the new create-flow behavior.
-Open Questions
-Should reviewer be allowed to equal assignee?
-Recommendation: allow for now, but consider a UI warning later. This keeps V1 flexible and avoids over-policing edge cases.
-Should reviewer be user-only or user-or-agent?
-Recommendation: support both. Rudder is built around agent teams, so review routing should be able to target either a human operator or a reviewer agent.
-Should review outcome be modeled explicitly?
-Recommendation: not in this proposal. Use existing status and comments first. Add explicit reviewState later only if review workflows become important enough to deserve their own state machine.
-Should Approver be added at the same time?
-Recommendation: no. Reviewer is a lightweight issue-routing role. Approver belongs to governance and approval gates, and should remain separate.
+E2E tests:
+
+- create an issue from the UI
+- select a reviewer
+- submit
+- open issue detail
+- verify reviewer is shown in properties
+- change reviewer from issue detail
+- clear reviewer from issue detail
+
+Optional E2E if the wakeup harness is available:
+
+- create issue with reviewer agent
+- move issue to `in_review`
+- verify reviewer agent receives `issue_review_requested`
+
+### Expected Results
+
+- Reviewer fields are persisted and returned by API responses.
+- Invalid reviewer states fail with 422.
+- Organization boundary violations fail.
+- Human reviewer issues are visible through reviewer filters and attention
+  surfaces.
+- Agent reviewer wakeup context clearly identifies the agent as reviewer.
+- Existing assignee assignment and wakeup behavior does not regress.
+
+### Pass / Fail
+
+Verification will be filled during implementation.
+
+## Documentation Changes
+
+Update these docs if the proposal lands:
+
+- `doc/SPEC-implementation.md`: add reviewer fields to the V1 issue model and
+  define lightweight review routing semantics.
+- `doc/TASKS.md`: clarify assignee, reviewer, and `in_review` status behavior.
+- `doc/README.md`: update navigation only if task/review docs become a common
+  contributor route.
+- `doc/DESIGN.md`: add reviewer property placement guidance only if the UI
+  pattern differs from existing issue properties.
+
+## Open Issues
+
+1. Should the new heartbeat wakeup source be `review`, or should it reuse an
+   existing source with distinct `reason: "issue_review_requested"`?
+   Recommendation: add `review` if the type change is small; otherwise keep the
+   distinct reason and context snapshot mandatory.
+
+2. Should reviewer be allowed to equal assignee?
+   Recommendation: allow in the API for V1, warn in UI later if this becomes
+   confusing.
+
+3. Do we need a separate `review_requests` table?
+   Recommendation: no for V1. Add it only if we need multiple review attempts,
+   explicit review SLA, separate review assignment history, or parallel
+   reviewers.
+
+4. Should review outcome be modeled explicitly?
+   Recommendation: no for this proposal. Use existing comments and status
+   transitions first. Introduce explicit review outcome only when the product
+   needs analytics or stronger workflow gates.
+
+5. How broad should user picker support be in local trusted mode?
+   Recommendation: support current user immediately, and support broader
+   organization users only if the member list API is already reliable enough for
+   the dialog.
