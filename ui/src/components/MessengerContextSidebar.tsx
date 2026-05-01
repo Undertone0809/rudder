@@ -161,6 +161,10 @@ function ChatThreadRow({
   const timeLabel = relativeTime(conversation.lastMessageAt ?? conversation.updatedAt);
   const [actionsOpen, setActionsOpen] = useState(false);
 
+  useEffect(() => {
+    if (generating) setActionsOpen(false);
+  }, [generating]);
+
   return (
     <div
       data-testid={`messenger-thread-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
@@ -228,65 +232,67 @@ function ChatThreadRow({
                 data-testid={`messenger-time-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
                 className={cn(
                   "mt-0.5 block w-12 shrink-0 whitespace-nowrap text-right text-[10px] leading-none tabular-nums text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
-                  actionsOpen && "opacity-0",
+                  (actionsOpen || generating) && "opacity-0",
                 )}
               >
-                {generating ? (
-                  <span
-                    data-testid={`messenger-generating-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
-                    aria-label="Chat reply in progress"
-                    className="inline-flex w-full justify-end text-muted-foreground"
-                  >
-                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.25} aria-hidden />
-                  </span>
-                ) : (
-                  timeLabel
-                )}
+                {timeLabel}
               </span>
             </div>
           </Link>
 
-          <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className={cn(
-                  "absolute right-2 top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-                  actionsOpen ? "opacity-100" : "opacity-0",
-                )}
-                aria-label="Chat actions"
-              >
-                <MoreHorizontal className="h-3.5 w-3.5" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="surface-overlay text-foreground">
-              <DropdownMenuItem onClick={onStartRename}>
-                <PencilLine className="h-4 w-4" />
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onTogglePin}>
-                {conversation.isPinned ? (
-                  <>
-                    <PinOff className="h-4 w-4" />
-                    Unpin
-                  </>
-                ) : (
-                  <>
-                    <Pin className="h-4 w-4" />
-                    Pin
-                  </>
-                )}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onCopyConversationId}>
-                <Copy className="h-4 w-4" />
-                Copy chat ID
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onArchive}>
-                <Archive className="h-4 w-4" />
-                Archive
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {generating ? (
+            <span
+              data-testid={`messenger-generating-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
+              aria-label="Chat reply in progress"
+              className="absolute right-2 top-1/2 z-10 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground"
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2.25} aria-hidden />
+            </span>
+          ) : null}
+
+          {!generating ? (
+            <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    "absolute right-2 top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+                    actionsOpen ? "opacity-100" : "opacity-0",
+                  )}
+                  aria-label="Chat actions"
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="surface-overlay text-foreground">
+                <DropdownMenuItem onClick={onStartRename}>
+                  <PencilLine className="h-4 w-4" />
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onTogglePin}>
+                  {conversation.isPinned ? (
+                    <>
+                      <PinOff className="h-4 w-4" />
+                      Unpin
+                    </>
+                  ) : (
+                    <>
+                      <Pin className="h-4 w-4" />
+                      Pin
+                    </>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onCopyConversationId}>
+                  <Copy className="h-4 w-4" />
+                  Copy chat ID
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onArchive}>
+                  <Archive className="h-4 w-4" />
+                  Archive
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
         </>
       )}
     </div>

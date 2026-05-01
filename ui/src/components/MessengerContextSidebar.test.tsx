@@ -158,6 +158,7 @@ describe("MessengerContextSidebar", () => {
 
     expect(html).toContain('data-testid="messenger-generating-chat-chat-1"');
     expect(html).toContain('aria-label="Chat reply in progress"');
-    expect(html).not.toMatch(/data-testid="messenger-time-chat-chat-1"[^>]*>20m ago/);
+    expect(html).toContain('class="absolute right-2 top-1/2');
+    expect(html).toContain("20m ago");
   });
 });

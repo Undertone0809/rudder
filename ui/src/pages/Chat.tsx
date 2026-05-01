@@ -1400,6 +1400,7 @@ function StreamTranscriptItem({
               streaming={streamingActive}
               collapseStdout
               presentation="chat"
+              hideAssistantMessages
             />
           </div>
         ) : null}
