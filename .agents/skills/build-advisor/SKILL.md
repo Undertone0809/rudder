@@ -78,22 +78,11 @@ Use `build-advisor` when the user is blocked on judgment, articulation, or decid
 
 Follow this sequence unless the user explicitly narrows the task.
 
-### Plan Template References
+### Plan Template Reference
 
-When this skill writes or prepares a plan document, use the repo templates as
-authoritative references:
-
-- `doc/plans/_template-proposal.md` for `kind: proposal` documents, open-ended
-  product/design/architecture proposals, and user requests to "write a
-  proposal." Follow its structure for proposal documents instead of inventing a
-  custom outline.
-- `doc/plans/_template-implementation.md` for `kind: implementation` documents
-  once the direction is approved and the work is scoped for delivery. Follow
-  its structure for implementation plans instead of stretching the proposal
-  template into execution tracking.
-
-Still use `doc/plans/_taxonomy.md` and nearby prior plans to choose `area`,
-`entities`, `related_plans`, and other metadata before filling either template.
+When this skill writes or prepares a plan document, read
+`references/plan-doc-templates.md` before drafting the file. That reference
+maps proposal and implementation work to the canonical repo templates.
 
 ### 1. Evidence Intake Before Reframing
 
@@ -308,8 +297,7 @@ The recommendation should be explicit, not "it depends" by default.
 Before you run, write your detail plan in `doc/plans`, then start your work.
 - DO NOT write your plan before user confirm.
 - If there are only some minor modifications, no plan is required, such as minor bug modifications, minor interface changes, etc.
-- When writing a proposal plan, read and follow `doc/plans/_template-proposal.md`.
-- When writing an implementation plan, read and follow `doc/plans/_template-implementation.md`.
+- Before writing a proposal or implementation plan, read `references/plan-doc-templates.md`.
 Record related commit info in plan's doc after finishing your work. (amend commit this change also)
 
 ## Standard-Gap Heuristic
