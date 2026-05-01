@@ -40,6 +40,13 @@ import {
 } from "../commands/start.js";
 import { createByteProgress, formatByteProgress } from "../utils/progress.js";
 
+const npmInstallCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmInstallSpawnOptions = {
+  encoding: "utf8",
+  stdio: ["inherit", "pipe", "pipe"],
+  ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
+};
+
 function responseFromChunks(chunks: string[], headers: Record<string, string> = {}): Response {
   return {
     ok: true,
@@ -177,12 +184,9 @@ describe("persistent CLI install helpers", () => {
     });
 
     expect(spawnSyncImpl).toHaveBeenCalledWith(
-      process.platform === "win32" ? "npm.cmd" : "npm",
+      npmInstallCommand,
       ["install", "--global", "@rudderhq/cli@0.1.0"],
-      {
-        encoding: "utf8",
-        stdio: ["inherit", "pipe", "pipe"],
-      },
+      npmInstallSpawnOptions,
     );
   });
 
@@ -213,22 +217,36 @@ describe("persistent CLI install helpers", () => {
 
     expect(spawnSyncImpl).toHaveBeenNthCalledWith(
       1,
-      process.platform === "win32" ? "npm.cmd" : "npm",
+      npmInstallCommand,
       ["install", "--global", "@rudderhq/cli@0.1.0"],
-      {
-        encoding: "utf8",
-        stdio: ["inherit", "pipe", "pipe"],
-      },
+      npmInstallSpawnOptions,
     );
     expect(spawnSyncImpl).toHaveBeenNthCalledWith(
       2,
-      process.platform === "win32" ? "npm.cmd" : "npm",
+      npmInstallCommand,
       ["install", "--global", "--force", "@rudderhq/cli@0.1.0"],
-      {
-        encoding: "utf8",
-        stdio: ["inherit", "pipe", "pipe"],
-      },
+      npmInstallSpawnOptions,
     );
+  });
+
+  it("includes npm spawn errors in failed install output", () => {
+    const spawnSyncImpl = vi.fn(() => ({
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: new Error("spawn npm failed"),
+    }));
+
+    expect(
+      installPersistentCli({
+        installSpec: "@rudderhq/cli@0.1.0",
+        spawnSyncImpl: spawnSyncImpl as never,
+      }),
+    ).toEqual({
+      ok: false,
+      command: "npm install --global @rudderhq/cli@0.1.0",
+      output: "spawn npm failed",
+    });
   });
 });
 

@@ -179,11 +179,12 @@ function runNpmGlobalInstall(
   return spawnSyncImpl(process.platform === "win32" ? "npm.cmd" : "npm", args, {
     encoding: "utf8",
     stdio: ["inherit", "pipe", "pipe"],
+    ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
   });
 }
 
 function collectSpawnOutput(result: SpawnSyncResultLike): string {
-  return [result.stdout, result.stderr]
+  return [result.stdout, result.stderr, result.error instanceof Error ? result.error.message : null]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .join("\n")
     .trim();
