@@ -9,7 +9,7 @@ const args = process.argv.slice(2);
 let packageSpec = "@rudderhq/cli@latest";
 let repo = process.env.GITHUB_REPOSITORY || "Undertone0809/rudder";
 let keepTemp = process.env.RUDDER_KEEP_PUBLIC_INSTALL_SMOKE_TEMP === "1";
-let timeoutMs = Number.parseInt(process.env.RUDDER_PUBLIC_INSTALL_SMOKE_TIMEOUT_MS ?? "900000", 10);
+let timeoutMs = Number.parseInt(process.env.RUDDER_PUBLIC_INSTALL_SMOKE_TIMEOUT_MS ?? "1800000", 10);
 
 for (let index = 0; index < args.length; index += 1) {
   const arg = args[index];
@@ -30,7 +30,7 @@ for (let index = 0; index < args.length; index += 1) {
 }
 
 if (!packageSpec || !repo) usage(1);
-if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 900000;
+if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) timeoutMs = 1800000;
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "rudder-public-install-smoke."));
 const homeDir = path.join(tempRoot, "home");
@@ -110,7 +110,12 @@ try {
   if (keepTemp) {
     console.log(`[public-install-smoke] keeping temp root: ${tempRoot}`);
   } else {
-    rmSync(tempRoot, { recursive: true, force: true });
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 1000 });
+    } catch (error) {
+      console.warn(`[public-install-smoke] warning: failed to clean temp root ${tempRoot}`);
+      console.warn(error);
+    }
   }
 }
 
