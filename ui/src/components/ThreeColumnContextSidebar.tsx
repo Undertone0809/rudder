@@ -36,6 +36,7 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useToast } from "@/context/ToastContext";
 import { useDialog } from "@/context/DialogContext";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { issuesApi } from "@/api/issues";
 import { authApi } from "@/api/auth";
 import { projectsApi } from "@/api/projects";
@@ -655,6 +656,7 @@ export function ThreeColumnContextSidebar() {
   const { pushToast } = useToast();
   const { openNewAgent, openNewProject } = useDialog();
   const queryClient = useQueryClient();
+  const calendarSidebarScrollRef = useScrollbarActivityRef("rudder:sidebar-scroll:calendar");
   const {
     cursor,
     setCursor,
@@ -1010,7 +1012,7 @@ export function ThreeColumnContextSidebar() {
         data-testid="workspace-sidebar"
         className="workspace-context-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
       >
-        <div className="min-h-0 flex-1 overflow-y-auto pb-3.5">
+        <div ref={calendarSidebarScrollRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto pb-3.5">
           <CalendarMiniMonth
             cursor={cursor}
             setCursor={setCursor}
