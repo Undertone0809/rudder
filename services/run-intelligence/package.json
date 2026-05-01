@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc && mkdir -p dist/public && cp -R src/public/. dist/public/",
+    "build": "node ../../scripts/build-tsc-copy-assets.mjs --copy src/public dist/public",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts"
