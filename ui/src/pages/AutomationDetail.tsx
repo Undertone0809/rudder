@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
   CirclePause,
@@ -12,6 +13,7 @@ import {
   Repeat,
   Trash2,
   Webhook,
+  X,
   Zap,
 } from "lucide-react";
 import { automationsApi, type AutomationTriggerResponse, type RotateAutomationTriggerResponse } from "../api/automations";
@@ -71,6 +73,14 @@ type SecretMessage = {
   webhookUrl: string;
   webhookSecret: string;
 };
+
+function addUniqueId(ids: string[], id: string) {
+  return ids.includes(id) ? ids : [...ids, id];
+}
+
+function removeId(ids: string[], id: string) {
+  return ids.filter((currentId) => currentId !== id);
+}
 
 function autoResizeTextarea(element: HTMLTextAreaElement | null) {
   if (!element) return;
@@ -152,11 +162,19 @@ function TriggerEditor({
   onSave,
   onRotate,
   onDelete,
+  isSaving,
+  isDeleting,
+  isRotating,
+  saveError,
 }: {
   trigger: AutomationTrigger;
   onSave: (id: string, patch: Record<string, unknown>) => void;
   onRotate: (id: string) => void;
   onDelete: (id: string) => void;
+  isSaving?: boolean;
+  isDeleting?: boolean;
+  isRotating?: boolean;
+  saveError?: string | null;
 }) {
   const [draft, setDraft] = useState({
     label: trigger.label ?? "",
@@ -192,6 +210,27 @@ function TriggerEditor({
 
   const canAutosaveTrigger =
     trigger.kind !== "schedule" || draft.cronExpression.trim().length > 0;
+  const triggerLabel = trigger.label?.trim() || trigger.kind;
+  const syncLabel = isDeleting
+    ? "Deleting..."
+    : isRotating
+      ? "Rotating..."
+      : isSaving
+        ? "Saving..."
+        : saveError
+          ? "Save failed"
+          : !canAutosaveTrigger
+            ? "Needs schedule"
+            : isTriggerDirty
+              ? "Autosaving..."
+              : "In sync";
+  const syncClassName = isDeleting || isRotating || isSaving || isTriggerDirty
+    ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+    : saveError
+      ? "border-destructive/40 bg-destructive/10 text-destructive"
+      : !canAutosaveTrigger
+        ? "border-border/70 bg-muted/20 text-muted-foreground"
+        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
 
   useEffect(() => {
     if (skipNextAutosaveRef.current) {
@@ -212,9 +251,12 @@ function TriggerEditor({
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm font-medium">
           {trigger.kind === "schedule" ? <Clock3 className="h-3.5 w-3.5" /> : trigger.kind === "webhook" ? <Webhook className="h-3.5 w-3.5" /> : <Zap className="h-3.5 w-3.5" />}
-          {trigger.label ?? trigger.kind}
+          {triggerLabel}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <Badge variant="outline" className={syncClassName}>
+            {syncLabel}
+          </Badge>
           <span className="text-xs text-muted-foreground">
             {trigger.kind === "schedule" && trigger.nextRunAt
               ? `Next: ${new Date(trigger.nextRunAt).toLocaleString()}`
@@ -227,7 +269,14 @@ function TriggerEditor({
             size="icon-xs"
             className="text-muted-foreground hover:text-destructive"
             aria-label="Delete trigger"
-            onClick={() => onDelete(trigger.id)}
+            disabled={isDeleting}
+            onClick={() => {
+              const confirmed = window.confirm(
+                `Delete trigger "${triggerLabel}"? It will stop new ${trigger.kind} activations.`,
+              );
+              if (!confirmed) return;
+              onDelete(trigger.id);
+            }}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -283,11 +332,26 @@ function TriggerEditor({
       {(trigger.lastResult || trigger.kind === "webhook") ? (
         <div className="flex flex-wrap items-center gap-2">
           {trigger.lastResult && <span className="text-xs text-muted-foreground">Last: {trigger.lastResult}</span>}
+          {saveError ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-destructive">
+              <span>{saveError}</span>
+              {canAutosaveTrigger ? (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="h-6 px-2 text-destructive hover:text-destructive"
+                  onClick={() => onSave(trigger.id, buildAutomationTriggerPatch(trigger, draft, getLocalTimezone()))}
+                >
+                  Retry save
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           <div className="ml-auto flex items-center gap-2">
             {trigger.kind === "webhook" && (
-              <Button variant="outline" size="sm" onClick={() => onRotate(trigger.id)}>
+              <Button variant="outline" size="sm" disabled={isRotating} onClick={() => onRotate(trigger.id)}>
                 <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                Rotate secret
+                {isRotating ? "Rotating..." : "Rotate secret"}
               </Button>
             )}
           </div>
@@ -310,8 +374,14 @@ export function AutomationDetail() {
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
+  const copiedSecretResetRef = useRef<number | null>(null);
   const [secretMessage, setSecretMessage] = useState<SecretMessage | null>(null);
+  const [copiedSecretField, setCopiedSecretField] = useState<"url" | "secret" | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [savingTriggerIds, setSavingTriggerIds] = useState<string[]>([]);
+  const [deletingTriggerIds, setDeletingTriggerIds] = useState<string[]>([]);
+  const [rotatingTriggerIds, setRotatingTriggerIds] = useState<string[]>([]);
+  const [triggerSaveErrors, setTriggerSaveErrors] = useState<Record<string, string>>({});
   const [newTrigger, setNewTrigger] = useState({
     kind: "schedule",
     cronExpression: "0 10 * * *",
@@ -436,9 +506,22 @@ export function AutomationDetail() {
     autoResizeTextarea(titleInputRef.current);
   }, [editDraft.title, automation?.id]);
 
-  const copySecretValue = async (label: string, value: string) => {
+  useEffect(() => () => {
+    if (copiedSecretResetRef.current) {
+      window.clearTimeout(copiedSecretResetRef.current);
+    }
+  }, []);
+
+  const copySecretValue = async (label: string, value: string, field: "url" | "secret") => {
     try {
       await navigator.clipboard.writeText(value);
+      setCopiedSecretField(field);
+      if (copiedSecretResetRef.current) {
+        window.clearTimeout(copiedSecretResetRef.current);
+      }
+      copiedSecretResetRef.current = window.setTimeout(() => {
+        setCopiedSecretField((current) => current === field ? null : current);
+      }, 1800);
       pushToast({ title: `${label} copied`, tone: "success" });
     } catch (error) {
       pushToast({
@@ -684,19 +767,45 @@ export function AutomationDetail() {
   });
   const saveTriggerDraft = useCallback(
     (id: string, patch: Record<string, unknown>) => {
-      updateTrigger.mutate({ id, patch });
+      setSavingTriggerIds((current) => addUniqueId(current, id));
+      setTriggerSaveErrors((current) => {
+        if (!(id in current)) return current;
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      updateTrigger.mutate(
+        { id, patch },
+        {
+          onError: (error) => {
+            setTriggerSaveErrors((current) => ({
+              ...current,
+              [id]: error instanceof Error ? error.message : "Rudder could not update the trigger.",
+            }));
+          },
+          onSettled: () => {
+            setSavingTriggerIds((current) => removeId(current, id));
+          },
+        },
+      );
     },
     [updateTrigger],
   );
 
   const deleteTrigger = useMutation({
     mutationFn: (id: string) => automationsApi.deleteTrigger(id),
-    onSuccess: async () => {
+    onSuccess: async (_result, id) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.detail(automationId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.activity(selectedOrganizationId!, automationId!) }),
       ]);
+      setTriggerSaveErrors((current) => {
+        if (!(id in current)) return current;
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
     },
     onError: (error) => {
       pushToast({
@@ -814,24 +923,36 @@ export function AutomationDetail() {
   return (
     <div className="pb-8" data-testid="automation-detail-shell">
       {secretMessage && (
-        <div className="mb-5 max-w-3xl rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 text-sm lg:ml-10 xl:ml-20">
+        <div className="relative mb-5 max-w-3xl rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 pr-12 text-sm lg:ml-10 xl:ml-20">
           <div className="mb-3">
             <p className="font-medium">{secretMessage.title}</p>
             <p className="text-xs text-muted-foreground">Save this now. Rudder will not show the secret value again.</p>
           </div>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="absolute right-4 top-4"
+            aria-label="Dismiss secret notice"
+            onClick={() => {
+              setSecretMessage(null);
+              setCopiedSecretField(null);
+            }}
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Input value={secretMessage.webhookUrl} readOnly className="flex-1" />
-              <Button variant="outline" size="sm" onClick={() => copySecretValue("Webhook URL", secretMessage.webhookUrl)}>
-                <Copy className="mr-1 h-3.5 w-3.5" />
-                URL
+              <Button variant="outline" size="sm" onClick={() => copySecretValue("Webhook URL", secretMessage.webhookUrl, "url")}>
+                {copiedSecretField === "url" ? <Check className="mr-1 h-3.5 w-3.5" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
+                {copiedSecretField === "url" ? "Copied" : "URL"}
               </Button>
             </div>
             <div className="flex items-center gap-2">
               <Input value={secretMessage.webhookSecret} readOnly className="flex-1" />
-              <Button variant="outline" size="sm" onClick={() => copySecretValue("Webhook secret", secretMessage.webhookSecret)}>
-                <Copy className="mr-1 h-3.5 w-3.5" />
-                Secret
+              <Button variant="outline" size="sm" onClick={() => copySecretValue("Webhook secret", secretMessage.webhookSecret, "secret")}>
+                {copiedSecretField === "secret" ? <Check className="mr-1 h-3.5 w-3.5" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
+                {copiedSecretField === "secret" ? "Copied" : "Secret"}
               </Button>
             </div>
           </div>
@@ -965,8 +1086,22 @@ export function AutomationDetail() {
                     key={trigger.id}
                     trigger={trigger}
                     onSave={saveTriggerDraft}
-                    onRotate={(id) => rotateTrigger.mutate(id)}
-                    onDelete={(id) => deleteTrigger.mutate(id)}
+                    onRotate={(id) => {
+                      setRotatingTriggerIds((current) => addUniqueId(current, id));
+                      rotateTrigger.mutate(id, {
+                        onSettled: () => setRotatingTriggerIds((current) => removeId(current, id)),
+                      });
+                    }}
+                    onDelete={(id) => {
+                      setDeletingTriggerIds((current) => addUniqueId(current, id));
+                      deleteTrigger.mutate(id, {
+                        onSettled: () => setDeletingTriggerIds((current) => removeId(current, id)),
+                      });
+                    }}
+                    isSaving={savingTriggerIds.includes(trigger.id)}
+                    isDeleting={deletingTriggerIds.includes(trigger.id)}
+                    isRotating={rotatingTriggerIds.includes(trigger.id)}
+                    saveError={triggerSaveErrors[trigger.id] ?? null}
                   />
                 ))
               )}

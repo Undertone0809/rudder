@@ -387,4 +387,27 @@ describe("AutomationDetail", () => {
     expect(container.textContent).toContain("Add at least one trigger so the automation has a clear way to start work.");
     expect(container.textContent).toContain("Triggers autosave after edits");
   });
+
+  it("shows per-trigger sync status and confirms before deleting a trigger", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect((container.textContent?.match(/In sync/g) ?? []).length).toBeGreaterThanOrEqual(2);
+
+    const deleteTriggerButton = container.querySelector('button[aria-label="Delete trigger"]');
+    expect(deleteTriggerButton).toBeTruthy();
+
+    act(() => {
+      deleteTriggerButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'Delete trigger "daily-check"? It will stop new schedule activations.',
+    );
+    confirmSpy.mockRestore();
+  });
 });
