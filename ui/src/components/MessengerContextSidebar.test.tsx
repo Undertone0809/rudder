@@ -11,6 +11,7 @@ const invalidateQueries = vi.fn();
 let messengerModel: any;
 let messengerRoute: any;
 let chatList: any[];
+let activeGeneratingChatIds: Set<string>;
 
 vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
@@ -28,6 +29,14 @@ vi.mock("@/lib/router", () => ({
 
 vi.mock("@/context/SidebarContext", () => ({
   useSidebar: () => ({ isMobile: false, setSidebarOpen: vi.fn() }),
+}));
+
+vi.mock("@/context/ChatGenerationContext", () => ({
+  useChatGenerations: () => ({
+    isChatGenerationActive: (chatId: string | null | undefined) => Boolean(chatId && activeGeneratingChatIds.has(chatId)),
+    setChatGenerationActive: vi.fn(),
+    activeChatIds: activeGeneratingChatIds,
+  }),
 }));
 
 vi.mock("@/hooks/useMessenger", () => ({
@@ -90,6 +99,7 @@ describe("MessengerContextSidebar", () => {
         primaryIssue: null,
       },
     ];
+    activeGeneratingChatIds = new Set();
     messengerModel = baseModel();
     messengerRoute = { kind: "root" };
     invalidateQueries.mockReset();
@@ -139,5 +149,15 @@ describe("MessengerContextSidebar", () => {
 
     expect(html).toContain("需求: 把 Agent 的处理流程规范化");
     expect(html).not.toContain("## 需求");
+  });
+
+  it("shows an animated progress icon for the chat that is currently generating", () => {
+    activeGeneratingChatIds = new Set(["chat-1"]);
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain('data-testid="messenger-generating-chat-chat-1"');
+    expect(html).toContain('aria-label="Chat reply in progress"');
+    expect(html).not.toMatch(/data-testid="messenger-time-chat-chat-1"[^>]*>20m ago/);
   });
 });

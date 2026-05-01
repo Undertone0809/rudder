@@ -6,6 +6,7 @@ import {
   CircleDot,
   Copy,
   DollarSign,
+  Loader2,
   MessageSquare,
   MoreHorizontal,
   PencilLine,
@@ -22,6 +23,7 @@ import { messengerApi } from "@/api/messenger";
 import { Link, useLocation, useNavigate } from "@/lib/router";
 import { cn, relativeTime } from "@/lib/utils";
 import { useSidebar } from "@/context/SidebarContext";
+import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
@@ -131,6 +133,7 @@ function ChatThreadRow({
   conversation,
   href,
   active,
+  generating,
   renaming,
   renameDraft,
   onRenameDraftChange,
@@ -144,6 +147,7 @@ function ChatThreadRow({
   conversation: ChatConversation;
   href: string;
   active: boolean;
+  generating: boolean;
   renaming: boolean;
   renameDraft: string;
   onRenameDraftChange: (value: string) => void;
@@ -227,7 +231,17 @@ function ChatThreadRow({
                   actionsOpen && "opacity-0",
                 )}
               >
-                {timeLabel}
+                {generating ? (
+                  <span
+                    data-testid={`messenger-generating-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
+                    aria-label="Chat reply in progress"
+                    className="inline-flex w-full justify-end text-muted-foreground"
+                  >
+                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.25} aria-hidden />
+                  </span>
+                ) : (
+                  timeLabel
+                )}
               </span>
             </div>
           </Link>
@@ -346,6 +360,7 @@ export function MessengerContextSidebar() {
   const relativePath = toOrganizationRelativePath(location.pathname);
   const model = useMessengerModel();
   const { isMobile, setSidebarOpen } = useSidebar();
+  const { isChatGenerationActive } = useChatGenerations();
   const queryClient = useQueryClient();
   const route = resolveMessengerRoute(relativePath);
   const markedThreadRef = useRef<string | null>(null);
@@ -547,6 +562,7 @@ export function MessengerContextSidebar() {
                 conversation={conversation}
                 href={thread.href}
                 active={active}
+                generating={isChatGenerationActive(conversation.id)}
                 renaming={renamingConversationId === conversation.id}
                 renameDraft={renameDraft}
                 onRenameDraftChange={setRenameDraft}

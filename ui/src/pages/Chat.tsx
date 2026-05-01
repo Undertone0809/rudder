@@ -58,6 +58,7 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useToast } from "@/context/ToastContext";
+import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
 import { ApiError } from "@/api/client";
@@ -1496,6 +1497,7 @@ function ChatWorkspace() {
   const { t } = useI18n();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
+  const { setChatGenerationActive } = useChatGenerations();
   const draftStorageOrgId = selectedOrganizationId!;
   const draftStorageConversationId = conversationId ?? null;
   const draftStorageScopeKey = `${draftStorageOrgId}:${draftStorageConversationId ?? "__new__"}`;
@@ -1534,6 +1536,7 @@ function ChatWorkspace() {
   const skillSearchInputRef = useRef<HTMLInputElement>(null);
   const streamAbortControllersRef = useRef<Record<string, AbortController>>({});
   const stopRequestedChatIdsRef = useRef<Set<string>>(new Set());
+  const activeGenerationIdsRef = useRef<Set<string>>(new Set());
   const pendingInitialSendRef = useRef<PendingInitialSend | null>(null);
   const newConversationSendLockRef = useRef(false);
   const chatSendLocksRef = useRef<Record<string, true>>({});
@@ -1999,6 +2002,33 @@ function ChatWorkspace() {
       return setChatScopedState(current, chatId, resolved);
     });
   }, []);
+
+  useEffect(() => {
+    const nextActiveIds = new Set(Object.keys(streamDrafts));
+    const previousActiveIds = activeGenerationIdsRef.current;
+
+    for (const chatId of previousActiveIds) {
+      if (!nextActiveIds.has(chatId)) {
+        setChatGenerationActive(chatId, false);
+      }
+    }
+    for (const chatId of nextActiveIds) {
+      if (!previousActiveIds.has(chatId)) {
+        setChatGenerationActive(chatId, true);
+      }
+    }
+
+    activeGenerationIdsRef.current = nextActiveIds;
+  }, [setChatGenerationActive, streamDrafts]);
+
+  useEffect(() => {
+    return () => {
+      for (const chatId of activeGenerationIdsRef.current) {
+        setChatGenerationActive(chatId, false);
+      }
+      activeGenerationIdsRef.current = new Set();
+    };
+  }, [setChatGenerationActive]);
 
   const setProcessOpenForMessage = useCallback((messageId: string, open: boolean) => {
     setOpenProcessMessageIds((current) => {
