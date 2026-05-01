@@ -66,6 +66,8 @@ interface RunTranscriptViewProps {
   thinkingClassName?: string;
   /** Chat stream: denser rows, collapsible thinking summaries, tool cards stay expandable. */
   presentation?: TranscriptPresentation;
+  /** For embedded chat process logs, the final assistant answer is rendered as the message body. */
+  hideAssistantMessages?: boolean;
 }
 
 type TranscriptBlock =
@@ -2494,16 +2496,22 @@ function TranscriptChatTimeline({
   streaming,
   collapseStdout,
   thinkingClassName,
+  hideAssistantMessages,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
   streaming: boolean;
   collapseStdout: boolean;
   thinkingClassName?: string;
+  hideAssistantMessages: boolean;
 }) {
+  const timelineEntries = useMemo(
+    () => hideAssistantMessages ? entries.filter((entry) => entry.kind !== "assistant") : entries,
+    [entries, hideAssistantMessages],
+  );
   const { preludeBlocks, turns } = useMemo(
-    () => normalizeChatTranscriptTurns(entries, streaming),
-    [entries, streaming],
+    () => normalizeChatTranscriptTurns(timelineEntries, streaming),
+    [timelineEntries, streaming],
   );
 
   return (
@@ -2736,6 +2744,7 @@ export function RunTranscriptView({
   className,
   thinkingClassName,
   presentation = "default",
+  hideAssistantMessages = false,
 }: RunTranscriptViewProps) {
   const blocks = useMemo(() => normalizeTranscript(entries, streaming), [entries, streaming]);
   const visibleBlocks = limit ? blocks.slice(-limit) : blocks;
@@ -2779,6 +2788,7 @@ export function RunTranscriptView({
           streaming={streaming}
           collapseStdout={collapseStdout}
           thinkingClassName={thinkingClassName}
+          hideAssistantMessages={hideAssistantMessages}
         />
       </div>
     );

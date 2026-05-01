@@ -169,6 +169,38 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("Activity details");
   });
 
+  it("can hide assistant transcript text when chat renders the final answer separately", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          hideAssistantMessages
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "thinking",
+              ts: "2026-03-12T00:00:02.000Z",
+              text: "Preparing the answer.",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:03.000Z",
+              text: "Final answer shown in the assistant message.",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Preparing the answer.");
+    expect(html).not.toContain("Final answer shown in the assistant message.");
+  });
+
   it("renders a single chat log inline instead of behind a log-count disclosure", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

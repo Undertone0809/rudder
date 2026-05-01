@@ -12,6 +12,7 @@ let messengerModel: any;
 let messengerRoute: any;
 let chatList: any[];
 let localStorageValues: Record<string, string>;
+let activeGeneratingChatIds: Set<string>;
 
 vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
@@ -29,6 +30,14 @@ vi.mock("@/lib/router", () => ({
 
 vi.mock("@/context/SidebarContext", () => ({
   useSidebar: () => ({ isMobile: false, setSidebarOpen: vi.fn() }),
+}));
+
+vi.mock("@/context/ChatGenerationContext", () => ({
+  useChatGenerations: () => ({
+    isChatGenerationActive: (chatId: string | null | undefined) => Boolean(chatId && activeGeneratingChatIds.has(chatId)),
+    setChatGenerationActive: vi.fn(),
+    activeChatIds: activeGeneratingChatIds,
+  }),
 }));
 
 vi.mock("@/hooks/useMessenger", () => ({
@@ -101,6 +110,7 @@ describe("MessengerContextSidebar", () => {
         contextLinks: [],
       },
     ];
+    activeGeneratingChatIds = new Set();
     messengerModel = baseModel();
     messengerRoute = { kind: "root" };
     invalidateQueries.mockReset();
@@ -269,5 +279,16 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain("Website launch");
     expect(html).toContain("System");
     expect(html.indexOf("Website launch")).toBeLessThan(html.indexOf("System"));
+  });
+
+  it("shows an animated progress icon for the chat that is currently generating", () => {
+    activeGeneratingChatIds = new Set(["chat-1"]);
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain('data-testid="messenger-generating-chat-chat-1"');
+    expect(html).toContain('aria-label="Chat reply in progress"');
+    expect(html).toContain('class="absolute right-2 top-1/2');
+    expect(html).toContain("20m ago");
   });
 });
