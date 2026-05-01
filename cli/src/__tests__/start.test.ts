@@ -537,10 +537,12 @@ describe("desktop start command helpers", () => {
 
   it("resolves per-user portable install paths", () => {
     const macTarget = { platform: "macos" as const, arch: "arm64" as const, extension: ".zip" as const };
-    expect(resolveDefaultDesktopInstallRoot(macTarget, {}, "/Users/test")).toBe("/Users/test/Applications");
-    expect(resolveDesktopInstallPaths(macTarget, "/Users/test/Applications")).toMatchObject({
-      appPath: "/Users/test/Applications/Rudder.app",
-      executablePath: "/Users/test/Applications/Rudder.app/Contents/MacOS/Rudder",
+    const macInstallRoot = path.join("/Users/test", "Applications");
+    const macAppPath = path.join(macInstallRoot, "Rudder.app");
+    expect(resolveDefaultDesktopInstallRoot(macTarget, {}, "/Users/test")).toBe(macInstallRoot);
+    expect(resolveDesktopInstallPaths(macTarget, macInstallRoot)).toMatchObject({
+      appPath: macAppPath,
+      executablePath: path.join(macAppPath, "Contents", "MacOS", "Rudder"),
     });
 
     const winTarget = { platform: "windows" as const, arch: "x64" as const, extension: ".zip" as const };
