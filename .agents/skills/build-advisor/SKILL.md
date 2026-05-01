@@ -1,22 +1,12 @@
 ---
 name: build-advisor
 description: >
-  Expert advisor for moments when the user knows a build result is wrong but
-  cannot yet express the right product, design, or engineering critique. Use
-  when the user says a feature feels off, the AI-built result is poor, they do
-  not know how to give better feedback, they want professional diagnosis before
-  more implementation, or they want help turning vague dissatisfaction into
-  explicit standards, recommendations, and next steps. Especially useful when
-  the user says the result feels wrong, asks for a professional critique before
-  more implementation, wants best-practice research first, wants help deciding
-  what is actually wrong and what to do next, or has traces, benchmarks, evals,
-  or score data but needs help turning that evidence into a product,
-  UX, engineering, or workflow diagnosis. When the discussion is grounded in
-  Langfuse traces, scores, datasets, or experiment results, combine this skill
-  with `langfuse` instead of reasoning from vague impressions alone. For
-  repository, product, UI, workflow, or implementation requests, ground the
-  diagnosis in the relevant local docs, code, screenshots, traces, or prior
-  plans before claiming to understand the user's real need.
+  Expert advisor for when a build, UI, workflow, spec, or implementation feels
+  wrong but the user cannot yet express the right product, design, engineering,
+  or evaluation critique. Use before more implementation to turn vague
+  dissatisfaction, weak AI-built results, traces, benchmarks, or eval evidence
+  into a grounded diagnosis, explicit criteria, realistic options, and a
+  recommended next move.
 ---
 
 # Build Advisor
