@@ -124,11 +124,17 @@ test.describe("Calendar V1", () => {
     await expect(modal.getByText("Read-only import for the operator calendar.")).toBeVisible();
     await expect(modal.getByText("calendar data never enters agent context")).toBeVisible();
 
-    await modal.getByRole("button", { name: "Connect" }).click();
-    await expect(modal.getByText("GOOGLE_CALENDAR_CLIENT_ID")).toBeVisible();
-    await expect(modal.getByText("GOOGLE_CALENDAR_CLIENT_SECRET")).toBeVisible();
-    await expect(modal.getByText("GOOGLE_CLIENT_ID")).toBeVisible();
+    await expect(modal.getByText("OAuth settings")).toBeVisible();
+    await expect(modal.getByText("Not configured")).toBeVisible();
+    await expect(modal.getByPlaceholder("Google OAuth client ID")).toBeVisible();
+    await expect(modal.getByPlaceholder("Google OAuth client secret")).toBeVisible();
     await expect(modal.getByText(`/api/orgs/${organization.id}/calendar/google/callback`)).toBeVisible();
+
+    await modal.getByPlaceholder("Google OAuth client ID").fill("test-google-client-id.apps.googleusercontent.com");
+    await modal.getByPlaceholder("Google OAuth client secret").fill("test-google-client-secret");
+    await modal.getByRole("button", { name: "Save settings" }).click();
+    await expect(modal.getByText("Stored for this organization")).toBeVisible();
+    await expect(modal.getByPlaceholder("Stored. Enter a new value to rotate.")).toBeVisible();
   });
 
   test("lets operators enable individual Google calendars", async ({ page }) => {

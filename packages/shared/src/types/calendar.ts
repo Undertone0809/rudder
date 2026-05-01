@@ -91,10 +91,20 @@ export interface GoogleCalendarConnectResponse {
   redirectUri?: string;
   requiredEnv?: string[];
   acceptedAliases?: string[];
+  config?: GoogleCalendarOAuthConfig;
 }
 
 export interface GoogleCalendarSyncResponse {
   source: CalendarSource;
   importedCount: number;
   syncedSourceCount?: number;
+}
+
+export interface GoogleCalendarOAuthConfig {
+  clientId: string;
+  clientSecretConfigured: boolean;
+  managedByEnv: boolean;
+  redirectUri: string;
+  requiredEnv: string[];
+  acceptedAliases: string[];
 }

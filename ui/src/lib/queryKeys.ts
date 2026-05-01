@@ -77,6 +77,7 @@ export const queryKeys = {
   },
   calendar: {
     sources: (orgId: string) => ["calendar", orgId, "sources"] as const,
+    googleConfig: (orgId: string) => ["calendar", orgId, "google-config"] as const,
     events: (
       orgId: string,
       start: string,

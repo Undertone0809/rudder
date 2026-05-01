@@ -98,3 +98,14 @@ export const googleCalendarSyncSchema = z.object({
 });
 
 export type GoogleCalendarSync = z.infer<typeof googleCalendarSyncSchema>;
+
+export const updateGoogleCalendarOAuthConfigSchema = z.object({
+  clientId: z.string().trim().min(1).max(512).optional(),
+  clientSecret: z.string().trim().min(1).max(2048).optional(),
+  clear: z.boolean().optional().default(false),
+}).refine(
+  (value) => value.clear || value.clientId !== undefined || value.clientSecret !== undefined,
+  { message: "Provide credentials or clear the stored Google Calendar OAuth configuration" },
+);
+
+export type UpdateGoogleCalendarOAuthConfig = z.input<typeof updateGoogleCalendarOAuthConfigSchema>;

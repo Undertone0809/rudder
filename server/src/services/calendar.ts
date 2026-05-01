@@ -11,25 +11,33 @@ import {
   issues,
   projects,
 } from "@rudderhq/db";
+import { SECRET_PROVIDERS, type SecretProvider } from "@rudderhq/shared";
 import type {
   CalendarEvent,
   CalendarEventKind,
   CalendarEventStatus,
+  GoogleCalendarOAuthConfig,
   CalendarSource,
   CalendarSourceStatus,
   CalendarVisibility,
   CreateCalendarEvent,
   CreateCalendarSource,
+  UpdateGoogleCalendarOAuthConfig,
   UpdateCalendarEvent,
   UpdateCalendarSource,
 } from "@rudderhq/shared";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { asBoolean, asNumber, parseObject } from "../agent-runtimes/utils.js";
+import { secretService } from "./secrets.js";
 
 type Actor = { userId?: string | null };
 const PROJECTED_HEARTBEAT_DURATION_MS = 15 * 60 * 1000;
 const PROJECTED_HEARTBEAT_MAX_PER_AGENT = 96;
+const GOOGLE_CALENDAR_OAUTH_SECRET_NAME = "google_calendar_oauth_credentials";
+const GOOGLE_CALENDAR_REQUIRED_ENV = ["GOOGLE_CALENDAR_CLIENT_ID", "GOOGLE_CALENDAR_CLIENT_SECRET"] as const;
+const GOOGLE_CALENDAR_ACCEPTED_ENV_ALIASES = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"] as const;
 type CalendarSourceRow = typeof calendarSources.$inferSelect;
+type GoogleCredentials = { clientId: string; clientSecret: string; managedByEnv: boolean };
 
 export interface CalendarEventFilters {
   start: Date;
@@ -68,10 +76,37 @@ function parseSyncCursor(value: Record<string, unknown> | null | undefined) {
   return value;
 }
 
-function googleCredentials() {
+function envGoogleCredentials(): GoogleCredentials | null {
   const clientId = process.env.GOOGLE_CALENDAR_CLIENT_ID?.trim() || process.env.GOOGLE_CLIENT_ID?.trim() || "";
   const clientSecret = process.env.GOOGLE_CALENDAR_CLIENT_SECRET?.trim() || process.env.GOOGLE_CLIENT_SECRET?.trim() || "";
-  return clientId && clientSecret ? { clientId, clientSecret } : null;
+  return clientId && clientSecret ? { clientId, clientSecret, managedByEnv: true } : null;
+}
+
+function parseStoredGoogleCredentials(value: string): Omit<GoogleCredentials, "managedByEnv"> | null {
+  try {
+    const parsed = JSON.parse(value) as { clientId?: unknown; clientSecret?: unknown };
+    const clientId = typeof parsed.clientId === "string" ? parsed.clientId.trim() : "";
+    const clientSecret = typeof parsed.clientSecret === "string" ? parsed.clientSecret.trim() : "";
+    return clientId && clientSecret ? { clientId, clientSecret } : null;
+  } catch {
+    return null;
+  }
+}
+
+function serializeGoogleCredentials(credentials: Omit<GoogleCredentials, "managedByEnv">) {
+  return JSON.stringify({
+    clientId: credentials.clientId,
+    clientSecret: credentials.clientSecret,
+  });
+}
+
+function defaultSecretProvider(): SecretProvider {
+  const configured = process.env.RUDDER_SECRETS_PROVIDER;
+  return (
+    configured && SECRET_PROVIDERS.includes(configured as SecretProvider)
+      ? configured
+      : "local_encrypted"
+  ) as SecretProvider;
 }
 
 function googleCalendarIdForListItem(item: { id?: string; primary?: boolean }) {
@@ -205,6 +240,73 @@ function mergeEventInput(
 export function calendarService(db: Db) {
   const issueIdAsText = sql<string>`${issues.id}::text`;
   const contextIssueId = sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`;
+  const secrets = secretService(db);
+
+  async function storedGoogleCredentials(orgId: string): Promise<GoogleCredentials | null> {
+    const secret = await secrets.getByName(orgId, GOOGLE_CALENDAR_OAUTH_SECRET_NAME);
+    if (!secret) return null;
+    const value = await secrets.resolveSecretValue(orgId, secret.id, "latest");
+    const credentials = parseStoredGoogleCredentials(value);
+    return credentials ? { ...credentials, managedByEnv: false } : null;
+  }
+
+  async function googleCredentials(orgId: string): Promise<GoogleCredentials | null> {
+    return envGoogleCredentials() ?? await storedGoogleCredentials(orgId);
+  }
+
+  async function googleOAuthConfig(orgId: string, redirectUri: string): Promise<GoogleCalendarOAuthConfig> {
+    const credentials = await googleCredentials(orgId);
+    return {
+      clientId: credentials?.clientId ?? "",
+      clientSecretConfigured: !!credentials,
+      managedByEnv: credentials?.managedByEnv ?? false,
+      redirectUri,
+      requiredEnv: [...GOOGLE_CALENDAR_REQUIRED_ENV],
+      acceptedAliases: [...GOOGLE_CALENDAR_ACCEPTED_ENV_ALIASES],
+    };
+  }
+
+  async function updateGoogleOAuthConfig(
+    orgId: string,
+    input: UpdateGoogleCalendarOAuthConfig,
+    redirectUri: string,
+    actor?: Actor,
+  ): Promise<GoogleCalendarOAuthConfig> {
+    if (envGoogleCredentials()) {
+      throw unprocessable("Google Calendar OAuth is managed by server environment variables");
+    }
+
+    const existingSecret = await secrets.getByName(orgId, GOOGLE_CALENDAR_OAUTH_SECRET_NAME);
+    if (input.clear) {
+      if (existingSecret) await secrets.remove(existingSecret.id);
+      return googleOAuthConfig(orgId, redirectUri);
+    }
+
+    const existingCredentials = existingSecret
+      ? parseStoredGoogleCredentials(await secrets.resolveSecretValue(orgId, existingSecret.id, "latest"))
+      : null;
+    const clientId = input.clientId?.trim() || existingCredentials?.clientId || "";
+    const clientSecret = input.clientSecret?.trim() || existingCredentials?.clientSecret || "";
+    if (!clientId) throw unprocessable("Google Calendar client ID is required");
+    if (!clientSecret) throw unprocessable("Google Calendar client secret is required");
+
+    const value = serializeGoogleCredentials({ clientId, clientSecret });
+    if (existingSecret) {
+      await secrets.rotate(existingSecret.id, { value }, { userId: actor?.userId ?? "board", agentId: null });
+    } else {
+      await secrets.create(
+        orgId,
+        {
+          name: GOOGLE_CALENDAR_OAUTH_SECRET_NAME,
+          provider: defaultSecretProvider(),
+          value,
+          description: "Google Calendar OAuth client credentials used for read-only calendar import.",
+        },
+        { userId: actor?.userId ?? "board", agentId: null },
+      );
+    }
+    return googleOAuthConfig(orgId, redirectUri);
+  }
 
   async function assertSourceOrg(orgId: string, sourceId: string | null | undefined) {
     if (!sourceId) return null;
@@ -801,7 +903,7 @@ export function calendarService(db: Db) {
     if (!refreshToken) {
       return accessToken ? { source, accessToken } : null;
     }
-    const credentials = googleCredentials();
+    const credentials = await googleCredentials(orgId);
     if (!credentials) return null;
 
     const response = await fetch("https://oauth2.googleapis.com/token", {
@@ -1176,18 +1278,31 @@ export function calendarService(db: Db) {
       return existing;
     },
 
+    getGoogleOAuthConfig: googleOAuthConfig,
+
+    updateGoogleOAuthConfig,
+
     async connectGoogle(orgId: string, redirectUri: string, actor?: Actor) {
-      const source = await getOrCreateGoogleSource(orgId, actor, googleCredentials() ? "disconnected" : "error");
-      const credentials = googleCredentials();
+      const credentials = await googleCredentials(orgId);
+      let source = await getOrCreateGoogleSource(orgId, actor, credentials ? "disconnected" : "error");
       if (!credentials) {
         return {
           status: "configuration_required" as const,
           authUrl: null,
           source: sanitizeSource(source),
           redirectUri,
-          requiredEnv: ["GOOGLE_CALENDAR_CLIENT_ID", "GOOGLE_CALENDAR_CLIENT_SECRET"],
-          acceptedAliases: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+          requiredEnv: [...GOOGLE_CALENDAR_REQUIRED_ENV],
+          acceptedAliases: [...GOOGLE_CALENDAR_ACCEPTED_ENV_ALIASES],
+          config: await googleOAuthConfig(orgId, redirectUri),
         };
+      }
+      if (source.status === "error" && !sourceHasGoogleToken(source)) {
+        const [updated] = await db
+          .update(calendarSources)
+          .set({ status: "disconnected", updatedAt: new Date() })
+          .where(eq(calendarSources.id, source.id))
+          .returning();
+        source = updated ?? source;
       }
       const state = Buffer.from(JSON.stringify({ orgId, sourceId: source.id })).toString("base64url");
       const params = new URLSearchParams({
@@ -1204,11 +1319,12 @@ export function calendarService(db: Db) {
         status: "authorization_required" as const,
         authUrl: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
         source: sanitizeSource(source),
+        config: await googleOAuthConfig(orgId, redirectUri),
       };
     },
 
     async completeGoogleCallback(orgId: string, input: { code: string; state?: string | null; redirectUri: string }, actor?: Actor) {
-      const credentials = googleCredentials();
+      const credentials = await googleCredentials(orgId);
       if (!credentials) throw unprocessable("Google Calendar OAuth is not configured");
       let sourceId: string | null = null;
       if (input.state) {

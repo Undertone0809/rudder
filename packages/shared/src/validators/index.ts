@@ -278,12 +278,14 @@ export {
   updateCalendarEventSchema,
   calendarEventListQuerySchema,
   googleCalendarSyncSchema,
+  updateGoogleCalendarOAuthConfigSchema,
   type CreateCalendarSource,
   type UpdateCalendarSource,
   type CreateCalendarEvent,
   type UpdateCalendarEvent,
   type CalendarEventListQuery,
   type GoogleCalendarSync,
+  type UpdateGoogleCalendarOAuthConfig,
 } from "./calendar.js";
 
 export {

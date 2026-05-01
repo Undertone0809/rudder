@@ -3,7 +3,9 @@ import type {
   CalendarEventListResponse,
   CalendarSource,
   GoogleCalendarConnectResponse,
+  GoogleCalendarOAuthConfig,
   GoogleCalendarSyncResponse,
+  UpdateGoogleCalendarOAuthConfig,
 } from "@rudderhq/shared";
 import { api } from "./client";
 
@@ -57,6 +59,15 @@ export const calendarApi = {
     ),
   deleteEvent: (orgId: string, eventId: string) =>
     api.delete<{ ok: true }>(`/orgs/${encodeURIComponent(orgId)}/calendar/events/${encodeURIComponent(eventId)}`),
+  googleConfig: (orgId: string) =>
+    api.get<GoogleCalendarOAuthConfig>(
+      `/orgs/${encodeURIComponent(orgId)}/calendar/google/config`,
+    ),
+  updateGoogleConfig: (orgId: string, data: UpdateGoogleCalendarOAuthConfig) =>
+    api.patch<GoogleCalendarOAuthConfig>(
+      `/orgs/${encodeURIComponent(orgId)}/calendar/google/config`,
+      data,
+    ),
   connectGoogle: (orgId: string) =>
     api.post<GoogleCalendarConnectResponse>(
       `/orgs/${encodeURIComponent(orgId)}/calendar/google/connect`,

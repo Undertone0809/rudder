@@ -212,6 +212,7 @@ export type {
   CalendarEventListResponse,
   GoogleCalendarConnectResponse,
   GoogleCalendarSyncResponse,
+  GoogleCalendarOAuthConfig,
 } from "./calendar.js";
 export type { CostEvent, CostSummary, CostByAgent, CostByProviderModel, CostByBiller, CostByAgentModel, CostWindowSpendRow, CostByProject } from "./cost.js";
 export type { FinanceEvent, FinanceSummary, FinanceByBiller, FinanceByKind } from "./finance.js";

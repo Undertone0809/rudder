@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Agent, CalendarEvent, CalendarSource, GoogleCalendarConnectResponse, Issue } from "@rudderhq/shared";
+import type { Agent, CalendarEvent, CalendarSource, GoogleCalendarConnectResponse, GoogleCalendarOAuthConfig, Issue } from "@rudderhq/shared";
 import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
   CalendarDays,
   CheckCircle2,
+  Copy,
   ExternalLink,
   Loader2,
   Plus,
@@ -818,6 +819,8 @@ export function Calendar() {
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [draft, setDraft] = useState(() => newDraft());
   const [googleConnectResult, setGoogleConnectResult] = useState<GoogleCalendarConnectResponse | null>(null);
+  const [googleConfigForm, setGoogleConfigForm] = useState({ clientId: "", clientSecret: "" });
+  const [googleConfigFormDirty, setGoogleConfigFormDirty] = useState(false);
 
   const clampQuickCreatePosition = useCallback((anchor?: { x: number; y: number }) => {
     if (typeof window === "undefined") return { x: 420, y: 96 };
@@ -888,6 +891,11 @@ export function Calendar() {
     queryFn: () => calendarApi.sources(viewedOrganizationId!),
     enabled: !!viewedOrganizationId,
   });
+  const googleConfigQuery = useQuery({
+    queryKey: queryKeys.calendar.googleConfig(viewedOrganizationId ?? "__none__"),
+    queryFn: () => calendarApi.googleConfig(viewedOrganizationId!),
+    enabled: !!viewedOrganizationId && googleCalendarModalOpen,
+  });
   const eventsQuery = useQuery({
     queryKey: queryKeys.calendar.events(viewedOrganizationId ?? "__none__", rangeStart, rangeEnd),
     queryFn: () => calendarApi.events(viewedOrganizationId!, { start: rangeStart, end: rangeEnd }),
@@ -905,6 +913,16 @@ export function Calendar() {
     () => new Map(sources.map((source) => [source.id, source])),
     [sources],
   );
+  const googleConfig = googleConfigQuery.data ?? googleConnectResult?.config ?? null;
+
+  useEffect(() => {
+    if (!googleCalendarModalOpen) {
+      setGoogleConfigFormDirty(false);
+      return;
+    }
+    if (!googleConfig || googleConfigFormDirty) return;
+    setGoogleConfigForm({ clientId: googleConfig.clientId, clientSecret: "" });
+  }, [googleCalendarModalOpen, googleConfig, googleConfigFormDirty]);
 
   const visibleEvents = useMemo(() => {
     return (eventsQuery.data?.events ?? []).filter((event) => {
@@ -935,6 +953,7 @@ export function Calendar() {
     if (!viewedOrganizationId) return;
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.calendar.sources(viewedOrganizationId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.calendar.googleConfig(viewedOrganizationId) }),
       queryClient.invalidateQueries({ queryKey: ["calendar", viewedOrganizationId] }),
       queryClient.invalidateQueries({ queryKey: queryKeys.activity(viewedOrganizationId) }),
     ]);
@@ -1013,8 +1032,62 @@ export function Calendar() {
     },
     onError: (error) => pushToast({ title: "Failed to update calendar source", body: error instanceof Error ? error.message : undefined, tone: "error" }),
   });
+  const setGoogleConfigCache = (config: GoogleCalendarOAuthConfig) => {
+    if (!viewedOrganizationId) return;
+    queryClient.setQueryData(queryKeys.calendar.googleConfig(viewedOrganizationId), config);
+  };
+  const saveGoogleConfigMutation = useMutation({
+    mutationFn: () => calendarApi.updateGoogleConfig(viewedOrganizationId!, {
+      clientId: googleConfigForm.clientId.trim(),
+      ...(googleConfigForm.clientSecret.trim() ? { clientSecret: googleConfigForm.clientSecret.trim() } : {}),
+    }),
+    onSuccess: async (config) => {
+      setGoogleConfigCache(config);
+      setGoogleConfigForm({ clientId: config.clientId, clientSecret: "" });
+      setGoogleConfigFormDirty(false);
+      await invalidateCalendar();
+      pushToast({ title: "Google Calendar OAuth settings saved", tone: "success" });
+    },
+    onError: (error) => pushToast({ title: "Failed to save Google Calendar settings", body: error instanceof Error ? error.message : undefined, tone: "error" }),
+  });
+  const clearGoogleConfigMutation = useMutation({
+    mutationFn: () => calendarApi.updateGoogleConfig(viewedOrganizationId!, { clear: true }),
+    onSuccess: async (config) => {
+      setGoogleConfigCache(config);
+      setGoogleConfigForm({ clientId: "", clientSecret: "" });
+      setGoogleConfigFormDirty(false);
+      await invalidateCalendar();
+      pushToast({ title: "Google Calendar OAuth settings cleared", tone: "success" });
+    },
+    onError: (error) => pushToast({ title: "Failed to clear Google Calendar settings", body: error instanceof Error ? error.message : undefined, tone: "error" }),
+  });
   const connectGoogleMutation = useMutation({
     mutationFn: () => calendarApi.connectGoogle(viewedOrganizationId!),
+    onSuccess: async (result) => {
+      setGoogleConnectResult(result);
+      await invalidateCalendar();
+      if (result.authUrl) {
+        window.location.href = result.authUrl;
+        return;
+      }
+      setGoogleCalendarModalOpen(true);
+    },
+    onError: (error) => {
+      setGoogleCalendarModalOpen(true);
+      pushToast({ title: "Google Calendar connection failed", body: error instanceof Error ? error.message : undefined, tone: "error" });
+    },
+  });
+  const saveAndConnectGoogleMutation = useMutation({
+    mutationFn: async () => {
+      const config = await calendarApi.updateGoogleConfig(viewedOrganizationId!, {
+        clientId: googleConfigForm.clientId.trim(),
+        ...(googleConfigForm.clientSecret.trim() ? { clientSecret: googleConfigForm.clientSecret.trim() } : {}),
+      });
+      setGoogleConfigCache(config);
+      setGoogleConfigForm({ clientId: config.clientId, clientSecret: "" });
+      setGoogleConfigFormDirty(false);
+      return calendarApi.connectGoogle(viewedOrganizationId!);
+    },
     onSuccess: async (result) => {
       setGoogleConnectResult(result);
       await invalidateCalendar();
@@ -1092,17 +1165,32 @@ export function Calendar() {
   const redirectUri = typeof window === "undefined"
     ? `/api/orgs/${encodeURIComponent(viewedOrganizationId)}/calendar/google/callback`
     : `${window.location.origin}/api/orgs/${encodeURIComponent(viewedOrganizationId)}/calendar/google/callback`;
+  const activeGoogleRedirectUri = googleConfig?.redirectUri ?? googleConnectResult?.redirectUri ?? redirectUri;
+  const googleManagedByEnv = googleConfig?.managedByEnv ?? false;
+  const googleOauthConfigured = !!googleConfig?.clientSecretConfigured || googleManagedByEnv;
   const googleConfigRequired =
     googleConnectResult?.status === "configuration_required" ||
-    (googleSource?.status === "error" && !googleSource.lastSyncedAt);
-  const requiredGoogleEnv = googleConnectResult?.requiredEnv ?? [
+    (googleSource?.status === "error" && !googleSource.lastSyncedAt && !googleOauthConfigured);
+  const requiredGoogleEnv = googleConfig?.requiredEnv ?? googleConnectResult?.requiredEnv ?? [
     "GOOGLE_CALENDAR_CLIENT_ID",
     "GOOGLE_CALENDAR_CLIENT_SECRET",
   ];
-  const acceptedGoogleAliases = googleConnectResult?.acceptedAliases ?? [
+  const acceptedGoogleAliases = googleConfig?.acceptedAliases ?? googleConnectResult?.acceptedAliases ?? [
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
   ];
+  const googleConfigCanSave =
+    !googleManagedByEnv &&
+    googleConfigForm.clientId.trim().length > 0 &&
+    (googleConfigForm.clientSecret.trim().length > 0 || !!googleConfig?.clientSecretConfigured);
+  const googleConfigDirty =
+    !googleManagedByEnv &&
+    (googleConfigForm.clientId.trim() !== (googleConfig?.clientId ?? "") ||
+      googleConfigForm.clientSecret.trim().length > 0);
+  const googleConfigActionPending =
+    saveGoogleConfigMutation.isPending ||
+    clearGoogleConfigMutation.isPending ||
+    saveAndConnectGoogleMutation.isPending;
 
   return (
     <div className="flex h-full min-h-[720px] min-w-0 flex-col gap-3">
@@ -1284,22 +1372,9 @@ export function Calendar() {
                   <AlertCircle className="h-4 w-4" />
                   <span className="font-medium">OAuth configuration required</span>
                 </div>
-                <div className="space-y-2 text-xs leading-5 text-muted-foreground">
-                  <div>Set these server environment variables, then restart Rudder:</div>
-                  <div className="rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background p-2 font-mono text-[11px] text-foreground">
-                    {requiredGoogleEnv.map((name) => <div key={name}>{name}</div>)}
-                  </div>
-                  <div>Accepted aliases:</div>
-                  <div className="rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background p-2 font-mono text-[11px] text-foreground">
-                    {acceptedGoogleAliases.map((name) => <div key={name}>{name}</div>)}
-                  </div>
-                  <div>
-                    Redirect URI:
-                    <div className="mt-1 break-all rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background p-2 font-mono text-[11px] text-foreground">
-                      {googleConnectResult?.redirectUri ?? redirectUri}
-                    </div>
-                  </div>
-                </div>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Enter a Google OAuth client ID and client secret below, then connect this organization calendar.
+                </p>
               </div>
             ) : (
               <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-border bg-muted/25 p-3 text-muted-foreground">
@@ -1307,6 +1382,118 @@ export function Calendar() {
                 <span className="font-medium">Disconnected</span>
               </div>
             )}
+
+            <div className="space-y-3 rounded-[var(--radius-sm)] border border-border bg-muted/20 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-medium text-foreground">OAuth settings</div>
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    {googleManagedByEnv
+                      ? "Managed by server environment variables"
+                      : googleConfig?.clientSecretConfigured
+                        ? "Stored for this organization"
+                        : "Not configured"}
+                  </div>
+                </div>
+                {googleConfigQuery.isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
+              </div>
+
+              {googleManagedByEnv ? (
+                <div className="space-y-2 text-xs leading-5 text-muted-foreground">
+                  <div className="rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background p-2">
+                    Server environment variables are active. UI edits are disabled until those variables are removed.
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div>
+                      <div className="mb-1 text-[11px] font-medium text-muted-foreground">Required env</div>
+                      <div className="rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background p-2 font-mono text-[11px] text-foreground">
+                        {requiredGoogleEnv.map((name) => <div key={name}>{name}</div>)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="mb-1 text-[11px] font-medium text-muted-foreground">Accepted aliases</div>
+                      <div className="rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background p-2 font-mono text-[11px] text-foreground">
+                        {acceptedGoogleAliases.map((name) => <div key={name}>{name}</div>)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-3">
+                  <label className="space-y-1.5 text-xs text-muted-foreground">
+                    <span>Client ID</span>
+                    <Input
+                      value={googleConfigForm.clientId}
+                      onChange={(event) => {
+                        setGoogleConfigFormDirty(true);
+                        setGoogleConfigForm((current) => ({ ...current, clientId: event.target.value }));
+                      }}
+                      placeholder="Google OAuth client ID"
+                      disabled={googleConfigActionPending}
+                    />
+                  </label>
+                  <label className="space-y-1.5 text-xs text-muted-foreground">
+                    <span>Client secret</span>
+                    <Input
+                      type="password"
+                      value={googleConfigForm.clientSecret}
+                      onChange={(event) => {
+                        setGoogleConfigFormDirty(true);
+                        setGoogleConfigForm((current) => ({ ...current, clientSecret: event.target.value }));
+                      }}
+                      placeholder={googleConfig?.clientSecretConfigured ? "Stored. Enter a new value to rotate." : "Google OAuth client secret"}
+                      disabled={googleConfigActionPending}
+                    />
+                  </label>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-[11px] text-muted-foreground">
+                      {googleConfig?.clientSecretConfigured ? "Client secret is stored and never shown again." : "Client secret is required before connecting."}
+                    </div>
+                    <div className="flex gap-2">
+                      {googleConfig?.clientSecretConfigured ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          onClick={() => clearGoogleConfigMutation.mutate()}
+                          disabled={googleConfigActionPending}
+                        >
+                          Clear
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        onClick={() => saveGoogleConfigMutation.mutate()}
+                        disabled={!googleConfigCanSave || !googleConfigDirty || googleConfigActionPending}
+                      >
+                        {saveGoogleConfigMutation.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                        Save settings
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1.5 text-xs text-muted-foreground">
+                <span>Redirect URI</span>
+                <div className="flex gap-2">
+                  <div className="min-w-0 flex-1 break-all rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background p-2 font-mono text-[11px] text-foreground">
+                    {activeGoogleRedirectUri}
+                  </div>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="Copy Google Calendar redirect URI"
+                    onClick={() => navigator.clipboard?.writeText(activeGoogleRedirectUri)}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </div>
 
             {googleSource ? (
               <div className="grid gap-4">
@@ -1409,11 +1596,21 @@ export function Calendar() {
               ) : null}
               <Button
                 type="button"
-                onClick={() => connectGoogleMutation.mutate()}
-                disabled={connectGoogleMutation.isPending}
+                onClick={() => {
+                  if (!googleOauthConfigured && !googleManagedByEnv) {
+                    saveAndConnectGoogleMutation.mutate();
+                    return;
+                  }
+                  connectGoogleMutation.mutate();
+                }}
+                disabled={
+                  connectGoogleMutation.isPending ||
+                  saveAndConnectGoogleMutation.isPending ||
+                  (!googleOauthConfigured && !googleConfigCanSave)
+                }
               >
-                {connectGoogleMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="mr-1.5 h-3.5 w-3.5" />}
-                Connect
+                {connectGoogleMutation.isPending || saveAndConnectGoogleMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="mr-1.5 h-3.5 w-3.5" />}
+                {!googleOauthConfigured && !googleManagedByEnv ? "Save and connect" : "Connect"}
               </Button>
             </div>
           </DialogFooter>

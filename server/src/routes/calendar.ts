@@ -5,6 +5,7 @@ import {
   createCalendarEventSchema,
   createCalendarSourceSchema,
   googleCalendarSyncSchema,
+  updateGoogleCalendarOAuthConfigSchema,
   updateCalendarEventSchema,
   updateCalendarSourceSchema,
 } from "@rudderhq/shared";
@@ -211,6 +212,37 @@ export function calendarRoutes(db: Db) {
       details: { status: result.status, visibilityDefault: result.source.visibilityDefault },
     });
     res.json(result);
+  });
+
+  router.get("/orgs/:orgId/calendar/google/config", async (req, res) => {
+    assertBoard(req);
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    res.json(await svc.getGoogleOAuthConfig(orgId, redirectUri(req)));
+  });
+
+  router.patch("/orgs/:orgId/calendar/google/config", validate(updateGoogleCalendarOAuthConfigSchema), async (req, res) => {
+    assertBoard(req);
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    const actor = getActorInfo(req);
+    const config = await svc.updateGoogleOAuthConfig(orgId, req.body, redirectUri(req), { userId: actor.actorId });
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "calendar.google_oauth_config_updated",
+      entityType: "calendar_source",
+      entityId: orgId,
+      details: {
+        clientIdConfigured: config.clientId.trim().length > 0,
+        clientSecretConfigured: config.clientSecretConfigured,
+        cleared: req.body.clear === true,
+      },
+    });
+    res.json(config);
   });
 
   router.get("/orgs/:orgId/calendar/google/callback", async (req, res) => {
