@@ -133,6 +133,13 @@ command above. More generally, `npx @rudderhq/cli@latest <command>` and
 version; the `npx` form is mainly the first-run and explicit dist-tag form.
 Use `--no-desktop` or `--no-cli` only for targeted maintainer checks.
 
+The release workflow runs the public install smoke after npm publish and Desktop
+assets are available. The smoke executes `npx ... start --no-open` on Linux,
+Windows, and macOS using isolated temporary HOME, npm cache, npm prefix, output,
+and Desktop install directories. Maintainers can also run it manually from the
+`Public Install Smoke` workflow with a package spec such as
+`@rudderhq/cli@latest`, `@rudderhq/cli@canary`, or an exact version.
+
 ## Local Commands
 
 ### Preview a canary locally

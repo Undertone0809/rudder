@@ -31,6 +31,8 @@ jobs:
     if: github.event_name == 'push' && github.repository == 'Undertone0809/rudder' && !contains(github.event.head_commit.message, '[skip release]')
     runs-on: ubuntu-latest
     environment: npm-canary
+    outputs:
+      version: ${{ steps.publish.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -124,6 +126,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.repository == 'Undertone0809/rudder'
     runs-on: ubuntu-latest
     environment: npm-stable
+    outputs:
+      version: ${{ steps.publish.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -164,3 +168,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run desktop-release.yml --ref "v${{ steps.publish.outputs.version }}" -f release_tag="v${{ steps.publish.outputs.version }}"
+
+      - name: Wait for desktop release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ steps.publish.outputs.version }}"
+          node scripts/wait-for-desktop-release-assets.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$tag" \
+            --version "${{ steps.publish.outputs.version }}"
+
+  public-install-smoke:
+    name: Public install smoke
+    needs:
+      - canary
+      - stable
+    if: always() && (needs.canary.result == 'success' || needs.stable.result == 'success')
+    uses: ./.github/workflows/public-install-smoke.yml
+    with:
+      package_spec: "@rudderhq/cli@${{ needs.canary.outputs.version || needs.stable.outputs.version }}"
+      repo: ${{ github.repository }}

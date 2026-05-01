@@ -1,0 +1,50 @@
+name: Public Install Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_spec:
+        description: "npm package spec to smoke, for example @rudderhq/cli@latest or @rudderhq/cli@canary"
+        required: true
+        default: "@rudderhq/cli@latest"
+      repo:
+        description: "GitHub repository that hosts desktop releases"
+        required: true
+        default: "Undertone0809/rudder"
+  workflow_call:
+    inputs:
+      package_spec:
+        required: true
+        type: string
+      repo:
+        required: false
+        type: string
+        default: "Undertone0809/rudder"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            runner: ubuntu-latest
+          - label: Windows x64
+            runner: windows-latest
+          - label: macOS arm64
+            runner: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Smoke public npx install
+        run: node scripts/smoke-public-install.mjs --package-spec "${{ inputs.package_spec }}" --repo "${{ inputs.repo }}"
