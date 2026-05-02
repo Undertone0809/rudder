@@ -85,8 +85,17 @@ test.describe("Run transcript detail", () => {
     const invocationTab = page.getByRole("tab", { name: "Invocation" });
     await expect(transcriptTab).toBeVisible({ timeout: 15_000 });
     await expect(invocationTab).toBeVisible({ timeout: 15_000 });
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    const listPane = page.getByTestId("agent-runs-list-pane");
+    await expect(detailPane).toBeVisible();
+    await expect(listPane).toBeVisible();
+    const detailBox = await detailPane.boundingBox();
+    const listBox = await listPane.boundingBox();
+    expect(detailBox).not.toBeNull();
+    expect(listBox).not.toBeNull();
+    expect(listBox!.x).toBeLessThan(detailBox!.x);
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
-    await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Readable" })).toBeVisible();
     await expect(page.getByText("adapter invocation")).toBeVisible();
 
     await page.getByRole("button", { name: "Expand transcript" }).click();
@@ -110,7 +119,7 @@ test.describe("Run transcript detail", () => {
     expect(transcriptDialogBox!.x + transcriptDialogBox!.width).toBeLessThanOrEqual(viewport!.width);
     expect(transcriptDialogBox!.y + transcriptDialogBox!.height).toBeLessThanOrEqual(viewport!.height);
     await expect(transcriptDialog.getByText("adapter invocation")).toBeVisible();
-    await expect(transcriptDialog.getByRole("button", { name: "raw" })).toBeVisible();
+    await expect(transcriptDialog.getByRole("button", { name: "Raw" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(transcriptDialog).toBeHidden();
 
@@ -121,7 +130,7 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByText("Command:", { exact: false })).toBeVisible();
     await expect(page.getByText(/^Events \(\d+\)$/)).toBeVisible();
     await expect(page.getByText("adapter invocation")).toBeVisible();
-    await expect(page.getByRole("button", { name: "nice" })).toBeHidden();
+    await expect(page.getByRole("button", { name: "Readable" })).toBeHidden();
 
     const promptBlock = page.getByTestId("invocation-prompt");
     await expect(promptBlock).toBeVisible();
@@ -141,7 +150,7 @@ test.describe("Run transcript detail", () => {
 
     await transcriptTab.click();
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
-    await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Readable" })).toBeVisible();
 
     await page.screenshot({
       path: "tests/e2e/test-results/agent-run-detail-tabs.png",

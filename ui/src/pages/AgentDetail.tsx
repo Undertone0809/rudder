@@ -648,6 +648,22 @@ function runMetrics(run: HeartbeatRun) {
   };
 }
 
+function formatRunDuration(seconds: number): string {
+  if (seconds >= 3600) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+  if (seconds >= 60) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${seconds}s`;
+}
+
+function formatRunStatusLabel(status: string): string {
+  return status
+    .replaceAll("_", " ")
+    .replace(/^\w/, (char) => char.toUpperCase());
+}
+
 type RunLogChunk = { ts: string; stream: "stdout" | "stderr" | "system"; chunk: string };
 
 function utf8ByteLength(value: string): number {
@@ -3912,10 +3928,13 @@ function RunsTab({
     );
   }
 
-  // Desktop: compact navigation rail + detail pane that fully claims the remaining width
+  // Desktop: compact run navigation beside a primary run inspection surface.
   return (
-    <div className="flex min-w-0 items-start gap-4">
-      <div className="w-[14rem] shrink-0 border border-border rounded-lg xl:w-[14.5rem] 2xl:w-[15rem]">
+    <div className="grid min-w-0 items-start gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]">
+      <div
+        className="min-w-0 overflow-hidden rounded-lg border border-border"
+        data-testid="agent-runs-list-pane"
+      >
         <div className="sticky top-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 2rem)" }}>
           {sorted.map((run) => (
             <RunListItem key={run.id} run={run} isSelected={run.id === effectiveRunId} agentId={agentRouteId} />
@@ -3923,7 +3942,7 @@ function RunsTab({
         </div>
       </div>
 
-      <div className="min-w-0 flex-1 basis-0">
+      <div className="min-w-0" data-testid="agent-runs-detail-pane">
         <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} />
       </div>
     </div>
@@ -4035,16 +4054,23 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
   const passiveFollowupAttempt = typeof passiveFollowupContext?.attempt === "number" ? passiveFollowupContext.attempt : null;
   const passiveFollowupMaxAttempts =
     typeof passiveFollowupContext?.maxAttempts === "number" ? passiveFollowupContext.maxAttempts : null;
+  const durationLabel = displayDurationSec !== null ? formatRunDuration(displayDurationSec) : null;
+  const runOutcomeLabel =
+    recoveryOriginalRunId && run.status === "succeeded"
+      ? "Succeeded after recovery"
+      : passiveFollowupOriginRunId
+        ? "Passive follow-up"
+        : formatRunStatusLabel(run.status);
+  const touchedIssuePreview = (touchedIssues ?? []).slice(0, 2);
 
   return (
-    <div className="space-y-4 min-w-0">
-      {/* Run summary card */}
-      <div className="border border-border rounded-lg overflow-hidden">
-        <div className="flex flex-col sm:flex-row">
-          {/* Left column: status + timing */}
-          <div className="flex-1 p-4 space-y-3">
-            <div className="flex items-center gap-2">
+    <div className="min-w-0 space-y-3">
+      <div className="overflow-hidden rounded-lg border border-border bg-background/40">
+        <div className="flex flex-col gap-3 p-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
               <StatusBadge status={run.status} />
+              <span className="text-sm font-medium text-foreground">{runOutcomeLabel}</span>
               {(run.status === "running" || run.status === "queued") && (
                 <Button
                   variant="ghost"
@@ -4086,21 +4112,44 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
                 {recoverRun.error instanceof Error ? recoverRun.error.message : "Failed to recover run"}
               </div>
             )}
-            {startTime && (
-              <div className="space-y-0.5">
-                <div className="text-sm font-mono">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {startTime && (
+                <span className="font-mono text-foreground">
                   {startTime}
                   {endTime && <span className="text-muted-foreground"> &rarr; </span>}
                   {endTime}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {relativeTime(run.startedAt!)}
-                  {run.finishedAt && <> &rarr; {relativeTime(run.finishedAt)}</>}
-                </div>
-                {displayDurationSec !== null && (
-                  <div className="text-xs text-muted-foreground">
-                    Duration: {displayDurationSec >= 60 ? `${Math.floor(displayDurationSec / 60)}m ${displayDurationSec % 60}s` : `${displayDurationSec}s`}
-                  </div>
+                </span>
+              )}
+              {run.startedAt && <span>{relativeTime(run.startedAt)}</span>}
+              {durationLabel && <span>Duration {durationLabel}</span>}
+              {sessionChanged && <span className="text-yellow-600 dark:text-yellow-400">Session changed</span>}
+              <CopyText
+                text={run.id}
+                ariaLabel={`Copy run ID ${run.id.slice(0, 8)}`}
+                title="Copy run ID"
+                className="font-mono text-muted-foreground hover:text-foreground"
+              >
+                {run.id.slice(0, 8)}
+              </CopyText>
+            </div>
+            {touchedIssuePreview.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-muted-foreground">
+                  {touchedIssues && touchedIssues.length === 1 ? "Issue" : "Issues"}
+                </span>
+                {touchedIssuePreview.map((issue) => (
+                  <Link
+                    key={issue.issueId}
+                    to={`/issues/${issue.identifier ?? issue.issueId}`}
+                    className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/70 px-2 py-1 text-foreground no-underline transition-colors hover:bg-accent/30"
+                  >
+                    <StatusBadge status={issue.status} />
+                    <span className="truncate">{issue.title}</span>
+                    <span className="font-mono text-muted-foreground">{issue.identifier ?? issue.issueId.slice(0, 8)}</span>
+                  </Link>
+                ))}
+                {touchedIssues && touchedIssues.length > touchedIssuePreview.length && (
+                  <span className="text-muted-foreground">+{touchedIssues.length - touchedIssuePreview.length} more</span>
                 )}
               </div>
             )}
@@ -4164,33 +4213,28 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
               </div>
             )}
             {recoveryOriginalRunId && (
-              <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs space-y-1">
-                <div className="font-medium text-foreground">Recovery</div>
-                <div className="text-muted-foreground">
-                  From run{" "}
-                  <Link className="underline underline-offset-2" to={`/agents/${run.agentId}/runs/${recoveryOriginalRunId}`}>
-                    {recoveryOriginalRunId}
+              <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="font-medium text-foreground">Recovery</span>
+                  <span className="text-muted-foreground">from</span>
+                  <Link className="font-mono underline underline-offset-2" to={`/agents/${run.agentId}/runs/${recoveryOriginalRunId}`}>
+                    {recoveryOriginalRunId.slice(0, 8)}
                   </Link>
                 </div>
-                {(recoveryTrigger || recoveryMode) && (
-                  <div className="text-muted-foreground">
-                    {[recoveryTrigger, recoveryMode].filter(Boolean).join(" · ")}
-                  </div>
-                )}
-                {(recoveryFailureKind || recoveryFailureSummary) && (
-                  <div className="text-muted-foreground">
-                    {[recoveryFailureKind, recoveryFailureSummary].filter(Boolean).join(": ")}
-                  </div>
-                )}
+                <div className="text-muted-foreground">
+                  {[recoveryTrigger, recoveryMode].filter(Boolean).join(" · ")}
+                  {(recoveryTrigger || recoveryMode) && (recoveryFailureKind || recoveryFailureSummary) ? " · " : ""}
+                  {[recoveryFailureKind, recoveryFailureSummary].filter(Boolean).join(": ")}
+                </div>
               </div>
             )}
             {passiveFollowupOriginRunId && (
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs space-y-1">
-                <div className="font-medium text-foreground">Passive follow-up</div>
-                <div className="text-muted-foreground">
-                  Origin run{" "}
-                  <Link className="underline underline-offset-2" to={`/agents/${run.agentId}/runs/${passiveFollowupOriginRunId}`}>
-                    {passiveFollowupOriginRunId}
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="font-medium text-foreground">Passive follow-up</span>
+                  <span className="text-muted-foreground">from</span>
+                  <Link className="font-mono underline underline-offset-2" to={`/agents/${run.agentId}/runs/${passiveFollowupOriginRunId}`}>
+                    {passiveFollowupOriginRunId.slice(0, 8)}
                   </Link>
                 </div>
                 {passiveFollowupPreviousRunId && (
@@ -4215,9 +4259,8 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
             )}
           </div>
 
-          {/* Right column: metrics */}
           {hasMetrics && (
-            <div className="border-t sm:border-t-0 sm:border-l border-border p-4 grid grid-cols-2 gap-x-4 sm:gap-x-8 gap-y-3 content-center tabular-nums">
+            <div className="grid shrink-0 grid-cols-2 gap-x-5 gap-y-2 border-t border-border pt-3 tabular-nums lg:w-[13rem] lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
               <div>
                 <div className="text-xs text-muted-foreground">Input</div>
                 <div className="text-sm font-medium font-mono">{formatTokens(metrics.input)}</div>
@@ -4238,11 +4281,10 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
           )}
         </div>
 
-        {/* Collapsible session row */}
         {hasSession && (
           <div className="border-t border-border">
             <button
-              className="flex items-center gap-1.5 w-full px-4 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              className="flex w-full items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
               onClick={() => setSessionOpen((v) => !v)}
             >
               <ChevronRight className={cn("h-3 w-3 transition-transform", sessionOpen && "rotate-90")} />
@@ -4250,7 +4292,7 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
               {sessionChanged && <span className="text-yellow-400 ml-1">(changed)</span>}
             </button>
             {sessionOpen && (
-              <div className="px-4 pb-3 space-y-1 text-xs">
+              <div className="space-y-1 px-3 pb-3 text-xs">
                 <div className="flex items-start gap-2">
                   <span className="text-muted-foreground w-12 shrink-0">Run ID</span>
                   <CopyText
@@ -4307,27 +4349,8 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
         )}
       </div>
 
-      {/* Issues touched by this run */}
-      {touchedIssues && touchedIssues.length > 0 && (
-        <div className="space-y-2">
-          <span className="text-xs font-medium text-muted-foreground">Issues Touched ({touchedIssues.length})</span>
-          <div className="border border-border rounded-lg divide-y divide-border">
-            {touchedIssues.map((issue) => (
-              <Link
-                key={issue.issueId}
-                to={`/issues/${issue.identifier ?? issue.issueId}`}
-                className="flex items-center justify-between w-full px-3 py-2 text-xs hover:bg-accent/20 transition-colors text-left no-underline text-inherit"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <StatusBadge status={issue.status} />
-                  <span className="truncate">{issue.title}</span>
-                </div>
-                <span className="font-mono text-muted-foreground shrink-0 ml-2">{issue.identifier ?? issue.issueId.slice(0, 8)}</span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Primary run inspection surface */}
+      <LogViewer run={run} agentRuntimeType={agentRuntimeType} />
 
       {/* stderr excerpt for failed runs */}
       {run.stderrExcerpt && (
@@ -4345,8 +4368,6 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
         </div>
       )}
 
-      {/* Log viewer */}
-      <LogViewer run={run} agentRuntimeType={agentRuntimeType} />
       <ScrollToBottom />
     </div>
   );
@@ -4806,21 +4827,25 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
     "--transcript-dialog-from-scale-x": transcriptDialogMotion.fromScaleX,
     "--transcript-dialog-from-scale-y": transcriptDialogMotion.fromScaleY,
   } as CSSProperties;
+  const transcriptModeLabels: Record<TranscriptMode, string> = {
+    nice: "Readable",
+    raw: "Raw",
+  };
   const renderTranscriptModeToggle = () => (
-    <div className="inline-flex rounded-lg border border-border/70 bg-background/70 p-0.5">
+    <div className="inline-flex rounded-md border border-border/70 bg-background/70 p-0.5">
       {(["nice", "raw"] as const).map((mode) => (
         <button
           key={mode}
           type="button"
           className={cn(
-            "rounded-md px-2.5 py-1 text-[11px] font-medium capitalize transition-colors",
+            "rounded-[calc(var(--radius)-2px)] px-2.5 py-1 text-[11px] font-medium transition-colors",
             transcriptMode === mode
               ? "bg-accent text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
           )}
           onClick={() => setTranscriptMode(mode)}
         >
-          {mode}
+          {transcriptModeLabels[mode]}
         </button>
       ))}
     </div>
@@ -4852,7 +4877,7 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
         operations={workspaceOperations}
         censorUsernameInLogs={censorUsernameInLogs}
       />
-      <div className="rounded-2xl border border-border/70 bg-background/40">
+      <div className="rounded-lg border border-border/70 bg-background/40">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-3 py-2 sm:px-4">
           {hasInvocationTab ? (
             <Tabs value={activeDetailTab} onValueChange={(value) => setActiveDetailTab(value as RunDetailTab)}>
@@ -4922,7 +4947,7 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
         </div>
 
         {transcriptVisible ? (
-          <div className="max-h-[38rem] overflow-y-auto p-3 sm:p-4">
+          <div className="max-h-[calc(100vh-18rem)] min-h-[22rem] overflow-y-auto p-3 sm:min-h-[34rem] sm:p-4">
             <RunTranscriptView
               entries={transcript}
               mode={transcriptMode}
@@ -4932,14 +4957,14 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
               presentation="detail"
             />
             {logError && (
-              <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
+              <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
                 {logError}
               </div>
             )}
             <div ref={logEndRef} />
           </div>
         ) : (
-          <div className="max-h-[38rem] overflow-y-auto p-3 sm:p-4">
+          <div className="max-h-[calc(100vh-18rem)] min-h-[22rem] overflow-y-auto p-3 sm:min-h-[34rem] sm:p-4">
             <div className="space-y-3">
               {typeof adapterInvokePayload?.agentRuntimeType === "string" && (
                 <div className="text-xs">
