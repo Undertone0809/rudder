@@ -34,13 +34,37 @@ const CODEX_BENIGN_STDERR_RES = [
   /^\d{4}-\d{2}-\d{2}T[^\s]+\s+ERROR\s+codex_core::rollout::list:\s+state db missing rollout path for thread\s+[a-z0-9-]+$/i,
   /^Error:\s+thread\/resume:\s+thread\/resume failed:\s+no rollout found for thread id\s+[a-z0-9-]+$/i,
   /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_core::shell_snapshot:\s+Failed to delete shell snapshot at\s+".+?\.tmp-\d+":\s+Os\s+\{\s+code:\s*2,\s+kind:\s*NotFound,\s+message:\s*"No such file or directory"\s+\}$/i,
+  /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_protocol::openai_models:\s+Model personality requested but model_messages is missing, falling back to base instructions\.\s+model=\S+\s+personality=\S+$/i,
 ] as const;
+const CODEX_ANALYTICS_FORBIDDEN_HTML_START_RE =
+  /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_analytics::analytics_client:\s+events failed with status 403 Forbidden:\s+<html>$/i;
 
 function isBenignCodexStderrLine(line: string): boolean {
   return CODEX_BENIGN_STDERR_RES.some((pattern) => pattern.test(line.trim()));
 }
 
+function createBenignCodexStderrFilter() {
+  let suppressingAnalyticsHtml = false;
+
+  return (line: string): boolean => {
+    const trimmed = line.trim();
+
+    if (suppressingAnalyticsHtml) {
+      if (/^<\/html>$/i.test(trimmed)) suppressingAnalyticsHtml = false;
+      return true;
+    }
+
+    if (CODEX_ANALYTICS_FORBIDDEN_HTML_START_RE.test(trimmed)) {
+      suppressingAnalyticsHtml = true;
+      return true;
+    }
+
+    return isBenignCodexStderrLine(trimmed);
+  };
+}
+
 function stripCodexBenignStderr(text: string): string {
+  const isBenignLine = createBenignCodexStderrFilter();
   const parts = text.split(/\r?\n/);
   const kept: string[] = [];
   for (const part of parts) {
@@ -49,7 +73,7 @@ function stripCodexBenignStderr(text: string): string {
       kept.push(part);
       continue;
     }
-    if (isBenignCodexStderrLine(trimmed)) continue;
+    if (isBenignLine(trimmed)) continue;
     kept.push(part);
   }
   return kept.join("\n");
@@ -472,13 +496,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
 
     let stderrBuffer = "";
+    const isBenignStderrLine = createBenignCodexStderrFilter();
     const flushBufferedStderr = async (force: boolean) => {
       if (!stderrBuffer) return;
       const { lines, remainder } = splitCompleteLines(stderrBuffer);
       stderrBuffer = force ? "" : remainder;
       const emittedLines = force ? [...lines, ...(remainder ? [remainder] : [])] : lines;
       for (const line of emittedLines) {
-        if (isBenignCodexStderrLine(line)) continue;
+        if (isBenignStderrLine(line)) continue;
         await onLog("stderr", line);
       }
     };

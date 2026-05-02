@@ -75,6 +75,30 @@ process.stdin.on("end", () => {
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeCodexRuntimeNoiseCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on("end", () => {
+  process.stderr.write([
+    "2026-05-02T08:58:43.814979Z  WARN codex_protocol::openai_models: Model personality requested but model_messages is missing, falling back to base instructions. model=gpt-5.5 personality=pragmatic",
+    "2026-05-02T08:58:57.468646Z  WARN codex_analytics::analytics_client: events failed with status 403 Forbidden: <html>",
+    "  <head>",
+    "    <meta name=\\"viewport\\" content=\\"width=device-width, initial-scale=1\\" />",
+    "  </head>",
+    "  <body>",
+    "    <div class=\\"container\\">Enable JavaScript and cookies to continue</div>",
+    "  </body>",
+    "</html>",
+  ].join("\\n") + "\\n");
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-1" }));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } }));
+  console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 async function writeMissingRolloutResumeCodexCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 const args = process.argv.slice(2);
@@ -1127,6 +1151,53 @@ describe("codex execute", () => {
       const logs: LogEntry[] = [];
       const result = await execute({
         runId: "run-shell-snapshot-noise",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      expect(result.resultJson).toMatchObject({
+        stderr: "",
+      });
+      expect(logs.some((entry) => entry.stream === "stderr")).toBe(false);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("filters benign Codex model personality and analytics warnings from stderr", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-runtime-noise-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeCodexRuntimeNoiseCommand(commandPath);
+
+    try {
+      const logs: LogEntry[] = [];
+      const result = await execute({
+        runId: "run-runtime-noise",
         agent: {
           id: "agent-1",
           orgId: "organization-1",
