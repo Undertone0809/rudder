@@ -441,6 +441,7 @@ Use motion only when it improves one of these jobs:
 - confirms an operator action completed
 - reveals that data changed while the user was watching
 - preserves spatial continuity during navigation, resizing, drag, or expansion
+- preserves spatial continuity for structural layout controls such as sidebar collapse, panel expansion, and drawer reveal
 - distinguishes live work from historical records
 - calls attention to an approval, warning, or intervention need
 
@@ -456,6 +457,12 @@ Default easing:
 - entering or settling: `cubic-bezier(0.16, 1, 0.3, 1)`
 - normal state changes: `cubic-bezier(0.2, 0, 0, 1)`
 - exiting: `cubic-bezier(0.4, 0, 0.2, 1)`
+
+Structural layout controls must animate by default. If a user can collapse,
+expand, reveal, or hide a sidebar, drawer, panel, or split-pane column, the
+surface should use a short width, transform, or opacity transition unless
+reduced-motion mode is active or the animation would make the operation less
+clear.
 
 ### 14.2 Product Placement
 

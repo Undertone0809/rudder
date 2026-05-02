@@ -346,14 +346,20 @@ test.describe("Workspace shell", () => {
 
     await collapseButton.click();
 
-    await expect(contextCard).toHaveCount(0);
-    await expect(page.getByTestId("workspace-column-resizer")).toHaveCount(0);
+    await expect(contextCard).toHaveAttribute("aria-hidden", "true");
+    await expect(contextCard).toHaveCSS("opacity", "0");
+    await expect(contextCard).toHaveJSProperty("offsetWidth", 0);
+    const resizer = page.getByTestId("workspace-column-resizer");
+    await expect(resizer).toHaveCSS("opacity", "0");
+    await expect(resizer).toHaveJSProperty("offsetWidth", 0);
     const openButton = page.getByRole("button", { name: "Open workspace sidebar" });
     await expect(openButton).toBeVisible();
 
     await openButton.click();
 
     await expect(contextCard).toBeVisible();
+    await expect(contextCard).toHaveAttribute("aria-hidden", "false");
+    await expect(contextCard).toHaveCSS("opacity", "1");
     await expect(collapseButton).toBeVisible();
   });
 

@@ -517,7 +517,7 @@ export function Layout() {
 
   const showDesktopWorkspaceShell = !isMobile && !isSettingsRoute;
   const showIntegratedShellSidebar =
-    showDesktopWorkspaceShell && effectiveShowMiddleContextColumn && sidebarOpen;
+    showDesktopWorkspaceShell && effectiveShowMiddleContextColumn;
   const showIntegratedCardHeaders = showDesktopWorkspaceShell;
   const showDesktopSettingsModal = !isMobile && isSettingsRoute;
   const shellMainPaddingClass = showDesktopWorkspaceShell
@@ -741,22 +741,27 @@ export function Layout() {
                       <>
                         <div
                           data-testid="workspace-context-card"
+                          aria-hidden={!sidebarOpen}
+                          inert={sidebarOpen ? undefined : true}
                           className={cn(
                             "workspace-context-card flex min-h-0 shrink-0 overflow-hidden rounded-[5px]",
-                            !resizingColumn && "transition-[width] duration-150 ease-out",
+                            !resizingColumn && "transition-[width,opacity,border-color] duration-200 ease-out motion-reduce:transition-none",
+                            sidebarOpen ? "opacity-100" : "pointer-events-none border-transparent opacity-0",
                           )}
-                          style={{ width: contextColumnWidth }}
+                          style={{ width: sidebarOpen ? contextColumnWidth : 0 }}
                         >
                           <ThreeColumnContextSidebar />
                         </div>
                         <div
                           data-testid="workspace-column-resizer"
+                          aria-hidden={!sidebarOpen}
                           className={cn(
-                            "workspace-column-resizer group flex w-2 shrink-0 cursor-col-resize items-stretch justify-center md:w-[9px]",
+                            "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none",
+                            sidebarOpen ? "w-2 opacity-100 md:w-[9px]" : "w-0 overflow-hidden opacity-0",
                             resizingColumn && "is-resizing",
                           )}
                           onPointerDown={startContextColumnResize}
-                          role="separator"
+                          role={sidebarOpen ? "separator" : undefined}
                           aria-orientation="vertical"
                           aria-label="Resize workspace columns"
                         >
