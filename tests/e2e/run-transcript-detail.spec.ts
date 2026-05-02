@@ -85,6 +85,15 @@ test.describe("Run transcript detail", () => {
     const invocationTab = page.getByRole("tab", { name: "Invocation" });
     await expect(transcriptTab).toBeVisible({ timeout: 15_000 });
     await expect(invocationTab).toBeVisible({ timeout: 15_000 });
+    const detailPane = page.getByTestId("agent-runs-detail-pane");
+    const listPane = page.getByTestId("agent-runs-list-pane");
+    await expect(detailPane).toBeVisible();
+    await expect(listPane).toBeVisible();
+    const detailBox = await detailPane.boundingBox();
+    const listBox = await listPane.boundingBox();
+    expect(detailBox).not.toBeNull();
+    expect(listBox).not.toBeNull();
+    expect(detailBox!.x).toBeLessThan(listBox!.x);
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
     await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
     await expect(page.getByText("adapter invocation")).toBeVisible();

@@ -3912,19 +3912,22 @@ function RunsTab({
     );
   }
 
-  // Desktop: compact navigation rail + detail pane that fully claims the remaining width
+  // Desktop: detail pane first, compact navigation rail on the right.
   return (
     <div className="flex min-w-0 items-start gap-4">
-      <div className="w-[14rem] shrink-0 border border-border rounded-lg xl:w-[14.5rem] 2xl:w-[15rem]">
+      <div className="min-w-0 flex-1 basis-0" data-testid="agent-runs-detail-pane">
+        <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} />
+      </div>
+
+      <div
+        className="w-[14rem] shrink-0 border border-border rounded-lg xl:w-[14.5rem] 2xl:w-[15rem]"
+        data-testid="agent-runs-list-pane"
+      >
         <div className="sticky top-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 2rem)" }}>
           {sorted.map((run) => (
             <RunListItem key={run.id} run={run} isSelected={run.id === effectiveRunId} agentId={agentRouteId} />
           ))}
         </div>
-      </div>
-
-      <div className="min-w-0 flex-1 basis-0">
-        <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} />
       </div>
     </div>
   );
