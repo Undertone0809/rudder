@@ -8,7 +8,7 @@ async function selectOrganization(page: Page, orgId: string) {
 }
 
 test.describe("Automation detail layout", () => {
-  test("keeps page actions in the header and relies on autosave", async ({ page }, testInfo) => {
+  test("keeps page actions in the header and moves editing context into the overview strip", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1200 });
 
     const orgRes = await page.request.post("/api/orgs", {
@@ -68,6 +68,7 @@ test.describe("Automation detail layout", () => {
 
     const headerActions = page.getByTestId("workspace-main-header-actions");
     const shell = page.getByTestId("automation-detail-shell");
+    const overviewStrip = page.getByTestId("automation-overview-strip");
     const addTriggerCard = page.getByTestId("automation-add-trigger-card");
     const triggersList = page.getByTestId("automation-triggers-list");
     const statusButton = headerActions.getByRole("button", { name: "Pause automation" });
@@ -76,6 +77,7 @@ test.describe("Automation detail layout", () => {
 
     await expect(headerActions).toBeVisible();
     await expect(shell).toBeVisible();
+    await expect(overviewStrip).toBeVisible();
     await expect(addTriggerCard).toBeVisible();
     await expect(triggersList).toBeVisible();
     await expect(statusButton).toBeVisible();
@@ -87,10 +89,12 @@ test.describe("Automation detail layout", () => {
     await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
     await expect(page.getByText(/Automatic triggers/)).toHaveCount(0);
     await expect(page.getByText(/Changes save automatically/)).toHaveCount(0);
+    await expect(page.getByText("Run status")).toBeVisible();
+    await expect(page.getByText("Details")).toHaveCount(0);
     await expect(addTriggerCard.getByRole("button", { name: "Add trigger" })).toBeVisible();
 
-    const assigneeSelector = page.getByRole("button", { name: /Automation Layout Agent/ });
-    const projectSelector = page.getByRole("button", { name: /Onboarding/ });
+    const assigneeSelector = overviewStrip.getByRole("button", { name: /Automation Layout Agent/ });
+    const projectSelector = overviewStrip.getByRole("button", { name: /Onboarding/ });
     await expect(assigneeSelector).toHaveCSS("border-top-width", "1px");
     await expect(projectSelector).toHaveCSS("border-top-width", "1px");
 
@@ -116,6 +120,7 @@ test.describe("Automation detail layout", () => {
     const statusButtonBox = await statusButton.boundingBox();
     const deleteButtonBox = await deleteButton.boundingBox();
     const runButtonBox = await runButton.boundingBox();
+    const overviewBox = await overviewStrip.boundingBox();
     const addTriggerBox = await addTriggerCard.boundingBox();
     const triggersListBox = await triggersList.boundingBox();
 
@@ -125,6 +130,7 @@ test.describe("Automation detail layout", () => {
     expect(statusButtonBox).not.toBeNull();
     expect(deleteButtonBox).not.toBeNull();
     expect(runButtonBox).not.toBeNull();
+    expect(overviewBox).not.toBeNull();
     expect(addTriggerBox).not.toBeNull();
     expect(triggersListBox).not.toBeNull();
 
@@ -132,6 +138,8 @@ test.describe("Automation detail layout", () => {
     expect(deleteButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
     expect(runButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
     expect(runButtonBox!.x).toBeGreaterThan(deleteButtonBox!.x);
+    expect(overviewBox!.y).toBeGreaterThan(shellBox!.y);
+    expect(overviewBox!.y + overviewBox!.height).toBeLessThan(addTriggerBox!.y + 8);
     expect(addTriggerBox!.y + addTriggerBox!.height).toBeLessThan(triggersListBox!.y + 8);
     expect(addTriggerBox!.x).toBeGreaterThanOrEqual(shellBox!.x - 2);
 

@@ -157,6 +157,28 @@ function SidebarSelectValue({ children }: { children: ReactNode }) {
   );
 }
 
+function OverviewMetaPill({
+  label,
+  value,
+  icon,
+  className,
+}: {
+  label: string;
+  value: ReactNode;
+  icon?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`inline-flex min-w-0 items-center gap-2 rounded-md border border-border/70 bg-background/70 px-2.5 py-1.5 text-sm text-foreground ${className ?? ""}`}
+    >
+      {icon ? <span className="shrink-0 text-muted-foreground">{icon}</span> : null}
+      <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
+      <span className="truncate">{value}</span>
+    </div>
+  );
+}
+
 function TriggerEditor({
   trigger,
   onSave,
@@ -961,7 +983,7 @@ export function AutomationDetail() {
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]">
         <main className="min-w-0 space-y-8 pt-4 lg:pl-10 xl:pl-20">
-          <section className="max-w-3xl space-y-5">
+          <section className="max-w-3xl space-y-4">
             <textarea
               ref={titleInputRef}
               className="min-h-[40px] w-full resize-none overflow-hidden bg-transparent text-[1.8rem] font-semibold leading-tight outline-none placeholder:text-muted-foreground/50"
@@ -993,6 +1015,138 @@ export function AutomationDetail() {
               }}
             />
 
+            <div
+              data-testid="automation-overview-strip"
+              className="grid gap-3 rounded-md border border-border/70 bg-muted/15 p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <Badge variant="outline" className={automationBadgeClassName}>
+                  <span className={automationLabelClassName}>{automationLabel}</span>
+                </Badge>
+                {hasLiveRun ? (
+                  <Badge variant="outline" className="border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300">
+                    In progress
+                  </Badge>
+                ) : null}
+                <OverviewMetaPill
+                  label="Repeats"
+                  value={summarizeTrigger(nextTrigger)}
+                  icon={<Clock3 className="h-3.5 w-3.5" />}
+                />
+                <OverviewMetaPill
+                  label="Next"
+                  value={formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}
+                  icon={<Repeat className="h-3.5 w-3.5" />}
+                />
+                {automation.activeIssue && activeIssueLabel ? (
+                  <OverviewMetaPill
+                    label="Issue"
+                    value={(
+                      <Link
+                        to={`/issues/${activeIssueLabel}`}
+                        className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                      >
+                        {activeIssueLabel}
+                      </Link>
+                    )}
+                  />
+                ) : null}
+              </div>
+
+              <div className="flex min-w-0 flex-wrap items-center gap-2 md:justify-end">
+                <InlineEntitySelector
+                  ref={assigneeSelectorRef}
+                  value={editDraft.assigneeAgentId}
+                  options={assigneeOptions}
+                  placeholder="Assignee"
+                  noneLabel="No assignee"
+                  searchPlaceholder="Search assignees..."
+                  emptyMessage="No assignees found."
+                  className="min-h-8 max-w-full justify-between border-border/80 bg-background/70 px-2.5 py-1.5 text-sm font-medium shadow-none hover:border-border hover:bg-accent/60"
+                  onChange={(assigneeAgentId) => {
+                    if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
+                    setEditDraft((current) => ({ ...current, assigneeAgentId }));
+                  }}
+                  onConfirm={() => {
+                    if (editDraft.projectId) {
+                      descriptionEditorRef.current?.focus();
+                    } else {
+                      projectSelectorRef.current?.focus();
+                    }
+                  }}
+                  renderTriggerValue={(option) =>
+                    option ? (
+                      <SidebarSelectValue>
+                        {currentAssignee ? (
+                          <>
+                            <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate">{option.label}</span>
+                          </>
+                        ) : (
+                          <span className="truncate">{option.label}</span>
+                        )}
+                      </SidebarSelectValue>
+                    ) : (
+                      <SidebarSelectValue>
+                        <span className="text-muted-foreground">Assignee</span>
+                      </SidebarSelectValue>
+                    )
+                  }
+                  renderOption={(option) => {
+                    if (!option.id) return <span className="truncate">{option.label}</span>;
+                    const assignee = agentById.get(option.id);
+                    return (
+                      <>
+                        {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    );
+                  }}
+                />
+
+                <InlineEntitySelector
+                  ref={projectSelectorRef}
+                  value={editDraft.projectId}
+                  options={projectOptions}
+                  placeholder="Project"
+                  noneLabel="No project"
+                  searchPlaceholder="Search projects..."
+                  emptyMessage="No projects found."
+                  className="min-h-8 max-w-full justify-between border-border/80 bg-background/70 px-2.5 py-1.5 text-sm font-medium shadow-none hover:border-border hover:bg-accent/60"
+                  onChange={(projectId) => setEditDraft((current) => ({ ...current, projectId }))}
+                  onConfirm={() => descriptionEditorRef.current?.focus()}
+                  renderTriggerValue={(option) =>
+                    option && currentProject ? (
+                      <SidebarSelectValue>
+                        <span
+                          className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                          style={projectColorBackgroundStyle(currentProject.color)}
+                        />
+                        <span className="truncate">{option.label}</span>
+                      </SidebarSelectValue>
+                    ) : (
+                      <SidebarSelectValue>
+                        <span className="text-muted-foreground">Project</span>
+                      </SidebarSelectValue>
+                    )
+                  }
+                  renderOption={(option) => {
+                    if (!option.id) return <span className="truncate">{option.label}</span>;
+                    const project = projectById.get(option.id);
+                    return (
+                      <>
+                        <span
+                          className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                          style={projectColorBackgroundStyle(project?.color)}
+                        />
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    );
+                  }}
+                />
+              </div>
+            </div>
+
             <MarkdownEditor
               ref={descriptionEditorRef}
               value={editDraft.description}
@@ -1000,7 +1154,7 @@ export function AutomationDetail() {
               placeholder="Add instructions..."
               bordered={false}
               className="bg-transparent"
-              contentClassName="min-h-[320px] text-[15px] leading-7 text-foreground/90"
+              contentClassName="min-h-[200px] text-[15px] leading-7 text-foreground/90"
             />
           </section>
 
@@ -1139,12 +1293,7 @@ export function AutomationDetail() {
         </main>
 
         <aside className="space-y-8 border-t border-border/70 pt-5 lg:sticky lg:top-24 lg:self-start lg:border-l lg:border-t-0 lg:pl-7 lg:pr-2 lg:pt-8">
-          <SidebarSection title="Status">
-            <SidebarRow label="State">
-              <Badge variant="outline" className={automationBadgeClassName}>
-                <span className={automationLabelClassName}>{automationLabel}</span>
-              </Badge>
-            </SidebarRow>
+          <SidebarSection title="Run status">
             <SidebarRow label="Next run">
               <span className="truncate">{formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}</span>
             </SidebarRow>
@@ -1161,112 +1310,6 @@ export function AutomationDetail() {
                 </Badge>
               </SidebarRow>
             ) : null}
-            {automation.activeIssue && activeIssueLabel ? (
-              <SidebarRow label="Issue">
-                <Link to={`/issues/${activeIssueLabel}`} className="truncate text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
-                  {activeIssueLabel}
-                </Link>
-              </SidebarRow>
-            ) : null}
-          </SidebarSection>
-
-          <SidebarSection title="Details">
-            <SidebarRow label="Assigned">
-              <InlineEntitySelector
-                ref={assigneeSelectorRef}
-                value={editDraft.assigneeAgentId}
-                options={assigneeOptions}
-                placeholder="Assignee"
-                noneLabel="No assignee"
-                searchPlaceholder="Search assignees..."
-                emptyMessage="No assignees found."
-                className="ml-auto min-h-8 max-w-full justify-between border-border/80 bg-muted/30 px-2.5 py-1.5 text-sm font-medium shadow-none hover:border-border hover:bg-accent/60"
-                onChange={(assigneeAgentId) => {
-                  if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
-                  setEditDraft((current) => ({ ...current, assigneeAgentId }));
-                }}
-                onConfirm={() => {
-                  if (editDraft.projectId) {
-                    descriptionEditorRef.current?.focus();
-                  } else {
-                    projectSelectorRef.current?.focus();
-                  }
-                }}
-                renderTriggerValue={(option) =>
-                  option ? (
-                    <SidebarSelectValue>
-                      {currentAssignee ? (
-                        <>
-                          <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <span className="truncate">{option.label}</span>
-                        </>
-                      ) : (
-                        <span className="truncate">{option.label}</span>
-                      )}
-                    </SidebarSelectValue>
-                  ) : (
-                    <SidebarSelectValue>
-                      <span className="text-muted-foreground">Assignee</span>
-                    </SidebarSelectValue>
-                  )
-                }
-                renderOption={(option) => {
-                  if (!option.id) return <span className="truncate">{option.label}</span>;
-                  const assignee = agentById.get(option.id);
-                  return (
-                    <>
-                      {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
-                      <span className="truncate">{option.label}</span>
-                    </>
-                  );
-                }}
-              />
-            </SidebarRow>
-            <SidebarRow label="Project">
-              <InlineEntitySelector
-                ref={projectSelectorRef}
-                value={editDraft.projectId}
-                options={projectOptions}
-                placeholder="Project"
-                noneLabel="No project"
-                searchPlaceholder="Search projects..."
-                emptyMessage="No projects found."
-                className="ml-auto min-h-8 max-w-full justify-between border-border/80 bg-muted/30 px-2.5 py-1.5 text-sm font-medium shadow-none hover:border-border hover:bg-accent/60"
-                onChange={(projectId) => setEditDraft((current) => ({ ...current, projectId }))}
-                onConfirm={() => descriptionEditorRef.current?.focus()}
-                renderTriggerValue={(option) =>
-                  option && currentProject ? (
-                    <SidebarSelectValue>
-                      <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={projectColorBackgroundStyle(currentProject.color)}
-                      />
-                      <span className="truncate">{option.label}</span>
-                    </SidebarSelectValue>
-                  ) : (
-                    <SidebarSelectValue>
-                      <span className="text-muted-foreground">Project</span>
-                    </SidebarSelectValue>
-                  )
-                }
-                renderOption={(option) => {
-                  if (!option.id) return <span className="truncate">{option.label}</span>;
-                  const project = projectById.get(option.id);
-                  return (
-                    <>
-                      <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={projectColorBackgroundStyle(project?.color)}
-                      />
-                      <span className="truncate">{option.label}</span>
-                    </>
-                  );
-                }}
-              />
-            </SidebarRow>
-            <SidebarRow label="Repeats">
-              <span className="truncate text-muted-foreground">{summarizeTrigger(nextTrigger)}</span>
-            </SidebarRow>
           </SidebarSection>
 
           <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="border-t border-border/70 pt-5">

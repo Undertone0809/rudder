@@ -323,25 +323,30 @@ function renderPage() {
 }
 
 describe("AutomationDetail", () => {
-  it("keeps status compact and removes duplicate in-page controls", async () => {
+  it("keeps run state compact and moves high-frequency fields into the overview strip", async () => {
     const container = renderPage();
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Status");
-    expect(container.textContent).toContain("State");
+    expect(container.textContent).toContain("Run status");
     expect(container.textContent).toContain("Next run");
     expect(container.textContent).toContain("Last ran");
     expect(container.textContent).toContain("In sync");
+    expect(container.textContent).toContain("Repeats");
+    expect(container.textContent).toContain("Issue");
+    expect(container.textContent).not.toContain("Details");
     expect(container.textContent).not.toContain("Changes save automatically as you edit instructions, ownership, and delivery rules.");
     expect(container.textContent).not.toContain("Automatic triggers are live.");
     expect(container.textContent).not.toContain("Pause automation");
     expect(container.textContent).not.toContain("Run now");
-    expect(container.textContent).not.toContain("Open issue");
     expect(container.querySelector('[role="switch"]')).toBeNull();
     expect(container.querySelector("aside")?.className).toContain("lg:sticky");
+    const overviewStrip = container.querySelector('[data-testid="automation-overview-strip"]');
+    expect(overviewStrip?.textContent).toContain("Active");
+    expect(overviewStrip?.textContent).toContain("Automation UX");
+    expect(overviewStrip?.textContent).toContain("Ada");
   });
 
   it("registers the header as the only manual action surface", async () => {
