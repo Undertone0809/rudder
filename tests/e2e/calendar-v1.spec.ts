@@ -105,7 +105,6 @@ test.describe("Calendar V1", () => {
 
     await expect(page.getByTestId("workspace-context-card")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
-    await expect(page.getByTestId("workspace-context-header")).toHaveCount(0);
     await expect(page.getByTestId("calendar-mini-month")).toBeVisible();
     await expect(page.getByTestId("calendar-sidebar-month")).toHaveCount(0);
     await expect(page.getByTestId("calendar-layers-sidebar")).toHaveCount(0);
@@ -125,16 +124,23 @@ test.describe("Calendar V1", () => {
     await expect(modal.getByText("calendar data never enters agent context")).toBeVisible();
 
     await expect(modal.getByText("OAuth settings")).toBeVisible();
-    await expect(modal.getByText("Not configured")).toBeVisible();
-    await expect(modal.getByPlaceholder("Google OAuth client ID")).toBeVisible();
-    await expect(modal.getByPlaceholder("Google OAuth client secret")).toBeVisible();
     await expect(modal.getByText(`/api/orgs/${organization.id}/calendar/google/callback`)).toBeVisible();
 
-    await modal.getByPlaceholder("Google OAuth client ID").fill("test-google-client-id.apps.googleusercontent.com");
-    await modal.getByPlaceholder("Google OAuth client secret").fill("test-google-client-secret");
-    await modal.getByRole("button", { name: "Save settings" }).click();
-    await expect(modal.getByText("Stored for this organization")).toBeVisible();
-    await expect(modal.getByPlaceholder("Stored. Enter a new value to rotate.")).toBeVisible();
+    await expect(modal.getByText(/Managed by server environment variables|Not configured/)).toBeVisible();
+    if (await modal.getByText("Managed by server environment variables").isVisible()) {
+      await expect(modal.getByText("Server environment variables are active.")).toBeVisible();
+      await expect(modal.getByText("GOOGLE_CALENDAR_CLIENT_ID")).toBeVisible();
+      await expect(modal.getByText("GOOGLE_CALENDAR_CLIENT_SECRET")).toBeVisible();
+    } else {
+      await expect(modal.getByText("Not configured")).toBeVisible();
+      await expect(modal.getByPlaceholder("Google OAuth client ID")).toBeVisible();
+      await expect(modal.getByPlaceholder("Google OAuth client secret")).toBeVisible();
+      await modal.getByPlaceholder("Google OAuth client ID").fill("test-google-client-id.apps.googleusercontent.com");
+      await modal.getByPlaceholder("Google OAuth client secret").fill("test-google-client-secret");
+      await modal.getByRole("button", { name: "Save settings" }).click();
+      await expect(modal.getByText("Stored for this organization")).toBeVisible();
+      await expect(modal.getByPlaceholder("Stored. Enter a new value to rotate.")).toBeVisible();
+    }
   });
 
   test("lets operators enable individual Google calendars", async ({ page }) => {
@@ -171,6 +177,46 @@ test.describe("Calendar V1", () => {
     await expect(modal.getByText("Personal calendar")).toBeVisible();
   });
 
+  test("clusters high-frequency projected agent activity in week view", async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 1490, height: 1003 });
+
+    const organization = await createCalendarOrg(page, `Calendar-Clusters-${Date.now()}`);
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Cluster Bot",
+        role: "engineer",
+        runtimeConfig: {
+          heartbeat: {
+            enabled: true,
+            intervalSec: 600,
+          },
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+
+    await selectOrganization(page, organization.id);
+    await page.goto("/calendar");
+
+    await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("button", { name: /^week$/i })).toBeVisible();
+    await expect(page.locator('[data-testid^="calendar-cluster-"]')).toHaveCount(0);
+
+    await page.getByLabel("Show projected events").click();
+    const cluster = page.locator('[data-testid^="calendar-cluster-"]').filter({ hasText: /Cluster Bot · \d+ projected/ }).first();
+    await expect(cluster).toBeVisible();
+    await expect(cluster).not.toContainText("Projected heartbeat");
+
+    await cluster.click();
+    const drawer = page.getByRole("dialog", { name: /Cluster Bot · \d+ projected/ });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText("Underlying events", { exact: true })).toBeVisible();
+    await expect(drawer.getByText("Cluster Bot · Projected heartbeat").first()).toBeVisible();
+    await expect(drawer.getByText("projected").first()).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "Open agent" })).toBeVisible();
+  });
+
   test("creates a planned agent work block as a read-only human-facing annotation", async ({ page }) => {
     test.slow();
     await page.setViewportSize({ width: 1490, height: 1003 });
@@ -204,7 +250,7 @@ test.describe("Calendar V1", () => {
     await expect(page.getByText("CEO (CEO)", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: /^week$/i })).toBeVisible();
 
-    await page.getByRole("button", { name: "Create" }).click();
+    await page.getByTestId("workspace-main-header-actions").getByRole("button", { name: "Create" }).click();
     const popover = page.getByTestId("calendar-quick-create");
     await expect(popover).toBeVisible();
     await popover.getByRole("button", { name: "Agent block" }).click();
