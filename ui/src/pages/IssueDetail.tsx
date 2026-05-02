@@ -13,7 +13,7 @@ import { projectsApi } from "../api/projects";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { assigneeValueFromSelection, suggestedCommentAssigneeValue } from "../lib/assignees";
+import { assigneeValueFromSelection, formatAssigneeUserLabel, suggestedCommentAssigneeValue } from "../lib/assignees";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { queryKeys } from "../lib/queryKeys";
@@ -479,6 +479,10 @@ export function IssueDetail() {
     for (const a of agents ?? []) map.set(a.id, a);
     return map;
   }, [agents]);
+  const projectById = useMemo(
+    () => new Map((projects ?? []).map((project) => [project.id, project])),
+    [projects],
+  );
 
   const currentAssigneeAgent = issue?.assigneeAgentId
     ? agentMap.get(issue.assigneeAgentId) ?? null
@@ -525,17 +529,39 @@ export function IssueDetail() {
     }
     for (const relatedIssue of allIssues ?? []) {
       if (relatedIssue.id === issue?.id) continue;
+      const relatedIssueProject = relatedIssue.projectId
+        ? projectById.get(relatedIssue.projectId) ?? relatedIssue.project ?? null
+        : relatedIssue.project ?? null;
+      const relatedIssueAssignee = relatedIssue.assigneeAgentId
+        ? agentMap.get(relatedIssue.assigneeAgentId) ?? null
+        : null;
+      const relatedIssueAssigneeName = relatedIssue.assigneeAgentId
+        ? relatedIssueAssignee?.name ?? relatedIssue.assigneeAgentId.slice(0, 8)
+        : formatAssigneeUserLabel(relatedIssue.assigneeUserId, currentUserId);
       options.push({
         id: `issue:${relatedIssue.id}`,
         name: relatedIssue.identifier ? `${relatedIssue.identifier} ${relatedIssue.title}` : relatedIssue.title,
         kind: "issue",
+        searchText: [
+          relatedIssue.identifier,
+          relatedIssue.title,
+          relatedIssue.status,
+          relatedIssueProject?.name,
+          relatedIssueAssigneeName,
+        ].filter(Boolean).join(" "),
         issueId: relatedIssue.id,
         issueIdentifier: relatedIssue.identifier,
+        issueStatus: relatedIssue.status,
+        issueProjectName: relatedIssueProject?.name ?? null,
+        issueProjectColor: relatedIssueProject?.color ?? null,
+        issueAssigneeName: relatedIssueAssigneeName,
+        issueAssigneeIcon: relatedIssueAssignee?.icon ?? null,
+        issueAssigneeRole: relatedIssueAssignee?.role ?? null,
       });
     }
     options.push(...skillMentionOptions);
     return options;
-  }, [agents, allIssues, issue?.id, orderedProjects, skillMentionOptions]);
+  }, [agentMap, agents, allIssues, currentUserId, issue?.id, orderedProjects, projectById, skillMentionOptions]);
 
   const orderedChildIssues = useMemo(
     () => [...childIssues].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),

@@ -1224,8 +1224,8 @@ button[draggable="false"] {
   margin-top: 1.1em;
 }
 
-.rudder-mdxeditor-content a.rudder-mention-chip,
-.rudder-mdxeditor-content a.rudder-project-mention-chip {
+.rudder-mdxeditor-content .rudder-mention-chip,
+.rudder-mdxeditor-content .rudder-project-mention-chip {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
@@ -1244,13 +1244,13 @@ button[draggable="false"] {
   user-select: none;
 }
 
-.rudder-mdxeditor-content a.rudder-mention-chip::before,
+.rudder-mdxeditor-content .rudder-mention-chip::before,
 a.rudder-mention-chip::before {
   content: "";
   flex: none;
 }
 
-.rudder-mdxeditor-content a.rudder-mention-chip[data-mention-kind="project"]::before,
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"]::before,
 a.rudder-mention-chip[data-mention-kind="project"]::before {
   width: 0.45rem;
   height: 0.45rem;
@@ -1258,7 +1258,7 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
   background: var(--rudder-mention-project-color, currentColor);
 }
 
-.rudder-mdxeditor-content a.rudder-mention-chip[data-mention-kind="agent"]::before,
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="agent"]::before,
 a.rudder-mention-chip[data-mention-kind="agent"]::before {
   width: 0.75rem;
   height: 0.75rem;
@@ -1738,8 +1738,8 @@ a.rudder-project-mention-chip {
   white-space: nowrap;
 }
 
-.rudder-mdxeditor-content a.rudder-mention-chip:hover,
-.rudder-mdxeditor-content a.rudder-project-mention-chip:hover,
+.rudder-mdxeditor-content .rudder-mention-chip:hover,
+.rudder-mdxeditor-content .rudder-project-mention-chip:hover,
 a.rudder-mention-chip:hover,
 a.rudder-project-mention-chip:hover {
   background-color: color-mix(in oklab, var(--foreground) 10%, transparent);
