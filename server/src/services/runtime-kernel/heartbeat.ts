@@ -58,6 +58,7 @@ import {
   agentRunContextService,
   type ResolvedWorkspaceForRun,
 } from "../agent-run-context.js";
+import { agentLearningService } from "../agent-learning.js";
 import {
   resolveDefaultAgentWorkspaceDir,
 } from "../../home-paths.js";
@@ -3054,6 +3055,28 @@ export function heartbeatService(db: Db) {
         agent,
         baseConfig: mergedConfig,
       });
+    try {
+      await agentLearningService(db).recordRunLoadedSkills(
+        agent.orgId,
+        run.id,
+        agent.id,
+        runtimeSkillEntries,
+      );
+      context.rudderLoadedSkills = runtimeSkillEntries.map((entry) => ({
+        key: entry.key,
+        name: entry.name ?? null,
+        runtimeName: entry.runtimeName ?? null,
+      }));
+    } catch (err) {
+      logger.warn(
+        {
+          err,
+          runId: run.id,
+          agentId: agent.id,
+        },
+        "Failed to record loaded skill revisions for heartbeat run",
+      );
+    }
     heartbeatObservationContext.metadata = {
       ...(heartbeatObservationContext.metadata ?? {}),
       ...buildHeartbeatRuntimeTraceMetadata({

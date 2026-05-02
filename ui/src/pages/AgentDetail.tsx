@@ -16,6 +16,7 @@ import {
   type ClaudeLoginResult,
   type AgentPermissionUpdate,
 } from "../api/agents";
+import { agentLearningApi } from "../api/agentLearning";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { budgetsApi } from "../api/budgets";
 import { heartbeatsApi } from "../api/heartbeats";
@@ -100,8 +101,19 @@ import {
   MessageSquare,
   CalendarDays,
   Maximize2,
+  Brain,
+  BookOpenCheck,
+  CircleDot,
 } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -131,8 +143,10 @@ import {
   type HeartbeatRun,
   type HeartbeatRunEvent,
   type AgentRuntimeState,
+  type AgentLearningSummary,
   type LiveEvent,
   type OrganizationSkillCreateRequest,
+  type RunLoadedSkillsSummary,
   type WorkspaceOperation,
 } from "@rudderhq/shared";
 import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@rudderhq/agent-runtime-utils";
@@ -156,6 +170,36 @@ const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string 
   timed_out: { icon: Timer, color: "text-orange-600 dark:text-orange-400" },
   cancelled: { icon: Slash, color: "text-neutral-500 dark:text-neutral-400" },
 };
+
+type RunFeedbackEvidence = {
+  sourceKind: string;
+  sourceId?: string | null;
+  selectedTextSnapshot?: string | null;
+  eventSeq?: number | null;
+};
+
+type DraftFeedbackItem = RunFeedbackEvidence & {
+  id: string;
+  body: string;
+};
+
+function formatLearningScope(value: Record<string, unknown> | null | undefined) {
+  const entries = Object.entries(value ?? {});
+  if (entries.length === 0) return "similar work";
+  return entries
+    .map(([key, item]) => `${key}: ${typeof item === "string" ? item : JSON.stringify(item)}`)
+    .join(" · ");
+}
+
+function summarizeRunEvidence(run: HeartbeatRun) {
+  const result = asRecord(run.resultJson);
+  const summary = asNonEmptyString(result?.summary)
+    ?? asNonEmptyString(result?.result)
+    ?? run.error
+    ?? run.stdoutExcerpt
+    ?? `Run ${run.id.slice(0, 8)}`;
+  return String(summary).slice(0, 700);
+}
 
 const REDACTED_ENV_VALUE = "***REDACTED***";
 const SECRET_ENV_KEY_RE =
@@ -2988,6 +3032,79 @@ function PromptEditorSkeleton() {
   );
 }
 
+function AgentLearningSummaryCard({ summary }: { summary: AgentLearningSummary | undefined }) {
+  if (!summary) {
+    return (
+      <section className="rounded-xl border border-border bg-[color:var(--surface-elevated)] px-4 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Brain className="h-4 w-4 text-muted-foreground" />
+          Agent learning summary
+        </div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-4">
+          {["Active learnings", "Suggested", "Recent revisions", "Recent misses"].map((label) => (
+            <div key={label} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+              <Skeleton className="h-4 w-10" />
+              <div className="mt-1 text-[11px] text-muted-foreground">{label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  const statItems = [
+    { label: "Active learnings", value: summary.stats.activeLearningCount },
+    { label: "Suggested", value: summary.stats.suggestedCount },
+    { label: "Recent revisions", value: summary.stats.recentRevisionCount },
+    { label: "Recent misses", value: summary.stats.recentMissCount },
+  ];
+
+  return (
+    <section className="rounded-xl border border-border bg-[color:var(--surface-elevated)] px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Brain className="h-4 w-4 text-muted-foreground" />
+            Agent learning summary
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Approved feedback becomes skill instructions for this agent.
+          </p>
+        </div>
+        {summary.managedSkill ? (
+          <Button asChild variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
+            <Link to={`/skills/${summary.managedSkill.id}`}>
+              <BookOpenCheck className="h-3.5 w-3.5" />
+              {summary.managedSkill.name}
+            </Link>
+          </Button>
+        ) : null}
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        {statItems.map((item) => (
+          <div key={item.label} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+            <div className="text-sm font-semibold tabular-nums">{item.value}</div>
+            <div className="text-[11px] text-muted-foreground">{item.label}</div>
+          </div>
+        ))}
+      </div>
+      {summary.activeLearnings.length > 0 ? (
+        <div className="mt-3 space-y-1.5">
+          {summary.activeLearnings.slice(0, 3).map((learning) => (
+            <div key={learning.id} className="flex items-start gap-2 rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-xs">
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <div className="min-w-0">
+                <div className="font-medium text-foreground">{learning.title}</div>
+                <div className="mt-0.5 line-clamp-2 text-muted-foreground">{learning.instruction}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function AgentSkillsTab({
   agent,
   orgId,
@@ -3034,6 +3151,12 @@ function AgentSkillsTab({
   const { data: organizationSkills, isLoading: organizationSkillsLoading } = useQuery({
     queryKey: queryKeys.organizationSkills.list(orgId ?? ""),
     queryFn: () => organizationSkillsApi.list(orgId!),
+    enabled: Boolean(orgId),
+  });
+
+  const { data: learningSummary } = useQuery({
+    queryKey: queryKeys.agentLearning.summary(orgId ?? "", agent.id),
+    queryFn: () => agentLearningApi.agentSummary(orgId!, agent.id),
     enabled: Boolean(orgId),
   });
 
@@ -3527,6 +3650,8 @@ function AgentSkillsTab({
 
   return (
     <div className="max-w-6xl space-y-3">
+      <AgentLearningSummaryCard summary={learningSummary} />
+
       <section className="space-y-3">
         <div className="space-y-1">
           <div className="min-w-0">
@@ -3934,6 +4059,310 @@ function RunsTab({
   );
 }
 
+function RunLoadedSkillsCard({
+  orgId,
+  runId,
+  onGiveFeedback,
+}: {
+  orgId: string;
+  runId: string;
+  onGiveFeedback: (evidence: RunFeedbackEvidence) => void;
+}) {
+  const queryClient = useQueryClient();
+  const { data: summary, isLoading, isError } = useQuery({
+    queryKey: queryKeys.agentLearning.runLoadedSkills(orgId, runId),
+    queryFn: () => agentLearningApi.runLoadedSkills(orgId, runId),
+    enabled: Boolean(orgId && runId),
+  });
+  const evaluateSkills = useMutation({
+    mutationFn: () => agentLearningApi.evaluateRunSkills(orgId, runId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.agentLearning.runLoadedSkills(orgId, runId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agentLearning.runSkillEvaluations(orgId, runId) }),
+      ]);
+    },
+  });
+
+  const loadedSkills = summary?.loadedSkills ?? [];
+  const evaluations = summary?.evaluations ?? [];
+  const missedItems = evaluations.flatMap((report) =>
+    Array.isArray(report.missedItemsJson) ? report.missedItemsJson : [],
+  );
+  const passedCount = evaluations.reduce((count, report) => (
+    count + (Array.isArray(report.passedItemsJson) ? report.passedItemsJson.length : 0)
+  ), 0);
+  const totalChecks = evaluations.reduce((count, report) => (
+    count + (Array.isArray(report.applicableChecksJson) ? report.applicableChecksJson.length : 0)
+  ), 0);
+
+  return (
+    <section className="rounded-lg border border-border bg-background/50 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+            <BookOpenCheck className="h-3.5 w-3.5 text-muted-foreground" />
+            Skills used in this run
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {isLoading
+              ? "Loading runtime skill context..."
+              : isError
+                ? "Skill context could not be loaded."
+                : loadedSkills.length > 0
+                  ? `${loadedSkills.length} skill${loadedSkills.length === 1 ? "" : "s"} recorded for this run.`
+                  : "No runtime skills were recorded for this run."}
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {loadedSkills.length > 0 ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => evaluateSkills.mutate()}
+              disabled={evaluateSkills.isPending}
+            >
+              {evaluateSkills.isPending ? "Checking..." : "Check learnings"}
+            </Button>
+          ) : null}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 px-2 text-xs"
+            onClick={() => onGiveFeedback({
+              sourceKind: "skills_used",
+              sourceId: runId,
+              selectedTextSnapshot: loadedSkills.map((skill) => skill.skillName ?? skill.skillKey).join(", "),
+            })}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            Give feedback
+          </Button>
+        </div>
+      </div>
+
+      {loadedSkills.length > 0 ? (
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          {loadedSkills.slice(0, 6).map((skill) => (
+            <div key={skill.skillKey} className="rounded-lg border border-border/70 bg-muted/20 px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 truncate text-xs font-medium text-foreground">
+                  {skill.skillName ?? skill.skillKey}
+                </div>
+                {skill.revision ? (
+                  <span className="rounded-md border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    rev {skill.revision}
+                  </span>
+                ) : null}
+              </div>
+              {skill.recentLearnings.length > 0 ? (
+                <div className="mt-2 space-y-1">
+                  {skill.recentLearnings.slice(0, 2).map((learning) => (
+                    <div key={`${skill.skillKey}:${learning.title}`} className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+                      <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                      <span className="line-clamp-2">{learning.title}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {totalChecks > 0 ? (
+        <div className="mt-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-xs">
+          <div className="font-medium text-foreground">Followed {passedCount}/{totalChecks} active learnings</div>
+          {missedItems.length > 0 ? (
+            <div className="mt-1 text-muted-foreground">
+              Missed: {missedItems.slice(0, 3).join(", ")}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RunFeedbackSheet({
+  open,
+  onOpenChange,
+  run,
+  agentRouteId,
+  evidence,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  run: HeartbeatRun;
+  agentRouteId: string;
+  evidence: RunFeedbackEvidence;
+}) {
+  const navigate = useNavigate();
+  const { pushToast } = useToast();
+  const [body, setBody] = useState("");
+  const [draftItems, setDraftItems] = useState<DraftFeedbackItem[]>([]);
+  const issueId = asNonEmptyString(asRecord(run.contextSnapshot)?.issueId);
+
+  useEffect(() => {
+    if (!open) return;
+    setBody("");
+  }, [open, evidence.sourceKind, evidence.sourceId, evidence.eventSeq]);
+
+  const addCurrentDraft = useCallback(() => {
+    const trimmed = body.trim();
+    if (!trimmed) return;
+    setDraftItems((current) => [
+      ...current,
+      {
+        id: `${Date.now()}-${current.length}`,
+        body: trimmed,
+        ...evidence,
+      },
+    ]);
+    setBody("");
+  }, [body, evidence]);
+
+  const submitFeedback = useMutation({
+    mutationFn: async () => {
+      const pendingDraft = body.trim()
+        ? [{ id: `pending-${Date.now()}`, body: body.trim(), ...evidence }]
+        : [];
+      const items = [...draftItems, ...pendingDraft];
+      if (items.length === 0) throw new Error("Add feedback before improving future runs.");
+
+      const session = await agentLearningApi.createFeedbackSession(run.orgId, {
+        targetAgentId: run.agentId,
+      });
+      for (const item of items) {
+        await agentLearningApi.addFeedbackItem(run.orgId, session.id, {
+          runId: run.id,
+          issueId,
+          sourceKind: item.sourceKind,
+          sourceId: item.sourceId ?? null,
+          eventSeq: item.eventSeq ?? null,
+          selectedTextSnapshot: item.selectedTextSnapshot ?? null,
+          body: item.body,
+          feedbackType: "behavior",
+          severity: "medium",
+        });
+      }
+      return agentLearningApi.submitFeedbackSession(run.orgId, session.id);
+    },
+    onSuccess: (result) => {
+      setDraftItems([]);
+      setBody("");
+      onOpenChange(false);
+      navigate(`/agents/${agentRouteId}/learnings/${result.batch.id}`);
+    },
+    onError: (error) => {
+      pushToast({
+        title: "Could not submit feedback",
+        body: error instanceof Error ? error.message : "Feedback submission failed.",
+        tone: "error",
+      });
+    },
+  });
+
+  const evidenceLabel = evidence.sourceKind.replaceAll("_", " ");
+  const canSubmit = draftItems.length > 0 || body.trim().length > 0;
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-md">
+        <SheetHeader className="border-b border-border">
+          <SheetTitle>Give feedback</SheetTitle>
+          <SheetDescription>
+            Feedback is tied to this run and can become a reviewed skill update.
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-4">
+          <div className="space-y-4 py-4">
+            <div className="rounded-lg border border-border bg-muted/20 px-3 py-2">
+              <div className="text-[11px] font-medium uppercase text-muted-foreground">{evidenceLabel}</div>
+              <div className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-foreground">
+                {evidence.selectedTextSnapshot || `Run ${run.id.slice(0, 8)}`}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-foreground" htmlFor="run-feedback-body">
+                Feedback
+              </label>
+              <Textarea
+                id="run-feedback-body"
+                value={body}
+                onChange={(event) => setBody(event.target.value)}
+                placeholder="Example: Before ending a run, leave a clear done, blocked, handoff, or needs review status."
+                className="min-h-32 text-sm"
+              />
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={addCurrentDraft}
+                  disabled={!body.trim()}
+                >
+                  Add to batch
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-muted-foreground">Current batch</div>
+              {draftItems.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                  Add one or more feedback items, then improve future runs.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {draftItems.map((item, index) => (
+                    <div key={item.id} className="rounded-lg border border-border bg-background px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-muted-foreground">Feedback {index + 1}</span>
+                        <button
+                          type="button"
+                          className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                          onClick={() => setDraftItems((current) => current.filter((entry) => entry.id !== item.id))}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <div className="mt-1 text-xs text-foreground">{item.body}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <SheetFooter className="border-t border-border">
+          {submitFeedback.isError ? (
+            <p className="text-xs text-destructive">
+              {submitFeedback.error instanceof Error ? submitFeedback.error.message : "Feedback submission failed"}
+            </p>
+          ) : null}
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => submitFeedback.mutate()}
+              disabled={!canSubmit || submitFeedback.isPending}
+            >
+              {submitFeedback.isPending ? "Preparing review..." : "Improve future runs"}
+            </Button>
+          </div>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 /* ---- Run Detail (expanded) ---- */
 
 function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: HeartbeatRun; agentRouteId: string; agentRuntimeType: string }) {
@@ -3948,6 +4377,12 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
   const metrics = runMetrics(run);
   const [sessionOpen, setSessionOpen] = useState(false);
   const [claudeLoginResult, setClaudeLoginResult] = useState<ClaudeLoginResult | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackEvidence, setFeedbackEvidence] = useState<RunFeedbackEvidence>({
+    sourceKind: "run_summary",
+    sourceId: initialRun.id,
+    selectedTextSnapshot: summarizeRunEvidence(initialRun),
+  });
 
   useEffect(() => {
     setClaudeLoginResult(null);
@@ -3968,6 +4403,11 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
       navigate(`/agents/${agentRouteId}/runs/${newRun.id}`);
     },
   });
+
+  const openFeedback = useCallback((evidence: RunFeedbackEvidence) => {
+    setFeedbackEvidence(evidence);
+    setFeedbackOpen(true);
+  }, []);
 
   const { data: touchedIssues } = useQuery({
     queryKey: queryKeys.runIssues(run.id),
@@ -4084,6 +4524,19 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
                   {recoverRun.isPending ? "Retrying…" : "Retry"}
                 </Button>
               )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto h-7 gap-1.5 px-2 text-xs"
+                onClick={() => openFeedback({
+                  sourceKind: "run_summary",
+                  sourceId: run.id,
+                  selectedTextSnapshot: summarizeRunEvidence(run),
+                })}
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                Give feedback
+              </Button>
             </div>
             {recoverRun.isError && (
               <div className="text-xs text-destructive">
@@ -4333,6 +4786,12 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
         </div>
       )}
 
+      <RunLoadedSkillsCard
+        orgId={run.orgId}
+        runId={run.id}
+        onGiveFeedback={openFeedback}
+      />
+
       {/* stderr excerpt for failed runs */}
       {run.stderrExcerpt && (
         <div className="space-y-1">
@@ -4350,7 +4809,18 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
       )}
 
       {/* Log viewer */}
-      <LogViewer run={run} agentRuntimeType={agentRuntimeType} />
+      <LogViewer
+        run={run}
+        agentRuntimeType={agentRuntimeType}
+        onGiveFeedback={openFeedback}
+      />
+      <RunFeedbackSheet
+        open={feedbackOpen}
+        onOpenChange={setFeedbackOpen}
+        run={run}
+        agentRouteId={agentRouteId}
+        evidence={feedbackEvidence}
+      />
       <ScrollToBottom />
     </div>
   );
@@ -4358,7 +4828,15 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
 
 /* ---- Log Viewer ---- */
 
-function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeType: string }) {
+function LogViewer({
+  run,
+  agentRuntimeType,
+  onGiveFeedback,
+}: {
+  run: HeartbeatRun;
+  agentRuntimeType: string;
+  onGiveFeedback?: (evidence: RunFeedbackEvidence) => void;
+}) {
   type RunDetailTab = "transcript" | "invocation";
   const [events, setEvents] = useState<HeartbeatRunEvent[]>([]);
   const [logLines, setLogLines] = useState<RunLogChunk[]>([]);
@@ -4884,6 +5362,26 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
               <span className="text-xs text-muted-foreground">
                 {transcriptEntryLabel}
               </span>
+              {onGiveFeedback ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 px-2 text-xs"
+                  onClick={() => onGiveFeedback({
+                    sourceKind: "transcript",
+                    sourceId: run.id,
+                    selectedTextSnapshot: transcript.slice(-6).map((entry) => {
+                      if ("text" in entry) return entry.text;
+                      if ("content" in entry) return entry.content;
+                      if ("name" in entry) return `Tool call: ${entry.name}`;
+                      return entry.kind;
+                    }).join("\n").slice(0, 1200),
+                  })}
+                >
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  Give feedback
+                </Button>
+              ) : null}
               {renderTranscriptModeToggle()}
               <Button
                 ref={transcriptExpandButtonRef}

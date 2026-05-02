@@ -792,3 +792,42 @@ export {
   type SecretsLocalEncryptedConfig,
   type ConfigMeta,
 } from "./config-schema.js";
+
+export type {
+  AgentLearningSummary,
+  ApplyApprovedLearningResponse,
+  CreateRunFeedbackItemRequest,
+  CreateRunFeedbackSessionRequest,
+  FeedbackBatch,
+  FeedbackBatchReview,
+  FeedbackBatchStatus,
+  LearningCandidate,
+  LearningCandidateClassification,
+  LearningCandidateStatus,
+  LearningConfidence,
+  LearningRiskLevel,
+  OrganizationSkillRevision,
+  RunFeedbackItem,
+  RunFeedbackSession,
+  RunFeedbackSessionStatus,
+  RunLoadedSkillRevision,
+  RunLoadedSkillsSummary,
+  SkillEvaluationReport,
+  SkillEvidenceLink,
+  SkillUpdateProposal,
+  SkillUpdateProposalStatus,
+  SubmitRunFeedbackSessionResponse,
+  UpdateLearningCandidateRequest,
+} from "./types/agent-learning.js";
+
+export {
+  createRunFeedbackItemSchema,
+  createRunFeedbackSessionSchema,
+  learningCandidateClassificationSchema,
+  learningCandidateStatusSchema,
+  learningRiskLevelSchema,
+  updateLearningCandidateSchema,
+  type CreateRunFeedbackItem,
+  type CreateRunFeedbackSession,
+  type UpdateLearningCandidate,
+} from "./validators/agent-learning.js";

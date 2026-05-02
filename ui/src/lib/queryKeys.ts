@@ -33,6 +33,16 @@ export const queryKeys = {
     adapterModels: (orgId: string, agentRuntimeType: string) =>
       ["agents", orgId, "adapter-models", agentRuntimeType] as const,
   },
+  agentLearning: {
+    summary: (orgId: string, agentId: string) =>
+      ["agent-learning", orgId, agentId, "summary"] as const,
+    batchReview: (orgId: string, batchId: string) =>
+      ["agent-learning", orgId, "feedback-batches", batchId, "review"] as const,
+    runLoadedSkills: (orgId: string, runId: string) =>
+      ["agent-learning", orgId, "runs", runId, "loaded-skills"] as const,
+    runSkillEvaluations: (orgId: string, runId: string) =>
+      ["agent-learning", orgId, "runs", runId, "skill-evaluations"] as const,
+  },
   issues: {
     list: (orgId: string) => ["issues", orgId] as const,
     children: (orgId: string, parentId: string) => ["issues", orgId, "children", parentId] as const,

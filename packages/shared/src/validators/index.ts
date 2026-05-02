@@ -363,3 +363,14 @@ export {
   type SetPluginState,
   type ListPluginState,
 } from "./plugin.js";
+export {
+  createRunFeedbackItemSchema,
+  createRunFeedbackSessionSchema,
+  learningCandidateClassificationSchema,
+  learningCandidateStatusSchema,
+  learningRiskLevelSchema,
+  updateLearningCandidateSchema,
+  type CreateRunFeedbackItem,
+  type CreateRunFeedbackSession,
+  type UpdateLearningCandidate,
+} from "./agent-learning.js";

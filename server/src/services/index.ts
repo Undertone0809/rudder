@@ -2,6 +2,7 @@ export { organizationService } from "./orgs.js";
 export { resourceCatalogService } from "./resource-catalog.js";
 export { organizationSkillService, organizationSkillFacade } from "./organization-skills.js";
 export { agentEnabledSkillsService } from "./agent-enabled-skills.js";
+export { agentLearningService } from "./agent-learning.js";
 export { agentService, deduplicateAgentName } from "./agents.js";
 export { agentInstructionsService, syncInstructionsBundleConfigFromFilePath } from "./agent-instructions.js";
 export { assetService } from "./assets.js";

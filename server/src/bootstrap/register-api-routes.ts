@@ -3,6 +3,7 @@ import type { Db } from "@rudderhq/db";
 import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
 import { accessRoutes } from "../routes/access.js";
 import { activityRoutes } from "../routes/activity.js";
+import { agentLearningRoutes } from "../routes/agent-learning.js";
 import { agentRoutes } from "../routes/agents.js";
 import { approvalRoutes } from "../routes/approvals.js";
 import { assetRoutes } from "../routes/assets.js";
@@ -49,6 +50,7 @@ export function registerApiRoutes(
   );
   api.use("/orgs", organizationRoutes(db, opts.storageService));
   api.use(organizationSkillRoutes(db));
+  api.use(agentLearningRoutes(db));
   api.use(agentRoutes(db, opts.storageService));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
