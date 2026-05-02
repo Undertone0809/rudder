@@ -557,10 +557,8 @@ function RecentIssueListSection({
               <span className="shrink-0">
                 <StatusIcon status={issue.status} />
               </span>
-              <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-                <span className="shrink-0 font-mono text-[11px] text-muted-foreground/78">{issueRef}</span>
-                <span className="shrink-0 text-muted-foreground/55">·</span>
-                <span className="min-w-0 truncate">{issue.title}</span>
+              <span className="min-w-0 flex-1 truncate">
+                {issue.title}
               </span>
             </Link>
           );

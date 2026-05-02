@@ -346,6 +346,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector('a[href="/issues?scope=recent"]')).toBeNull();
     expect(document.querySelector("[data-testid='issue-recent-section']")?.textContent).toContain("Recently Viewed");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-1']")?.textContent).toContain("Recent issue 1");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-1']")?.textContent).not.toContain("RUD-1");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-5']")?.textContent).toContain("Recent issue 5");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-6']")).toBeNull();
 
