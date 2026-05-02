@@ -795,6 +795,8 @@ export {
 
 export type {
   AgentLearningSummary,
+  AgentLearningSkillPreview,
+  AgentSkillRevision,
   ApplyApprovedLearningResponse,
   CreateRunFeedbackItemRequest,
   CreateRunFeedbackSessionRequest,

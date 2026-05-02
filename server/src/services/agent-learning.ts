@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
+  agentSkillRevisions,
   agents,
   feedbackBatches,
   heartbeatRunEvents,
@@ -18,7 +19,9 @@ import {
   skillUpdateProposals,
 } from "@rudderhq/db";
 import type {
+  AgentLearningSkillPreview,
   AgentLearningSummary,
+  AgentSkillRevision,
   ApplyApprovedLearningResponse,
   CreateRunFeedbackItemRequest,
   CreateRunFeedbackSessionRequest,
@@ -70,6 +73,7 @@ type SkillLearning = {
 
 const ORGANIZATION_SELECTION_PREFIX = "org:";
 const BUNDLED_SELECTION_PREFIX = "bundled:";
+const AGENT_SELECTION_PREFIX = "agent:";
 
 function hashText(value: string) {
   return createHash("sha256").update(value).digest("hex");
@@ -151,6 +155,29 @@ function managedLearningSkillSlug(agent: { id: string; name: string; urlKey?: st
   return normalizeSkillSlug(`agent-learning-${key}`);
 }
 
+function agentSkillSelectionKey(slug: string) {
+  return `${AGENT_SELECTION_PREFIX}${slug}`;
+}
+
+function managedLearningSkillPreview(
+  agent: { id: string; name: string; urlKey?: string | null },
+  entry?: { sourcePath?: string | null; workspaceEditPath?: string | null } | null,
+): AgentLearningSkillPreview {
+  const slug = managedLearningSkillSlug(agent);
+  const selectionKey = agentSkillSelectionKey(slug);
+  return {
+    id: selectionKey,
+    key: selectionKey,
+    slug,
+    name: `Agent Learning - ${agent.name}`,
+    description: `Approved learnings from real run feedback for ${agent.name}.`,
+    selectionKey,
+    sourcePath: entry?.sourcePath ?? null,
+    workspaceEditPath: entry?.workspaceEditPath ?? null,
+    scope: "agent",
+  };
+}
+
 function buildManagedSkillMarkdown(agent: { name: string }) {
   const name = `Agent Learning - ${agent.name}`;
   const description = `Approved learnings from real run feedback for ${agent.name}. Use these as durable working habits in future runs.`;
@@ -162,11 +189,31 @@ function buildManagedSkillMarkdown(agent: { name: string }) {
     "",
     `# ${name}`,
     "",
-    "This skill contains approved learnings from run feedback. Apply these rules when the current task matches their scope.",
+    "This agent-private skill is generated from approved run feedback. Apply it as durable working habits for this agent when the current task matches the learning scope.",
+    "",
+    "## Skill Builder Pattern",
+    "",
+    "The learning loop follows the local skill-creator, skill-optimizer, and conversation-to-skill pattern:",
+    "",
+    "1. Extract the repeatable workflow from run evidence and user feedback.",
+    "2. Separate durable behavior from one-off corrections or ambiguous signals.",
+    "3. Convert the durable behavior into a small reviewable skill patch.",
+    "4. Keep validation checks attached so later runs can be evaluated.",
+    "",
+    "## Application Rules",
+    "",
+    "- Apply active learnings only when their scope matches the current task.",
+    "- Prefer the specific `applies when` and `must not` boundaries over broad interpretation.",
+    "- If two learnings conflict, follow repository, organization, and user instructions first, then report the conflict.",
+    "- Do not treat raw feedback as policy until it has been approved into this skill.",
     "",
     "## Active Learnings",
     "",
     "No approved learnings yet.",
+    "",
+    "## Validation Notes",
+    "",
+    "Future run reviews should check whether applicable active learnings were loaded, followed, and reflected in the final handoff.",
     "",
   ].join("\n");
 }
@@ -369,8 +416,58 @@ function buildBatchSummary(items: Array<{ body: string }>) {
 function safePatchJson(candidates: SkillLearning[]) {
   return {
     operation: "add_active_learnings",
+    synthesisPipeline: ["conversation-to-skill", "skill-optimizer", "skill-creator"],
     learnings: candidates,
   };
+}
+
+function learningPayloadsFromCandidates(candidates: Array<typeof learningCandidates.$inferSelect>): SkillLearning[] {
+  return candidates.map((candidate) => ({
+    id: candidate.id,
+    title: candidate.title,
+    instruction: candidate.instruction,
+    appliesWhenJson: parseObject(candidate.appliesWhenJson),
+    mustNot: candidate.mustNot,
+    validationChecksJson: readStringArray(candidate.validationChecksJson),
+  }));
+}
+
+function proposalRisk(candidates: Array<Pick<typeof learningCandidates.$inferSelect, "riskLevel">>): LearningRiskLevel {
+  if (candidates.some((candidate) => candidate.riskLevel === "high")) return "high";
+  if (candidates.some((candidate) => candidate.riskLevel === "medium")) return "medium";
+  return "low";
+}
+
+function proposalValidationChecks(input: {
+  baseMarkdown: string;
+  nextMarkdown: string;
+  learnings: SkillLearning[];
+}) {
+  const checks = new Set(input.learnings.flatMap((learning) => learning.validationChecksJson));
+  checks.add("Constraint gate: proposed skill patch is non-empty.");
+  checks.add("Constraint gate: generated SKILL.md remains under 15 KB.");
+  checks.add("Constraint gate: update preserves the target skill identity.");
+  checks.add("Constraint gate: update stays inside the target agent's private skill space.");
+  checks.add("Skill Builder gate: proposal separates reusable behavior from one-off feedback.");
+  checks.add("Skill Builder gate: proposal includes validation checks for future runs.");
+  if (input.nextMarkdown.length <= input.baseMarkdown.length) {
+    checks.add("Review gate: proposal does not add new skill behavior and should be inspected before applying.");
+  }
+  if (input.nextMarkdown.length > 15_000) {
+    checks.add("Review gate: generated SKILL.md exceeds the 15 KB Hermes-inspired size limit.");
+  }
+  return Array.from(checks);
+}
+
+function markdownDiffFromLearnings(learnings: SkillLearning[]) {
+  return learnings
+    .map((learning) => [
+      `+ ${learning.title}`,
+      `+ ${learning.instruction}`,
+      `+ Applies when: ${renderAppliesWhen(learning.appliesWhenJson)}`,
+      ...(learning.mustNot ? [`+ Must not: ${learning.mustNot}`] : []),
+    ].join("\n"))
+    .join("\n");
 }
 
 function pickSkillPreview(skill: typeof organizationSkillsTable.$inferSelect | null) {
@@ -584,6 +681,15 @@ export function agentLearningService(db: Db) {
       }))
       .returning();
 
+    await createPendingProposalForBatch({
+      orgId,
+      batch: batch!,
+      agent: await getAgentOrThrow(orgId, session.targetAgentId),
+      candidates: candidateRows,
+      items,
+      actor,
+    });
+
     await db
       .update(runFeedbackSessions)
       .set({ status: "submitted", updatedAt: new Date() })
@@ -629,8 +735,8 @@ export function agentLearningService(db: Db) {
     const batch = await getBatchOrThrow(orgId, batchId);
     const session = await getSessionOrThrow(orgId, batch.sessionId);
     const agent = await getAgentOrThrow(orgId, batch.targetAgentId);
-    const targetSkill = batch.targetSkillId ? pickSkillPreview(await getSkillOrThrow(orgId, batch.targetSkillId)) : null;
-    const [feedbackItemsForBatch, candidates, proposals, revisions] = await Promise.all([
+    const targetSkill = managedLearningSkillPreview(agent);
+    const [feedbackItemsForBatch, candidates, revisions] = await Promise.all([
       db
         .select()
         .from(runFeedbackItems)
@@ -643,30 +749,38 @@ export function agentLearningService(db: Db) {
         .orderBy(asc(learningCandidates.createdAt)),
       db
         .select()
-        .from(skillUpdateProposals)
-        .where(and(eq(skillUpdateProposals.orgId, orgId), eq(skillUpdateProposals.targetAgentId, batch.targetAgentId)))
-        .orderBy(desc(skillUpdateProposals.createdAt))
-        .limit(20),
-      db
-        .select()
-        .from(organizationSkillRevisions)
-        .where(and(eq(organizationSkillRevisions.orgId, orgId), eq(organizationSkillRevisions.createdFromFeedbackBatchId, batchId)))
-        .orderBy(desc(organizationSkillRevisions.createdAt)),
+        .from(agentSkillRevisions)
+        .where(and(eq(agentSkillRevisions.orgId, orgId), eq(agentSkillRevisions.createdFromFeedbackBatchId, batchId)))
+        .orderBy(desc(agentSkillRevisions.createdAt)),
     ]);
-    const proposalIds = proposals.map((proposal) => proposal.id);
-    const revisionIds = revisions.map((revision) => revision.id);
-    const evidenceLinks = proposalIds.length === 0 && revisionIds.length === 0
+    const feedbackItemIds = feedbackItemsForBatch.map((item) => item.id);
+    const evidenceLinksForFeedback = feedbackItemIds.length === 0
       ? []
       : await db
         .select()
         .from(skillEvidenceLinks)
-        .where(and(
-          eq(skillEvidenceLinks.orgId, orgId),
-          proposalIds.length > 0
-            ? inArray(skillEvidenceLinks.skillUpdateProposalId, proposalIds)
-            : inArray(skillEvidenceLinks.skillRevisionId, revisionIds),
-        ))
+        .where(and(eq(skillEvidenceLinks.orgId, orgId), inArray(skillEvidenceLinks.feedbackItemId, feedbackItemIds)))
         .orderBy(asc(skillEvidenceLinks.createdAt));
+    const proposalIds = Array.from(new Set(evidenceLinksForFeedback
+      .map((link) => link.skillUpdateProposalId)
+      .filter((id): id is string => Boolean(id))));
+    const proposals = proposalIds.length === 0
+      ? []
+      : await db
+        .select()
+        .from(skillUpdateProposals)
+        .where(and(eq(skillUpdateProposals.orgId, orgId), inArray(skillUpdateProposals.id, proposalIds)))
+        .orderBy(desc(skillUpdateProposals.createdAt));
+    const revisionIds = revisions.map((revision) => revision.id);
+    const evidenceLinksForRevisions = revisionIds.length === 0
+      ? []
+      : await db
+        .select()
+        .from(skillEvidenceLinks)
+        .where(and(eq(skillEvidenceLinks.orgId, orgId), inArray(skillEvidenceLinks.agentSkillRevisionId, revisionIds)))
+        .orderBy(asc(skillEvidenceLinks.createdAt));
+    const evidenceLinksById = new Map([...evidenceLinksForFeedback, ...evidenceLinksForRevisions].map((link) => [link.id, link]));
+    const evidenceLinks = Array.from(evidenceLinksById.values());
 
     return {
       batch: batch as FeedbackBatch,
@@ -683,7 +797,7 @@ export function agentLearningService(db: Db) {
       feedbackItems: feedbackItemsForBatch,
       candidates: candidates as LearningCandidate[],
       proposals: proposals as SkillUpdateProposal[],
-      revisions,
+      revisions: revisions as AgentSkillRevision[],
       evidenceLinks,
     };
   }
@@ -735,39 +849,42 @@ export function agentLearningService(db: Db) {
     return (row?.value ?? 0) + 1;
   }
 
-  async function findOrCreateManagedSkill(orgId: string, agent: Awaited<ReturnType<typeof getAgentOrThrow>>) {
-    const slug = managedLearningSkillSlug(agent);
-    const existing = await db
+  async function getLatestAgentRevision(agentId: string, skillKey: string) {
+    return db
       .select()
-      .from(organizationSkillsTable)
-      .where(and(eq(organizationSkillsTable.orgId, orgId), eq(organizationSkillsTable.slug, slug)))
+      .from(agentSkillRevisions)
+      .where(and(eq(agentSkillRevisions.agentId, agentId), eq(agentSkillRevisions.skillKey, skillKey)))
+      .orderBy(desc(agentSkillRevisions.revision))
+      .limit(1)
       .then((rows) => rows[0] ?? null);
-    if (existing) return existing;
-
-    const created = await organizationSkills.createLocalSkill(orgId, {
-      name: `Agent Learning - ${agent.name}`,
-      slug,
-      description: `Approved learnings from real run feedback for ${agent.name}.`,
-      markdown: buildManagedSkillMarkdown(agent),
-    });
-    return getSkillOrThrow(orgId, created.id);
   }
 
-  async function resolveApplySkill(
-    orgId: string,
-    agent: Awaited<ReturnType<typeof getAgentOrThrow>>,
-    candidates: LearningCandidate[],
-    batchTargetSkillId: string | null,
-  ) {
-    const targetSkillId = candidates.find((candidate) => candidate.targetSkillId)?.targetSkillId ?? batchTargetSkillId;
-    if (targetSkillId) return getSkillOrThrow(orgId, targetSkillId);
-    return findOrCreateManagedSkill(orgId, agent);
+  async function getNextAgentRevisionNumber(agentId: string, skillKey: string) {
+    const row = await db
+      .select({ value: sql<number>`coalesce(max(${agentSkillRevisions.revision}), 0)::int` })
+      .from(agentSkillRevisions)
+      .where(and(eq(agentSkillRevisions.agentId, agentId), eq(agentSkillRevisions.skillKey, skillKey)))
+      .then((rows) => rows[0] ?? null);
+    return (row?.value ?? 0) + 1;
+  }
+
+  async function getManagedAgentSkillState(orgId: string, agent: Awaited<ReturnType<typeof getAgentOrThrow>>) {
+    const slug = managedLearningSkillSlug(agent);
+    const selectionKey = agentSkillSelectionKey(slug);
+    const existing = await organizationSkills.readAgentPrivateSkillMarkdown(orgId, agent.id, slug);
+    return {
+      slug,
+      selectionKey,
+      markdown: existing?.markdown ?? buildManagedSkillMarkdown(agent),
+      preview: managedLearningSkillPreview(agent, existing?.entry ?? null),
+      latestRevision: await getLatestAgentRevision(agent.id, selectionKey),
+    };
   }
 
   async function enableSkillForAgent(
     orgId: string,
     agent: Awaited<ReturnType<typeof getAgentOrThrow>>,
-    skill: typeof organizationSkillsTable.$inferSelect,
+    selectionKey: string,
   ) {
     const current = await organizationSkills.getEnabledSkillKeysForAgent(orgId, {
       id: agent.id,
@@ -775,16 +892,118 @@ export function agentLearningService(db: Db) {
       agentRuntimeType: agent.agentRuntimeType,
       agentRuntimeConfig: agent.agentRuntimeConfig,
     });
-    const selectionKey = `org:${skill.key}`;
     if (!current.includes(selectionKey)) {
       await organizationSkills.replaceEnabledSkillKeysForAgent(orgId, agent.id, [...current, selectionKey]);
     }
+  }
+
+  async function createPendingProposalForBatch(input: {
+    orgId: string;
+    batch: typeof feedbackBatches.$inferSelect;
+    agent: Awaited<ReturnType<typeof getAgentOrThrow>>;
+    candidates: Array<typeof learningCandidates.$inferSelect>;
+    items: Array<typeof runFeedbackItems.$inferSelect>;
+    actor: LearningActor;
+  }) {
+    const proposalCandidates = input.candidates.filter((candidate) => candidate.status === "pending");
+    if (proposalCandidates.length === 0) return null;
+
+    const skill = await getManagedAgentSkillState(input.orgId, input.agent);
+    const baseMarkdown = skill.markdown;
+    const learningPayloads = learningPayloadsFromCandidates(proposalCandidates);
+    const nextMarkdown = appendLearningsToSkillMarkdown({
+      markdown: baseMarkdown,
+      batchId: input.batch.id,
+      candidateLearnings: learningPayloads,
+    });
+    const validationChecks = proposalValidationChecks({
+      baseMarkdown,
+      nextMarkdown,
+      learnings: learningPayloads,
+    });
+    const summary = learningPayloads.length === 1
+      ? learningPayloads[0]!.instruction
+      : `${learningPayloads.length} AI-synthesized learnings will be added to ${skill.preview.name}.`;
+
+    const [proposal] = await db
+      .insert(skillUpdateProposals)
+      .values({
+        orgId: input.orgId,
+        targetSkillId: null,
+        targetSkillKey: skill.selectionKey,
+        targetAgentId: input.agent.id,
+        baseRevisionId: skill.latestRevision?.id ?? null,
+        baseContentHash: hashText(baseMarkdown),
+        title: `AI proposal: update ${skill.preview.name}`,
+        summary,
+        patchJson: safePatchJson(learningPayloads),
+        markdownDiff: markdownDiffFromLearnings(learningPayloads),
+        structuredSpecDiffJson: { activeLearnings: learningPayloads },
+        rationale: `Generated by Skill Builder from feedback batch ${input.batch.id}: conversation-to-skill extracts the durable workflow, skill-optimizer classifies evidence and risk, and skill-creator shapes the SKILL.md update.`,
+        expectedBehavior: learningPayloads.map((learning) => learning.instruction).join("\n"),
+        validationChecksJson: validationChecks,
+        riskLevel: proposalRisk(proposalCandidates),
+        status: "pending",
+        createdByUserId: input.actor.actorType === "user" ? input.actor.actorId : null,
+        createdByAgentId: input.actor.actorType === "agent" ? input.actor.agentId : null,
+        rollbackPlan: `Reject this proposal before apply, or revert ${skill.preview.name} to revision ${skill.latestRevision?.revision ?? 0} after apply.`,
+      })
+      .returning();
+
+    if (proposal && input.items.length > 0) {
+      await db.insert(skillEvidenceLinks).values(input.items.map((item) => ({
+        orgId: input.orgId,
+        skillUpdateProposalId: proposal.id,
+        skillRevisionId: null,
+        agentSkillRevisionId: null,
+        feedbackItemId: item.id,
+        runId: item.runId,
+        issueId: item.issueId,
+        eventId: item.eventId,
+        eventSeq: item.eventSeq,
+        evidenceSummary: compactText(item.body, 240),
+      })));
+    }
+
+    return proposal ?? null;
+  }
+
+  async function findPendingProposalForBatch(orgId: string, batchId: string) {
+    const batch = await getBatchOrThrow(orgId, batchId);
+    const items = await db
+      .select({ id: runFeedbackItems.id })
+      .from(runFeedbackItems)
+      .where(and(eq(runFeedbackItems.orgId, orgId), eq(runFeedbackItems.sessionId, batch.sessionId)));
+    if (items.length === 0) return null;
+
+    const links = await db
+      .select({ proposalId: skillEvidenceLinks.skillUpdateProposalId })
+      .from(skillEvidenceLinks)
+      .where(and(
+        eq(skillEvidenceLinks.orgId, orgId),
+        inArray(skillEvidenceLinks.feedbackItemId, items.map((item) => item.id)),
+      ));
+    const proposalIds = Array.from(new Set(links.map((link) => link.proposalId).filter((id): id is string => Boolean(id))));
+    if (proposalIds.length === 0) return null;
+
+    return db
+      .select()
+      .from(skillUpdateProposals)
+      .where(and(
+        eq(skillUpdateProposals.orgId, orgId),
+        inArray(skillUpdateProposals.id, proposalIds),
+        eq(skillUpdateProposals.status, "pending"),
+      ))
+      .orderBy(desc(skillUpdateProposals.createdAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
   }
 
   async function applyApproved(
     orgId: string,
     batchId: string,
     actor: LearningActor,
+    options: { sourceProposalId?: string | null } = {},
   ): Promise<ApplyApprovedLearningResponse> {
     const batch = await getBatchOrThrow(orgId, batchId);
     const agent = await getAgentOrThrow(orgId, batch.targetAgentId);
@@ -799,68 +1018,81 @@ export function agentLearningService(db: Db) {
       .orderBy(asc(learningCandidates.createdAt));
     if (approved.length === 0) throw unprocessable("Approve at least one learning before applying");
 
-    const skill = await resolveApplySkill(orgId, agent, approved as LearningCandidate[], batch.targetSkillId);
-    const latestRevision = await getLatestRevision(skill.id);
+    const sourceProposal = options.sourceProposalId
+      ? await db
+        .select()
+        .from(skillUpdateProposals)
+        .where(and(eq(skillUpdateProposals.id, options.sourceProposalId), eq(skillUpdateProposals.orgId, orgId)))
+        .then((rows) => rows[0] ?? null)
+      : await findPendingProposalForBatch(orgId, batchId);
+    if (options.sourceProposalId && !sourceProposal) throw notFound("Skill update proposal not found");
+    if (sourceProposal?.status === "rejected") throw unprocessable("Rejected proposals cannot be applied");
+
+    const skill = await getManagedAgentSkillState(orgId, agent);
+    const latestRevision = skill.latestRevision;
     const baseMarkdown = skill.markdown;
-    const learningPayloads: SkillLearning[] = approved.map((candidate) => ({
-      id: candidate.id,
-      title: candidate.title,
-      instruction: candidate.instruction,
-      appliesWhenJson: parseObject(candidate.appliesWhenJson),
-      mustNot: candidate.mustNot,
-      validationChecksJson: readStringArray(candidate.validationChecksJson),
-    }));
+    const learningPayloads = learningPayloadsFromCandidates(approved);
     const nextMarkdown = appendLearningsToSkillMarkdown({
       markdown: baseMarkdown,
       batchId,
       candidateLearnings: learningPayloads,
     });
 
-    await organizationSkills.updateFile(orgId, skill.id, "SKILL.md", nextMarkdown);
-    const refreshedSkill = await getSkillOrThrow(orgId, skill.id);
-    const revisionNumber = await getNextRevisionNumber(skill.id);
+    const refreshedEntry = await organizationSkills.upsertAgentPrivateSkill(orgId, agent.id, {
+      name: skill.preview.name,
+      slug: skill.slug,
+      description: skill.preview.description ?? undefined,
+      markdown: nextMarkdown,
+    });
+    const refreshedSkill = managedLearningSkillPreview(agent, refreshedEntry);
+    const revisionNumber = await getNextAgentRevisionNumber(agent.id, skill.selectionKey);
     const proposalSummary = approved.length === 1
       ? approved[0]!.instruction
       : `${approved.length} approved learnings will be added to ${refreshedSkill.name}.`;
-    const markdownDiff = learningPayloads
-      .map((learning) => `+ ${learning.title}\n+ ${learning.instruction}`)
-      .join("\n");
+    const proposalPatch = {
+      targetSkillId: null,
+      targetSkillKey: refreshedSkill.selectionKey,
+      targetAgentId: agent.id,
+      baseRevisionId: latestRevision?.id ?? null,
+      baseContentHash: hashText(baseMarkdown),
+      title: sourceProposal?.title ?? `AI proposal: update ${refreshedSkill.name}`,
+      summary: sourceProposal?.summary ?? proposalSummary,
+      patchJson: safePatchJson(learningPayloads),
+      markdownDiff: markdownDiffFromLearnings(learningPayloads),
+      structuredSpecDiffJson: { activeLearnings: learningPayloads },
+      rationale: sourceProposal?.rationale ?? `Generated by Skill Builder from feedback batch ${batchId}: conversation-to-skill extracts the durable workflow, skill-optimizer classifies evidence and risk, and skill-creator shapes the SKILL.md update.`,
+      expectedBehavior: learningPayloads.map((learning) => learning.instruction).join("\n"),
+      validationChecksJson: proposalValidationChecks({ baseMarkdown, nextMarkdown, learnings: learningPayloads }),
+      riskLevel: proposalRisk(approved),
+      status: "applied",
+      approvedByUserId: actor.actorType === "user" ? actor.actorId : null,
+      rollbackPlan: `Disable ${refreshedSkill.name} for ${agent.name} or revert the agent-private skill to revision ${latestRevision?.revision ?? 0}.`,
+      updatedAt: new Date(),
+    };
 
-    const [proposal] = await db
-      .insert(skillUpdateProposals)
-      .values({
-        orgId,
-        targetSkillId: refreshedSkill.id,
-        targetSkillKey: refreshedSkill.key,
-        targetAgentId: agent.id,
-        baseRevisionId: latestRevision?.id ?? null,
-        baseContentHash: hashText(baseMarkdown),
-        title: `Apply ${approved.length} learning${approved.length === 1 ? "" : "s"} to ${refreshedSkill.name}`,
-        summary: proposalSummary,
-        patchJson: safePatchJson(learningPayloads),
-        markdownDiff,
-        structuredSpecDiffJson: { activeLearnings: learningPayloads },
-        rationale: `Approved from feedback batch ${batchId}.`,
-        expectedBehavior: learningPayloads.map((learning) => learning.instruction).join("\n"),
-        validationChecksJson: Array.from(new Set(learningPayloads.flatMap((learning) => learning.validationChecksJson))),
-        riskLevel: approved.some((candidate) => candidate.riskLevel === "high")
-          ? "high"
-          : approved.some((candidate) => candidate.riskLevel === "medium")
-            ? "medium"
-            : "low",
-        status: "applied",
-        approvedByUserId: actor.actorType === "user" ? actor.actorId : null,
-        createdByUserId: actor.actorType === "user" ? actor.actorId : null,
-        createdByAgentId: actor.actorType === "agent" ? actor.agentId : null,
-        rollbackPlan: `Disable ${refreshedSkill.name} for ${agent.name} or revert to revision ${latestRevision?.revision ?? 0}.`,
-      })
-      .returning();
+    const [proposal] = sourceProposal
+      ? await db
+        .update(skillUpdateProposals)
+        .set(proposalPatch)
+        .where(eq(skillUpdateProposals.id, sourceProposal.id))
+        .returning()
+      : await db
+        .insert(skillUpdateProposals)
+        .values({
+          orgId,
+          ...proposalPatch,
+          createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+          createdByAgentId: actor.actorType === "agent" ? actor.agentId : null,
+        })
+        .returning();
 
     const [revision] = await db
-      .insert(organizationSkillRevisions)
+      .insert(agentSkillRevisions)
       .values({
         orgId,
-        skillId: refreshedSkill.id,
+        agentId: agent.id,
+        skillKey: refreshedSkill.selectionKey,
+        skillSlug: refreshedSkill.slug,
         revision: revisionNumber,
         markdown: nextMarkdown,
         structuredSpecJson: { activeLearnings: learningPayloads },
@@ -878,11 +1110,17 @@ export function agentLearningService(db: Db) {
       .from(runFeedbackItems)
       .where(and(eq(runFeedbackItems.orgId, orgId), eq(runFeedbackItems.sessionId, batch.sessionId)))
       .orderBy(asc(runFeedbackItems.createdAt));
-    if (items.length > 0) {
+    if (sourceProposal && proposal) {
+      await db
+        .update(skillEvidenceLinks)
+        .set({ skillRevisionId: null, agentSkillRevisionId: revision!.id })
+        .where(and(eq(skillEvidenceLinks.orgId, orgId), eq(skillEvidenceLinks.skillUpdateProposalId, proposal.id)));
+    } else if (items.length > 0) {
       await db.insert(skillEvidenceLinks).values(items.map((item) => ({
         orgId,
         skillUpdateProposalId: proposal!.id,
-        skillRevisionId: revision!.id,
+        skillRevisionId: null,
+        agentSkillRevisionId: revision!.id,
         feedbackItemId: item.id,
         runId: item.runId,
         issueId: item.issueId,
@@ -894,15 +1132,15 @@ export function agentLearningService(db: Db) {
 
     await db
       .update(learningCandidates)
-      .set({ status: "applied", targetSkillId: refreshedSkill.id, updatedAt: new Date() })
+      .set({ status: "applied", targetSkillId: null, updatedAt: new Date() })
       .where(inArray(learningCandidates.id, approved.map((candidate) => candidate.id)));
     const [updatedBatch] = await db
       .update(feedbackBatches)
-      .set({ status: "applied", targetSkillId: refreshedSkill.id, updatedAt: new Date() })
+      .set({ status: "applied", targetSkillId: null, updatedAt: new Date() })
       .where(eq(feedbackBatches.id, batchId))
       .returning();
 
-    await enableSkillForAgent(orgId, agent, refreshedSkill);
+    await enableSkillForAgent(orgId, agent, refreshedSkill.selectionKey);
 
     await logActivity(db, {
       orgId,
@@ -911,10 +1149,11 @@ export function agentLearningService(db: Db) {
       agentId: actor.agentId,
       runId: actor.runId,
       action: "agent_learning.skill_update_applied",
-      entityType: "organization_skill",
-      entityId: refreshedSkill.id,
+      entityType: "agent_skill",
+      entityId: refreshedSkill.selectionKey,
       details: {
         targetAgentId: agent.id,
+        targetSkillKey: refreshedSkill.selectionKey,
         feedbackBatchId: batchId,
         proposalId: proposal!.id,
         revisionId: revision!.id,
@@ -928,22 +1167,104 @@ export function agentLearningService(db: Db) {
       appliedCandidates: approved.map((candidate) => ({
         ...candidate,
         status: "applied",
-        targetSkillId: refreshedSkill.id,
+        targetSkillId: null,
       })) as LearningCandidate[],
       proposals: [proposal! as SkillUpdateProposal],
-      revisions: [revision!],
-      skill: pickSkillPreview(refreshedSkill),
+      revisions: [revision! as AgentSkillRevision],
+      skill: refreshedSkill,
     };
+  }
+
+  async function getProposalOrThrow(orgId: string, proposalId: string) {
+    const proposal = await db
+      .select()
+      .from(skillUpdateProposals)
+      .where(and(eq(skillUpdateProposals.id, proposalId), eq(skillUpdateProposals.orgId, orgId)))
+      .then((rows) => rows[0] ?? null);
+    if (!proposal) throw notFound("Skill update proposal not found");
+    return proposal;
+  }
+
+  async function getBatchForProposal(orgId: string, proposalId: string) {
+    const link = await db
+      .select()
+      .from(skillEvidenceLinks)
+      .where(and(eq(skillEvidenceLinks.orgId, orgId), eq(skillEvidenceLinks.skillUpdateProposalId, proposalId)))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!link?.feedbackItemId) throw unprocessable("Proposal is not linked to a feedback batch");
+
+    const item = await db
+      .select()
+      .from(runFeedbackItems)
+      .where(and(eq(runFeedbackItems.orgId, orgId), eq(runFeedbackItems.id, link.feedbackItemId)))
+      .then((rows) => rows[0] ?? null);
+    if (!item) throw unprocessable("Proposal feedback evidence is missing");
+
+    const batch = await db
+      .select()
+      .from(feedbackBatches)
+      .where(and(eq(feedbackBatches.orgId, orgId), eq(feedbackBatches.sessionId, item.sessionId)))
+      .then((rows) => rows[0] ?? null);
+    if (!batch) throw unprocessable("Proposal feedback batch is missing");
+    return batch;
+  }
+
+  async function applyProposal(
+    orgId: string,
+    proposalId: string,
+    actor: LearningActor,
+  ): Promise<ApplyApprovedLearningResponse> {
+    const proposal = await getProposalOrThrow(orgId, proposalId);
+    if (proposal.status === "applied") throw unprocessable("Proposal is already applied");
+    if (proposal.status === "rejected") throw unprocessable("Rejected proposals cannot be applied");
+    const batch = await getBatchForProposal(orgId, proposalId);
+
+    await db
+      .update(learningCandidates)
+      .set({ status: "approved", updatedAt: new Date() })
+      .where(and(
+        eq(learningCandidates.orgId, orgId),
+        eq(learningCandidates.feedbackBatchId, batch.id),
+        eq(learningCandidates.status, "pending"),
+      ));
+
+    return applyApproved(orgId, batch.id, actor, { sourceProposalId: proposal.id });
+  }
+
+  async function rejectProposal(orgId: string, proposalId: string) {
+    const proposal = await getProposalOrThrow(orgId, proposalId);
+    if (proposal.status === "applied") throw unprocessable("Applied proposals cannot be rejected");
+    const batch = await getBatchForProposal(orgId, proposalId);
+
+    const [updated] = await db
+      .update(skillUpdateProposals)
+      .set({ status: "rejected", updatedAt: new Date() })
+      .where(and(eq(skillUpdateProposals.id, proposalId), eq(skillUpdateProposals.orgId, orgId)))
+      .returning();
+
+    await db
+      .update(learningCandidates)
+      .set({ status: "rejected", updatedAt: new Date() })
+      .where(and(
+        eq(learningCandidates.orgId, orgId),
+        eq(learningCandidates.feedbackBatchId, batch.id),
+        eq(learningCandidates.status, "pending"),
+      ));
+
+    await db
+      .update(feedbackBatches)
+      .set({ status: "closed", updatedAt: new Date() })
+      .where(and(eq(feedbackBatches.id, batch.id), eq(feedbackBatches.orgId, orgId)));
+
+    return updated! as SkillUpdateProposal;
   }
 
   async function agentSummary(orgId: string, agentId: string): Promise<AgentLearningSummary> {
     const agent = await getAgentOrThrow(orgId, agentId);
     const managedSlug = managedLearningSkillSlug(agent);
-    const managedSkill = await db
-      .select()
-      .from(organizationSkillsTable)
-      .where(and(eq(organizationSkillsTable.orgId, orgId), eq(organizationSkillsTable.slug, managedSlug)))
-      .then((rows) => rows[0] ?? null);
+    const managedSkillFile = await organizationSkills.readAgentPrivateSkillMarkdown(orgId, agent.id, managedSlug);
+    const managedSkill = managedSkillFile ? managedLearningSkillPreview(agent, managedSkillFile.entry) : null;
 
     const [appliedCandidates, suggestedUpdates, recentProposals, recentMisses] = await Promise.all([
       db
@@ -989,14 +1310,14 @@ export function agentLearningService(db: Db) {
       ? []
       : await db
         .select()
-        .from(organizationSkillRevisions)
-        .where(and(eq(organizationSkillRevisions.orgId, orgId), inArray(organizationSkillRevisions.sourceProposalId, proposalIds)))
-        .orderBy(desc(organizationSkillRevisions.createdAt))
+        .from(agentSkillRevisions)
+        .where(and(eq(agentSkillRevisions.orgId, orgId), inArray(agentSkillRevisions.sourceProposalId, proposalIds)))
+        .orderBy(desc(agentSkillRevisions.createdAt))
         .limit(10);
 
     return {
       agentId,
-      managedSkill: pickSkillPreview(managedSkill),
+      managedSkill,
       activeLearnings: appliedCandidates.map((candidate) => ({
         id: candidate.id,
         title: candidate.title,
@@ -1008,7 +1329,7 @@ export function agentLearningService(db: Db) {
         createdAt: candidate.updatedAt,
       })),
       suggestedUpdates: suggestedUpdates as LearningCandidate[],
-      recentRevisions,
+      recentRevisions: recentRevisions as AgentSkillRevision[],
       recentMisses,
       stats: {
         activeLearningCount: appliedCandidates.length,
@@ -1051,6 +1372,7 @@ export function agentLearningService(db: Db) {
       .where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.orgId, orgId)))
       .then((rows) => rows[0] ?? null);
     if (!run) throw notFound("Run not found");
+    const runAgent = await getAgentOrThrow(orgId, run.agentId);
 
     const [persistedLoaded, eventLoaded, evaluations] = await Promise.all([
       db
@@ -1095,8 +1417,28 @@ export function agentLearningService(db: Db) {
       revisionById.set(revision.id, revision);
       if (!latestRevisionBySkillId.has(revision.skillId)) latestRevisionBySkillId.set(revision.skillId, revision);
     }
+    const agentRevisionRows = skillKeys.length === 0
+      ? []
+      : await db
+        .select()
+        .from(agentSkillRevisions)
+        .where(and(
+          eq(agentSkillRevisions.orgId, orgId),
+          eq(agentSkillRevisions.agentId, run.agentId),
+          inArray(agentSkillRevisions.skillKey, skillKeys),
+        ))
+        .orderBy(desc(agentSkillRevisions.revision));
+    const latestAgentRevisionBySkillKey = new Map<string, typeof agentSkillRevisions.$inferSelect>();
+    const agentRevisionById = new Map<string, typeof agentSkillRevisions.$inferSelect>();
+    for (const revision of agentRevisionRows) {
+      agentRevisionById.set(revision.id, revision);
+      if (!latestAgentRevisionBySkillKey.has(revision.skillKey)) {
+        latestAgentRevisionBySkillKey.set(revision.skillKey, revision);
+      }
+    }
     const persistedByKey = new Map(persistedLoaded.map((entry) => [entry.skillKey, entry]));
     const eventByKey = new Map(eventLoaded.map((entry) => [entry.key, entry]));
+    const managedAgentLearningKey = agentSkillSelectionKey(managedLearningSkillSlug(runAgent));
 
     return {
       runId,
@@ -1107,16 +1449,24 @@ export function agentLearningService(db: Db) {
         const loadedRevision = persisted?.skillRevisionId
           ? revisionById.get(persisted.skillRevisionId) ?? latestRevision
           : latestRevision;
+        const latestAgentRevision = latestAgentRevisionBySkillKey.get(skillKey) ?? null;
+        const loadedAgentRevision = persisted?.agentSkillRevisionId
+          ? agentRevisionById.get(persisted.agentSkillRevisionId) ?? latestAgentRevision
+          : latestAgentRevision;
         const eventEntry = eventByKey.get(skillKey) ?? null;
+        const skillName = skill?.name
+          ?? eventEntry?.name
+          ?? eventEntry?.runtimeName
+          ?? (skillKey === managedAgentLearningKey ? `Agent Learning - ${runAgent.name}` : null);
+        const structuredSpecJson = loadedAgentRevision?.structuredSpecJson ?? loadedRevision?.structuredSpecJson ?? null;
         return {
           skillKey,
-          skillName: skill?.name ?? eventEntry?.name ?? eventEntry?.runtimeName ?? null,
+          skillName,
           skillRevisionId: persisted?.skillRevisionId ?? loadedRevision?.id ?? null,
-          revision: loadedRevision?.revision ?? null,
-          contentHash: persisted?.contentHash ?? loadedRevision?.contentHash ?? null,
-          recentLearnings: loadedRevision
-            ? parseLearningCandidatesFromStructuredSpec(loadedRevision.structuredSpecJson)
-            : [],
+          agentSkillRevisionId: persisted?.agentSkillRevisionId ?? loadedAgentRevision?.id ?? null,
+          revision: loadedAgentRevision?.revision ?? loadedRevision?.revision ?? null,
+          contentHash: persisted?.contentHash ?? loadedAgentRevision?.contentHash ?? loadedRevision?.contentHash ?? null,
+          recentLearnings: structuredSpecJson ? parseLearningCandidatesFromStructuredSpec(structuredSpecJson) : [],
         };
       }),
       evaluations,
@@ -1154,19 +1504,38 @@ export function agentLearningService(db: Db) {
     for (const revision of revisionRows) {
       if (!latestRevisionBySkillId.has(revision.skillId)) latestRevisionBySkillId.set(revision.skillId, revision);
     }
+    const agentRevisionRows = skillKeys.length === 0
+      ? []
+      : await db
+        .select()
+        .from(agentSkillRevisions)
+        .where(and(
+          eq(agentSkillRevisions.orgId, orgId),
+          eq(agentSkillRevisions.agentId, agentId),
+          inArray(agentSkillRevisions.skillKey, skillKeys),
+        ))
+        .orderBy(desc(agentSkillRevisions.revision));
+    const latestAgentRevisionBySkillKey = new Map<string, typeof agentSkillRevisions.$inferSelect>();
+    for (const revision of agentRevisionRows) {
+      if (!latestAgentRevisionBySkillKey.has(revision.skillKey)) {
+        latestAgentRevisionBySkillKey.set(revision.skillKey, revision);
+      }
+    }
 
     return db
       .insert(runLoadedSkillRevisions)
       .values(skillKeys.map((skillKey) => {
         const skill = orgSkillsByRuntimeKey.get(skillKey);
         const latestRevision = skill ? latestRevisionBySkillId.get(skill.id) ?? null : null;
+        const latestAgentRevision = latestAgentRevisionBySkillKey.get(skillKey) ?? null;
         return {
           orgId,
           runId,
           agentId,
           skillKey,
           skillRevisionId: latestRevision?.id ?? null,
-          contentHash: latestRevision?.contentHash ?? null,
+          agentSkillRevisionId: latestAgentRevision?.id ?? null,
+          contentHash: latestAgentRevision?.contentHash ?? latestRevision?.contentHash ?? null,
         };
       }))
       .returning();
@@ -1211,6 +1580,7 @@ export function agentLearningService(db: Db) {
           runId,
           agentId: run.agentId,
           skillRevisionId: skill.skillRevisionId,
+          agentSkillRevisionId: skill.agentSkillRevisionId,
           score,
           applicableChecksJson: checks,
           passedItemsJson: passed,
@@ -1232,6 +1602,8 @@ export function agentLearningService(db: Db) {
     updateCandidate,
     setCandidateStatus,
     applyApproved,
+    applyProposal,
+    rejectProposal,
     agentSummary,
     getRunLoadedSkills,
     recordRunLoadedSkills,

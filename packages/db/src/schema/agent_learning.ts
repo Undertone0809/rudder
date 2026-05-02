@@ -210,6 +210,45 @@ export const organizationSkillRevisions = pgTable(
   }),
 );
 
+export const agentSkillRevisions = pgTable(
+  "agent_skill_revisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+    skillKey: text("skill_key").notNull(),
+    skillSlug: text("skill_slug").notNull(),
+    revision: integer("revision").notNull(),
+    markdown: text("markdown").notNull(),
+    structuredSpecJson: jsonb("structured_spec_json").$type<Record<string, unknown>>(),
+    contentHash: text("content_hash").notNull(),
+    sourceProposalId: uuid("source_proposal_id"),
+    createdFromFeedbackBatchId: uuid("created_from_feedback_batch_id").references(() => feedbackBatches.id, {
+      onDelete: "set null",
+    }),
+    createdFromReflectionId: uuid("created_from_reflection_id").references(() => skillReflections.id, {
+      onDelete: "set null",
+    }),
+    status: text("status").notNull().default("approved"),
+    approvedByUserId: text("approved_by_user_id"),
+    createdByAgentId: uuid("created_by_agent_id").references(() => agents.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    agentSkillRevisionUniqueIdx: uniqueIndex("agent_skill_revisions_agent_skill_revision_idx").on(
+      table.agentId,
+      table.skillKey,
+      table.revision,
+    ),
+    orgAgentSkillIdx: index("agent_skill_revisions_org_agent_skill_idx").on(
+      table.orgId,
+      table.agentId,
+      table.skillKey,
+    ),
+    orgCreatedIdx: index("agent_skill_revisions_org_created_idx").on(table.orgId, table.createdAt),
+  }),
+);
+
 export const skillEvidenceLinks = pgTable(
   "skill_evidence_links",
   {
@@ -219,6 +258,9 @@ export const skillEvidenceLinks = pgTable(
       onDelete: "cascade",
     }),
     skillRevisionId: uuid("skill_revision_id").references(() => organizationSkillRevisions.id, {
+      onDelete: "cascade",
+    }),
+    agentSkillRevisionId: uuid("agent_skill_revision_id").references(() => agentSkillRevisions.id, {
       onDelete: "cascade",
     }),
     feedbackItemId: uuid("feedback_item_id").references(() => runFeedbackItems.id, { onDelete: "set null" }),
@@ -232,6 +274,7 @@ export const skillEvidenceLinks = pgTable(
   (table) => ({
     orgProposalIdx: index("skill_evidence_links_org_proposal_idx").on(table.orgId, table.skillUpdateProposalId),
     orgRevisionIdx: index("skill_evidence_links_org_revision_idx").on(table.orgId, table.skillRevisionId),
+    orgAgentRevisionIdx: index("skill_evidence_links_org_agent_revision_idx").on(table.orgId, table.agentSkillRevisionId),
     orgRunIdx: index("skill_evidence_links_org_run_idx").on(table.orgId, table.runId),
   }),
 );
@@ -245,6 +288,9 @@ export const runLoadedSkillRevisions = pgTable(
     agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
     skillKey: text("skill_key").notNull(),
     skillRevisionId: uuid("skill_revision_id").references(() => organizationSkillRevisions.id, {
+      onDelete: "set null",
+    }),
+    agentSkillRevisionId: uuid("agent_skill_revision_id").references(() => agentSkillRevisions.id, {
       onDelete: "set null",
     }),
     contentHash: text("content_hash"),
@@ -266,6 +312,9 @@ export const skillEvaluationReports = pgTable(
     agentId: uuid("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
     skillId: uuid("skill_id").references(() => organizationSkills.id, { onDelete: "set null" }),
     skillRevisionId: uuid("skill_revision_id").references(() => organizationSkillRevisions.id, {
+      onDelete: "set null",
+    }),
+    agentSkillRevisionId: uuid("agent_skill_revision_id").references(() => agentSkillRevisions.id, {
       onDelete: "set null",
     }),
     score: real("score"),

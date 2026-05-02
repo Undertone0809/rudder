@@ -1,5 +1,4 @@
 import type { Agent } from "./agent.js";
-import type { OrganizationSkill } from "./organization-skill.js";
 
 export type LearningCandidateClassification =
   | "core_behavior"
@@ -112,10 +111,41 @@ export interface SkillUpdateProposal {
   updatedAt: Date;
 }
 
+export interface AgentLearningSkillPreview {
+  id: string;
+  key: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  selectionKey: string;
+  sourcePath: string | null;
+  workspaceEditPath: string | null;
+  scope: "agent";
+}
+
 export interface OrganizationSkillRevision {
   id: string;
   orgId: string;
   skillId: string;
+  revision: number;
+  markdown: string;
+  structuredSpecJson: Record<string, unknown> | null;
+  contentHash: string;
+  sourceProposalId: string | null;
+  createdFromFeedbackBatchId: string | null;
+  createdFromReflectionId: string | null;
+  status: string;
+  approvedByUserId: string | null;
+  createdByAgentId: string | null;
+  createdAt: Date;
+}
+
+export interface AgentSkillRevision {
+  id: string;
+  orgId: string;
+  agentId: string;
+  skillKey: string;
+  skillSlug: string;
   revision: number;
   markdown: string;
   structuredSpecJson: Record<string, unknown> | null;
@@ -134,6 +164,7 @@ export interface SkillEvidenceLink {
   orgId: string;
   skillUpdateProposalId: string | null;
   skillRevisionId: string | null;
+  agentSkillRevisionId: string | null;
   feedbackItemId: string | null;
   runId: string | null;
   issueId: string | null;
@@ -150,6 +181,7 @@ export interface RunLoadedSkillRevision {
   agentId: string;
   skillKey: string;
   skillRevisionId: string | null;
+  agentSkillRevisionId: string | null;
   contentHash: string | null;
   loadedAt: Date;
 }
@@ -161,6 +193,7 @@ export interface SkillEvaluationReport {
   agentId: string;
   skillId: string | null;
   skillRevisionId: string | null;
+  agentSkillRevisionId: string | null;
   score: number | null;
   applicableChecksJson: string[];
   passedItemsJson: string[];
@@ -213,11 +246,11 @@ export interface FeedbackBatchReview {
   batch: FeedbackBatch;
   session: RunFeedbackSession;
   agent: Pick<Agent, "id" | "name" | "urlKey" | "title" | "role" | "agentRuntimeType">;
-  targetSkill: Pick<OrganizationSkill, "id" | "key" | "slug" | "name" | "description"> | null;
+  targetSkill: AgentLearningSkillPreview | null;
   feedbackItems: RunFeedbackItem[];
   candidates: LearningCandidate[];
   proposals: SkillUpdateProposal[];
-  revisions: OrganizationSkillRevision[];
+  revisions: AgentSkillRevision[];
   evidenceLinks: SkillEvidenceLink[];
 }
 
@@ -225,13 +258,13 @@ export interface ApplyApprovedLearningResponse {
   batch: FeedbackBatch;
   appliedCandidates: LearningCandidate[];
   proposals: SkillUpdateProposal[];
-  revisions: OrganizationSkillRevision[];
-  skill: Pick<OrganizationSkill, "id" | "key" | "slug" | "name" | "description"> | null;
+  revisions: AgentSkillRevision[];
+  skill: AgentLearningSkillPreview | null;
 }
 
 export interface AgentLearningSummary {
   agentId: string;
-  managedSkill: Pick<OrganizationSkill, "id" | "key" | "slug" | "name" | "description"> | null;
+  managedSkill: AgentLearningSkillPreview | null;
   activeLearnings: Array<{
     id: string;
     title: string;
@@ -243,7 +276,7 @@ export interface AgentLearningSummary {
     createdAt: Date;
   }>;
   suggestedUpdates: LearningCandidate[];
-  recentRevisions: OrganizationSkillRevision[];
+  recentRevisions: AgentSkillRevision[];
   recentMisses: SkillEvaluationReport[];
   stats: {
     activeLearningCount: number;
@@ -259,6 +292,7 @@ export interface RunLoadedSkillsSummary {
     skillKey: string;
     skillName: string | null;
     skillRevisionId: string | null;
+    agentSkillRevisionId: string | null;
     revision: number | null;
     contentHash: string | null;
     recentLearnings: Array<{

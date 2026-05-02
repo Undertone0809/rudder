@@ -9,6 +9,7 @@ import type {
   RunFeedbackSession,
   RunLoadedSkillsSummary,
   SkillEvaluationReport,
+  SkillUpdateProposal,
   SubmitRunFeedbackSessionResponse,
   UpdateLearningCandidateRequest,
 } from "@rudderhq/shared";
@@ -57,6 +58,16 @@ export const agentLearningApi = {
   applyApproved: (orgId: string, batchId: string) =>
     api.post<ApplyApprovedLearningResponse>(
       `/orgs/${encodeURIComponent(orgId)}/feedback-batches/${encodeURIComponent(batchId)}/apply-approved`,
+      {},
+    ),
+  applyProposal: (orgId: string, proposalId: string) =>
+    api.post<ApplyApprovedLearningResponse>(
+      `/orgs/${encodeURIComponent(orgId)}/skill-update-proposals/${encodeURIComponent(proposalId)}/apply`,
+      {},
+    ),
+  rejectProposal: (orgId: string, proposalId: string) =>
+    api.post<SkillUpdateProposal>(
+      `/orgs/${encodeURIComponent(orgId)}/skill-update-proposals/${encodeURIComponent(proposalId)}/reject`,
       {},
     ),
   agentSummary: (orgId: string, agentId: string) =>

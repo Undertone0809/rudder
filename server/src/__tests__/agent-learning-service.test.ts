@@ -5,6 +5,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
+  agentSkillRevisions,
   agentEnabledSkills,
   activityLog,
   agents,
@@ -132,6 +133,7 @@ describe("agentLearningService", () => {
     await db.delete(activityLog);
     await db.delete(skillEvidenceLinks);
     await db.delete(skillUpdateProposals);
+    await db.delete(agentSkillRevisions);
     await db.delete(organizationSkillRevisions);
     await db.delete(learningCandidates);
     await db.delete(feedbackBatches);
@@ -155,7 +157,7 @@ describe("agentLearningService", () => {
     else process.env.RUDDER_INSTANCE_ID = originalRudderInstanceId;
   });
 
-  it("turns run feedback into an approved skill revision and enables it for the agent", { timeout: 30000 }, async () => {
+  it("turns run feedback into an AI proposal, approved skill revision, and enabled agent skill", { timeout: 30000 }, async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
     const runId = randomUUID();
@@ -213,8 +215,17 @@ describe("agentLearningService", () => {
       status: "pending",
     });
 
-    await svc.setCandidateStatus(orgId, submitted.candidates[0]!.id, "approved");
-    const applied = await svc.applyApproved(orgId, submitted.batch.id, actor);
+    const reviewBeforeApply = await svc.getBatchReview(orgId, submitted.batch.id);
+    expect(reviewBeforeApply.proposals).toEqual([
+      expect.objectContaining({
+        targetAgentId: agentId,
+        status: "pending",
+        title: "AI proposal: update Agent Learning - Founding Engineer",
+      }),
+    ]);
+    expect(reviewBeforeApply.proposals[0]!.markdownDiff).toContain("+ Read project instructions before editing");
+
+    const applied = await svc.applyProposal(orgId, reviewBeforeApply.proposals[0]!.id, actor);
 
     expect(applied.skill).toMatchObject({
       name: "Agent Learning - Founding Engineer",
@@ -227,7 +238,7 @@ describe("agentLearningService", () => {
     expect(enabled).toEqual([
       expect.objectContaining({
         agentId,
-        skillKey: `org:${applied.skill!.key}`,
+        skillKey: applied.skill!.selectionKey,
       }),
     ]);
 
@@ -262,12 +273,14 @@ describe("agentLearningService", () => {
     });
 
     await svc.recordRunLoadedSkills(orgId, followupRunId, agentId, [
-      { key: `org:${applied.skill!.key}` },
+      { key: applied.skill!.selectionKey },
     ]);
 
-    await db.insert(organizationSkillRevisions).values({
+    await db.insert(agentSkillRevisions).values({
       orgId,
-      skillId: applied.skill!.id,
+      agentId,
+      skillKey: applied.skill!.selectionKey,
+      skillSlug: applied.skill!.slug,
       revision: 2,
       markdown: "# Later revision",
       structuredSpecJson: {

@@ -295,6 +295,8 @@ export type {
 } from "./plugin.js";
 export type {
   AgentLearningSummary,
+  AgentLearningSkillPreview,
+  AgentSkillRevision,
   ApplyApprovedLearningResponse,
   CreateRunFeedbackItemRequest,
   CreateRunFeedbackSessionRequest,

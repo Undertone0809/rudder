@@ -3034,6 +3034,68 @@ export function organizationSkillService(db: Db) {
     return buildAgentPrivateSkillEntry(orgId, slug, skillDir, description);
   }
 
+  async function upsertAgentPrivateSkill(
+    orgId: string,
+    agentId: string,
+    input: OrganizationSkillCreateRequest,
+  ): Promise<AgentSkillEntry> {
+    const slug = normalizeSkillSlug(input.slug ?? input.name) ?? "skill";
+    const agentWorkspace = await getAgentWorkspaceRow(orgId, agentId);
+    const skillsRoot = resolveAgentSkillsDir(orgId, agentWorkspace);
+    const skillDir = path.resolve(skillsRoot, slug);
+    const relativePath = path.relative(skillsRoot, skillDir);
+    if (
+      relativePath.startsWith("..")
+      || path.isAbsolute(relativePath)
+      || relativePath === ""
+      || relativePath === "."
+    ) {
+      throw unprocessable("Invalid agent skill slug.");
+    }
+
+    await fs.mkdir(skillDir, { recursive: true });
+    const markdown = buildDraftSkillMarkdown(input);
+    await fs.writeFile(path.resolve(skillDir, "SKILL.md"), markdown, "utf8");
+
+    const parsed = parseFrontmatterMarkdown(markdown);
+    const description = normalizeSkillDescription(parsed.frontmatter.description) ?? input.description?.trim() ?? null;
+    return buildAgentPrivateSkillEntry(orgId, slug, skillDir, description);
+  }
+
+  async function readAgentPrivateSkillMarkdown(
+    orgId: string,
+    agentId: string,
+    slugInput: string,
+  ): Promise<{ entry: AgentSkillEntry; markdown: string } | null> {
+    const slug = normalizeSkillSlug(slugInput);
+    if (!slug) throw unprocessable("Invalid agent skill slug.");
+
+    const agentWorkspace = await getAgentWorkspaceRow(orgId, agentId);
+    const skillsRoot = resolveAgentSkillsDir(orgId, agentWorkspace);
+    const skillDir = path.resolve(skillsRoot, slug);
+    const relativePath = path.relative(skillsRoot, skillDir);
+    if (
+      relativePath.startsWith("..")
+      || path.isAbsolute(relativePath)
+      || relativePath === ""
+      || relativePath === "."
+    ) {
+      throw unprocessable("Invalid agent skill slug.");
+    }
+
+    const skillFilePath = path.resolve(skillDir, "SKILL.md");
+    const existing = await statPath(skillFilePath);
+    if (!existing?.isFile()) return null;
+
+    const markdown = await fs.readFile(skillFilePath, "utf8");
+    const parsed = parseFrontmatterMarkdown(markdown);
+    const description = normalizeSkillDescription(parsed.frontmatter.description) ?? null;
+    return {
+      entry: buildAgentPrivateSkillEntry(orgId, slug, skillDir, description),
+      markdown,
+    };
+  }
+
   async function updateFile(orgId: string, skillId: string, relativePath: string, content: string): Promise<OrganizationSkillFileDetail> {
     await ensureSkillInventoryCurrent(orgId);
     const skill = await getById(skillId);
@@ -3781,6 +3843,8 @@ export function organizationSkillService(db: Db) {
     syncWorkspaceFileChange,
     createLocalSkill,
     createAgentPrivateSkill,
+    upsertAgentPrivateSkill,
+    readAgentPrivateSkillMarkdown,
     deleteSkill,
     importFromSource,
     scanProjectWorkspaces,

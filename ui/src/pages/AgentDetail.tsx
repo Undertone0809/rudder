@@ -3032,7 +3032,13 @@ function PromptEditorSkeleton() {
   );
 }
 
-function AgentLearningSummaryCard({ summary }: { summary: AgentLearningSummary | undefined }) {
+function AgentLearningSummaryCard({
+  summary,
+  agent,
+}: {
+  summary: AgentLearningSummary | undefined;
+  agent: Pick<Agent, "urlKey">;
+}) {
   if (!summary) {
     return (
       <section className="rounded-xl border border-border bg-[color:var(--surface-elevated)] px-4 py-3">
@@ -3073,7 +3079,7 @@ function AgentLearningSummaryCard({ summary }: { summary: AgentLearningSummary |
         </div>
         {summary.managedSkill ? (
           <Button asChild variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
-            <Link to={`/skills/${summary.managedSkill.id}`}>
+            <Link to={summary.managedSkill.workspaceEditPath ? `/workspaces?path=${encodeURIComponent(summary.managedSkill.workspaceEditPath)}` : `/agents/${agent.urlKey}/skills`}>
               <BookOpenCheck className="h-3.5 w-3.5" />
               {summary.managedSkill.name}
             </Link>
@@ -3650,7 +3656,7 @@ function AgentSkillsTab({
 
   return (
     <div className="max-w-6xl space-y-3">
-      <AgentLearningSummaryCard summary={learningSummary} />
+      <AgentLearningSummaryCard summary={learningSummary} agent={agent} />
 
       <section className="space-y-3">
         <div className="space-y-1">

@@ -110,6 +110,20 @@ export function agentLearningRoutes(db: Db) {
     res.json(await svc.applyApproved(orgId, batchId, getActorInfo(req)));
   });
 
+  router.post("/orgs/:orgId/skill-update-proposals/:proposalId/apply", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const proposalId = req.params.proposalId as string;
+    assertLearningMutation(req, orgId);
+    res.json(await svc.applyProposal(orgId, proposalId, getActorInfo(req)));
+  });
+
+  router.post("/orgs/:orgId/skill-update-proposals/:proposalId/reject", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const proposalId = req.params.proposalId as string;
+    assertLearningMutation(req, orgId);
+    res.json(await svc.rejectProposal(orgId, proposalId));
+  });
+
   router.get("/orgs/:orgId/agents/:agentId/learnings/summary", async (req, res) => {
     const orgId = req.params.orgId as string;
     const agentId = req.params.agentId as string;

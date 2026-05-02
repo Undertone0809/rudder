@@ -106,13 +106,12 @@ test.describe("Agent learning loop", () => {
     await feedbackDialog.getByRole("button", { name: "Improve future runs" }).click();
 
     await expect(page).toHaveURL(/\/agents\/[^/]+\/learnings\/[0-9a-f-]+$/);
-    await expect(page.getByRole("heading", { name: "Review what this agent should learn" })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByDisplayValue("Read project instructions before editing")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Review AI-generated skill update" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("AI proposal: update Agent Learning - Learning Loop Agent")).toBeVisible();
+    await expect(page.getByText("Read project instructions before editing")).toBeVisible();
     await expect(page.getByText("AGENTS.md", { exact: false })).toBeVisible();
 
-    await page.getByRole("button", { name: "Approve" }).click();
-    await expect(page.getByText("Approved", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Apply approved updates" }).click();
+    await page.getByRole("button", { name: "Apply AI proposal" }).first().click();
 
     await expect(page).toHaveURL(/\/agents\/[^/]+\/skills$/);
     await expect(page.getByText("Agent learning summary")).toBeVisible({ timeout: 15_000 });
@@ -135,7 +134,7 @@ test.describe("Agent learning loop", () => {
     const skillsRes = await request.get(`/api/agents/${agent.id}/skills?orgId=${organization.id}`);
     expect(skillsRes.ok()).toBe(true);
     const skillSnapshot = await skillsRes.json() as { desiredSkills: string[] };
-    expect(skillSnapshot.desiredSkills.some((key) => key.startsWith("org:") && key.includes("agent-learning"))).toBe(true);
+    expect(skillSnapshot.desiredSkills.some((key) => key.startsWith("agent:") && key.includes("agent-learning"))).toBe(true);
 
     await page.screenshot({
       path: "/tmp/rudder-agent-learning-loop-skills.png",

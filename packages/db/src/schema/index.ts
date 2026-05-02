@@ -18,6 +18,7 @@ export { agentConfigRevisions } from "./agent_config_revisions.js";
 export { agentApiKeys } from "./agent_api_keys.js";
 export { agentEnabledSkills } from "./agent_enabled_skills.js";
 export {
+  agentSkillRevisions,
   feedbackBatches,
   learningCandidates,
   organizationSkillRevisions,
