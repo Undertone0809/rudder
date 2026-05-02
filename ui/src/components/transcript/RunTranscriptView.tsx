@@ -120,6 +120,7 @@ type TranscriptBlock =
       tone: "info" | "warn" | "error" | "neutral";
       text: string;
       detail?: string;
+      collapseByDefault?: boolean;
     };
 
 interface ChatTranscriptTurn {
@@ -160,6 +161,8 @@ const COMMON_FILENAME_TOKENS = new Set([
   "Makefile",
   "LICENSE",
 ]);
+const LONG_EVENT_COLLAPSE_CHARS = 900;
+const LONG_EVENT_COLLAPSE_LINES = 8;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
@@ -186,6 +189,54 @@ function filterRoutineStdout(value: string): string {
     })
     .join("\n")
     .trim();
+}
+
+function isWarningStderrLine(line: string): boolean {
+  const trimmed = line.trim();
+  return /^WARN\b/i.test(trimmed) || /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+/i.test(trimmed);
+}
+
+function isAnalyticsForbiddenHtmlStart(line: string): boolean {
+  return /WARN\s+codex_analytics::analytics_client:\s+events failed with status 403 Forbidden:\s+<html>/i.test(line.trim());
+}
+
+function filterRenderableTranscriptEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
+  let suppressingWarningHtml = false;
+  const result: TranscriptEntry[] = [];
+
+  for (const entry of entries) {
+    if (entry.kind !== "stderr") {
+      result.push(entry);
+      continue;
+    }
+
+    const keptLines: string[] = [];
+    for (const line of entry.text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+
+      if (suppressingWarningHtml) {
+        if (/^<\/html>$/i.test(trimmed)) suppressingWarningHtml = false;
+        continue;
+      }
+
+      if (isAnalyticsForbiddenHtmlStart(trimmed)) {
+        suppressingWarningHtml = true;
+        continue;
+      }
+
+      if (isWarningStderrLine(trimmed)) continue;
+      keptLines.push(line);
+    }
+
+    const text = keptLines.join("\n").trim();
+    if (text) result.push({ ...entry, text });
+  }
+
+  return result;
+}
+
+function shouldCollapseEventText(text: string): boolean {
+  return text.length > LONG_EVENT_COLLAPSE_CHARS || text.split(/\r?\n/).length > LONG_EVENT_COLLAPSE_LINES;
 }
 
 function formatTranscriptTimestamp(ts: string): string {
@@ -1219,6 +1270,7 @@ export function normalizeTranscript(entries: TranscriptEntry[], streaming: boole
         label: "stderr",
         tone: "error",
         text: entry.text,
+        collapseByDefault: shouldCollapseEventText(entry.text),
       });
       continue;
     }
@@ -1891,8 +1943,11 @@ function TranscriptEventRow({
   density: TranscriptDensity;
   presentation?: TranscriptPresentation;
 }) {
+  const [open, setOpen] = useState(!block.collapseByDefault);
   const compact = density === "compact";
   const detail = presentation === "detail";
+  const collapsible = block.collapseByDefault === true;
+  const preview = truncate(compactWhitespace(block.text), compact ? 96 : 140);
   const toneClasses =
     block.tone === "error"
       ? "rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3 text-red-700 dark:text-red-300"
@@ -1913,11 +1968,28 @@ function TranscriptEventRow({
           <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-current/50" />
         )}
         <div className="min-w-0 flex-1">
+          {collapsible && (
+            <button
+              type="button"
+              className={cn(
+                "mb-1 inline-flex max-w-full items-center gap-1 rounded-md text-left font-medium transition-colors hover:text-red-800 dark:hover:text-red-100",
+                compact ? "text-[11px]" : "text-xs",
+              )}
+              onClick={() => setOpen((value) => !value)}
+              aria-expanded={open}
+              aria-label={open ? "Collapse stderr details" : "Expand stderr details"}
+            >
+              {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+              <span className="min-w-0 truncate">
+                {formatTranscriptLabel(block.label)}: {preview || "Details"}
+              </span>
+            </button>
+          )}
           {block.label === "result" && block.tone !== "error" ? (
             <div className={cn("whitespace-pre-wrap break-words text-sky-700 dark:text-sky-300", compact ? "text-[11px]" : "text-xs")}>
               {block.text}
             </div>
-          ) : detail ? (
+          ) : collapsible && !open ? null : detail ? (
             <div className={cn("whitespace-pre-wrap break-words", compact ? "text-[11px]" : "text-xs")}>
               {block.text}
             </div>
@@ -1929,7 +2001,7 @@ function TranscriptEventRow({
               {block.text ? <span className="ml-2">{block.text}</span> : null}
             </div>
           )}
-          {block.detail && (
+          {block.detail && (!collapsible || open) && (
             <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground/75">
               {block.detail}
             </pre>
@@ -2746,11 +2818,12 @@ export function RunTranscriptView({
   presentation = "default",
   hideAssistantMessages = false,
 }: RunTranscriptViewProps) {
-  const blocks = useMemo(() => normalizeTranscript(entries, streaming), [entries, streaming]);
+  const renderableEntries = useMemo(() => filterRenderableTranscriptEntries(entries), [entries]);
+  const blocks = useMemo(() => normalizeTranscript(renderableEntries, streaming), [renderableEntries, streaming]);
   const visibleBlocks = limit ? blocks.slice(-limit) : blocks;
-  const visibleEntries = limit ? entries.slice(-limit) : entries;
+  const visibleEntries = limit ? renderableEntries.slice(-limit) : renderableEntries;
 
-  if (entries.length === 0) {
+  if (renderableEntries.length === 0) {
     return (
       <div className={cn("rounded-2xl border border-dashed border-border/70 bg-background/40 p-4 text-sm text-muted-foreground", className)}>
         {emptyMessage}

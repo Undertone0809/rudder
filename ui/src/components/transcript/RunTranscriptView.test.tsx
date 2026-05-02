@@ -111,6 +111,72 @@ describe("RunTranscriptView", () => {
     });
   });
 
+  it("does not render stderr warning lines or their analytics HTML body", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          entries={[
+            {
+              kind: "stderr",
+              ts: "2026-05-02T08:58:43.000Z",
+              text: "2026-05-02T08:58:43.814979Z  WARN codex_protocol::openai_models: Model personality requested but model_messages is missing, falling back to base instructions. model=gpt-5.5 personality=pragmatic",
+            },
+            {
+              kind: "stderr",
+              ts: "2026-05-02T08:58:57.000Z",
+              text: "2026-05-02T08:58:57.468646Z  WARN codex_analytics::analytics_client: events failed with status 403 Forbidden: <html>",
+            },
+            {
+              kind: "stderr",
+              ts: "2026-05-02T08:58:58.000Z",
+              text: "<body>Enable JavaScript and cookies to continue</body>",
+            },
+            {
+              kind: "stderr",
+              ts: "2026-05-02T08:58:59.000Z",
+              text: "</html>",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-05-02T08:59:00.000Z",
+              text: "Continuing after runtime noise.",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).not.toContain("model_messages is missing");
+    expect(html).not.toContain("Enable JavaScript and cookies");
+    expect(html).toContain("Continuing after runtime noise.");
+  });
+
+  it("collapses long stderr by default while keeping a short summary visible", () => {
+    const longError = [
+      "Error: provider returned a long diagnostic",
+      ...Array.from({ length: 16 }, (_, index) => `stack frame ${index}: very detailed line that should stay folded`),
+    ].join("\n");
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          presentation="detail"
+          entries={[
+            {
+              kind: "stderr",
+              ts: "2026-05-02T08:58:43.000Z",
+              text: longError,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Expand stderr details");
+    expect(html).toContain("Error: provider returned a long diagnostic");
+    expect(html).not.toContain("stack frame 15");
+  });
+
   it("groups chat transcripts into readable progress chunks and keeps tool activity collapsed by default", () => {
     const messageTime = new Date("2026-03-12T00:00:02.000Z").toLocaleTimeString("en-US", {
       hour: "2-digit",
