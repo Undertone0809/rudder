@@ -26,6 +26,7 @@ import {
 import { relativeTime } from "../lib/utils";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList, type IssueViewState } from "../components/IssuesList";
+import { LinearIssueSourceBoard } from "../components/LinearIssueSourceBoard";
 import {
   createIssueCustomView,
   deleteIssueCustomView,
@@ -170,9 +171,13 @@ export function Issues() {
   const queryClient = useQueryClient();
 
   const initialSearch = searchParams.get("q") ?? "";
+  const issueSource = searchParams.get("source") ?? "";
   const issueScope = searchParams.get("scope") ?? "";
   const effectiveIssueScope = issueScope === "recent" ? "" : issueScope;
   const isDraftScope = effectiveIssueScope === "drafts";
+  const isLinearSource = issueSource === "linear" && !isDraftScope;
+  const linearTeamId = searchParams.get("linearTeamId") ?? undefined;
+  const linearProjectId = searchParams.get("linearProjectId") ?? undefined;
   const customViewId = searchParams.get("view") ?? "";
   const projectId = searchParams.get("projectId") ?? undefined;
   const participantAgentId = searchParams.get("participantAgentId") ?? undefined;
@@ -272,8 +277,8 @@ export function Issues() {
   );
 
   useEffect(() => {
-    setBreadcrumbs([{ label: isDraftScope ? "Draft Issues" : "Issue Tracker" }]);
-  }, [isDraftScope, setBreadcrumbs]);
+    setBreadcrumbs([{ label: isDraftScope ? "Draft Issues" : isLinearSource ? "Linear Issues" : "Issue Tracker" }]);
+  }, [isDraftScope, isLinearSource, setBreadcrumbs]);
 
   useEffect(() => {
     const refreshIssueDraftSummaries = () => {
@@ -304,12 +309,12 @@ export function Issues() {
   }, [selectedOrganizationId]);
 
   useEffect(() => {
-    if (!selectedOrganizationId || participantAgentId || isDraftScope || customViewId) return;
+    if (!selectedOrganizationId || participantAgentId || isDraftScope || isLinearSource || customViewId) return;
     rememberIssueNavigation(selectedOrganizationId, {
       scope: effectiveIssueScope || undefined,
       projectId,
     });
-  }, [customViewId, effectiveIssueScope, isDraftScope, participantAgentId, projectId, selectedOrganizationId]);
+  }, [customViewId, effectiveIssueScope, isDraftScope, isLinearSource, participantAgentId, projectId, selectedOrganizationId]);
 
   const issueFilters = useMemo(
     () => getIssueScopeFilters(effectiveIssueScope, currentUserId),
@@ -329,7 +334,7 @@ export function Issues() {
       projectId ?? "__all__",
     ],
     queryFn: () => issuesApi.list(selectedOrganizationId!, { participantAgentId, projectId, ...issueFilters }),
-    enabled: !!selectedOrganizationId && !isDraftScope,
+    enabled: !!selectedOrganizationId && !isDraftScope && !isLinearSource,
   });
   const visibleIssues = useMemo(() => {
     const allIssues = issues ?? [];
@@ -394,6 +399,21 @@ export function Issues() {
           pushToast({ title: "Draft issue deleted", tone: "success" });
         }}
       />
+    );
+  }
+
+  if (isLinearSource) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <LinearIssueSourceBoard
+          orgId={selectedOrganizationId}
+          projects={projects}
+          linearTeamId={linearTeamId}
+          linearProjectId={linearProjectId}
+          initialSearch={initialSearch}
+          onSearchChange={handleSearchChange}
+        />
+      </div>
     );
   }
 

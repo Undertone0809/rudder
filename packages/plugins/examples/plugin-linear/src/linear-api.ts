@@ -24,8 +24,8 @@ const FIXTURE_TEAMS: LinearTeamSummary[] = [
 ];
 
 const FIXTURE_PROJECTS: LinearProjectSummary[] = [
-  { id: "proj-roadmap", name: "Roadmap" },
-  { id: "proj-growth", name: "Growth" },
+  { id: "proj-roadmap", name: "Roadmap", teamIds: ["team-eng"], teams: [FIXTURE_TEAMS[0]!] },
+  { id: "proj-growth", name: "Growth", teamIds: ["team-eng"], teams: [FIXTURE_TEAMS[0]!] },
 ];
 
 const FIXTURE_USERS: LinearUserSummary[] = [
@@ -155,6 +155,18 @@ function normalizeIssue(issue: Record<string, any>): LinearIssueSummary {
       ? {
         id: String(issue.project.id),
         name: String(issue.project.name),
+        teamIds: Array.isArray(issue.project.teams?.nodes)
+          ? issue.project.teams.nodes.map((team: Record<string, any>) => String(team.id))
+          : Array.isArray(issue.project.teamIds)
+            ? issue.project.teamIds.map((teamId: unknown) => String(teamId))
+            : [],
+        teams: Array.isArray(issue.project.teams?.nodes)
+          ? issue.project.teams.nodes.map((team: Record<string, any>) => ({
+            id: String(team.id),
+            key: String(team.key ?? team.name ?? team.id),
+            name: String(team.name),
+          }))
+          : undefined,
       }
       : null,
     assignee: issue.assignee
@@ -302,6 +314,13 @@ export function createLinearApiClient(
             nodes {
               id
               name
+              teams(first: 20) {
+                nodes {
+                  id
+                  key
+                  name
+                }
+              }
             }
           }
           users(first: 100) {
@@ -329,10 +348,26 @@ export function createLinearApiClient(
             }))
             : [],
         })),
-        projects: data.projects.nodes.map((project) => ({
-          id: String(project.id),
-          name: String(project.name),
-        })),
+        projects: data.projects.nodes
+          .map((project) => {
+            const teams: Array<Pick<LinearTeamSummary, "id" | "key" | "name">> = Array.isArray(project.teams?.nodes)
+              ? project.teams.nodes.map((team: Record<string, any>) => ({
+                id: String(team.id),
+                key: String(team.key ?? team.name ?? team.id),
+                name: String(team.name),
+              }))
+              : [];
+            return {
+              id: String(project.id),
+              name: String(project.name),
+              teamIds: teams.map((team) => team.id),
+              teams,
+            };
+          })
+          .filter((project) => {
+            if (!allowedTeamIds?.length || project.teamIds.length === 0) return true;
+            return project.teamIds.some((teamId) => allowedTeamIds.includes(teamId));
+          }),
         users: data.users.nodes
           .filter((user) => user.active !== false)
           .map((user) => ({
@@ -380,6 +415,13 @@ export function createLinearApiClient(
               project {
                 id
                 name
+                teams(first: 20) {
+                  nodes {
+                    id
+                    key
+                    name
+                  }
+                }
               }
               assignee {
                 id
@@ -438,6 +480,13 @@ export function createLinearApiClient(
             project {
               id
               name
+              teams(first: 20) {
+                nodes {
+                  id
+                  key
+                  name
+                }
+              }
             }
             assignee {
               id
