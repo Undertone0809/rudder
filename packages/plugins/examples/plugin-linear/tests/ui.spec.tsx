@@ -685,7 +685,7 @@ describe("@rudderhq/plugin-linear UI", () => {
           createdAt: "2026-04-20T00:00:00.000Z",
           team: { id: "team-1", key: "ENG", name: "Engineering", states: [] },
           state: { id: "state-2", name: "In Progress" },
-          project: { id: "project-1", name: "Roadmap" },
+          project: { id: "project-1", name: "Roadmap", teamIds: ["team-1"] },
           assignee: { id: "user-1", name: "Amy Zhang" },
         },
         staleReason: null,

@@ -30,6 +30,11 @@ describe("@rudderhq/plugin-linear worker", () => {
         });
       }
       if (body.query?.includes("LinearCatalog")) {
+        if (Array.isArray(body.variables?.teamIds)) {
+          return makeJsonResponse({
+            errors: [{ message: "Filtered team catalog query failed" }],
+          });
+        }
         return makeJsonResponse({
           data: {
             teams: {
@@ -45,9 +50,32 @@ describe("@rudderhq/plugin-linear worker", () => {
                     ],
                   },
                 },
+                {
+                  id: "team-ops",
+                  key: "OPS",
+                  name: "Operations",
+                  states: {
+                    nodes: [
+                      { id: "state-ops-backlog", name: "Backlog", type: "backlog" },
+                    ],
+                  },
+                },
               ],
             },
-            projects: { nodes: [{ id: "linear-project", name: "Roadmap" }] },
+            projects: {
+              nodes: [
+                {
+                  id: "linear-project",
+                  name: "Roadmap",
+                  teams: { nodes: [{ id: "team-eng", key: "ENG", name: "Engineering" }] },
+                },
+                {
+                  id: "ops-project",
+                  name: "Operations Queue",
+                  teams: { nodes: [{ id: "team-ops", key: "OPS", name: "Operations" }] },
+                },
+              ],
+            },
             users: { nodes: [{ id: "user-1", name: "Amy Zhang", email: "amy@example.com", active: true }] },
           },
         });
@@ -217,13 +245,41 @@ describe("@rudderhq/plugin-linear worker", () => {
     await plugin.definition.setup(harness.ctx);
 
     const catalog = await harness.getData<SettingsCatalogData>(DATA_KEYS.settingsCatalog, { orgId });
-    expect(catalog.teams).toEqual([
+    expect(catalog.teams).toContainEqual(
       expect.objectContaining({
         id: "team-eng",
         name: "Engineering",
       }),
-    ]);
+    );
     expect(catalog.projects).toContainEqual(expect.objectContaining({ id: "linear-project" }));
+  });
+
+  it("builds the page catalog from the full Linear catalog and filters it by mapped teams", async () => {
+    const harness = createTestHarness({
+      manifest,
+      config: normalizeConfig({
+        apiTokenSecretRef: "linear-token",
+        organizationMappings: [
+          {
+            orgId,
+            teamMappings: [
+              {
+                teamId: "team-eng",
+                teamName: "Engineering",
+                stateMappings: [],
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    await plugin.definition.setup(harness.ctx);
+
+    const catalog = await harness.getData<SettingsCatalogData>(DATA_KEYS.catalog, { orgId });
+    expect(catalog.teams.map((team) => team.id)).toEqual(["team-eng"]);
+    expect(catalog.projects.map((project) => project.id)).toEqual(["linear-project"]);
+    expect(catalog.users.map((user) => user.id)).toEqual(["user-1"]);
   });
 
   it("imports selected issues, skips duplicates, and reports fallback statuses", async () => {

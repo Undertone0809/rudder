@@ -34,7 +34,7 @@ const mockState = vi.hoisted(() => ({
   }>,
   linearCatalog: null as null | {
     orgId: string;
-    projects: Array<{ id: string; name: string }>;
+    projects: Array<{ id: string; name: string; teamIds?: string[] }>;
     teams: Array<{ id: string; name: string }>;
   },
   liveRuns: [] as Array<{
@@ -507,13 +507,13 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const teamLink = document.querySelector<HTMLAnchorElement>("[data-testid='issue-linear-team-team-rudder']");
     expect(teamLink?.textContent).toContain("Rudder");
-    expect(teamLink?.getAttribute("href")).toBe("/linear?linearTeamId=team-rudder");
+    expect(teamLink?.getAttribute("href")).toBe("/issues?source=linear&linearTeamId=team-rudder");
   });
 
-  it("marks a Linear team slice active on the Linear plugin page", () => {
-    mockState.pathname = "/RUD/linear";
-    mockState.relativePath = "/linear";
-    mockState.search = "?linearTeamId=team-rudder";
+  it("marks a Linear team slice active on the issue source board", () => {
+    mockState.pathname = "/RUD/issues";
+    mockState.relativePath = "/issues";
+    mockState.search = "?source=linear&linearTeamId=team-rudder";
     mockState.linearContributions = [{
       pluginId: "plugin-linear",
       pluginKey: "rudder.linear",
@@ -534,6 +534,29 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     const activeLink = document.querySelector<HTMLAnchorElement>("[data-testid='issue-linear-team-team-rudder']");
     expect(activeLink?.getAttribute("aria-current")).toBe("page");
     expect(document.querySelector("[data-testid='issue-linear-sidebar-active-indicator']")).not.toBeNull();
+  });
+
+  it("shows Linear projects under their connected team and routes them into the issue board", () => {
+    mockState.linearContributions = [{
+      pluginId: "plugin-linear",
+      pluginKey: "rudder.linear",
+      displayName: "Linear",
+      version: "0.1.0",
+      uiEntryFile: "index.js",
+      slots: [{ type: "page", routePath: "linear" }],
+      launchers: [],
+    }];
+    mockState.linearCatalog = {
+      orgId: "org-1",
+      projects: [{ id: "project-roadmap", name: "Roadmap", teamIds: ["team-rudder"] }],
+      teams: [{ id: "team-rudder", name: "Rudder" }],
+    };
+
+    renderSidebar();
+
+    const projectLink = document.querySelector<HTMLAnchorElement>("[data-testid='issue-linear-project-project-roadmap']");
+    expect(projectLink?.textContent).toContain("Roadmap");
+    expect(projectLink?.getAttribute("href")).toBe("/issues?source=linear&linearTeamId=team-rudder&linearProjectId=project-roadmap");
   });
 
   it("shows live run counts on issue project rows", () => {

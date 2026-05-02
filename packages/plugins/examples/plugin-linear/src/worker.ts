@@ -18,6 +18,7 @@ import type {
   ImportLinearIssuesActionResult,
   ImportedLinearLink,
   IssueLinkData,
+  LinearCatalog,
   LinearIssueListFilters,
   LinearIssueSummary,
   LinearLinkState,
@@ -75,6 +76,26 @@ function getOrgMapping(config: LinearPluginConfig, orgId: string): LinearOrganiz
 
 function getAllowedTeamIds(mapping: LinearOrganizationMapping): string[] {
   return mapping.teamMappings.map((team) => team.teamId);
+}
+
+function filterCatalogForMapping(catalog: LinearCatalog, mapping: LinearOrganizationMapping): LinearCatalog {
+  const allowedTeamIds = new Set(getAllowedTeamIds(mapping));
+  if (allowedTeamIds.size === 0) {
+    return {
+      teams: [],
+      projects: [],
+      users: [],
+    };
+  }
+
+  return {
+    teams: catalog.teams.filter((team) => allowedTeamIds.has(team.id)),
+    projects: catalog.projects.filter((project) => {
+      if (project.teamIds.length === 0) return true;
+      return project.teamIds.some((teamId) => allowedTeamIds.has(teamId));
+    }),
+    users: catalog.users,
+  };
 }
 
 function sanitizeFilters(
@@ -500,7 +521,7 @@ const plugin = definePlugin({
       const orgId = requireOrgId(params);
       try {
         const { client, mapping } = await resolveLinearClient(ctx, orgId);
-        const catalog = await client.getCatalog(getAllowedTeamIds(mapping));
+        const catalog = filterCatalogForMapping(await client.getCatalog(), mapping);
         return {
           orgId,
           ...catalog,

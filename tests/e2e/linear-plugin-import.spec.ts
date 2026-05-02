@@ -271,11 +271,11 @@ test.describe("Linear plugin import workflow", () => {
 
     const catalog = await pluginData<{
       teams: Array<{ id: string; name: string }>;
-      projects: Array<{ id: string; name: string }>;
+      projects: Array<{ id: string; name: string; teamIds?: string[] }>;
       users: Array<{ id: string; name: string }>;
     }>(request, plugin, "linear-catalog", organization);
     expect(catalog.teams).toContainEqual(expect.objectContaining({ id: "team-eng", name: "Engineering" }));
-    expect(catalog.projects).toContainEqual(expect.objectContaining({ id: "proj-roadmap", name: "Roadmap" }));
+    expect(catalog.projects).toContainEqual(expect.objectContaining({ id: "proj-roadmap", name: "Roadmap", teamIds: ["team-eng"] }));
     expect(catalog.users).toContainEqual(expect.objectContaining({ id: "user-amy", name: "Amy Zhang" }));
 
     await page.goto(`/${organization.issuePrefix}/issues`);
@@ -287,11 +287,11 @@ test.describe("Linear plugin import workflow", () => {
     await expect(roadmapLink).toContainText("Roadmap");
     await expect(roadmapLink).toHaveAttribute(
       "href",
-      new RegExp(`/${organization.issuePrefix}/linear\\?linearProjectId=proj-roadmap$`),
+      new RegExp(`/${organization.issuePrefix}/issues\\?source=linear&linearTeamId=team-eng&linearProjectId=proj-roadmap$`),
     );
     await roadmapLink.click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/linear\\?linearProjectId=proj-roadmap$`));
-    await expect(page.locator("#linear-project-filter")).toHaveValue("proj-roadmap");
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues\\?source=linear&linearTeamId=team-eng&linearProjectId=proj-roadmap$`));
+    await expect(page.getByTestId("linear-source-board")).toContainText("Roadmap");
 
     const filtered = await pluginData<{
       rows: LinearIssueRow[];

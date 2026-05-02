@@ -33,6 +33,8 @@ export type LinearUserSummary = {
 export type LinearProjectSummary = {
   id: string;
   name: string;
+  teamIds: string[];
+  teams?: Array<Pick<LinearTeamSummary, "id" | "key" | "name">>;
 };
 
 export type LinearStateSummary = {
