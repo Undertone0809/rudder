@@ -345,6 +345,7 @@ export function CommentThread({
   const [reassignTarget, setReassignTarget] = useState(effectiveSuggestedAssigneeValue);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const editorRef = useRef<MarkdownEditorRef>(null);
+  const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
@@ -518,13 +519,15 @@ export function CommentThread({
 
       {liveRunSlot}
 
-      <div className="space-y-2">
+      <div ref={composerSurfaceRef} className="space-y-2">
         <MarkdownEditor
           ref={editorRef}
           value={body}
           onChange={setBody}
           placeholder="Leave a comment..."
           mentions={mentions}
+          mentionMenuAnchorRef={composerSurfaceRef}
+          mentionMenuPlacement="container"
           onSubmit={handleSubmit}
           imageUploadHandler={imageUploadHandler}
           contentClassName="min-h-[60px] text-sm"

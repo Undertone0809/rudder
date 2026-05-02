@@ -42,6 +42,7 @@ import {
 } from "../lib/mention-chips";
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
 import { mentionDeletionPlugin } from "../lib/mention-deletion";
+import { mentionTokenPlugin } from "../lib/mention-token-node";
 import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
@@ -136,6 +137,61 @@ function getLastCaretTarget(node: Node): CaretTarget {
   }
 
   return { kind: "inside", node, offset: node.childNodes.length };
+}
+
+function placeCaretNearInlineToken(token: HTMLElement, clientX: number) {
+  const editable = token.closest('[contenteditable="true"]');
+  if (!(editable instanceof HTMLElement)) return;
+
+  editable.focus();
+
+  const selection = window.getSelection();
+  if (!selection) return;
+
+  const rect = token.getBoundingClientRect();
+  const range = document.createRange();
+  if (clientX < rect.left + rect.width / 2) {
+    range.setStartBefore(token);
+  } else {
+    range.setStartAfter(token);
+  }
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function closestAtomicInlineToken(target: EventTarget | null): HTMLElement | null {
+  const element = target instanceof HTMLElement
+    ? target
+    : target instanceof Node
+      ? target.parentElement
+      : null;
+  if (!element) return null;
+  const token = element.closest("[data-skill-token='true'], [data-mention-kind]");
+  return token instanceof HTMLElement ? token : null;
+}
+
+type AtomicInlineTokenEvent = {
+  target: EventTarget | null;
+  nativeEvent: Event & { stopImmediatePropagation?: () => void };
+  preventDefault: () => void;
+  stopPropagation: () => void;
+  clientX?: number;
+};
+
+function stopAtomicInlineTokenEvent(
+  event: AtomicInlineTokenEvent,
+  options: { placeCaret?: boolean } = {},
+) {
+  const token = closestAtomicInlineToken(event.target);
+  if (!token) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  event.nativeEvent.stopImmediatePropagation?.();
+  if (options.placeCaret && typeof event.clientX === "number") {
+    placeCaretNearInlineToken(token, event.clientX);
+  }
+  return true;
 }
 
 /* ---- Mention detection helpers ---- */
@@ -616,6 +672,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       tablePlugin(),
       linkPlugin({ validateUrl: isSafeMarkdownLinkUrl }),
       linkDialogPlugin(),
+      mentionTokenPlugin(),
       skillTokenPlugin(),
       mentionDeletionPlugin(),
       thematicBreakPlugin(),
@@ -968,21 +1025,20 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         dragDepthRef.current += 1;
         setIsDragOver(true);
       }}
+      onPointerDownCapture={(event) => {
+        stopAtomicInlineTokenEvent(event, { placeCaret: true });
+      }}
       onMouseDownCapture={(event) => {
-        const target = event.target;
-        if (!(target instanceof HTMLElement)) return;
-        const skillToken = target.closest("[data-skill-token='true']");
-        if (!skillToken) return;
-        event.preventDefault();
-        event.stopPropagation();
+        stopAtomicInlineTokenEvent(event, { placeCaret: true });
+      }}
+      onPointerUpCapture={(event) => {
+        stopAtomicInlineTokenEvent(event);
+      }}
+      onMouseUpCapture={(event) => {
+        stopAtomicInlineTokenEvent(event);
       }}
       onClickCapture={(event) => {
-        const target = event.target;
-        if (!(target instanceof HTMLElement)) return;
-        const skillToken = target.closest("[data-skill-token='true']");
-        if (!skillToken) return;
-        event.preventDefault();
-        event.stopPropagation();
+        stopAtomicInlineTokenEvent(event);
       }}
       onDoubleClickCapture={(event) => {
         const target = event.target;

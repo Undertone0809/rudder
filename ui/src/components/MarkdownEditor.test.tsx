@@ -71,6 +71,10 @@ vi.mock("../lib/mention-deletion", () => ({
   mentionDeletionPlugin: () => ({}),
 }));
 
+vi.mock("../lib/mention-token-node", () => ({
+  mentionTokenPlugin: () => ({}),
+}));
+
 vi.mock("../lib/skill-reference", () => ({
   applySkillTokenDecoration: vi.fn(),
   clearSkillTokenDecoration: vi.fn(),

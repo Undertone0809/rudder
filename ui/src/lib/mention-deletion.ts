@@ -13,6 +13,7 @@ import {
   type PointType,
 } from "lexical";
 import { parseMentionChipHref } from "./mention-chips";
+import { $isMentionTokenNode, MentionTokenNode } from "./mention-token-node";
 import { $isSkillTokenNode, SkillTokenNode } from "./skill-token-node";
 
 export type MentionDeletionDirection = "backward" | "forward";
@@ -21,18 +22,22 @@ function isMentionLinkNode(node: LexicalNode | null | undefined): node is LinkNo
   return Boolean(node && $isLinkNode(node) && parseMentionChipHref(node.getURL()));
 }
 
+function isMentionTokenNode(node: LexicalNode | null | undefined): node is MentionTokenNode {
+  return Boolean(node && $isMentionTokenNode(node));
+}
+
 function isSkillTokenNode(node: LexicalNode | null | undefined): node is SkillTokenNode {
   return Boolean(node && $isSkillTokenNode(node));
 }
 
-function isAtomicInlineNode(node: LexicalNode | null | undefined): node is LinkNode | SkillTokenNode {
-  return isMentionLinkNode(node) || isSkillTokenNode(node);
+function isAtomicInlineNode(node: LexicalNode | null | undefined): node is LinkNode | MentionTokenNode | SkillTokenNode {
+  return isMentionLinkNode(node) || isMentionTokenNode(node) || isSkillTokenNode(node);
 }
 
 function findAtomicInlineNodeInSubtree(
   node: LexicalNode | null | undefined,
   direction: MentionDeletionDirection,
-): LinkNode | SkillTokenNode | null {
+): LinkNode | MentionTokenNode | SkillTokenNode | null {
   if (!node) return null;
   if (isAtomicInlineNode(node)) return node;
   if (!$isElementNode(node)) return null;
@@ -50,7 +55,7 @@ function findAtomicInlineNodeInSubtree(
   return null;
 }
 
-function findMentionLinkNode(node: LexicalNode | null | undefined): LinkNode | SkillTokenNode | null {
+function findMentionLinkNode(node: LexicalNode | null | undefined): LinkNode | MentionTokenNode | SkillTokenNode | null {
   if (!node) return null;
   if (isAtomicInlineNode(node)) return node;
 
@@ -63,7 +68,10 @@ function findMentionLinkNode(node: LexicalNode | null | undefined): LinkNode | S
   return null;
 }
 
-function findMentionLinkNodeAtPoint(point: PointType, direction: MentionDeletionDirection): LinkNode | SkillTokenNode | null {
+function findMentionLinkNodeAtPoint(
+  point: PointType,
+  direction: MentionDeletionDirection,
+): LinkNode | MentionTokenNode | SkillTokenNode | null {
   const node = point.getNode();
   const directMention = findMentionLinkNode(node);
   if (directMention) return directMention;
@@ -87,7 +95,9 @@ function findMentionLinkNodeAtPoint(point: PointType, direction: MentionDeletion
   return null;
 }
 
-export function findMentionLinkForDeletion(direction: MentionDeletionDirection): LinkNode | SkillTokenNode | null {
+export function findMentionLinkForDeletion(
+  direction: MentionDeletionDirection,
+): LinkNode | MentionTokenNode | SkillTokenNode | null {
   const selection = $getSelection();
   if (!selection) return null;
 

@@ -47,4 +47,24 @@ describe("getMentionAwareLinkNodeInit", () => {
 
     expect(created).toBeInstanceOf(MentionAwareLinkNode);
   });
+
+  it("keeps all internal mention URL schemes intact", () => {
+    const editor = createTestEditor();
+    let sanitized: string[] = [];
+
+    editor.update(() => {
+      const node = new MentionAwareLinkNode();
+      sanitized = [
+        node.sanitizeUrl("agent://agent-123"),
+        node.sanitizeUrl("project://project-123?c=336699"),
+        node.sanitizeUrl("issue://issue-123?r=RUD-123"),
+      ];
+    });
+
+    expect(sanitized).toEqual([
+      "agent://agent-123",
+      "project://project-123?c=336699",
+      "issue://issue-123?r=RUD-123",
+    ]);
+  });
 });

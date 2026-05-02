@@ -10,6 +10,7 @@ import {
   $isRangeSelection,
 } from "lexical";
 import { deleteSelectedMentionChip } from "./mention-deletion";
+import { $createMentionTokenNode, MentionTokenNode } from "./mention-token-node";
 import { $createSkillTokenNode, SkillTokenNode } from "./skill-token-node";
 
 const SKILL_TOKEN_HREF = "/workspace/.agents/skills/build-advisor/SKILL.md";
@@ -18,7 +19,7 @@ const SKILL_TOKEN_LABEL = "rudder/build-advisor";
 function createTestEditor() {
   return createEditor({
     namespace: "mention-deletion-test",
-    nodes: [LinkNode, SkillTokenNode],
+    nodes: [LinkNode, MentionTokenNode, SkillTokenNode],
     onError(error: Error) {
       throw error;
     },
@@ -110,6 +111,35 @@ describe("mention deletion", () => {
       expect($isRangeSelection(selection)).toBe(true);
       if (!$isRangeSelection(selection)) {
         throw new Error("Expected range selection after backward skill deletion");
+      }
+      expect(selection.isCollapsed()).toBe(true);
+      expect(selection.anchor.getNode().is(before)).toBe(true);
+      expect(selection.anchor.offset).toBe(before.getTextContentSize());
+    });
+  });
+
+  it("removes the full mention token when backspacing from the token edge", () => {
+    const editor = createTestEditor();
+
+    editor.update(() => {
+      const root = $getRoot();
+      const paragraph = $createParagraphNode();
+      const before = $createTextNode("Hello ");
+      const mention = $createMentionTokenNode("Dylan", buildAgentMentionHref("agent-123", "code"));
+      const after = $createTextNode(" world");
+
+      paragraph.append(before, mention, after);
+      root.append(paragraph);
+
+      mention.selectEnd();
+
+      expect(deleteSelectedMentionChip("backward")).toBe(true);
+      expect(root.getTextContent()).toBe("Hello  world");
+
+      const selection = $getSelection();
+      expect($isRangeSelection(selection)).toBe(true);
+      if (!$isRangeSelection(selection)) {
+        throw new Error("Expected range selection after backward mention-token deletion");
       }
       expect(selection.isCollapsed()).toBe(true);
       expect(selection.anchor.getNode().is(before)).toBe(true);
