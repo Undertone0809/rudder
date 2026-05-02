@@ -10,6 +10,7 @@ import {
   Loader2,
   MessageSquare,
   MoreHorizontal,
+  PanelLeftClose,
   PencilLine,
   Pin,
   PinOff,
@@ -58,15 +59,28 @@ function ContextColumnHeader({
   title: string;
   description: string;
 }) {
+  const { isMobile, setSidebarOpen } = useSidebar();
+
   return (
     <header
       data-testid="workspace-context-header"
-      className="workspace-card-header workspace-context-header desktop-chrome desktop-window-drag flex shrink-0 items-center px-4 py-3"
+      className="workspace-card-header workspace-context-header desktop-chrome desktop-window-drag flex shrink-0 items-center justify-between gap-3 px-4 py-3"
     >
       <div className="min-w-0">
         <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">{title}</h2>
         <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{description}</p>
       </div>
+      {!isMobile ? (
+        <button
+          type="button"
+          aria-label="Collapse workspace sidebar"
+          title="Collapse workspace sidebar"
+          className="desktop-window-no-drag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground"
+          onClick={() => setSidebarOpen(false)}
+        >
+          <PanelLeftClose className="h-4 w-4" />
+        </button>
+      ) : null}
     </header>
   );
 }

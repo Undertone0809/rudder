@@ -315,6 +315,48 @@ test.describe("Workspace shell", () => {
     });
   });
 
+  test("collapses and reopens the desktop workspace context sidebar", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Workspace-Shell-Collapse-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Collapsible Sidebar Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string; urlKey?: string | null };
+
+    await gotoOrganizationPath(page, organization, `/agents/${agent.urlKey ?? agent.id}/dashboard`);
+
+    const contextCard = page.getByTestId("workspace-context-card");
+    const collapseButton = page.getByRole("button", { name: "Collapse workspace sidebar" });
+    await expect(contextCard).toBeVisible();
+    await expect(collapseButton).toBeVisible();
+
+    await collapseButton.click();
+
+    await expect(contextCard).toHaveCount(0);
+    await expect(page.getByTestId("workspace-column-resizer")).toHaveCount(0);
+    const openButton = page.getByRole("button", { name: "Open workspace sidebar" });
+    await expect(openButton).toBeVisible();
+
+    await openButton.click();
+
+    await expect(contextCard).toBeVisible();
+    await expect(collapseButton).toBeVisible();
+  });
+
   test("renders projects inside the org workspace shell", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {

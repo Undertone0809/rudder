@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { CircleHelp, Menu, Plus, Search } from "lucide-react";
+import { CircleHelp, Menu, PanelLeftOpen, Plus, Search } from "lucide-react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useOrganization } from "../context/OrganizationContext";
@@ -50,7 +50,7 @@ export function BreadcrumbBar({
 }: BreadcrumbBarProps = {}) {
   const { t } = useI18n();
   const { breadcrumbs, headerActions } = useBreadcrumbs();
-  const { toggleSidebar, isMobile } = useSidebar();
+  const { sidebarOpen, setSidebarOpen, toggleSidebar, isMobile } = useSidebar();
   const { selectedOrganizationId, selectedOrganization } = useOrganization();
   const { openNewIssue, openNewProject } = useDialog();
   const location = useLocation();
@@ -146,6 +146,18 @@ export function BreadcrumbBar({
       <Menu className="h-5 w-5" />
     </Button>
   );
+  const openWorkspaceSidebarButton = !isMobile && variant === "card" && sidebarOpen === false ? (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      className="desktop-window-no-drag shrink-0 text-muted-foreground hover:text-foreground"
+      onClick={() => setSidebarOpen(true)}
+      aria-label="Open workspace sidebar"
+      title="Open workspace sidebar"
+    >
+      <PanelLeftOpen className="h-4 w-4" />
+    </Button>
+  ) : null;
 
   const shellHeaderBaseClass = "surface-shell";
   const cardHeaderBaseClass = "workspace-card-header workspace-main-header";
@@ -168,8 +180,24 @@ export function BreadcrumbBar({
     return null;
   }, [relativePath]);
 
-  if (hideMessengerMainHeader || hideAgentDetailMainHeader) {
+  if ((hideMessengerMainHeader || hideAgentDetailMainHeader) && !openWorkspaceSidebarButton) {
     return null;
+  }
+
+  if (hideMessengerMainHeader || hideAgentDetailMainHeader) {
+    return (
+      <div
+        className={cn(
+          headerSurfaceClass,
+          "flex h-12 shrink-0 items-center px-4 md:px-4",
+          draggableClass,
+        )}
+      >
+        {openWorkspaceSidebarButton}
+        <div className="desktop-window-drag hidden min-h-full flex-1 md:block" />
+        {trailingToolbar}
+      </div>
+    );
   }
 
   if (threeColumnTitle) {
@@ -187,6 +215,7 @@ export function BreadcrumbBar({
         )}
       >
         {menuButton}
+        {openWorkspaceSidebarButton}
         <div className="min-w-0 shrink-0">
           <h1 className="truncate text-[15px] font-semibold tracking-tight text-foreground">{threeColumnTitle}</h1>
         </div>
@@ -235,6 +264,7 @@ export function BreadcrumbBar({
           draggableClass,
         )}
       >
+        {openWorkspaceSidebarButton}
         {desktopChrome ? <div className="desktop-window-drag hidden min-h-full flex-1 md:block" /> : null}
         {trailingToolbar}
       </div>
@@ -258,6 +288,7 @@ export function BreadcrumbBar({
         )}
       >
         {menuButton}
+        {openWorkspaceSidebarButton}
         <div className="min-w-0 overflow-hidden flex-1">
           {variant === "card" ? null : (
             <div className="text-[10px] font-medium text-muted-foreground/75">{t("common.workspace")}</div>
@@ -311,6 +342,7 @@ export function BreadcrumbBar({
       )}
     >
       {menuButton}
+      {openWorkspaceSidebarButton}
       <div className="min-w-0 overflow-hidden flex-1">
         <Breadcrumb className="min-w-0 overflow-hidden">
           <BreadcrumbList className="flex-nowrap">

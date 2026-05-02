@@ -17,6 +17,7 @@ const mockState = vi.hoisted(() => ({
   navigate: vi.fn(),
   pushToast: vi.fn(),
   setSidebarOpen: vi.fn(),
+  isMobile: true,
   pathname: "/RUD/issues",
   search: "",
   relativePath: "/issues",
@@ -117,7 +118,7 @@ vi.mock("@/context/OrganizationContext", () => ({
 
 vi.mock("@/context/SidebarContext", () => ({
   useSidebar: () => ({
-    isMobile: true,
+    isMobile: mockState.isMobile,
     setSidebarOpen: mockState.setSidebarOpen,
   }),
 }));
@@ -202,6 +203,7 @@ beforeEach(() => {
   mockState.navigate.mockReset();
   mockState.pushToast.mockReset();
   mockState.setSidebarOpen.mockReset();
+  mockState.isMobile = true;
   mockState.pathname = "/RUD/issues";
   mockState.search = "";
   mockState.relativePath = "/issues";
@@ -235,6 +237,21 @@ function renderSidebar() {
 }
 
 describe("ThreeColumnContextSidebar issue draft recovery", () => {
+  it("collapses the desktop workspace sidebar from the context header", () => {
+    mockState.isMobile = false;
+
+    renderSidebar();
+
+    const collapseButton = document.querySelector("[aria-label='Collapse workspace sidebar']") as HTMLButtonElement | null;
+    expect(collapseButton).not.toBeNull();
+
+    act(() => {
+      collapseButton?.click();
+    });
+
+    expect(mockState.setSidebarOpen).toHaveBeenCalledWith(false);
+  });
+
   it("shows the following issues scope in the issues sidebar", () => {
     renderSidebar();
 

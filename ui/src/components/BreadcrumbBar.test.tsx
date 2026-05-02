@@ -1,10 +1,11 @@
 // @vitest-environment node
 
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BreadcrumbBar } from "./BreadcrumbBar";
 
 let pathname = "/RUD/messenger/issues";
+let sidebarOpen = true;
 
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: import("react").ReactNode }) => (
@@ -19,7 +20,7 @@ vi.mock("../context/BreadcrumbContext", () => ({
 }));
 
 vi.mock("../context/SidebarContext", () => ({
-  useSidebar: () => ({ toggleSidebar: vi.fn(), isMobile: false }),
+  useSidebar: () => ({ sidebarOpen, setSidebarOpen: vi.fn(), toggleSidebar: vi.fn(), isMobile: false }),
 }));
 
 vi.mock("../context/OrganizationContext", () => ({
@@ -56,6 +57,11 @@ vi.mock("@/plugins/launchers", () => ({
 }));
 
 describe("BreadcrumbBar", () => {
+  beforeEach(() => {
+    pathname = "/RUD/messenger/issues";
+    sidebarOpen = true;
+  });
+
   it("hides the integrated card header on messenger routes", () => {
     const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
 
@@ -76,5 +82,14 @@ describe("BreadcrumbBar", () => {
     const html = renderToStaticMarkup(<BreadcrumbBar />);
 
     expect(html).toContain("Messenger");
+  });
+
+  it("shows a workspace sidebar opener when hidden card headers are collapsed", () => {
+    sidebarOpen = false;
+    pathname = "/RUD/agents/designlead/configuration";
+
+    const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(html).toContain("Open workspace sidebar");
   });
 });
