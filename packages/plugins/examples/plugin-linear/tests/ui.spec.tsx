@@ -222,6 +222,64 @@ describe("@rudderhq/plugin-linear UI", () => {
     expect(importSelected?.disabled).toBe(false);
   });
 
+  it("initializes Linear page filters from project, team, and query URL params", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/ACME/linear?linearTeamId=team-1&linearProjectId=linear-project-1&q=launch",
+    );
+    mockedUsePluginData.mockImplementation((key: string) => {
+      if (key === "page-bootstrap") {
+        return {
+          data: {
+            configured: true,
+            message: null,
+            projects: [{ id: "project-1", name: "Imported Work" }],
+            teamMappings: [],
+          },
+          loading: false,
+          error: null,
+          refresh: vi.fn(),
+        };
+      }
+      if (key === "linear-catalog") {
+        return {
+          data: {
+            orgId: "org-1",
+            teams: [{ id: "team-1", name: "Engineering", key: "ENG", states: [{ id: "state-1", name: "Backlog" }] }],
+            projects: [{ id: "linear-project-1", name: "Launch" }],
+            users: [],
+          },
+          loading: false,
+          error: null,
+          refresh: vi.fn(),
+        };
+      }
+      return {
+        data: {
+          rows: [],
+          endCursor: null,
+          hasNextPage: false,
+          totalShown: 0,
+        },
+        loading: false,
+        error: null,
+        refresh: vi.fn(),
+      };
+    });
+
+    render(<LinearPluginPage {...makePageProps()} />);
+
+    expect(container.querySelector<HTMLSelectElement>("#linear-team-filter")?.value).toBe("team-1");
+    expect(container.querySelector<HTMLSelectElement>("#linear-project-filter")?.value).toBe("linear-project-1");
+    expect(container.querySelector<HTMLInputElement>("#linear-query-filter")?.value).toBe("launch");
+    expect(mockedUsePluginData).toHaveBeenCalledWith("linear-issues", expect.objectContaining({
+      teamId: "team-1",
+      projectId: "linear-project-1",
+      query: "launch",
+    }));
+  });
+
   it("renders the token-first settings page instead of exposing raw mappings", async () => {
     mockedUsePluginData.mockReturnValue({
       data: {

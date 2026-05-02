@@ -23,6 +23,20 @@ const mockState = vi.hoisted(() => ({
   relativePath: "/issues",
   issues: [] as Array<{ id: string; identifier: string; title: string; status: string; projectId?: string | null }>,
   projects: [] as Array<{ id: string; name: string; archivedAt?: string | null; color?: string | null; urlKey?: string | null }>,
+  linearContributions: [] as Array<{
+    pluginId: string;
+    pluginKey: string;
+    displayName: string;
+    version: string;
+    uiEntryFile: string;
+    slots: Array<{ type: string; routePath?: string }>;
+    launchers: unknown[];
+  }>,
+  linearCatalog: null as null | {
+    orgId: string;
+    projects: Array<{ id: string; name: string }>;
+    teams: Array<{ id: string; name: string }>;
+  },
   liveRuns: [] as Array<{
     id: string;
     agentId: string;
@@ -79,6 +93,12 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (queryKey[0] === "live-runs" && queryKey[1] === "org-1") {
       return { data: mockState.liveRuns, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "plugins" && queryKey[1] === "ui-contributions") {
+      return { data: mockState.linearContributions, isLoading: false, error: null };
+    }
+    if (queryKey[0] === "plugins" && queryKey[1] === "rudder.linear") {
+      return { data: mockState.linearCatalog, isLoading: false, error: null };
     }
     return { data: [], isLoading: false, error: null };
   },
@@ -209,6 +229,8 @@ beforeEach(() => {
   mockState.relativePath = "/issues";
   mockState.issues = [];
   mockState.projects = [];
+  mockState.linearContributions = [];
+  mockState.linearCatalog = null;
   mockState.liveRuns = [];
   vi.stubGlobal("confirm", mockState.confirm);
 });
@@ -456,6 +478,62 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     const row = document.querySelector<HTMLAnchorElement>("[data-testid='issue-custom-view-row-view-1'] a");
     expect(row?.textContent).toContain("Review board");
     expect(row?.getAttribute("href")).toBe("/issues?view=view-1");
+  });
+
+  it("shows connected Linear teams in the issues sidebar when Linear has no projects", () => {
+    mockState.linearContributions = [{
+      pluginId: "plugin-linear",
+      pluginKey: "rudder.linear",
+      displayName: "Linear",
+      version: "0.1.0",
+      uiEntryFile: "index.js",
+      slots: [{ type: "page", routePath: "linear" }],
+      launchers: [],
+    }];
+    mockState.linearCatalog = {
+      orgId: "org-1",
+      projects: [],
+      teams: [
+        { id: "team-zeeland", name: "Zeeland" },
+        { id: "team-rudder", name: "Rudder" },
+      ],
+    };
+
+    renderSidebar();
+
+    const section = document.querySelector("[data-testid='issue-linear-section']");
+    expect(section?.textContent).toContain("Linear");
+    expect(section?.textContent).toContain("External");
+
+    const teamLink = document.querySelector<HTMLAnchorElement>("[data-testid='issue-linear-team-team-rudder']");
+    expect(teamLink?.textContent).toContain("Rudder");
+    expect(teamLink?.getAttribute("href")).toBe("/linear?linearTeamId=team-rudder");
+  });
+
+  it("marks a Linear team slice active on the Linear plugin page", () => {
+    mockState.pathname = "/RUD/linear";
+    mockState.relativePath = "/linear";
+    mockState.search = "?linearTeamId=team-rudder";
+    mockState.linearContributions = [{
+      pluginId: "plugin-linear",
+      pluginKey: "rudder.linear",
+      displayName: "Linear",
+      version: "0.1.0",
+      uiEntryFile: "index.js",
+      slots: [{ type: "page", routePath: "linear" }],
+      launchers: [],
+    }];
+    mockState.linearCatalog = {
+      orgId: "org-1",
+      projects: [],
+      teams: [{ id: "team-rudder", name: "Rudder" }],
+    };
+
+    renderSidebar();
+
+    const activeLink = document.querySelector<HTMLAnchorElement>("[data-testid='issue-linear-team-team-rudder']");
+    expect(activeLink?.getAttribute("aria-current")).toBe("page");
+    expect(document.querySelector("[data-testid='issue-linear-sidebar-active-indicator']")).not.toBeNull();
   });
 
   it("shows live run counts on issue project rows", () => {

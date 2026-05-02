@@ -387,6 +387,18 @@ function pageHref(orgPrefix: string | null, query?: string): string {
   return `${url.pathname}${url.search}`;
 }
 
+function readLinearPageUrlFilters() {
+  if (typeof window === "undefined") {
+    return { query: "", projectId: "", teamId: "" };
+  }
+  const params = new URLSearchParams(window.location.search);
+  return {
+    query: params.get("q") ?? "",
+    projectId: params.get("linearProjectId") ?? "",
+    teamId: params.get("linearTeamId") ?? "",
+  };
+}
+
 type FilterState = {
   teamId: string;
   stateId: string;
@@ -395,11 +407,15 @@ type FilterState = {
   query: string;
 };
 
-function useLinearFilters(initialQuery: string): [FilterState, Dispatch<SetStateAction<FilterState>>] {
+function useLinearFilters(
+  initialQuery: string,
+  initialProjectId = "",
+  initialTeamId = "",
+): [FilterState, Dispatch<SetStateAction<FilterState>>] {
   const [filters, setFilters] = useState<FilterState>({
-    teamId: "",
+    teamId: initialTeamId,
     stateId: "",
-    projectId: "",
+    projectId: initialProjectId,
     assigneeId: "",
     query: initialQuery,
   });
@@ -413,13 +429,11 @@ export function LinearPluginPage({ context }: PluginPageProps) {
   ) => Promise<ImportLinearIssuesActionResult>;
   const orgId = context.orgId ?? "__missing__";
   const orgPrefix = getOrgPrefix(context as unknown as Record<string, unknown>);
-  const initialQuery = typeof window !== "undefined"
-    ? new URLSearchParams(window.location.search).get("q") ?? ""
-    : "";
+  const urlFilters = readLinearPageUrlFilters();
 
   const bootstrap = usePluginData<PageBootstrapData>(DATA_KEYS.pageBootstrap, { orgId });
   const catalog = usePluginData<LinearCatalogData>(DATA_KEYS.catalog, { orgId });
-  const [filters, setFilters] = useLinearFilters(initialQuery);
+  const [filters, setFilters] = useLinearFilters(urlFilters.query, urlFilters.projectId, urlFilters.teamId);
   const [targetProjectId, setTargetProjectId] = useState("");
   const [afterCursor, setAfterCursor] = useState<string | null>(null);
   const [cursorHistory, setCursorHistory] = useState<string[]>([]);
@@ -436,6 +450,24 @@ export function LinearPluginPage({ context }: PluginPageProps) {
     assigneeId: filters.assigneeId || undefined,
     query: filters.query || undefined,
   });
+
+  useEffect(() => {
+    setFilters((current) => {
+      if (
+        current.query === urlFilters.query &&
+        current.projectId === urlFilters.projectId &&
+        current.teamId === urlFilters.teamId
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        query: urlFilters.query,
+        projectId: urlFilters.projectId,
+        teamId: urlFilters.teamId,
+      };
+    });
+  }, [setFilters, urlFilters.projectId, urlFilters.query, urlFilters.teamId]);
 
   const stateOptions = useMemo(() => {
     if (!catalog.data?.teams?.length) return [];

@@ -15,6 +15,7 @@ import {
   DollarSign,
   Eye,
   EyeOff,
+  ExternalLink,
   FolderTree,
   History,
   MessageSquare,
@@ -45,6 +46,7 @@ import { agentsApi } from "@/api/agents";
 import { calendarApi } from "@/api/calendar";
 import { chatsApi } from "@/api/chats";
 import { heartbeatsApi } from "@/api/heartbeats";
+import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
 import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
@@ -83,6 +85,32 @@ import type { CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/share
 
 const RECENT_ISSUES_COLLAPSED_LIMIT = 5;
 const RECENT_ISSUES_EXPANDED_LIMIT = 12;
+const LINEAR_PLUGIN_KEY = "rudder.linear";
+const LINEAR_CATALOG_DATA_KEY = "linear-catalog";
+const LINEAR_PLUGIN_ROUTE_PATH = "linear";
+
+type LinearSidebarItem = {
+  id: string;
+  name: string;
+  kind: "project" | "team";
+};
+
+type LinearSidebarCatalog = {
+  orgId: string;
+  projects: Array<{ id: string; name: string }>;
+  teams: Array<{ id: string; name: string }>;
+};
+
+function resolveLinearPageContribution(contributions: PluginUiContribution[] | undefined) {
+  const contribution = contributions?.find((entry) => entry.pluginKey === LINEAR_PLUGIN_KEY);
+  if (!contribution) return null;
+  const pageSlot = contribution.slots.find((slot) => slot.type === "page");
+  if (!pageSlot) return null;
+  return {
+    pluginId: contribution.pluginId,
+    routePath: pageSlot.routePath || LINEAR_PLUGIN_ROUTE_PATH,
+  };
+}
 
 function SectionLabel({
   children,
@@ -138,7 +166,7 @@ function ContextColumnHeader({
 }
 
 function resolveContextColumnHeader(relativePath: string): { title: string; description: string } {
-  if (/^\/issues(?:\/|$)/.test(relativePath)) {
+  if (/^\/issues(?:\/|$)/.test(relativePath) || /^\/linear(?:\/|$)/.test(relativePath)) {
     return { title: "Issues", description: "Views and project slices" };
   }
   if (/^\/chat(?:\/|$)/.test(relativePath)) {
@@ -662,7 +690,8 @@ export function ThreeColumnContextSidebar() {
   const contextHeader = useMemo(() => resolveContextColumnHeader(relativePath), [relativePath]);
   const isMessengerRoute = /^\/messenger(?:\/|$)/.test(relativePath);
   const isCalendarRoute = /^\/calendar(?:\/|$)/.test(relativePath);
-  const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath);
+  const isLinearPluginRoute = /^\/linear(?:\/|$)/.test(relativePath);
+  const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath) || isLinearPluginRoute;
   const isOrgWorkspaceRoute = /^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const isChatRoute = /^\/chat(?:\/|$)/.test(relativePath);
   const isAgentRoute = !isMessengerRoute && !isIssuesRoute && !isCalendarRoute && !isOrgWorkspaceRoute && !isChatRoute;
@@ -739,6 +768,11 @@ export function ThreeColumnContextSidebar() {
     queryFn: () => issuesApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && isIssuesRoute,
   });
+  const { data: pluginContributions } = useQuery({
+    queryKey: queryKeys.plugins.uiContributions,
+    queryFn: () => pluginsApi.listUiContributions(),
+    enabled: !!selectedOrganizationId && isIssuesRoute,
+  });
   const { data: calendarCompletedIssues } = useQuery({
     queryKey: ["calendar", selectedOrganizationId ?? "__none__", "completed-issue-heatmap"],
     queryFn: () => issuesApi.list(selectedOrganizationId!, { status: "done" }),
@@ -749,6 +783,8 @@ export function ThreeColumnContextSidebar() {
   const scope = rawScope === "recent" ? "" : rawScope;
   const activeCustomViewId = new URLSearchParams(location.search).get("view") ?? "";
   const selectedProjectId = new URLSearchParams(location.search).get("projectId") ?? "";
+  const selectedLinearProjectId = new URLSearchParams(location.search).get("linearProjectId") ?? "";
+  const selectedLinearTeamId = new URLSearchParams(location.search).get("linearTeamId") ?? "";
   const activeConversationId = activeConversationIdFromPath(location.pathname);
   const activeAgentRef = location.pathname.match(/\/agents\/([^/]+)/)?.[1] ?? null;
   const activeProjectRef = location.pathname.match(/\/projects\/([^/]+)/)?.[1] ?? null;
@@ -758,6 +794,37 @@ export function ThreeColumnContextSidebar() {
     () => (projects ?? []).filter((project) => !project.archivedAt),
     [projects],
   );
+  const linearPageContribution = useMemo(
+    () => resolveLinearPageContribution(pluginContributions),
+    [pluginContributions],
+  );
+  const { data: linearCatalog } = useQuery({
+    queryKey: [
+      "plugins",
+      LINEAR_PLUGIN_KEY,
+      "catalog",
+      selectedOrganizationId ?? "__none__",
+      linearPageContribution?.pluginId ?? "__none__",
+    ] as const,
+    queryFn: async () => {
+      const response = await pluginsApi.bridgeGetData(
+        linearPageContribution!.pluginId,
+        LINEAR_CATALOG_DATA_KEY,
+        { orgId: selectedOrganizationId! },
+        selectedOrganizationId,
+      );
+      return response.data as LinearSidebarCatalog;
+    },
+    enabled: !!selectedOrganizationId && !!linearPageContribution?.pluginId && isIssuesRoute,
+  });
+  const linearSidebarItems = useMemo<LinearSidebarItem[]>(() => {
+    const projects = linearCatalog?.projects ?? [];
+    const teams = linearCatalog?.teams ?? [];
+    const source = projects.length > 0
+      ? projects.map((project) => ({ ...project, kind: "project" as const }))
+      : teams.map((team) => ({ ...team, kind: "team" as const }));
+    return [...source].sort((a, b) => a.name.localeCompare(b.name));
+  }, [linearCatalog?.projects, linearCatalog?.teams]);
   const visibleAgents = useMemo(
     () => (agents ?? []).filter((agent) => agent.status !== "terminated").sort((a, b) => a.name.localeCompare(b.name)),
     [agents],
@@ -829,6 +896,9 @@ export function ThreeColumnContextSidebar() {
     const routeRef = projectRouteRef(project);
     return selectedProjectId === project.id || activeProjectRef === routeRef;
   });
+  const issueLinearActiveIndex = linearSidebarItems.findIndex((item) =>
+    item.kind === "project" ? selectedLinearProjectId === item.id : selectedLinearTeamId === item.id,
+  );
   const orgContextItems = [
     { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
     { key: "resources", to: "/resources", icon: Boxes, label: "Resources", active: /^\/resources(?:\/|$)/.test(relativePath) },
@@ -1243,6 +1313,55 @@ export function ThreeColumnContextSidebar() {
               );
             })}
           </SlidingContextNav>
+          {linearSidebarItems.length > 0 ? (
+            <>
+              <SectionLabel
+                testId="issue-linear-section"
+                action={(
+                  <span
+                    title="External source"
+                    className="inline-flex items-center gap-1 rounded-[calc(var(--radius-sm)-2px)] border border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-muted-foreground/78"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    External
+                  </span>
+                )}
+              >
+                Linear
+              </SectionLabel>
+              <SlidingContextNav
+                activeIndex={issueLinearActiveIndex}
+                ariaLabel="Linear issue source slices"
+                className="mt-2"
+                indicatorTestId="issue-linear-sidebar-active-indicator"
+              >
+                {linearSidebarItems.map((item) => {
+                  const active = item.kind === "project"
+                    ? selectedLinearProjectId === item.id
+                    : selectedLinearTeamId === item.id;
+                  const paramName = item.kind === "project" ? "linearProjectId" : "linearTeamId";
+                  return (
+                    <Link
+                      key={`${item.kind}-${item.id}`}
+                      to={`/${linearPageContribution?.routePath ?? LINEAR_PLUGIN_ROUTE_PATH}?${paramName}=${encodeURIComponent(item.id)}`}
+                      onClick={closeMobileSidebar}
+                      data-testid={`issue-linear-${item.kind}-${item.id}`}
+                      aria-current={active ? "page" : undefined}
+                      className={cn(
+                        "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                        active
+                          ? "font-medium text-foreground"
+                          : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
+                      )}
+                    >
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-[calc(var(--radius-sm)-4px)] border border-[color:color-mix(in_oklab,var(--muted-foreground)_54%,transparent)] bg-[color:color-mix(in_oklab,var(--muted-foreground)_18%,transparent)]" />
+                      <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                    </Link>
+                  );
+                })}
+              </SlidingContextNav>
+            </>
+          ) : null}
         </div>
       </aside>
     );
