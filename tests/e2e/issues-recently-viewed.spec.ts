@@ -39,38 +39,45 @@ async function createProject(page: Page, orgId: string, name: string) {
 }
 
 test.describe("Issues recently viewed sidebar", () => {
-  test("saves custom issue boards and removes the old starred sidebar view", async ({ page }) => {
-    const organization = await createOrganization(page, "Issues-Custom-Boards");
-    await createIssue(page, organization.id, "Custom board visible issue");
+  test("does not expose custom issue board controls or saved custom boards", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-No-Custom-Boards");
+    await createIssue(page, organization.id, "Visible issue");
 
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+      window.localStorage.setItem(`rudder:issue-custom-views:${orgId}`, JSON.stringify([
+        {
+          id: "view-1",
+          orgId,
+          name: "Review board",
+          state: {
+            statuses: ["todo"],
+            priorities: [],
+            assignees: [],
+            labels: [],
+            projects: [],
+            displayProperties: ["identifier"],
+            sortField: "updated",
+            sortDir: "desc",
+            groupBy: "none",
+            viewMode: "board",
+            collapsedGroups: [],
+          },
+          createdAt: "2026-04-30T01:00:00.000Z",
+          updatedAt: "2026-04-30T01:00:00.000Z",
+        },
+      ]));
     }, organization.id);
 
-    await page.goto("/issues");
+    await page.goto("/issues?view=view-1");
 
     await expect(page.getByRole("link", { name: /Starred/ })).toHaveCount(0);
-
-    page.once("dialog", async (dialog) => {
-      expect(dialog.message()).toBe("Name this board");
-      await dialog.accept("Review board");
-    });
-    await page.getByRole("button", { name: /Save board/ }).click();
-
-    await expect(page).toHaveURL(/\/issues\?view=/);
-    await expect(page.getByTestId("issue-custom-views-section")).toContainText("Custom Boards");
-    await expect(page.getByRole("link", { name: /Review board/ })).toBeVisible();
-    await expect(page.getByTestId("issues-view-toolbar")).toContainText("Review board");
-
-    page.once("dialog", async (dialog) => {
-      expect(dialog.message()).toBe('Delete custom board "Review board"? This cannot be undone.');
-      await dialog.accept();
-    });
-    await page.getByLabel("Delete custom board Review board").click();
-
     await expect(page).toHaveURL(/\/issues$/);
+    await expect(page.getByRole("button", { name: /Save board/ })).toHaveCount(0);
+    await expect(page.getByTestId("issue-custom-views-section")).toHaveCount(0);
     await expect(page.getByRole("link", { name: /Review board/ })).toHaveCount(0);
+    await expect(page.getByTestId("issues-view-toolbar")).toContainText("Issues");
   });
 
   test("shows current-org recent issues in the sidebar without turning recent into a main view", async ({ page }) => {

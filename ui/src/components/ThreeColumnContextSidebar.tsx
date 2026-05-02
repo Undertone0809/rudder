@@ -10,7 +10,6 @@ import {
   ChevronUp,
   Circle,
   Clock3,
-  Columns3,
   Copy,
   DollarSign,
   Eye,
@@ -27,7 +26,6 @@ import {
   Plus,
   Settings2,
   Target,
-  Trash2,
   UserRound,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@/lib/router";
@@ -55,12 +53,6 @@ import {
   recordRecentIssue,
   resolveRecentIssues,
 } from "@/lib/recent-issues";
-import {
-  deleteIssueCustomView,
-  ISSUE_CUSTOM_VIEWS_CHANGED_EVENT,
-  readIssueCustomViews,
-  type IssueCustomView,
-} from "@/lib/issue-custom-views";
 import { isFollowingIssue } from "@/lib/issue-scope-filters";
 import {
   ISSUE_DRAFT_CHANGED_EVENT,
@@ -584,77 +576,6 @@ function RecentIssueListSection({
   );
 }
 
-function CustomIssueViewsSection({
-  views,
-  activeViewId,
-  closeMobileSidebar,
-  onDeleteView,
-}: {
-  views: IssueCustomView[];
-  activeViewId: string;
-  closeMobileSidebar: () => void;
-  onDeleteView: (view: IssueCustomView) => void;
-}) {
-  if (views.length === 0) return null;
-
-  const activeIndex = views.findIndex((view) => view.id === activeViewId);
-
-  return (
-    <section aria-label="Custom issue boards" className="mt-1">
-      <SectionLabel testId="issue-custom-views-section">Custom Boards</SectionLabel>
-      <SlidingContextNav
-        activeIndex={activeIndex}
-        ariaLabel="Custom issue boards"
-        className="mt-2"
-        indicatorTestId="issue-custom-view-sidebar-active-indicator"
-      >
-        {views.map((view) => {
-          const active = view.id === activeViewId;
-          return (
-            <div
-              key={view.id}
-              data-testid={`issue-custom-view-row-${view.id}`}
-              className={cn(
-                "group/custom-view relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center rounded-[calc(var(--radius-sm)-1px)] border border-transparent text-sm transition-[background-color,border-color,color]",
-                active
-                  ? "font-medium text-foreground"
-                  : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
-              )}
-            >
-              <Link
-                to={`/issues?view=${encodeURIComponent(view.id)}`}
-                onClick={closeMobileSidebar}
-                className="flex min-w-0 flex-1 items-center gap-3 self-stretch py-2 pl-3 pr-1 no-underline text-inherit"
-                aria-current={active ? "page" : undefined}
-              >
-                <Columns3 className="h-4 w-4 shrink-0" />
-                <span className="truncate">{view.name}</span>
-              </Link>
-              <button
-                type="button"
-                aria-label={`Delete custom board ${view.name}`}
-                title="Delete custom board"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onDeleteView(view);
-                }}
-                className={cn(
-                  "mr-2 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground transition-[opacity,background-color,color]",
-                  "hover:bg-[color:color-mix(in_oklab,var(--destructive)_14%,transparent)] hover:text-destructive",
-                  "opacity-100 md:opacity-0 md:group-hover/custom-view:opacity-100 md:group-focus-within/custom-view:opacity-100",
-                )}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          );
-        })}
-      </SlidingContextNav>
-    </section>
-  );
-}
-
 export function ThreeColumnContextSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -747,7 +668,6 @@ export function ThreeColumnContextSidebar() {
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   const rawScope = new URLSearchParams(location.search).get("scope") ?? "";
   const scope = rawScope === "recent" ? "" : rawScope;
-  const activeCustomViewId = new URLSearchParams(location.search).get("view") ?? "";
   const selectedProjectId = new URLSearchParams(location.search).get("projectId") ?? "";
   const activeConversationId = activeConversationIdFromPath(location.pathname);
   const activeAgentRef = location.pathname.match(/\/agents\/([^/]+)/)?.[1] ?? null;
@@ -789,7 +709,6 @@ export function ThreeColumnContextSidebar() {
   const [googleExpanded, setGoogleExpanded] = useState(true);
   const [issueDraftSummaries, setIssueDraftSummaries] = useState(() => summarizeIssueDrafts(selectedOrganizationId));
   const [recentIssueIds, setRecentIssueIds] = useState<string[]>(() => readRecentIssueIds(selectedOrganizationId));
-  const [customIssueViews, setCustomIssueViews] = useState<IssueCustomView[]>(() => readIssueCustomViews(selectedOrganizationId));
   const recentIssueRefs = useMemo(
     () => resolveRecentIssues(recentIssueIds, allIssues ?? []),
     [allIssues, recentIssueIds],
@@ -804,7 +723,7 @@ export function ThreeColumnContextSidebar() {
       to: "/issues",
       icon: Circle,
       label: "All Issues",
-      active: scope === "" && !selectedProjectId && !activeCustomViewId,
+      active: scope === "" && !selectedProjectId,
     },
     ...(issueDraftSummaries.length > 0
       ? [{
@@ -890,20 +809,6 @@ export function ThreeColumnContextSidebar() {
     };
   }, [selectedOrganizationId]);
 
-  useEffect(() => {
-    const refreshCustomIssueViews = () => {
-      setCustomIssueViews(readIssueCustomViews(selectedOrganizationId));
-    };
-    refreshCustomIssueViews();
-    if (typeof window === "undefined") return;
-    window.addEventListener(ISSUE_CUSTOM_VIEWS_CHANGED_EVENT, refreshCustomIssueViews);
-    window.addEventListener("storage", refreshCustomIssueViews);
-    return () => {
-      window.removeEventListener(ISSUE_CUSTOM_VIEWS_CHANGED_EVENT, refreshCustomIssueViews);
-      window.removeEventListener("storage", refreshCustomIssueViews);
-    };
-  }, [selectedOrganizationId]);
-
   const closeMobileSidebar = () => {
     if (isMobile) setSidebarOpen(false);
   };
@@ -911,18 +816,6 @@ export function ThreeColumnContextSidebar() {
   const recordRecentIssueOpen = (issue: Issue) => {
     if (!selectedOrganizationId) return;
     setRecentIssueIds(recordRecentIssue(selectedOrganizationId, issue.id, readRecentIssueIds(selectedOrganizationId)));
-  };
-
-  const deleteCustomIssueView = (view: IssueCustomView) => {
-    if (!selectedOrganizationId) return;
-    const confirmed = window.confirm(`Delete custom board "${view.name}"? This cannot be undone.`);
-    if (!confirmed) return;
-    const nextViews = deleteIssueCustomView(selectedOrganizationId, view.id);
-    setCustomIssueViews(nextViews);
-    pushToast({ title: "Custom board deleted", tone: "success" });
-    if (activeCustomViewId === view.id) {
-      navigate("/issues");
-    }
   };
 
   const refreshChatList = async (chatId?: string) => {
@@ -1178,7 +1071,7 @@ export function ThreeColumnContextSidebar() {
         <SectionLabel>Issues</SectionLabel>
         <SlidingContextNav
           activeIndex={activeIssueContextIndex}
-          ariaLabel="Issue views"
+          ariaLabel="Issue navigation"
           className="mt-2"
           indicatorTestId="issue-sidebar-active-indicator"
         >
@@ -1196,12 +1089,6 @@ export function ThreeColumnContextSidebar() {
         </SlidingContextNav>
 
         <div className="min-h-0 flex-1 overflow-y-auto pb-3.5">
-          <CustomIssueViewsSection
-            views={customIssueViews}
-            activeViewId={activeCustomViewId}
-            closeMobileSidebar={closeMobileSidebar}
-            onDeleteView={deleteCustomIssueView}
-          />
           <RecentIssueListSection
             issues={recentIssueRefs}
             activeIssueRef={activeIssueRef}
