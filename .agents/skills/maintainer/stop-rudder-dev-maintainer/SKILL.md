@@ -62,13 +62,13 @@ That flow launches `scripts/dev-shell.mjs`, which in turn manages the local dev 
 From the repo root:
 
 ```bash
-bash .agents/skills/stop-rudder-dev-maintainer/scripts/stop_rudder_dev.sh
+bash .agents/skills/maintainer/stop-rudder-dev-maintainer/scripts/stop_rudder_dev.sh
 ```
 
 Preview only:
 
 ```bash
-bash .agents/skills/stop-rudder-dev-maintainer/scripts/stop_rudder_dev.sh --dry-run
+bash .agents/skills/maintainer/stop-rudder-dev-maintainer/scripts/stop_rudder_dev.sh --dry-run
 ```
 
 If the script prints `No matching Rudder dev processes found.`, stop the skill

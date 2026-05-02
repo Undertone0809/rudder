@@ -150,7 +150,7 @@ If you change a built-in Rudder skill under `server/resources/bundled-skills/<sl
 
 1. Name repo-local development skills with a `maintainer` suffix.
 
-Repository-based agent skills for local development, maintenance, release, debugging, preview, or operational workflows should use a `*-maintainer` name and directory under `.agents/skills/` (for example `release-maintainer`, `stop-rudder-dev-maintainer`, or `pr-local-preview-maintainer`). Keep the directory name, `SKILL.md` frontmatter `name`, and any eval `skill_name` values synchronized.
+Repository-based agent skills for local development, maintenance, release, debugging, preview, or operational workflows should use a `*-maintainer` name and directory under `.agents/skills/maintainer/` (for example `release-maintainer`, `stop-rudder-dev-maintainer`, or `pr-local-preview-maintainer`). Keep the directory name, `SKILL.md` frontmatter `name`, and any eval `skill_name` values synchronized.
 
 1. Keep plan docs dated and centralized.
 

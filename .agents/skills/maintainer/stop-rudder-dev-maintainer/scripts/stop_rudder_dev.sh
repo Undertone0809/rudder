@@ -10,7 +10,7 @@ ALL_PIDS=()
 usage() {
   cat <<'EOF'
 Usage:
-  bash .agents/skills/stop-rudder-dev-maintainer/scripts/stop_rudder_dev.sh [--dry-run] [--force]
+  bash .agents/skills/maintainer/stop-rudder-dev-maintainer/scripts/stop_rudder_dev.sh [--dry-run] [--force]
 
 Behavior:
   - Targets Rudder repo-local dev runtime processes only.

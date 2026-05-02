@@ -47,8 +47,8 @@ server/ui-dist/index.html
 /.agents/*
 !/.agents/skills/
 /.agents/skills/*
-!/.agents/skills/stop-rudder-dev-maintainer/
-!/.agents/skills/stop-rudder-dev-maintainer/**
+!/.agents/skills/maintainer/
+!/.agents/skills/maintainer/**
 !/.agents/skills/self-improvement/
 !/.agents/skills/self-improvement/**
 
