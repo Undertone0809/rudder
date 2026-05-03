@@ -149,8 +149,10 @@ Add a V1 workspace backup system with these surfaces:
    card.
 2. The card continues to show the read-only workspace root and the live
    workspace opener. It adds one backup entry point, `Backups`.
-3. Clicking `Backups` opens a dedicated workspace-backup browser.
-4. The backup browser uses a three-column layout:
+3. Clicking `Backups` leaves Settings and opens a dedicated workspace page at
+   `/:orgPrefix/workspaces/backups`.
+4. The backup browser uses the normal workspace shell: primary rail on the far
+   left, then a dedicated three-column backup surface:
    - left: file tree for the selected backup
    - center: selected file content or binary metadata
    - right: backup versions, backup metadata, and version-level actions

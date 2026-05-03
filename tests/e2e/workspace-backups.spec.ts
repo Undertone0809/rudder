@@ -42,7 +42,7 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   await fs.writeFile(path.join(workspaceRoot, "plans", "roadmap.md"), "# Changed\n", "utf8");
 
   await selectOrganization(page, organization.id);
-  await page.goto(`/${organization.issuePrefix}/organization/settings/workspace/backups`);
+  await page.goto(`/${organization.issuePrefix}/workspaces/backups`);
 
   await expect(page.getByRole("heading", { name: "Workspace backups" })).toBeVisible();
   await expect(page.getByText("Versions")).toBeVisible();

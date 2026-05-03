@@ -653,7 +653,7 @@ export function OrganizationSettings() {
 
   const organizationWorkspacesPath = applyOrganizationPrefix("/workspaces", viewedOrganization.issuePrefix);
   const organizationWorkspaceBackupsPath = applyOrganizationPrefix(
-    "/organization/settings/workspace/backups",
+    "/workspaces/backups",
     viewedOrganization.issuePrefix,
   );
 

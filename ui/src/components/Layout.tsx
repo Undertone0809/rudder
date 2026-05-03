@@ -191,6 +191,7 @@ function isMacDesktopShell(): boolean {
 }
 
 function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily | null {
+  if (/^\/workspaces\/backups(?:\/|$)/.test(relativePath)) return null;
   if (/^\/chat(?:\/|$)/.test(relativePath)) return "chat";
   if (/^\/messenger(?:\/|$)/.test(relativePath)) return "messenger";
   if (/^\/issues(?:\/|$)/.test(relativePath)) return "issues";
@@ -247,7 +248,9 @@ export function Layout() {
     [relativeBoardPath],
   );
   const useMiddleContextColumn = useMemo(
-    () => /^\/(?:chat|messenger|issues|calendar|agents|projects|org|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
+    () =>
+      !/^\/workspaces\/backups(?:\/|$)/.test(relativeBoardPath) &&
+      /^\/(?:chat|messenger|issues|calendar|agents|projects|org|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
     [relativeBoardPath],
   );
   const isChatRoute = useMemo(() => /^\/chat(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
