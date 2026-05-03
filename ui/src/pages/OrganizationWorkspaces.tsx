@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type SVGProps } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useSearchParams } from "@/lib/router";
@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -22,16 +23,21 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import {
   ChevronDown,
   ChevronRight,
+  Blocks,
   Code2,
   ExternalLink,
+  Hammer,
   HardDrive,
   Folder,
   FolderOpen,
   FileCode2,
+  MousePointer2,
   RefreshCw,
   Save,
   Loader2,
   Terminal,
+  Waves,
+  Zap,
 } from "lucide-react";
 
 const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
@@ -63,6 +69,26 @@ function writeStoredWorkspaceLaunchTargetId(targetId: DesktopWorkspaceLaunchTarg
   window.localStorage.setItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY, targetId);
 }
 
+function VisualStudioCodeIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path
+        d="M16.7 4.2 8.1 12l8.6 7.8c.7.6 1.8.1 1.8-.8V5c0-.9-1.1-1.4-1.8-.8Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8.1 12 4.8 8.9a.9.9 0 0 1 0-1.3l.9-.8c.3-.3.8-.3 1.2 0l3.7 3.5m-2.5 1.7-3.3 3.1a.9.9 0 0 0 0 1.3l.9.8c.3.3.8.3 1.2 0l3.7-3.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function WorkspaceLaunchTargetIcon({
   target,
   className,
@@ -70,7 +96,19 @@ function WorkspaceLaunchTargetIcon({
   target: DesktopWorkspaceLaunchTarget;
   className?: string;
 }) {
-  const Icon = target.kind === "terminal" ? Terminal : target.kind === "folder" ? FolderOpen : Code2;
+  const targetIcons = {
+    cursor: MousePointer2,
+    vscode: VisualStudioCodeIcon,
+    windsurf: Waves,
+    zed: Zap,
+    webstorm: Blocks,
+    intellij: Blocks,
+    xcode: Hammer,
+    terminal: Terminal,
+    warp: Terminal,
+    finder: FolderOpen,
+  };
+  const Icon = targetIcons[target.id] ?? (target.kind === "terminal" ? Terminal : target.kind === "folder" ? FolderOpen : Code2);
   return <Icon className={className} />;
 }
 
@@ -418,6 +456,11 @@ export function OrganizationWorkspaces() {
     }
   }, [pushToast, workspaceRootPath]);
 
+  const handleSelectWorkspaceLaunchTarget = useCallback((target: DesktopWorkspaceLaunchTarget) => {
+    setLastWorkspaceLaunchTargetId(target.id);
+    writeStoredWorkspaceLaunchTargetId(target.id);
+  }, []);
+
   useEffect(() => {
     setHeaderActions(
       <div className="flex items-center gap-2">
@@ -456,16 +499,24 @@ export function OrganizationWorkspaces() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-44">
-                {workspaceLaunchTargets.map((target) => (
-                  <DropdownMenuItem
-                    key={target.id}
-                    data-testid={`org-workspaces-launch-target-${target.id}`}
-                    onSelect={() => void handleOpenWorkspace(target)}
-                  >
-                    <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
-                    <span>{target.label}</span>
-                  </DropdownMenuItem>
-                ))}
+                <DropdownMenuRadioGroup
+                  value={selectedWorkspaceLaunchTarget.id}
+                  onValueChange={(targetId) => {
+                    const target = workspaceLaunchTargets.find((candidate) => candidate.id === targetId);
+                    if (target) handleSelectWorkspaceLaunchTarget(target);
+                  }}
+                >
+                  {workspaceLaunchTargets.map((target) => (
+                    <DropdownMenuRadioItem
+                      key={target.id}
+                      value={target.id}
+                      data-testid={`org-workspaces-launch-target-${target.id}`}
+                    >
+                      <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
+                      <span>{target.label}</span>
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -486,6 +537,7 @@ export function OrganizationWorkspaces() {
     return () => setHeaderActions(null);
   }, [
     handleOpenWorkspace,
+    handleSelectWorkspaceLaunchTarget,
     openingWorkspaceTargetId,
     refreshWorkspace,
     refreshingWorkspace,

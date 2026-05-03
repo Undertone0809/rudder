@@ -887,10 +887,14 @@ test.describe("Workspace shell", () => {
     await expect(page.getByRole("menuitem", { name: "Finder" })).toBeVisible();
 
     await page.getByRole("menuitem", { name: "Terminal" }).click();
+    await expect(launcher.getByRole("button", { name: "Open workspace in Terminal" })).toBeVisible();
+    await launcher.getByRole("button", { name: "Open workspace in Terminal" }).click();
     await expect(page.getByText("Opened workspace in Terminal")).toBeVisible();
 
     await launcher.getByRole("button", { name: "Open workspace menu" }).click();
     await page.getByRole("menuitem", { name: "Finder" }).click();
+    await expect(launcher.getByRole("button", { name: "Open workspace in Finder" })).toBeVisible();
+    await launcher.getByRole("button", { name: "Open workspace in Finder" }).click();
     await expect(page.getByText("Opened workspace in Finder")).toBeVisible();
 
     const workspaceCalls = await page.evaluate(() =>
