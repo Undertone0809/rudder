@@ -27,6 +27,7 @@ import type {
   OrganizationPortabilitySidebarOrder,
   OrganizationPortabilitySkillManifestEntry,
   OrganizationSkill,
+  OrganizationExportJobStage,
 } from "@rudderhq/shared";
 import {
   ISSUE_PRIORITIES,
@@ -57,6 +58,17 @@ import { validateCron } from "../cron.js";
 import { issueService } from "../issues.js";
 import { projectService } from "../projects.js";
 import { automationService } from "../automations.js";
+
+export interface OrganizationPortabilityExportOptions {
+  signal?: AbortSignal;
+  onProgress?: (progress: {
+    stage: OrganizationExportJobStage;
+    message: string;
+    completed: number;
+    total: number;
+    fileCount?: number | null;
+  }) => void;
+}
 
 /** Build OrgNode tree from manifest agent list (slug + reportsToSlug). */
 function buildOrgTreeFromManifest(agents: OrganizationPortabilityManifest["agents"]): OrgNode[] {
@@ -2742,7 +2754,30 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
   async function exportBundle(
     orgId: string,
     input: OrganizationPortabilityExport,
+    options: OrganizationPortabilityExportOptions = {},
   ): Promise<OrganizationPortabilityExportResult> {
+    const totalProgressSteps = 8;
+    const assertNotAborted = () => {
+      if (options.signal?.aborted) {
+        throw new Error("Export build canceled");
+      }
+    };
+    const reportProgress = (
+      stage: OrganizationExportJobStage,
+      message: string,
+      completed: number,
+      fileCount?: number | null,
+    ) => {
+      options.onProgress?.({
+        stage,
+        message,
+        completed,
+        total: totalProgressSteps,
+        fileCount: fileCount ?? null,
+      });
+    };
+    assertNotAborted();
+    reportProgress("collecting", "Collecting organization data.", 1);
     const include = normalizeInclude({
       ...input.include,
       agents: input.agents && input.agents.length > 0 ? true : input.include?.agents,
@@ -2754,6 +2789,7 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
       skills: input.skills && input.skills.length > 0 ? true : input.include?.skills,
     });
     const organization = await organizations.getById(orgId);
+    assertNotAborted();
     if (!organization) throw notFound("Organization not found");
 
     const files: Record<string, OrganizationPortabilityFileEntry> = {};
@@ -2764,8 +2800,10 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
     let companyLogoPath: string | null = null;
 
     const allAgentRows = include.agents ? await agents.list(orgId, { includeTerminated: true }) : [];
+    assertNotAborted();
     const liveAgentRows = allAgentRows.filter((agent) => agent.status !== "terminated");
     const organizationSkillRows = include.skills || include.agents ? await organizationSkills.listFull(orgId) : [];
+    assertNotAborted();
     if (include.agents) {
       const skipped = allAgentRows.length - liveAgentRows.length;
       if (skipped > 0) {
@@ -2817,8 +2855,10 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
     const issuesSvc = issueService(db);
     const automationsSvc = automationService(db);
     const allProjectsRaw = include.projects || include.issues ? await projectsSvc.list(orgId) : [];
+    assertNotAborted();
     const allProjects = allProjectsRaw.filter((project) => !project.archivedAt);
     const allAutomations = include.issues ? await automationsSvc.list(orgId) : [];
+    assertNotAborted();
     const projectById = new Map(allProjects.map((project) => [project.id, project]));
     const projectByReference = new Map<string, typeof allProjects[number]>();
     for (const project of allProjects) {
@@ -2877,6 +2917,7 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
       }
       selectedProjects.set(match.id, match);
       const projectIssues = await issuesSvc.list(orgId, { projectId: match.id });
+      assertNotAborted();
       for (const issue of projectIssues) {
         selectedIssues.set(issue.id, issue);
       }
@@ -2893,6 +2934,7 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
 
     if (include.issues && selectedIssues.size === 0) {
       const allIssues = await issuesSvc.list(orgId);
+      assertNotAborted();
       for (const issue of allIssues) {
         selectedIssues.set(issue.id, issue);
         if (issue.projectId) {
@@ -2921,6 +2963,13 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
     const selectedAutomationRows = (
       await Promise.all(selectedAutomationSummaries.map((automation) => automationsSvc.getDetail(automation.id)))
     ).filter((automation): automation is AutomationLike => automation !== null);
+    assertNotAborted();
+    reportProgress(
+      "resolving_selection",
+      `Resolved ${selectedAgents.size} agents, ${selectedProjects.size} projects, and ${selectedIssues.size + selectedAutomations.size} tasks.`,
+      2,
+      Object.keys(files).length,
+    );
 
     const taskSlugByIssueId = new Map<string, string>();
     const taskSlugByAutomationId = new Map<string, string>();
@@ -3015,14 +3064,20 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
       .sort((left, right) => left.key.localeCompare(right.key));
 
     const skillExportDirs = buildSkillExportDirMap(selectedSkillRows, organization.issuePrefix);
+    if (selectedSkillRows.length > 0) {
+      reportProgress("rendering_skills", `Rendering ${selectedSkillRows.length} skill files.`, 3, Object.keys(files).length);
+    }
     for (const skill of selectedSkillRows) {
+      assertNotAborted();
       const packageDir = skillExportDirs.get(skill.key) ?? `skills/${normalizeSkillSlug(skill.slug) ?? "skill"}`;
       if (shouldReferenceSkillOnExport(skill, Boolean(input.expandReferencedSkills))) {
         files[`${packageDir}/SKILL.md`] = await buildReferencedSkillMarkdown(skill);
+        assertNotAborted();
         continue;
       }
 
       for (const inventoryEntry of skill.fileInventory) {
+        assertNotAborted();
         const fileDetail = await organizationSkills.readFile(orgId, skill.id, inventoryEntry.path).catch(() => null);
         if (!fileDetail) continue;
         const filePath = `${packageDir}/${inventoryEntry.path}`;
@@ -3033,9 +3088,12 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
     }
 
     if (include.agents) {
+      reportProgress("rendering_agents", `Rendering ${agentRows.length} agent files.`, 4, Object.keys(files).length);
       for (const agent of agentRows) {
+        assertNotAborted();
         const slug = idToSlug.get(agent.id)!;
         const exportedInstructions = await instructions.exportFiles(agent);
+        assertNotAborted();
         warnings.push(...exportedInstructions.warnings);
 
         const envInputsStart = envInputs.length;
@@ -3068,6 +3126,7 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
         );
         const reportsToSlug = agent.reportsTo ? (idToSlug.get(agent.reportsTo) ?? null) : null;
         const desiredSkills = await organizationSkills.getEnabledSkillKeysForAgent(agent.orgId, agent);
+        assertNotAborted();
 
         const commandValue = asString(portableAdapterConfig.command);
         if (commandValue && isAbsoluteCommand(commandValue)) {
@@ -3113,7 +3172,11 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
       }
     }
 
+    if (selectedProjectRows.length > 0) {
+      reportProgress("rendering_projects", `Rendering ${selectedProjectRows.length} project files.`, 5, Object.keys(files).length);
+    }
     for (const project of selectedProjectRows) {
+      assertNotAborted();
       const slug = projectSlugById.get(project.id)!;
       const projectPath = `projects/${slug}/PROJECT.md`;
       const portableWorkspaces = await buildPortableProjectWorkspaces(slug, project.workspaces, warnings);
@@ -3142,7 +3205,16 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
       rudderProjectsOut[slug] = isPlainRecord(extension) ? extension : {};
     }
 
+    if (selectedIssueRows.length > 0 || selectedAutomationRows.length > 0) {
+      reportProgress(
+        "rendering_tasks",
+        `Rendering ${selectedIssueRows.length + selectedAutomationRows.length} task files.`,
+        6,
+        Object.keys(files).length,
+      );
+    }
     for (const issue of selectedIssueRows) {
+      assertNotAborted();
       const taskSlug = taskSlugByIssueId.get(issue.id)!;
       const projectSlug = issue.projectId ? (projectSlugById.get(issue.projectId) ?? null) : null;
       // All tasks go in top-level tasks/ folder, never nested under projects/
@@ -3194,6 +3266,7 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
     }
 
     for (const automation of selectedAutomationRows) {
+      assertNotAborted();
       const taskSlug = taskSlugByAutomationId.get(automation.id)!;
       const projectSlug = projectSlugById.get(automation.projectId) ?? null;
       const taskPath = `tasks/${taskSlug}/TASK.md`;
@@ -3277,14 +3350,19 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
     // Generate org chart PNG from manifest agents
     if (resolved.manifest.agents.length > 0) {
       try {
+        assertNotAborted();
+        reportProgress("generating_assets", "Generating organization chart image.", 7, Object.keys(finalFiles).length);
         const orgNodes = buildOrgTreeFromManifest(resolved.manifest.agents);
         const pngBuffer = await renderOrgChartPng(orgNodes);
+        assertNotAborted();
         finalFiles["images/org-chart.png"] = bufferToPortableBinaryFile(pngBuffer, "image/png");
-      } catch {
+      } catch (err) {
+        if (options.signal?.aborted) throw err;
         // Non-fatal: export still works without the org chart image
       }
     }
 
+    reportProgress("finalizing", "Finalizing export manifest and README.", 7, Object.keys(finalFiles).length);
     if (!input.selectedFiles || input.selectedFiles.some((entry) => normalizePortablePath(entry) === "README.md")) {
       finalFiles["README.md"] = generateReadme(resolved.manifest, {
         organizationName: organization.name,
@@ -3307,6 +3385,8 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
     };
     resolved.manifest.envInputs = dedupeEnvInputs(envInputs);
     resolved.warnings.unshift(...warnings);
+    assertNotAborted();
+    reportProgress("ready", "Export package is ready.", 8, Object.keys(finalFiles).length);
 
     return {
       rootPath,

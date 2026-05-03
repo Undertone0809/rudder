@@ -19,6 +19,12 @@ vi.mock("../services/index.js", () => ({
     previewImport: vi.fn(),
     importBundle: vi.fn(),
   }),
+  organizationExportJobService: () => ({
+    create: vi.fn(),
+    get: vi.fn(),
+    getResult: vi.fn(),
+    cancel: vi.fn(),
+  }),
   organizationSkillService: () => ({
     syncWorkspaceFileChange: vi.fn(),
   }),

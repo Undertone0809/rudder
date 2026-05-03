@@ -8,6 +8,8 @@ import type {
   OrganizationPortabilityExportRequest,
   OrganizationPortabilityExportPreviewResult,
   OrganizationPortabilityExportResult,
+  OrganizationExportJob,
+  OrganizationExportJobCreateResult,
   OrganizationPortabilityImportRequest,
   OrganizationPortabilityImportResult,
   OrganizationPortabilityPreviewRequest,
@@ -114,6 +116,17 @@ export const organizationsApi = {
     data: OrganizationPortabilityExportRequest,
   ) =>
     api.post<OrganizationPortabilityExportResult>(`/orgs/${orgId}/exports`, data),
+  createExportJob: (
+    orgId: string,
+    data: OrganizationPortabilityExportRequest,
+  ) =>
+    api.post<OrganizationExportJobCreateResult>(`/orgs/${orgId}/exports/jobs`, data),
+  getExportJob: (orgId: string, jobId: string) =>
+    api.get<OrganizationExportJob>(`/orgs/${orgId}/exports/jobs/${jobId}`),
+  cancelExportJob: (orgId: string, jobId: string) =>
+    api.delete<OrganizationExportJob>(`/orgs/${orgId}/exports/jobs/${jobId}`),
+  getExportJobResult: (orgId: string, jobId: string) =>
+    api.get<OrganizationPortabilityExportResult>(`/orgs/${orgId}/exports/jobs/${jobId}/result`),
   importPreview: (data: OrganizationPortabilityPreviewRequest) =>
     api.post<OrganizationPortabilityPreviewResult>("/orgs/import/preview", data),
   importBundle: (data: OrganizationPortabilityImportRequest) =>
