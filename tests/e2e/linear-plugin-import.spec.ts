@@ -281,7 +281,7 @@ test.describe("Linear plugin import workflow", () => {
     await page.goto(`/${organization.issuePrefix}/issues`);
     const linearSection = page.getByTestId("issue-linear-section");
     await expect(linearSection).toContainText("Linear");
-    await expect(linearSection).toContainText("External");
+    await expect(linearSection).not.toContainText("External");
 
     const roadmapLink = page.getByTestId("issue-linear-project-proj-roadmap");
     await expect(roadmapLink).toContainText("Roadmap");

@@ -1245,7 +1245,11 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
           <div>
             <h3 style={{ margin: 0 }}>Connect Linear</h3>
             <p style={layoutStyles.subtitle}>
-              Pick a Rudder organization, paste a token, and Rudder will prepare the import setup from Linear.
+              Pick a Rudder organization, paste a token, and Rudder will prepare the import setup from Linear.{" "}
+              <a href="https://linear.app/settings/account/security" target="_blank" rel="noreferrer" style={layoutStyles.monoLink}>
+                Create a Linear token
+              </a>
+              .
             </p>
           </div>
         </div>
