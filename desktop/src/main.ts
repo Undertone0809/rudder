@@ -139,7 +139,9 @@ type DesktopIdeTarget = {
   label: string;
 };
 
-type DesktopWorkspaceLaunchTargetPayload = DesktopWorkspaceLaunchTarget;
+type DesktopWorkspaceLaunchTargetPayload = Omit<DesktopWorkspaceLaunchTarget, "iconPath"> & {
+  iconDataUrl?: string;
+};
 
 type ActiveRunSummary = {
   totalRuns: number;
@@ -208,6 +210,30 @@ function resolveDesktopCapabilities(): DesktopCapabilities {
     badgeCount: typeof app.setBadgeCount === "function",
     notifications,
   };
+}
+
+async function toWorkspaceLaunchTargetPayload(
+  target: DesktopWorkspaceLaunchTarget,
+): Promise<DesktopWorkspaceLaunchTargetPayload> {
+  let iconDataUrl: string | undefined;
+
+  if (target.iconPath) {
+    try {
+      const icon = await app.getFileIcon(target.iconPath, { size: "normal" });
+      if (!icon.isEmpty()) {
+        iconDataUrl = icon.toDataURL();
+      }
+    } catch {
+      iconDataUrl = undefined;
+    }
+  }
+
+  const payload = {
+    id: target.id,
+    label: target.label,
+    kind: target.kind,
+  };
+  return iconDataUrl ? { ...payload, iconDataUrl } : payload;
 }
 
 async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
@@ -1291,7 +1317,8 @@ function registerIpc(): void {
     return await listAvailableIdeTargets();
   });
   ipcMain.handle("desktop:list-workspace-launch-targets", async (): Promise<DesktopWorkspaceLaunchTargetPayload[]> => {
-    return await listWorkspaceLaunchTargets();
+    const targets = await listWorkspaceLaunchTargets();
+    return await Promise.all(targets.map(toWorkspaceLaunchTargetPayload));
   });
   ipcMain.handle(
     "desktop:open-workspace",

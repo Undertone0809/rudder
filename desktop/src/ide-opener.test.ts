@@ -50,17 +50,17 @@ describe("listWorkspaceLaunchTargets", () => {
       pathExists: async (targetPath) =>
         targetPath === "/Applications/Cursor.app"
         || targetPath === "/Applications/Visual Studio Code.app"
-        || targetPath === "/Applications/Terminal.app"
+        || targetPath === "/System/Applications/Utilities/Terminal.app"
         || targetPath === "/Applications/Warp.app",
       commandExists: async () => false,
     });
 
     expect(targets).toEqual([
-      { id: "cursor", label: "Cursor", kind: "ide" },
-      { id: "vscode", label: "VS Code", kind: "ide" },
-      { id: "terminal", label: "Terminal", kind: "terminal" },
-      { id: "warp", label: "Warp", kind: "terminal" },
-      { id: "finder", label: "Finder", kind: "folder" },
+      { id: "cursor", label: "Cursor", kind: "ide", iconPath: "/Applications/Cursor.app" },
+      { id: "vscode", label: "VS Code", kind: "ide", iconPath: "/Applications/Visual Studio Code.app" },
+      { id: "terminal", label: "Terminal", kind: "terminal", iconPath: "/System/Applications/Utilities/Terminal.app" },
+      { id: "warp", label: "Warp", kind: "terminal", iconPath: "/Applications/Warp.app" },
+      { id: "finder", label: "Finder", kind: "folder", iconPath: "/System/Library/CoreServices/Finder.app" },
     ]);
   });
 

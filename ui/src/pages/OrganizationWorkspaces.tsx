@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type SVGProps } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useSearchParams } from "@/lib/router";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -23,21 +24,16 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import {
   ChevronDown,
   ChevronRight,
-  Blocks,
   Code2,
   ExternalLink,
-  Hammer,
   HardDrive,
   Folder,
   FolderOpen,
   FileCode2,
-  MousePointer2,
   RefreshCw,
   Save,
   Loader2,
   Terminal,
-  Waves,
-  Zap,
 } from "lucide-react";
 
 const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
@@ -69,26 +65,6 @@ function writeStoredWorkspaceLaunchTargetId(targetId: DesktopWorkspaceLaunchTarg
   window.localStorage.setItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY, targetId);
 }
 
-function VisualStudioCodeIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
-      <path
-        d="M16.7 4.2 8.1 12l8.6 7.8c.7.6 1.8.1 1.8-.8V5c0-.9-1.1-1.4-1.8-.8Z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M8.1 12 4.8 8.9a.9.9 0 0 1 0-1.3l.9-.8c.3-.3.8-.3 1.2 0l3.7 3.5m-2.5 1.7-3.3 3.1a.9.9 0 0 0 0 1.3l.9.8c.3.3.8.3 1.2 0l3.7-3.5"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 function WorkspaceLaunchTargetIcon({
   target,
   className,
@@ -96,19 +72,18 @@ function WorkspaceLaunchTargetIcon({
   target: DesktopWorkspaceLaunchTarget;
   className?: string;
 }) {
-  const targetIcons = {
-    cursor: MousePointer2,
-    vscode: VisualStudioCodeIcon,
-    windsurf: Waves,
-    zed: Zap,
-    webstorm: Blocks,
-    intellij: Blocks,
-    xcode: Hammer,
-    terminal: Terminal,
-    warp: Terminal,
-    finder: FolderOpen,
-  };
-  const Icon = targetIcons[target.id] ?? (target.kind === "terminal" ? Terminal : target.kind === "folder" ? FolderOpen : Code2);
+  if (target.iconDataUrl) {
+    return (
+      <img
+        src={target.iconDataUrl}
+        alt=""
+        aria-hidden="true"
+        className={cn("h-4 w-4 shrink-0 rounded-[4px] object-contain", className)}
+      />
+    );
+  }
+
+  const Icon = target.kind === "terminal" ? Terminal : target.kind === "folder" ? FolderOpen : Code2;
   return <Icon className={className} />;
 }
 
@@ -465,33 +440,37 @@ export function OrganizationWorkspaces() {
     setHeaderActions(
       <div className="flex items-center gap-2">
         {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
-          <div className="flex items-center" data-testid="org-workspaces-launcher">
+          <div
+            className="inline-flex h-8 items-stretch overflow-hidden rounded-md border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
+            data-testid="org-workspaces-launcher"
+          >
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
-              className="rounded-r-none border-r-0"
+              className="h-full rounded-none border-0 px-2.5 text-sm text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
               aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
               onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
               disabled={openingWorkspaceTargetId !== null}
             >
               {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <WorkspaceLaunchTargetIcon
                   target={selectedWorkspaceLaunchTarget}
-                  className="mr-1.5 h-3.5 w-3.5"
+                  className="h-3.5 w-3.5"
                 />
               )}
               {selectedWorkspaceLaunchTarget.label}
             </Button>
+            <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                   size="icon"
-                  className="h-8 w-8 rounded-l-none"
+                  className="h-full w-8 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
                   aria-label="Open workspace menu"
                   disabled={openingWorkspaceTargetId !== null}
                 >
