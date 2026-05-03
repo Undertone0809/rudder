@@ -368,6 +368,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector('a[href="/issues?scope=recent"]')).toBeNull();
     expect(document.querySelector("[data-testid='issue-recent-section']")?.textContent).toContain("Recently Viewed");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-1']")?.textContent).toContain("Recent issue 1");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-1']")?.textContent).not.toContain("RUD-1");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-5']")?.textContent).toContain("Recent issue 5");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-6']")).toBeNull();
 
@@ -446,7 +447,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(activeRow?.getAttribute("aria-current")).toBe("page");
   });
 
-  it("ignores previously stored custom boards in the issues sidebar", () => {
+  it("renders stored custom boards in the issues sidebar", () => {
     window.localStorage.setItem("rudder:issue-custom-views:org-1", JSON.stringify([
       {
         id: "view-1",
@@ -473,9 +474,10 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     renderSidebar();
 
     const section = document.querySelector("[data-testid='issue-custom-views-section']");
-    expect(section).toBeNull();
+    expect(section?.textContent).toContain("Custom Boards");
     const row = document.querySelector<HTMLAnchorElement>("[data-testid='issue-custom-view-row-view-1'] a");
-    expect(row).toBeNull();
+    expect(row?.textContent).toContain("Review board");
+    expect(row?.getAttribute("href")).toBe("/issues?view=view-1");
   });
 
   it("shows connected Linear teams in the issues sidebar when Linear has no projects", () => {
