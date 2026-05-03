@@ -254,23 +254,19 @@ describe("@rudderhq/plugin-linear worker", () => {
     expect(catalog.projects).toContainEqual(expect.objectContaining({ id: "linear-project" }));
   });
 
-  it("builds the page catalog from the full Linear catalog and filters it by mapped teams", async () => {
+  it("uses top-level Linear team mappings for every Rudder organization page", async () => {
     const harness = createTestHarness({
       manifest,
       config: normalizeConfig({
         apiTokenSecretRef: "linear-token",
-        organizationMappings: [
+        teamMappings: [
           {
-            orgId,
-            teamMappings: [
-              {
-                teamId: "team-eng",
-                teamName: "Engineering",
-                stateMappings: [],
-              },
-            ],
+            teamId: "team-eng",
+            teamName: "Engineering",
+            stateMappings: [],
           },
         ],
+        organizationMappings: [],
       }),
     });
 
@@ -280,6 +276,9 @@ describe("@rudderhq/plugin-linear worker", () => {
     expect(catalog.teams.map((team) => team.id)).toEqual(["team-eng"]);
     expect(catalog.projects.map((project) => project.id)).toEqual(["linear-project"]);
     expect(catalog.users.map((user) => user.id)).toEqual(["user-1"]);
+
+    const otherOrgCatalog = await harness.getData<SettingsCatalogData>(DATA_KEYS.catalog, { orgId: "other-org" });
+    expect(otherOrgCatalog.teams.map((team) => team.id)).toEqual(["team-eng"]);
   });
 
   it("imports selected issues, skips duplicates, and reports fallback statuses", async () => {
@@ -438,7 +437,7 @@ describe("@rudderhq/plugin-linear worker", () => {
         mode: "selected",
         issueIds: ["lin-4"],
       }),
-    ).rejects.toThrow("which is not allowed for this Rudder organization");
+    ).rejects.toThrow("which is not selected for import");
   });
 
   it("downgrades mapped in-progress imports to todo when imports stay unassigned", async () => {

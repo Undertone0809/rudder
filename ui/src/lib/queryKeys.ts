@@ -178,6 +178,7 @@ export const queryKeys = {
   },
   plugins: {
     all: ["plugins"] as const,
+    available: ["plugins", "available"] as const,
     examples: ["plugins", "examples"] as const,
     detail: (pluginId: string) => ["plugins", pluginId] as const,
     health: (pluginId: string) => ["plugins", pluginId, "health"] as const,

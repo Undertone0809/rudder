@@ -344,6 +344,7 @@ describe("@rudderhq/plugin-linear UI", () => {
     expect(container.textContent).not.toContain("Linear team id");
     expect(container.textContent).not.toContain("Linear state id");
     expect(container.textContent).not.toContain("Add team mapping");
+    expect(container.querySelector("[data-testid='linear-rudder-org']")).toBeNull();
     expect(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")?.value).toBe("");
     expect(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")?.placeholder).toContain("Token saved");
     expect(findLink("Create a Linear token")?.getAttribute("href")).toBe("https://linear.app/settings/account/security");
@@ -435,10 +436,14 @@ describe("@rudderhq/plugin-linear UI", () => {
 
     const saveCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"));
     const body = JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
-    expect(body.configJson.organizationMappings[0].teamMappings).toEqual([
+    expect(body.configJson.teamMappings).toEqual([
       expect.objectContaining({ teamId: "team-1", teamName: "Engineering" }),
       expect.objectContaining({ teamId: "team-2", teamName: "Design" }),
     ]);
+    expect(body.configJson.organizationMappings[0]).toMatchObject({
+      orgId: "__global__",
+      teamMappings: body.configJson.teamMappings,
+    });
   });
 
   it("creates a secret and fills mappings from Linear catalog", async () => {
@@ -515,21 +520,20 @@ describe("@rudderhq/plugin-linear UI", () => {
     const finalBody = JSON.parse(String((finalConfigCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
     expect(finalBody.configJson).toMatchObject({
       apiTokenSecretRef: "secret-1",
-      organizationMappings: [
+      teamMappings: [
         {
-          orgId: "org-1",
-          teamMappings: [
-            {
-              teamId: "team-1",
-              teamName: "Engineering",
-              stateMappings: [
-                { linearStateId: "state-backlog", rudderStatus: "backlog" },
-                { linearStateId: "state-done", rudderStatus: "done" },
-              ],
-            },
+          teamId: "team-1",
+          teamName: "Engineering",
+          stateMappings: [
+            { linearStateId: "state-backlog", rudderStatus: "backlog" },
+            { linearStateId: "state-done", rudderStatus: "done" },
           ],
         },
       ],
+    });
+    expect(finalBody.configJson.organizationMappings[0]).toMatchObject({
+      orgId: "__global__",
+      teamMappings: finalBody.configJson.teamMappings,
     });
     expect(refresh).toHaveBeenCalled();
   });
@@ -628,10 +632,11 @@ describe("@rudderhq/plugin-linear UI", () => {
       .filter(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"))
       .at(-1);
     const finalBody = JSON.parse(String((finalConfigCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
-    expect(finalBody.configJson.organizationMappings[0].teamMappings[0].stateMappings[0]).toMatchObject({
+    expect(finalBody.configJson.teamMappings[0].stateMappings[0]).toMatchObject({
       linearStateId: "state-done",
       rudderStatus: "done",
     });
+    expect(finalBody.configJson.organizationMappings[0].orgId).toBe("__global__");
     expect(refresh).toHaveBeenCalled();
   });
 
