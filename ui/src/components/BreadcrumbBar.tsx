@@ -57,6 +57,7 @@ export function BreadcrumbBar({
   const navigate = useNavigate();
   const [issueSearch, setIssueSearch] = useState("");
   const relativePath = useMemo(() => toOrganizationRelativePath(location.pathname), [location.pathname]);
+  const activeIssueSource = useMemo(() => new URLSearchParams(location.search).get("source") ?? "", [location.search]);
   const isPrimaryRailPage = useMemo(
     () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|projects|goals|automations|calendar)(?:\/|$)/.test(relativePath),
     [relativePath],
@@ -69,7 +70,7 @@ export function BreadcrumbBar({
     if (/^\/dashboard(?:\/|$)/.test(relativePath)) return "Dashboard";
     if (/^\/messenger(?:\/|$)/.test(relativePath)) return "Messenger";
     if (/^\/inbox(?:\/|$)/.test(relativePath)) return "Inbox";
-    if (/^\/issues(?:\/|$)/.test(relativePath)) return "Issue Tracker";
+    if (/^\/issues(?:\/|$)/.test(relativePath)) return activeIssueSource === "linear" ? "Linear Issues" : "Issue Tracker";
     if (/^\/chat(?:\/|$)/.test(relativePath)) return "Chat";
     if (/^\/projects(?:\/|$)/.test(relativePath)) return "Projects";
     if (/^\/agents(?:\/|$)/.test(relativePath)) return "Agents";
@@ -77,7 +78,7 @@ export function BreadcrumbBar({
     if (/^\/automations(?:\/|$)/.test(relativePath)) return "Automations";
     if (/^\/calendar(?:\/|$)/.test(relativePath)) return "Calendar";
     return null;
-  }, [relativePath]);
+  }, [activeIssueSource, relativePath]);
   const { data: visibleProjects } = useQuery({
     queryKey: queryKeys.projects.list(selectedOrganizationId ?? "__none__"),
     queryFn: async () => {
@@ -202,6 +203,7 @@ export function BreadcrumbBar({
 
   if (threeColumnTitle) {
     const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath);
+    const isLinearIssueSource = isIssuesRoute && activeIssueSource === "linear";
     const isProjectsRoute = /^\/projects(?:\/|$)/.test(relativePath);
     const isProjectsIndex = isProjectsRoute && !/^\/projects\/[^/]+/.test(relativePath);
     return (
@@ -220,7 +222,7 @@ export function BreadcrumbBar({
           <h1 className="truncate text-[15px] font-semibold tracking-tight text-foreground">{threeColumnTitle}</h1>
         </div>
         {desktopChrome ? <div className="desktop-window-drag hidden min-h-full flex-1 md:block" /> : null}
-        {isIssuesRoute ? (
+        {isIssuesRoute && !isLinearIssueSource ? (
           <div className={cn("hidden items-center gap-3 md:flex", desktopChrome && "desktop-window-no-drag")}>
             <div className="relative w-80">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />

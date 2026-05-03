@@ -5,13 +5,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BreadcrumbBar } from "./BreadcrumbBar";
 
 let pathname = "/RUD/messenger/issues";
+let search = "";
 let sidebarOpen = true;
 
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: import("react").ReactNode }) => (
     <a href={to} {...props}>{children}</a>
   ),
-  useLocation: () => ({ pathname, search: "" }),
+  useLocation: () => ({ pathname, search }),
   useNavigate: () => vi.fn(),
 }));
 
@@ -59,6 +60,7 @@ vi.mock("@/plugins/launchers", () => ({
 describe("BreadcrumbBar", () => {
   beforeEach(() => {
     pathname = "/RUD/messenger/issues";
+    search = "";
     sidebarOpen = true;
   });
 
@@ -91,5 +93,17 @@ describe("BreadcrumbBar", () => {
     const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
 
     expect(html).toContain("Open workspace sidebar");
+  });
+
+  it("uses the Linear source header without native issue actions", () => {
+    pathname = "/RUD/issues";
+    search = "?source=linear&linearTeamId=team-rudder";
+
+    const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(html).toContain("Linear Issues");
+    expect(html).not.toContain("Issue Tracker");
+    expect(html).not.toContain("Search issues...");
+    expect(html).not.toContain("Create Issue");
   });
 });

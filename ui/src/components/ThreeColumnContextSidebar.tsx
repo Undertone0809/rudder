@@ -85,11 +85,12 @@ type LinearSidebarItem = {
   id: string;
   name: string;
   kind: "project" | "team";
+  teamId?: string;
 };
 
 type LinearSidebarCatalog = {
   orgId: string;
-  projects: Array<{ id: string; name: string }>;
+  projects: Array<{ id: string; name: string; teamIds?: string[] }>;
   teams: Array<{ id: string; name: string }>;
 };
 
@@ -102,6 +103,18 @@ function resolveLinearPageContribution(contributions: PluginUiContribution[] | u
     pluginId: contribution.pluginId,
     routePath: pageSlot.routePath || LINEAR_PLUGIN_ROUTE_PATH,
   };
+}
+
+function linearIssueSourceHref(item: LinearSidebarItem): string {
+  const params = new URLSearchParams();
+  params.set("source", "linear");
+  if (item.kind === "team") {
+    params.set("linearTeamId", item.id);
+  } else {
+    if (item.teamId) params.set("linearTeamId", item.teamId);
+    params.set("linearProjectId", item.id);
+  }
+  return `/issues?${params.toString()}`;
 }
 
 function SectionLabel({
@@ -704,6 +717,7 @@ export function ThreeColumnContextSidebar() {
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   const rawScope = new URLSearchParams(location.search).get("scope") ?? "";
   const scope = rawScope === "recent" ? "" : rawScope;
+  const selectedIssueSource = new URLSearchParams(location.search).get("source") ?? "";
   const selectedProjectId = new URLSearchParams(location.search).get("projectId") ?? "";
   const selectedLinearProjectId = new URLSearchParams(location.search).get("linearProjectId") ?? "";
   const selectedLinearTeamId = new URLSearchParams(location.search).get("linearTeamId") ?? "";
@@ -740,12 +754,35 @@ export function ThreeColumnContextSidebar() {
     enabled: !!selectedOrganizationId && !!linearPageContribution?.pluginId && isIssuesRoute,
   });
   const linearSidebarItems = useMemo<LinearSidebarItem[]>(() => {
-    const projects = linearCatalog?.projects ?? [];
-    const teams = linearCatalog?.teams ?? [];
-    const source = projects.length > 0
-      ? projects.map((project) => ({ ...project, kind: "project" as const }))
-      : teams.map((team) => ({ ...team, kind: "team" as const }));
-    return [...source].sort((a, b) => a.name.localeCompare(b.name));
+    const projects = [...(linearCatalog?.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+    const teams = [...(linearCatalog?.teams ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+    if (teams.length === 0) {
+      return projects.map((project) => ({ ...project, kind: "project" as const }));
+    }
+
+    const items: LinearSidebarItem[] = [];
+    const groupedProjectIds = new Set<string>();
+    for (const team of teams) {
+      items.push({ ...team, kind: "team" });
+      for (const project of projects) {
+        const teamIds = project.teamIds ?? [];
+        if (!teamIds.includes(team.id)) continue;
+        groupedProjectIds.add(project.id);
+        items.push({
+          id: project.id,
+          name: project.name,
+          kind: "project",
+          teamId: team.id,
+        });
+      }
+    }
+
+    for (const project of projects) {
+      if (groupedProjectIds.has(project.id)) continue;
+      items.push({ ...project, kind: "project" });
+    }
+
+    return items;
   }, [linearCatalog?.projects, linearCatalog?.teams]);
   const visibleAgents = useMemo(
     () => (agents ?? []).filter((agent) => agent.status !== "terminated").sort((a, b) => a.name.localeCompare(b.name)),
@@ -792,7 +829,7 @@ export function ThreeColumnContextSidebar() {
       to: "/issues",
       icon: Circle,
       label: "All Issues",
-      active: scope === "" && !selectedProjectId,
+      active: selectedIssueSource !== "linear" && scope === "" && !selectedProjectId,
     },
     ...(issueDraftSummaries.length > 0
       ? [{
@@ -818,7 +855,9 @@ export function ThreeColumnContextSidebar() {
     return selectedProjectId === project.id || activeProjectRef === routeRef;
   });
   const issueLinearActiveIndex = linearSidebarItems.findIndex((item) =>
-    item.kind === "project" ? selectedLinearProjectId === item.id : selectedLinearTeamId === item.id,
+    item.kind === "project"
+      ? selectedLinearProjectId === item.id && (!item.teamId || selectedLinearTeamId === item.teamId)
+      : selectedIssueSource === "linear" && selectedLinearTeamId === item.id && !selectedLinearProjectId,
   );
   const orgContextItems = [
     { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
@@ -1226,18 +1265,18 @@ export function ThreeColumnContextSidebar() {
               >
                 {linearSidebarItems.map((item) => {
                   const active = item.kind === "project"
-                    ? selectedLinearProjectId === item.id
-                    : selectedLinearTeamId === item.id;
-                  const paramName = item.kind === "project" ? "linearProjectId" : "linearTeamId";
+                    ? selectedLinearProjectId === item.id && (!item.teamId || selectedLinearTeamId === item.teamId)
+                    : selectedIssueSource === "linear" && selectedLinearTeamId === item.id && !selectedLinearProjectId;
                   return (
                     <Link
                       key={`${item.kind}-${item.id}`}
-                      to={`/${linearPageContribution?.routePath ?? LINEAR_PLUGIN_ROUTE_PATH}?${paramName}=${encodeURIComponent(item.id)}`}
+                      to={linearIssueSourceHref(item)}
                       onClick={closeMobileSidebar}
                       data-testid={`issue-linear-${item.kind}-${item.id}`}
                       aria-current={active ? "page" : undefined}
                       className={cn(
                         "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                        item.kind === "project" && item.teamId ? "ml-6 min-h-8 py-1.5 text-xs" : "",
                         active
                           ? "font-medium text-foreground"
                           : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
