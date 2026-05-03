@@ -26,6 +26,7 @@ import {
   quotePlugin,
   tablePlugin,
   thematicBreakPlugin,
+  type Translation,
   type RealmPlugin,
 } from "@mdxeditor/editor";
 import { Sparkles } from "lucide-react";
@@ -259,6 +260,29 @@ const FALLBACK_CODE_BLOCK_DESCRIPTOR: CodeBlockEditorDescriptor = {
 function EmptyImageToolbar() {
   return null;
 }
+
+const mdxEditorTranslations: Translation = (key, defaultValue, interpolations) => {
+  const overrides: Record<string, string> = {
+    "createLink.url": "Page or URL",
+    "createLink.urlPlaceholder": "Paste a URL",
+    "createLink.text": "Link title",
+    "createLink.textTooltip": "The text shown for this link",
+    "createLink.saveTooltip": "Apply link changes",
+    "createLink.cancelTooltip": "Cancel",
+    "dialogControls.save": "Done",
+    "dialogControls.cancel": "Cancel",
+    "linkPreview.edit": "Edit",
+    "linkPreview.copyToClipboard": "Copy link",
+    "linkPreview.copied": "Copied",
+    "linkPreview.remove": "Remove Link",
+  };
+  const template = overrides[key] ?? defaultValue;
+  if (!interpolations) return template;
+  return Object.entries(interpolations).reduce(
+    (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
+    template,
+  );
+};
 
 function detectMention(container: HTMLElement): MentionState | null {
   const sel = window.getSelection();
@@ -671,7 +695,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       quotePlugin(),
       tablePlugin(),
       linkPlugin({ validateUrl: isSafeMarkdownLinkUrl }),
-      linkDialogPlugin(),
+      linkDialogPlugin({ showLinkTitleField: false }),
       mentionTokenPlugin(),
       skillTokenPlugin(),
       mentionDeletionPlugin(),
@@ -1086,6 +1110,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           "rudder-mdxeditor-content focus:outline-none [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:list-item",
           contentClassName,
         )}
+        translation={mdxEditorTranslations}
         additionalLexicalNodes={[MentionAwareLinkNode, mentionAwareLinkNodeReplacement]}
         plugins={plugins}
       />
