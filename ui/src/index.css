@@ -1549,17 +1549,34 @@ a.rudder-mention-chip[data-mention-kind="agent"]::before {
 }
 
 .rudder-markdown a {
-  color: color-mix(in oklab, var(--foreground) 76%, #0969da 24%);
-  text-decoration: none;
+  color: color-mix(in oklab, var(--foreground) 62%, #0969da 38%);
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 44%, transparent);
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+  border-radius: 0.2em;
+  background:
+    linear-gradient(
+      color-mix(in oklab, currentColor 8%, transparent),
+      color-mix(in oklab, currentColor 8%, transparent)
+    )
+    0 88% / 100% 0.3em no-repeat;
+  font-weight: 520;
 }
 
 .rudder-markdown a:hover {
-  text-decoration: underline;
-  text-underline-offset: 0.15em;
+  color: color-mix(in oklab, var(--foreground) 52%, #0969da 48%);
+  text-decoration-color: currentColor;
+  background:
+    linear-gradient(
+      color-mix(in oklab, currentColor 13%, transparent),
+      color-mix(in oklab, currentColor 13%, transparent)
+    )
+    0 88% / 100% 0.3em no-repeat;
 }
 
 .dark .rudder-markdown a {
-  color: color-mix(in oklab, var(--foreground) 80%, #58a6ff 20%);
+  color: color-mix(in oklab, var(--foreground) 64%, #58a6ff 36%);
 }
 
 .rudder-mdxeditor-content .rudder-skill-token,
