@@ -104,6 +104,22 @@ function readRememberedWorkspacePath(): string {
   }
 }
 
+function hasInAppBackStack(): boolean {
+  if (typeof window === "undefined") return false;
+  const historyState = window.history.state as { idx?: unknown } | null;
+  if (typeof historyState?.idx === "number") {
+    return historyState.idx > 0;
+  }
+
+  try {
+    return window.history.length > 1
+      && Boolean(document.referrer)
+      && new URL(document.referrer).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
 export function DesktopSettingsModalFrame({
   children,
   onClose,
@@ -552,11 +568,17 @@ export function Layout() {
     settingsTarget,
   ]);
 
+  const navigateBack = useCallback(() => {
+    if (!hasInAppBackStack()) return;
+    navigate(-1);
+  }, [navigate]);
+
   useKeyboardShortcuts({
     onNewIssue: () => openNewIssue(),
     onToggleSidebar: toggleSidebar,
     onTogglePanel: togglePanel,
     onOpenSettings: () => openSettings(),
+    onNavigateBack: navigateBack,
   });
 
   const desktopContentShellInsetClass = macDesktopShell
