@@ -31,6 +31,7 @@ import { OrganizationSettings } from "./pages/OrganizationSettings";
 import { OrganizationHeartbeats } from "./pages/OrganizationHeartbeats";
 import { OrganizationResources } from "./pages/OrganizationResources";
 import { OrganizationWorkspaces } from "./pages/OrganizationWorkspaces";
+import { OrganizationWorkspaceBackups } from "./pages/OrganizationWorkspaceBackups";
 import { OrganizationSkills } from "./pages/OrganizationSkills";
 import { OrganizationExport } from "./pages/OrganizationExport";
 import { OrganizationImport } from "./pages/OrganizationImport";
@@ -186,6 +187,7 @@ function boardRoutes() {
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="organizations" element={<LegacyOrganizationsRedirect />} />
       <Route path="organization/settings" element={<OrganizationSettings />} />
+      <Route path="organization/settings/workspace/backups" element={<OrganizationWorkspaceBackups />} />
       <Route path="resources" element={<OrganizationResources />} />
       <Route path="heartbeats" element={<OrganizationHeartbeats />} />
       <Route path="workspaces" element={<OrganizationWorkspaces />} />

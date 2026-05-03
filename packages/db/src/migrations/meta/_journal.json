@@ -463,6 +463,13 @@
       "when": 1777546061916,
       "tag": "0064_lush_the_fury",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1777817069285,
+      "tag": "0066_bumpy_electro",
+      "breakpoints": true
     }
   ]
 }

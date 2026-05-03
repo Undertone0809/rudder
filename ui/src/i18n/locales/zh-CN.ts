@@ -157,6 +157,7 @@ export const zhCN: Messages = {
   "organizationSettings.workspace.usage.resources": "把应加载进 agent run 的 canonical repo、文档、URL 和 connector 放在 Resources 里。",
   "organizationSettings.workspace.usage.workspaces": "把应落盘保存的共享文件、笔记、计划和 skill 包放在 Workspaces 里。",
   "organizationSettings.workspace.open": "打开 workspaces",
+  "organizationSettings.workspace.backups": "备份",
   "organizationSettings.labels.intro.title": "Issue 标签管理",
   "organizationSettings.labels.intro.description": "在这里创建、重命名、改色和删除标签。Issue detail 页面只负责选择标签和一次性快速创建。",
   "organizationSettings.labels.new.placeholder": "新标签",

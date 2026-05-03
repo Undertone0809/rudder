@@ -8,6 +8,12 @@ export const queryKeys = {
       ["organizations", orgId, "workspace-files", directoryPath] as const,
     workspaceFile: (orgId: string, filePath: string) =>
       ["organizations", orgId, "workspace-file", filePath] as const,
+    workspaceBackups: (orgId: string) =>
+      ["organizations", orgId, "workspace-backups"] as const,
+    workspaceBackupFiles: (orgId: string, backupId: string, directoryPath: string) =>
+      ["organizations", orgId, "workspace-backup-files", backupId, directoryPath] as const,
+    workspaceBackupFile: (orgId: string, backupId: string, filePath: string) =>
+      ["organizations", orgId, "workspace-backup-file", backupId, filePath] as const,
   },
   organizationSkills: {
     list: (orgId: string) => ["organization-skills", orgId] as const,

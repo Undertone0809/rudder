@@ -41,10 +41,11 @@ workspaces hold file-backed work product, agent memory, agent-authored skills,
 shared organization skills, plans, and other durable coordination files. Losing
 that tree can erase useful agent work even when the database is recoverable.
 
-The recommended V1 is a local-first, org-scoped workspace snapshot service with
-manual and scheduled backup, backup history, restore preview, and guarded full
+The recommended first slice is a local-first, org-scoped workspace snapshot
+service with manual backup, backup history, version browsing, and guarded full
 restore. It should reuse the instance backup directory by default and stay
-compatible with future S3 or full-instance disaster recovery work.
+compatible with future scheduled backups, S3, CLI restore, and full-instance
+disaster recovery work.
 
 ## What Is The Problem?
 
@@ -82,49 +83,38 @@ Impact:
 Add a V1 workspace backup system with these surfaces:
 
 1. A server-side `workspaceBackupService` that can snapshot one organization
-   workspace root into a compressed archive plus manifest.
+   workspace root into a versioned local artifact plus manifest metadata.
 2. A `workspace_backups` table for backup history, artifact metadata, manifest
    summary, status, trigger source, retention expiry, and restore audit links.
 3. Board-only REST APIs under the organization workspace route:
    - `GET /api/orgs/:orgId/workspace/backups`
    - `POST /api/orgs/:orgId/workspace/backups`
-   - `GET /api/orgs/:orgId/workspace/backups/:backupId/preview`
+   - `GET /api/orgs/:orgId/workspace/backups/:backupId/files`
+   - `GET /api/orgs/:orgId/workspace/backups/:backupId/file`
    - `POST /api/orgs/:orgId/workspace/backups/:backupId/restore`
-4. A CLI surface for operational use:
-   - `rudder workspace:backup --org <org-id-or-prefix>`
-   - `rudder workspace:restore --org <org-id-or-prefix> --backup <id-or-file>`
-5. A Workspaces page backup panel with:
-   - last successful backup
-   - manual "Back up now"
-   - backup history
-   - restore preview and confirmation
-6. Instance config for scheduled workspace backups:
-   - enabled
-   - interval minutes
-   - retention days
-   - target directory
-   - maximum archive size or warning threshold
-7. Activity log events:
+   - `DELETE /api/orgs/:orgId/workspace/backups/:backupId`
+4. A single backup entry point in the organization Settings workspace card.
+   Clicking it opens a dedicated workspace-backup browser instead of adding
+   backup controls to the live Workspaces page.
+5. Activity log events:
    - `organization.workspace_backup.created`
    - `organization.workspace_backup.failed`
    - `organization.workspace_backup.restored`
+   - `organization.workspace_backup.deleted`
 
 ## Success Criteria For Change
 
 - A board operator can create a backup for an organization's workspace from the
-  UI and CLI.
-- Scheduled backups run without blocking normal Rudder startup or heartbeat
-  scheduling.
-- Restoring a backup requires no active runs for that organization unless a
-  force flag is explicitly used by CLI.
-- Restore preview shows files that will be added, modified, deleted, or skipped.
+  Settings workspace card and dedicated backup browser.
+- The backup browser uses the agreed three-column shape: files on the left,
+  content in the center, versions and actions on the right.
+- Restoring a backup requires no queued or running heartbeat runs for that
+  organization.
 - Restore creates a pre-restore backup automatically before replacing files.
-- Backup artifacts include a manifest with org id, instance id, Rudder version,
-  tree hash, file inventory, byte size, archive checksum, agent workspace key
-  map, active run count, and warnings.
-- Backup and restore events are visible in activity logs.
-- Path traversal, symlink escape, and archive extraction attacks are blocked by
-  tests.
+- Backup artifacts include org id, instance id, tree hash, file inventory,
+  byte size, artifact checksum, active run count, and warnings.
+- Backup, restore, and delete events are visible in activity logs.
+- Path traversal and symlink escape are blocked by tests.
 
 ## Out Of Scope
 
@@ -134,20 +124,20 @@ Add a V1 workspace backup system with these surfaces:
   organization.
 - Selective file-level restore in the first release.
 - Git-style diff visualization for large binary files.
+- Scheduled backups, retention pruning, and CLI backup/restore.
 - Backup encryption key management beyond local file permissions and existing
   instance trust boundaries.
 - Cloud object-storage backup as the only supported V1 path.
 
 ## Non-Functional Requirements
 
-- Performance: stream archive creation and extraction; do not load full
-  workspace trees into memory.
-- Scalability: skip unchanged scheduled backups by comparing a tree hash or
-  incremental file inventory signature.
-- Availability: scheduled backup failure must not stop the server or agent
-  scheduler.
-- Security: do not follow symlinks outside the workspace root; do not extract
-  archive paths outside a staging directory; write local backup artifacts with
+- Performance: avoid shelling out to platform archive tools in the first slice;
+  future large-workspace support should replace the JSON artifact with a
+  streaming archive format.
+- Scalability: record a tree hash and file inventory so scheduled/incremental
+  backup can skip unchanged trees later.
+- Security: do not follow symlinks outside the workspace root; do not restore
+  paths outside a staging directory; write local backup artifacts with
   owner-only permissions where the platform supports it.
 - Maintainability: keep the backup artifact manifest schema versioned.
 - Observability: persist backup status, duration, size, file counts, warnings,
@@ -155,19 +145,27 @@ Add a V1 workspace backup system with these surfaces:
 
 ## User Experience Walkthrough
 
-1. The operator opens an organization's Workspaces page.
-2. A compact backup panel shows the last successful backup and whether
-   automatic backups are enabled.
-3. The operator clicks "Back up now".
-4. Rudder creates a snapshot in the background and shows status as running,
-   succeeded, or failed.
-5. When a backup is selected, Rudder can compute a restore preview against the
-   live workspace.
-6. Restore is disabled if that organization has active queued or running agent
+1. The operator opens organization Settings and finds the existing Workspace
+   card.
+2. The card continues to show the read-only workspace root and the live
+   workspace opener. It adds one backup entry point, `Backups`.
+3. Clicking `Backups` opens a dedicated workspace-backup browser.
+4. The backup browser uses a three-column layout:
+   - left: file tree for the selected backup
+   - center: selected file content or binary metadata
+   - right: backup versions, backup metadata, and version-level actions
+5. The operator selects a backup version in the right column, then browses that
+   version's files from the left column.
+6. The center column updates as files are selected, similar to an IDE preview.
+7. Version-level actions live in the right column:
+   - `Back up now`
+   - `Restore`
+   - `Delete`
+8. Restore is disabled if that organization has active queued or running agent
    work.
-7. When confirmed, Rudder creates a pre-restore backup, extracts the chosen
-   archive into a staging directory, atomically swaps workspace contents where
-   possible, reconciles workspace-backed skills, and logs activity.
+9. When confirmed, Rudder creates a pre-restore backup, writes the chosen
+   version into a staging directory, swaps workspace contents where possible,
+   ensures canonical workspace folders exist, and logs activity.
 
 ## Implementation
 
@@ -209,16 +207,17 @@ workspace_backups
 - updated_at timestamptz
 ```
 
-Artifact layout for local default:
+Artifact layout for the local first slice:
 
 ```text
 ~/.rudder/instances/<instance>/data/backups/workspaces/<org-id>/
-  workspace-<org-id>-<YYYYMMDD-HHMMSS>.tar.zst
-  workspace-<org-id>-<YYYYMMDD-HHMMSS>.manifest.json
+  workspace-<org-id>-<YYYYMMDD-HHMMSS>-<backup-id-prefix>.json
 ```
 
-If `zstd` is not available through a stable Node dependency, use `.tar.gz` in
-V1 and leave compression pluggable.
+The JSON artifact stores a schema version, manifest fields, directory entries,
+and base64 file contents. This keeps the first implementation dependency-free;
+large-workspace and scheduled-backup work should replace it with a streaming
+archive format.
 
 ### Breaking Change
 
@@ -231,35 +230,31 @@ and organization import/export remains portability-focused.
 Backup flow:
 
 1. Resolve and ensure the org workspace root with existing home-path helpers.
-2. Check active org runs and workspace operations. Manual backup may proceed
-   with a warning; scheduled backup should record active run count in the
-   manifest.
+2. Count active org runs and record that count in the manifest. Manual backup
+   may proceed while work is active because it does not mutate the workspace.
 3. Walk the workspace tree with strict root containment.
 4. Exclude known machine caches by default, such as `.DS_Store`, `.cache`,
    `node_modules`, and archive staging directories. Record exclusions in the
    manifest.
-5. For each entry, record relative path, type, mode, size, mtime, sha256 for
-   files below a practical threshold, and symlink metadata without following
-   external targets.
-6. Write archive and manifest to a temp path, fsync where practical, then rename
-   into the final backup directory.
+5. For each entry, record relative path, type, mode, size, mtime, sha256, and
+   base64 file contents. Skip symlinks rather than following external targets.
+6. Write the artifact to a temp path, then rename into the final backup
+   directory.
 7. Insert or update the `workspace_backups` row and log activity.
-8. Prune expired local artifacts for this org.
 
 Restore flow:
 
 1. Require board actor.
-2. Block restore while the org has queued or running work unless CLI force is
-   supplied.
-3. Validate archive checksum and manifest schema.
-4. Extract into an instance-local staging directory outside the live workspace.
-5. Validate extracted paths before copying or swapping.
+2. Block restore while the org has queued or running work.
+3. Validate artifact checksum and manifest schema.
+4. Materialize into an instance-local staging directory outside the live
+   workspace.
+5. Validate staged paths before swapping.
 6. Create a pre-restore backup automatically.
 7. Replace the live workspace tree with the staged tree.
-8. Re-run workspace-backed skill reconciliation for org and agent skill roots.
-9. Ensure canonical layout directories still exist.
-10. Invalidate workspace browser state through normal query invalidation in UI.
-11. Log restore activity with backup id, pre-restore backup id, file count, and
+8. Ensure canonical layout directories still exist.
+9. Invalidate workspace browser state through normal query invalidation in UI.
+10. Log restore activity with backup id, pre-restore backup id, file count, and
     warning count.
 
 Consistency policy:
@@ -278,10 +273,8 @@ Important security rules:
 
 - Never accept an arbitrary filesystem path from the browser for backup
   creation.
-- CLI restore from an external archive must validate manifest org id unless the
-  operator uses an explicit override.
 - Do not follow symlinks outside the workspace root.
-- Do not extract absolute paths or `..` segments.
+- Do not restore absolute paths or `..` segments.
 - Treat workspace backups as sensitive because they may contain agent memory,
   prompts, code, notes, and generated files.
 
@@ -303,18 +296,15 @@ without violating org boundaries, path safety, or active-run guardrails.
 
 - Service test: creates a backup of a workspace containing text files, binary
   files, nested directories, and agent workspace directories.
-- Service test: scheduled backup skips writing a duplicate archive when tree
-  hash is unchanged.
-- Restore preview test: reports add, modify, delete, and skip outcomes.
 - Restore test: creates a pre-restore backup and restores files to the previous
   state.
 - Restore guard test: active org run blocks restore.
-- Security test: archive with absolute path, `..`, or symlink escape is
+- Security test: artifact with absolute path, `..`, or symlink escape is
   rejected.
 - API test: board can manage backups; agent and cross-org requests cannot.
-- UI E2E: Workspaces page can trigger backup and show last successful backup.
-- CLI test: `workspace:backup` creates a backup and prints JSON metadata with
-  `--json`.
+- UI E2E: organization Settings exposes one workspace backup entry point, and
+  the dedicated backup browser can select a version, select a file, preview
+  content, restore, and delete.
 
 ### Expected Results
 
@@ -325,8 +315,9 @@ without violating org boundaries, path safety, or active-run guardrails.
 
 ### Pass / Fail
 
-Not run. This proposal defines the design and expected verification coverage;
-implementation has not started.
+Implemented first slice. Typecheck and build should pass before handoff; local
+test execution is tracked in the task handoff because embedded Postgres can be
+environment-dependent.
 
 ## Documentation Changes
 
@@ -338,7 +329,7 @@ Update these docs when the feature lands:
 - `doc/DATABASE.md` only to clarify that database backup is separate from
   workspace backup
 - `doc/SPEC-implementation.md`
-- `doc/CLI.md`
+- `doc/CLI.md` only when CLI backup/restore is implemented
 
 ## Open Issues
 

@@ -30,6 +30,7 @@ export { operatorProfileService } from "./operator-profile.js";
 export { organizationPortabilityService, organizationPortabilityFacade } from "./organization-portability.js";
 export { executionWorkspaceService } from "./execution-workspaces.js";
 export { workspaceOperationService } from "./workspace-operations.js";
+export { workspaceBackupService } from "./workspace-backups.js";
 export { workProductService } from "./work-products.js";
 export { logActivity, type LogActivityInput } from "./activity-log.js";
 export { notifyHireApproved, type NotifyHireApprovedInput } from "./hire-hook.js";
