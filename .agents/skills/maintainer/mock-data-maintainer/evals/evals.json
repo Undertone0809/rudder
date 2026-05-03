@@ -1,0 +1,29 @@
+{
+  "skill_name": "mock-data-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "给 Rudder 准备一个 landing 截图用 demo org，不用帮我截图，我想自己打开本地页面拍。数据要看起来像真实 agent team 正在推进 launch。",
+      "expected_output": "Uses the Rudder landing demo org scenario, gives the seed-only command, explains the seeded org shape, and lists routes worth opening for screenshots.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "我想给 approvals + budget auto-pause 补 E2E，帮我设计 deterministic mock 数据，不要做漂亮 demo，重点是能测边界状态。",
+      "expected_output": "Classifies the request as testing data, proposes deterministic Rudder fixtures for approvals and budget control, includes edge states, assertions, and reset/setup guidance.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "帮我造一组数据，让第一次看 Rudder 的用户能理解 founder 怎么用它管理 agent 团队。可以是故事化的，不一定要数据库脚本。",
+      "expected_output": "Classifies the request as user-scenario data, produces a persona-driven Rudder scenario with entities, workflow, conflict, and outcome rather than random records.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "做一个 SaaS billing dashboard 的 mock JSON，要包含 trial、failed payment、overage、enterprise security review 和 churn risk。",
+      "expected_output": "Uses the generic SaaS dashboard scenario, produces realistic JSON-ready entities and metrics with mixed states and clear usage notes.",
+      "files": []
+    }
+  ]
+}

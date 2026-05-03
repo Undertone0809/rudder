@@ -21,7 +21,8 @@ the user already chose one:
 
 Important:
 
-- both modes must use the same landing-quality mock dataset
+- both modes must use the landing-quality mock dataset maintained by
+  `mock-data-maintainer`
 - seed-only mode is not a lighter fallback dataset
 - do not substitute a small import, a partial org copy, or a simplified sample
   when the user asked for the landing-shot dataset
@@ -53,7 +54,8 @@ Produce one of these clean outcomes:
 - a full screenshot set the user can present directly
 - a seeded dev/demo org with clear routes so the user can take those shots
 
-The underlying demo data should be the same in both modes:
+The underlying demo data should be the same in both modes and should come from
+`mock-data-maintainer`:
 
 - same realistic projects, issues, agents, approvals, chat, costs, and org data
 - same screenshot-worthy density and statefulness
@@ -126,11 +128,12 @@ issue density before capture.
 
 ### 2. Seed An Isolated Demo Org
 
-Prefer the repository's existing seed/capture script:
+Prefer the repository's existing mock-data seed/capture script:
 
 ```bash
 LANDING_SHOTS_SKIP_CAPTURE=1 LANDING_SHOTS_HOLD_OPEN=1 \
-node cli/node_modules/tsx/dist/cli.mjs scripts/capture-landing-proof-shots.ts
+node cli/node_modules/tsx/dist/cli.mjs \
+.agents/skills/maintainer/mock-data-maintainer/scripts/capture-landing-proof-shots.ts
 ```
 
 Why:
@@ -138,6 +141,10 @@ Why:
 - it creates an isolated Rudder instance for landing shots
 - it seeds realistic projects, agents, issues, approvals, chat, costs, and org data
 - it avoids polluting the developer's normal local environment
+
+The legacy `scripts/capture-landing-proof-shots.ts` path is kept as a wrapper
+for compatibility, but the dataset and implementation live under
+`mock-data-maintainer`.
 
 If the user chose seed-only mode, this same seeded dataset is still the target.
 Only the capture responsibility changes.
