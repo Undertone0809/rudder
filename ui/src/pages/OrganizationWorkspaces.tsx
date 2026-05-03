@@ -3,27 +3,76 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useSearchParams } from "@/lib/router";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { organizationsApi } from "../api/orgs";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
-import { readDesktopShell, type DesktopIdeTarget } from "../lib/desktop-shell";
+import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
 import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import {
   ChevronDown,
   ChevronRight,
+  Code2,
   ExternalLink,
   HardDrive,
   Folder,
+  FolderOpen,
   FileCode2,
   RefreshCw,
   Save,
   Loader2,
+  Terminal,
 } from "lucide-react";
+
+const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
+const WORKSPACE_LAUNCH_TARGET_IDS = [
+  "cursor",
+  "vscode",
+  "windsurf",
+  "zed",
+  "webstorm",
+  "intellij",
+  "xcode",
+  "terminal",
+  "warp",
+  "finder",
+] as const satisfies readonly DesktopWorkspaceLaunchTarget["id"][];
+
+function isWorkspaceLaunchTargetId(value: string | null): value is DesktopWorkspaceLaunchTarget["id"] {
+  return WORKSPACE_LAUNCH_TARGET_IDS.includes(value as DesktopWorkspaceLaunchTarget["id"]);
+}
+
+function readStoredWorkspaceLaunchTargetId() {
+  if (typeof window === "undefined") return null;
+  const value = window.localStorage.getItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY);
+  return isWorkspaceLaunchTargetId(value) ? value : null;
+}
+
+function writeStoredWorkspaceLaunchTargetId(targetId: DesktopWorkspaceLaunchTarget["id"]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY, targetId);
+}
+
+function WorkspaceLaunchTargetIcon({
+  target,
+  className,
+}: {
+  target: DesktopWorkspaceLaunchTarget;
+  className?: string;
+}) {
+  const Icon = target.kind === "terminal" ? Terminal : target.kind === "folder" ? FolderOpen : Code2;
+  return <Icon className={className} />;
+}
 
 function parentDirectories(filePath: string) {
   const segments = filePath.split("/").filter(Boolean);
@@ -218,6 +267,13 @@ export function OrganizationWorkspaces() {
   const [refreshingWorkspace, setRefreshingWorkspace] = useState(false);
   const [availableIdes, setAvailableIdes] = useState<DesktopIdeTarget[]>([]);
   const [openingInIde, setOpeningInIde] = useState(false);
+  const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
+  const [lastWorkspaceLaunchTargetId, setLastWorkspaceLaunchTargetId] = useState<
+    DesktopWorkspaceLaunchTarget["id"] | null
+  >(() => readStoredWorkspaceLaunchTargetId());
+  const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<
+    DesktopWorkspaceLaunchTarget["id"] | null
+  >(null);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Workspaces" }]);
@@ -227,6 +283,7 @@ export function OrganizationWorkspaces() {
     const desktopShell = readDesktopShell();
     if (!desktopShell) {
       setAvailableIdes([]);
+      setWorkspaceLaunchTargets([]);
       return;
     }
 
@@ -238,6 +295,17 @@ export function OrganizationWorkspaces() {
       .catch(() => {
         if (!cancelled) setAvailableIdes([]);
       });
+    if (desktopShell.listWorkspaceLaunchTargets) {
+      desktopShell.listWorkspaceLaunchTargets()
+        .then((targets) => {
+          if (!cancelled) setWorkspaceLaunchTargets(targets);
+        })
+        .catch(() => {
+          if (!cancelled) setWorkspaceLaunchTargets([]);
+        });
+    } else {
+      setWorkspaceLaunchTargets([]);
+    }
 
     return () => {
       cancelled = true;
@@ -316,22 +384,116 @@ export function OrganizationWorkspaces() {
     }
   }, [queryClient, viewedOrganizationId]);
 
+  const workspaceRootPath = rootQuery.data?.rootExists ? rootQuery.data.rootPath : null;
+  const selectedWorkspaceLaunchTarget = (
+    lastWorkspaceLaunchTargetId
+      ? workspaceLaunchTargets.find((target) => target.id === lastWorkspaceLaunchTargetId)
+      : null
+  ) ?? workspaceLaunchTargets[0] ?? null;
+
+  const handleOpenWorkspace = useCallback(async (
+    target: DesktopWorkspaceLaunchTarget,
+  ) => {
+    if (!workspaceRootPath) return;
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.openWorkspace) return;
+
+    setOpeningWorkspaceTargetId(target.id);
+    try {
+      await desktopShell.openWorkspace(workspaceRootPath, target.id);
+      setLastWorkspaceLaunchTargetId(target.id);
+      writeStoredWorkspaceLaunchTargetId(target.id);
+      pushToast({
+        title: `Opened workspace in ${target.label}`,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to open workspace",
+        body: error instanceof Error ? error.message : `Could not open the workspace in ${target.label}.`,
+        tone: "error",
+      });
+    } finally {
+      setOpeningWorkspaceTargetId(null);
+    }
+  }, [pushToast, workspaceRootPath]);
+
   useEffect(() => {
     setHeaderActions(
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => void refreshWorkspace()}
-        disabled={refreshingWorkspace}
-      >
-        <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${refreshingWorkspace ? "animate-spin" : ""}`} />
-        Refresh
-      </Button>,
+      <div className="flex items-center gap-2">
+        {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
+          <div className="flex items-center" data-testid="org-workspaces-launcher">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-r-none border-r-0"
+              aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
+              onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
+              disabled={openingWorkspaceTargetId !== null}
+            >
+              {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <WorkspaceLaunchTargetIcon
+                  target={selectedWorkspaceLaunchTarget}
+                  className="mr-1.5 h-3.5 w-3.5"
+                />
+              )}
+              {selectedWorkspaceLaunchTarget.label}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8 rounded-l-none"
+                  aria-label="Open workspace menu"
+                  disabled={openingWorkspaceTargetId !== null}
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                {workspaceLaunchTargets.map((target) => (
+                  <DropdownMenuItem
+                    key={target.id}
+                    data-testid={`org-workspaces-launch-target-${target.id}`}
+                    onSelect={() => void handleOpenWorkspace(target)}
+                  >
+                    <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
+                    <span>{target.label}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ) : null}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void refreshWorkspace()}
+          disabled={refreshingWorkspace}
+        >
+          <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${refreshingWorkspace ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </div>,
     );
 
     return () => setHeaderActions(null);
-  }, [refreshWorkspace, refreshingWorkspace, setHeaderActions]);
+  }, [
+    handleOpenWorkspace,
+    openingWorkspaceTargetId,
+    refreshWorkspace,
+    refreshingWorkspace,
+    selectedWorkspaceLaunchTarget,
+    setHeaderActions,
+    workspaceLaunchTargets,
+    workspaceRootPath,
+  ]);
 
   if (!viewedOrganizationId || !viewedOrganization) {
     return <EmptyState icon={HardDrive} message="Select an organization to browse its shared workspace." />;
@@ -363,7 +525,6 @@ export function OrganizationWorkspaces() {
   const hasUnsavedChanges = canEditSelectedFile && draftContent !== (selectedFileDetail?.content ?? "");
   const selectedLanguage = inferLanguageFromPath(selectedFilePath);
   const primaryIde = availableIdes[0] ?? null;
-  const workspaceRootPath = workspace.rootExists ? workspace.rootPath : null;
   const hasLoadedSelectedFile = Boolean(
     selectedFilePath
     && selectedFileDetail
