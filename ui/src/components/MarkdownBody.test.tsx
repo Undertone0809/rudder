@@ -1,10 +1,54 @@
-// @vitest-environment node
+// @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
+import { act, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { ThemeProvider } from "../context/ThemeContext";
 import { MarkdownBody } from "./MarkdownBody";
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+Object.defineProperty(window, "matchMedia", {
+  writable: true,
+  value: vi.fn().mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })),
+});
+
+let cleanupFn: (() => void) | null = null;
+
+afterEach(() => {
+  cleanupFn?.();
+  cleanupFn = null;
+  document.body.innerHTML = "";
+});
+
+function render(element: ReactNode) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  cleanupFn = () => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  };
+  act(() => {
+    root.render(element);
+  });
+  return container;
+}
 
 describe("MarkdownBody", () => {
   it("renders markdown images without a resolver", () => {
@@ -79,5 +123,25 @@ describe("MarkdownBody", () => {
     expect(html).toContain("rudder/rudder-create-plugin");
     expect(html).not.toContain("href=");
     expect(html).not.toContain("/Users/zeeland/projects/rudder/.agents/skills/rudder-create-plugin/SKILL.md");
+  });
+
+  it("lets callers intercept ordinary markdown links", () => {
+    const onLinkClick = vi.fn(({ event }) => event.preventDefault());
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody onLinkClick={onLinkClick}>
+          {"Open [daily note](/Users/zeeland/.rudder/notes/2026-04-30.md)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const link = container.querySelector("a");
+    expect(link).toBeTruthy();
+    link?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+
+    expect(onLinkClick).toHaveBeenCalledWith(expect.objectContaining({
+      href: "/Users/zeeland/.rudder/notes/2026-04-30.md",
+      label: "daily note",
+    }));
   });
 });

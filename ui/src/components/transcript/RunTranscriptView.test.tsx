@@ -4,13 +4,22 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
-import { RunTranscriptView, normalizeTranscript } from "./RunTranscriptView";
+import { RunTranscriptView, normalizeTranscript, resolveTranscriptLocalFileTarget } from "./RunTranscriptView";
 
 function countOccurrences(value: string, needle: string) {
   return value.split(needle).length - 1;
 }
 
 describe("RunTranscriptView", () => {
+  it("recognizes only local file targets for transcript links", () => {
+    expect(resolveTranscriptLocalFileTarget("/Users/zeeland/work/result.md")).toBe("/Users/zeeland/work/result.md");
+    expect(resolveTranscriptLocalFileTarget("file:///Users/zeeland/work/result%20copy.md")).toBe("/Users/zeeland/work/result copy.md");
+    expect(resolveTranscriptLocalFileTarget("C:\\Users\\zeeland\\work\\result.md")).toBe("C:\\Users\\zeeland\\work\\result.md");
+    expect(resolveTranscriptLocalFileTarget("https://example.com/result.md")).toBeNull();
+    expect(resolveTranscriptLocalFileTarget("result.md")).toBeNull();
+    expect(resolveTranscriptLocalFileTarget("/issues/RUD-43")).toBeNull();
+  });
+
   it("keeps running command stdout inside the command fold instead of a standalone stdout block", () => {
     const entries: TranscriptEntry[] = [
       {

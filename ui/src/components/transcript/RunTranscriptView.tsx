@@ -1,7 +1,9 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
-import { MarkdownBody } from "../MarkdownBody";
+import { MarkdownBody, type MarkdownLinkClickHandler } from "../MarkdownBody";
 import { cn, formatTokens } from "../../lib/utils";
+import { readDesktopShell } from "../../lib/desktop-shell";
+import { useOptionalToast } from "../../context/ToastContext";
 import {
   Check,
   ChevronDown,
@@ -163,10 +165,53 @@ const COMMON_FILENAME_TOKENS = new Set([
 ]);
 const LONG_EVENT_COLLAPSE_CHARS = 900;
 const LONG_EVENT_COLLAPSE_LINES = 8;
+const LOCAL_POSIX_FILE_ROOTS = [
+  "/Users/",
+  "/home/",
+  "/Volumes/",
+  "/tmp/",
+  "/var/",
+  "/opt/",
+  "/mnt/",
+  "/private/",
+];
+
+type TranscriptMarkdownLinkClickHandler = MarkdownLinkClickHandler;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function decodeFileUrlPath(href: string): string | null {
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "file:") return null;
+    const pathname = decodeURIComponent(url.pathname);
+    if (/^\/[A-Za-z]:\//.test(pathname)) return pathname.slice(1);
+    return pathname;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveTranscriptLocalFileTarget(href: string | null | undefined): string | null {
+  const value = href?.trim();
+  if (!value) return null;
+
+  const fileUrlPath = /^file:/i.test(value) ? decodeFileUrlPath(value) : null;
+  if (fileUrlPath) return fileUrlPath;
+
+  if (/^[A-Za-z]:[\\/]/.test(value)) return value;
+  if (/^\\\\[^\\]+\\[^\\]+/.test(value)) return value;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return null;
+  if (value.startsWith("//")) return null;
+  if (LOCAL_POSIX_FILE_ROOTS.some((root) => value.startsWith(root))) return value;
+  return null;
+}
+
+function shouldHandlePlainClick(event: Parameters<MarkdownLinkClickHandler>[0]["event"]) {
+  return event.button === 0 && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
 }
 
 function compactWhitespace(value: string): string {
@@ -1448,12 +1493,14 @@ function TranscriptMessageBlock({
   presentation = "default",
   className,
   collapsibleSummary = false,
+  onMarkdownLinkClick,
 }: {
   block: Extract<TranscriptBlock, { type: "message" }>;
   density: TranscriptDensity;
   presentation?: TranscriptPresentation;
   className?: string;
   collapsibleSummary?: boolean;
+  onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
 }) {
   const compact = density === "compact";
   const isUser = block.role === "user";
@@ -1471,6 +1518,7 @@ function TranscriptMessageBlock({
             : "text-sm",
         className,
       )}
+      onLinkClick={onMarkdownLinkClick}
     >
       {block.text}
     </MarkdownBody>
@@ -1519,11 +1567,13 @@ function TranscriptThinkingBlock({
   density,
   className,
   collapsibleSummary = false,
+  onMarkdownLinkClick,
 }: {
   block: Extract<TranscriptBlock, { type: "thinking" }>;
   density: TranscriptDensity;
   className?: string;
   collapsibleSummary?: boolean;
+  onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
 }) {
   const [open, setOpen] = useState(() => Boolean(block.streaming));
 
@@ -1543,6 +1593,7 @@ function TranscriptThinkingBlock({
         density === "compact" ? "text-[11px] leading-5" : "text-sm leading-6",
         className,
       )}
+      onLinkClick={onMarkdownLinkClick}
     >
       {block.text}
     </MarkdownBody>
@@ -1589,6 +1640,7 @@ function renderTranscriptBlock({
   presentation,
   collapseStdout,
   thinkingClassName,
+  onMarkdownLinkClick,
 }: {
   block: TranscriptBlock;
   index: number;
@@ -1596,6 +1648,7 @@ function renderTranscriptBlock({
   presentation: TranscriptPresentation;
   collapseStdout: boolean;
   thinkingClassName?: string;
+  onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
 }) {
   return (
     <div
@@ -1608,6 +1661,7 @@ function renderTranscriptBlock({
           density={density}
           presentation={presentation}
           collapsibleSummary={presentation === "chat"}
+          onMarkdownLinkClick={onMarkdownLinkClick}
         />
       )}
       {block.type === "thinking" && (
@@ -1616,6 +1670,7 @@ function renderTranscriptBlock({
           density={density}
           className={thinkingClassName}
           collapsibleSummary={presentation === "chat"}
+          onMarkdownLinkClick={onMarkdownLinkClick}
         />
       )}
       {block.type === "tool" && <TranscriptToolCard block={block} density={density} presentation={presentation} />}
@@ -2525,11 +2580,13 @@ function TranscriptChatTurn({
   density,
   thinkingClassName,
   variant = "chat",
+  onMarkdownLinkClick,
 }: {
   turn: ChatTranscriptTurn;
   density: TranscriptDensity;
   thinkingClassName?: string;
   variant?: "chat" | "detail";
+  onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
 }) {
   const detailVariant = variant === "detail";
   const segments = segmentChatTranscriptBlocks(turn.blocks);
@@ -2545,6 +2602,7 @@ function TranscriptChatTurn({
               presentation: detailVariant ? "detail" : "chat",
               collapseStdout: true,
               thinkingClassName,
+              onMarkdownLinkClick,
             })
           : (
             <TranscriptChatActionGroup
@@ -2569,6 +2627,7 @@ function TranscriptChatTimeline({
   collapseStdout,
   thinkingClassName,
   hideAssistantMessages,
+  onMarkdownLinkClick,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
@@ -2576,6 +2635,7 @@ function TranscriptChatTimeline({
   collapseStdout: boolean;
   thinkingClassName?: string;
   hideAssistantMessages: boolean;
+  onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
 }) {
   const timelineEntries = useMemo(
     () => hideAssistantMessages ? entries.filter((entry) => entry.kind !== "assistant") : entries,
@@ -2595,6 +2655,7 @@ function TranscriptChatTimeline({
         presentation: "chat",
         collapseStdout,
         thinkingClassName,
+        onMarkdownLinkClick,
       }))}
       {turns.map((turn) => (
         <TranscriptChatTurn
@@ -2602,6 +2663,7 @@ function TranscriptChatTimeline({
           turn={turn}
           density={density}
           thinkingClassName={thinkingClassName}
+          onMarkdownLinkClick={onMarkdownLinkClick}
         />
       ))}
     </div>
@@ -2696,11 +2758,13 @@ function TranscriptDetailTimeline({
   density,
   streaming,
   thinkingClassName,
+  onMarkdownLinkClick,
 }: {
   entries: TranscriptEntry[];
   density: TranscriptDensity;
   streaming: boolean;
   thinkingClassName?: string;
+  onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
 }) {
   const { preludeBlocks, turns } = useMemo(
     () => normalizeChatTranscriptTurns(entries, streaming),
@@ -2720,6 +2784,7 @@ function TranscriptDetailTimeline({
                 presentation="detail"
                 className="text-sm leading-7"
                 collapsibleSummary={row.block.role === "user"}
+                onMarkdownLinkClick={onMarkdownLinkClick}
               />
             )}
             {row.block.type === "thinking" && (
@@ -2728,6 +2793,7 @@ function TranscriptDetailTimeline({
                 density={density}
                 className={thinkingClassName}
                 collapsibleSummary
+                onMarkdownLinkClick={onMarkdownLinkClick}
               />
             )}
             {row.block.type === "tool" && (
@@ -2759,6 +2825,7 @@ function TranscriptDetailTimeline({
               density={density}
               thinkingClassName={thinkingClassName}
               variant="detail"
+              onMarkdownLinkClick={onMarkdownLinkClick}
             />
           </div>
         );
@@ -2818,6 +2885,35 @@ export function RunTranscriptView({
   presentation = "default",
   hideAssistantMessages = false,
 }: RunTranscriptViewProps) {
+  const toastContext = useOptionalToast();
+  const handleMarkdownLinkClick = useCallback<TranscriptMarkdownLinkClickHandler>(({ event, href }) => {
+    if (!shouldHandlePlainClick(event)) return;
+
+    const targetPath = resolveTranscriptLocalFileTarget(href);
+    if (!targetPath) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const desktopShell = readDesktopShell();
+    if (!desktopShell) {
+      toastContext?.pushToast({
+        title: "Open from Desktop",
+        body: "Local transcript file links can only be opened from the Rudder Desktop app.",
+        tone: "warn",
+      });
+      return true;
+    }
+
+    void desktopShell.openPath(targetPath).catch((error) => {
+      toastContext?.pushToast({
+        title: "Failed to open file",
+        body: error instanceof Error ? error.message : `Could not open ${targetPath}.`,
+        tone: "error",
+      });
+    });
+    return true;
+  }, [toastContext]);
   const renderableEntries = useMemo(() => filterRenderableTranscriptEntries(entries), [entries]);
   const blocks = useMemo(() => normalizeTranscript(renderableEntries, streaming), [renderableEntries, streaming]);
   const visibleBlocks = limit ? blocks.slice(-limit) : blocks;
@@ -2847,6 +2943,7 @@ export function RunTranscriptView({
           density={density}
           streaming={streaming}
           thinkingClassName={thinkingClassName}
+          onMarkdownLinkClick={handleMarkdownLinkClick}
         />
       </div>
     );
@@ -2862,6 +2959,7 @@ export function RunTranscriptView({
           collapseStdout={collapseStdout}
           thinkingClassName={thinkingClassName}
           hideAssistantMessages={hideAssistantMessages}
+          onMarkdownLinkClick={handleMarkdownLinkClick}
         />
       </div>
     );
@@ -2881,6 +2979,7 @@ export function RunTranscriptView({
             presentation,
             collapseStdout,
             thinkingClassName,
+            onMarkdownLinkClick: handleMarkdownLinkClick,
           })}
         </div>
       ))}
