@@ -1267,13 +1267,20 @@ export function AutomationDetail() {
             {(activity ?? []).length === 0 ? (
               <p className="text-xs text-muted-foreground">No activity yet.</p>
             ) : (
-              <div className="divide-y divide-border/70 border-y border-border/70">
+              <div data-testid="automation-activity-list" className="divide-y divide-border/70 border-y border-border/70">
                 {(activity ?? []).slice(0, 8).map((event) => (
-                  <div key={event.id} className="flex items-center justify-between gap-4 py-2 text-xs">
-                    <div className="flex min-w-0 items-center gap-2">
+                  <div
+                    key={event.id}
+                    data-testid="automation-activity-row"
+                    className="flex flex-col gap-1.5 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                  >
+                    <div data-testid="automation-activity-summary" className="min-w-0 space-y-1 sm:flex sm:items-center sm:gap-2 sm:space-y-0">
                       <span className="shrink-0 font-medium text-foreground/90">{event.action.replaceAll(".", " ")}</span>
                       {event.details && Object.keys(event.details).length > 0 && (
-                        <span className="truncate text-muted-foreground">
+                        <span
+                          data-testid="automation-activity-details"
+                          className="block break-words leading-5 text-muted-foreground sm:truncate"
+                        >
                           {Object.entries(event.details).slice(0, 3).map(([key, value], i) => (
                             <span key={key}>
                               {i > 0 && <span className="mx-1 text-border">·</span>}
@@ -1284,7 +1291,9 @@ export function AutomationDetail() {
                         </span>
                       )}
                     </div>
-                    <span className="shrink-0 text-muted-foreground/60">{timeAgo(event.createdAt)}</span>
+                    <span data-testid="automation-activity-time" className="shrink-0 text-muted-foreground/60">
+                      {timeAgo(event.createdAt)}
+                    </span>
                   </div>
                 ))}
               </div>

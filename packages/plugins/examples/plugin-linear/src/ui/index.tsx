@@ -1279,12 +1279,6 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
               onChange={(event) => setTokenInput(event.target.value)}
               placeholder={draft.apiTokenSecretRef ? "Token saved. Paste a new token to replace it." : "Paste a Linear token"}
             />
-            <div style={layoutStyles.helpText}>
-              <a href={LINEAR_TOKEN_SETTINGS_URL} target="_blank" rel="noreferrer">
-                Create a Linear token
-              </a>
-              {" "}and paste it here.
-            </div>
           </div>
           <div style={{ display: "grid", gap: 6, justifySelf: "start" }}>
             <span aria-hidden="true" style={{ ...layoutStyles.label, visibility: "hidden" }}>Action</span>

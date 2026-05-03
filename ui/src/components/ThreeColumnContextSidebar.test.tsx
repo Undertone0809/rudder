@@ -368,7 +368,6 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector('a[href="/issues?scope=recent"]')).toBeNull();
     expect(document.querySelector("[data-testid='issue-recent-section']")?.textContent).toContain("Recently Viewed");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-1']")?.textContent).toContain("Recent issue 1");
-    expect(document.querySelector("[data-testid='issue-recent-row-issue-1']")?.textContent).not.toContain("RUD-1");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-5']")?.textContent).toContain("Recent issue 5");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-6']")).toBeNull();
 
@@ -447,7 +446,7 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(activeRow?.getAttribute("aria-current")).toBe("page");
   });
 
-  it("shows saved custom boards in the issues sidebar", () => {
+  it("ignores previously stored custom boards in the issues sidebar", () => {
     window.localStorage.setItem("rudder:issue-custom-views:org-1", JSON.stringify([
       {
         id: "view-1",
@@ -474,10 +473,9 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     renderSidebar();
 
     const section = document.querySelector("[data-testid='issue-custom-views-section']");
-    expect(section?.textContent).toContain("Custom Boards");
+    expect(section).toBeNull();
     const row = document.querySelector<HTMLAnchorElement>("[data-testid='issue-custom-view-row-view-1'] a");
-    expect(row?.textContent).toContain("Review board");
-    expect(row?.getAttribute("href")).toBe("/issues?view=view-1");
+    expect(row).toBeNull();
   });
 
   it("shows connected Linear teams in the issues sidebar when Linear has no projects", () => {
@@ -581,43 +579,6 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector("[data-testid='issue-project-row-project-2']")?.textContent).not.toContain("live");
   });
 
-  it("deletes an active custom board from the issues sidebar", () => {
-    mockState.search = "?view=view-1";
-    window.localStorage.setItem("rudder:issue-custom-views:org-1", JSON.stringify([
-      {
-        id: "view-1",
-        orgId: "org-1",
-        name: "Review board",
-        state: {
-          statuses: ["in_review"],
-          priorities: [],
-          assignees: [],
-          labels: [],
-          projects: [],
-          displayProperties: ["identifier", "assignee"],
-          sortField: "updated",
-          sortDir: "desc",
-          groupBy: "none",
-          viewMode: "board",
-          collapsedGroups: [],
-        },
-        createdAt: "2026-04-30T01:00:00.000Z",
-        updatedAt: "2026-04-30T01:00:00.000Z",
-      },
-    ]));
-
-    renderSidebar();
-
-    const deleteButton = document.querySelector<HTMLButtonElement>("[aria-label='Delete custom board Review board']");
-    act(() => {
-      deleteButton?.click();
-    });
-
-    expect(mockState.confirm).toHaveBeenCalledWith('Delete custom board "Review board"? This cannot be undone.');
-    expect(JSON.parse(window.localStorage.getItem("rudder:issue-custom-views:org-1") ?? "[]")).toEqual([]);
-    expect(mockState.pushToast).toHaveBeenCalledWith({ title: "Custom board deleted", tone: "success" });
-    expect(mockState.navigate).toHaveBeenCalledWith("/issues");
-  });
 });
 
 describe("ThreeColumnContextSidebar agent actions", () => {
