@@ -152,7 +152,7 @@ function DraftIssuesView({
 }
 
 export function Issues() {
-  const { selectedOrganizationId } = useOrganization();
+  const { selectedOrganizationId, selectedOrganization } = useOrganization();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { openNewIssue } = useDialog();
   const { pushToast } = useToast();
@@ -362,11 +362,11 @@ export function Issues() {
       <div className="flex h-full min-h-0 flex-col">
         <LinearIssueSourceBoard
           orgId={selectedOrganizationId}
+          orgName={selectedOrganization?.name}
           projects={projects}
           linearTeamId={linearTeamId}
           linearProjectId={linearProjectId}
           initialSearch={initialSearch}
-          onSearchChange={handleSearchChange}
         />
       </div>
     );

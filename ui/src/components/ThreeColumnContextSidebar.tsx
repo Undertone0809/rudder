@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -14,7 +14,6 @@ import {
   DollarSign,
   Eye,
   EyeOff,
-  ExternalLink,
   FolderTree,
   History,
   MessageSquare,
@@ -121,18 +120,44 @@ function SectionLabel({
   children,
   action,
   testId,
+  collapsed,
+  onToggle,
 }: {
   children: string;
   action?: ReactNode;
   testId?: string;
+  collapsed?: boolean;
+  onToggle?: () => void;
 }) {
+  const canToggle = typeof collapsed === "boolean" && onToggle;
   return (
     <div
       data-testid={testId}
-      className="group flex items-center justify-between px-3.5 pt-3.5 text-[10px] font-semibold tracking-[0.08em] text-muted-foreground/72"
+      className="group flex items-center justify-between px-3.5 pt-3.5 text-[11px] font-medium tracking-normal text-muted-foreground/76"
     >
       <span>{children}</span>
-      {action ? <div className="flex shrink-0 items-center">{action}</div> : null}
+      {action || canToggle ? (
+        <div className="flex shrink-0 items-center gap-1">
+          {action}
+          {canToggle ? (
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-label={`${collapsed ? "Expand" : "Collapse"} ${children}`}
+              title={collapsed ? "Expand" : "Collapse"}
+              data-testid={testId ? `${testId}-toggle` : undefined}
+              className={cn(
+                "inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground/72 transition-[opacity,background-color,color]",
+                "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,transparent)] hover:text-foreground",
+                "opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100",
+                collapsed && "md:opacity-100",
+              )}
+            >
+              {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -542,11 +567,15 @@ function RecentIssueListSection({
   activeIssueRef,
   closeMobileSidebar,
   onOpenIssue,
+  collapsed,
+  onToggleCollapsed,
 }: {
   issues: Issue[];
   activeIssueRef: string | null;
   closeMobileSidebar: () => void;
   onOpenIssue: (issue: Issue) => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -559,7 +588,15 @@ function RecentIssueListSection({
 
   return (
     <section aria-label="Recently viewed issues" className="mt-1">
-      <SectionLabel testId="issue-recent-section">Recently Viewed</SectionLabel>
+      <SectionLabel
+        testId="issue-recent-section"
+        collapsed={collapsed}
+        onToggle={onToggleCollapsed}
+      >
+        Recently Viewed
+      </SectionLabel>
+      {collapsed ? null : (
+        <>
       <div
         data-testid="issue-recent-list"
         className={cn(
@@ -615,6 +652,8 @@ function RecentIssueListSection({
           <span>{expanded ? "Show less" : `Show ${expandCount} more`}</span>
         </button>
       ) : null}
+        </>
+      )}
     </section>
   );
 }
@@ -636,6 +675,17 @@ export function ThreeColumnContextSidebar() {
   const { pushToast } = useToast();
   const { openNewAgent, openNewProject } = useDialog();
   const queryClient = useQueryClient();
+  const [collapsedIssueSections, setCollapsedIssueSections] = useState<Record<string, boolean>>({});
+  const isIssueSectionCollapsed = useCallback(
+    (key: string) => collapsedIssueSections[key] === true,
+    [collapsedIssueSections],
+  );
+  const toggleIssueSection = useCallback((key: string) => {
+    setCollapsedIssueSections((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
+  }, []);
   const calendarSidebarScrollRef = useScrollbarActivityRef("rudder:sidebar-scroll:calendar");
   const {
     cursor,
@@ -1179,25 +1229,32 @@ export function ThreeColumnContextSidebar() {
         className="workspace-context-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
       >
         <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
-        <SectionLabel>Issues</SectionLabel>
-        <SlidingContextNav
-          activeIndex={activeIssueContextIndex}
-          ariaLabel="Issue navigation"
-          className="mt-2"
-          indicatorTestId="issue-sidebar-active-indicator"
+        <SectionLabel
+          collapsed={isIssueSectionCollapsed("issues")}
+          onToggle={() => toggleIssueSection("issues")}
         >
-          {issueContextItems.map((item) => (
-            <ContextItem
-              key={item.key}
-              to={item.to}
-              icon={item.icon}
-              label={item.label}
-              active={item.active}
-              testId={item.testId}
-              slidingActiveIndicator
-            />
-          ))}
-        </SlidingContextNav>
+          Issues
+        </SectionLabel>
+        {isIssueSectionCollapsed("issues") ? null : (
+          <SlidingContextNav
+            activeIndex={activeIssueContextIndex}
+            ariaLabel="Issue navigation"
+            className="mt-2"
+            indicatorTestId="issue-sidebar-active-indicator"
+          >
+            {issueContextItems.map((item) => (
+              <ContextItem
+                key={item.key}
+                to={item.to}
+                icon={item.icon}
+                label={item.label}
+                active={item.active}
+                testId={item.testId}
+                slidingActiveIndicator
+              />
+            ))}
+          </SlidingContextNav>
+        )}
 
         <div className="min-h-0 flex-1 overflow-y-auto pb-3.5">
           <RecentIssueListSection
@@ -1205,89 +1262,94 @@ export function ThreeColumnContextSidebar() {
             activeIssueRef={activeIssueRef}
             closeMobileSidebar={closeMobileSidebar}
             onOpenIssue={recordRecentIssueOpen}
+            collapsed={isIssueSectionCollapsed("recent")}
+            onToggleCollapsed={() => toggleIssueSection("recent")}
           />
-          <SectionLabel testId="workspace-projects-section">Projects</SectionLabel>
-          <SlidingContextNav
-            activeIndex={issueProjectActiveIndex}
-            ariaLabel="Issue project slices"
-            className="mt-2"
-            indicatorTestId="issue-project-sidebar-active-indicator"
+          <SectionLabel
+            testId="workspace-projects-section"
+            collapsed={isIssueSectionCollapsed("projects")}
+            onToggle={() => toggleIssueSection("projects")}
           >
-            {visibleProjects.map((project) => {
-              const routeRef = projectRouteRef(project);
-              const active = selectedProjectId === project.id || activeProjectRef === routeRef;
-              const liveCount = liveCountByProject.get(project.id) ?? 0;
-              return (
-                <Link
-                  key={project.id}
-                  to={`/issues?projectId=${project.id}`}
-                  onClick={closeMobileSidebar}
-                  data-testid={`issue-project-row-${project.id}`}
-                  className={cn(
-                    "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
-                    active
-                      ? "font-medium text-foreground"
-                      : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
-                  )}
-                >
-                  <Circle
-                    data-testid={`issue-project-color-${project.id}`}
-                    className="h-2.5 w-2.5 shrink-0 fill-current"
-                    style={{ color: projectColorAccent(project.color) }}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                  {liveCount > 0 ? <SidebarLiveCount count={liveCount} /> : null}
-                </Link>
-              );
-            })}
-          </SlidingContextNav>
+            Projects
+          </SectionLabel>
+          {isIssueSectionCollapsed("projects") ? null : (
+            <SlidingContextNav
+              activeIndex={issueProjectActiveIndex}
+              ariaLabel="Issue project slices"
+              className="mt-2"
+              indicatorTestId="issue-project-sidebar-active-indicator"
+            >
+              {visibleProjects.map((project) => {
+                const routeRef = projectRouteRef(project);
+                const active = selectedProjectId === project.id || activeProjectRef === routeRef;
+                const liveCount = liveCountByProject.get(project.id) ?? 0;
+                return (
+                  <Link
+                    key={project.id}
+                    to={`/issues?projectId=${project.id}`}
+                    onClick={closeMobileSidebar}
+                    data-testid={`issue-project-row-${project.id}`}
+                    className={cn(
+                      "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                      active
+                        ? "font-medium text-foreground"
+                        : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
+                    )}
+                  >
+                    <Circle
+                      data-testid={`issue-project-color-${project.id}`}
+                      className="h-2.5 w-2.5 shrink-0 fill-current"
+                      style={{ color: projectColorAccent(project.color) }}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                    {liveCount > 0 ? <SidebarLiveCount count={liveCount} /> : null}
+                  </Link>
+                );
+              })}
+            </SlidingContextNav>
+          )}
           {linearSidebarItems.length > 0 ? (
             <>
               <SectionLabel
                 testId="issue-linear-section"
-                action={(
-                  <span
-                    title="External source"
-                    className="inline-flex items-center gap-1 rounded-[calc(var(--radius-sm)-2px)] border border-[color:color-mix(in_oklab,var(--border-soft)_70%,transparent)] px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-muted-foreground/78"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    External
-                  </span>
-                )}
+                collapsed={isIssueSectionCollapsed("linear")}
+                onToggle={() => toggleIssueSection("linear")}
               >
                 Linear
               </SectionLabel>
-              <SlidingContextNav
-                activeIndex={issueLinearActiveIndex}
-                ariaLabel="Linear issue source slices"
-                className="mt-2"
-                indicatorTestId="issue-linear-sidebar-active-indicator"
-              >
-                {linearSidebarItems.map((item) => {
-                  const active = item.kind === "project"
-                    ? selectedLinearProjectId === item.id && (!item.teamId || selectedLinearTeamId === item.teamId)
-                    : selectedIssueSource === "linear" && selectedLinearTeamId === item.id && !selectedLinearProjectId;
-                  return (
-                    <Link
-                      key={`${item.kind}-${item.id}`}
-                      to={linearIssueSourceHref(item)}
-                      onClick={closeMobileSidebar}
-                      data-testid={`issue-linear-${item.kind}-${item.id}`}
-                      aria-current={active ? "page" : undefined}
-                      className={cn(
-                        "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
-                        item.kind === "project" && item.teamId ? "ml-6 min-h-8 py-1.5 text-xs" : "",
-                        active
-                          ? "font-medium text-foreground"
-                          : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
-                      )}
-                    >
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-[calc(var(--radius-sm)-4px)] border border-[color:color-mix(in_oklab,var(--muted-foreground)_54%,transparent)] bg-[color:color-mix(in_oklab,var(--muted-foreground)_18%,transparent)]" />
-                      <span className="min-w-0 flex-1 truncate">{item.name}</span>
-                    </Link>
-                  );
-                })}
-              </SlidingContextNav>
+              {isIssueSectionCollapsed("linear") ? null : (
+                <SlidingContextNav
+                  activeIndex={issueLinearActiveIndex}
+                  ariaLabel="Linear issue source slices"
+                  className="mt-2"
+                  indicatorTestId="issue-linear-sidebar-active-indicator"
+                >
+                  {linearSidebarItems.map((item) => {
+                    const active = item.kind === "project"
+                      ? selectedLinearProjectId === item.id && (!item.teamId || selectedLinearTeamId === item.teamId)
+                      : selectedIssueSource === "linear" && selectedLinearTeamId === item.id && !selectedLinearProjectId;
+                    return (
+                      <Link
+                        key={`${item.kind}-${item.id}`}
+                        to={linearIssueSourceHref(item)}
+                        onClick={closeMobileSidebar}
+                        data-testid={`issue-linear-${item.kind}-${item.id}`}
+                        aria-current={active ? "page" : undefined}
+                        className={cn(
+                          "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
+                          item.kind === "project" && item.teamId ? "ml-6 min-h-8 py-1.5 text-xs" : "",
+                          active
+                            ? "font-medium text-foreground"
+                            : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
+                        )}
+                      >
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-[calc(var(--radius-sm)-4px)] border border-[color:color-mix(in_oklab,var(--muted-foreground)_54%,transparent)] bg-[color:color-mix(in_oklab,var(--muted-foreground)_18%,transparent)]" />
+                        <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                      </Link>
+                    );
+                  })}
+                </SlidingContextNav>
+              )}
             </>
           ) : null}
         </div>

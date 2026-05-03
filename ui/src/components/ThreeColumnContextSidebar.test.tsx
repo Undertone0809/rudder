@@ -501,7 +501,8 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const section = document.querySelector("[data-testid='issue-linear-section']");
     expect(section?.textContent).toContain("Linear");
-    expect(section?.textContent).toContain("External");
+    expect(section?.textContent).not.toContain("External");
+    expect(document.querySelector("[data-testid='issue-linear-section-toggle']")).not.toBeNull();
 
     const teamLink = document.querySelector<HTMLAnchorElement>("[data-testid='issue-linear-team-team-rudder']");
     expect(teamLink?.textContent).toContain("Rudder");

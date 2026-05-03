@@ -115,6 +115,7 @@ async function renderBoard() {
       <QueryClientProvider client={client}>
         <LinearIssueSourceBoard
           orgId="org-1"
+          orgName="Rudder QA"
           projects={[{ id: "rudder-project", name: "Rudder Project", archivedAt: null }]}
           linearTeamId="team-eng"
           linearProjectId="linear-roadmap"
@@ -193,24 +194,17 @@ describe("LinearIssueSourceBoard", () => {
   it("groups Linear issues into mapped Rudder status lanes without native drag controls", async () => {
     await renderBoard();
 
-    expect(document.querySelector("[data-testid='linear-source-board']")?.textContent).toContain("Linear Issues");
+    expect(document.querySelector("[data-testid='linear-source-board']")?.textContent).toContain("Roadmap");
     expect(document.querySelector("[data-testid='linear-source-kanban-column-in_progress']")?.textContent).toContain("ENG-102");
-    expect(document.querySelector("[data-testid='linear-source-board-card-lin-2']")?.textContent).toContain("External");
+    expect(document.querySelector("[data-testid='linear-source-board-card-lin-2']")?.textContent).not.toContain("Import");
   });
 
-  it("imports selected Linear issues into a chosen Rudder project", async () => {
+  it("imports selected Linear issues after choosing a project in the import dialog", async () => {
     await renderBoard();
 
     const listToggle = document.querySelector<HTMLButtonElement>("[data-testid='linear-source-view-list']");
     act(() => {
       listToggle?.click();
-    });
-
-    const target = document.querySelector<HTMLSelectElement>("[data-testid='linear-source-target-project']");
-    act(() => {
-      if (!target) return;
-      target.value = "rudder-project";
-      target.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
     const checkbox = document.querySelector<HTMLInputElement>("[data-testid='linear-source-row-checkbox-lin-2']");
@@ -221,6 +215,20 @@ describe("LinearIssueSourceBoard", () => {
     const importButton = document.querySelector<HTMLButtonElement>("[data-testid='linear-source-import-selected']");
     await act(async () => {
       importButton?.click();
+    });
+    await flushAsyncWork();
+
+    expect(document.body.textContent).toContain("Project in Rudder QA");
+    const target = document.querySelector<HTMLSelectElement>("[data-testid='linear-source-import-project']");
+    act(() => {
+      if (!target) return;
+      target.value = "rudder-project";
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    const confirmButton = document.querySelector<HTMLButtonElement>("[data-testid='linear-source-confirm-import']");
+    await act(async () => {
+      confirmButton?.click();
     });
     await flushAsyncWork();
 
