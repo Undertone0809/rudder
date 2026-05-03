@@ -196,6 +196,7 @@ describe("LinearIssueSourceBoard", () => {
 
     expect(document.querySelector("[data-testid='linear-source-board']")?.textContent).toContain("Roadmap");
     expect(document.querySelector("[data-testid='linear-source-kanban-column-in_progress']")?.textContent).toContain("ENG-102");
+    expect(document.querySelector("[data-testid='linear-source-hidden-columns']")?.textContent).toContain("Done");
     expect(document.querySelector("[data-testid='linear-source-board-card-lin-2']")?.textContent).not.toContain("Import");
   });
 

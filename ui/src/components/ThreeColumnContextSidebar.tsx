@@ -904,11 +904,6 @@ export function ThreeColumnContextSidebar() {
     const routeRef = projectRouteRef(project);
     return selectedProjectId === project.id || activeProjectRef === routeRef;
   });
-  const issueLinearActiveIndex = linearSidebarItems.findIndex((item) =>
-    item.kind === "project"
-      ? selectedLinearProjectId === item.id && (!item.teamId || selectedLinearTeamId === item.teamId)
-      : selectedIssueSource === "linear" && selectedLinearTeamId === item.id && !selectedLinearProjectId,
-  );
   const orgContextItems = [
     { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
     { key: "resources", to: "/resources", icon: Boxes, label: "Resources", active: /^\/resources(?:\/|$)/.test(relativePath) },
@@ -1319,10 +1314,9 @@ export function ThreeColumnContextSidebar() {
               </SectionLabel>
               {isIssueSectionCollapsed("linear") ? null : (
                 <SlidingContextNav
-                  activeIndex={issueLinearActiveIndex}
+                  activeIndex={-1}
                   ariaLabel="Linear issue source slices"
                   className="mt-2"
-                  indicatorTestId="issue-linear-sidebar-active-indicator"
                 >
                   {linearSidebarItems.map((item) => {
                     const active = item.kind === "project"
@@ -1339,7 +1333,7 @@ export function ThreeColumnContextSidebar() {
                           "relative z-10 mx-1.5 flex min-h-[var(--motion-context-item-height)] items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
                           item.kind === "project" && item.teamId ? "ml-6 min-h-8 py-1.5 text-xs" : "",
                           active
-                            ? "font-medium text-foreground"
+                            ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
                             : "text-muted-foreground hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground",
                         )}
                       >

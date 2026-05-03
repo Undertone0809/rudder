@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { StatusIcon } from "@/components/StatusIcon";
@@ -324,6 +325,32 @@ function LinearListView({
   );
 }
 
+function LinearHiddenBoardStatus({
+  status,
+  issueCount,
+}: {
+  status: IssueStatus;
+  issueCount: number;
+}) {
+  return (
+    <div
+      data-testid={`linear-source-hidden-column-${status}`}
+      className={cn(
+        "flex items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] border px-2 py-2",
+        laneSurfaceClasses[status],
+      )}
+    >
+      <StatusIcon status={status} />
+      <span className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {statusLabel(status)}
+      </span>
+      <span className="text-xs text-muted-foreground/60 tabular-nums">
+        {issueCount}
+      </span>
+    </div>
+  );
+}
+
 function LinearBoardView({
   rows,
   teamMappings,
@@ -350,10 +377,11 @@ function LinearBoardView({
   }, [rows, teamMappings]);
 
   const visibleStatuses = boardStatuses.filter((status) => (grouped.get(status)?.length ?? 0) > 0);
+  const hiddenStatuses = boardStatuses.filter((status) => (grouped.get(status)?.length ?? 0) === 0);
 
   return (
     <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-x-auto overflow-y-hidden pb-3">
-      <div className="flex h-full min-h-[440px] min-w-max items-stretch gap-3 pr-2">
+      <div className="flex h-full min-h-full min-w-max items-stretch gap-3 pr-2">
         {visibleStatuses.map((status) => {
           const laneRows = grouped.get(status) ?? [];
           return (
@@ -426,6 +454,30 @@ function LinearBoardView({
             </section>
           );
         })}
+        {hiddenStatuses.length > 0 ? (
+          <div
+            data-testid="linear-source-hidden-columns"
+            className="flex h-full min-h-0 w-[228px] min-w-[228px] shrink-0 flex-col rounded-[calc(var(--radius-sm)+1px)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_78%,transparent)] p-2"
+          >
+            <div className="mb-2 flex items-center gap-2 px-1">
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Hidden columns
+              </span>
+              <span className="ml-auto text-xs text-muted-foreground/60 tabular-nums">
+                {hiddenStatuses.length}
+              </span>
+            </div>
+            <div className="space-y-2">
+              {hiddenStatuses.map((status) => (
+                <LinearHiddenBoardStatus
+                  key={status}
+                  status={status}
+                  issueCount={grouped.get(status)?.length ?? 0}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -651,6 +703,9 @@ export function LinearIssueSourceBoard({
   const selectedImportCount = selectedIssueIds.length;
   const selectedTargetProject = targetProjects.find((project) => project.id === importTargetProjectId) ?? null;
   const totalLoaded = rows.length;
+  const activeFilterCount = Number(Boolean(stateId)) + Number(Boolean(assigneeId));
+  const selectedStateLabel = stateOptions.find((state) => state.id === stateId)?.name ?? "All states";
+  const selectedAssigneeLabel = catalog?.users.find((user) => user.id === assigneeId)?.name ?? "Anyone";
 
   const toggleSelected = useCallback((issueId: string) => {
     setSelectedIssueIds((current) =>
@@ -702,17 +757,22 @@ export function LinearIssueSourceBoard({
 
   return (
     <div data-testid="linear-source-board" className="flex h-full min-h-0 flex-col gap-4">
-      <div className="surface-panel flex flex-col gap-3 rounded-[calc(var(--radius-sm)+1px)] px-3 py-3">
-        <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-foreground">{sourceLabel}</h2>
-            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span>{totalLoaded} loaded</span>
-              {importedCount > 0 ? <span>{importedCount} imported</span> : null}
-              {hasNextPage ? <span>More loads as you scroll</span> : null}
-            </div>
+      <div
+        data-testid="linear-source-toolbar"
+        className="surface-panel flex items-center justify-between gap-2 rounded-[calc(var(--radius-sm)+1px)] px-3 py-3 sm:gap-3"
+      >
+        <div className="flex min-w-0 items-baseline gap-3">
+          <div className="truncate text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            {sourceLabel}
           </div>
+          <div className="hidden min-w-0 items-center gap-2 text-xs text-muted-foreground md:flex">
+            <span>{totalLoaded} loaded</span>
+            {importedCount > 0 ? <span>{importedCount} imported</span> : null}
+            {hasNextPage ? <span>Loads as you scroll</span> : null}
+          </div>
+        </div>
 
+        <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
           <div className="flex items-center overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_82%,transparent)]">
             <button
               className={cn(
@@ -737,64 +797,103 @@ export function LinearIssueSourceBoard({
               <Columns3 className="h-3.5 w-3.5" />
             </button>
           </div>
-        </div>
 
-        <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(9rem,11rem)_minmax(9rem,11rem)_minmax(8rem,10rem)_auto]">
-          <ToolbarField label="State">
-          <select
-            className={selectClassName("h-8 w-full")}
-            value={stateId}
-            aria-label="Filter by Linear state"
-            onChange={(event) => setStateId(event.target.value)}
-          >
-            <option value="">All states</option>
-            {stateOptions.map((state) => (
-              <option key={state.id} value={state.id}>{state.name}</option>
-            ))}
-          </select>
-          </ToolbarField>
-          <ToolbarField label="Assignee">
-          <select
-            className={selectClassName("h-8 w-full")}
-            value={assigneeId}
-            aria-label="Filter by Linear assignee"
-            onChange={(event) => setAssigneeId(event.target.value)}
-          >
-            <option value="">Anyone</option>
-            {(catalog?.users ?? []).map((user) => (
-              <option key={user.id} value={user.id}>{user.name}</option>
-            ))}
-          </select>
-          </ToolbarField>
-          <ToolbarField label="Sort">
-          <select
-            className={selectClassName("h-8 w-full")}
-            value={sortField}
-            aria-label="Sort Linear issues"
-            onChange={(event) => setSortField(event.target.value as LinearSortField)}
-          >
-            <option value="updated">Updated</option>
-            <option value="created">Created</option>
-            <option value="identifier">Identifier</option>
-          </select>
-          </ToolbarField>
-          <ToolbarField label="Order" className="sm:max-w-44">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 justify-start"
-            title={`Sort ${sortDir === "asc" ? "ascending" : "descending"}`}
-            onClick={() => setSortDir((current) => (current === "asc" ? "desc" : "asc"))}
-          >
-            <ArrowUpDown className="h-3.5 w-3.5" />
-            <span>{sortDir === "asc" ? "Ascending" : "Descending"}</span>
-          </Button>
-          </ToolbarField>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className={cn("text-xs", activeFilterCount > 0 && "text-[color:var(--accent-strong)]")}>
+                <Filter className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+                <span className="hidden sm:inline">{activeFilterCount > 0 ? `Filters: ${activeFilterCount}` : "Filter"}</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 p-3">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Filters</span>
+                  {activeFilterCount > 0 ? (
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        setStateId("");
+                        setAssigneeId("");
+                      }}
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+                <ToolbarField label="State">
+                  <select
+                    className={selectClassName("h-8 w-full")}
+                    value={stateId}
+                    aria-label="Filter by Linear state"
+                    onChange={(event) => setStateId(event.target.value)}
+                  >
+                    <option value="">All states</option>
+                    {stateOptions.map((state) => (
+                      <option key={state.id} value={state.id}>{state.name}</option>
+                    ))}
+                  </select>
+                </ToolbarField>
+                <ToolbarField label="Assignee">
+                  <select
+                    className={selectClassName("h-8 w-full")}
+                    value={assigneeId}
+                    aria-label="Filter by Linear assignee"
+                    onChange={(event) => setAssigneeId(event.target.value)}
+                  >
+                    <option value="">Anyone</option>
+                    {(catalog?.users ?? []).map((user) => (
+                      <option key={user.id} value={user.id}>{user.name}</option>
+                    ))}
+                  </select>
+                </ToolbarField>
+                <div className="rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] px-2.5 py-2 text-xs text-muted-foreground">
+                  {selectedStateLabel} / {selectedAssigneeLabel}
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-xs">
+                <ArrowUpDown className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+                <span className="hidden sm:inline">Sort</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-56 p-3">
+              <div className="space-y-3">
+                <ToolbarField label="Sort by">
+                  <select
+                    className={selectClassName("h-8 w-full")}
+                    value={sortField}
+                    aria-label="Sort Linear issues"
+                    onChange={(event) => setSortField(event.target.value as LinearSortField)}
+                  >
+                    <option value="updated">Updated</option>
+                    <option value="created">Created</option>
+                    <option value="identifier">Identifier</option>
+                  </select>
+                </ToolbarField>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-full justify-start"
+                  title={`Sort ${sortDir === "asc" ? "ascending" : "descending"}`}
+                  onClick={() => setSortDir((current) => (current === "asc" ? "desc" : "asc"))}
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5" />
+                  <span>{sortDir === "asc" ? "Ascending" : "Descending"}</span>
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
 
-      <div className="surface-panel flex flex-col gap-3 rounded-[calc(var(--radius-sm)+1px)] px-3 py-3 md:flex-row md:items-center md:justify-between">
+      <div className="surface-panel flex flex-col gap-3 rounded-[calc(var(--radius-sm)+1px)] px-3 py-2.5 md:flex-row md:items-center md:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Button
             type="button"

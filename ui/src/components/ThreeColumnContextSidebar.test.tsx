@@ -532,7 +532,8 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const activeLink = document.querySelector<HTMLAnchorElement>("[data-testid='issue-linear-team-team-rudder']");
     expect(activeLink?.getAttribute("aria-current")).toBe("page");
-    expect(document.querySelector("[data-testid='issue-linear-sidebar-active-indicator']")).not.toBeNull();
+    expect(activeLink?.className).toContain("bg-[color:color-mix");
+    expect(document.querySelector("[data-testid='issue-linear-sidebar-active-indicator']")).toBeNull();
   });
 
   it("shows Linear projects under their connected team and routes them into the issue board", () => {
