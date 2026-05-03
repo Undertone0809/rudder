@@ -7,61 +7,66 @@ async function selectOrganization(page: Page, orgId: string) {
   }, orgId);
 }
 
+async function createAutomationFixture(page: Page) {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: {
+      name: `Automation-Layout-${Date.now()}`,
+    },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string };
+
+  const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+    data: {
+      name: "Onboarding",
+      description: "Project used to verify the automation detail layout.",
+    },
+  });
+  expect(projectRes.ok()).toBe(true);
+  const project = await projectRes.json() as { id: string };
+
+  const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "Automation Layout Agent",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {
+        model: "gpt-5.4",
+      },
+    },
+  });
+  expect(agentRes.ok()).toBe(true);
+  const agent = await agentRes.json() as { id: string };
+
+  const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
+    data: {
+      title: "Every morning summarize onboarding blockers",
+      description: "Check onboarding health and report the top blockers.",
+      projectId: project.id,
+      assigneeAgentId: agent.id,
+      priority: "medium",
+    },
+  });
+  expect(automationRes.ok()).toBe(true);
+  const automation = await automationRes.json() as { id: string };
+
+  const triggerRes = await page.request.post(`/api/automations/${automation.id}/triggers`, {
+    data: {
+      kind: "schedule",
+      label: "daily-check",
+      cronExpression: "0 10 * * *",
+      timezone: "Asia/Shanghai",
+    },
+  });
+  expect(triggerRes.ok()).toBe(true);
+
+  return { organization, automation };
+}
+
 test.describe("Automation detail layout", () => {
   test("keeps page actions in the header and moves editing context into the overview strip", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1200 });
-
-    const orgRes = await page.request.post("/api/orgs", {
-      data: {
-        name: `Automation-Layout-${Date.now()}`,
-      },
-    });
-    expect(orgRes.ok()).toBe(true);
-    const organization = await orgRes.json() as { id: string };
-
-    const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
-      data: {
-        name: "Onboarding",
-        description: "Project used to verify the automation detail layout.",
-      },
-    });
-    expect(projectRes.ok()).toBe(true);
-    const project = await projectRes.json() as { id: string };
-
-    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
-      data: {
-        name: "Automation Layout Agent",
-        role: "engineer",
-        agentRuntimeType: "codex_local",
-        agentRuntimeConfig: {
-          model: "gpt-5.4",
-        },
-      },
-    });
-    expect(agentRes.ok()).toBe(true);
-    const agent = await agentRes.json() as { id: string };
-
-    const automationRes = await page.request.post(`/api/orgs/${organization.id}/automations`, {
-      data: {
-        title: "Every morning summarize onboarding blockers",
-        description: "Check onboarding health and report the top blockers.",
-        projectId: project.id,
-        assigneeAgentId: agent.id,
-        priority: "medium",
-      },
-    });
-    expect(automationRes.ok()).toBe(true);
-    const automation = await automationRes.json() as { id: string };
-
-    const triggerRes = await page.request.post(`/api/automations/${automation.id}/triggers`, {
-      data: {
-        kind: "schedule",
-        label: "daily-check",
-        cronExpression: "0 10 * * *",
-        timezone: "Asia/Shanghai",
-      },
-    });
-    expect(triggerRes.ok()).toBe(true);
+    const { organization, automation } = await createAutomationFixture(page);
 
     await selectOrganization(page, organization.id);
     await page.goto(`/automations/${automation.id}?tab=triggers`);
@@ -145,6 +150,45 @@ test.describe("Automation detail layout", () => {
 
     await page.screenshot({
       path: testInfo.outputPath("automation-detail-layout.png"),
+      fullPage: true,
+    });
+  });
+
+  test("stacks activity metadata cleanly on narrow viewports", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const { organization, automation } = await createAutomationFixture(page);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`/automations/${automation.id}`);
+
+    const activityList = page.getByTestId("automation-activity-list");
+    const firstRow = page.getByTestId("automation-activity-row").first();
+    const firstSummary = page.getByTestId("automation-activity-summary").first();
+    const firstTimestamp = page.getByTestId("automation-activity-time").first();
+    const firstDetails = page.getByTestId("automation-activity-details").first();
+
+    await expect(activityList).toBeVisible();
+    await expect(firstRow).toBeVisible();
+    await expect(firstDetails).toContainText("kind: schedule");
+
+    const [rowBox, summaryBox, timestampBox] = await Promise.all([
+      firstRow.boundingBox(),
+      firstSummary.boundingBox(),
+      firstTimestamp.boundingBox(),
+    ]);
+    const widths = await page.evaluate(() => ({
+      bodyWidth: document.body.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }));
+
+    expect(rowBox).not.toBeNull();
+    expect(summaryBox).not.toBeNull();
+    expect(timestampBox).not.toBeNull();
+    expect(timestampBox!.y).toBeGreaterThan(summaryBox!.y);
+    expect(widths.bodyWidth).toBeLessThanOrEqual(widths.viewportWidth);
+
+    await page.screenshot({
+      path: testInfo.outputPath("automation-detail-mobile-layout.png"),
       fullPage: true,
     });
   });

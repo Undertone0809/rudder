@@ -138,6 +138,7 @@ import {
 import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@rudderhq/agent-runtime-utils";
 import { agentRouteRef } from "../lib/utils";
 import { heartbeatRunEventText, heartbeatRunEventToTranscriptEntry, mergeTranscriptEntries } from "../lib/run-detail-events";
+import { shouldPollLiveRunBackfill } from "../lib/live-run-backfill";
 import {
   arraysEqual,
   canManageSkillEntry,
@@ -4601,7 +4602,7 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
 
   // Poll for live updates
   useEffect(() => {
-    if (!isLive || isStreamingConnected) return;
+    if (!shouldPollLiveRunBackfill({ isLive, isStreamingConnected })) return;
     const interval = setInterval(async () => {
       const maxSeq = events.length > 0 ? Math.max(...events.map((e) => e.seq)) : 0;
       try {
@@ -4618,7 +4619,7 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
 
   // Poll shell log for running runs
   useEffect(() => {
-    if (!isLive || isStreamingConnected) return;
+    if (!shouldPollLiveRunBackfill({ isLive, isStreamingConnected })) return;
     const interval = setInterval(async () => {
       try {
         const result = await heartbeatsApi.log(run.id, logOffset, 256_000);
