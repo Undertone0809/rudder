@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Notification, app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, systemPreferences } from "electron";
 import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electron";
+import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml } from "./boot-screen.js";
 import { DESKTOP_CLI_FLAG, ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
@@ -1017,8 +1018,11 @@ async function desktopApiRequest<T>(apiPath: string, init?: RequestInit): Promis
   if (!headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  if (!headers.has("Accept")) {
+    headers.set("Accept", "application/json");
+  }
 
-  const response = await fetch(`${apiBase}${apiPath}`, {
+  const response = await fetch(buildDesktopApiRequestUrl(apiBase, apiPath), {
     ...init,
     headers,
   });
