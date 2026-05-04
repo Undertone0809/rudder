@@ -10,11 +10,6 @@ import { cn, relativeTime } from "../lib/utils";
 import { MarkdownBody } from "./MarkdownBody";
 import { MarkdownEditor, type MentionOption } from "./MarkdownEditor";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { semanticNoticeToneClasses, semanticTextToneClasses } from "@/components/ui/semanticTones";
 import {
@@ -42,6 +37,7 @@ type DocumentConflictState = {
 };
 
 const DOCUMENT_AUTOSAVE_DEBOUNCE_MS = 900;
+const NEW_DOCUMENT_DRAFT_KEY = "__new_document_draft__";
 const getFoldedDocumentsStorageKey = (issueId: string) => `rudder:issue-document-folds:${issueId}`;
 
 function loadFoldedDocumentKeys(issueId: string) {
@@ -176,7 +172,7 @@ export function IssueDocumentsSection({
   const [autosaveDocumentKey, setAutosaveDocumentKey] = useState<string | null>(null);
   const [copiedDocumentKey, setCopiedDocumentKey] = useState<string | null>(null);
   const [highlightDocumentKey, setHighlightDocumentKey] = useState<string | null>(null);
-  const [expandedDocumentEditorOpen, setExpandedDocumentEditorOpen] = useState(false);
+  const [expandedDocumentEditorKey, setExpandedDocumentEditorKey] = useState<string | null>(null);
   const autosaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedDocumentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasScrolledToHashRef = useRef(false);
@@ -243,7 +239,7 @@ export function IssueDocumentsSection({
   const beginNewDocument = () => {
     resetAutosaveState();
     setDocumentConflict(null);
-    setExpandedDocumentEditorOpen(false);
+    setExpandedDocumentEditorKey(null);
     setDraft({
       key: "",
       title: "",
@@ -275,7 +271,7 @@ export function IssueDocumentsSection({
     if (autosaveDebounceRef.current) {
       clearTimeout(autosaveDebounceRef.current);
     }
-    setExpandedDocumentEditorOpen(false);
+    setExpandedDocumentEditorKey(null);
     resetAutosaveState();
     setDocumentConflict(null);
     setDraft(null);
@@ -490,31 +486,9 @@ export function IssueDocumentsSection({
       trackAutosave: options?.trackAutosave ?? false,
     });
     if (saved) {
-      setExpandedDocumentEditorOpen(false);
+      setExpandedDocumentEditorKey(null);
     }
   }, [commitDraft, draft]);
-
-  const saveExpandedDocument = useCallback(async () => {
-    if (!draft) return;
-    if (draft.isNew) {
-      await createDraftDocument();
-      return;
-    }
-    const saved = await commitDraft(draft, { clearAfterSave: true, trackAutosave: true });
-    if (saved) {
-      setExpandedDocumentEditorOpen(false);
-    }
-  }, [commitDraft, createDraftDocument, draft]);
-
-  const handleExpandedDocumentEditorKeyDown = async (event: React.KeyboardEvent) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      event.preventDefault();
-      if (autosaveDebounceRef.current) {
-        clearTimeout(autosaveDebounceRef.current);
-      }
-      await saveExpandedDocument();
-    }
-  };
 
   useEffect(() => {
     setFoldedDocumentKeys(loadFoldedDocumentKeys(issue.id));
@@ -610,6 +584,7 @@ export function IssueDocumentsSection({
   const documentBodyShellClassName = "mt-3 overflow-hidden rounded-md";
   const documentBodyPaddingClassName = "";
   const documentBodyContentClassName = "rudder-edit-in-place-content min-h-[220px] text-[15px] leading-7";
+  const isNewDraftExpanded = draft?.isNew && expandedDocumentEditorKey === NEW_DOCUMENT_DRAFT_KEY;
   const toggleFoldedDocument = (key: string) => {
     setFoldedDocumentKeys((current) =>
       current.includes(key)
@@ -647,7 +622,12 @@ export function IssueDocumentsSection({
 
       {draft?.isNew && (
         <div
-          className="space-y-3 rounded-lg border border-border bg-accent/10 p-3"
+          className={cn(
+            "space-y-3 rounded-lg border border-border transition-all duration-300 ease-out",
+            isNewDraftExpanded
+              ? "min-h-[calc(100dvh-18rem)] bg-background/80 px-5 py-6"
+              : "bg-accent/10 p-3",
+          )}
           onBlurCapture={handleDraftBlur}
           onKeyDown={handleDraftKeyDown}
         >
@@ -659,17 +639,26 @@ export function IssueDocumentsSection({
                 setDraft((current) => current ? { ...current, title: event.target.value } : current)
               }
               placeholder="Document title"
+              className={cn(
+                isNewDraftExpanded &&
+                  "h-auto border-transparent bg-transparent p-0 text-3xl font-semibold focus-visible:border-transparent focus-visible:ring-0",
+              )}
             />
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
               className="shrink-0 text-muted-foreground"
-              title="Expand editor"
-              aria-label="Expand editor"
-              onClick={() => setExpandedDocumentEditorOpen(true)}
+              title={isNewDraftExpanded ? "Collapse editor" : "Expand editor"}
+              aria-label={isNewDraftExpanded ? "Collapse editor" : "Expand editor"}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() =>
+                setExpandedDocumentEditorKey((current) =>
+                  current === NEW_DOCUMENT_DRAFT_KEY ? null : NEW_DOCUMENT_DRAFT_KEY,
+                )
+              }
             >
-              <Maximize2 className="h-4 w-4" />
+              {isNewDraftExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </Button>
           </div>
           <MarkdownEditor
@@ -680,7 +669,10 @@ export function IssueDocumentsSection({
             placeholder="Write the document..."
             bordered={false}
             className="bg-transparent"
-            contentClassName="min-h-[220px] text-[15px] leading-7"
+            contentClassName={cn(
+              "text-[15px] leading-7",
+              isNewDraftExpanded ? "min-h-[calc(100dvh-28rem)]" : "min-h-[220px]",
+            )}
             mentions={mentions}
             imageUploadHandler={imageUploadHandler}
             onSubmit={() => void createDraftDocument()}
@@ -729,13 +721,17 @@ export function IssueDocumentsSection({
           const title = activeDraft
             ? inferDocumentTitle(activeDraft.title, activeDraft.body, doc.key)
             : displayDocumentTitle(doc);
+          const isDocumentExpanded = expandedDocumentEditorKey === doc.key;
 
           return (
             <div
               key={doc.id}
               id={`document-${doc.key}`}
               className={cn(
-                "rounded-lg border border-border p-3 transition-colors duration-1000",
+                "rounded-lg border border-border transition-all duration-300 ease-out",
+                isDocumentExpanded
+                  ? "min-h-[calc(100dvh-18rem)] bg-background/80 px-5 py-6"
+                  : "p-3",
                 highlightDocumentKey === doc.key && "border-primary/50 bg-primary/5",
               )}
             >
@@ -768,14 +764,19 @@ export function IssueDocumentsSection({
                     variant="ghost"
                     size="icon-xs"
                     className="text-muted-foreground"
-                    title="Expand editor"
-                    aria-label="Expand editor"
+                    title={isDocumentExpanded ? "Collapse editor" : "Expand editor"}
+                    aria-label={isDocumentExpanded ? "Collapse editor" : "Expand editor"}
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={() => {
+                      if (isDocumentExpanded) {
+                        setExpandedDocumentEditorKey(null);
+                        return;
+                      }
                       beginEdit(doc.key);
-                      setExpandedDocumentEditorOpen(true);
+                      setExpandedDocumentEditorKey(doc.key);
                     }}
                   >
-                    <Maximize2 className="h-3.5 w-3.5" />
+                    {isDocumentExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
                   </Button>
                   <Button
                     variant="ghost"
@@ -919,6 +920,10 @@ export function IssueDocumentsSection({
                         setDraft((current) => current ? { ...current, title: event.target.value } : current);
                       }}
                       placeholder="Document title"
+                      className={cn(
+                        isDocumentExpanded &&
+                          "h-auto border-transparent bg-transparent p-0 text-3xl font-semibold focus-visible:border-transparent focus-visible:ring-0",
+                      )}
                     />
                   )}
                   <div
@@ -946,7 +951,10 @@ export function IssueDocumentsSection({
                       placeholder="Write the document..."
                       bordered={false}
                       className="bg-transparent"
-                      contentClassName={documentBodyContentClassName}
+                      contentClassName={cn(
+                        documentBodyContentClassName,
+                        isDocumentExpanded && "min-h-[calc(100dvh-28rem)] text-[16px]",
+                      )}
                       mentions={mentions}
                       imageUploadHandler={imageUploadHandler}
                       onSubmit={() => void commitDraft(activeDraft ?? draft, { clearAfterSave: false, trackAutosave: true })}
@@ -1010,110 +1018,6 @@ export function IssueDocumentsSection({
         })}
       </div>
 
-      <Dialog
-        open={expandedDocumentEditorOpen && Boolean(draft)}
-        onOpenChange={(open) => setExpandedDocumentEditorOpen(open)}
-      >
-        <DialogContent
-          showCloseButton={false}
-          overlayClassName="bg-background"
-          className="inset-0 left-0 top-0 grid h-[100dvh] max-h-[100dvh] w-screen max-w-none translate-x-0 translate-y-0 grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none md:top-0 md:translate-y-0 sm:max-w-none"
-          onKeyDown={handleExpandedDocumentEditorKeyDown}
-        >
-          <div className="flex h-12 items-center justify-between gap-3 border-b border-border/60 px-4">
-            <div className="flex min-w-0 items-center gap-2 text-sm">
-              <DialogTitle className="truncate font-medium text-foreground">
-                {draft?.isNew ? "New document" : "Edit document"}
-              </DialogTitle>
-              <span className="text-muted-foreground/50">/</span>
-              <span className="max-w-[40vw] truncate text-muted-foreground">{issue.title}</span>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="hidden text-xs text-muted-foreground sm:inline">
-                {draft?.isNew
-                  ? "Draft"
-                  : documentConflict?.key === draft?.key
-                    ? "Out of date"
-                    : autosaveDocumentKey === draft?.key && autosaveState === "saving"
-                      ? "Autosaving..."
-                      : autosaveDocumentKey === draft?.key && autosaveState === "error"
-                        ? "Could not save"
-                        : "Saved"}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground"
-                onClick={cancelDraft}
-              >
-                Discard
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => void saveExpandedDocument()}
-                disabled={upsertDocument.isPending}
-              >
-                {upsertDocument.isPending ? "Saving..." : draft?.isNew ? "Create" : "Done"}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="text-muted-foreground"
-                title="Collapse editor"
-                aria-label="Collapse editor"
-                onClick={() => setExpandedDocumentEditorOpen(false)}
-              >
-                <Minimize2 className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="text-muted-foreground"
-                title="Close editor"
-                aria-label="Close editor"
-                onClick={() => setExpandedDocumentEditorOpen(false)}
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </div>
-          <div className="min-h-0 overflow-y-auto px-5 py-10 sm:px-8 sm:py-14">
-            <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col">
-              {draft?.isNew || (draft && !isPlanKey(draft.key)) ? (
-                <input
-                  value={draft?.title ?? ""}
-                  onChange={(event) =>
-                    setDraft((current) => current ? { ...current, title: event.target.value } : current)
-                  }
-                  placeholder="Untitled document"
-                  className="w-full bg-transparent text-4xl font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/35 sm:text-5xl"
-                  autoFocus
-                />
-              ) : (
-                <h2 className="text-4xl font-semibold leading-tight text-foreground sm:text-5xl">
-                  Plan
-                </h2>
-              )}
-              <MarkdownEditor
-                value={draft?.body ?? ""}
-                onChange={(body) =>
-                  setDraft((current) => current ? { ...current, body } : current)
-                }
-                placeholder="Write the document..."
-                bordered={false}
-                className="mt-6 min-h-0 flex-1 bg-transparent"
-                contentClassName="min-h-[calc(100dvh-18rem)] text-[16px] leading-7"
-                mentions={mentions}
-                imageUploadHandler={imageUploadHandler}
-                onSubmit={() => void createDraftDocument()}
-              />
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
