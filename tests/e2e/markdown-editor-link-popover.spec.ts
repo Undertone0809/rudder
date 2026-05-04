@@ -53,8 +53,8 @@ test("markdown editor links use the compact preview and edit popover", async ({ 
   await popover.getByRole("button", { name: "Edit" }).click();
   await expect(popover.getByText("Page or URL")).toBeVisible();
   await expect(popover.getByText("Link title")).toBeVisible();
-  await expect(popover.getByRole("button", { name: "Done" })).toBeVisible();
-  await expect(popover.getByRole("button", { name: "Cancel" })).toBeVisible();
+  await expect(popover.locator("button").filter({ hasText: "Done" })).toBeVisible();
+  await expect(popover.locator("button").filter({ hasText: "Cancel" })).toBeVisible();
 
   const editMetrics = await popover.evaluate((element) => {
     const rect = element.getBoundingClientRect();
