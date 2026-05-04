@@ -12,6 +12,7 @@ import { AutomationDetail } from "./AutomationDetail";
 
 const mockNavigate = vi.fn();
 const mockSetHeaderActions = vi.fn();
+const mockConfirm = vi.fn(async () => true);
 
 const automation = {
   id: "auto-1",
@@ -209,6 +210,12 @@ vi.mock("../context/BreadcrumbContext", () => ({
   }),
 }));
 
+vi.mock("../context/DialogContext", () => ({
+  useDialog: () => ({
+    confirm: mockConfirm,
+  }),
+}));
+
 vi.mock("../context/ToastContext", () => ({
   useToast: () => ({
     pushToast: vi.fn(),
@@ -301,6 +308,7 @@ afterEach(() => {
   cleanupFn = null;
   document.body.innerHTML = "";
   vi.clearAllMocks();
+  mockConfirm.mockResolvedValue(true);
 });
 
 function renderPage() {
@@ -394,7 +402,7 @@ describe("AutomationDetail", () => {
   });
 
   it("shows per-trigger sync status and confirms before deleting a trigger", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    mockConfirm.mockResolvedValue(false);
     const container = renderPage();
 
     await act(async () => {
@@ -406,13 +414,15 @@ describe("AutomationDetail", () => {
     const deleteTriggerButton = container.querySelector('button[aria-label="Delete trigger"]');
     expect(deleteTriggerButton).toBeTruthy();
 
-    act(() => {
+    await act(async () => {
       deleteTriggerButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      'Delete trigger "daily-check"? It will stop new schedule activations.',
-    );
-    confirmSpy.mockRestore();
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: 'Delete trigger "daily-check"?',
+      description: "It will stop new schedule activations.",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
   });
 });

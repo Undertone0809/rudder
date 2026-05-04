@@ -61,6 +61,7 @@ vi.mock("@/context/BreadcrumbContext", () => ({
 vi.mock("@/context/DialogContext", () => ({
   useDialog: () => ({
     openNewIssue: mockState.openNewIssue,
+    confirm: mockState.confirm,
   }),
 }));
 
@@ -179,30 +180,35 @@ describe("Issues draft scope", () => {
     expect(mockState.openNewIssue).toHaveBeenCalledWith({ draftId: "draft-1" });
   });
 
-  it("deletes a draft issue from the main content after confirmation", () => {
+  it("deletes a draft issue from the main content after confirmation", async () => {
     window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([savedDraft]));
 
     renderIssues();
 
     const deleteButton = document.querySelector("[data-testid='issue-draft-delete-button']") as HTMLButtonElement | null;
-    act(() => {
+    await act(async () => {
       deleteButton?.click();
     });
 
-    expect(mockState.confirm).toHaveBeenCalledWith('Delete draft issue "Recovered draft issue"? This cannot be undone.');
+    expect(mockState.confirm).toHaveBeenCalledWith({
+      title: 'Delete draft issue "Recovered draft issue"?',
+      description: "This cannot be undone.",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
     expect(mockState.pushToast).toHaveBeenCalledWith({ title: "Draft issue deleted", tone: "success" });
     expect(JSON.parse(window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY) ?? "[]")).toEqual([]);
     expect(document.querySelector("[data-testid='issue-draft-card']")).toBeNull();
   });
 
-  it("keeps a draft issue when deletion is cancelled", () => {
+  it("keeps a draft issue when deletion is cancelled", async () => {
     mockState.confirm.mockReturnValue(false);
     window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([savedDraft]));
 
     renderIssues();
 
     const deleteButton = document.querySelector("[data-testid='issue-draft-delete-button']") as HTMLButtonElement | null;
-    act(() => {
+    await act(async () => {
       deleteButton?.click();
     });
 

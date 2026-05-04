@@ -1,4 +1,15 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export interface NewIssueDefaults {
   draftId?: string;
@@ -22,6 +33,34 @@ interface OnboardingOptions {
   orgId?: string;
 }
 
+export interface ConfirmDialogOptions {
+  title: string;
+  description?: ReactNode;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  tone?: "default" | "destructive";
+}
+
+export interface PromptTextDialogOptions {
+  title: string;
+  description?: ReactNode;
+  label?: string;
+  defaultValue?: string;
+  placeholder?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+}
+
+type ConfirmDialogRequest = ConfirmDialogOptions & {
+  id: number;
+  resolve: (confirmed: boolean) => void;
+};
+
+type PromptTextDialogRequest = PromptTextDialogOptions & {
+  id: number;
+  resolve: (value: string | null) => void;
+};
+
 interface DialogContextValue {
   newIssueOpen: boolean;
   newIssueDefaults: NewIssueDefaults;
@@ -41,6 +80,8 @@ interface DialogContextValue {
   onboardingOptions: OnboardingOptions;
   openOnboarding: (options?: OnboardingOptions) => void;
   closeOnboarding: () => void;
+  confirm: (options: ConfirmDialogOptions) => Promise<boolean>;
+  promptText: (options: PromptTextDialogOptions) => Promise<string | null>;
 }
 
 const DialogContext = createContext<DialogContextValue | null>(null);
@@ -54,6 +95,12 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   const [newAgentOpen, setNewAgentOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingOptions, setOnboardingOptions] = useState<OnboardingOptions>({});
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmDialogRequest | null>(null);
+  const [promptTextRequest, setPromptTextRequest] = useState<PromptTextDialogRequest | null>(null);
+  const [promptTextValue, setPromptTextValue] = useState("");
+  const confirmRequestRef = useRef<ConfirmDialogRequest | null>(null);
+  const promptTextRequestRef = useRef<PromptTextDialogRequest | null>(null);
+  const dialogRequestIdRef = useRef(0);
 
   const openNewIssue = useCallback((defaults: NewIssueDefaults = {}) => {
     setNewIssueDefaults(defaults);
@@ -101,6 +148,56 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     setOnboardingOptions({});
   }, []);
 
+  const confirm = useCallback((options: ConfirmDialogOptions) => (
+    new Promise<boolean>((resolve) => {
+      dialogRequestIdRef.current += 1;
+      setConfirmRequest({
+        id: dialogRequestIdRef.current,
+        resolve,
+        ...options,
+      });
+    })
+  ), []);
+
+  const promptText = useCallback((options: PromptTextDialogOptions) => (
+    new Promise<string | null>((resolve) => {
+      dialogRequestIdRef.current += 1;
+      setPromptTextRequest({
+        id: dialogRequestIdRef.current,
+        resolve,
+        ...options,
+      });
+    })
+  ), []);
+
+  const settleConfirm = useCallback((confirmed: boolean) => {
+    const current = confirmRequestRef.current;
+    if (!current) return;
+    confirmRequestRef.current = null;
+    current.resolve(confirmed);
+    setConfirmRequest(null);
+  }, []);
+
+  const settlePromptText = useCallback((value: string | null) => {
+    const current = promptTextRequestRef.current;
+    if (!current) return;
+    promptTextRequestRef.current = null;
+    current.resolve(value);
+    setPromptTextRequest(null);
+  }, []);
+
+  useEffect(() => {
+    confirmRequestRef.current = confirmRequest;
+  }, [confirmRequest]);
+
+  useEffect(() => {
+    promptTextRequestRef.current = promptTextRequest;
+  }, [promptTextRequest]);
+
+  useEffect(() => {
+    setPromptTextValue(promptTextRequest?.defaultValue ?? "");
+  }, [promptTextRequest?.id, promptTextRequest?.defaultValue]);
+
   return (
     <DialogContext.Provider
       value={{
@@ -122,9 +219,89 @@ export function DialogProvider({ children }: { children: ReactNode }) {
         onboardingOptions,
         openOnboarding,
         closeOnboarding,
+        confirm,
+        promptText,
       }}
     >
       {children}
+      <Dialog
+        open={confirmRequest !== null}
+        onOpenChange={(open) => {
+          if (!open) settleConfirm(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-md" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle className="text-base leading-6">
+              {confirmRequest?.title}
+            </DialogTitle>
+            {confirmRequest?.description ? (
+              <DialogDescription>
+                {confirmRequest.description}
+              </DialogDescription>
+            ) : null}
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => settleConfirm(false)}>
+              {confirmRequest?.cancelLabel ?? "Cancel"}
+            </Button>
+            <Button
+              type="button"
+              variant={confirmRequest?.tone === "destructive" ? "destructive" : "default"}
+              onClick={() => settleConfirm(true)}
+            >
+              {confirmRequest?.confirmLabel ?? "Confirm"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={promptTextRequest !== null}
+        onOpenChange={(open) => {
+          if (!open) settlePromptText(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md" showCloseButton={false}>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              settlePromptText(promptTextValue.trim());
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-base leading-6">
+                {promptTextRequest?.title}
+              </DialogTitle>
+              {promptTextRequest?.description ? (
+                <DialogDescription>
+                  {promptTextRequest.description}
+                </DialogDescription>
+              ) : null}
+            </DialogHeader>
+            <div className="space-y-1.5">
+              {promptTextRequest?.label ? (
+                <Label htmlFor="app-prompt-text-input">{promptTextRequest.label}</Label>
+              ) : null}
+              <Input
+                id="app-prompt-text-input"
+                autoFocus
+                value={promptTextValue}
+                placeholder={promptTextRequest?.placeholder}
+                onChange={(event) => setPromptTextValue(event.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => settlePromptText(null)}>
+                {promptTextRequest?.cancelLabel ?? "Cancel"}
+              </Button>
+              <Button type="submit">
+                {promptTextRequest?.confirmLabel ?? "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </DialogContext.Provider>
   );
 }

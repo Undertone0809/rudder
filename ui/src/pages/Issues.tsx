@@ -154,7 +154,7 @@ function DraftIssuesView({
 export function Issues() {
   const { selectedOrganizationId, selectedOrganization } = useOrganization();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { openNewIssue } = useDialog();
+  const { openNewIssue, confirm } = useDialog();
   const { pushToast } = useToast();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -347,8 +347,13 @@ export function Issues() {
         onOpenDraft={(draft) => {
           openNewIssue({ draftId: draft.id });
         }}
-        onDeleteDraft={(draft) => {
-          const confirmed = window.confirm(`Delete draft issue "${draft.title}"? This cannot be undone.`);
+        onDeleteDraft={async (draft) => {
+          const confirmed = await confirm({
+            title: `Delete draft issue "${draft.title}"?`,
+            description: "This cannot be undone.",
+            confirmLabel: "Delete",
+            tone: "destructive",
+          });
           if (!confirmed) return;
           deleteIssueDraft(draft.id);
           pushToast({ title: "Draft issue deleted", tone: "success" });

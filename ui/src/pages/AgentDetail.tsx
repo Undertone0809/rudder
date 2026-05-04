@@ -2245,6 +2245,7 @@ function PromptsTab({
   onSavingChange: (saving: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const { confirm } = useDialog();
   const { selectedOrganizationId } = useOrganization();
   const { isMobile } = useSidebar();
   const [selectedFile, setSelectedFile] = useState<string>("AGENTS.md");
@@ -2887,15 +2888,19 @@ function PromptsTab({
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => {
-                  if (confirm(`Delete ${selectedOrEntryFile}?`)) {
-                    deleteFile.mutate(selectedOrEntryFile, {
-                      onSuccess: () => {
-                        setSelectedFile(currentEntryFile);
-                        setDraft(null);
-                      },
-                    });
-                  }
+                onClick={async () => {
+                  const confirmed = await confirm({
+                    title: `Delete ${selectedOrEntryFile}?`,
+                    confirmLabel: "Delete",
+                    tone: "destructive",
+                  });
+                  if (!confirmed) return;
+                  deleteFile.mutate(selectedOrEntryFile, {
+                    onSuccess: () => {
+                      setSelectedFile(currentEntryFile);
+                      setDraft(null);
+                    },
+                  });
                 }}
                 disabled={deleteFile.isPending}
               >
@@ -3939,6 +3944,7 @@ function RunsTab({
 function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: HeartbeatRun; agentRouteId: string; agentRuntimeType: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { confirm } = useDialog();
   const { data: hydratedRun } = useQuery({
     queryKey: queryKeys.runDetail(initialRun.id),
     queryFn: () => heartbeatsApi.get(initialRun.id),
@@ -4283,11 +4289,13 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
                       type="button"
                       className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-60"
                       disabled={clearSessionsForTouchedIssues.isPending}
-                      onClick={() => {
+                      onClick={async () => {
                         const issueCount = touchedIssueIds.length;
-                        const confirmed = window.confirm(
-                          `Clear session for ${issueCount} issue${issueCount === 1 ? "" : "s"} touched by this run?`,
-                        );
+                        const confirmed = await confirm({
+                          title: `Clear session for ${issueCount} issue${issueCount === 1 ? "" : "s"} touched by this run?`,
+                          confirmLabel: "Clear session",
+                          tone: "destructive",
+                        });
                         if (!confirmed) return;
                         clearSessionsForTouchedIssues.mutate();
                       }}

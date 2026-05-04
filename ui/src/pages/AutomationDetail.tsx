@@ -36,6 +36,7 @@ import { InlineEntitySelector, type InlineEntityOption } from "../components/Inl
 import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
 import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
+import { useDialog } from "../context/DialogContext";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
@@ -198,6 +199,7 @@ function TriggerEditor({
   isRotating?: boolean;
   saveError?: string | null;
 }) {
+  const { confirm } = useDialog();
   const [draft, setDraft] = useState({
     label: trigger.label ?? "",
     cronExpression: trigger.cronExpression ?? "",
@@ -292,10 +294,13 @@ function TriggerEditor({
             className="text-muted-foreground hover:text-destructive"
             aria-label="Delete trigger"
             disabled={isDeleting}
-            onClick={() => {
-              const confirmed = window.confirm(
-                `Delete trigger "${triggerLabel}"? It will stop new ${trigger.kind} activations.`,
-              );
+            onClick={async () => {
+              const confirmed = await confirm({
+                title: `Delete trigger "${triggerLabel}"?`,
+                description: `It will stop new ${trigger.kind} activations.`,
+                confirmLabel: "Delete",
+                tone: "destructive",
+              });
               if (!confirmed) return;
               onDelete(trigger.id);
             }}
@@ -386,6 +391,7 @@ function TriggerEditor({
 export function AutomationDetail() {
   const { automationId } = useParams<{ automationId: string }>();
   const { selectedOrganizationId } = useOrganization();
+  const { confirm } = useDialog();
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -690,10 +696,13 @@ export function AutomationDetail() {
           aria-label="Delete automation"
           title="Delete automation"
           disabled={deleteAutomation.isPending || isArchived}
-          onClick={() => {
-            const confirmed = window.confirm(
-              `Delete "${automation.title}"? It will be archived and stop new runs.`,
-            );
+          onClick={async () => {
+            const confirmed = await confirm({
+              title: `Delete "${automation.title}"?`,
+              description: "It will be archived and stop new runs.",
+              confirmLabel: "Delete",
+              tone: "destructive",
+            });
             if (!confirmed) return;
             deleteAutomation.mutate();
           }}

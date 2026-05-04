@@ -6,6 +6,7 @@ import { Link } from "@/lib/router";
 import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { EmptyState } from "../components/EmptyState";
 import {
@@ -59,6 +60,7 @@ function schedulerStateMeta(
 
 export function InstanceSettings() {
   const { t } = useI18n();
+  const { confirm } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
@@ -221,12 +223,18 @@ export function InstanceSettings() {
             size="sm"
             className="h-8 text-xs sm:ml-auto"
             disabled={disableAllMutation.isPending}
-            onClick={() => {
+            onClick={async () => {
               const message = t(
                 enabledCount === 1 ? "heartbeats.confirmDisableAll.one" : "heartbeats.confirmDisableAll.many",
                 { count: enabledCount },
               );
-              if (!window.confirm(message)) {
+              const confirmed = await confirm({
+                title: t("heartbeats.disableAll"),
+                description: message,
+                confirmLabel: t("heartbeats.disableAll"),
+                tone: "destructive",
+              });
+              if (!confirmed) {
                 return;
               }
               disableAllMutation.mutate(agents);

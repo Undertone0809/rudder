@@ -76,6 +76,12 @@ vi.mock("@/context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({ setBreadcrumbs: vi.fn() }),
 }));
 
+vi.mock("@/context/DialogContext", () => ({
+  useDialog: () => ({
+    confirm: vi.fn(async () => true),
+  }),
+}));
+
 vi.mock("@/context/I18nContext", () => ({
   useI18n: () => ({
     t: (key: string, params?: Record<string, string | number>) =>

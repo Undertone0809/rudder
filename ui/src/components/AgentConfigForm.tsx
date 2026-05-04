@@ -42,6 +42,7 @@ import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption }
 import { resolveRuntimeModels } from "../lib/runtime-models";
 import { queryKeys } from "../lib/queryKeys";
 import { useOrganization } from "../context/OrganizationContext";
+import { useDialog } from "../context/DialogContext";
 import {
   Field,
   ToggleField,
@@ -1430,6 +1431,7 @@ function EnvVarEditor({
   onCreateSecret: (name: string, value: string) => Promise<OrganizationSecret>;
   onChange: (env: Record<string, EnvBinding> | undefined) => void;
 }) {
+  const { promptText } = useDialog();
   type Row = {
     key: string;
     source: "plain" | "secret";
@@ -1559,7 +1561,12 @@ function EnvVarEditor({
     if (!key || plain.length === 0) return;
 
     const suggested = defaultSecretName(key) || "secret";
-    const name = window.prompt("Secret name", suggested)?.trim();
+    const name = (await promptText({
+      title: "Secret name",
+      label: "Name",
+      defaultValue: suggested,
+      confirmLabel: "Create secret",
+    }))?.trim();
     if (!name) return;
 
     try {
