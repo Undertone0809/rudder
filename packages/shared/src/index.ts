@@ -306,6 +306,8 @@ export type {
   IssueAttachment,
   IssueLabel,
   Goal,
+  GoalDependencies,
+  GoalDependencyPreview,
   Approval,
   ApprovalComment,
   MessengerThreadUserState,
