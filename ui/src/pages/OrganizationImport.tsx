@@ -12,7 +12,6 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { authApi } from "../api/auth";
 import { organizationsApi } from "../api/orgs";
-import type { LinearImportSourceResult } from "../api/orgs";
 import { agentsApi } from "../api/agents";
 import { queryKeys } from "../lib/queryKeys";
 import { getAgentOrderStorageKey, writeAgentOrder } from "../lib/agent-order";
@@ -28,7 +27,6 @@ import {
   ChevronRight,
   Download,
   Github,
-  Link2,
   Package,
   Upload,
 } from "lucide-react";
@@ -665,17 +663,13 @@ export function OrganizationImport() {
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
 
   // Source state
-  const [sourceMode, setSourceMode] = useState<"github" | "local" | "linear">("github");
+  const [sourceMode, setSourceMode] = useState<"github" | "local">("github");
   const [importUrl, setImportUrl] = useState("");
   const [localPackage, setLocalPackage] = useState<{
     name: string;
     rootPath: string | null;
     files: Record<string, OrganizationPortabilityFileEntry>;
   } | null>(null);
-  const [linearApiKey, setLinearApiKey] = useState("");
-  const [linearTeamIdOrKey, setLinearTeamIdOrKey] = useState("");
-  const [linearProjectIds, setLinearProjectIds] = useState("");
-  const [linearPackage, setLinearPackage] = useState<LinearImportSourceResult | null>(null);
 
   // Target state
   const [targetMode, setTargetMode] = useState<"existing" | "new">("new");
@@ -726,10 +720,6 @@ export function OrganizationImport() {
       if (!localPackage) return null;
       return { type: "inline", rootPath: localPackage.rootPath, files: localPackage.files };
     }
-    if (sourceMode === "linear") {
-      if (!linearPackage) return null;
-      return { type: "inline", rootPath: linearPackage.rootPath, files: linearPackage.files };
-    }
     const url = importUrl.trim();
     if (!url) return null;
     return { type: "github", url };
@@ -738,27 +728,9 @@ export function OrganizationImport() {
   // Preview mutation
   const previewMutation = useMutation({
     mutationFn: () => {
-      const projectIds = linearProjectIds
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean);
-      const sourcePromise = sourceMode === "linear"
-        ? organizationsApi.buildLinearImportSource({
-          apiKey: linearApiKey.trim(),
-          teamIdOrKey: linearTeamIdOrKey.trim() || undefined,
-          projectIds: projectIds.length > 0 ? projectIds : undefined,
-        }).then((result) => {
-          setLinearPackage(result);
-          return {
-            type: "inline" as const,
-            rootPath: result.rootPath,
-            files: result.files,
-          };
-        })
-        : Promise.resolve(buildSource());
-      return sourcePromise.then((source) => {
-        if (!source) throw new Error("No source configured.");
-        return organizationsApi.importPreview({
+      const source = buildSource();
+      if (!source) throw new Error("No source configured.");
+      return organizationsApi.importPreview({
         source,
         include: { organization: true, agents: true, projects: true, issues: true },
         target:
@@ -766,7 +738,6 @@ export function OrganizationImport() {
             ? { mode: "new_organization", newOrganizationName: newOrganizationName || null }
             : { mode: "existing_organization", orgId: selectedOrganizationId! },
         collisionStrategy,
-      });
       });
     },
     onSuccess: (result) => {
@@ -1108,9 +1079,7 @@ export function OrganizationImport() {
   const hasSource =
     sourceMode === "local"
       ? !!localPackage
-      : sourceMode === "linear"
-        ? linearApiKey.trim().length > 0
-        : importUrl.trim().length > 0;
+      : importUrl.trim().length > 0;
   const hasErrors = importPreview ? importPreview.errors.length > 0 : false;
 
   const previewContent = selectedFile && importPreview
@@ -1131,15 +1100,14 @@ export function OrganizationImport() {
         <div>
           <h2 className="text-base font-semibold">Import source</h2>
           <p className="text-xs text-muted-foreground mt-1">
-            Choose a GitHub repo, import from Linear, or upload a local Rudder zip package.
+            Choose a GitHub repo or upload a local Rudder zip package.
           </p>
         </div>
 
-        <div className="grid gap-2 md:grid-cols-3">
+        <div className="grid gap-2 md:grid-cols-2">
           {(
             [
               { key: "github", icon: Github, label: "GitHub repo" },
-              { key: "linear", icon: Link2, label: "Linear" },
               { key: "local", icon: Upload, label: "Local zip" },
             ] as const
           ).map(({ key, icon: Icon, label }) => (
@@ -1193,63 +1161,6 @@ export function OrganizationImport() {
             {!localPackage && (
               <p className="mt-2 text-xs text-muted-foreground">
                 {localZipHelpText}
-              </p>
-            )}
-          </div>
-        ) : sourceMode === "linear" ? (
-          <div className="space-y-3 rounded-md border border-border px-3 py-3">
-            <Field
-              label="Linear API Key"
-              hint="Create one in Linear Settings → Security & access."
-            >
-              <input
-                className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
-                type="password"
-                value={linearApiKey}
-                placeholder="lin_api_..."
-                onChange={(e) => {
-                  setLinearApiKey(e.target.value);
-                  setImportPreview(null);
-                  setLinearPackage(null);
-                }}
-              />
-            </Field>
-            <Field
-              label="Team ID or key"
-              hint="Optional: limit imported projects and issues to a single team."
-            >
-              <input
-                className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
-                type="text"
-                value={linearTeamIdOrKey}
-                placeholder="e.g. ENG or 9cfb482a-81e3-4154-b5b9-2c805e70a02d"
-                onChange={(e) => {
-                  setLinearTeamIdOrKey(e.target.value);
-                  setImportPreview(null);
-                  setLinearPackage(null);
-                }}
-              />
-            </Field>
-            <Field
-              label="Project IDs"
-              hint="Optional: comma-separated Linear project UUIDs."
-            >
-              <input
-                className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
-                type="text"
-                value={linearProjectIds}
-                placeholder="uuid-1, uuid-2"
-                onChange={(e) => {
-                  setLinearProjectIds(e.target.value);
-                  setImportPreview(null);
-                  setLinearPackage(null);
-                }}
-              />
-            </Field>
-            {linearPackage && (
-              <p className="text-xs text-muted-foreground">
-                Loaded {linearPackage.summary.projectCount} project{linearPackage.summary.projectCount === 1 ? "" : "s"} and{" "}
-                {linearPackage.summary.issueCount} issue{linearPackage.summary.issueCount === 1 ? "" : "s"} from Linear.
               </p>
             )}
           </div>
