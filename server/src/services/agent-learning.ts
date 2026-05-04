@@ -30,6 +30,7 @@ import type {
   LearningCandidate,
   LearningCandidateClassification,
   LearningRiskLevel,
+  RunFeedbackItem,
   RunFeedbackSession,
   RunLoadedSkillsSummary,
   SkillUpdateProposal,
@@ -74,6 +75,7 @@ type SkillLearning = {
 const ORGANIZATION_SELECTION_PREFIX = "org:";
 const BUNDLED_SELECTION_PREFIX = "bundled:";
 const AGENT_SELECTION_PREFIX = "agent:";
+const MANAGED_LEARNING_SKILL_DISPLAY_NAME = "Learning";
 
 function hashText(value: string) {
   return createHash("sha256").update(value).digest("hex");
@@ -169,8 +171,8 @@ function managedLearningSkillPreview(
     id: selectionKey,
     key: selectionKey,
     slug,
-    name: `Agent Learning - ${agent.name}`,
-    description: `Approved learnings from real run feedback for ${agent.name}.`,
+    name: MANAGED_LEARNING_SKILL_DISPLAY_NAME,
+    description: "Approved learnings from real run feedback for this agent.",
     selectionKey,
     sourcePath: entry?.sourcePath ?? null,
     workspaceEditPath: entry?.workspaceEditPath ?? null,
@@ -179,7 +181,7 @@ function managedLearningSkillPreview(
 }
 
 function buildManagedSkillMarkdown(agent: { name: string }) {
-  const name = `Agent Learning - ${agent.name}`;
+  const name = MANAGED_LEARNING_SKILL_DISPLAY_NAME;
   const description = `Approved learnings from real run feedback for ${agent.name}. Use these as durable working habits in future runs.`;
   return [
     "---",
@@ -1266,7 +1268,7 @@ export function agentLearningService(db: Db) {
     const managedSkillFile = await organizationSkills.readAgentPrivateSkillMarkdown(orgId, agent.id, managedSlug);
     const managedSkill = managedSkillFile ? managedLearningSkillPreview(agent, managedSkillFile.entry) : null;
 
-    const [appliedCandidates, suggestedUpdates, recentProposals, recentMisses] = await Promise.all([
+    const [appliedCandidates, suggestedUpdates, recentFeedbackItems, recentProposals, recentMisses] = await Promise.all([
       db
         .select()
         .from(learningCandidates)
@@ -1287,6 +1289,12 @@ export function agentLearningService(db: Db) {
         ))
         .orderBy(desc(learningCandidates.createdAt))
         .limit(10),
+      db
+        .select()
+        .from(runFeedbackItems)
+        .where(and(eq(runFeedbackItems.orgId, orgId), eq(runFeedbackItems.agentId, agentId)))
+        .orderBy(desc(runFeedbackItems.createdAt))
+        .limit(20),
       db
         .select()
         .from(skillUpdateProposals)
@@ -1329,11 +1337,13 @@ export function agentLearningService(db: Db) {
         createdAt: candidate.updatedAt,
       })),
       suggestedUpdates: suggestedUpdates as LearningCandidate[],
+      recentFeedbackItems: recentFeedbackItems as RunFeedbackItem[],
       recentRevisions: recentRevisions as AgentSkillRevision[],
       recentMisses,
       stats: {
         activeLearningCount: appliedCandidates.length,
         suggestedCount: suggestedUpdates.length,
+        recentFeedbackCount: recentFeedbackItems.length,
         recentRevisionCount: recentRevisions.length,
         recentMissCount: recentMisses.filter((report) => readStringArray(report.missedItemsJson).length > 0).length,
       },
@@ -1454,10 +1464,12 @@ export function agentLearningService(db: Db) {
           ? agentRevisionById.get(persisted.agentSkillRevisionId) ?? latestAgentRevision
           : latestAgentRevision;
         const eventEntry = eventByKey.get(skillKey) ?? null;
-        const skillName = skill?.name
+        const skillName = skillKey === managedAgentLearningKey
+          ? MANAGED_LEARNING_SKILL_DISPLAY_NAME
+          : skill?.name
           ?? eventEntry?.name
           ?? eventEntry?.runtimeName
-          ?? (skillKey === managedAgentLearningKey ? `Agent Learning - ${runAgent.name}` : null);
+          ?? null;
         const structuredSpecJson = loadedAgentRevision?.structuredSpecJson ?? loadedRevision?.structuredSpecJson ?? null;
         return {
           skillKey,

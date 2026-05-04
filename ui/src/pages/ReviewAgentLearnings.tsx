@@ -91,7 +91,7 @@ export function ReviewAgentLearnings() {
           : "The approved skill update was applied.",
         tone: "success",
       });
-      navigate(`/agents/${agentId ?? reviewQuery.data!.agent.urlKey}/skills`);
+      navigate(`/agents/${agentId ?? reviewQuery.data!.agent.urlKey}/learning`);
     },
     onError: (error) => pushToast({
       title: "Could not apply proposal",
@@ -139,18 +139,18 @@ export function ReviewAgentLearnings() {
   const proposalActionable = primaryProposal?.status === "pending";
   const targetSkillLabel = review.targetSkill?.name
     ?? primaryProposal?.targetSkillKey
-    ?? "Agent Learning";
+    ?? "Learning";
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <Link
-            to={`/agents/${agentId ?? review.agent.urlKey}/runs`}
+            to={`/agents/${agentId ?? review.agent.urlKey}/learning`}
             className="mb-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground no-underline hover:text-foreground"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
-            Back to runs
+            Back to learning
           </Link>
           <h1 className="text-xl font-semibold tracking-tight">Review AI-generated skill update</h1>
           <p className="mt-1 text-sm text-muted-foreground">

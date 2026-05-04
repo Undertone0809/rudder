@@ -107,16 +107,17 @@ test.describe("Agent learning loop", () => {
 
     await expect(page).toHaveURL(/\/agents\/[^/]+\/learnings\/[0-9a-f-]+$/);
     await expect(page.getByRole("heading", { name: "Review AI-generated skill update" })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("AI proposal: update Agent Learning - Learning Loop Agent")).toBeVisible();
+    await expect(page.getByText("AI proposal: update Learning")).toBeVisible();
     await expect(page.getByText("Read project instructions before editing")).toBeVisible();
     await expect(page.getByText("AGENTS.md", { exact: false })).toBeVisible();
 
     await page.getByRole("button", { name: "Apply AI proposal" }).first().click();
 
-    await expect(page).toHaveURL(/\/agents\/[^/]+\/skills$/);
-    await expect(page.getByText("Agent learning summary")).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(/\/agents\/[^/]+\/learning$/);
+    await expect(page.getByText("Pending AI updates")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Feedback records")).toBeVisible();
     await expect(page.getByText("Read project instructions before editing")).toBeVisible();
-    await expect(page.getByText("Agent Learning - Learning Loop Agent")).toBeVisible();
+    await expect(page.getByText("Learning", { exact: true }).first()).toBeVisible();
 
     const summaryRes = await request.get(
       `/api/orgs/${organization.id}/agents/${agent.id}/learnings/summary`,
@@ -125,10 +126,14 @@ test.describe("Agent learning loop", () => {
     const summary = await summaryRes.json() as {
       activeLearnings: Array<{ title: string; instruction: string }>;
       managedSkill: { name: string } | null;
+      recentFeedbackItems: Array<{ body: string }>;
     };
-    expect(summary.managedSkill?.name).toBe("Agent Learning - Learning Loop Agent");
+    expect(summary.managedSkill?.name).toBe("Learning");
     expect(summary.activeLearnings.map((learning) => learning.title)).toContain(
       "Read project instructions before editing",
+    );
+    expect(summary.recentFeedbackItems.map((item) => item.body)).toContain(
+      "Before editing in this repo, read AGENTS.md and the project instructions so future code changes follow the repository conventions.",
     );
 
     const skillsRes = await request.get(`/api/agents/${agent.id}/skills?orgId=${organization.id}`);
@@ -136,8 +141,16 @@ test.describe("Agent learning loop", () => {
     const skillSnapshot = await skillsRes.json() as { desiredSkills: string[] };
     expect(skillSnapshot.desiredSkills.some((key) => key.startsWith("agent:") && key.includes("agent-learning"))).toBe(true);
 
+    await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`, { waitUntil: "domcontentloaded" });
+    const managedLearningCard = page.getByText("Agent learning", { exact: true }).locator("xpath=ancestor::div[contains(@class,'rounded-lg')][1]");
+    await expect(managedLearningCard.getByText("Learning", { exact: true })).toBeVisible();
+    await expect(managedLearningCard.getByRole("link", { name: "Open learning" })).toBeVisible();
+    await expect(page.getByText("agent-learning-learning-loop-agent")).toHaveCount(0);
+    await managedLearningCard.getByRole("link", { name: "Open learning" }).click();
+    await expect(page).toHaveURL(/\/agents\/[^/]+\/learning$/);
+
     await page.screenshot({
-      path: "/tmp/rudder-agent-learning-loop-skills.png",
+      path: "/tmp/rudder-agent-learning-loop-learning.png",
       fullPage: true,
     });
   });

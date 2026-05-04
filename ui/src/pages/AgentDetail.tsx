@@ -191,6 +191,22 @@ function formatLearningScope(value: Record<string, unknown> | null | undefined) 
     .join(" · ");
 }
 
+const MANAGED_AGENT_LEARNING_LABEL = "Learning";
+
+function isManagedAgentLearningSelectionKey(selectionKey: string) {
+  return selectionKey.startsWith("agent:agent-learning-");
+}
+
+function summarizeAgentLearning(summary: AgentLearningSummary | undefined) {
+  if (!summary) return "Agent-private learning generated from approved run feedback.";
+  const latestRevision = summary.recentRevisions[0]?.revision ?? null;
+  return [
+    `${summary.stats.activeLearningCount} active`,
+    `${summary.stats.suggestedCount} pending`,
+    latestRevision ? `rev ${latestRevision}` : null,
+  ].filter(Boolean).join(" · ");
+}
+
 function summarizeRunEvidence(run: HeartbeatRun) {
   const result = asRecord(run.resultJson);
   const summary = asNonEmptyString(result?.summary)
@@ -643,12 +659,13 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget";
+type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "learning" | "runs" | "budget";
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "instructions" || value === "prompts") return "instructions";
   if (value === "configure" || value === "configuration") return "configuration";
   if (value === "skills") return "skills";
+  if (value === "learning" || value === "learnings") return "learning";
   if (value === "budget") return "budget";
   if (value === "runs") return value;
   return "dashboard";
@@ -1214,11 +1231,13 @@ export function AgentDetail() {
           ? "configuration"
           : activeView === "skills"
             ? "skills"
-            : activeView === "runs"
-              ? "runs"
-              : activeView === "budget"
-                ? "budget"
-              : "dashboard";
+            : activeView === "learning"
+              ? "learning"
+              : activeView === "runs"
+                ? "runs"
+                : activeView === "budget"
+                  ? "budget"
+                  : "dashboard";
     if (routeAgentRef !== canonicalAgentRef || urlTab !== canonicalTab) {
       navigate(`/agents/${canonicalAgentRef}/${canonicalTab}`, { replace: true });
       return;
@@ -1357,8 +1376,10 @@ export function AgentDetail() {
         crumbs.push({ label: "Instructions" });
       } else if (activeView === "configuration") {
         crumbs.push({ label: "Configuration" });
-      // } else if (activeView === "skills") { // TODO: bring back later
-      //   crumbs.push({ label: "Skills" });
+      } else if (activeView === "skills") {
+        crumbs.push({ label: "Skills" });
+      } else if (activeView === "learning") {
+        crumbs.push({ label: "Learning" });
       } else if (activeView === "runs") {
         crumbs.push({ label: "Runs" });
       } else if (activeView === "budget") {
@@ -1554,6 +1575,7 @@ export function AgentDetail() {
                 { value: "dashboard", label: "Dashboard" },
                 { value: "instructions", label: "Instructions" },
                 { value: "skills", label: "Skills" },
+                { value: "learning", label: "Learning" },
                 { value: "configuration", label: "Configuration" },
                 { value: "runs", label: "Runs" },
                 { value: "budget", label: "Budget" },
@@ -1700,6 +1722,13 @@ export function AgentDetail() {
 
       {activeView === "skills" && (
         <AgentSkillsTab
+          agent={agent}
+          orgId={resolvedCompanyId ?? undefined}
+        />
+      )}
+
+      {activeView === "learning" && (
+        <AgentLearningPage
           agent={agent}
           orgId={resolvedCompanyId ?? undefined}
         />
@@ -3046,8 +3075,8 @@ function AgentLearningSummaryCard({
           <Brain className="h-4 w-4 text-muted-foreground" />
           Agent learning summary
         </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-4">
-          {["Active learnings", "Suggested", "Recent revisions", "Recent misses"].map((label) => (
+        <div className="mt-2 grid gap-2 sm:grid-cols-5">
+          {["Active learnings", "Suggested", "Feedback records", "Recent revisions", "Recent misses"].map((label) => (
             <div key={label} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
               <Skeleton className="h-4 w-10" />
               <div className="mt-1 text-[11px] text-muted-foreground">{label}</div>
@@ -3061,6 +3090,7 @@ function AgentLearningSummaryCard({
   const statItems = [
     { label: "Active learnings", value: summary.stats.activeLearningCount },
     { label: "Suggested", value: summary.stats.suggestedCount },
+    { label: "Feedback records", value: summary.stats.recentFeedbackCount },
     { label: "Recent revisions", value: summary.stats.recentRevisionCount },
     { label: "Recent misses", value: summary.stats.recentMissCount },
   ];
@@ -3079,14 +3109,14 @@ function AgentLearningSummaryCard({
         </div>
         {summary.managedSkill ? (
           <Button asChild variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
-            <Link to={summary.managedSkill.workspaceEditPath ? `/workspaces?path=${encodeURIComponent(summary.managedSkill.workspaceEditPath)}` : `/agents/${agent.urlKey}/skills`}>
+            <Link to={`/agents/${agent.urlKey}/learning`}>
               <BookOpenCheck className="h-3.5 w-3.5" />
-              {summary.managedSkill.name}
+              Open learning
             </Link>
           </Button>
         ) : null}
       </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+      <div className="mt-3 grid gap-2 sm:grid-cols-5">
         {statItems.map((item) => (
           <div key={item.label} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
             <div className="text-sm font-semibold tabular-nums">{item.value}</div>
@@ -3111,6 +3141,243 @@ function AgentLearningSummaryCard({
   );
 }
 
+function AgentLearningPage({
+  agent,
+  orgId,
+}: {
+  agent: AgentDetailRecord;
+  orgId?: string;
+}) {
+  const { data: summary, isLoading, isError, error } = useQuery({
+    queryKey: queryKeys.agentLearning.summary(orgId ?? "", agent.id),
+    queryFn: () => agentLearningApi.agentSummary(orgId!, agent.id),
+    enabled: Boolean(orgId),
+  });
+
+  if (!orgId) {
+    return (
+      <div className="max-w-6xl rounded-xl border border-border bg-[color:var(--surface-elevated)] px-4 py-6 text-sm text-muted-foreground">
+        Select an organization to view agent learning.
+      </div>
+    );
+  }
+
+  if (isLoading) return <PageSkeleton variant="list" />;
+
+  if (isError || !summary) {
+    return (
+      <div className="max-w-6xl rounded-xl border border-border bg-[color:var(--surface-elevated)] px-4 py-6 text-sm text-destructive">
+        {error instanceof Error ? error.message : "Could not load agent learning."}
+      </div>
+    );
+  }
+
+  const latestRevision = summary.recentRevisions[0]?.revision ?? null;
+  const statItems = [
+    { label: "Active learnings", value: summary.stats.activeLearningCount },
+    { label: "Pending updates", value: summary.stats.suggestedCount },
+    { label: "Feedback records", value: summary.stats.recentFeedbackCount },
+    { label: "Recent revisions", value: summary.stats.recentRevisionCount },
+    { label: "Recent misses", value: summary.stats.recentMissCount },
+  ];
+  const advancedSkillHref = summary.managedSkill?.workspaceEditPath
+    ? `/workspaces?path=${encodeURIComponent(summary.managedSkill.workspaceEditPath)}`
+    : null;
+  const missedReports = summary.recentMisses.filter((report) => report.missedItemsJson.length > 0);
+
+  return (
+    <div className="max-w-6xl space-y-4">
+      <section className="rounded-xl border border-border bg-[color:var(--surface-elevated)] px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <Brain className="h-4 w-4 text-muted-foreground" />
+              Learning
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Agent-private learning for {agent.name}{latestRevision ? ` - rev ${latestRevision}` : ""}.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {summary.stats.suggestedCount > 0 && summary.suggestedUpdates[0]?.feedbackBatchId ? (
+              <Button asChild size="sm" className="h-8 gap-1.5 text-xs">
+                <Link to={`/agents/${agent.urlKey}/learnings/${summary.suggestedUpdates[0].feedbackBatchId}`}>
+                  <BookOpenCheck className="h-3.5 w-3.5" />
+                  Review pending
+                </Link>
+              </Button>
+            ) : null}
+            {advancedSkillHref ? (
+              <Button asChild variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
+                <Link to={advancedSkillHref}>
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  View generated file
+                </Link>
+              </Button>
+            ) : null}
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-5">
+          {statItems.map((item) => (
+            <div key={item.label} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+              <div className="text-sm font-semibold tabular-nums">{item.value}</div>
+              <div className="text-[11px] text-muted-foreground">{item.label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="space-y-4">
+          <section className="overflow-hidden rounded-xl border border-border bg-[color:var(--surface-elevated)]">
+            <div className="border-b border-border px-4 py-3">
+              <div className="text-sm font-semibold text-foreground">Pending AI updates</div>
+            </div>
+            <div className="space-y-2 px-3.5 py-3.5">
+              {summary.suggestedUpdates.length === 0 ? (
+                <div className="px-0.5 py-1 text-sm text-muted-foreground">No pending updates.</div>
+              ) : summary.suggestedUpdates.map((update) => (
+                <div key={update.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-foreground">{update.title}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {update.confidence} confidence - {update.riskLevel} risk - {formatLearningScope(update.appliesWhenJson)}
+                      </div>
+                    </div>
+                    {update.feedbackBatchId ? (
+                      <Button asChild variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-xs">
+                        <Link to={`/agents/${agent.urlKey}/learnings/${update.feedbackBatchId}`}>
+                          <BookOpenCheck className="h-3.5 w-3.5" />
+                          Review
+                        </Link>
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 text-sm text-foreground">{update.instruction}</div>
+                  {update.validationChecksJson.length > 0 ? (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      {update.validationChecksJson.slice(0, 2).join(" / ")}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-xl border border-border bg-[color:var(--surface-elevated)]">
+            <div className="border-b border-border px-4 py-3">
+              <div className="text-sm font-semibold text-foreground">Active learnings</div>
+            </div>
+            <div className="space-y-2 px-3.5 py-3.5">
+              {summary.activeLearnings.length === 0 ? (
+                <div className="px-0.5 py-1 text-sm text-muted-foreground">No active learnings yet.</div>
+              ) : summary.activeLearnings.map((learning) => (
+                <div key={learning.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                      <div className="text-sm font-medium text-foreground">{learning.title}</div>
+                    </div>
+                    <span className="text-[11px] text-muted-foreground">
+                      {learning.revision ? `rev ${learning.revision}` : relativeTime(learning.createdAt)}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-sm text-foreground">{learning.instruction}</div>
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Applies when: {formatLearningScope(learning.appliesWhenJson)}
+                  </div>
+                  {learning.mustNot ? (
+                    <div className="mt-1 text-xs text-muted-foreground">Must not: {learning.mustNot}</div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-xl border border-border bg-[color:var(--surface-elevated)]">
+            <div className="border-b border-border px-4 py-3">
+              <div className="text-sm font-semibold text-foreground">Feedback records</div>
+            </div>
+            <div className="space-y-2 px-3.5 py-3.5">
+              {summary.recentFeedbackItems.length === 0 ? (
+                <div className="px-0.5 py-1 text-sm text-muted-foreground">No feedback records yet.</div>
+              ) : summary.recentFeedbackItems.map((item) => (
+                <div key={item.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 text-xs text-muted-foreground">
+                      {item.feedbackType} - {item.severity} - {item.sourceKind.replaceAll("_", " ")} - {relativeTime(item.createdAt)}
+                    </div>
+                    <Button asChild variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                      <Link to={`/agents/${agent.urlKey}/runs/${item.runId}`}>
+                        Open run
+                      </Link>
+                    </Button>
+                  </div>
+                  <div className="mt-1 text-sm text-foreground">{item.body}</div>
+                  {item.selectedTextSnapshot ? (
+                    <div className="mt-2 max-h-24 overflow-y-auto rounded-md bg-muted/30 p-2 text-[11px] text-muted-foreground">
+                      {item.selectedTextSnapshot}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <aside className="space-y-4">
+          <section className="overflow-hidden rounded-xl border border-border bg-[color:var(--surface-elevated)]">
+            <div className="border-b border-border px-4 py-3">
+              <div className="text-sm font-semibold text-foreground">Revision history</div>
+            </div>
+            <div className="space-y-2 px-3.5 py-3.5">
+              {summary.recentRevisions.length === 0 ? (
+                <div className="px-0.5 py-1 text-sm text-muted-foreground">No revisions yet.</div>
+              ) : summary.recentRevisions.map((revision) => (
+                <div key={revision.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-foreground">rev {revision.revision}</span>
+                    <StatusBadge status={revision.status} />
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">{formatDate(revision.createdAt)}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-xl border border-border bg-[color:var(--surface-elevated)]">
+            <div className="border-b border-border px-4 py-3">
+              <div className="text-sm font-semibold text-foreground">Evaluation misses</div>
+            </div>
+            <div className="space-y-2 px-3.5 py-3.5">
+              {missedReports.length === 0 ? (
+                <div className="px-0.5 py-1 text-sm text-muted-foreground">No missed learnings recorded.</div>
+              ) : missedReports.map((report) => (
+                <div key={report.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-foreground">
+                      {report.score === null ? "Not scored" : `${Math.round(report.score * 100)}%`}
+                    </span>
+                    <Button asChild variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                      <Link to={`/agents/${agent.urlKey}/runs/${report.runId}`}>Open run</Link>
+                    </Button>
+                  </div>
+                  <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                    {report.missedItemsJson.map((miss) => (
+                      <li key={miss}>{miss}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
 function AgentSkillsTab({
   agent,
   orgId,
@@ -3129,6 +3396,7 @@ function AgentSkillsTab({
     badgeLabel: string | null;
     metadataTokens: string[];
     linkTo: string | null;
+    primaryActionLabel: string | null;
     workspaceEditPath: string | null;
     alwaysEnabled: boolean;
     configurable: boolean;
@@ -3315,6 +3583,7 @@ function AgentSkillsTab({
               .filter((value): value is string => Boolean(value))
               .filter((value) => value !== badgeLabel),
             linkTo: `/skills/${skill.id}`,
+            primaryActionLabel: null,
             workspaceEditPath: skill.workspaceEditPath,
             alwaysEnabled: entry.alwaysEnabled,
             configurable: canManageSkillEntry(entry),
@@ -3338,35 +3607,50 @@ function AgentSkillsTab({
       snapshotEntries
         .filter((entry) => isExternalSkillEntry(entry))
         .filter((entry) => !shouldHideExternalSkillEntry(entry))
-        .map((entry) => ({
-          id: entry.selectionKey,
-          selectionKey: entry.selectionKey,
-          key: entry.key,
-          name: entry.runtimeName ?? entry.key,
-          description: compactSkillText(entry.description ?? null),
-          detail: compactSkillText(
-            entry.detail
-              ?? (entry.sourceClass === "agent_home"
-                ? "Discovered in AGENT_HOME/skills. Enable it here to load it for this agent."
+        .map((entry) => {
+          const managedLearning = entry.selectionKey === learningSummary?.managedSkill?.selectionKey
+            || isManagedAgentLearningSelectionKey(entry.selectionKey);
+          return {
+            id: entry.selectionKey,
+            selectionKey: entry.selectionKey,
+            key: entry.key,
+            name: managedLearning ? MANAGED_AGENT_LEARNING_LABEL : (entry.runtimeName ?? entry.key),
+            description: compactSkillText(
+              managedLearning
+                ? "Agent-private learning generated from approved run feedback."
+                : entry.description ?? null,
+            ),
+            detail: compactSkillText(
+              managedLearning
+                ? summarizeAgentLearning(learningSummary)
+                : entry.detail
+                  ?? (entry.sourceClass === "agent_home"
+                    ? "Discovered in AGENT_HOME/skills. Enable it here to load it for this agent."
+                    : entry.sourceClass === "global"
+                      ? "Discovered in ~/.agents/skills. Enable it here to load it for this agent."
+                      : "Discovered in the current runtime adapter home. Enable it here to load it for this agent."),
+            ),
+            locationLabel: managedLearning ? null : entry.locationLabel ?? null,
+            badgeLabel: managedLearning
+              ? "Agent learning"
+              : entry.sourceClass === "agent_home"
+                ? "Agent skill"
                 : entry.sourceClass === "global"
-                  ? "Discovered in ~/.agents/skills. Enable it here to load it for this agent."
-                  : "Discovered in the current runtime adapter home. Enable it here to load it for this agent."),
-          ),
-          locationLabel: entry.locationLabel ?? null,
-          badgeLabel: entry.sourceClass === "agent_home"
-            ? "Agent skill"
-            : entry.sourceClass === "global"
-              ? "Global skill"
-              : "Adapter skill",
-          metadataTokens: [entry.locationLabel].filter((value): value is string => Boolean(value)),
-          linkTo: null,
-          workspaceEditPath: entry.workspaceEditPath ?? null,
-          alwaysEnabled: entry.alwaysEnabled,
-          configurable: canManageSkillEntry(entry),
-          entry,
-        }))
+                  ? "Global skill"
+                  : "Adapter skill",
+            metadataTokens: managedLearning
+              ? ["Agent-private", "Generated"]
+              : [entry.locationLabel].filter((value): value is string => Boolean(value)),
+            linkTo: managedLearning ? `/agents/${agent.urlKey}/learning` : null,
+            primaryActionLabel: managedLearning ? "Open learning" : null,
+            workspaceEditPath: managedLearning ? null : entry.workspaceEditPath ?? null,
+            alwaysEnabled: entry.alwaysEnabled,
+            configurable: canManageSkillEntry(entry),
+            entry,
+          };
+        })
         .sort((left, right) => left.name.localeCompare(right.name) || left.selectionKey.localeCompare(right.selectionKey)),
-    [snapshotEntries],
+    [agent.urlKey, learningSummary, snapshotEntries],
   );
 
   const agentSkillRows = useMemo(
@@ -3485,7 +3769,7 @@ function AgentSkillsTab({
   const saveStatusLabel = syncSkills.isPending ? "Saving..." : null;
 
   const controlsHelperText = "Rudder always loads the bundled Rudder skills. Agent, organization, global, and adapter skills load only when enabled on this page.";
-  const agentSectionHelperText = "Agent-private skills belong to this agent only. Edit them in Workspaces, then enable them here when you want Rudder to load them.";
+  const agentSectionHelperText = "Agent-private skills belong to this agent only. Learning is generated from approved feedback; other agent skills can still be edited in Workspaces when needed.";
   const organizationSectionHelperText = "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Workspaces.";
   const externalSectionHelperText = "Global and adapter skills are discovered from ~/.agents/skills and the current runtime adapter home. Discovery does not enable them; only the selections on this page determine runtime loading.";
 
@@ -3550,6 +3834,7 @@ function AgentSkillsTab({
   const renderSkillCard = useCallback((skill: SkillRow) => {
     const enabled = skill.alwaysEnabled || skillDraft.includes(skill.selectionKey);
     const switchDisabled = skill.alwaysEnabled || !skill.configurable || Boolean(unsupportedSkillMessage && !skill.alwaysEnabled);
+    const primaryActionHref = skill.primaryActionLabel && skill.linkTo ? skill.linkTo : null;
     const workspaceEditHref = skill.workspaceEditPath
       ? `/workspaces?path=${encodeURIComponent(skill.workspaceEditPath)}`
       : null;
@@ -3623,7 +3908,7 @@ function AgentSkillsTab({
           </p>
         ) : null}
 
-        {metadataTokens.length > 0 || workspaceEditHref ? (
+        {metadataTokens.length > 0 || primaryActionHref || workspaceEditHref ? (
           <div className="mt-auto space-y-2">
             {metadataTokens.length > 0 ? (
               <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -3638,14 +3923,24 @@ function AgentSkillsTab({
                 ))}
               </div>
             ) : null}
-            {workspaceEditHref ? (
-              <div className="flex items-center gap-2">
-                <Button asChild variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-xs">
-                  <Link to={workspaceEditHref}>
-                    <FolderOpen className="h-3.5 w-3.5" />
-                    <span>Edit in workspaces</span>
-                  </Link>
-                </Button>
+            {primaryActionHref || workspaceEditHref ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {primaryActionHref ? (
+                  <Button asChild variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-xs">
+                    <Link to={primaryActionHref}>
+                      <Brain className="h-3.5 w-3.5" />
+                      <span>{skill.primaryActionLabel}</span>
+                    </Link>
+                  </Button>
+                ) : null}
+                {workspaceEditHref ? (
+                  <Button asChild variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-xs">
+                    <Link to={workspaceEditHref}>
+                      <FolderOpen className="h-3.5 w-3.5" />
+                      <span>Edit in workspaces</span>
+                    </Link>
+                  </Button>
+                ) : null}
               </div>
             ) : null}
           </div>

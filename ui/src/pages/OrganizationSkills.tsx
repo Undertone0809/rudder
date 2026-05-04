@@ -127,7 +127,7 @@ function sourceMeta(sourceBadge: OrganizationSkillSourceBadge, sourceLabel: stri
 }
 
 function isManagedAgentLearningSkill(detail: OrganizationSkillDetail) {
-  return detail.slug.startsWith("agent-learning-") && detail.name.startsWith("Agent Learning -");
+  return detail.slug.startsWith("agent-learning-");
 }
 
 function shortRef(ref: string | null | undefined) {

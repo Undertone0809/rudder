@@ -130,6 +130,7 @@ describe("agentLearningService", () => {
   }, 20_000);
 
   afterEach(async () => {
+    if (!db) return;
     await db.delete(activityLog);
     await db.delete(skillEvidenceLinks);
     await db.delete(skillUpdateProposals);
@@ -147,7 +148,7 @@ describe("agentLearningService", () => {
   });
 
   afterAll(async () => {
-    await (db as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
+    if (db) await (db as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
     await instance?.stop();
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
     if (rudderHome) fs.rmSync(rudderHome, { recursive: true, force: true });
@@ -220,7 +221,7 @@ describe("agentLearningService", () => {
       expect.objectContaining({
         targetAgentId: agentId,
         status: "pending",
-        title: "AI proposal: update Agent Learning - Founding Engineer",
+        title: "AI proposal: update Learning",
       }),
     ]);
     expect(reviewBeforeApply.proposals[0]!.markdownDiff).toContain("+ Read project instructions before editing");
@@ -228,7 +229,7 @@ describe("agentLearningService", () => {
     const applied = await svc.applyProposal(orgId, reviewBeforeApply.proposals[0]!.id, actor);
 
     expect(applied.skill).toMatchObject({
-      name: "Agent Learning - Founding Engineer",
+      name: "Learning",
     });
     expect(applied.revisions).toHaveLength(1);
     expect(applied.revisions[0]!.revision).toBe(1);
@@ -252,6 +253,10 @@ describe("agentLearningService", () => {
 
     const summary = await svc.agentSummary(orgId, agentId);
     expect(summary.stats.activeLearningCount).toBe(1);
+    expect(summary.stats.recentFeedbackCount).toBe(1);
+    expect(summary.recentFeedbackItems[0]).toMatchObject({
+      body: "Before editing code, read AGENTS.md and task-specific project instructions.",
+    });
     expect(summary.activeLearnings[0]).toMatchObject({
       title: "Read project instructions before editing",
     });
@@ -302,7 +307,7 @@ describe("agentLearningService", () => {
     const loaded = await svc.getRunLoadedSkills(orgId, followupRunId);
     expect(loaded.loadedSkills).toEqual([
       expect.objectContaining({
-        skillName: "Agent Learning - Founding Engineer",
+        skillName: "Learning",
         revision: 1,
         recentLearnings: [
           expect.objectContaining({

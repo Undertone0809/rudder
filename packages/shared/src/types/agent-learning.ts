@@ -276,11 +276,13 @@ export interface AgentLearningSummary {
     createdAt: Date;
   }>;
   suggestedUpdates: LearningCandidate[];
+  recentFeedbackItems: RunFeedbackItem[];
   recentRevisions: AgentSkillRevision[];
   recentMisses: SkillEvaluationReport[];
   stats: {
     activeLearningCount: number;
     suggestedCount: number;
+    recentFeedbackCount: number;
     recentRevisionCount: number;
     recentMissCount: number;
   };
