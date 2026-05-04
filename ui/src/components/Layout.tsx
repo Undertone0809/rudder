@@ -5,6 +5,7 @@ import { Link, Outlet, useLocation, useNavigate, useParams } from "@/lib/router"
 import { SettingsSidebar } from "./SettingsSidebar";
 import { PrimaryRail } from "./PrimaryRail";
 import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
+import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
 import { BreadcrumbBar } from "./BreadcrumbBar";
 import { CommandPalette } from "./CommandPalette";
 import { NewIssueDialog } from "./NewIssueDialog";
@@ -51,7 +52,7 @@ const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
 const WORKSPACE_COLUMN_WIDTH_KEY_PREFIX = "rudder.workspace.contextWidth";
 
-type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org";
+type WorkspaceColumnFamily = "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
 
 const WORKSPACE_COLUMN_WIDTH_DEFAULTS: Record<WorkspaceColumnFamily, number> = {
   chat: 318,
@@ -61,6 +62,7 @@ const WORKSPACE_COLUMN_WIDTH_DEFAULTS: Record<WorkspaceColumnFamily, number> = {
   projects: 268,
   agents: 268,
   org: 248,
+  backups: 332,
 };
 
 const WORKSPACE_COLUMN_WIDTH_LIMITS: Record<WorkspaceColumnFamily, { min: number; max: number }> = {
@@ -71,6 +73,7 @@ const WORKSPACE_COLUMN_WIDTH_LIMITS: Record<WorkspaceColumnFamily, { min: number
   projects: { min: 236, max: 360 },
   agents: { min: 236, max: 360 },
   org: { min: 220, max: 340 },
+  backups: { min: 280, max: 420 },
 };
 
 function readRememberedSettingsPath(canManageAdminSettings: boolean): string {
@@ -191,7 +194,7 @@ function isMacDesktopShell(): boolean {
 }
 
 function getWorkspaceColumnFamily(relativePath: string): WorkspaceColumnFamily | null {
-  if (/^\/workspaces\/backups(?:\/|$)/.test(relativePath)) return null;
+  if (/^\/workspaces\/backups(?:\/|$)/.test(relativePath)) return "backups";
   if (/^\/chat(?:\/|$)/.test(relativePath)) return "chat";
   if (/^\/messenger(?:\/|$)/.test(relativePath)) return "messenger";
   if (/^\/issues(?:\/|$)/.test(relativePath)) return "issues";
@@ -249,8 +252,11 @@ export function Layout() {
   );
   const useMiddleContextColumn = useMemo(
     () =>
-      !/^\/workspaces\/backups(?:\/|$)/.test(relativeBoardPath) &&
       /^\/(?:chat|messenger|issues|calendar|agents|projects|org|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativeBoardPath),
+    [relativeBoardPath],
+  );
+  const isWorkspaceBackupsRoute = useMemo(
+    () => /^\/workspaces\/backups(?:\/|$)/.test(relativeBoardPath),
     [relativeBoardPath],
   );
   const isChatRoute = useMemo(() => /^\/chat(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
@@ -775,7 +781,7 @@ export function Layout() {
                           )}
                           style={{ width: sidebarOpen ? contextColumnWidth : 0 }}
                         >
-                          <ThreeColumnContextSidebar />
+                          {isWorkspaceBackupsRoute ? <WorkspaceBackupFilesSidebar /> : <ThreeColumnContextSidebar />}
                         </div>
                         <div
                           data-testid="workspace-column-resizer"

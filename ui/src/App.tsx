@@ -309,7 +309,8 @@ function LegacySettingsRedirect() {
 
 function LegacyWorkspaceBackupsRedirect() {
   const { orgPrefix } = useParams<{ orgPrefix?: string }>();
-  return <Navigate to={`/${orgPrefix ?? ""}/workspaces/backups`} replace />;
+  const location = useLocation();
+  return <Navigate to={`/${orgPrefix ?? ""}/workspaces/backups${location.search}${location.hash}`} replace />;
 }
 
 function LegacyOrganizationsRedirect() {
