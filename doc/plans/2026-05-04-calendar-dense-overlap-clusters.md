@@ -35,8 +35,10 @@ agent, but it did not address cross-agent overlap. When several agent-owned
 blocks overlap in a day column, the week view can split them into tiny
 horizontal columns that no longer communicate the time block, title, or owner
 clearly. The first collision pass only handled four-or-more column groups; a
-follow-up visual review showed that three agent-owned columns are already below
-the useful readability threshold in the week grid.
+follow-up visual review showed that three non-writable columns, including mixed
+agent and external blocks, are already below the useful readability threshold in
+the week grid. Long cluster blocks also need opaque surfaces so hour grid lines
+do not read through the card body.
 
 ## Scope
 
@@ -50,13 +52,15 @@ the useful readability threshold in the week grid.
 
 - Add a pure helper that groups connected timed segments and measures their
   required overlap columns.
-- Compact mixed or non-agent groups that require at least four columns and
-  contain at least four underlying events into a `collision_cluster` display
-  item.
-- Compact agent-owned groups earlier, at three columns and three events, because
-  those cards reduce to initials and ellipses in the week grid.
+- Compact directly writable manual human-event groups at the general
+  four-column/four-event threshold so normal three-column drag/edit behavior is
+  preserved.
+- Compact non-writable or mixed groups earlier, at three columns and three
+  events, because those cards reduce to initials and ellipses in the week grid.
 - Render collision clusters as neutral busy cards with multi-agent accents,
   aggregate count, participant count, time range, and status summary.
+- Render cluster cards with an opaque card surface so underlying hour-grid lines
+  do not show through long blocks.
 - Reuse the existing cluster drawer to show complete underlying event rows.
 - Add an `Open day view` action so operators can switch from week scanning to
   focused inspection without losing context.
@@ -64,9 +68,10 @@ the useful readability threshold in the week grid.
 
 ## Success Criteria
 
-- Week view does not render agent-owned three-column or general four-column
+- Week view does not render non-writable three-column or general four-column
   overlap groups as unreadable slivers.
 - The busy cluster preserves the occupied time window and participant density.
+- Long busy clusters use opaque surfaces and hide interior hour grid lines.
 - Underlying events remain accessible and ordered by time in the drawer.
 - Day view still expands the same blocks as individual time blocks.
 - Existing three-column overlap behavior remains expanded and draggable tests
@@ -75,28 +80,32 @@ the useful readability threshold in the week grid.
 ## Validation
 
 - `pnpm vitest run ui/src/lib/calendar-collision-clusters.test.ts ui/src/lib/calendar-display-items.test.ts ui/src/lib/calendar-event-layout.test.ts`
-  - Passed: 3 files, 13 tests after the follow-up three-column threshold.
+  - Passed: 3 files, 14 tests, including mixed agent and external three-column
+    overlap compaction.
 - `pnpm --filter @rudderhq/ui typecheck`
   - Passed.
 - `pnpm -r typecheck`
   - Passed.
-- `RUDDER_E2E_RUN_ID="calendar-dense-$(date +%s)" RUDDER_E2E_CHROMIUM_EXECUTABLE="/Applications/Browser/Google Chrome.app/Contents/MacOS/Google Chrome" pnpm test:e2e tests/e2e/calendar-v1.spec.ts`
-  - Passed: 6 tests.
-- `RUDDER_E2E_RUN_ID="calendar-three-col-$(date +%s)" RUDDER_E2E_CHROMIUM_EXECUTABLE="/Applications/Browser/Google Chrome.app/Contents/MacOS/Google Chrome" pnpm test:e2e tests/e2e/calendar-v1.spec.ts`
-  - Passed: 6 tests, including agent three-column compaction and human
-    three-column direct manipulation.
+- `RUDDER_E2E_RUN_ID="calendar-mixed-$(date +%s)" RUDDER_E2E_CHROMIUM_EXECUTABLE="/Applications/Browser/Google Chrome.app/Contents/MacOS/Google Chrome" pnpm test:e2e tests/e2e/calendar-v1.spec.ts`
+  - Passed: 7 tests, including agent three-column compaction, mixed
+    agent/external three-column compaction, and human three-column direct
+    manipulation.
+- Temporary visual verification with Playwright against an isolated E2E
+  instance:
+  - Passed: long cluster computed background is opaque, long cluster renders as
+    one busy block, mixed agent/external three-column group renders as one busy
+    block.
 - `pnpm build`
   - Passed.
 - `pnpm test:run`
-  - Calendar-related tests passed, but the full suite failed in unrelated areas:
-    `ui/src/pages/AutomationDetail.test.tsx` and
-    `ui/src/pages/InstanceSettings.test.tsx` require `DialogProvider`; CLI
-    org import/export E2E imported zero agents where one was expected.
+  - Calendar-related tests passed, but the full suite failed in unrelated CLI
+    org import/export E2E assertions where imported agents were empty:
+    `src/__tests__/company-import-export-e2e.test.ts:476` and
+    `src/__tests__/company-import-export-e2e.test.ts:748`.
 - Visual checks captured outside the repo:
-  - `/tmp/rudder-calendar-dense-overlap-week.png`
-  - `/tmp/rudder-calendar-dense-overlap-drawer.png`
-  - `/tmp/rudder-calendar-dense-overlap-day.png`
-  - `/tmp/rudder-calendar-three-column-cluster.png`
+  - `/tmp/rudder-calendar-dense-clusters.png`
+  - `/tmp/rudder-calendar-opaque-cluster.png`
+  - `/tmp/rudder-calendar-mixed-three-column-cluster.png`
 
 ## Open Issues
 

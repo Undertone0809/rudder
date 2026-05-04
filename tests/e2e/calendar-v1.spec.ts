@@ -282,6 +282,43 @@ test.describe("Calendar V1", () => {
     await expect(page.getByText("Diana · Dense overlap 1").first()).toBeVisible();
   });
 
+  test("compacts mixed agent and external three-column week blocks into an inspectable busy cluster", async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 1490, height: 1003 });
+
+    const organization = await createCalendarOrg(page, `Calendar-Mixed-Collisions-${Date.now()}`);
+    const todayKey = localDateKey(new Date());
+    const agents = await Promise.all(["Atlas", "Grace"].map(async (name) => {
+      const response = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+        data: { name, role: "engineer" },
+      });
+      expect(response.ok()).toBe(true);
+      return response.json();
+    }));
+    const source = await createGoogleSource(page, organization.id, "Founder Calendar", "active");
+
+    await Promise.all([
+      createAgentWorkBlock(page, organization.id, agents[0].id, "Atlas · Mixed overlap 1", localIso(todayKey, 9, 18), localIso(todayKey, 10, 18)),
+      createAgentWorkBlock(page, organization.id, agents[1].id, "Grace · Mixed overlap 2", localIso(todayKey, 9, 24), localIso(todayKey, 10, 24)),
+      createExternalEvent(page, organization.id, source.id, "Design review", localIso(todayKey, 9, 30), localIso(todayKey, 10, 30)),
+    ]);
+
+    await selectOrganization(page, organization.id);
+    await page.goto("/calendar");
+
+    await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
+    const busyCluster = page.locator('[data-testid^="calendar-collision-cluster-"]').filter({ hasText: "3 events · 2 agents" }).first();
+    await expect(busyCluster).toBeVisible();
+    await expect(busyCluster).not.toContainText("Mixed overlap");
+    await expect(busyCluster).not.toContainText("Design review");
+
+    await busyCluster.click();
+    const drawer = page.getByRole("dialog", { name: "3 events · 2 agents" });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText("Atlas · Mixed overlap 1")).toBeVisible();
+    await expect(drawer.getByText("Design review")).toBeVisible();
+  });
+
   test("creates a planned agent work block as a read-only human-facing annotation", async ({ page }) => {
     test.slow();
     await page.setViewportSize({ width: 1490, height: 1003 });

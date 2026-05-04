@@ -387,7 +387,7 @@ function EventBlock({
       }}
       className={cn(
         "group relative h-full w-full min-w-0 select-none overflow-hidden rounded-[calc(var(--radius-sm)-1px)] border border-border/80 bg-background px-2 py-1 pl-3 text-left text-foreground shadow-[0_10px_18px_-18px_rgba(15,23,42,0.45)] transition hover:bg-muted/35",
-        item.kind !== "single" && "border-border bg-muted/30",
+        item.kind !== "single" && "border-border bg-card hover:bg-card",
         item.kind === "single" && event.eventStatus === "projected" && "border-dashed",
         continuation?.startsBeforeDay && "rounded-t-none border-t-0",
         continuation?.endsAfterDay && "rounded-b-none border-b-0",

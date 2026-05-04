@@ -13,8 +13,8 @@ type CompactDenseTimedSegmentsOptions = {
   enabled?: boolean;
   minColumns?: number;
   minEvents?: number;
-  agentMinColumns?: number;
-  agentMinEvents?: number;
+  unreadableMinColumns?: number;
+  unreadableMinEvents?: number;
 };
 
 function eventStart(segment: TimedDaySegment<CalendarDisplayItem>) {
@@ -85,14 +85,14 @@ function shouldCompactGroup(
   group: TimedDaySegment<CalendarDisplayItem>[],
   minColumns: number,
   minEvents: number,
-  agentMinColumns: number,
-  agentMinEvents: number,
+  unreadableMinColumns: number,
+  unreadableMinEvents: number,
 ) {
   const events = group.flatMap((segment) => calendarDisplayItemEvents(segment.event));
-  const allAgentOwned = events.every((event) => event.ownerType === "agent" && event.ownerAgentId);
+  const allDirectlyWritableHuman = events.every((event) => event.eventKind === "human_event" && event.sourceMode === "manual");
   const layout = layoutTimedEvents(group);
   const maxColumns = Math.max(1, ...layout.map((item) => item.columns));
-  if (allAgentOwned && events.length >= agentMinEvents && maxColumns >= agentMinColumns) return true;
+  if (!allDirectlyWritableHuman && events.length >= unreadableMinEvents && maxColumns >= unreadableMinColumns) return true;
   if (events.length < minEvents) return false;
   return maxColumns >= minColumns;
 }
@@ -106,8 +106,8 @@ export function compactDenseTimedSegments(
 
   const minColumns = options.minColumns ?? 4;
   const minEvents = options.minEvents ?? 4;
-  const agentMinColumns = options.agentMinColumns ?? 3;
-  const agentMinEvents = options.agentMinEvents ?? 3;
+  const unreadableMinColumns = options.unreadableMinColumns ?? 3;
+  const unreadableMinEvents = options.unreadableMinEvents ?? 3;
   const sorted = [...segments].sort((a, b) => {
     const startDelta = eventStart(a) - eventStart(b);
     if (startDelta !== 0) return startDelta;
@@ -122,7 +122,7 @@ export function compactDenseTimedSegments(
 
   function flushGroup() {
     if (group.length === 0) return;
-    if (shouldCompactGroup(group, minColumns, minEvents, agentMinColumns, agentMinEvents)) {
+    if (shouldCompactGroup(group, minColumns, minEvents, unreadableMinColumns, unreadableMinEvents)) {
       compacted.push(denseClusterFor(group));
     } else {
       compacted.push(...group);

@@ -91,12 +91,35 @@ describe("compactDenseTimedSegments", () => {
 
   it("keeps three-column human overlaps expanded for direct manipulation", () => {
     const items = compactDenseTimedSegments(segments([
-      event({ id: "a", startAt: new Date(2026, 4, 1, 9, 0), endAt: new Date(2026, 4, 1, 10, 0), ownerType: "user", ownerAgentId: null }),
-      event({ id: "b", startAt: new Date(2026, 4, 1, 9, 5), endAt: new Date(2026, 4, 1, 10, 5), ownerType: "user", ownerAgentId: null }),
-      event({ id: "c", startAt: new Date(2026, 4, 1, 9, 10), endAt: new Date(2026, 4, 1, 10, 10), ownerType: "user", ownerAgentId: null }),
+      event({ id: "a", eventKind: "human_event", startAt: new Date(2026, 4, 1, 9, 0), endAt: new Date(2026, 4, 1, 10, 0), ownerType: "user", ownerAgentId: null }),
+      event({ id: "b", eventKind: "human_event", startAt: new Date(2026, 4, 1, 9, 5), endAt: new Date(2026, 4, 1, 10, 5), ownerType: "user", ownerAgentId: null }),
+      event({ id: "c", eventKind: "human_event", startAt: new Date(2026, 4, 1, 9, 10), endAt: new Date(2026, 4, 1, 10, 10), ownerType: "user", ownerAgentId: null }),
     ]));
 
     expect(items.map((item) => item.event.kind)).toEqual(["single", "single", "single"]);
+  });
+
+  it("compacts three-column mixed agent and external overlaps", () => {
+    const items = compactDenseTimedSegments(segments([
+      event({ id: "a", startAt: new Date(2026, 4, 1, 9, 0), endAt: new Date(2026, 4, 1, 10, 0), ownerAgentId: "agent-1" }),
+      event({ id: "b", startAt: new Date(2026, 4, 1, 9, 5), endAt: new Date(2026, 4, 1, 10, 5), ownerAgentId: "agent-2" }),
+      event({
+        id: "c",
+        eventKind: "external_event",
+        eventStatus: "external",
+        sourceMode: "imported",
+        startAt: new Date(2026, 4, 1, 9, 10),
+        endAt: new Date(2026, 4, 1, 10, 10),
+        ownerType: "user",
+        ownerAgentId: null,
+      }),
+    ]));
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.event.kind).toBe("collision_cluster");
+    if (items[0]?.event.kind !== "collision_cluster") throw new Error("Expected a collision cluster");
+    expect(items[0].event.events.map((clusteredEvent) => clusteredEvent.id)).toEqual(["a", "b", "c"]);
+    expect(items[0].event.agentIds).toEqual(["agent-1", "agent-2"]);
   });
 
   it("keeps two-column agent-owned overlaps expanded", () => {
