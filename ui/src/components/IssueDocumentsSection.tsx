@@ -8,7 +8,7 @@ import { useAutosaveIndicator } from "../hooks/useAutosaveIndicator";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, relativeTime } from "../lib/utils";
 import { MarkdownBody } from "./MarkdownBody";
-import { MarkdownEditor, type MentionOption } from "./MarkdownEditor";
+import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { semanticNoticeToneClasses, semanticTextToneClasses } from "@/components/ui/semanticTones";
@@ -239,6 +239,10 @@ export function IssueDocumentsSection({
   }, [markDirty]);
 
   const beginNewDocument = () => {
+    if (onFocusNewDocument) {
+      onFocusNewDocument();
+      return;
+    }
     resetAutosaveState();
     setDocumentConflict(null);
     setDraft({
@@ -1009,6 +1013,7 @@ export function IssueDocumentFocusPage({
   onDocumentCreated?: (key: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const bodyEditorRef = useRef<MarkdownEditorRef | null>(null);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autosaveDocumentKey, setAutosaveDocumentKey] = useState<string | null>(null);
@@ -1079,6 +1084,13 @@ export function IssueDocumentFocusPage({
       isNew: false,
     });
   }, [focusedDocument, resetAutosaveState, target.kind]);
+
+  useEffect(() => {
+    if (!draft) return;
+    if (draft.title.trim()) {
+      window.requestAnimationFrame(() => bodyEditorRef.current?.focus());
+    }
+  }, [draft?.key]);
 
   useEffect(() => {
     return () => {
@@ -1220,9 +1232,9 @@ export function IssueDocumentFocusPage({
   return (
     <section
       aria-label="Focused document editor"
-      className="min-h-[calc(100dvh-7rem)] animate-in fade-in-0 slide-in-from-bottom-1 duration-200"
+      className="min-h-[calc(100dvh-7rem)] animate-in fade-in-0 slide-in-from-right-2 duration-200"
     >
-      <div className="mb-5 flex items-center justify-between gap-3 border-b border-border/60 pb-3">
+      <div className="mb-4 flex items-center justify-between gap-3 border-b border-border/60 pb-3">
         <div className="flex min-w-0 items-center gap-2">
           <Button
             type="button"
@@ -1251,7 +1263,7 @@ export function IssueDocumentFocusPage({
 
       {error ? <p className="mb-3 text-xs text-destructive">{error}</p> : null}
 
-      <div className="mx-auto flex min-h-[calc(100dvh-14rem)] w-full max-w-3xl flex-col">
+      <div className="flex min-h-[calc(100dvh-13rem)] w-full max-w-[980px] flex-col pl-10 pr-4 pt-3">
         {!draft ? (
           <p className="text-sm text-muted-foreground">Loading document...</p>
         ) : (
@@ -1263,21 +1275,23 @@ export function IssueDocumentFocusPage({
                   setDraft((current) => current ? { ...current, title: event.target.value } : current);
                 }}
                 placeholder="Untitled document"
-                className="w-full bg-transparent text-4xl font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/35"
+                className="w-full bg-transparent text-[28px] font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/45"
                 autoFocus
               />
             ) : (
-              <h2 className="text-4xl font-semibold leading-tight text-foreground">Plan</h2>
+              <h2 className="text-[28px] font-semibold leading-tight text-foreground">Plan</h2>
             )}
+            <div className="mt-4 border-t border-border/60" />
             <MarkdownEditor
+              ref={bodyEditorRef}
               value={draft.body}
               onChange={(body) => {
                 setDraft((current) => current ? { ...current, body } : current);
               }}
               placeholder="Write the document..."
               bordered={false}
-              className="mt-6 min-h-0 flex-1 bg-transparent"
-              contentClassName="min-h-[calc(100dvh-22rem)] text-[16px] leading-7"
+              className="mt-4 min-h-0 flex-1 bg-transparent"
+              contentClassName="min-h-[calc(100dvh-20rem)] cursor-text text-[16px] leading-7"
               mentions={mentions}
               imageUploadHandler={imageUploadHandler}
               onSubmit={() => void commitDraft(draft, { trackAutosave: true })}
