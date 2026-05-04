@@ -41,6 +41,11 @@ const boardStatuses: IssueStatus[] = [
   "cancelled",
 ];
 
+type KanbanIssueGroups = Record<IssueStatus, Issue[]>;
+type KanbanDropOrderPreview = {
+  laneIdsByStatus: Partial<Record<IssueStatus, string[]>>;
+};
+
 const laneSurfaceClasses: Record<string, { base: string; over: string }> = {
   backlog: {
     base: "border-[color:color-mix(in_oklab,var(--border-soft)_88%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_88%,transparent)]",
@@ -74,6 +79,53 @@ const laneSurfaceClasses: Record<string, { base: string; over: string }> = {
 
 function statusLabel(status: string): string {
   return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function createEmptyIssueGroups(): KanbanIssueGroups {
+  const groups = {} as KanbanIssueGroups;
+  for (const status of boardStatuses) {
+    groups[status] = [];
+  }
+  return groups;
+}
+
+function issueIdsMatchLaneOrder(issues: Issue[], issueIds: string[]): boolean {
+  if (issues.length !== issueIds.length) return false;
+  return issues.every((issue, index) => issue.id === issueIds[index]);
+}
+
+export function applyKanbanDropOrderPreview(
+  baseColumnIssues: KanbanIssueGroups,
+  allIssues: Issue[],
+  preview: KanbanDropOrderPreview | null,
+): KanbanIssueGroups {
+  if (!preview) return baseColumnIssues;
+
+  const issueById = new Map(allIssues.map((issue) => [issue.id, issue]));
+  const projected = Object.fromEntries(
+    boardStatuses.map((status) => [status, [...baseColumnIssues[status]]]),
+  ) as KanbanIssueGroups;
+
+  for (const [status, issueIds] of Object.entries(preview.laneIdsByStatus) as [IssueStatus, string[]][]) {
+    projected[status] = issueIds
+      .map((issueId) => {
+        const issue = issueById.get(issueId);
+        if (!issue) return null;
+        return issue.status === status ? issue : { ...issue, status };
+      })
+      .filter((issue): issue is Issue => Boolean(issue));
+  }
+
+  return projected;
+}
+
+export function doesKanbanDropOrderPreviewMatchBase(
+  baseColumnIssues: KanbanIssueGroups,
+  preview: KanbanDropOrderPreview,
+): boolean {
+  return (Object.entries(preview.laneIdsByStatus) as [IssueStatus, string[]][]).every(
+    ([status, issueIds]) => issueIdsMatchLaneOrder(baseColumnIssues[status] ?? [], issueIds),
+  );
 }
 
 interface Agent {
@@ -427,6 +479,7 @@ export function KanbanBoard({
 }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [recentlyDroppedIssueIds, setRecentlyDroppedIssueIds] = useState<Set<string>>(new Set());
+  const [dropOrderPreview, setDropOrderPreview] = useState<KanbanDropOrderPreview | null>(null);
   const boardScrollRef = useScrollbarActivityRef();
   const dropTimersRef = useRef<number[]>([]);
 
@@ -434,11 +487,8 @@ export function KanbanBoard({
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
-  const columnIssues = useMemo(() => {
-    const grouped: Record<string, Issue[]> = {};
-    for (const status of boardStatuses) {
-      grouped[status] = [];
-    }
+  const baseColumnIssues = useMemo(() => {
+    const grouped = createEmptyIssueGroups();
     for (const issue of issues) {
       if (grouped[issue.status]) {
         grouped[issue.status].push(issue);
@@ -451,6 +501,11 @@ export function KanbanBoard({
     }
     return grouped;
   }, [issues, sortState]);
+
+  const columnIssues = useMemo(
+    () => applyKanbanDropOrderPreview(baseColumnIssues, issues, dropOrderPreview),
+    [baseColumnIssues, issues, dropOrderPreview],
+  );
 
   const visibleStatuses = useMemo(
     () => boardStatuses.filter((status) => (columnIssues[status]?.length ?? 0) > 0),
@@ -472,6 +527,18 @@ export function KanbanBoard({
       dropTimersRef.current = [];
     };
   }, []);
+
+  useEffect(() => {
+    if (!dropOrderPreview) return;
+    if (doesKanbanDropOrderPreviewMatchBase(baseColumnIssues, dropOrderPreview)) {
+      setDropOrderPreview(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setDropOrderPreview(null);
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [baseColumnIssues, dropOrderPreview]);
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string);
@@ -523,6 +590,15 @@ export function KanbanBoard({
     const finalLaneIds = finalLane.map((candidate) => candidate.id).join("\n");
 
     if (targetStatus !== issue.status || originalLaneIds !== finalLaneIds) {
+      const laneIdsByStatus: KanbanDropOrderPreview["laneIdsByStatus"] = {
+        [targetStatus]: finalLane.map((candidate) => candidate.id),
+      };
+      if (targetStatus !== issue.status) {
+        laneIdsByStatus[issue.status] = (columnIssues[issue.status] ?? [])
+          .filter((candidate) => candidate.id !== issueId)
+          .map((candidate) => candidate.id);
+      }
+      setDropOrderPreview({ laneIdsByStatus });
       setRecentlyDroppedIssueIds((prev) => {
         const next = new Set(prev);
         next.add(issueId);
