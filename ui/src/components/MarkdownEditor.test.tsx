@@ -11,6 +11,10 @@ import {
 
 const mdxEditorMocks = vi.hoisted(() => ({
   imagePlugin: vi.fn(() => ({})),
+  linkDialogPlugin: vi.fn(() => ({})),
+  lastEditorProps: null as null | {
+    translation?: (key: string, defaultValue: string, interpolations?: Record<string, unknown>) => string;
+  },
 }));
 
 (
@@ -99,9 +103,11 @@ vi.mock("@mdxeditor/editor", async () => {
       className?: string;
       contentEditableClassName?: string;
       onBlur?: () => void;
+      translation?: (key: string, defaultValue: string, interpolations?: Record<string, unknown>) => string;
     },
     ref: React.ForwardedRef<{ focus: () => void; setMarkdown: (value: string) => void }>,
   ) {
+    mdxEditorMocks.lastEditorProps = props;
     const [, setMarkdown] = React.useState(props.markdown);
     React.useImperativeHandle(ref, () => ({
       focus: () => undefined,
@@ -128,7 +134,7 @@ vi.mock("@mdxeditor/editor", async () => {
     codeMirrorPlugin: () => ({}),
     headingsPlugin: () => ({}),
     imagePlugin: mdxEditorMocks.imagePlugin,
-    linkDialogPlugin: () => ({}),
+    linkDialogPlugin: mdxEditorMocks.linkDialogPlugin,
     linkPlugin: () => ({}),
     listsPlugin: () => ({}),
     markdownShortcutPlugin: () => ({}),
@@ -144,6 +150,8 @@ afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   mdxEditorMocks.imagePlugin.mockClear();
+  mdxEditorMocks.linkDialogPlugin.mockClear();
+  mdxEditorMocks.lastEditorProps = null;
   document.body.innerHTML = "";
 });
 
@@ -282,6 +290,35 @@ describe("MarkdownEditor", () => {
         EditImageToolbar: expect.any(Function),
       }),
     );
+  });
+
+  it("uses the compact Notion-style link dialog labels", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="[Rudder](https://example.com)"
+          onChange={() => undefined}
+        />,
+      );
+    });
+
+    expect(mdxEditorMocks.linkDialogPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ showLinkTitleField: false }),
+    );
+    expect(mdxEditorMocks.lastEditorProps?.translation?.("createLink.url", "URL")).toBe("Page or URL");
+    expect(mdxEditorMocks.lastEditorProps?.translation?.("createLink.text", "Anchor text")).toBe("Link title");
+    expect(mdxEditorMocks.lastEditorProps?.translation?.("linkPreview.edit", "Edit link URL")).toBe("Edit");
   });
 
   it("renders issue mention options with status, project, and assignee metadata", async () => {

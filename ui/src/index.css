@@ -1549,17 +1549,34 @@ a.rudder-mention-chip[data-mention-kind="agent"]::before {
 }
 
 .rudder-markdown a {
-  color: color-mix(in oklab, var(--foreground) 76%, #0969da 24%);
-  text-decoration: none;
+  color: color-mix(in oklab, var(--foreground) 62%, #0969da 38%);
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 44%, transparent);
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+  border-radius: 0.2em;
+  background:
+    linear-gradient(
+      color-mix(in oklab, currentColor 8%, transparent),
+      color-mix(in oklab, currentColor 8%, transparent)
+    )
+    0 88% / 100% 0.3em no-repeat;
+  font-weight: 520;
 }
 
 .rudder-markdown a:hover {
-  text-decoration: underline;
-  text-underline-offset: 0.15em;
+  color: color-mix(in oklab, var(--foreground) 52%, #0969da 48%);
+  text-decoration-color: currentColor;
+  background:
+    linear-gradient(
+      color-mix(in oklab, currentColor 13%, transparent),
+      color-mix(in oklab, currentColor 13%, transparent)
+    )
+    0 88% / 100% 0.3em no-repeat;
 }
 
 .dark .rudder-markdown a {
-  color: color-mix(in oklab, var(--foreground) 80%, #58a6ff 20%);
+  color: color-mix(in oklab, var(--foreground) 64%, #58a6ff 36%);
 }
 
 .rudder-mdxeditor-content .rudder-skill-token,
@@ -1763,4 +1780,187 @@ a.rudder-project-mention-chip:hover {
 [class*="_toolbarButtonDropdownContainer_"],
 [class*="_toolbarNodeKindSelectContainer_"] {
   z-index: 81 !important;
+}
+
+/* MDXEditor link popover: closer to Notion's compact preview and edit affordances. */
+[class*="_linkDialogPopoverContent_"] {
+  --rudder-link-popover-bg: color-mix(in oklab, var(--popover) 92%, black 8%);
+  --rudder-link-popover-control: color-mix(in oklab, var(--popover) 82%, var(--foreground) 8%);
+  --rudder-link-popover-hover: color-mix(in oklab, var(--foreground) 10%, transparent);
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.25rem !important;
+  min-height: 2.25rem;
+  max-width: min(34rem, calc(100vw - 2rem));
+  padding: 0.25rem !important;
+  border: 1px solid color-mix(in oklab, var(--border) 78%, var(--foreground) 22%) !important;
+  border-radius: calc(var(--radius-sm) + 1px) !important;
+  background: var(--rudder-link-popover-bg) !important;
+  color: var(--foreground) !important;
+  box-shadow: 0 18px 42px -24px rgb(0 0 0 / 0.55), 0 2px 10px rgb(0 0 0 / 0.18) !important;
+  filter: none !important;
+}
+
+[class*="_linkDialogPopoverContent_"] [class*="_popoverArrow_"] {
+  display: none;
+}
+
+[class*="_linkDialogPreviewAnchor_"] {
+  display: inline-flex !important;
+  min-width: 0;
+  max-width: min(26rem, calc(100vw - 10rem));
+  height: 1.875rem;
+  align-items: center !important;
+  gap: 0.5rem;
+  margin: 0 !important;
+  padding: 0 0.625rem;
+  border: 0 !important;
+  border-radius: calc(var(--radius-sm) - 1px);
+  color: var(--muted-foreground) !important;
+  text-decoration: none !important;
+}
+
+[class*="_linkDialogPreviewAnchor_"]::before {
+  content: "";
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  background: currentColor;
+  opacity: 0.9;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M2 12h20'/%3E%3Cpath d='M12 2a15.3 15.3 0 0 1 0 20'/%3E%3Cpath d='M12 2a15.3 15.3 0 0 0 0 20'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M2 12h20'/%3E%3Cpath d='M12 2a15.3 15.3 0 0 1 0 20'/%3E%3Cpath d='M12 2a15.3 15.3 0 0 0 0 20'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+[class*="_linkDialogPreviewAnchor_"]:hover {
+  background: var(--rudder-link-popover-hover);
+  color: var(--foreground) !important;
+}
+
+[class*="_linkDialogPreviewAnchor_"] span {
+  max-width: 100% !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[class*="_linkDialogPreviewAnchor_"] svg {
+  display: none;
+}
+
+[class*="_linkDialogPopoverContent_"] [class*="_actionButton_"] {
+  display: inline-flex !important;
+  width: auto;
+  min-width: 1.875rem;
+  height: 1.875rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0 0.475rem !important;
+  border-radius: calc(var(--radius-sm) - 1px) !important;
+  color: var(--muted-foreground) !important;
+}
+
+[class*="_linkDialogPopoverContent_"] [class*="_actionButton_"]:hover {
+  background: var(--rudder-link-popover-hover) !important;
+  color: var(--foreground) !important;
+}
+
+[class*="_linkDialogPopoverContent_"] [class*="_actionButton_"] svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+[class*="_linkDialogPopoverContent_"] [class*="_actionButton_"][aria-label="Edit"] {
+  padding-right: 0.625rem !important;
+  color: var(--foreground) !important;
+  font-weight: 600;
+}
+
+[class*="_linkDialogPopoverContent_"] [class*="_actionButton_"][aria-label="Edit"]::after {
+  content: "Edit";
+  font-size: 0.8125rem;
+}
+
+[class*="_linkDialogPopoverContent_"] [class*="_actionButton_"][aria-label="Remove Link"]:hover {
+  color: var(--destructive) !important;
+}
+
+[class*="_linkDialogPopoverContent_"]:has([class*="_linkDialogEditForm_"]) {
+  align-items: stretch !important;
+  width: min(32rem, calc(100vw - 2rem));
+  padding: 0 !important;
+}
+
+[class*="_linkDialogEditForm_"] {
+  width: 100%;
+  gap: 0.875rem !important;
+  padding: 1rem !important;
+}
+
+[class*="_linkDialogEditForm_"] [class*="_formField_"] {
+  gap: 0.45rem !important;
+}
+
+[class*="_linkDialogEditForm_"] label {
+  color: var(--muted-foreground);
+  font-size: 0.8125rem !important;
+  font-weight: 650;
+}
+
+[class*="_linkDialogEditForm_"] [class*="_downshiftInputWrapper_"],
+[class*="_linkDialogEditForm_"] [class*="_textInput_"] {
+  min-height: 2.625rem;
+  border: 1px solid color-mix(in oklab, var(--border) 72%, var(--foreground) 28%) !important;
+  border-radius: calc(var(--radius-sm) + 1px) !important;
+  background: var(--rudder-link-popover-control) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+[class*="_linkDialogEditForm_"] [class*="_downshiftInputWrapper_"]:focus-within,
+[class*="_linkDialogEditForm_"] [class*="_textInput_"]:focus {
+  border-color: #2383ff !important;
+  box-shadow: 0 0 0 2px color-mix(in oklab, #2383ff 34%, transparent);
+}
+
+[class*="_linkDialogEditForm_"] [class*="_downshiftInput_"],
+[class*="_linkDialogEditForm_"] [class*="_textInput_"] {
+  width: 100% !important;
+  color: var(--foreground) !important;
+  font-size: 0.9375rem !important;
+}
+
+[class*="_linkDialogEditForm_"] [class*="_downshiftInput_"] {
+  padding: 0.45rem 0.75rem !important;
+}
+
+[class*="_linkDialogEditForm_"] [class*="_textInput_"] {
+  box-sizing: border-box;
+  padding: 0.45rem 0.75rem !important;
+}
+
+[class*="_linkDialogEditForm_"] > div:last-child {
+  margin-top: 0.125rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+}
+
+[class*="_linkDialogEditForm_"] [class*="_primaryButton_"],
+[class*="_linkDialogEditForm_"] [class*="_secondaryButton_"] {
+  min-height: 2rem;
+  padding: 0 0.75rem !important;
+  border-radius: calc(var(--radius-sm) - 1px) !important;
+  font-size: 0.8125rem !important;
+  font-weight: 600;
+}
+
+[class*="_linkDialogEditForm_"] [class*="_primaryButton_"] {
+  border-color: var(--foreground) !important;
+  background: var(--foreground) !important;
+  color: var(--background) !important;
+}
+
+[class*="_linkDialogEditForm_"] [class*="_secondaryButton_"] {
+  border-color: color-mix(in oklab, var(--border) 70%, var(--foreground) 30%) !important;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
 }
