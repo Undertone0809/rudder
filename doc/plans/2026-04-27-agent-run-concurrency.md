@@ -20,7 +20,7 @@ related_code:
   - ui/src/components/OnboardingWizard.tsx
   - packages/agent-runtime-utils/src/types.ts
 commit_refs:
-  - 107a987
+  - 6499d92
 updated_at: 2026-05-04
 ---
 
