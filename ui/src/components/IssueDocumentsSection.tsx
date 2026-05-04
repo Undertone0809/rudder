@@ -19,7 +19,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Check, ChevronDown, ChevronRight, Copy, Download, FileText, Maximize2, Minimize2, MoreHorizontal, Plus, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronRight, Copy, Download, FileText, Maximize2, MoreHorizontal, Plus, Trash2, X } from "lucide-react";
 
 type DraftState = {
   key: string;
@@ -37,7 +37,6 @@ type DocumentConflictState = {
 };
 
 const DOCUMENT_AUTOSAVE_DEBOUNCE_MS = 900;
-const NEW_DOCUMENT_DRAFT_KEY = "__new_document_draft__";
 const getFoldedDocumentsStorageKey = (issueId: string) => `rudder:issue-document-folds:${issueId}`;
 
 function loadFoldedDocumentKeys(issueId: string) {
@@ -155,12 +154,16 @@ export function IssueDocumentsSection({
   mentions,
   imageUploadHandler,
   extraActions,
+  onFocusDocument,
+  onFocusNewDocument,
 }: {
   issue: Issue;
   canDeleteDocuments: boolean;
   mentions?: MentionOption[];
   imageUploadHandler?: (file: File) => Promise<string>;
   extraActions?: ReactNode;
+  onFocusDocument?: (key: string) => void;
+  onFocusNewDocument?: () => void;
 }) {
   const queryClient = useQueryClient();
   const location = useLocation();
@@ -172,7 +175,6 @@ export function IssueDocumentsSection({
   const [autosaveDocumentKey, setAutosaveDocumentKey] = useState<string | null>(null);
   const [copiedDocumentKey, setCopiedDocumentKey] = useState<string | null>(null);
   const [highlightDocumentKey, setHighlightDocumentKey] = useState<string | null>(null);
-  const [expandedDocumentEditorKey, setExpandedDocumentEditorKey] = useState<string | null>(null);
   const autosaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedDocumentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasScrolledToHashRef = useRef(false);
@@ -239,7 +241,6 @@ export function IssueDocumentsSection({
   const beginNewDocument = () => {
     resetAutosaveState();
     setDocumentConflict(null);
-    setExpandedDocumentEditorKey(null);
     setDraft({
       key: "",
       title: "",
@@ -271,7 +272,6 @@ export function IssueDocumentsSection({
     if (autosaveDebounceRef.current) {
       clearTimeout(autosaveDebounceRef.current);
     }
-    setExpandedDocumentEditorKey(null);
     resetAutosaveState();
     setDocumentConflict(null);
     setDraft(null);
@@ -486,7 +486,7 @@ export function IssueDocumentsSection({
       trackAutosave: options?.trackAutosave ?? false,
     });
     if (saved) {
-      setExpandedDocumentEditorKey(null);
+      resetAutosaveState();
     }
   }, [commitDraft, draft]);
 
@@ -584,7 +584,6 @@ export function IssueDocumentsSection({
   const documentBodyShellClassName = "mt-3 overflow-hidden rounded-md";
   const documentBodyPaddingClassName = "";
   const documentBodyContentClassName = "rudder-edit-in-place-content min-h-[220px] text-[15px] leading-7";
-  const isNewDraftExpanded = draft?.isNew && expandedDocumentEditorKey === NEW_DOCUMENT_DRAFT_KEY;
   const toggleFoldedDocument = (key: string) => {
     setFoldedDocumentKeys((current) =>
       current.includes(key)
@@ -622,12 +621,7 @@ export function IssueDocumentsSection({
 
       {draft?.isNew && (
         <div
-          className={cn(
-            "space-y-3 rounded-lg border border-border transition-all duration-300 ease-out",
-            isNewDraftExpanded
-              ? "min-h-[calc(100dvh-18rem)] bg-background/80 px-5 py-6"
-              : "bg-accent/10 p-3",
-          )}
+          className="space-y-3 rounded-lg border border-border bg-accent/10 p-3"
           onBlurCapture={handleDraftBlur}
           onKeyDown={handleDraftKeyDown}
         >
@@ -639,26 +633,18 @@ export function IssueDocumentsSection({
                 setDraft((current) => current ? { ...current, title: event.target.value } : current)
               }
               placeholder="Document title"
-              className={cn(
-                isNewDraftExpanded &&
-                  "h-auto border-transparent bg-transparent p-0 text-3xl font-semibold focus-visible:border-transparent focus-visible:ring-0",
-              )}
             />
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
               className="shrink-0 text-muted-foreground"
-              title={isNewDraftExpanded ? "Collapse editor" : "Expand editor"}
-              aria-label={isNewDraftExpanded ? "Collapse editor" : "Expand editor"}
+              title="Expand editor"
+              aria-label="Expand editor"
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() =>
-                setExpandedDocumentEditorKey((current) =>
-                  current === NEW_DOCUMENT_DRAFT_KEY ? null : NEW_DOCUMENT_DRAFT_KEY,
-                )
-              }
+              onClick={() => onFocusNewDocument?.()}
             >
-              {isNewDraftExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+              <Maximize2 className="h-4 w-4" />
             </Button>
           </div>
           <MarkdownEditor
@@ -669,10 +655,7 @@ export function IssueDocumentsSection({
             placeholder="Write the document..."
             bordered={false}
             className="bg-transparent"
-            contentClassName={cn(
-              "text-[15px] leading-7",
-              isNewDraftExpanded ? "min-h-[calc(100dvh-28rem)]" : "min-h-[220px]",
-            )}
+            contentClassName="min-h-[220px] text-[15px] leading-7"
             mentions={mentions}
             imageUploadHandler={imageUploadHandler}
             onSubmit={() => void createDraftDocument()}
@@ -721,17 +704,13 @@ export function IssueDocumentsSection({
           const title = activeDraft
             ? inferDocumentTitle(activeDraft.title, activeDraft.body, doc.key)
             : displayDocumentTitle(doc);
-          const isDocumentExpanded = expandedDocumentEditorKey === doc.key;
 
           return (
             <div
               key={doc.id}
               id={`document-${doc.key}`}
               className={cn(
-                "rounded-lg border border-border transition-all duration-300 ease-out",
-                isDocumentExpanded
-                  ? "min-h-[calc(100dvh-18rem)] bg-background/80 px-5 py-6"
-                  : "p-3",
+                "rounded-lg border border-border p-3 transition-colors duration-1000",
                 highlightDocumentKey === doc.key && "border-primary/50 bg-primary/5",
               )}
             >
@@ -764,19 +743,14 @@ export function IssueDocumentsSection({
                     variant="ghost"
                     size="icon-xs"
                     className="text-muted-foreground"
-                    title={isDocumentExpanded ? "Collapse editor" : "Expand editor"}
-                    aria-label={isDocumentExpanded ? "Collapse editor" : "Expand editor"}
+                    title="Expand editor"
+                    aria-label="Expand editor"
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => {
-                      if (isDocumentExpanded) {
-                        setExpandedDocumentEditorKey(null);
-                        return;
-                      }
-                      beginEdit(doc.key);
-                      setExpandedDocumentEditorKey(doc.key);
+                      onFocusDocument?.(doc.key);
                     }}
                   >
-                    {isDocumentExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+                    <Maximize2 className="h-3.5 w-3.5" />
                   </Button>
                   <Button
                     variant="ghost"
@@ -920,10 +894,6 @@ export function IssueDocumentsSection({
                         setDraft((current) => current ? { ...current, title: event.target.value } : current);
                       }}
                       placeholder="Document title"
-                      className={cn(
-                        isDocumentExpanded &&
-                          "h-auto border-transparent bg-transparent p-0 text-3xl font-semibold focus-visible:border-transparent focus-visible:ring-0",
-                      )}
                     />
                   )}
                   <div
@@ -951,10 +921,7 @@ export function IssueDocumentsSection({
                       placeholder="Write the document..."
                       bordered={false}
                       className="bg-transparent"
-                      contentClassName={cn(
-                        documentBodyContentClassName,
-                        isDocumentExpanded && "min-h-[calc(100dvh-28rem)] text-[16px]",
-                      )}
+                      contentClassName={documentBodyContentClassName}
                       mentions={mentions}
                       imageUploadHandler={imageUploadHandler}
                       onSubmit={() => void commitDraft(activeDraft ?? draft, { clearAfterSave: false, trackAutosave: true })}
@@ -1019,5 +986,305 @@ export function IssueDocumentsSection({
       </div>
 
     </div>
+  );
+}
+
+export type IssueDocumentFocusTarget =
+  | { kind: "new" }
+  | { kind: "existing"; key: string };
+
+export function IssueDocumentFocusPage({
+  issue,
+  target,
+  mentions,
+  imageUploadHandler,
+  onClose,
+  onDocumentCreated,
+}: {
+  issue: Issue;
+  target: IssueDocumentFocusTarget;
+  mentions?: MentionOption[];
+  imageUploadHandler?: (file: File) => Promise<string>;
+  onClose: () => void;
+  onDocumentCreated?: (key: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState<DraftState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [autosaveDocumentKey, setAutosaveDocumentKey] = useState<string | null>(null);
+  const autosaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const {
+    state: autosaveState,
+    markDirty,
+    reset,
+    runSave,
+  } = useAutosaveIndicator();
+
+  const { data: documents } = useQuery({
+    queryKey: queryKeys.issues.documents(issue.id),
+    queryFn: () => issuesApi.listDocuments(issue.id),
+  });
+
+  const sortedDocuments = useMemo(() => {
+    return [...(documents ?? [])].sort((a, b) => {
+      if (a.key === "plan" && b.key !== "plan") return -1;
+      if (a.key !== "plan" && b.key === "plan") return 1;
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+  }, [documents]);
+
+  const focusedDocument = target.kind === "existing"
+    ? sortedDocuments.find((doc) => doc.key === target.key)
+    : null;
+
+  const upsertDocument = useMutation({
+    mutationFn: async (nextDraft: DraftState) =>
+      issuesApi.upsertDocument(issue.id, nextDraft.key, {
+        title: isPlanKey(nextDraft.key) ? null : nextDraft.title.trim() || null,
+        format: "markdown",
+        body: nextDraft.body,
+        baseRevisionId: nextDraft.baseRevisionId,
+      }),
+  });
+
+  const resetAutosaveState = useCallback(() => {
+    setAutosaveDocumentKey(null);
+    reset();
+  }, [reset]);
+
+  const invalidateIssueDocuments = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issue.id) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issue.id) });
+  }, [issue.id, queryClient]);
+
+  useEffect(() => {
+    resetAutosaveState();
+    setError(null);
+    if (target.kind === "new") {
+      setDraft({
+        key: "",
+        title: "",
+        body: "",
+        baseRevisionId: null,
+        isNew: true,
+      });
+      return;
+    }
+    if (!focusedDocument) return;
+    setDraft({
+      key: focusedDocument.key,
+      title: focusedDocument.title ?? "",
+      body: focusedDocument.body,
+      baseRevisionId: focusedDocument.latestRevisionId,
+      isNew: false,
+    });
+  }, [focusedDocument, resetAutosaveState, target.kind]);
+
+  useEffect(() => {
+    return () => {
+      if (autosaveDebounceRef.current) {
+        clearTimeout(autosaveDebounceRef.current);
+      }
+    };
+  }, []);
+
+  const commitDraft = useCallback(async (currentDraft: DraftState | null, options?: { trackAutosave?: boolean }) => {
+    if (!currentDraft || upsertDocument.isPending) return false;
+    const normalizedBody = currentDraft.body.trim();
+    const normalizedKey = currentDraft.isNew
+      ? buildDocumentKey(currentDraft.title, currentDraft.body, sortedDocuments.map((doc) => doc.key))
+      : currentDraft.key.trim().toLowerCase();
+    const normalizedTitle = inferDocumentTitle(
+      currentDraft.title,
+      currentDraft.body,
+      currentDraft.isNew ? undefined : normalizedKey,
+    );
+
+    if (!normalizedBody) {
+      if (!currentDraft.isNew) {
+        setError("Document body cannot be empty");
+      }
+      if (options?.trackAutosave) {
+        resetAutosaveState();
+      }
+      return false;
+    }
+
+    const existing = sortedDocuments.find((doc) => doc.key === normalizedKey);
+    if (
+      !currentDraft.isNew &&
+      existing &&
+      existing.body === currentDraft.body &&
+      (existing.title ?? "") === currentDraft.title
+    ) {
+      if (options?.trackAutosave) {
+        resetAutosaveState();
+      }
+      return true;
+    }
+
+    const save = async () => {
+      const saved = await upsertDocument.mutateAsync({
+        ...currentDraft,
+        key: normalizedKey,
+        title: isPlanKey(normalizedKey) ? "" : normalizedTitle,
+        body: currentDraft.body,
+      });
+      setError(null);
+      setDraft({
+        key: saved.key,
+        title: saved.title ?? normalizedTitle,
+        body: saved.body,
+        baseRevisionId: saved.latestRevisionId,
+        isNew: false,
+      });
+      invalidateIssueDocuments();
+      if (currentDraft.isNew) {
+        onDocumentCreated?.(saved.key);
+      }
+    };
+
+    try {
+      if (options?.trackAutosave) {
+        setAutosaveDocumentKey(normalizedKey);
+        await runSave(save);
+      } else {
+        await save();
+      }
+      return true;
+    } catch (err) {
+      if (isDocumentConflictError(err)) {
+        setError("Document changed remotely. Return to the issue and reopen it to refresh.");
+        resetAutosaveState();
+        return false;
+      }
+      setError(err instanceof Error ? err.message : "Failed to save document");
+      return false;
+    }
+  }, [invalidateIssueDocuments, onDocumentCreated, resetAutosaveState, runSave, sortedDocuments, upsertDocument]);
+
+  useEffect(() => {
+    if (!draft) return;
+    const existing = draft.isNew ? null : sortedDocuments.find((doc) => doc.key === draft.key);
+    const hasChanges = draft.isNew
+      ? draft.body.trim().length > 0
+      : Boolean(existing) && (existing!.body !== draft.body || (existing!.title ?? "") !== draft.title);
+
+    if (!hasChanges) {
+      if (autosaveState !== "saved") {
+        resetAutosaveState();
+      }
+      return;
+    }
+
+    setError(null);
+    setAutosaveDocumentKey(draft.key);
+    markDirty();
+    if (autosaveDebounceRef.current) {
+      clearTimeout(autosaveDebounceRef.current);
+    }
+    autosaveDebounceRef.current = setTimeout(() => {
+      void commitDraft(draft, { trackAutosave: true });
+    }, DOCUMENT_AUTOSAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (autosaveDebounceRef.current) {
+        clearTimeout(autosaveDebounceRef.current);
+      }
+    };
+  }, [autosaveState, commitDraft, draft, markDirty, resetAutosaveState, sortedDocuments]);
+
+  const title = draft
+    ? inferDocumentTitle(draft.title, draft.body, draft.isNew ? undefined : draft.key)
+    : target.kind === "existing"
+      ? titleCaseWords(target.key)
+      : "Untitled document";
+  const statusLabel = error
+    ? "Could not save"
+    : draft?.isNew
+      ? draft.body.trim()
+        ? autosaveState === "saving"
+          ? "Creating..."
+          : autosaveState === "saved"
+            ? "Created"
+            : "Draft"
+        : "Draft"
+      : autosaveDocumentKey === draft?.key && autosaveState === "saving"
+        ? "Autosaving..."
+        : autosaveDocumentKey === draft?.key && autosaveState === "saved"
+          ? "Saved"
+          : autosaveDocumentKey === draft?.key && autosaveState === "error"
+            ? "Could not save"
+            : "Saved";
+
+  return (
+    <section
+      aria-label="Focused document editor"
+      className="min-h-[calc(100dvh-7rem)] animate-in fade-in-0 slide-in-from-bottom-1 duration-200"
+    >
+      <div className="mb-5 flex items-center justify-between gap-3 border-b border-border/60 pb-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0 text-muted-foreground"
+            onClick={onClose}
+            aria-label="Back to issue"
+            title="Back to issue"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              <span className="truncate">{issue.identifier ?? issue.id}</span>
+              <span>/</span>
+              <span className="truncate">Document</span>
+            </div>
+            <p className="truncate text-sm font-medium text-foreground">{title}</p>
+          </div>
+        </div>
+        <div className={cn("shrink-0 text-xs", error ? "text-destructive" : "text-muted-foreground")}>
+          {statusLabel}
+        </div>
+      </div>
+
+      {error ? <p className="mb-3 text-xs text-destructive">{error}</p> : null}
+
+      <div className="mx-auto flex min-h-[calc(100dvh-14rem)] w-full max-w-3xl flex-col">
+        {!draft ? (
+          <p className="text-sm text-muted-foreground">Loading document...</p>
+        ) : (
+          <>
+            {!isPlanKey(draft.key) ? (
+              <input
+                value={draft.title}
+                onChange={(event) => {
+                  setDraft((current) => current ? { ...current, title: event.target.value } : current);
+                }}
+                placeholder="Untitled document"
+                className="w-full bg-transparent text-4xl font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/35"
+                autoFocus
+              />
+            ) : (
+              <h2 className="text-4xl font-semibold leading-tight text-foreground">Plan</h2>
+            )}
+            <MarkdownEditor
+              value={draft.body}
+              onChange={(body) => {
+                setDraft((current) => current ? { ...current, body } : current);
+              }}
+              placeholder="Write the document..."
+              bordered={false}
+              className="mt-6 min-h-0 flex-1 bg-transparent"
+              contentClassName="min-h-[calc(100dvh-22rem)] text-[16px] leading-7"
+              mentions={mentions}
+              imageUploadHandler={imageUploadHandler}
+              onSubmit={() => void commitDraft(draft, { trackAutosave: true })}
+            />
+          </>
+        )}
+      </div>
+    </section>
   );
 }

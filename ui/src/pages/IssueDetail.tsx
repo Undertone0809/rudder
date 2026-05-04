@@ -24,7 +24,11 @@ import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread } from "../components/CommentThread";
-import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
+import {
+  IssueDocumentFocusPage,
+  IssueDocumentsSection,
+  type IssueDocumentFocusTarget,
+} from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import type { MentionOption } from "../components/MarkdownEditor";
@@ -319,6 +323,7 @@ export function IssueDetail() {
   });
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
+  const [documentFocusTarget, setDocumentFocusTarget] = useState<IssueDocumentFocusTarget | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
 
@@ -328,6 +333,10 @@ export function IssueDetail() {
     enabled: !!issueId,
   });
   const resolvedCompanyId = issue?.orgId ?? selectedOrganizationId;
+
+  useEffect(() => {
+    setDocumentFocusTarget(null);
+  }, [issueId]);
 
   useEffect(() => {
     if (!issue?.orgId || !issue.id) return;
@@ -1053,7 +1062,26 @@ export function IssueDetail() {
   );
 
   return (
-    <div className="mx-auto max-w-6xl xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start xl:gap-6">
+    <div
+      className={cn(
+        "mx-auto max-w-6xl",
+        !documentFocusTarget && "xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start xl:gap-6",
+      )}
+    >
+      {documentFocusTarget ? (
+        <IssueDocumentFocusPage
+          issue={issue}
+          target={documentFocusTarget}
+          mentions={mentionOptions}
+          imageUploadHandler={async (file) => {
+            const attachment = await uploadAttachment.mutateAsync({ file, usage: "document_inline" });
+            return attachment.contentPath;
+          }}
+          onClose={() => setDocumentFocusTarget(null)}
+          onDocumentCreated={(key) => setDocumentFocusTarget({ kind: "existing", key })}
+        />
+      ) : (
+        <>
       <div className="min-w-0 space-y-6">
         <nav aria-label="Issue navigation" data-testid="issue-detail-breadcrumb">
           <Breadcrumb>
@@ -1394,6 +1422,8 @@ export function IssueDetail() {
           return attachment.contentPath;
         }}
         extraActions={!hasAttachments ? attachmentUploadButton : undefined}
+        onFocusNewDocument={() => setDocumentFocusTarget({ kind: "new" })}
+        onFocusDocument={(key) => setDocumentFocusTarget({ kind: "existing", key })}
       />
 
       {hasAttachments ? (
@@ -1643,6 +1673,8 @@ export function IssueDetail() {
           </section>
         </div>
       </aside>
+      </>
+      )}
     </div>
   );
 }

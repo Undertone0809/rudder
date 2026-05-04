@@ -23,6 +23,16 @@ test.describe("Issue detail documents UX", () => {
     expect(issueRes.ok()).toBe(true);
     const issue = await issueRes.json();
 
+    const documentRes = await page.request.put(`/api/issues/${issue.id}/documents/ops-checklist`, {
+      data: {
+        title: "Ops checklist",
+        format: "markdown",
+        body: "Confirm staging is healthy before handoff.",
+        baseRevisionId: null,
+      },
+    });
+    expect(documentRes.ok()).toBe(true);
+
     await page.goto(`/issues/${issue.identifier ?? issue.id}`);
 
     await expect(page.getByRole("button", { name: "Copy ID" })).toBeVisible();
@@ -36,25 +46,28 @@ test.describe("Issue detail documents UX", () => {
     await page.getByRole("button", { name: "Expand editor" }).click();
     await expect(page.getByText("Add some content before creating the document")).toHaveCount(0);
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Collapse editor" }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Back to issue" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Done" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Discard" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Create" })).toHaveCount(0);
 
-    await page.getByPlaceholder("Document title").fill("Ops checklist");
+    await page.getByPlaceholder("Untitled document").fill("Release notes");
     const editor = page.locator('[contenteditable="true"]').last();
     await editor.click();
-    await editor.fill("Confirm staging is healthy before handoff.");
+    await editor.fill("Summarize what changed before handoff.");
+    await expect(page.getByText(/Created|Saved/)).toBeVisible({ timeout: 5000 });
 
-    await page.getByRole("button", { name: "Create" }).click();
-
-    await expect(page.getByText("Ops checklist")).toBeVisible();
-    await expect(page.getByText("Confirm staging is healthy before handoff.")).toBeVisible();
+    await page.getByRole("button", { name: "Back to issue" }).click();
+    await expect(page.getByText("Release notes")).toBeVisible();
     await expect(page.getByText("Document key", { exact: true })).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Expand editor" }).click();
+    await page.locator("#document-ops-checklist").getByRole("button", { name: "Expand editor" }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Done" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Discard" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Collapse editor" }).first()).toBeVisible();
-    await page.getByPlaceholder("Document title").fill("Ops checklist revised");
+    await expect(page.getByRole("button", { name: "Back to issue" })).toBeVisible();
+    await expect(page.getByText("Sub-issues")).toHaveCount(0);
+    await page.getByPlaceholder("Untitled document").fill("Ops checklist revised");
     await expect(page.getByText("Ops checklist revised")).toBeVisible();
   });
 });
