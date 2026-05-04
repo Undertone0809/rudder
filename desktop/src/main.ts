@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { Notification, app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, systemPreferences } from "electron";
+import { Notification, app, BrowserWindow, Menu, MenuItem, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell, systemPreferences } from "electron";
 import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electron";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml } from "./boot-screen.js";
@@ -158,6 +158,7 @@ const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
 const DESKTOP_FEEDBACK_EMAIL = "zeeland4work@gmail.com";
 const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
+const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
 
 const LOCAL_ENV_PROFILES: Record<LocalEnvProfile["name"], LocalEnvProfile> = {
   dev: {
@@ -210,6 +211,17 @@ async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
   });
 }
 
+function desktopMessageBoxWindow(): BrowserWindow | undefined {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+}
+
+async function showMessageBox(options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
+  const window = desktopMessageBoxWindow();
+  return window
+    ? dialog.showMessageBox(window, options)
+    : dialog.showMessageBox(options);
+}
+
 function resolveRudderAppVersion(): string {
   return serverHandle?.runtime.version
     ?? currentBootState.runtime?.version
@@ -221,15 +233,23 @@ function formatVersionForDisplay(version: string | null | undefined): string {
   return version.startsWith("v") ? version : `v${version}`;
 }
 
-async function maybeShowStartupUpdateNotice(): Promise<void> {
-  if (startupUpdateNoticeShown || !app.isPackaged) return;
-  startupUpdateNoticeShown = true;
+async function showUpdateInstallFallbackDialog(installResult: Exclude<DesktopUpdateInstallResult, { status: "started" }>): Promise<void> {
+  await showMessageBox({
+    type: installResult.status === "blocked" ? "warning" : "error",
+    title: APP_NAME,
+    buttons: ["OK"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    message: installResult.status === "blocked" ? "Update paused." : "Update could not start.",
+    detail: installResult.message,
+  });
+}
 
-  const result = await checkForUpdates();
-  if (result.status !== "update-available") return;
+async function promptToInstallAvailableUpdate(result: DesktopUpdateCheckResult): Promise<void> {
+  if (result.status !== "update-available" || !result.latestVersion) return;
 
-  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  const options: Electron.MessageBoxOptions = {
+  const response = await showMessageBox({
     type: "info",
     title: APP_NAME,
     buttons: ["Update", "Later"],
@@ -242,30 +262,61 @@ async function maybeShowStartupUpdateNotice(): Promise<void> {
       + (result.channel === "canary"
         ? "Canary builds update to newer canary releases."
         : "Stable builds update to stable releases."),
-  };
-  const response = window
-    ? await dialog.showMessageBox(window, options)
-    : await dialog.showMessageBox(options);
+  });
 
   if (response.response !== 0) return;
 
   const installResult = await installUpdate(result.latestVersion);
   if (installResult.status === "started") return;
 
-  const fallbackOptions: Electron.MessageBoxOptions = {
-    type: installResult.status === "blocked" ? "warning" : "error",
+  await showUpdateInstallFallbackDialog(installResult);
+}
+
+async function maybeShowStartupUpdateNotice(): Promise<void> {
+  if (startupUpdateNoticeShown || !app.isPackaged) return;
+  startupUpdateNoticeShown = true;
+
+  const result = await checkForUpdates();
+  if (result.status !== "update-available") return;
+
+  await promptToInstallAvailableUpdate(result);
+}
+
+async function showManualUpdateCheckDialog(): Promise<void> {
+  showMainWindow();
+  const result = await checkForUpdates();
+
+  if (result.status === "update-available") {
+    await promptToInstallAvailableUpdate(result);
+    return;
+  }
+
+  if (result.status === "up-to-date") {
+    await showMessageBox({
+      type: "info",
+      title: APP_NAME,
+      buttons: ["OK"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      message: "Rudder is up to date.",
+      detail: `You are running ${formatVersionForDisplay(result.currentVersion)}.`,
+    });
+    return;
+  }
+
+  const response = await showMessageBox({
+    type: "warning",
     title: APP_NAME,
-    buttons: ["OK"],
-    defaultId: 0,
-    cancelId: 0,
+    buttons: ["Open Releases", "OK"],
+    defaultId: 1,
+    cancelId: 1,
     noLink: true,
-    message: installResult.status === "blocked" ? "Update paused." : "Update could not start.",
-    detail: installResult.message,
-  };
-  if (window) {
-    await dialog.showMessageBox(window, fallbackOptions);
-  } else {
-    await dialog.showMessageBox(fallbackOptions);
+    message: "Rudder could not check for updates.",
+    detail: "Open GitHub Releases to inspect available builds manually.",
+  });
+  if (response.response === 0) {
+    await shell.openExternal(result.releaseUrl ?? DESKTOP_RELEASES_URL);
   }
 }
 
@@ -487,6 +538,7 @@ let quitRequested = false;
 let quitting = false;
 let quitExceptionGuardInstalled = false;
 let startupUpdateNoticeShown = false;
+let pendingDesktopNavigationPath: string | null = null;
 
 function resolveDesktopWindowBackgroundColor(appearance: DesktopAppearance = currentAppearance): string {
   return DESKTOP_WINDOW_BACKGROUND[appearance];
@@ -739,6 +791,127 @@ async function openAppWindow(loadUrl: string): Promise<void> {
   await replaceMainWindow(await createDesktopWindow(loadUrl));
 }
 
+function normalizeDesktopNavigationPath(targetPath: string): string {
+  const trimmed = targetPath.trim();
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+function resolveDesktopAppBaseUrl(): string | null {
+  const bootUrl = currentBootState.runtime?.apiUrl?.trim();
+  if (bootUrl) return bootUrl.replace(/\/$/, "");
+
+  const apiUrl = serverHandle?.apiUrl?.trim();
+  if (apiUrl) return apiUrl.replace(/\/api\/?$/, "").replace(/\/$/, "");
+
+  return null;
+}
+
+function resolveDesktopRouteUrl(targetPath: string): string | null {
+  const baseUrl = resolveDesktopAppBaseUrl();
+  if (!baseUrl) return null;
+  return `${baseUrl}${normalizeDesktopNavigationPath(targetPath)}`;
+}
+
+async function navigateExistingAppWindowToRoute(targetPath: string, targetUrl: string): Promise<boolean> {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+
+  const currentUrl = mainWindow.webContents.getURL();
+  if (!currentUrl.startsWith("http")) return false;
+
+  try {
+    if (new URL(currentUrl).origin !== new URL(targetUrl).origin) return false;
+  } catch {
+    return false;
+  }
+
+  try {
+    await mainWindow.webContents.executeJavaScript(`
+      (() => {
+        const targetPath = ${JSON.stringify(targetPath)};
+        const overlayStateKey = "settingsOverlayBackgroundPath";
+        const overlayStorageKey = "rudder.settingsOverlayBackgroundPath";
+        const currentPath = window.location.pathname + window.location.search + window.location.hash;
+        const currentIsSettings = currentPath.startsWith("/instance/settings")
+          || currentPath.includes("/organization/settings");
+        const state = currentIsSettings
+          ? (window.history.state || {})
+          : { ...(window.history.state || {}), [overlayStateKey]: currentPath };
+        if (!currentIsSettings) {
+          window.sessionStorage.setItem(overlayStorageKey, currentPath);
+        }
+        window.history.pushState(state, "", targetPath);
+        window.dispatchEvent(new PopStateEvent("popstate", { state }));
+      })();
+    `);
+    return true;
+  } catch (error) {
+    console.warn("[rudder-desktop] failed to navigate existing app window", error);
+    return false;
+  }
+}
+
+async function openDesktopRoute(targetPath: string): Promise<void> {
+  const normalizedPath = normalizeDesktopNavigationPath(targetPath);
+  const targetUrl = resolveDesktopRouteUrl(normalizedPath);
+
+  if (!targetUrl) {
+    pendingDesktopNavigationPath = normalizedPath;
+    showMainWindow();
+    return;
+  }
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    await openAppWindow(targetUrl);
+    return;
+  }
+
+  showMainWindow();
+  if (mainWindow.webContents.getURL() !== targetUrl && !(await navigateExistingAppWindowToRoute(normalizedPath, targetUrl))) {
+    await mainWindow.loadURL(targetUrl);
+  }
+  showMainWindow();
+}
+
+function installApplicationMenu(appName: string): void {
+  if (process.platform !== "darwin") return;
+
+  const menu = Menu.getApplicationMenu();
+  const appMenu = menu?.items[0]?.submenu;
+  if (!menu || !appMenu || appMenu.getMenuItemById("rudder-settings")) return;
+
+  const aboutIndex = appMenu.items.findIndex((item) => item.label === `About ${appName}`);
+  let insertIndex = aboutIndex >= 0 ? aboutIndex + 1 : 0;
+
+  if (appMenu.items[insertIndex]?.type === "separator") {
+    insertIndex += 1;
+  } else {
+    appMenu.insert(insertIndex, new MenuItem({ type: "separator" }));
+    insertIndex += 1;
+  }
+
+  appMenu.insert(insertIndex, new MenuItem({
+    id: "rudder-settings",
+    label: "Settings...",
+    accelerator: "Command+,",
+    click: () => {
+      void openDesktopRoute(INSTANCE_SETTINGS_GENERAL_PATH);
+    },
+  }));
+  appMenu.insert(insertIndex + 1, new MenuItem({
+    id: "rudder-check-for-updates",
+    label: "Check for Updates...",
+    click: () => {
+      void showManualUpdateCheckDialog();
+    },
+  }));
+
+  if (appMenu.items[insertIndex + 2]?.type !== "separator") {
+    appMenu.insert(insertIndex + 2, new MenuItem({ type: "separator" }));
+  }
+
+  Menu.setApplicationMenu(menu);
+}
+
 function currentResidentShellStatus(): ResidentShellStatus {
   return {
     enabled: residentShellEnabled,
@@ -947,8 +1120,10 @@ async function startLocalRudder(): Promise<void> {
         }
         return;
       }
-      const defaultLoadUrl = baseUrl;
-      const loadUrl = resolveDesktopLoadUrl(defaultLoadUrl);
+      const requestedPath = pendingDesktopNavigationPath;
+      pendingDesktopNavigationPath = null;
+      const defaultLoadUrl = requestedPath ? `${baseUrl}${requestedPath}` : baseUrl;
+      const loadUrl = requestedPath ? defaultLoadUrl : resolveDesktopLoadUrl(defaultLoadUrl);
       if (desktopDebugEnabled()) {
         console.info("[rudder-desktop] startLocalRudder:load-url", {
           loadUrl,
@@ -1466,6 +1641,7 @@ async function bootstrap(): Promise<void> {
     },
   };
   registerIpc();
+  installApplicationMenu(appName);
   createResidentShellControls();
   await openBootWindow();
   if (desktopDebugEnabled()) {
