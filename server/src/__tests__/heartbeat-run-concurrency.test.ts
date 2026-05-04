@@ -3,7 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   agentWakeupRequests,
@@ -12,6 +12,7 @@ import {
   createDb,
   ensurePostgresDatabase,
   heartbeatRuns,
+  issues,
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
@@ -206,6 +207,22 @@ describe("heartbeat run concurrency", () => {
     return { orgId, agentId };
   }
 
+  async function seedIssueFixture(input: {
+    orgId: string;
+    agentId: string;
+  }) {
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      orgId: input.orgId,
+      title: "Build concurrent execution",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: input.agentId,
+    });
+    return issueId;
+  }
+
   async function seedQueuedRun(input: {
     orgId: string;
     agentId: string;
@@ -256,6 +273,17 @@ describe("heartbeat run concurrency", () => {
       .where(eq(heartbeatRuns.agentId, agentId));
   }
 
+  async function listLiveRunsForAgent(agentId: string) {
+    return await db
+      .select({
+        id: heartbeatRuns.id,
+        status: heartbeatRuns.status,
+        contextSnapshot: heartbeatRuns.contextSnapshot,
+      })
+      .from(heartbeatRuns)
+      .where(and(eq(heartbeatRuns.agentId, agentId), inArray(heartbeatRuns.status, ["queued", "running"])));
+  }
+
   it("promotes queued runs up to the configured concurrency limit", async () => {
     const { orgId, agentId } = await seedAgentFixture(2);
     const createdAt = new Date("2026-04-27T00:00:00.000Z");
@@ -278,6 +306,30 @@ describe("heartbeat run concurrency", () => {
     expect(statuses.filter((run) => run.status === "running")).toHaveLength(2);
     expect(statuses.filter((run) => run.status === "queued")).toHaveLength(1);
     expect(new Set(mockRuntimeAdapter.calls.map((call) => call.taskKey))).toEqual(new Set(["issue:a", "issue:b"]));
+  });
+
+  it("keeps configured one-run agents serial", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const createdAt = new Date("2026-04-27T00:30:00.000Z");
+    await seedQueuedRun({ orgId, agentId, taskKey: "serial:1", createdAt });
+    await seedQueuedRun({ orgId, agentId, taskKey: "serial:2", createdAt: new Date(createdAt.getTime() + 1_000) });
+    await seedQueuedRun({ orgId, agentId, taskKey: "serial:3", createdAt: new Date(createdAt.getTime() + 2_000) });
+
+    const heartbeat = heartbeatService(db);
+    await heartbeat.resumeQueuedRuns();
+
+    await waitForCondition(async () => {
+      const statuses = await listRunStatuses(agentId);
+      return (
+        mockRuntimeAdapter.calls.length === 1
+        && statuses.filter((run) => run.status === "running").length === 1
+      );
+    });
+
+    const statuses = await listRunStatuses(agentId);
+    expect(statuses.filter((run) => run.status === "running")).toHaveLength(1);
+    expect(statuses.filter((run) => run.status === "queued")).toHaveLength(2);
+    expect(mockRuntimeAdapter.calls.map((call) => call.taskKey)).toEqual(["serial:1"]);
   });
 
   it("defaults agents without an explicit value to three concurrent runs", async () => {
@@ -305,5 +357,96 @@ describe("heartbeat run concurrency", () => {
     expect(new Set(mockRuntimeAdapter.calls.map((call) => call.taskKey))).toEqual(
       new Set(["task:1", "task:2", "task:3"]),
     );
+  });
+
+  it("clamps invalid and oversized concurrency values to the supported range", async () => {
+    const low = await seedAgentFixture(0);
+    const lowCreatedAt = new Date("2026-04-27T02:00:00.000Z");
+    await seedQueuedRun({ ...low, taskKey: "low:1", createdAt: lowCreatedAt });
+    await seedQueuedRun({ ...low, taskKey: "low:2", createdAt: new Date(lowCreatedAt.getTime() + 1_000) });
+
+    const heartbeat = heartbeatService(db);
+    await heartbeat.resumeQueuedRuns();
+
+    await waitForCondition(async () => {
+      const statuses = await listRunStatuses(low.agentId);
+      return (
+        mockRuntimeAdapter.calls.length === 1
+        && statuses.filter((run) => run.status === "running").length === 1
+      );
+    });
+
+    let statuses = await listRunStatuses(low.agentId);
+    expect(statuses.filter((run) => run.status === "running")).toHaveLength(1);
+    expect(statuses.filter((run) => run.status === "queued")).toHaveLength(1);
+
+    mockRuntimeAdapter.reset();
+    const high = await seedAgentFixture(999);
+    const highCreatedAt = new Date("2026-04-27T03:00:00.000Z");
+    for (let i = 0; i < 11; i += 1) {
+      await seedQueuedRun({
+        ...high,
+        taskKey: `high:${i + 1}`,
+        createdAt: new Date(highCreatedAt.getTime() + i * 1_000),
+      });
+    }
+
+    await heartbeat.resumeQueuedRuns();
+
+    await waitForCondition(async () => {
+      const highStatuses = await listRunStatuses(high.agentId);
+      return (
+        mockRuntimeAdapter.calls.length === 10
+        && highStatuses.filter((run) => run.status === "running").length === 10
+      );
+    });
+
+    statuses = await listRunStatuses(high.agentId);
+    expect(statuses.filter((run) => run.status === "running")).toHaveLength(10);
+    expect(statuses.filter((run) => run.status === "queued")).toHaveLength(1);
+  });
+
+  it("coalesces repeated wakeups for the same issue into one active execution run", async () => {
+    const { orgId, agentId } = await seedAgentFixture(3);
+    const issueId = await seedIssueFixture({ orgId, agentId });
+    const heartbeat = heartbeatService(db);
+
+    const firstRun = await heartbeat.wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      payload: { issueId },
+      contextSnapshot: {
+        issueId,
+        source: "test.issue_assigned",
+        wakeSource: "assignment",
+        wakeReason: "issue_assigned",
+      },
+    });
+    const secondRun = await heartbeat.wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      payload: { issueId },
+      contextSnapshot: {
+        issueId,
+        source: "test.issue_reassigned",
+        wakeSource: "assignment",
+        wakeReason: "issue_assigned",
+      },
+    });
+
+    expect(firstRun?.id).toBeTruthy();
+    expect(secondRun?.id).toBe(firstRun?.id);
+
+    await waitForCondition(async () => {
+      const runs = await listLiveRunsForAgent(agentId);
+      return runs.length === 1 && runs[0]?.status === "running" && mockRuntimeAdapter.calls.length === 1;
+    });
+
+    const liveRuns = await listLiveRunsForAgent(agentId);
+    expect(liveRuns).toHaveLength(1);
+    expect(mockRuntimeAdapter.calls).toHaveLength(1);
+    expect((liveRuns[0]?.contextSnapshot as Record<string, unknown>)?.issueId).toBe(issueId);
   });
 });
