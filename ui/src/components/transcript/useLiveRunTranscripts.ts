@@ -17,6 +17,7 @@ interface UseLiveRunTranscriptsOptions {
   runs: LiveRunForIssue[];
   orgId?: string | null;
   maxChunksPerRun?: number;
+  includeRunEvents?: boolean;
 }
 
 function readString(value: unknown): string | null {
@@ -67,6 +68,7 @@ export function useLiveRunTranscripts({
   runs,
   orgId,
   maxChunksPerRun = 200,
+  includeRunEvents = true,
 }: UseLiveRunTranscriptsOptions) {
   const [chunksByRun, setChunksByRun] = useState<Map<string, RunLogChunk[]>>(new Map());
   const seenChunkKeysRef = useRef(new Set<string>());
@@ -234,7 +236,7 @@ export function useLiveRunTranscripts({
           return;
         }
 
-        if (event.type === "heartbeat.run.event") {
+        if (includeRunEvents && event.type === "heartbeat.run.event") {
           const seq = typeof payload["seq"] === "number" ? payload["seq"] : null;
           const eventType = readString(payload["eventType"]) ?? "event";
           const messageText = readString(payload["message"]) ?? eventType;
@@ -247,7 +249,7 @@ export function useLiveRunTranscripts({
           return;
         }
 
-        if (event.type === "heartbeat.run.status") {
+        if (includeRunEvents && event.type === "heartbeat.run.status") {
           const status = readString(payload["status"]) ?? "updated";
           appendChunks(runId, [{
             ts: event.createdAt,
@@ -279,7 +281,7 @@ export function useLiveRunTranscripts({
         socket.close(1000, "live_run_transcripts_unmount");
       }
     };
-  }, [activeRunIds, orgId, runById]);
+  }, [activeRunIds, includeRunEvents, orgId, runById]);
 
   const transcriptByRun = useMemo(() => {
     const next = new Map<string, TranscriptEntry[]>();

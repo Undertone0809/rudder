@@ -18,7 +18,7 @@ import {
 } from "../api/agents";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { budgetsApi } from "../api/budgets";
-import { heartbeatsApi } from "../api/heartbeats";
+import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { ApiError } from "../api/client";
 import {
@@ -119,6 +119,7 @@ import {
 } from "@/components/ui/semanticTones";
 import { AgentIcon, AgentIconPicker } from "../components/AgentIconPicker";
 import { RunTranscriptView, type TranscriptMode } from "../components/transcript/RunTranscriptView";
+import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import {
   getBundledRudderSkillSlug,
   isUuidLike,
@@ -4368,6 +4369,11 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
 
 /* ---- Log Viewer ---- */
 
+function runDateToIso(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  return typeof value === "string" ? value : value.toISOString();
+}
+
 function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeType: string }) {
   type RunDetailTab = "transcript" | "invocation";
   const [events, setEvents] = useState<HeartbeatRunEvent[]>([]);
@@ -4401,6 +4407,39 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
     distanceFromBottom: Number.POSITIVE_INFINITY,
   });
   const isLive = run.status === "running" || run.status === "queued";
+  const liveTranscriptRuns = useMemo<LiveRunForIssue[]>(() => {
+    if (!isLive) return [];
+    return [{
+      id: run.id,
+      status: run.status,
+      invocationSource: run.invocationSource,
+      triggerDetail: run.triggerDetail,
+      startedAt: runDateToIso(run.startedAt),
+      finishedAt: runDateToIso(run.finishedAt),
+      createdAt: runDateToIso(run.createdAt) ?? new Date().toISOString(),
+      agentId: run.agentId,
+      agentName: "",
+      agentRuntimeType,
+      issueId: null,
+    }];
+  }, [
+    agentRuntimeType,
+    isLive,
+    run.agentId,
+    run.createdAt,
+    run.finishedAt,
+    run.id,
+    run.invocationSource,
+    run.startedAt,
+    run.status,
+    run.triggerDetail,
+  ]);
+  const { transcriptByRun: liveTranscriptByRun } = useLiveRunTranscripts({
+    runs: liveTranscriptRuns,
+    orgId: run.orgId,
+    maxChunksPerRun: 500,
+    includeRunEvents: false,
+  });
   const { data: workspaceOperations = [] } = useQuery({
     queryKey: queryKeys.runWorkspaceOperations(run.id),
     queryFn: () => heartbeatsApi.workspaceOperations(run.id),
@@ -4777,14 +4816,18 @@ function LogViewer({ run, agentRuntimeType }: { run: HeartbeatRun; agentRuntimeT
   const adapter = useMemo(() => getUIAdapter(agentRuntimeType), [agentRuntimeType]);
   const transcript = useMemo(() => {
     const logTranscript = buildTranscript(logLines, adapter.parseStdoutLine, { censorUsernameInLogs });
+    const liveLogTranscript = liveTranscriptByRun.get(run.id) ?? [];
+    const effectiveLogTranscript = liveLogTranscript.length > logTranscript.length
+      ? liveLogTranscript
+      : logTranscript;
     const eventTranscript = events.map((event) =>
       heartbeatRunEventToTranscriptEntry(event, {
         redactText: (value) => redactPathText(value, censorUsernameInLogs),
         redactValue: (value) => redactPathValue(value, censorUsernameInLogs),
       }),
     );
-    return mergeTranscriptEntries(logTranscript, eventTranscript);
-  }, [adapter, censorUsernameInLogs, events, logLines]);
+    return mergeTranscriptEntries(effectiveLogTranscript, eventTranscript);
+  }, [adapter, censorUsernameInLogs, events, liveTranscriptByRun, logLines, run.id]);
   const hasInvocationTab = Boolean(adapterInvokePayload);
   const invocationPromptText =
     adapterInvokePayload?.prompt !== undefined
