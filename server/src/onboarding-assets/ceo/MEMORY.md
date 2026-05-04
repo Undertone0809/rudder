@@ -1,4 +1,4 @@
-# Tacit Memory
+# MEMORY.md
 
 Record stable preferences, operating patterns, and lessons learned here.
 
