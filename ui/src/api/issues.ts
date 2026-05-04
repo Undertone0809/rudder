@@ -8,6 +8,7 @@ import type {
   IssueDocument,
   IssueLabel,
   IssueWorkProduct,
+  ReorderIssue,
   UpsertIssueDocument,
 } from "@rudderhq/shared";
 import { api } from "./client";
@@ -62,6 +63,7 @@ export const issuesApi = {
   create: (orgId: string, data: Record<string, unknown>) =>
     api.post<Issue>(`/orgs/${orgId}/issues`, data),
   update: (id: string, data: Record<string, unknown>) => api.patch<Issue>(`/issues/${id}`, data),
+  reorder: (orgId: string, data: ReorderIssue) => api.post<Issue>(`/orgs/${orgId}/issues/reorder`, data),
   remove: (id: string) => api.delete<Issue>(`/issues/${id}`),
   checkout: (id: string, agentId: string) =>
     api.post<Issue>(`/issues/${id}/checkout`, {

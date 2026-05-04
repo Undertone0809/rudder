@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Agent, Project } from "@rudderhq/shared";
+import type { Agent, Project, ReorderIssue } from "@rudderhq/shared";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -333,6 +333,14 @@ export function Issues() {
     },
   });
 
+  const reorderIssue = useMutation({
+    mutationFn: (data: ReorderIssue) =>
+      issuesApi.reorder(selectedOrganizationId!, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(selectedOrganizationId!) });
+    },
+  });
+
   if (!selectedOrganizationId) {
     return <EmptyState icon={CircleDot} message="Select a organization to view issues." />;
   }
@@ -403,6 +411,7 @@ export function Issues() {
         }}
         onSearchChange={handleSearchChange}
         onUpdateIssue={(id, data) => updateIssue.mutate({ id, data })}
+        onReorderIssue={(data) => reorderIssue.mutate(data)}
         searchFilters={participantAgentId ? { participantAgentId } : undefined}
       />
     </div>

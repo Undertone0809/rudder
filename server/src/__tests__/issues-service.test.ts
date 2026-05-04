@@ -687,4 +687,69 @@ describe("issueService.list participantAgentId", () => {
     expect(updated?.executionWorkspacePreference).toBe("isolated_workspace");
     expect(updated?.executionWorkspaceSettings).toEqual({ mode: "isolated_workspace" });
   });
+
+  it("persists manual board order inside a status lane", async () => {
+    const orgId = randomUUID();
+    const firstIssueId = randomUUID();
+    const secondIssueId = randomUUID();
+    const movedIssueId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Manual Order Org",
+      urlKey: deriveOrganizationUrlKey("Manual Order Org"),
+      issuePrefix: `T${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: firstIssueId,
+        orgId,
+        title: "First issue",
+        status: "todo",
+        priority: "medium",
+        boardOrder: 1000,
+      },
+      {
+        id: secondIssueId,
+        orgId,
+        title: "Second issue",
+        status: "todo",
+        priority: "medium",
+        boardOrder: 2000,
+      },
+      {
+        id: movedIssueId,
+        orgId,
+        title: "Moved issue",
+        status: "todo",
+        priority: "medium",
+        boardOrder: 3000,
+      },
+    ]);
+
+    const result = await svc.reorder(orgId, {
+      issueId: movedIssueId,
+      targetStatus: "todo",
+      previousIssueId: firstIssueId,
+      nextIssueId: secondIssueId,
+    });
+
+    expect(result?.issue.id).toBe(movedIssueId);
+    expect(result?.issue.boardOrder).toBe(2000);
+    expect(result?.previousBoardOrder).toBe(3000);
+
+    const ordered = await db
+      .select({ id: issues.id, boardOrder: issues.boardOrder })
+      .from(issues)
+      .where(eq(issues.orgId, orgId))
+      .orderBy(issues.boardOrder);
+
+    expect(ordered).toEqual([
+      { id: firstIssueId, boardOrder: 1000 },
+      { id: movedIssueId, boardOrder: 2000 },
+      { id: secondIssueId, boardOrder: 3000 },
+    ]);
+  });
 });

@@ -73,6 +73,13 @@
     transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
+.motion-kanban-card:is(:hover, :focus-within):not([data-dragging="true"]):not([data-overlay="true"]) {
+  border-color: color-mix(in oklab, var(--accent-base) 58%, var(--border));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 34%, transparent),
+    0 12px 30px -26px color-mix(in oklab, var(--accent-base) 56%, transparent);
+}
+
 .motion-kanban-card[data-dragging="true"] {
   opacity: 0.34;
 }

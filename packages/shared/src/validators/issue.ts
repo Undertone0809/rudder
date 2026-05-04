@@ -81,6 +81,23 @@ export const updateIssueSchema = createIssueSchema.partial().extend({
 export type UpdateIssue = z.infer<typeof updateIssueSchema>;
 export type IssueExecutionWorkspaceSettings = z.infer<typeof issueExecutionWorkspaceSettingsSchema>;
 
+export const reorderIssueSchema = z
+  .object({
+    issueId: z.string().uuid(),
+    targetStatus: z.enum(ISSUE_STATUSES),
+    previousIssueId: z.string().uuid().optional().nullable(),
+    nextIssueId: z.string().uuid().optional().nullable(),
+    position: z.enum(["start", "end"]).optional(),
+  })
+  .refine(
+    (value) => !(value.previousIssueId && value.nextIssueId && value.previousIssueId === value.nextIssueId),
+    {
+      message: "previousIssueId and nextIssueId must be different",
+    },
+  );
+
+export type ReorderIssue = z.infer<typeof reorderIssueSchema>;
+
 export const checkoutIssueSchema = z.object({
   agentId: z.string().uuid(),
   expectedStatuses: z.array(z.enum(ISSUE_STATUSES)).nonempty(),

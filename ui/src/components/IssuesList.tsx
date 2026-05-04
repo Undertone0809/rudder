@@ -23,6 +23,7 @@ import {
   issueSortOptions,
   issueStatusOrder as statusOrder,
   sortIssues,
+  type IssueSortField,
 } from "../lib/issue-sort";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,7 +32,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { CircleDot, Plus, Filter, ArrowUpDown, Layers, Check, X, ChevronRight, List, Columns3, User, Search, Star, SlidersHorizontal } from "lucide-react";
 import { KanbanBoard, type IssueDisplayProperty } from "./KanbanBoard";
-import type { AgentRole, Issue } from "@rudderhq/shared";
+import type { AgentRole, Issue, ReorderIssue } from "@rudderhq/shared";
 
 /* ── Helpers ── */
 
@@ -48,7 +49,7 @@ export type IssueViewState = {
   labels: string[];
   projects: string[];
   displayProperties: IssueDisplayProperty[];
-  sortField: "status" | "priority" | "title" | "created" | "updated";
+  sortField: IssueSortField;
   sortDir: "asc" | "desc";
   groupBy: "status" | "priority" | "assignee" | "project" | "none";
   viewMode: "list" | "board";
@@ -212,6 +213,7 @@ interface IssuesListProps {
   };
   onSearchChange?: (search: string) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
+  onReorderIssue?: (data: ReorderIssue) => void;
 }
 
 export function IssuesList({
@@ -234,6 +236,7 @@ export function IssuesList({
   searchFilters,
   onSearchChange,
   onUpdateIssue,
+  onReorderIssue,
 }: IssuesListProps) {
   const { selectedOrganizationId } = useOrganization();
   const { openNewIssue } = useDialog();
@@ -439,6 +442,17 @@ export function IssuesList({
     onUpdateIssue(issueId, { assigneeAgentId, assigneeUserId });
     setAssigneePickerIssueId(null);
     setAssigneeSearch("");
+  };
+
+  const reorderIssue = (data: ReorderIssue) => {
+    if (!onReorderIssue) {
+      onUpdateIssue(data.issueId, { status: data.targetStatus });
+      return;
+    }
+    if (viewState.sortField !== "manual" || viewState.sortDir !== "asc") {
+      updateView({ sortField: "manual", sortDir: "asc" });
+    }
+    onReorderIssue(data);
   };
 
   const toggleAssigneePicker = (issueId: string) => {
@@ -808,6 +822,7 @@ export function IssuesList({
             onCreateIssue={(status) => openNewIssue({ ...contextNewIssueDefaults, status })}
             onOpenIssue={onOpenIssue}
             onUpdateIssue={onUpdateIssue}
+            onReorderIssue={reorderIssue}
           />
         </div>
       )}
