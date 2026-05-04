@@ -1,13 +1,6 @@
 ---
 name: agent-work-reviewer-maintainer
-description: >
-  Review Rudder agent, Codex, PR, branch, commit, proposal, release, UI, or
-  workflow work as a first-principles product and engineering reviewer. Use this
-  skill whenever the user says "review", "reviewer", "第一性原理", "PM review",
-  "专业产品经理", "这个实现对吗", "这个 session 做得怎么样", "看看这个 PR/branch/commit",
-  "我不满意", or asks whether an agent solved the right Rudder problem. Pull
-  evidence from local Codex logs, git diffs, plan docs, tests, browser
-  screenshots, release logs, and Rudder product docs before judging.
+description: Review Rudder agent work. Use for review/第一性原理/PM review of Codex sessions, PRs, commits, UI, releases, regressions, or agent outcomes.
 ---
 
 # Agent Work Reviewer Maintainer
