@@ -25,22 +25,6 @@ import type {
 import { api } from "./client";
 
 export type OrganizationStats = Record<string, { agentCount: number; issueCount: number }>;
-export interface LinearImportSourceRequest {
-  apiKey: string;
-  teamIdOrKey?: string;
-  projectIds?: string[];
-  issueLimit?: number;
-  projectLimit?: number;
-}
-
-export interface LinearImportSourceResult {
-  rootPath: string;
-  files: Record<string, string>;
-  summary: {
-    projectCount: number;
-    issueCount: number;
-  };
-}
 
 export const organizationsApi = {
   list: () => api.get<Organization[]>("/orgs"),
@@ -149,6 +133,4 @@ export const organizationsApi = {
     api.post<OrganizationPortabilityPreviewResult>("/orgs/import/preview", data),
   importBundle: (data: OrganizationPortabilityImportRequest) =>
     api.post<OrganizationPortabilityImportResult>("/orgs/import", data),
-  buildLinearImportSource: (data: LinearImportSourceRequest) =>
-    api.post<LinearImportSourceResult>("/orgs/import/linear-source", data),
 };

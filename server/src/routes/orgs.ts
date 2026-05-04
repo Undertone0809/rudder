@@ -1,6 +1,5 @@
 import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
-import { normalizeAgentUrlKey } from "@rudderhq/shared";
 import {
   organizationPortabilityExportSchema,
   organizationPortabilityImportSchema,
@@ -14,7 +13,6 @@ import {
   createWorkspaceBackupSchema,
   restoreWorkspaceBackupSchema,
 } from "@rudderhq/shared";
-import { z } from "zod";
 import { forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -43,34 +41,6 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   const resources = resourceCatalogService(db);
   const workspaceBrowser = organizationWorkspaceBrowserService(db);
   const workspaceBackups = workspaceBackupService(db);
-  const linearImportSourceSchema = z.object({
-    apiKey: z.string().min(1),
-    teamIdOrKey: z.string().trim().min(1).optional(),
-    projectIds: z.array(z.string().trim().min(1)).optional(),
-    issueLimit: z.number().int().min(1).max(500).optional(),
-    projectLimit: z.number().int().min(1).max(200).optional(),
-  });
-
-  function buildMarkdown(frontmatter: Record<string, unknown>, body: string) {
-    const yaml = Object.entries(frontmatter)
-      .filter(([, value]) => value !== undefined && value !== null && value !== "")
-      .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
-      .join("\n");
-    return `---\n${yaml}\n---\n\n${body}`.trimEnd();
-  }
-
-  function uniqueSlug(base: string, used: Set<string>) {
-    const normalized = normalizeAgentUrlKey(base) ?? "item";
-    if (!used.has(normalized)) {
-      used.add(normalized);
-      return normalized;
-    }
-    let idx = 2;
-    while (used.has(`${normalized}-${idx}`)) idx += 1;
-    const slug = `${normalized}-${idx}`;
-    used.add(slug);
-    return slug;
-  }
 
   async function assertCanUpdateBranding(req: Request, orgId: string) {
     assertCompanyAccess(req, orgId);
@@ -407,156 +377,6 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     }
     const preview = await portability.previewImport(req.body);
     res.json(preview);
-  });
-
-  router.post("/import/linear-source", async (req, res) => {
-    assertBoard(req);
-    const parsed = linearImportSourceSchema.parse(req.body ?? {});
-    const response = await fetch("https://api.linear.app/graphql", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: parsed.apiKey,
-      },
-      body: JSON.stringify({
-        query: `
-          query RudderLinearImport($projectLimit: Int!, $issueLimit: Int!) {
-            viewer { id name }
-            projects(first: $projectLimit, includeArchived: false) {
-              nodes {
-                id
-                name
-                description
-                targetDate
-                url
-                teams { nodes { id key name } }
-              }
-            }
-            issues(first: $issueLimit, includeArchived: false) {
-              nodes {
-                id
-                identifier
-                title
-                description
-                url
-                priority
-                state { name }
-                project { id }
-                team { id key name }
-              }
-            }
-          }
-        `,
-        variables: {
-          issueLimit: parsed.issueLimit ?? 250,
-          projectLimit: parsed.projectLimit ?? 100,
-        },
-      }),
-    });
-    const payload = await response.json() as {
-      data?: {
-        viewer?: { name?: string | null } | null;
-        projects?: { nodes?: Array<{
-          id: string;
-          name: string;
-          description?: string | null;
-          targetDate?: string | null;
-          url?: string | null;
-          teams?: { nodes?: Array<{ id: string; key?: string | null; name?: string | null }> } | null;
-        }> } | null;
-        issues?: { nodes?: Array<{
-          id: string;
-          identifier?: string | null;
-          title: string;
-          description?: string | null;
-          url?: string | null;
-          priority?: number | null;
-          state?: { name?: string | null } | null;
-          project?: { id: string } | null;
-          team?: { id: string; key?: string | null; name?: string | null } | null;
-        }> } | null;
-      };
-      errors?: Array<{ message?: string }>;
-    };
-    if (!response.ok || (payload.errors && payload.errors.length > 0)) {
-      const message = payload.errors?.map((item) => item.message).filter(Boolean).join("; ")
-        || `Linear API request failed with status ${response.status}`;
-      res.status(422).json({ error: message });
-      return;
-    }
-
-    const selectedProjectIds = new Set(parsed.projectIds ?? []);
-    const normalizedTeamSelector = parsed.teamIdOrKey?.trim().toLowerCase() ?? null;
-    const allProjects = payload.data?.projects?.nodes ?? [];
-    const projectMatchesTeam = (project: (typeof allProjects)[number]) => {
-      if (!normalizedTeamSelector) return true;
-      const teams = project.teams?.nodes ?? [];
-      return teams.some((team) =>
-        team.id.toLowerCase() === normalizedTeamSelector || (team.key ?? "").toLowerCase() === normalizedTeamSelector
-      );
-    };
-    const projects = allProjects.filter((project) => {
-      if (selectedProjectIds.size > 0 && !selectedProjectIds.has(project.id)) return false;
-      return projectMatchesTeam(project);
-    });
-    const projectIdToSlug = new Map<string, string>();
-    const usedProjectSlugs = new Set<string>();
-    const files: Record<string, string> = {};
-
-    const sourceLabel = parsed.teamIdOrKey ? `Linear ${parsed.teamIdOrKey}` : "Linear";
-    files["ORGANIZATION.md"] = buildMarkdown(
-      { name: sourceLabel, description: "Imported from Linear projects and issues." },
-      `Imported from Linear by ${payload.data?.viewer?.name ?? "unknown user"}.`,
-    );
-
-    for (const project of projects) {
-      const slug = uniqueSlug(project.name, usedProjectSlugs);
-      projectIdToSlug.set(project.id, slug);
-      files[`projects/${slug}/PROJECT.md`] = buildMarkdown(
-        {
-          name: project.name,
-          targetDate: project.targetDate ?? undefined,
-        },
-        `${project.description?.trim() || ""}\n\n${project.url ? `Source: ${project.url}` : ""}`.trim(),
-      );
-    }
-
-    const issues = (payload.data?.issues?.nodes ?? []).filter((issue) => {
-      if (normalizedTeamSelector && issue.team) {
-        const byId = issue.team.id.toLowerCase() === normalizedTeamSelector;
-        const byKey = (issue.team.key ?? "").toLowerCase() === normalizedTeamSelector;
-        if (!byId && !byKey) return false;
-      } else if (normalizedTeamSelector && !issue.team) {
-        return false;
-      }
-      if (selectedProjectIds.size > 0 && issue.project?.id && !selectedProjectIds.has(issue.project.id)) return false;
-      if (selectedProjectIds.size > 0 && !issue.project?.id) return false;
-      return true;
-    });
-
-    const usedTaskSlugs = new Set<string>();
-    for (const issue of issues) {
-      const slug = uniqueSlug(issue.identifier || issue.title, usedTaskSlugs);
-      files[`tasks/${slug}/TASK.md`] = buildMarkdown(
-        {
-          name: issue.title,
-          project: issue.project?.id ? projectIdToSlug.get(issue.project.id) ?? undefined : undefined,
-          identifier: issue.identifier ?? undefined,
-          status: issue.state?.name ?? undefined,
-          priority: issue.priority ?? undefined,
-        },
-        `${issue.description?.trim() || ""}\n\n${issue.url ? `Source: ${issue.url}` : ""}`.trim(),
-      );
-    }
-
-    res.json({
-      rootPath: normalizeAgentUrlKey(sourceLabel) ?? "linear-import",
-      files,
-      summary: {
-        projectCount: projects.length,
-        issueCount: issues.length,
-      },
-    });
   });
 
   router.post("/import", validate(organizationPortabilityImportSchema), async (req, res) => {
