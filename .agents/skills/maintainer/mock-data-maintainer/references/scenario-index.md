@@ -5,6 +5,14 @@ need. Prefer a coherent scenario spine over unrelated rows.
 
 ## Rudder Scenarios
 
+### Rudder Studio
+
+Use for realistic whole-org user scenarios, "using Rudder to build Rudder",
+month-long agent-team operation, growth execution, reusable dev seed data, and
+Calendar views that should naturally emerge from real heartbeat runs.
+
+Read `rudder-studio-scenario.md`.
+
 ### Landing Demo Org
 
 Use for local screenshots, landing proof shots, README or deck images, and
@@ -53,5 +61,8 @@ permission, conflict, budget, or partial-success states. Read `edge-states.md`.
 - If the user says "help users understand", "user scenario", "customer
   story", or "explain this workflow", optimize for persona, conflict, and
   before/after state.
+- If the user says Calendar should come from real work, wants an org running
+  for weeks, or asks for Rudder operating Rudder, choose Rudder Studio before
+  any component-specific fixture.
 - If the user asks for a file format, produce that format directly and keep a
   short scenario note above it.

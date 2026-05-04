@@ -1,0 +1,62 @@
+[
+  {
+    "key": "chat-growth-real-issues",
+    "title": "Marketing project needs real growth execution",
+    "summary": "Operator correction that Marketing & Growth cannot just hold positioning work. It needs posts, DMs, launch prep, demos, reply classification, and follow-up issues.",
+    "preferredAgentKey": "diana",
+    "primaryIssueKey": "mkt-x-launch-thread",
+    "contextIssueKeys": ["mkt-x-launch-thread", "mkt-founder-dm-list", "mkt-hn-launch", "mkt-weekly-growth-report"],
+    "day": 23,
+    "messages": [
+      {
+        "role": "user",
+        "body": "mkt 里为什么都没有推进 Rudder 增长的真实 issue? 要有发推文、运营推广、具体计划和落实。"
+      },
+      {
+        "role": "assistant",
+        "replyingAgentKey": "diana",
+        "body": "同意。Marketing 项目应该从真实增长动作开始：X launch thread、HN packet、founder DM、demo clip、community posts、reply classifier 和 weekly report。我会把这些转成可执行 issue。"
+      }
+    ]
+  },
+  {
+    "key": "chat-calendar-source-of-truth",
+    "title": "Calendar should emerge from real work history",
+    "summary": "Operator rejects Calendar-only fixture thinking and clarifies that Calendar should reveal a month of daily agent runs in the Rudder Studio org.",
+    "preferredAgentKey": "grace",
+    "primaryIssueKey": "calendar-derived-runs",
+    "contextIssueKeys": ["calendar-derived-runs", "calendar-overlap-density", "skills-mock-data-scenario"],
+    "day": 18,
+    "messages": [
+      {
+        "role": "user",
+        "body": "不要专门给 Calendar 构建场景。真实用户场景里 Agent 每天运行一个月，Calendar 自然应该能看到运行数据。"
+      },
+      {
+        "role": "assistant",
+        "replyingAgentKey": "grace",
+        "body": "我会把 Calendar 当成 run history 的视图，核心数据放在 issues、heartbeat runs、costs、approvals 和活动里，Calendar 只派生显示这些信号。"
+      }
+    ]
+  },
+  {
+    "key": "chat-budget-overage",
+    "title": "Budget overage follow-up",
+    "summary": "Operator asks whether growth and release work should keep running after Rudder Studio crosses the monthly budget.",
+    "preferredAgentKey": "ada",
+    "primaryIssueKey": "messenger-budget-alert",
+    "contextIssueKeys": ["messenger-budget-alert", "operator-dashboard-signal"],
+    "day": 28,
+    "messages": [
+      {
+        "role": "system",
+        "body": "Rudder Studio monthly spend has exceeded the configured budget."
+      },
+      {
+        "role": "assistant",
+        "replyingAgentKey": "ada",
+        "body": "I opened a budget override approval with options to pause growth experiments, approve a one-week override, or resume only release reliability."
+      }
+    ]
+  }
+]

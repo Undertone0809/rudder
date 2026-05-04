@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "key": "rudder-studio",
+  "name": "Rudder Studio",
+  "description": "A canonical month-long org where the Rudder team uses Rudder to build, operate, and grow Rudder itself.",
+  "timezone": "Asia/Shanghai",
+  "anchorNow": "2026-05-04T09:00:00+08:00",
+  "historyStart": "2026-04-05T09:00:00+08:00",
+  "organization": {
+    "name": "Rudder Studio",
+    "description": "Internal Rudder operating org: agents build the product, run release reliability, operate growth, triage messenger intake, and leave a natural work-history trail for Calendar.",
+    "urlKeyBase": "rudder-studio",
+    "issuePrefixBase": "RUDSTU",
+    "budgetMonthlyCents": 25000,
+    "brandColor": "linear-gradient(135deg, #0891b2 0%, #4338ca 100%)",
+    "defaultChatIssueCreationMode": "manual_approval"
+  },
+  "generation": {
+    "issueNumberStart": 1,
+    "provider": "openai",
+    "biller": "rudder-dev",
+    "billingType": "agent_run",
+    "defaultModel": "gpt-5.3-codex",
+    "calendarSourceName": "Rudder Agent Work History",
+    "operatorCalendarSourceName": "Operator Calendar",
+    "createDerivedRunCalendarEvents": true,
+    "createIssueComments": true,
+    "createActivityLog": true
+  },
+  "goals": [
+    {
+      "key": "weekly-loops",
+      "title": "Increase completed real agent-work loops",
+      "description": "Make Rudder's own development team complete more real end-to-end agent work loops every week.",
+      "level": "organization",
+      "status": "active",
+      "ownerAgentKey": "ada"
+    },
+    {
+      "key": "calendar-history",
+      "title": "Make Calendar prove the work history",
+      "description": "Calendar should reveal how agents actually spent time across product, growth, release, support, and decisions without creating fake calendar-only scenarios.",
+      "level": "team",
+      "status": "active",
+      "ownerAgentKey": "grace"
+    },
+    {
+      "key": "qualified-builders",
+      "title": "Reach qualified agent-team builders",
+      "description": "Turn Rudder growth into concrete public shipping, distribution, DM follow-up, and feedback loops with measurable qualified interest.",
+      "level": "team",
+      "status": "active",
+      "ownerAgentKey": "diana"
+    }
+  ],
+  "projects": [
+    {
+      "key": "agent-work-loop",
+      "name": "Agent Work Loop",
+      "description": "Tighten the issue -> assignment -> run -> review -> close loop that defines Rudder's north star.",
+      "status": "in_progress",
+      "goalKey": "weekly-loops",
+      "leadAgentKey": "linus",
+      "targetDate": "2026-05-16",
+      "color": "linear-gradient(135deg, #16a34a 0%, #0f766e 100%)"
+    },
+    {
+      "key": "calendar-work-history",
+      "name": "Calendar as Work History",
+      "description": "Show real agent operation history and planned human checkpoints as a calendar view over the same org activity.",
+      "status": "in_progress",
+      "goalKey": "calendar-history",
+      "leadAgentKey": "grace",
+      "targetDate": "2026-05-10",
+      "color": "linear-gradient(135deg, #0891b2 0%, #4338ca 100%)"
+    },
+    {
+      "key": "desktop-release",
+      "name": "Desktop Release Reliability",
+      "description": "Make local desktop boot, packaged smoke, profile isolation, and release verification boring.",
+      "status": "in_progress",
+      "goalKey": "weekly-loops",
+      "leadAgentKey": "atlas",
+      "targetDate": "2026-05-18",
+      "color": "linear-gradient(135deg, #475569 0%, #0f766e 100%)"
+    },
+    {
+      "key": "developer-platform-skills",
+      "name": "Developer Platform & Skills",
+      "description": "Improve repo-local skills, agent adapters, plugin docs, and reusable workflows for contributors.",
+      "status": "in_progress",
+      "goalKey": "weekly-loops",
+      "leadAgentKey": "ken",
+      "targetDate": "2026-05-20",
+      "color": "linear-gradient(135deg, #334155 0%, #7c3aed 100%)"
+    },
+    {
+      "key": "marketing-growth",
+      "name": "Marketing & Growth",
+      "description": "Concrete growth work: public posts, demos, DM follow-up, community launch prep, feedback synthesis, and weekly growth reporting.",
+      "status": "in_progress",
+      "goalKey": "qualified-builders",
+      "leadAgentKey": "diana",
+      "targetDate": "2026-05-24",
+      "color": "linear-gradient(135deg, #be123c 0%, #7c2d12 100%)"
+    },
+    {
+      "key": "messenger-intake",
+      "name": "Messenger & Issue Intake",
+      "description": "Turn messy operator chats, requests, and approvals into auditable issues without losing context.",
+      "status": "in_progress",
+      "goalKey": "weekly-loops",
+      "leadAgentKey": "mira",
+      "targetDate": "2026-05-13",
+      "color": "linear-gradient(135deg, #a16207 0%, #ca8a04 100%)"
+    },
+    {
+      "key": "operator-experience",
+      "name": "Operator Experience",
+      "description": "Make dashboards, issue triage, approvals, and run intelligence feel like a control room for agent teams.",
+      "status": "in_progress",
+      "goalKey": "weekly-loops",
+      "leadAgentKey": "tess",
+      "targetDate": "2026-05-21",
+      "color": "linear-gradient(135deg, #6d28d9 0%, #be185d 100%)"
+    }
+  ]
+}

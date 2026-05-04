@@ -66,6 +66,29 @@ Data to show:
 - budget policy with near-limit and exceeded states
 - dashboard counts that reveal real work loops
 
+## Rudder Studio: Rudder Operating Rudder
+
+Persona: founder/operator using Rudder to develop, release, operate, and grow
+Rudder itself.
+
+Problem: the team needs to understand Rudder through real work, not isolated
+component demos. Calendar, Dashboard, approvals, Messenger, and cost views
+should all explain the same month of agent-team operation.
+
+Data to show:
+
+- product, release, skills, operator UX, messenger, and growth projects
+- concrete Marketing & Growth execution issues such as X launch thread, HN
+  packet, founder DMs, demo clip, community posts, reply classification,
+  waitlist capture, and weekly report
+- heartbeat runs and costs for each area so Calendar and Dashboard have real
+  downstream signals
+- approvals for launch gating, release language, rejected automation, and
+  budget override
+- chats where operator corrections turn into issues and fixture rules
+
+Read `rudder-studio-scenario.md` for the durable fixture and seed script.
+
 ## New Team Understanding Rudder
 
 Persona: team evaluating whether Rudder fits their workflow.
