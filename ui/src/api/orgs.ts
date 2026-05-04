@@ -12,6 +12,13 @@ import type {
   OrganizationPortabilityImportResult,
   OrganizationPortabilityPreviewRequest,
   OrganizationPortabilityPreviewResult,
+  WorkspaceBackupCreateRequest,
+  WorkspaceBackupFileDetail,
+  WorkspaceBackupFileList,
+  WorkspaceBackupList,
+  WorkspaceBackupRestoreRequest,
+  WorkspaceBackupRestoreResult,
+  WorkspaceBackupSummary,
   UpdateOrganizationBranding,
   UpdateOrganizationResourceRequest,
 } from "@rudderhq/shared";
@@ -97,6 +104,30 @@ export const organizationsApi = {
       data,
     );
   },
+  listWorkspaceBackups: (orgId: string) =>
+    api.get<WorkspaceBackupList>(`/orgs/${orgId}/workspace/backups`),
+  createWorkspaceBackup: (orgId: string, data: WorkspaceBackupCreateRequest = {}) =>
+    api.post<WorkspaceBackupSummary>(`/orgs/${orgId}/workspace/backups`, data),
+  listWorkspaceBackupFiles: (orgId: string, backupId: string, directoryPath: string = "") => {
+    const search = new URLSearchParams();
+    if (directoryPath) search.set("path", directoryPath);
+    const query = search.toString();
+    return api.get<WorkspaceBackupFileList>(
+      `/orgs/${orgId}/workspace/backups/${backupId}/files${query ? `?${query}` : ""}`,
+    );
+  },
+  readWorkspaceBackupFile: (orgId: string, backupId: string, filePath: string) => {
+    const search = new URLSearchParams();
+    if (filePath) search.set("path", filePath);
+    const query = search.toString();
+    return api.get<WorkspaceBackupFileDetail>(
+      `/orgs/${orgId}/workspace/backups/${backupId}/file${query ? `?${query}` : ""}`,
+    );
+  },
+  restoreWorkspaceBackup: (orgId: string, backupId: string, data: WorkspaceBackupRestoreRequest) =>
+    api.post<WorkspaceBackupRestoreResult>(`/orgs/${orgId}/workspace/backups/${backupId}/restore`, data),
+  deleteWorkspaceBackup: (orgId: string, backupId: string) =>
+    api.delete<WorkspaceBackupSummary>(`/orgs/${orgId}/workspace/backups/${backupId}`),
   archive: (orgId: string) => api.post<Organization>(`/orgs/${orgId}/archive`, {}),
   remove: (orgId: string) => api.delete<{ ok: true }>(`/orgs/${orgId}`),
   exportBundle: (

@@ -31,6 +31,7 @@ import { OrganizationSettings } from "./pages/OrganizationSettings";
 import { OrganizationHeartbeats } from "./pages/OrganizationHeartbeats";
 import { OrganizationResources } from "./pages/OrganizationResources";
 import { OrganizationWorkspaces } from "./pages/OrganizationWorkspaces";
+import { OrganizationWorkspaceBackups } from "./pages/OrganizationWorkspaceBackups";
 import { OrganizationSkills } from "./pages/OrganizationSkills";
 import { OrganizationExport } from "./pages/OrganizationExport";
 import { OrganizationImport } from "./pages/OrganizationImport";
@@ -186,9 +187,11 @@ function boardRoutes() {
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="organizations" element={<LegacyOrganizationsRedirect />} />
       <Route path="organization/settings" element={<OrganizationSettings />} />
+      <Route path="organization/settings/workspace/backups" element={<LegacyWorkspaceBackupsRedirect />} />
       <Route path="resources" element={<OrganizationResources />} />
       <Route path="heartbeats" element={<OrganizationHeartbeats />} />
       <Route path="workspaces" element={<OrganizationWorkspaces />} />
+      <Route path="workspaces/backups" element={<OrganizationWorkspaceBackups />} />
       <Route path="organization/export/*" element={<OrganizationExport />} />
       <Route path="organization/import" element={<OrganizationImport />} />
       <Route path="skills/*" element={<OrganizationSkills />} />
@@ -302,6 +305,12 @@ function InstanceSettingsRedirect({ requestedPath }: { requestedPath?: string })
 function LegacySettingsRedirect() {
   const location = useLocation();
   return <InstanceSettingsRedirect requestedPath={`/instance${location.pathname}`} />;
+}
+
+function LegacyWorkspaceBackupsRedirect() {
+  const { orgPrefix } = useParams<{ orgPrefix?: string }>();
+  const location = useLocation();
+  return <Navigate to={`/${orgPrefix ?? ""}/workspaces/backups${location.search}${location.hash}`} replace />;
 }
 
 function LegacyOrganizationsRedirect() {
@@ -527,8 +536,10 @@ export function App() {
           <Route path="skills/*" element={<UnprefixedBoardRedirect />} />
           <Route path="heartbeats" element={<UnprefixedBoardRedirect />} />
           <Route path="organization/settings" element={<UnprefixedBoardRedirect />} />
+          <Route path="organization/settings/workspace/backups" element={<UnprefixedBoardRedirect />} />
           <Route path="organization/export/*" element={<UnprefixedBoardRedirect />} />
           <Route path="organization/import" element={<UnprefixedBoardRedirect />} />
+          <Route path="workspaces/backups" element={<UnprefixedBoardRedirect />} />
           <Route path="settings" element={<LegacySettingsRedirect />} />
           <Route path="settings/*" element={<LegacySettingsRedirect />} />
           <Route path="agents" element={<UnprefixedBoardRedirect />} />

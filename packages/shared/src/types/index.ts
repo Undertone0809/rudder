@@ -131,6 +131,17 @@ export type {
   WorkspaceOperationStatus,
 } from "./workspace-operation.js";
 export type {
+  WorkspaceBackupStatus,
+  WorkspaceBackupTriggerSource,
+  WorkspaceBackupSummary,
+  WorkspaceBackupList,
+  WorkspaceBackupCreateRequest,
+  WorkspaceBackupRestoreRequest,
+  WorkspaceBackupRestoreResult,
+  WorkspaceBackupFileList,
+  WorkspaceBackupFileDetail,
+} from "./workspace-backup.js";
+export type {
   ExecutionObservabilityContext,
   ExecutionObservabilitySurface,
   ExecutionLangfuseLink,

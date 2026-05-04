@@ -224,6 +224,14 @@ export {
 } from "./execution-workspace.js";
 
 export {
+  workspaceBackupTriggerSourceSchema,
+  createWorkspaceBackupSchema,
+  restoreWorkspaceBackupSchema,
+  type CreateWorkspaceBackup,
+  type RestoreWorkspaceBackup,
+} from "./workspace-backup.js";
+
+export {
   createGoalSchema,
   updateGoalSchema,
   type CreateGoal,

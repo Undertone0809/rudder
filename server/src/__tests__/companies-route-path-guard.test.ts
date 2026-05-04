@@ -28,6 +28,14 @@ vi.mock("../services/index.js", () => ({
     updateOrganizationResource: vi.fn(),
     deleteOrganizationResource: vi.fn(),
   }),
+  workspaceBackupService: () => ({
+    list: vi.fn(),
+    create: vi.fn(),
+    listFiles: vi.fn(),
+    readFile: vi.fn(),
+    restore: vi.fn(),
+    remove: vi.fn(),
+  }),
   accessService: () => ({
     canUser: vi.fn(),
     ensureMembership: vi.fn(),

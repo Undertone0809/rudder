@@ -172,6 +172,10 @@ export {
 } from "./constants.js";
 
 export { EXECUTION_OBSERVABILITY_SURFACES } from "./types/observability.js";
+export {
+  WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
+  WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
+} from "./types/workspace-backup.js";
 
 
 export type {
@@ -282,6 +286,15 @@ export type {
   WorkspaceOperation,
   WorkspaceOperationPhase,
   WorkspaceOperationStatus,
+  WorkspaceBackupStatus,
+  WorkspaceBackupTriggerSource,
+  WorkspaceBackupSummary,
+  WorkspaceBackupList,
+  WorkspaceBackupCreateRequest,
+  WorkspaceBackupRestoreRequest,
+  WorkspaceBackupRestoreResult,
+  WorkspaceBackupFileList,
+  WorkspaceBackupFileDetail,
   ExecutionWorkspaceStrategyType,
   ExecutionWorkspaceMode,
   ExecutionWorkspaceProviderType,
@@ -569,6 +582,11 @@ export {
   type UpdateExecutionWorkspace,
   type IssueDocumentFormat,
   type UpsertIssueDocument,
+  workspaceBackupTriggerSourceSchema,
+  createWorkspaceBackupSchema,
+  restoreWorkspaceBackupSchema,
+  type CreateWorkspaceBackup,
+  type RestoreWorkspaceBackup,
   createGoalSchema,
   updateGoalSchema,
   type CreateGoal,

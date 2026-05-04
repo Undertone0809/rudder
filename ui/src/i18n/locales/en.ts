@@ -166,6 +166,7 @@ export const en = {
   "organizationSettings.workspace.usage.workspaces":
     "Use Workspaces for shared files, notes, plans, and skill packages that should live on disk.",
   "organizationSettings.workspace.open": "Open workspaces",
+  "organizationSettings.workspace.backups": "Backups",
   "organizationSettings.labels.intro.title": "Issue label management",
   "organizationSettings.labels.intro.description":
     "Create, rename, recolor, and delete labels here. Issue detail only handles picking labels and quick one-off creation.",

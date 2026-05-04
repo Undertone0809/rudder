@@ -11,6 +11,8 @@ import {
   updateOrganizationBrandingSchema,
   updateOrganizationSchema,
   updateOrganizationWorkspaceFileSchema,
+  createWorkspaceBackupSchema,
+  restoreWorkspaceBackupSchema,
 } from "@rudderhq/shared";
 import { z } from "zod";
 import { forbidden } from "../errors.js";
@@ -21,6 +23,7 @@ import {
   budgetService,
   resourceCatalogService,
   organizationPortabilityService,
+  workspaceBackupService,
   organizationSkillService,
   organizationService,
   logActivity,
@@ -39,6 +42,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   const budgets = budgetService(db);
   const resources = resourceCatalogService(db);
   const workspaceBrowser = organizationWorkspaceBrowserService(db);
+  const workspaceBackups = workspaceBackupService(db);
   const linearImportSourceSchema = z.object({
     apiKey: z.string().min(1),
     teamIdOrKey: z.string().trim().min(1).optional(),
@@ -270,6 +274,120 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       runId: actor.runId,
       details: {
         path: result.filePath,
+      },
+    });
+    res.json(result);
+  });
+
+  router.get("/:orgId/workspace/backups", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const backups = await workspaceBackups.list(orgId);
+    res.json({ backups });
+  });
+
+  router.post("/:orgId/workspace/backups", validate(createWorkspaceBackupSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const result = await workspaceBackups.create({
+      orgId,
+      triggerSource: req.body.triggerSource,
+      createdByUserId: req.actor.type === "board" ? req.actor.userId ?? null : null,
+    });
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: result.status === "succeeded" ? "organization.workspace_backup.created" : "organization.workspace_backup.failed",
+      entityType: "workspace_backup",
+      entityId: result.id,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        status: result.status,
+        fileCount: result.fileCount,
+        byteSize: result.byteSize,
+        warnings: result.warnings,
+        error: result.error,
+        expiresAt: result.expiresAt,
+      },
+    });
+    if (result.status === "failed") {
+      res.status(500).json({ error: result.error ?? "Workspace backup failed", backup: result });
+      return;
+    }
+    res.status(201).json(result);
+  });
+
+  router.get("/:orgId/workspace/backups/:backupId/files", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const backupId = req.params.backupId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const directoryPath = typeof req.query.path === "string" ? req.query.path : "";
+    const result = await workspaceBackups.listFiles(orgId, backupId, directoryPath);
+    res.json(result);
+  });
+
+  router.get("/:orgId/workspace/backups/:backupId/file", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const backupId = req.params.backupId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const filePath = typeof req.query.path === "string" ? req.query.path : "";
+    const result = await workspaceBackups.readFile(orgId, backupId, filePath);
+    res.json(result);
+  });
+
+  router.post("/:orgId/workspace/backups/:backupId/restore", validate(restoreWorkspaceBackupSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const backupId = req.params.backupId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const result = await workspaceBackups.restore(orgId, backupId, {
+      createdByUserId: req.actor.type === "board" ? req.actor.userId ?? null : null,
+    });
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_backup.restored",
+      entityType: "workspace_backup",
+      entityId: result.restoredBackup.id,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        preRestoreBackupId: result.preRestoreBackup.id,
+        fileCount: result.restoredBackup.fileCount,
+        byteSize: result.restoredBackup.byteSize,
+      },
+    });
+    res.json(result);
+  });
+
+  router.delete("/:orgId/workspace/backups/:backupId", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const backupId = req.params.backupId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const result = await workspaceBackups.remove(orgId, backupId);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_backup.deleted",
+      entityType: "workspace_backup",
+      entityId: result.id,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        fileCount: result.fileCount,
+        byteSize: result.byteSize,
       },
     });
     res.json(result);
