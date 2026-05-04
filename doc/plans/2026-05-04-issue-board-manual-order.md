@@ -23,7 +23,7 @@ related_code:
   - ui/src/components/IssuesList.tsx
   - ui/src/components/KanbanBoard.tsx
 commit_refs:
-  - d02ab24
+  - c25c316
 updated_at: 2026-05-04
 ---
 
