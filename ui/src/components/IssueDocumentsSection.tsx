@@ -991,12 +991,36 @@ export function IssueDocumentsSection({
       >
         <DialogContent
           showCloseButton={false}
-          className="grid h-[calc(100dvh-1.5rem)] max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] max-w-[calc(100vw-1.5rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-[calc(100vw-2rem)]"
+          overlayClassName="bg-background"
+          className="inset-0 left-0 top-0 grid h-[100dvh] max-h-[100dvh] w-screen max-w-none translate-x-0 translate-y-0 grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none md:top-0 md:translate-y-0 sm:max-w-none"
           onKeyDown={handleNewDocumentModalKeyDown}
         >
-          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-            <DialogTitle className="truncate text-sm font-medium">New document</DialogTitle>
-            <div className="flex items-center gap-1">
+          <div className="flex h-12 items-center justify-between gap-3 border-b border-border/60 px-4">
+            <div className="flex min-w-0 items-center gap-2 text-sm">
+              <DialogTitle className="truncate font-medium text-foreground">New document</DialogTitle>
+              <span className="text-muted-foreground/50">/</span>
+              <span className="max-w-[40vw] truncate text-muted-foreground">{issue.title}</span>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="hidden text-xs text-muted-foreground sm:inline">
+                Draft
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                onClick={cancelDraft}
+              >
+                Discard
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void createDraftDocument()}
+                disabled={upsertDocument.isPending}
+              >
+                {upsertDocument.isPending ? "Saving..." : "Create"}
+              </Button>
               <Button
                 type="button"
                 variant="ghost"
@@ -1021,14 +1045,16 @@ export function IssueDocumentsSection({
               </Button>
             </div>
           </div>
-          <div className="min-h-0 overflow-y-auto px-4 py-4">
-            <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col gap-3">
-              <Input
+          <div className="min-h-0 overflow-y-auto px-5 py-10 sm:px-8 sm:py-14">
+            <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col">
+              <input
                 value={draft?.title ?? ""}
                 onChange={(event) =>
                   setDraft((current) => current ? { ...current, title: event.target.value } : current)
                 }
-                placeholder="Document title"
+                placeholder="Untitled document"
+                className="w-full bg-transparent text-4xl font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/35 sm:text-5xl"
+                autoFocus
               />
               <MarkdownEditor
                 value={draft?.body ?? ""}
@@ -1037,26 +1063,13 @@ export function IssueDocumentsSection({
                 }
                 placeholder="Write the document..."
                 bordered={false}
-                className="min-h-0 flex-1 rounded-md border border-border bg-background/40"
-                contentClassName="min-h-[calc(100dvh-14rem)] px-3 py-3 text-[15px] leading-7"
+                className="mt-6 min-h-0 flex-1 bg-transparent"
+                contentClassName="min-h-[calc(100dvh-18rem)] text-[16px] leading-7"
                 mentions={mentions}
                 imageUploadHandler={imageUploadHandler}
                 onSubmit={() => void createDraftDocument()}
               />
             </div>
-          </div>
-          <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
-            <Button variant="outline" size="sm" onClick={cancelDraft}>
-              <X className="mr-1.5 h-3.5 w-3.5" />
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => void createDraftDocument()}
-              disabled={upsertDocument.isPending}
-            >
-              {upsertDocument.isPending ? "Saving..." : "Create"}
-            </Button>
           </div>
         </DialogContent>
       </Dialog>

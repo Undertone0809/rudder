@@ -37,6 +37,7 @@ test.describe("Issue detail documents UX", () => {
     const expandedEditor = page.getByRole("dialog", { name: "New document" });
     await expect(expandedEditor).toBeVisible();
     await expect(expandedEditor.getByRole("button", { name: "Collapse editor" })).toBeVisible();
+    await expect(expandedEditor.getByText("Draft")).toBeVisible();
 
     const viewport = page.viewportSize();
     const expandedBox = await expandedEditor.boundingBox();
@@ -46,7 +47,8 @@ test.describe("Issue detail documents UX", () => {
       expect(expandedBox.height).toBeGreaterThan(viewport.height * 0.9);
     }
 
-    await expandedEditor.getByPlaceholder("Document title").fill("Ops checklist");
+    await expect(expandedEditor.getByPlaceholder("Document title")).toHaveCount(0);
+    await expandedEditor.getByPlaceholder("Untitled document").fill("Ops checklist");
     const editor = expandedEditor.locator('[contenteditable="true"]').last();
     await editor.click();
     await editor.fill("Confirm staging is healthy before handoff.");
