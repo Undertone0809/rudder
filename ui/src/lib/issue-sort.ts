@@ -3,7 +3,7 @@ import type { Issue } from "@rudderhq/shared";
 export const issueStatusOrder = ["in_progress", "todo", "backlog", "in_review", "blocked", "done", "cancelled"];
 export const issuePriorityOrder = ["critical", "high", "medium", "low"];
 
-export type IssueSortField = "status" | "priority" | "title" | "created" | "updated";
+export type IssueSortField = "manual" | "status" | "priority" | "title" | "created" | "updated";
 export type IssueSortDir = "asc" | "desc";
 
 export type IssueSortState = {
@@ -12,6 +12,7 @@ export type IssueSortState = {
 };
 
 export const issueSortOptions: Array<{ value: IssueSortField; label: string }> = [
+  { value: "manual", label: "Manual" },
   { value: "status", label: "Status" },
   { value: "priority", label: "Priority" },
   { value: "title", label: "Title" },
@@ -31,6 +32,8 @@ function timestamp(value: Date | string | null | undefined): number {
 
 function compareIssueField(a: Issue, b: Issue, field: IssueSortField): number {
   switch (field) {
+    case "manual":
+      return (a.boardOrder ?? 0) - (b.boardOrder ?? 0);
     case "status":
       return orderedIndex(issueStatusOrder, a.status) - orderedIndex(issueStatusOrder, b.status);
     case "priority":

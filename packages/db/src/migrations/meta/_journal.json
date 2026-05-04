@@ -470,6 +470,13 @@
       "when": 1777817069285,
       "tag": "0066_bumpy_electro",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1777895868107,
+      "tag": "0067_sloppy_wolfpack",
+      "breakpoints": true
     }
   ]
 }

@@ -92,6 +92,7 @@ const baseIssue: Issue = {
   description: null,
   status: "todo",
   priority: "medium",
+  boardOrder: 1000,
   assigneeAgentId: null,
   assigneeUserId: null,
   checkoutRunId: null,
@@ -276,6 +277,41 @@ describe("IssuesList", () => {
     expect(openNewIssueMock).toHaveBeenCalledWith({
       status: "in_progress",
     });
+  });
+
+  it("orders board cards by manual board order when the saved sort is manual", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({ viewMode: "board", sortField: "manual", sortDir: "asc" }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[
+            { ...baseIssue, boardOrder: 2000 },
+            { ...secondIssue, projectId: null, boardOrder: 1000 },
+          ]}
+          viewStateKey="test:issues"
+          toolbarMode="hidden"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    const text = container.textContent ?? "";
+    expect(text.indexOf("Project grouped issue")).toBeLessThan(text.indexOf("Unassigned issue"));
   });
 
   it("marks live board cards with the Motion V1 hooks", () => {

@@ -29,9 +29,9 @@ import { sortIssues, type IssueSortState } from "@/lib/issue-sort";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { timeAgo } from "@/lib/timeAgo";
 import { CalendarClock, FolderKanban, Plus, User } from "lucide-react";
-import type { AgentRole, Issue } from "@rudderhq/shared";
+import type { AgentRole, Issue, IssueStatus, ReorderIssue } from "@rudderhq/shared";
 
-const boardStatuses = [
+const boardStatuses: IssueStatus[] = [
   "backlog",
   "todo",
   "in_progress",
@@ -109,6 +109,7 @@ interface KanbanBoardProps {
   onCreateIssue?: (status: string) => void;
   onOpenIssue?: (issue: Issue) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
+  onReorderIssue?: (data: ReorderIssue) => void;
 }
 
 interface CreateIssueActionProps {
@@ -422,6 +423,7 @@ export function KanbanBoard({
   onCreateIssue,
   onOpenIssue,
   onUpdateIssue,
+  onReorderIssue,
 }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [recentlyDroppedIssueIds, setRecentlyDroppedIssueIds] = useState<Set<string>>(new Set());
@@ -486,10 +488,10 @@ export function KanbanBoard({
 
     // Determine target status: the "over" could be a column id (status string)
     // or another card's id. Find which column the "over" belongs to.
-    let targetStatus: string | null = null;
+    let targetStatus: IssueStatus | null = null;
 
-    if (boardStatuses.includes(over.id as string)) {
-      targetStatus = over.id as string;
+    if (boardStatuses.includes(over.id as IssueStatus)) {
+      targetStatus = over.id as IssueStatus;
     } else {
       // It's a card - find which column it's in
       const targetIssue = issues.find((i) => i.id === over.id);
@@ -498,7 +500,29 @@ export function KanbanBoard({
       }
     }
 
-    if (targetStatus && targetStatus !== issue.status) {
+    if (!targetStatus) return;
+
+    const targetLane = columnIssues[targetStatus] ?? [];
+    const targetLaneWithoutActive = targetLane.filter((candidate) => candidate.id !== issueId);
+    let insertIndex = targetLaneWithoutActive.length;
+
+    if (!boardStatuses.includes(over.id as IssueStatus)) {
+      const overIndexInFullLane = targetLane.findIndex((candidate) => candidate.id === over.id);
+      if (overIndexInFullLane >= 0) {
+        insertIndex = overIndexInFullLane;
+      }
+    }
+
+    const finalLane = [...targetLaneWithoutActive];
+    finalLane.splice(insertIndex, 0, { ...issue, status: targetStatus });
+    const movedIndex = finalLane.findIndex((candidate) => candidate.id === issueId);
+    const previousIssueId = movedIndex > 0 ? finalLane[movedIndex - 1]?.id : null;
+    const nextIssueId = movedIndex >= 0 && movedIndex < finalLane.length - 1 ? finalLane[movedIndex + 1]?.id : null;
+    const position = previousIssueId ? (nextIssueId ? undefined : "end") : "start";
+    const originalLaneIds = targetLane.map((candidate) => candidate.id).join("\n");
+    const finalLaneIds = finalLane.map((candidate) => candidate.id).join("\n");
+
+    if (targetStatus !== issue.status || originalLaneIds !== finalLaneIds) {
       setRecentlyDroppedIssueIds((prev) => {
         const next = new Set(prev);
         next.add(issueId);
@@ -513,7 +537,17 @@ export function KanbanBoard({
         dropTimersRef.current = dropTimersRef.current.filter((candidate) => candidate !== timer);
       }, 520);
       dropTimersRef.current.push(timer);
-      onUpdateIssue(issueId, { status: targetStatus });
+      if (onReorderIssue) {
+        onReorderIssue({
+          issueId,
+          targetStatus,
+          previousIssueId,
+          nextIssueId,
+          ...(position ? { position } : {}),
+        });
+      } else if (targetStatus !== issue.status) {
+        onUpdateIssue(issueId, { status: targetStatus });
+      }
     }
   }
 

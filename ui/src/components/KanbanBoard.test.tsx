@@ -70,6 +70,7 @@ const issue: Issue = {
   description: null,
   status: "todo",
   priority: "medium",
+  boardOrder: 1000,
   assigneeAgentId: "agent-1",
   assigneeUserId: null,
   checkoutRunId: null,
