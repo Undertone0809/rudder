@@ -124,7 +124,7 @@ Add a V1 workspace backup system with these surfaces:
   organization.
 - Selective file-level restore in the first release.
 - Git-style diff visualization for large binary files.
-- Scheduled backups, retention pruning, and CLI backup/restore.
+- CLI backup/restore.
 - Backup encryption key management beyond local file permissions and existing
   instance trust boundaries.
 - Cloud object-storage backup as the only supported V1 path.
@@ -242,7 +242,17 @@ Backup flow:
    base64 file contents. Skip symlinks rather than following external targets.
 6. Write the artifact to a temp path, then rename into the final backup
    directory.
-7. Insert or update the `workspace_backups` row and log activity.
+7. Set `expires_at` to the default 30-day retention deadline.
+8. Insert or update the `workspace_backups` row and log activity.
+
+Scheduled policy:
+
+- Active organizations get one scheduled workspace snapshot every 24 hours by
+  default.
+- The scheduler prunes expired workspace backup artifacts after 30 days.
+- Manual and pre-restore backups use the same default retention window.
+- Database backup remains a separate subsystem and is not included in workspace
+  backup artifacts.
 
 Restore flow:
 
@@ -335,11 +345,10 @@ Update these docs when the feature lands:
 
 ## Open Issues
 
-- Decide whether automatic workspace backups should be enabled by default. The
-  recommended default is enabled for local trusted deployments, every 24 hours,
-  with duplicate-snapshot skipping and 30-day retention.
 - Decide whether V1 should support operator-chosen exclusions in config or use
   only hardcoded safe defaults.
+- Decide whether scheduled backups should skip duplicate tree hashes before
+  writing a new artifact.
 - Decide whether cloud deployments should store workspace backup archives
   through the storage provider in V1 or wait for a full backup provider
   abstraction.

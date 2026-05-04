@@ -3,6 +3,9 @@ import type {
   OrganizationWorkspaceFileList,
 } from "./organization.js";
 
+export const WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS = 24;
+export const WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS = 30;
+
 export type WorkspaceBackupStatus = "running" | "succeeded" | "failed" | "restored" | "deleted";
 export type WorkspaceBackupTriggerSource = "manual" | "scheduled" | "pre_restore";
 

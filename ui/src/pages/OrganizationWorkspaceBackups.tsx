@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { WorkspaceBackupSummary } from "@rudderhq/shared";
+import {
+  WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
+  WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
+  type WorkspaceBackupSummary,
+} from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
 import { organizationsApi } from "../api/orgs";
 import { EmptyState } from "../components/EmptyState";
@@ -33,6 +37,15 @@ function formatBackupTime(value: string | null) {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatBackupDate(value: string | null) {
+  if (!value) return "None";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   }).format(new Date(value));
 }
 
@@ -309,6 +322,19 @@ export function OrganizationWorkspaceBackups() {
       </section>
 
       <aside className="flex min-h-0 flex-col border-t border-border/70 lg:border-l lg:border-t-0">
+        <div className="border-b border-border/70 px-4 py-3">
+          <div className="text-sm font-medium">Policy</div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            Daily snapshots. 30-day retention.
+          </div>
+          <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+            <div className="flex justify-between gap-3"><span>Schedule</span><span>Every {WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS}h</span></div>
+            <div className="flex justify-between gap-3"><span>Retention</span><span>{WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS} days</span></div>
+            <div className="flex justify-between gap-3"><span>Scope</span><span>Workspace files</span></div>
+            <div className="flex justify-between gap-3"><span>Safety</span><span>Pre-restore backup</span></div>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between gap-2 border-b border-border/70 px-4 py-3">
           <div>
             <div className="text-sm font-medium">Versions</div>
@@ -351,6 +377,7 @@ export function OrganizationWorkspaceBackups() {
               <div className="flex justify-between gap-3"><span>Files</span><span>{selectedBackup.fileCount}</span></div>
               <div className="flex justify-between gap-3"><span>Size</span><span>{formatBytes(selectedBackup.byteSize)}</span></div>
               <div className="flex justify-between gap-3"><span>Source</span><span>{selectedBackup.triggerSource.replace("_", " ")}</span></div>
+              <div className="flex justify-between gap-3"><span>Expires</span><span>{formatBackupDate(selectedBackup.expiresAt)}</span></div>
             </div>
           ) : null}
           <div className="grid grid-cols-2 gap-2">

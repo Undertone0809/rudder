@@ -312,6 +312,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
         byteSize: result.byteSize,
         warnings: result.warnings,
         error: result.error,
+        expiresAt: result.expiresAt,
       },
     });
     if (result.status === "failed") {

@@ -3,6 +3,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
@@ -145,11 +146,12 @@ describe("workspace backup service", () => {
     expect(backup.status).toBe("succeeded");
     expect(backup.fileCount).toBe(1);
     expect(backup.byteSize).toBeGreaterThan(0);
+    expect(backup.expiresAt).not.toBeNull();
 
     const root = await service.listFiles(orgId, backup.id);
-    expect(root.entries).toEqual([
+    expect(root.entries).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "plans", path: "plans", isDirectory: true }),
-    ]);
+    ]));
 
     const plans = await service.listFiles(orgId, backup.id, "plans");
     expect(plans.entries).toEqual([
@@ -186,6 +188,29 @@ describe("workspace backup service", () => {
     const deleted = await service.remove(orgId, backup.id);
 
     expect(deleted.status).toBe("deleted");
+    await expect(service.list(orgId)).resolves.toEqual([]);
+  });
+
+  it("creates scheduled backups and prunes expired versions", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "daily.md"), "snapshot\n", "utf8");
+
+    const scheduled = await service.runScheduledBackups();
+
+    expect(scheduled.created).toHaveLength(1);
+    expect(scheduled.created[0]?.triggerSource).toBe("scheduled");
+    expect(scheduled.created[0]?.expiresAt).not.toBeNull();
+
+    await db
+      .update(workspaceBackups)
+      .set({ expiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(workspaceBackups.id, scheduled.created[0]!.id));
+
+    const deleted = await service.pruneExpired(new Date());
+
+    expect(deleted).toHaveLength(1);
     await expect(service.list(orgId)).resolves.toEqual([]);
   });
 });

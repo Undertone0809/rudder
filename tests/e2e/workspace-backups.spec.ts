@@ -49,6 +49,9 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   await expect(page.getByTestId("workspace-context-card")).toBeVisible();
   await expect(page.getByTestId("workspace-main-card")).toBeVisible();
   await expect(page.getByTestId("workspace-sidebar").getByRole("heading", { name: "Files" })).toBeVisible();
+  await expect(page.getByText("Policy")).toBeVisible();
+  await expect(page.getByText("Every 24h")).toBeVisible();
+  await expect(page.getByText("30 days")).toBeVisible();
   await expect(page.getByTestId("workspace-main-card").getByText("Versions")).toBeVisible();
   await expect(page.getByText("1 backup")).toBeVisible();
 

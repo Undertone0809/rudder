@@ -1,19 +1,21 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import {
   heartbeatRuns,
   type Db,
   workspaceBackups,
 } from "@rudderhq/db";
-import type {
-  OrganizationWorkspaceFileDetail,
-  OrganizationWorkspaceFileEntry,
-  OrganizationWorkspaceFileList,
-  WorkspaceBackupRestoreResult,
-  WorkspaceBackupSummary,
-  WorkspaceBackupTriggerSource,
+import {
+  WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
+  WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
+  type OrganizationWorkspaceFileDetail,
+  type OrganizationWorkspaceFileEntry,
+  type OrganizationWorkspaceFileList,
+  type WorkspaceBackupRestoreResult,
+  type WorkspaceBackupSummary,
+  type WorkspaceBackupTriggerSource,
 } from "@rudderhq/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import {
@@ -28,6 +30,7 @@ const ARTIFACT_VERSION = 1;
 const MAX_PREVIEW_BYTES = 200_000;
 const SKIPPED_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm", "node_modules"]);
 const ACTIVE_RUN_STATUSES = ["queued", "running"] as const;
+const WORKSPACE_BACKUP_DEFAULT_INTERVAL_MS = WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS * 60 * 60 * 1000;
 
 type WorkspaceBackupArtifactEntry = {
   path: string;
@@ -54,6 +57,11 @@ type WorkspaceBackupRow = typeof workspaceBackups.$inferSelect;
 function timestamp(date = new Date()) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function addDays(date: Date, days: number) {
+  const normalizedDays = Math.max(1, Math.trunc(days));
+  return new Date(date.getTime() + normalizedDays * 24 * 60 * 60 * 1000);
 }
 
 function sha256Buffer(buffer: Buffer | string) {
@@ -96,6 +104,7 @@ function isBinaryBuffer(buffer: Buffer) {
 }
 
 function mapBackupRow(row: WorkspaceBackupRow): WorkspaceBackupSummary {
+  const expiresAt = row.expiresAt ?? addDays(row.createdAt, WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS);
   return {
     id: row.id,
     orgId: row.orgId,
@@ -113,7 +122,7 @@ function mapBackupRow(row: WorkspaceBackupRow): WorkspaceBackupSummary {
     error: row.error,
     startedAt: row.startedAt?.toISOString() ?? null,
     finishedAt: row.finishedAt?.toISOString() ?? null,
-    expiresAt: row.expiresAt?.toISOString() ?? null,
+    expiresAt: expiresAt.toISOString(),
     restoredFromBackupId: row.restoredFromBackupId,
     createdByUserId: row.createdByUserId,
     createdAt: row.createdAt.toISOString(),
@@ -318,11 +327,13 @@ export function workspaceBackupService(db: Db) {
       triggerSource?: WorkspaceBackupTriggerSource;
       createdByUserId?: string | null;
       restoredFromBackupId?: string | null;
+      retentionDays?: number;
     }): Promise<WorkspaceBackupSummary> {
       const organization = await orgs.getById(input.orgId);
       if (!organization) throw notFound("Organization not found");
 
       const startedAt = new Date();
+      const expiresAt = addDays(startedAt, input.retentionDays ?? WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS);
       const backupId = crypto.randomUUID();
       const triggerSource = input.triggerSource ?? "manual";
       const backupDir = path.resolve(resolveDefaultBackupDir(), "workspaces", input.orgId);
@@ -339,6 +350,7 @@ export function workspaceBackupService(db: Db) {
           artifactProvider: "local_file",
           artifactRef,
           startedAt,
+          expiresAt,
           createdByUserId: input.createdByUserId ?? null,
           restoredFromBackupId: input.restoredFromBackupId ?? null,
         })
@@ -464,6 +476,80 @@ export function workspaceBackupService(db: Db) {
         .returning();
       if (!updated) throw notFound("Workspace backup not found");
       return mapBackupRow(updated);
+    },
+
+    async pruneExpired(now = new Date()): Promise<WorkspaceBackupSummary[]> {
+      const legacyCutoff = new Date(now.getTime() - WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+      const rows = await db
+        .select()
+        .from(workspaceBackups)
+        .where(and(
+          ne(workspaceBackups.status, "deleted"),
+          ne(workspaceBackups.status, "running"),
+          or(
+            and(isNotNull(workspaceBackups.expiresAt), lte(workspaceBackups.expiresAt, now)),
+            and(isNull(workspaceBackups.expiresAt), lte(workspaceBackups.createdAt, legacyCutoff)),
+          ),
+        ));
+
+      const deleted: WorkspaceBackupSummary[] = [];
+      for (const row of rows) {
+        deleted.push(await service.remove(row.orgId, row.id));
+      }
+      return deleted;
+    },
+
+    async runScheduledBackups(input?: {
+      now?: Date;
+      intervalMs?: number;
+      retentionDays?: number;
+    }): Promise<{
+      created: WorkspaceBackupSummary[];
+      failed: WorkspaceBackupSummary[];
+      deleted: WorkspaceBackupSummary[];
+      skipped: number;
+      errors: Array<{ orgId: string; message: string }>;
+    }> {
+      const now = input?.now ?? new Date();
+      const intervalMs = Math.max(60_000, Math.trunc(input?.intervalMs ?? WORKSPACE_BACKUP_DEFAULT_INTERVAL_MS));
+      const dueBefore = new Date(now.getTime() - intervalMs);
+      const deleted = await service.pruneExpired(now);
+      const organizations = (await orgs.list()).filter((organization) => organization.status === "active");
+      const created: WorkspaceBackupSummary[] = [];
+      const failed: WorkspaceBackupSummary[] = [];
+      const errors: Array<{ orgId: string; message: string }> = [];
+      let skipped = 0;
+
+      for (const organization of organizations) {
+        try {
+          const [latest] = await db
+            .select()
+            .from(workspaceBackups)
+            .where(and(eq(workspaceBackups.orgId, organization.id), ne(workspaceBackups.status, "deleted")))
+            .orderBy(desc(workspaceBackups.createdAt))
+            .limit(1);
+
+          if (latest?.status === "running" || (latest && latest.createdAt > dueBefore)) {
+            skipped += 1;
+            continue;
+          }
+
+          const backup = await service.create({
+            orgId: organization.id,
+            triggerSource: "scheduled",
+            retentionDays: input?.retentionDays,
+          });
+          if (backup.status === "failed") failed.push(backup);
+          else created.push(backup);
+        } catch (error) {
+          errors.push({
+            orgId: organization.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      return { created, failed, deleted, skipped, errors };
     },
 
     async restore(orgId: string, backupId: string, input?: { createdByUserId?: string | null }): Promise<WorkspaceBackupRestoreResult> {
