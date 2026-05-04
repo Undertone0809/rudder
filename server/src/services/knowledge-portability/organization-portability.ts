@@ -112,6 +112,7 @@ const DEFAULT_INCLUDE: OrganizationPortabilityInclude = {
 };
 
 const DEFAULT_COLLISION_STRATEGY: OrganizationPortabilityCollisionStrategy = "rename";
+const PORTABLE_AGENT_ENTRY_FILE = "AGENTS.md";
 const execFileAsync = promisify(execFile);
 let bundledSkillsCommitPromise: Promise<string | null> | null = null;
 
@@ -2233,6 +2234,32 @@ function readAgentSkillRefs(frontmatter: Record<string, unknown>) {
   ));
 }
 
+function isPortableAgentEntryPath(relativePath: string) {
+  return path.posix.basename(normalizePortablePath(relativePath)) === PORTABLE_AGENT_ENTRY_FILE;
+}
+
+function ensurePortableAgentEntryFile(
+  exportedFiles: Record<string, string>,
+  exportedEntryFile: string,
+  fallbackBody: string,
+) {
+  const files = { ...exportedFiles };
+  const normalizedEntryFile = normalizePortablePath(exportedEntryFile);
+  if (isPortableAgentEntryPath(normalizedEntryFile) && typeof files[normalizedEntryFile] === "string") {
+    return { files, entryFile: normalizedEntryFile };
+  }
+
+  const existingPortableEntry = Object.keys(files)
+    .map((entry) => normalizePortablePath(entry))
+    .find((entry) => isPortableAgentEntryPath(entry));
+  if (existingPortableEntry) {
+    return { files, entryFile: existingPortableEntry };
+  }
+
+  files[PORTABLE_AGENT_ENTRY_FILE] = fallbackBody || "_No AGENTS instructions were resolved from current agent config._";
+  return { files, entryFile: PORTABLE_AGENT_ENTRY_FILE };
+}
+
 function buildManifestFromPackageFiles(
   files: Record<string, OrganizationPortabilityFileEntry>,
   opts?: { sourceLabel?: { orgId: string; organizationName: string } | null },
@@ -3037,6 +3064,11 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
         const slug = idToSlug.get(agent.id)!;
         const exportedInstructions = await instructions.exportFiles(agent);
         warnings.push(...exportedInstructions.warnings);
+        const portableInstructions = ensurePortableAgentEntryFile(
+          exportedInstructions.files,
+          exportedInstructions.entryFile,
+          asString((agent.agentRuntimeConfig as Record<string, unknown>).promptTemplate) ?? "",
+        );
 
         const envInputsStart = envInputs.length;
         const exportedEnvInputs = extractPortableEnvInputs(
@@ -3074,9 +3106,9 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
           warnings.push(`Agent ${slug} command ${commandValue} was omitted from export because it is system-dependent.`);
           delete portableAdapterConfig.command;
         }
-        for (const [relativePath, content] of Object.entries(exportedInstructions.files)) {
+        for (const [relativePath, content] of Object.entries(portableInstructions.files)) {
           const targetPath = `agents/${slug}/${relativePath}`;
-          if (relativePath === exportedInstructions.entryFile) {
+          if (relativePath === portableInstructions.entryFile) {
             files[targetPath] = buildMarkdown(
               stripEmptyValues({
                 name: agent.name,
