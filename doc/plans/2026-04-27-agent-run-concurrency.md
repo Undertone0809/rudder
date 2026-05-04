@@ -19,8 +19,9 @@ related_code:
   - ui/src/pages/NewAgent.tsx
   - ui/src/components/OnboardingWizard.tsx
   - packages/agent-runtime-utils/src/types.ts
-commit_refs: []
-updated_at: 2026-04-27
+commit_refs:
+  - 107a987
+updated_at: 2026-05-04
 ---
 
 # Agent Run Concurrency
@@ -84,11 +85,26 @@ allow two simultaneous execution runs for the same issue.
 - Operators can edit the run concurrency value from Agent config.
 - The queue can promote multiple eligible runs for one agent when slots are
   available.
+- Agents configured with `maxConcurrentRuns: 1` keep serial run behavior.
+- Invalid values are clamped to the supported `1..10` range.
+- Repeated wakeups for the same issue coalesce into one active execution run
+  instead of consuming multiple slots.
 
 ## Validation
 
 - `pnpm vitest run ui/src/components/agent-config-defaults.test.ts server/src/__tests__/heartbeat-run-concurrency.test.ts`
   passed.
+- `pnpm test:run server/src/__tests__/heartbeat-run-concurrency.test.ts ui/src/components/agent-config-defaults.test.ts`
+  passed after adding coverage for serial behavior, clamping, and same-issue
+  coalescing.
+- `pnpm -r typecheck` passed after the follow-up coverage change.
+- `pnpm build` passed after the follow-up coverage change.
+- `pnpm test:run` was attempted after the follow-up coverage change; the new
+  concurrency suite passed, but the full run failed in unrelated embedded
+  PostgreSQL initialization paths:
+  `activity-service.test.ts`, `heartbeat-paused-wakeups.test.ts`,
+  `heartbeat-process-recovery.test.ts`, `organization-skills-reference.test.ts`,
+  `workspace-backups.test.ts`, and `packages/db/src/client.test.ts`.
 - `pnpm --filter @rudderhq/server typecheck` passed.
 - `pnpm --filter @rudderhq/ui typecheck` passed.
 - `pnpm -r typecheck` passed.
