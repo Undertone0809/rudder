@@ -58,5 +58,14 @@ test.describe("Issue detail documents UX", () => {
     await expect(page.getByText("Ops checklist")).toBeVisible();
     await expect(page.getByText("Confirm staging is healthy before handoff.")).toBeVisible();
     await expect(page.getByText("Document key", { exact: true })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Expand editor" }).click();
+    const expandedExistingEditor = page.getByRole("dialog", { name: "Edit document" });
+    await expect(expandedExistingEditor).toBeVisible();
+    await expect(expandedExistingEditor.getByRole("button", { name: "Collapse editor" })).toBeVisible();
+    await expect(expandedExistingEditor.getByRole("button", { name: "Done" })).toBeVisible();
+    await expandedExistingEditor.getByPlaceholder("Untitled document").fill("Ops checklist revised");
+    await expandedExistingEditor.getByRole("button", { name: "Done" }).click();
+    await expect(page.getByText("Ops checklist revised")).toBeVisible();
   });
 });
