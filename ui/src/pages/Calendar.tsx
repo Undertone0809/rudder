@@ -35,13 +35,15 @@ import { agentUrl, cn, formatDateTime, issueUrl } from "@/lib/utils";
 import { queryKeys } from "@/lib/queryKeys";
 import { layoutTimedEvents } from "@/lib/calendar-event-layout";
 import { timedEventSegmentsForDay, type TimedDaySegment } from "@/lib/calendar-day-segments";
-import { buildCalendarDisplayItems, type CalendarDisplayCluster, type CalendarDisplayItem } from "@/lib/calendar-display-items";
+import { compactDenseTimedSegments } from "@/lib/calendar-collision-clusters";
+import { buildCalendarDisplayItems, type CalendarDisplayCluster, type CalendarDisplayCollisionCluster, type CalendarDisplayItem } from "@/lib/calendar-display-items";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
 
 type CalendarView = "day" | "week" | "month" | "agenda";
 type DraftKind = "human_event" | "agent_work_block";
 type DragMode = "move" | "resize-start" | "resize-end";
 type CreatePreview = { startAt: Date; endAt: Date } | null;
+type SelectedDisplayCluster = CalendarDisplayCluster | CalendarDisplayCollisionCluster;
 
 const HOUR_HEIGHT = 52;
 const TIME_GUTTER_WIDTH = 56;
@@ -195,23 +197,41 @@ function eventAccent(event: CalendarEvent, agents: Agent[]) {
 
 function displayItemAccent(item: CalendarDisplayItem, agents: Agent[]) {
   if (item.kind === "cluster") return agentAccent(item.agentId, agents);
+  if (item.kind === "collision_cluster") return "bg-slate-500";
   return eventAccent(item.event, agents);
 }
 
 function primaryEvent(item: CalendarDisplayItem) {
-  return item.kind === "cluster" ? item.events[0]! : item.event;
+  return item.kind === "single" ? item.event : item.events[0]!;
 }
 
-function statusSummary(statusCounts: CalendarDisplayCluster["statusCounts"]) {
+function statusSummary(statusCounts: SelectedDisplayCluster["statusCounts"]) {
   return statusCounts.map(({ status, count }) => `${count} ${statusLabel(status)}`).join(" · ");
 }
 
-function clusterActivityLabel(cluster: CalendarDisplayCluster) {
+function clusterActivityLabel(cluster: SelectedDisplayCluster) {
   return statusSummary(cluster.statusCounts) || `${cluster.events.length} events`;
 }
 
-function clusterTitle(cluster: CalendarDisplayCluster) {
+function collisionParticipantLabel(cluster: CalendarDisplayCollisionCluster) {
+  if (cluster.agentIds.length === 0) return "calendar";
+  if (cluster.agentIds.length === 1) return cluster.agentNames[0] ?? "1 agent";
+  return `${cluster.agentIds.length} agents`;
+}
+
+function clusterTitle(cluster: SelectedDisplayCluster) {
+  if (cluster.kind === "collision_cluster") {
+    return `${cluster.events.length} events · ${collisionParticipantLabel(cluster)}`;
+  }
   return `${cluster.agentName} · ${clusterActivityLabel(cluster)}`;
+}
+
+function clusterParticipantText(cluster: SelectedDisplayCluster) {
+  if (cluster.kind === "cluster") return cluster.agentName;
+  if (cluster.agentNames.length === 0) return "Calendar";
+  const visibleNames = cluster.agentNames.slice(0, 4);
+  const hiddenCount = Math.max(0, cluster.agentNames.length - visibleNames.length);
+  return hiddenCount > 0 ? `${visibleNames.join(", ")} +${hiddenCount}` : visibleNames.join(", ");
 }
 
 function formatShortTime(date: Date | string) {
@@ -223,12 +243,16 @@ function formatTimeRange(startAt: Date | string, endAt: Date | string) {
 }
 
 function displayItemTitle(item: CalendarDisplayItem) {
-  return item.kind === "cluster" ? clusterTitle(item) : visibleEventTitle(item.event);
+  return item.kind === "single" ? visibleEventTitle(item.event) : clusterTitle(item);
 }
 
 function displayItemSubtitle(item: CalendarDisplayItem, displayStartAt?: Date | string) {
   if (item.kind === "cluster") {
     return item.statusCounts.length === 1 ? formatTimeRange(item.startAt, item.endAt) : statusSummary(item.statusCounts);
+  }
+  if (item.kind === "collision_cluster") {
+    const summary = statusSummary(item.statusCounts);
+    return summary ? `${formatTimeRange(item.startAt, item.endAt)} · ${summary}` : formatTimeRange(item.startAt, item.endAt);
   }
   return `${statusLabel(item.event.eventStatus)} · ${formatShortTime(displayStartAt ?? item.event.startAt)}`;
 }
@@ -342,7 +366,13 @@ function EventBlock({
       role="button"
       tabIndex={0}
       data-calendar-event="true"
-      data-testid={testId ?? (item.kind === "cluster" ? `calendar-cluster-${item.id}` : `calendar-event-${event.id}`)}
+      data-testid={testId ?? (
+        item.kind === "collision_cluster"
+          ? `calendar-collision-cluster-${item.id}`
+          : item.kind === "cluster"
+            ? `calendar-cluster-${item.id}`
+            : `calendar-event-${event.id}`
+      )}
       aria-label={displayItemTitle(item)}
       onClick={() => onSelect(item)}
       onPointerDown={writable && onPointerStart ? (pointerEvent) => onPointerStart(pointerEvent, "move") : undefined}
@@ -357,7 +387,7 @@ function EventBlock({
       }}
       className={cn(
         "group relative h-full w-full min-w-0 select-none overflow-hidden rounded-[calc(var(--radius-sm)-1px)] border border-border/80 bg-background px-2 py-1 pl-3 text-left text-foreground shadow-[0_10px_18px_-18px_rgba(15,23,42,0.45)] transition hover:bg-muted/35",
-        item.kind === "cluster" && "border-border bg-muted/30",
+        item.kind !== "single" && "border-border bg-muted/30",
         item.kind === "single" && event.eventStatus === "projected" && "border-dashed",
         continuation?.startsBeforeDay && "rounded-t-none border-t-0",
         continuation?.endsAfterDay && "rounded-b-none border-b-0",
@@ -365,7 +395,18 @@ function EventBlock({
         compact ? "text-[11px]" : "text-xs",
       )}
     >
-      <span className={cn("absolute inset-y-0 left-0 w-1", displayItemAccent(item, agents))} />
+      {item.kind === "collision_cluster" ? (
+        <span className="absolute inset-y-0 left-0 flex w-1 flex-col overflow-hidden rounded-l-[calc(var(--radius-sm)-1px)]">
+          {(item.agentIds.length ? item.agentIds.slice(0, 5) : [null]).map((agentId, index) => (
+            <span
+              key={agentId ?? `calendar-${index}`}
+              className={cn("min-h-1 flex-1", agentId ? agentAccent(agentId, agents) : "bg-slate-500")}
+            />
+          ))}
+        </span>
+      ) : (
+        <span className={cn("absolute inset-y-0 left-0 w-1", displayItemAccent(item, agents))} />
+      )}
       {writable && onPointerStart ? (
         <div
           data-testid={`calendar-event-resize-start-${event.id}`}
@@ -377,7 +418,16 @@ function EventBlock({
         />
       ) : null}
       <div className="flex min-w-0 items-center gap-1.5 truncate font-medium">
-        {item.kind === "cluster" ? (
+        {item.kind === "collision_cluster" ? (
+          <span className="flex shrink-0 items-center gap-0.5">
+            {(item.agentIds.length ? item.agentIds.slice(0, 5) : [null]).map((agentId, index) => (
+              <span
+                key={agentId ?? `calendar-${index}`}
+                className={cn("h-2 w-1 rounded-full", agentId ? agentAccent(agentId, agents) : "bg-slate-500")}
+              />
+            ))}
+          </span>
+        ) : item.kind === "cluster" ? (
           <span className="flex shrink-0 items-center gap-0.5">
             {item.statusCounts.map(({ status }) => (
               <span key={status} className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOTS[status])} />
@@ -642,7 +692,8 @@ function CalendarGridView({
             </div>
             {days.map((day) => {
               const daySegments = timedEventSegmentsForDay(displayItems, day);
-              const laidOutEvents = layoutTimedEvents(daySegments);
+              const compactedSegments = compactDenseTimedSegments(daySegments, { enabled: view === "week" });
+              const laidOutEvents = layoutTimedEvents(compactedSegments);
               const today = sameDay(day, currentTime);
               const todayLineTop = (minuteOfDay(currentTime) / 60) * HOUR_HEIGHT;
               const previewSelection = createPreview && sameDay(createPreview.startAt, day)
@@ -713,7 +764,13 @@ function CalendarGridView({
                           onSelect={selectDisplayItem}
                           displayStartAt={segment.startAt}
                           continuation={segment}
-                          testId={segment.startsBeforeDay ? (item.kind === "cluster" ? `calendar-cluster-${segment.id}` : `calendar-event-${segment.id}`) : undefined}
+                          testId={segment.startsBeforeDay ? (
+                            item.kind === "collision_cluster"
+                              ? `calendar-collision-cluster-${segment.id}`
+                              : item.kind === "cluster"
+                                ? `calendar-cluster-${segment.id}`
+                                : `calendar-event-${segment.id}`
+                          ) : undefined}
                           compact={view === "week"}
                           onPointerStart={item.kind === "single" ? (pointerEvent, mode) => beginEventDrag(pointerEvent, event, mode) : undefined}
                           onPointerMove={moveEventDrag}
@@ -879,7 +936,7 @@ export function Calendar() {
   const [view, setView] = useState<CalendarView>("week");
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
-  const [selectedCluster, setSelectedCluster] = useState<CalendarDisplayCluster | null>(null);
+  const [selectedCluster, setSelectedCluster] = useState<SelectedDisplayCluster | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [quickCreate, setQuickCreate] = useState<null | { x: number; y: number }>(null);
   const [createPreview, setCreatePreview] = useState<CreatePreview>(null);
@@ -1194,7 +1251,7 @@ export function Calendar() {
   }
 
   function selectCalendarGridItem(item: CalendarDisplayItem) {
-    if (item.kind === "cluster") {
+    if (item.kind !== "single") {
       setSelectedEvent(null);
       setSelectedCluster(item);
       return;
@@ -1206,6 +1263,12 @@ export function Calendar() {
   function openClusterEvent(event: CalendarEvent) {
     setSelectedCluster(null);
     setSelectedEvent(event);
+  }
+
+  function openClusterDay(cluster: SelectedDisplayCluster) {
+    setCursor(startOfDay(cluster.startAt));
+    setView("day");
+    setSelectedCluster(null);
   }
 
   function submitDraft() {
@@ -1273,7 +1336,9 @@ export function Calendar() {
     saveGoogleConfigMutation.isPending ||
     clearGoogleConfigMutation.isPending ||
     saveAndConnectGoogleMutation.isPending;
-  const selectedClusterAgent = selectedCluster?.events.find((event) => event.agent)?.agent ?? null;
+  const selectedClusterAgent = selectedCluster?.kind === "collision_cluster" && selectedCluster.agentIds.length !== 1
+    ? null
+    : selectedCluster?.events.find((event) => event.agent)?.agent ?? null;
 
   return (
     <div className="flex h-full min-h-[720px] min-w-0 flex-col gap-3">
@@ -1708,8 +1773,8 @@ export function Calendar() {
           {selectedCluster ? (
             <div className="space-y-5 overflow-y-auto px-4 pb-4 text-sm">
               <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-y-2">
-                <span className="text-muted-foreground">Agent</span>
-                <span>{selectedCluster.agentName}</span>
+                <span className="text-muted-foreground">{selectedCluster.kind === "cluster" ? "Agent" : "Participants"}</span>
+                <span>{clusterParticipantText(selectedCluster)}</span>
                 <span className="text-muted-foreground">Window</span>
                 <span>{formatDateTime(selectedCluster.startAt)} - {formatShortTime(selectedCluster.endAt)}</span>
                 <span className="text-muted-foreground">Activity</span>
@@ -1744,8 +1809,17 @@ export function Calendar() {
                   <Button asChild variant="outline" size="sm">
                     <Link to={agentUrl(selectedClusterAgent)}>Open agent</Link>
                   </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => openClusterDay(selectedCluster)}>
+                    Open day view
+                  </Button>
                 </div>
-              ) : null}
+              ) : (
+                <div className="flex flex-wrap gap-2 border-t border-border pt-4">
+                  <Button type="button" variant="outline" size="sm" onClick={() => openClusterDay(selectedCluster)}>
+                    Open day view
+                  </Button>
+                </div>
+              )}
             </div>
           ) : null}
         </SheetContent>

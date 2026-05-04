@@ -41,6 +41,26 @@ async function createHumanEvent(page: Page, orgId: string, title: string, startA
   return response.json();
 }
 
+async function createAgentWorkBlock(page: Page, orgId: string, agentId: string, title: string, startAt: string, endAt: string) {
+  const response = await page.request.post(`/api/orgs/${orgId}/calendar/events`, {
+    data: {
+      eventKind: "agent_work_block",
+      eventStatus: "planned",
+      ownerType: "agent",
+      ownerAgentId: agentId,
+      title,
+      startAt,
+      endAt,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      allDay: false,
+      visibility: "full",
+      sourceMode: "manual",
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return response.json();
+}
+
 async function createGoogleSource(page: Page, orgId: string, name: string, status: "active" | "paused") {
   const response = await page.request.post(`/api/orgs/${orgId}/calendar/sources`, {
     data: {
@@ -215,6 +235,51 @@ test.describe("Calendar V1", () => {
     await expect(drawer.getByText("Cluster Bot · Projected heartbeat").first()).toBeVisible();
     await expect(drawer.getByText("projected").first()).toBeVisible();
     await expect(drawer.getByRole("link", { name: "Open agent" })).toBeVisible();
+  });
+
+  test("compacts dense overlapping week blocks into an inspectable busy cluster", async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 1490, height: 1003 });
+
+    const organization = await createCalendarOrg(page, `Calendar-Collisions-${Date.now()}`);
+    const todayKey = localDateKey(new Date());
+    const agents = await Promise.all(["Ada", "Diana", "Grace", "Ken"].map(async (name) => {
+      const response = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+        data: { name, role: "engineer" },
+      });
+      expect(response.ok()).toBe(true);
+      return response.json();
+    }));
+
+    await Promise.all(agents.map((agent, index) =>
+      createAgentWorkBlock(
+        page,
+        organization.id,
+        agent.id,
+        `${agent.name} · Dense overlap ${index + 1}`,
+        localIso(todayKey, 13, index * 5),
+        localIso(todayKey, 14, index * 5),
+      ),
+    ));
+
+    await selectOrganization(page, organization.id);
+    await page.goto("/calendar");
+
+    await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
+    const busyCluster = page.locator('[data-testid^="calendar-collision-cluster-"]').filter({ hasText: "4 events · 4 agents" }).first();
+    await expect(busyCluster).toBeVisible();
+    await expect(busyCluster).not.toContainText("Dense overlap");
+
+    await busyCluster.click();
+    const drawer = page.getByRole("dialog", { name: "4 events · 4 agents" });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText("Underlying events", { exact: true })).toBeVisible();
+    await expect(drawer.getByText("Ada · Dense overlap 1")).toBeVisible();
+    await expect(drawer.getByText("Ken · Dense overlap 4")).toBeVisible();
+
+    await drawer.getByRole("button", { name: "Open day view" }).click();
+    await expect(page.locator('[data-testid^="calendar-collision-cluster-"]')).toHaveCount(0);
+    await expect(page.getByText("Ada · Dense overlap 1").first()).toBeVisible();
   });
 
   test("creates a planned agent work block as a read-only human-facing annotation", async ({ page }) => {
