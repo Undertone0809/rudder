@@ -305,17 +305,24 @@ describe("agent skill routes", () => {
       payload: input.payload ?? {},
     }));
     mockAgentInstructionsService.materializeManagedBundle.mockImplementation(
-      async (agent: Record<string, unknown>, files: Record<string, string>) => ({
-        bundle: null,
-        agentRuntimeConfig: {
-          ...((agent.agentRuntimeConfig as Record<string, unknown> | undefined) ?? {}),
-          instructionsBundleMode: "managed",
-          instructionsRootPath: `/tmp/${String(agent.id)}/instructions`,
-          instructionsEntryFile: "AGENTS.md",
-          instructionsFilePath: `/tmp/${String(agent.id)}/instructions/AGENTS.md`,
-          promptTemplate: files["AGENTS.md"] ?? "",
-        },
-      }),
+      async (
+        agent: Record<string, unknown>,
+        files: Record<string, string>,
+        options?: { entryFile?: string },
+      ) => {
+        const entryFile = options?.entryFile ?? "AGENTS.md";
+        return {
+          bundle: null,
+          agentRuntimeConfig: {
+            ...((agent.agentRuntimeConfig as Record<string, unknown> | undefined) ?? {}),
+            instructionsBundleMode: "managed",
+            instructionsRootPath: `/tmp/${String(agent.id)}/instructions`,
+            instructionsEntryFile: entryFile,
+            instructionsFilePath: `/tmp/${String(agent.id)}/instructions/${entryFile}`,
+            promptTemplate: files[entryFile] ?? "",
+          },
+        };
+      },
     );
     mockLogActivity.mockResolvedValue(undefined);
     mockAccessService.canUser.mockResolvedValue(true);
@@ -455,7 +462,7 @@ describe("agent skill routes", () => {
     expect(createInput).not.toHaveProperty("name");
   });
 
-  it("materializes a managed AGENTS.md for directly created local agents", async () => {
+  it("materializes a managed SOUL.md for directly created local agents", async () => {
     const res = await request(createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
@@ -475,20 +482,19 @@ describe("agent skill routes", () => {
         agentRuntimeType: "claude_local",
       }),
       expect.objectContaining({
-        "AGENTS.md": "You are QA.",
         "HEARTBEAT.md": expect.any(String),
-        "SOUL.md": expect.any(String),
+        "SOUL.md": "You are QA.",
         "TOOLS.md": expect.any(String),
       }),
-      { entryFile: "AGENTS.md", replaceExisting: false },
+      { entryFile: "SOUL.md", replaceExisting: false },
     );
     expect(mockAgentService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({
         agentRuntimeConfig: expect.objectContaining({
           instructionsBundleMode: "managed",
-          instructionsEntryFile: "AGENTS.md",
-          instructionsFilePath: "/tmp/11111111-1111-4111-8111-111111111111/instructions/AGENTS.md",
+          instructionsEntryFile: "SOUL.md",
+          instructionsFilePath: "/tmp/11111111-1111-4111-8111-111111111111/instructions/SOUL.md",
         }),
       }),
     );
@@ -517,21 +523,15 @@ describe("agent skill routes", () => {
         agentRuntimeType: "claude_local",
       }),
       expect.objectContaining({
-        "AGENTS.md": expect.stringContaining("You are the CEO."),
         "HEARTBEAT.md": expect.stringContaining("CEO Heartbeat Checklist"),
-        "SOUL.md": expect.stringContaining("CEO Persona"),
+        "SOUL.md": expect.stringContaining("You are the CEO."),
         "TOOLS.md": expect.stringContaining("# Tools"),
       }),
-      { entryFile: "AGENTS.md", replaceExisting: false },
+      { entryFile: "SOUL.md", replaceExisting: false },
     );
     const ceoBundle = mockAgentInstructionsService.materializeManagedBundle.mock.calls[0]?.[1] as Record<string, string>;
-    expect(ceoBundle["AGENTS.md"]).toContain(
-      "When you write issue comments or chat replies, match the language of the user's or board's most recent substantive message unless they explicitly ask for a different language.",
-    );
-    expect(ceoBundle["AGENTS.md"]).toContain(
-      "Use them when you need a refresh, when the task context changes, or when you are editing the system itself.",
-    );
-    expect(ceoBundle["AGENTS.md"]).not.toContain("These files are essential. Read them.");
+    expect(ceoBundle["SOUL.md"]).toContain("CEO Persona");
+    expect(ceoBundle).not.toHaveProperty("AGENTS.md");
   });
 
   it("materializes the bundled default instruction set for non-CEO agents with no prompt template", async () => {
@@ -552,14 +552,12 @@ describe("agent skill routes", () => {
         agentRuntimeType: "claude_local",
       }),
       expect.objectContaining({
-        "AGENTS.md": expect.stringContaining("Keep the work moving until it's done."),
+        "SOUL.md": expect.stringContaining("Agent Persona"),
       }),
-      { entryFile: "AGENTS.md", replaceExisting: false },
+      { entryFile: "SOUL.md", replaceExisting: false },
     );
     const defaultBundle = mockAgentInstructionsService.materializeManagedBundle.mock.calls[0]?.[1] as Record<string, string>;
-    expect(defaultBundle["AGENTS.md"]).toContain(
-      "When you write issue comments or chat replies, match the language of the user's or board's most recent substantive message unless they explicitly ask for a different language.",
-    );
+    expect(defaultBundle).not.toHaveProperty("AGENTS.md");
   });
 
   it("includes canonical desired skills in hire approvals", async () => {
@@ -631,7 +629,7 @@ describe("agent skill routes", () => {
     );
   });
 
-  it("uses managed AGENTS config in hire approval payloads", async () => {
+  it("uses managed SOUL config in hire approval payloads", async () => {
     const res = await request(createApp(createDb(true)))
       .post("/api/orgs/organization-1/agent-hires")
       .send({
@@ -650,8 +648,8 @@ describe("agent skill routes", () => {
         payload: expect.objectContaining({
           agentRuntimeConfig: expect.objectContaining({
             instructionsBundleMode: "managed",
-            instructionsEntryFile: "AGENTS.md",
-            instructionsFilePath: "/tmp/11111111-1111-4111-8111-111111111111/instructions/AGENTS.md",
+            instructionsEntryFile: "SOUL.md",
+            instructionsFilePath: "/tmp/11111111-1111-4111-8111-111111111111/instructions/SOUL.md",
           }),
         }),
       }),

@@ -88,8 +88,10 @@ Required thinking:
 - optional `desiredSkills` from the organization skill library
 - adapter and runtime config aligned to this environment
 - capabilities
-- run prompt in adapter config (`promptTemplate` where applicable)
+- role/persona instructions for the new agent (`promptTemplate` when the CLI payload is the available surface; Rudder materializes this as `SOUL.md`)
 - source issue linkage (`sourceIssueId` or `sourceIssueIds`) when this hire came from an issue
+
+Do not copy Rudder's shared filesystem, memory, language, or safety contract into the hire prompt. Rudder injects that operating contract from runtime code for supported local runtimes. The hire-specific prompt should only define the new agent's role, identity, scope, tone, and durable responsibilities.
 
 8. Submit the canonical hire request.
 
@@ -102,7 +104,11 @@ rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "capabilities": "Owns technical roadmap, architecture, staffing, execution",
   "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
   "agentRuntimeType": "codex_local",
-  "agentRuntimeConfig": {"cwd": "/abs/path/to/repo", "model": "o4-mini"},
+  "agentRuntimeConfig": {
+    "cwd": "/abs/path/to/repo",
+    "model": "o4-mini",
+    "promptTemplate": "You are the CTO. Own technical strategy, architecture, engineering execution, and quality bars."
+  },
   "runtimeConfig": {"heartbeat": {"enabled": true, "intervalSec": 300, "wakeOnDemand": true, "maxConcurrentRuns": 3}},
   "sourceIssueId": "<issue-id>"
 }' --json
@@ -153,7 +159,7 @@ Before sending a hire request:
 - set a concrete `icon` from `rudder agent icons` so the new hire is identifiable in org and task views
 - avoid secrets in plain text unless required by adapter behavior
 - ensure the reporting line is correct and in-org
-- ensure the prompt is role-specific and operationally scoped
+- ensure the prompt is role-specific and operationally scoped; it should become the agent's `SOUL.md`, not a copy of Rudder's shared operating contract
 - prefer `sourceIssueId` or `sourceIssueIds` in the hire payload instead of manual approval linking
 - if board requests revision, update the payload and resubmit through the approval flow
 - do not report success unless `rudder agent hire` itself succeeded and you can cite the returned `agent.id` or `approval.id`

@@ -62,7 +62,7 @@ Don't use when:
 
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
-- instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to the run prompt
+- instructionsFilePath (string, optional): absolute path to a markdown role/persona instructions file such as SOUL.md; Rudder's shared operating contract is prepended separately at runtime
 - promptTemplate (string, optional): run prompt template
 - model (string, optional): Cursor model id (for example auto or gpt-5.3-codex)
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider

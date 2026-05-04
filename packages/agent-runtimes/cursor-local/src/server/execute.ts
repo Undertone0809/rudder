@@ -417,7 +417,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       notes.push("Auto-added --yolo to bypass interactive prompts.");
     }
     notes.push("Prompt is piped to Cursor via stdin.");
-    if (!instructionsFilePath) return notes;
+    if (!instructionsFilePath) {
+      notes.push(...loadedInstructions.commandNotes, "Prepended Rudder operating contract to prompt.");
+      return notes;
+    }
     if (instructionsPrefix.length > 0) {
       notes.push(
         ...loadedInstructions.commandNotes,

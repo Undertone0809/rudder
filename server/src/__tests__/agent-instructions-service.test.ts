@@ -108,11 +108,11 @@ describe("agent instructions service", () => {
 
   it("includes MEMORY.md in default managed instruction bundles", async () => {
     await expect(loadDefaultAgentInstructionsBundle("default")).resolves.toEqual(expect.objectContaining({
-      "AGENTS.md": expect.any(String),
-      "MEMORY.md": expect.stringContaining("# Tacit Memory"),
+      "SOUL.md": expect.stringContaining("# SOUL.md -- Agent Persona"),
+      "MEMORY.md": expect.stringContaining("# MEMORY.md"),
     }));
     await expect(loadDefaultAgentInstructionsBundle("ceo")).resolves.toEqual(expect.objectContaining({
-      "AGENTS.md": expect.any(String),
+      "SOUL.md": expect.stringContaining("# SOUL.md -- CEO Persona"),
       "MEMORY.md": expect.stringContaining("# Tacit Memory"),
     }));
   });

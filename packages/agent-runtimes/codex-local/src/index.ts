@@ -23,7 +23,7 @@ Adapter: codex_local
 
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
-- instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to stdin prompt at runtime
+- instructionsFilePath (string, optional): absolute path to a markdown role/persona instructions file such as SOUL.md; Rudder's shared operating contract is prepended separately at runtime
 - model (string, optional): Codex model id
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
 - modelReasoningEffort (string, optional): reasoning effort override (low|medium|high|xhigh) passed via -c model_reasoning_effort=...
@@ -42,7 +42,7 @@ Operational fields:
 
 Notes:
 - Prompts are piped via stdin (Codex receives "-" prompt argument).
-- If instructionsFilePath is configured, Rudder prepends that file's contents to the stdin prompt on every run.
+- Rudder always prepends its shared operating contract to the stdin prompt. If instructionsFilePath is configured, Rudder also prepends that file plus sibling SOUL.md, TOOLS.md, and MEMORY.md when present.
 - Codex exec automatically applies repo-scoped AGENTS.md instructions from the active workspace. Rudder cannot suppress that discovery in exec mode, so repo AGENTS.md files may still apply even when you only configured an explicit instructionsFilePath.
 - Agent enabled-skill state is controlled only by Rudder's bundled skills plus the selections saved on the agent's Skills page.
 - The codex_local adapter does not materialize skills into repo-scoped ".agents/skills"; it realizes selected skills by linking them into the Rudder-managed \`CODEX_HOME/skills\` directory that Codex discovers at runtime.

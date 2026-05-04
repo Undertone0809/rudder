@@ -370,7 +370,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const commandNotes = (() => {
     const notes: string[] = ["Prompt is passed to Gemini via --prompt for non-interactive execution."];
     notes.push("Added --approval-mode yolo for unattended execution.");
-    if (!instructionsFilePath) return notes;
+    if (!instructionsFilePath) {
+      notes.push(...loadedInstructions.commandNotes, "Prepended Rudder operating contract to prompt.");
+      return notes;
+    }
     if (instructionsPrefix.length > 0) {
       notes.push(
         ...loadedInstructions.commandNotes,

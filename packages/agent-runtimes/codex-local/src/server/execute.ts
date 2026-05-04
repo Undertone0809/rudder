@@ -384,7 +384,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     "Codex exec automatically applies repo-scoped AGENTS.md instructions from the current workspace; Rudder does not currently suppress that discovery.";
   const commandNotes = (() => {
     if (!instructionsFilePath) {
-      return [repoAgentsNote];
+      return [
+        ...loadedInstructions.commandNotes,
+        "Prepended Rudder operating contract to stdin prompt.",
+        repoAgentsNote,
+      ];
     }
     if (instructionsPrefix.length > 0) {
       return [

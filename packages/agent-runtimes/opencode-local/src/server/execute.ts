@@ -310,7 +310,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const instructionsDir = loadedInstructions.instructionsDir;
 
   const commandNotes = (() => {
-    if (!resolvedInstructionsFilePath) return [] as string[];
+    if (!resolvedInstructionsFilePath) {
+      return [
+        ...loadedInstructions.commandNotes,
+        "Prepended Rudder operating contract to stdin prompt.",
+      ];
+    }
     if (instructionsPrefix.length > 0) {
       return [
         ...loadedInstructions.commandNotes,

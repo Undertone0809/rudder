@@ -15,7 +15,7 @@ Adapter: claude_local
 
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
-- instructionsFilePath (string, optional): absolute path to a markdown instructions file injected at runtime
+- instructionsFilePath (string, optional): absolute path to a markdown role/persona instructions file such as SOUL.md; Rudder's shared operating contract is injected separately at runtime
 - model (string, optional): Claude model id
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
 - effort (string, optional): reasoning effort passed via --effort (low|medium|high)

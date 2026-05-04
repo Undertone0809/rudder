@@ -62,7 +62,11 @@ rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "capabilities": "Owns technical roadmap, architecture, staffing, execution",
   "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
   "agentRuntimeType": "codex_local",
-  "agentRuntimeConfig": {"cwd": "/abs/path/to/repo", "model": "o4-mini"},
+  "agentRuntimeConfig": {
+    "cwd": "/abs/path/to/repo",
+    "model": "o4-mini",
+    "promptTemplate": "You are the CTO. Own technical strategy, architecture, engineering execution, and quality bars."
+  },
   "runtimeConfig": {"heartbeat": {"enabled": true, "intervalSec": 300, "wakeOnDemand": true, "maxConcurrentRuns": 3}},
   "sourceIssueId": "<issue-id>"
 }' --json
@@ -75,6 +79,8 @@ Canonical semantics:
 - if the organization requires board approval, the response contains both `agent` and `approval`, and the new agent stays `pending_approval`
 
 Do not use `rudder approval create --type hire_agent` as a replacement for `agent hire` during normal skill execution. That is a lower-level compatibility surface and does not preserve the canonical direct-create behavior.
+
+`agentRuntimeConfig.promptTemplate`, when used, is for role/persona content. Rudder materializes it as the managed instruction bundle's `SOUL.md`. Do not include Rudder's shared operating contract in this field; supported local runtimes inject that contract from code.
 
 ### Approval follow-up
 

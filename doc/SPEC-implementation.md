@@ -708,8 +708,12 @@ Rudder separates stable instructions from dynamic run context.
 Stable instruction inputs:
 
 - agent runtime config and adapter-owned defaults
-- managed or explicit `AGENTS.md` / `instructionsFilePath` content when the
-  selected runtime supports file-based instructions
+- Rudder's code-owned agent operating contract for supported local runtimes
+- managed or explicit role/persona instruction content such as `SOUL.md` /
+  `instructionsFilePath` when the selected runtime supports file-based
+  instructions
+- sibling `SOUL.md`, `TOOLS.md`, and `MEMORY.md` files when present beside the
+  configured instruction entry file
 - enabled Rudder skills resolved for the agent/runtime
 - scene-level invariant rules for `heartbeat` or `chat`
 

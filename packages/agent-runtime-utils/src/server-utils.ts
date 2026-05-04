@@ -463,16 +463,53 @@ export function joinPromptSections(
     .join(separator);
 }
 
+export const RUDDER_AGENT_OPERATING_CONTRACT = [
+  "# Rudder Agent Operating Contract",
+  "",
+  "Your home directory is `$AGENT_HOME`. Everything personal to you -- life, memory, knowledge -- lives there. Other agents may have their own folders and you may update them when necessary.",
+  "",
+  "Use these paths consistently:",
+  "",
+  "- Personal instructions live under `$AGENT_HOME/instructions`.",
+  "- Personal memory lives under `$AGENT_HOME/memory`.",
+  "- Tacit memory instruction lives at `$AGENT_HOME/instructions/MEMORY.md` and is automatically loaded when present.",
+  "- Personal skills live under `$AGENT_HOME/skills`.",
+  "- Shared organization workspace root lives under `$RUDDER_ORG_WORKSPACE_ROOT`.",
+  "- Shared organization skills live under `$RUDDER_ORG_SKILLS_DIR`.",
+  "- Shared organization plans live under `$RUDDER_ORG_PLANS_DIR`.",
+  "- Durable shared work output should prefer these managed workspace paths instead of ad-hoc top-level `projects/` folders.",
+  "",
+  "When you write issue comments or chat replies, match the language of the user's or board's most recent substantive message unless they explicitly ask for a different language.",
+  "",
+  "## Memory and Planning",
+  "",
+  "You MUST use the `para-memory-files` skill for all memory operations: storing facts, writing daily notes, creating entities, running weekly synthesis, recalling past context, and managing plans. The skill defines your three-layer memory system (knowledge graph, daily notes, tacit knowledge), the PARA folder structure, atomic fact schemas, memory decay rules, and recall/planning conventions.",
+  "",
+  "Keep stable preferences and operating lessons in `$AGENT_HOME/instructions/MEMORY.md`. Use `$AGENT_HOME/memory/YYYY-MM-DD.md` for daily notes and `$AGENT_HOME/life/` for structured long-term memory; those files are not auto-loaded.",
+  "",
+  "Invoke it whenever you need to remember, retrieve, or organize anything.",
+  "",
+  "## Safety Considerations",
+  "",
+  "- Never exfiltrate secrets or private data.",
+  "- Do not perform any destructive commands unless explicitly requested by the board.",
+].join("\n");
+
 export interface LoadedAgentInstructionsPrefix {
   prefix: string;
   commandNotes: string[];
   instructionsFilePath: string;
   instructionsDir: string;
+  soulFilePath: string | null;
+  toolsFilePath: string | null;
   memoryFilePath: string | null;
   readFailed: boolean;
   metrics: {
     instructionsChars: number;
+    operatingContractChars: number;
     instructionEntryChars: number;
+    soulChars: number;
+    toolsChars: number;
     memoryChars: number;
   };
 }
@@ -485,25 +522,36 @@ export async function loadAgentInstructionsPrefix(input: {
   const instructionsFilePath = input.instructionsFilePath.trim();
   const instructionsDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
   const warningStream = input.warningStream ?? "stdout";
+  const operatingContractSection =
+    `${RUDDER_AGENT_OPERATING_CONTRACT}\n\n` +
+    "The above Rudder agent operating contract was injected by Rudder at runtime.";
   const empty = {
-    prefix: "",
-    commandNotes: [],
+    prefix: operatingContractSection,
+    commandNotes: ["Loaded Rudder agent operating contract from runtime code"],
     instructionsFilePath,
     instructionsDir,
+    soulFilePath: null,
+    toolsFilePath: null,
     memoryFilePath: null,
     readFailed: false,
     metrics: {
-      instructionsChars: 0,
+      instructionsChars: operatingContractSection.length,
+      operatingContractChars: operatingContractSection.length,
       instructionEntryChars: 0,
+      soulChars: 0,
+      toolsChars: 0,
       memoryChars: 0,
     },
   } satisfies LoadedAgentInstructionsPrefix;
 
   if (!instructionsFilePath) return empty;
 
+  const loadedPaths = new Set<string>();
+  const commandNotes = [...empty.commandNotes];
   let entrySection = "";
   try {
     const instructionsContents = await fs.readFile(instructionsFilePath, "utf8");
+    loadedPaths.add(path.resolve(instructionsFilePath));
     entrySection =
       `${instructionsContents}\n\n` +
       `The above agent instructions were loaded from ${instructionsFilePath}. ` +
@@ -518,52 +566,86 @@ export async function loadAgentInstructionsPrefix(input: {
       warningStream,
       `[rudder] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
     );
-    return {
-      ...empty,
-      readFailed: true,
-      commandNotes: [
-        `Configured instructionsFilePath ${instructionsFilePath}, but file could not be read; continuing without injected instructions.`,
-      ],
-    };
+    commandNotes.push(
+      `Configured instructionsFilePath ${instructionsFilePath}, but file could not be read; continuing without injected instructions.`,
+    );
   }
 
-  const memoryFilePath = path.join(path.dirname(instructionsFilePath), "MEMORY.md");
-  let memorySection = "";
-  try {
-    const memoryContents = await fs.readFile(memoryFilePath, "utf8");
-    memorySection =
-      `${memoryContents}\n\n` +
-      `The above agent memory instructions were loaded from ${memoryFilePath}. ` +
-      `Resolve any relative file references from ${instructionsDir}.`;
-    await input.onLog(
-      "stdout",
-      `[rudder] Loaded agent memory instructions file: ${memoryFilePath}\n`,
-    );
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      const reason = err instanceof Error ? err.message : String(err);
+  async function loadSiblingInstructionFile(siblingInput: {
+    fileName: string;
+    label: string;
+    logLabel: string;
+  }): Promise<{ path: string | null; section: string }> {
+    const filePath = path.join(path.dirname(instructionsFilePath), siblingInput.fileName);
+    const resolvedPath = path.resolve(filePath);
+    if (loadedPaths.has(resolvedPath)) return { path: filePath, section: "" };
+    try {
+      const contents = await fs.readFile(filePath, "utf8");
+      loadedPaths.add(resolvedPath);
       await input.onLog(
-        warningStream,
-        `[rudder] Warning: could not read agent memory instructions file "${memoryFilePath}": ${reason}\n`,
+        "stdout",
+        `[rudder] Loaded ${siblingInput.logLabel}: ${filePath}\n`,
       );
+      return {
+        path: filePath,
+        section:
+          `${contents}\n\n` +
+          `The above ${siblingInput.label} were loaded from ${filePath}. ` +
+          `Resolve any relative file references from ${instructionsDir}.`,
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        const reason = err instanceof Error ? err.message : String(err);
+        await input.onLog(
+          warningStream,
+          `[rudder] Warning: could not read ${siblingInput.logLabel} "${filePath}": ${reason}\n`,
+        );
+      }
+      return { path: null, section: "" };
     }
   }
 
-  const prefix = joinPromptSections([entrySection, memorySection]);
-  const commandNotes = [
-    `Loaded agent instructions from ${instructionsFilePath}`,
-    ...(memorySection ? [`Loaded agent memory instructions from ${memoryFilePath}`] : []),
-  ];
+  const soul = await loadSiblingInstructionFile({
+    fileName: "SOUL.md",
+    label: "agent role and persona instructions",
+    logLabel: "agent soul instructions file",
+  });
+  if (soul.section) commandNotes.push(`Loaded agent soul instructions from ${soul.path}`);
+
+  const tools = await loadSiblingInstructionFile({
+    fileName: "TOOLS.md",
+    label: "agent tool notes",
+    logLabel: "agent tool notes file",
+  });
+  if (tools.section) commandNotes.push(`Loaded agent tool notes from ${tools.path}`);
+
+  const memory = await loadSiblingInstructionFile({
+    fileName: "MEMORY.md",
+    label: "agent memory instructions",
+    logLabel: "agent memory instructions file",
+  });
+  if (memory.section) commandNotes.push(`Loaded agent memory instructions from ${memory.path}`);
+
+  const memoryFilePath = memory.section ? memory.path : null;
+  const memorySection = memory.section;
+  if (entrySection) commandNotes.splice(1, 0, `Loaded agent instructions from ${instructionsFilePath}`);
+
+  const prefix = joinPromptSections([operatingContractSection, entrySection, soul.section, tools.section, memorySection]);
   return {
     prefix,
     commandNotes,
     instructionsFilePath,
     instructionsDir,
-    memoryFilePath: memorySection ? memoryFilePath : null,
-    readFailed: false,
+    soulFilePath: soul.section ? soul.path : null,
+    toolsFilePath: tools.section ? tools.path : null,
+    memoryFilePath,
+    readFailed: !entrySection,
     metrics: {
       instructionsChars: prefix.length,
+      operatingContractChars: operatingContractSection.length,
       instructionEntryChars: entrySection.length,
+      soulChars: soul.section.length,
+      toolsChars: tools.section.length,
       memoryChars: memorySection.length,
     },
   };

@@ -90,7 +90,7 @@ Request body:
   "agentRuntimeConfig": {
     "cwd": "/absolute/path",
     "model": "o4-mini",
-    "promptTemplate": "You are CTO..."
+    "promptTemplate": "You are the CTO. Own technical strategy, architecture, engineering execution, and quality bars."
   },
   "runtimeConfig": {
     "heartbeat": {
@@ -141,6 +141,8 @@ Important notes:
 
 - `name` is optional; if omitted or blank, Rudder assigns a distinct first name automatically
 - `desiredSkills` accepts organization skill ids, canonical keys, or a unique slug; the server resolves and stores canonical organization skill keys
+- `agentRuntimeConfig.promptTemplate`, when present for local runtimes, is role/persona content that Rudder materializes as managed `SOUL.md`
+- do not put Rudder's shared operating contract in `promptTemplate`; supported local runtimes inject that contract from code
 - `sourceIssueId` and `sourceIssueIds` are the canonical way to link the hire back to originating issues
 - this route is preferred over creating `hire_agent` approvals manually because it preserves the organization's approval policy
 
