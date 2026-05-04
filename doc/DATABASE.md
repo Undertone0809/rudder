@@ -27,6 +27,10 @@ With the current local environment presets:
 - packaged Desktop uses the same `~/.rudder/instances/default/db/`
 - `pnpm test:e2e` uses `~/.rudder/instances/e2e/db/`
 
+When `pnpm dev` runs from a Codex-managed worktree at `~/.codex/worktrees/<id>/<repo>` and that checkout
+does not already have `.rudder/.env` or `.rudder/config.json`, the dev scripts auto-isolate it under
+`~/.rudder-worktrees/instances/codex-<id>-<repo>/db/` with non-default app and embedded PostgreSQL ports.
+
 If you need to apply pending migrations manually, run:
 
 ```sh
