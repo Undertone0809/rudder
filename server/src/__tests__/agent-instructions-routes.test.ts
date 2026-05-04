@@ -109,14 +109,14 @@ describe("agent instructions bundle routes", () => {
       mode: "managed",
       rootPath: "/tmp/agent-1",
       managedRootPath: "/tmp/agent-1",
-      entryFile: "AGENTS.md",
-      resolvedEntryPath: "/tmp/agent-1/AGENTS.md",
+      entryFile: "SOUL.md",
+      resolvedEntryPath: "/tmp/agent-1/SOUL.md",
       editable: true,
       warnings: [],
       legacyPromptTemplateActive: false,
       legacyBootstrapPromptTemplateActive: false,
       files: [{
-        path: "AGENTS.md",
+        path: "SOUL.md",
         size: 12,
         language: "markdown",
         markdown: true,
@@ -133,14 +133,14 @@ describe("agent instructions bundle routes", () => {
         mode: "managed",
         rootPath: "/tmp/agent-1",
         managedRootPath: "/tmp/agent-1",
-        entryFile: "AGENTS.md",
-        resolvedEntryPath: "/tmp/agent-1/AGENTS.md",
+        entryFile: "SOUL.md",
+        resolvedEntryPath: "/tmp/agent-1/SOUL.md",
         editable: true,
         warnings: [],
         legacyPromptTemplateActive: false,
         legacyBootstrapPromptTemplateActive: false,
         files: [{
-          path: "AGENTS.md",
+          path: "SOUL.md",
           size: 12,
           language: "markdown",
           markdown: true,
@@ -154,7 +154,7 @@ describe("agent instructions bundle routes", () => {
       changed: false,
     });
     mockAgentInstructionsService.readFile.mockResolvedValue({
-      path: "AGENTS.md",
+      path: "SOUL.md",
       size: 12,
       language: "markdown",
       markdown: true,
@@ -167,7 +167,7 @@ describe("agent instructions bundle routes", () => {
     mockAgentInstructionsService.writeFile.mockResolvedValue({
       bundle: null,
       file: {
-        path: "AGENTS.md",
+        path: "SOUL.md",
         size: 18,
         language: "markdown",
         markdown: true,
@@ -180,8 +180,8 @@ describe("agent instructions bundle routes", () => {
       agentRuntimeConfig: {
         instructionsBundleMode: "managed",
         instructionsRootPath: "/tmp/agent-1",
-        instructionsEntryFile: "AGENTS.md",
-        instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+        instructionsEntryFile: "SOUL.md",
+        instructionsFilePath: "/tmp/agent-1/SOUL.md",
       },
     });
     mockAgentInstructionsService.deleteFile.mockResolvedValue({
@@ -191,8 +191,8 @@ describe("agent instructions bundle routes", () => {
         mode: "managed",
         rootPath: "/tmp/agent-1",
         managedRootPath: "/tmp/agent-1",
-        entryFile: "AGENTS.md",
-        resolvedEntryPath: "/tmp/agent-1/AGENTS.md",
+        entryFile: "SOUL.md",
+        resolvedEntryPath: "/tmp/agent-1/SOUL.md",
         editable: true,
         warnings: [],
         legacyPromptTemplateActive: false,
@@ -202,8 +202,8 @@ describe("agent instructions bundle routes", () => {
       agentRuntimeConfig: {
         instructionsBundleMode: "managed",
         instructionsRootPath: "/tmp/agent-1",
-        instructionsEntryFile: "AGENTS.md",
-        instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+        instructionsEntryFile: "SOUL.md",
+        instructionsFilePath: "/tmp/agent-1/SOUL.md",
       },
     });
   });
@@ -217,7 +217,7 @@ describe("agent instructions bundle routes", () => {
       mode: "managed",
       rootPath: "/tmp/agent-1",
       managedRootPath: "/tmp/agent-1",
-      entryFile: "AGENTS.md",
+      entryFile: "SOUL.md",
     });
     expect(mockAgentInstructionsService.reconcileBundle).toHaveBeenCalled();
   });
@@ -230,8 +230,8 @@ describe("agent instructions bundle routes", () => {
         mode: "managed",
         rootPath: "/tmp/agent-1",
         managedRootPath: "/tmp/agent-1",
-        entryFile: "AGENTS.md",
-        resolvedEntryPath: "/tmp/agent-1/AGENTS.md",
+        entryFile: "SOUL.md",
+        resolvedEntryPath: "/tmp/agent-1/SOUL.md",
         editable: true,
         warnings: [],
         legacyPromptTemplateActive: false,
@@ -241,8 +241,8 @@ describe("agent instructions bundle routes", () => {
       agentRuntimeConfig: {
         instructionsBundleMode: "managed",
         instructionsRootPath: "/tmp/agent-1",
-        instructionsEntryFile: "AGENTS.md",
-        instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+        instructionsEntryFile: "SOUL.md",
+        instructionsFilePath: "/tmp/agent-1/SOUL.md",
       },
       changed: true,
     });
@@ -257,8 +257,8 @@ describe("agent instructions bundle routes", () => {
         agentRuntimeConfig: expect.objectContaining({
           instructionsBundleMode: "managed",
           instructionsRootPath: "/tmp/agent-1",
-          instructionsEntryFile: "AGENTS.md",
-          instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+          instructionsEntryFile: "SOUL.md",
+          instructionsFilePath: "/tmp/agent-1/SOUL.md",
         }),
       }),
     );
@@ -268,14 +268,14 @@ describe("agent instructions bundle routes", () => {
     const res = await request(createApp())
       .put("/api/agents/11111111-1111-4111-8111-111111111111/instructions-bundle/file?orgId=organization-1")
       .send({
-        path: "AGENTS.md",
+        path: "SOUL.md",
         content: "# Updated Agent\n",
         clearLegacyPromptTemplate: true,
       });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body).toMatchObject({
-      path: "AGENTS.md",
+      path: "SOUL.md",
       content: "# Updated Agent\n",
     });
     expect(mockAgentService.update).toHaveBeenCalledWith(
@@ -284,8 +284,8 @@ describe("agent instructions bundle routes", () => {
         agentRuntimeConfig: expect.objectContaining({
           instructionsBundleMode: "managed",
           instructionsRootPath: "/tmp/agent-1",
-          instructionsEntryFile: "AGENTS.md",
-          instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+          instructionsEntryFile: "SOUL.md",
+          instructionsFilePath: "/tmp/agent-1/SOUL.md",
         }),
       }),
       expect.any(Object),
@@ -303,8 +303,8 @@ describe("agent instructions bundle routes", () => {
         agentRuntimeConfig: expect.objectContaining({
           instructionsBundleMode: "managed",
           instructionsRootPath: "/tmp/agent-1",
-          instructionsEntryFile: "AGENTS.md",
-          instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+          instructionsEntryFile: "SOUL.md",
+          instructionsFilePath: "/tmp/agent-1/SOUL.md",
         }),
       }),
       expect.any(Object),
@@ -318,8 +318,8 @@ describe("agent instructions bundle routes", () => {
       agentRuntimeConfig: {
         instructionsBundleMode: "managed",
         instructionsRootPath: "/tmp/agent-1",
-        instructionsEntryFile: "AGENTS.md",
-        instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+        instructionsEntryFile: "SOUL.md",
+        instructionsFilePath: "/tmp/agent-1/SOUL.md",
         model: "gpt-5.4",
       },
     };
@@ -344,8 +344,8 @@ describe("agent instructions bundle routes", () => {
           model: "claude-sonnet-4",
           instructionsBundleMode: "managed",
           instructionsRootPath: "/tmp/agent-1",
-          instructionsEntryFile: "AGENTS.md",
-          instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+          instructionsEntryFile: "SOUL.md",
+          instructionsFilePath: "/tmp/agent-1/SOUL.md",
         }),
       }),
       expect.any(Object),
@@ -359,8 +359,8 @@ describe("agent instructions bundle routes", () => {
       agentRuntimeConfig: {
         instructionsBundleMode: "managed",
         instructionsRootPath: "/tmp/agent-1",
-        instructionsEntryFile: "AGENTS.md",
-        instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+        instructionsEntryFile: "SOUL.md",
+        instructionsFilePath: "/tmp/agent-1/SOUL.md",
         model: "gpt-5.4",
       },
     };
@@ -384,8 +384,8 @@ describe("agent instructions bundle routes", () => {
           model: "gpt-5.4",
           instructionsBundleMode: "managed",
           instructionsRootPath: "/tmp/agent-1",
-          instructionsEntryFile: "AGENTS.md",
-          instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+          instructionsEntryFile: "SOUL.md",
+          instructionsFilePath: "/tmp/agent-1/SOUL.md",
         }),
       }),
       expect.any(Object),
@@ -400,8 +400,8 @@ describe("agent instructions bundle routes", () => {
       agentRuntimeConfig: {
         instructionsBundleMode: "managed",
         instructionsRootPath: "/tmp/agents/cto--11111111/instructions",
-        instructionsEntryFile: "AGENTS.md",
-        instructionsFilePath: "/tmp/agents/cto--11111111/instructions/AGENTS.md",
+        instructionsEntryFile: "SOUL.md",
+        instructionsFilePath: "/tmp/agents/cto--11111111/instructions/SOUL.md",
       },
     });
 
@@ -423,8 +423,8 @@ describe("agent instructions bundle routes", () => {
       agentRuntimeConfig: {
         instructionsBundleMode: "managed",
         instructionsRootPath: "/tmp/agent-1",
-        instructionsEntryFile: "AGENTS.md",
-        instructionsFilePath: "/tmp/agent-1/AGENTS.md",
+        instructionsEntryFile: "SOUL.md",
+        instructionsFilePath: "/tmp/agent-1/SOUL.md",
         model: "gpt-5.4",
       },
     };

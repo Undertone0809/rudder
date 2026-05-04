@@ -21,7 +21,7 @@ const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 const COPILOT_ROW_NAME = "Rudder Copilot (system)";
 export const RUDDER_COPILOT_LABEL = "Rudder Copilot";
 const COPILOT_TITLE = "System-managed chat copilot";
-const COPILOT_ENTRY_FILE = "AGENTS.md";
+const COPILOT_ENTRY_FILE = "SOUL.md";
 const COPILOT_SYSTEM_KIND = "rudder_copilot";
 
 export type AgentRunScene = "chat" | "heartbeat";

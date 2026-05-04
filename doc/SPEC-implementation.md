@@ -1005,6 +1005,12 @@ V1 supports organization import/export using a portable package contract:
 
 Export/import behavior in V1:
 
+The `agents/<slug>/AGENTS.md` convention belongs to the portable package
+format. It does not mean Rudder-managed local runtimes use `AGENTS.md` as their
+runtime identity entry. New managed local agents use `SOUL.md` for durable
+role/persona instructions while Rudder injects the shared operating contract
+from runtime code.
+
 - export emits a clean vendor-neutral markdown package plus `.rudder.yaml`
 - projects and starter tasks are opt-in export content rather than default package content
 - recurring `TASK.md` entries use `recurring: true` in the base package and Rudder automation fidelity in `.rudder.yaml`

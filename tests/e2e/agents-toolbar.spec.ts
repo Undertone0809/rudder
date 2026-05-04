@@ -67,7 +67,7 @@ test.describe("Agents workspace entry", () => {
     await page.getByRole("button", { name: /Codex Local Codex agent/i }).click();
     const promptTemplateHelper = page.getByTestId("prompt-template-helper");
     await expect(promptTemplateHelper).toBeVisible();
-    await expect(promptTemplateHelper).toContainText("Prompt template is replayed on every heartbeat.");
+    await expect(promptTemplateHelper).toContainText("Rudder materializes this as SOUL.md");
     await expect(promptTemplateHelper).toHaveClass(/text-muted-foreground/);
     await expect(promptTemplateHelper).not.toHaveClass(/text-amber-100/);
 

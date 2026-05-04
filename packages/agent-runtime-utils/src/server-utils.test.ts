@@ -48,7 +48,7 @@ describe("selectPromptTemplate", () => {
     });
 
     expect(rendered).toContain("This is a recovery run, not a fresh task.");
-    expect(rendered).toContain("**Original Run ID:** run-123");
+    expect(rendered).toContain("- Original Run ID: run-123");
     expect(rendered).toContain("Finish CMO onboarding");
     expect(rendered).toContain("inspect what the previous run already completed");
     expect(rendered).toContain("Avoid blindly re-running the whole task.");
@@ -73,8 +73,8 @@ describe("selectPromptTemplate", () => {
     });
 
     expect(rendered).toContain("This is a recovery run, not a fresh task.");
-    expect(rendered).toContain("**Original Run ID:** run-456");
-    expect(rendered).toContain("**Failure Kind:** process_lost");
+    expect(rendered).toContain("- Original Run ID: run-456");
+    expect(rendered).toContain("- Failure Kind: process_lost");
     expect(rendered).toContain("inspect what the previous run already completed");
     expect(rendered).not.toContain("Current Issue Context");
   });
@@ -107,7 +107,7 @@ describe("selectPromptTemplate", () => {
 
     expect(rendered).toContain("This is a passive issue follow-up");
     expect(rendered).toContain("The previous run ended without sufficient issue close-out.");
-    expect(rendered).toContain("**Origin Run ID:** run-origin");
+    expect(rendered).toContain("- Origin Run ID: run-origin");
     expect(rendered).toContain("Publish onboarding notes");
     expect(rendered).toContain("add a progress comment, mark the issue done, block it with a reason, or hand it off");
   });

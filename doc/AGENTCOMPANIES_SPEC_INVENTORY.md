@@ -96,14 +96,15 @@ Route registration lives in `server/src/app.ts` via `organizationRoutes(db, stor
 |---|---|
 | `skills/rudder/references/organization-skills.md` | Reference doc for organization skill library workflow — install, inspect, update, assign. Skill packages are a subset of the agent organizations spec. |
 | `server/src/services/organization-skills.ts` | Organization skill management service — handles SKILL.md-based imports and organization-level skill library. |
-| `server/src/services/agent-instructions.ts` | Agent instructions service — resolves AGENTS.md paths for agent instruction loading. |
+| `server/src/services/agent-instructions.ts` | Agent instructions service — manages runtime instruction bundles. New managed local agents default to `SOUL.md`; portability import/export still maps portable `AGENTS.md` package files. |
 
 ## 12. Quick Cross-Reference by Spec Concept
 
 | Spec concept | Primary implementation files |
 |---|---|
 | `ORGANIZATION.md` frontmatter & body | `organization-portability.ts` (export emitter + import parser) |
-| `AGENTS.md` frontmatter & body | `organization-portability.ts`, `agent-instructions.ts` |
+| `AGENTS.md` frontmatter & body | `organization-portability.ts` |
+| Managed runtime `SOUL.md` body | `agent-instructions.ts`, `default-agent-instructions.ts` |
 | `PROJECT.md` frontmatter & body | `organization-portability.ts` |
 | `TASK.md` frontmatter & body | `organization-portability.ts` |
 | `SKILL.md` packages | `organization-portability.ts`, `organization-skills.ts` |

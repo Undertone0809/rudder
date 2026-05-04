@@ -2229,6 +2229,8 @@ function ConfigurationTab({
 
 /* ---- Prompts Tab ---- */
 
+const DEFAULT_INSTRUCTIONS_ENTRY_FILE = "SOUL.md";
+
 function PromptsTab({
   agent,
   orgId,
@@ -2248,7 +2250,7 @@ function PromptsTab({
   const { confirm } = useDialog();
   const { selectedOrganizationId } = useOrganization();
   const { isMobile } = useSidebar();
-  const [selectedFile, setSelectedFile] = useState<string>("AGENTS.md");
+  const [selectedFile, setSelectedFile] = useState<string>(DEFAULT_INSTRUCTIONS_ENTRY_FILE);
   const [showFilePanel, setShowFilePanel] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   const [bundleDraft, setBundleDraft] = useState<{
@@ -2271,7 +2273,7 @@ function PromptsTab({
   } | null>(null);
 
   useEffect(() => {
-    setSelectedFile("AGENTS.md");
+    setSelectedFile(DEFAULT_INSTRUCTIONS_ENTRY_FILE);
     setShowFilePanel(false);
     setDraft(null);
     setBundleDraft(null);
@@ -2303,7 +2305,7 @@ function PromptsTab({
     ? (bundle?.managedRootPath ?? bundle?.rootPath ?? "")
     : (bundle?.rootPath ?? "");
   const currentMode = bundleDraft?.mode ?? persistedMode;
-  const currentEntryFile = bundleDraft?.entryFile ?? bundle?.entryFile ?? "AGENTS.md";
+  const currentEntryFile = bundleDraft?.entryFile ?? bundle?.entryFile ?? DEFAULT_INSTRUCTIONS_ENTRY_FILE;
   const currentRootPath = bundleDraft?.rootPath ?? persistedRootPath;
   const fileOptions = useMemo(
     () => bundle?.files.map((file) => file.path) ?? [],
@@ -2458,7 +2460,7 @@ function PromptsTab({
       (
         bundleDraft.mode !== persistedMode ||
         bundleDraft.rootPath !== persistedRootPath ||
-        bundleDraft.entryFile !== (bundle?.entryFile ?? "AGENTS.md")
+        bundleDraft.entryFile !== (bundle?.entryFile ?? DEFAULT_INSTRUCTIONS_ENTRY_FILE)
       ),
   );
   const fileDirty = draft !== null && draft !== currentContent;
@@ -2599,7 +2601,7 @@ function PromptsTab({
                           selectedFile: selectedOrEntryFile,
                         };
                       }
-                      const nextEntryFile = currentEntryFile || "AGENTS.md";
+                      const nextEntryFile = currentEntryFile || DEFAULT_INSTRUCTIONS_ENTRY_FILE;
                       setBundleDraft({
                         mode: "managed",
                         rootPath: bundle?.managedRootPath ?? currentRootPath,
@@ -2616,7 +2618,7 @@ function PromptsTab({
                     variant={currentMode === "external" ? "default" : "outline"}
                     onClick={() => {
                       const externalBundle = externalBundleRef.current;
-                      const nextEntryFile = externalBundle?.entryFile ?? currentEntryFile ?? "AGENTS.md";
+                      const nextEntryFile = externalBundle?.entryFile ?? currentEntryFile ?? DEFAULT_INSTRUCTIONS_ENTRY_FILE;
                       setBundleDraft({
                         mode: "external",
                         rootPath: externalBundle?.rootPath ?? (bundle?.mode === "external" ? (bundle.rootPath ?? "") : ""),
@@ -2686,14 +2688,14 @@ function PromptsTab({
                       <HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent side="right" sideOffset={4}>
-                      The main file the agent reads first when loading instructions. Defaults to AGENTS.md.
+                      The main file the agent reads first when loading role and persona instructions. Defaults to SOUL.md.
                     </TooltipContent>
                   </Tooltip>
                 </span>
                 <Input
                   value={currentEntryFile}
                   onChange={(event) => {
-                    const nextEntryFile = event.target.value || "AGENTS.md";
+                    const nextEntryFile = event.target.value || DEFAULT_INSTRUCTIONS_ENTRY_FILE;
                     const nextSelectedFile = selectedOrEntryFile === currentEntryFile
                       ? nextEntryFile
                       : selectedOrEntryFile;

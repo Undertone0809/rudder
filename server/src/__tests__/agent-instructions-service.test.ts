@@ -113,8 +113,52 @@ describe("agent instructions service", () => {
     }));
     await expect(loadDefaultAgentInstructionsBundle("ceo")).resolves.toEqual(expect.objectContaining({
       "SOUL.md": expect.stringContaining("# SOUL.md -- CEO Persona"),
-      "MEMORY.md": expect.stringContaining("# Tacit Memory"),
+      "MEMORY.md": expect.stringContaining("# MEMORY.md"),
     }));
+  });
+
+  it("uses SOUL.md as the default managed bundle entry file", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-soul-default-");
+    cleanupDirs.add(paperclipHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const svc = agentInstructionsService();
+    const agent = makeAgent({});
+
+    const result = await svc.materializeManagedBundle(agent, { "TOOLS.md": "## Tools\n" });
+
+    expect(result.bundle.entryFile).toBe("SOUL.md");
+    expect(result.bundle.files.map((file) => file.path)).toEqual(["SOUL.md", "TOOLS.md"]);
+    expect(result.agentRuntimeConfig).toMatchObject({
+      instructionsBundleMode: "managed",
+      instructionsRootPath: managedInstructionsRoot(paperclipHome),
+      instructionsEntryFile: "SOUL.md",
+      instructionsFilePath: path.join(managedInstructionsRoot(paperclipHome), "SOUL.md"),
+    });
+    await expect(fs.readFile(path.join(result.bundle.managedRootPath, "SOUL.md"), "utf8")).resolves.toBe("");
+  });
+
+  it("creates the default SOUL.md entry when the first managed write targets another file", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-first-write-");
+    cleanupDirs.add(paperclipHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const svc = agentInstructionsService();
+    const agent = makeAgent({});
+
+    const result = await svc.writeFile(agent, "TOOLS.md", "## Tools\n");
+
+    expect(result.bundle.entryFile).toBe("SOUL.md");
+    expect(result.bundle.files.map((file) => file.path)).toEqual(["SOUL.md", "TOOLS.md"]);
+    expect(result.agentRuntimeConfig).toMatchObject({
+      instructionsBundleMode: "managed",
+      instructionsRootPath: managedInstructionsRoot(paperclipHome),
+      instructionsEntryFile: "SOUL.md",
+      instructionsFilePath: path.join(managedInstructionsRoot(paperclipHome), "SOUL.md"),
+    });
+    await expect(fs.readFile(path.join(result.bundle.managedRootPath, "SOUL.md"), "utf8")).resolves.toBe("");
   });
 
   it("creates the target entry file when switching to a new external root", async () => {
