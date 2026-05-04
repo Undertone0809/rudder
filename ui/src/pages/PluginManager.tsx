@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { PluginRecord } from "@rudderhq/shared";
 import { Link, useLocation } from "@/lib/router";
-import { AlertTriangle, FlaskConical, Plus, Power, Puzzle, Settings, Trash } from "lucide-react";
+import { AlertTriangle, Plus, Power, Puzzle, Settings, Trash } from "lucide-react";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { pluginsApi } from "@/api/plugins";
@@ -88,14 +88,14 @@ export function PluginManager() {
     queryFn: () => pluginsApi.list(),
   });
 
-  const examplesQuery = useQuery({
-    queryKey: queryKeys.plugins.examples,
-    queryFn: () => pluginsApi.listExamples(),
+  const availableQuery = useQuery({
+    queryKey: queryKeys.plugins.available,
+    queryFn: () => pluginsApi.listAvailable(),
   });
 
   const invalidatePluginQueries = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.plugins.all });
-    queryClient.invalidateQueries({ queryKey: queryKeys.plugins.examples });
+    queryClient.invalidateQueries({ queryKey: queryKeys.plugins.available });
     queryClient.invalidateQueries({ queryKey: queryKeys.plugins.uiContributions });
   };
 
@@ -147,9 +147,15 @@ export function PluginManager() {
   });
 
   const installedPlugins = plugins ?? [];
-  const examples = examplesQuery.data ?? [];
+  const availablePlugins = availableQuery.data ?? [];
   const installedByPackageName = new Map(installedPlugins.map((plugin) => [plugin.packageName, plugin]));
-  const examplePackageNames = new Set(examples.map((example) => example.packageName));
+  const installedByPluginKey = new Map(installedPlugins.map((plugin) => [plugin.pluginKey, plugin]));
+  const examplePackageNames = new Set(
+    availablePlugins.filter((plugin) => plugin.tag === "example").map((plugin) => plugin.packageName),
+  );
+  const examplePluginKeys = new Set(
+    availablePlugins.filter((plugin) => plugin.tag === "example").map((plugin) => plugin.pluginKey),
+  );
   const errorSummaryByPluginId = useMemo(
     () =>
       new Map(
@@ -221,35 +227,37 @@ export function PluginManager() {
 
       <section className="space-y-3">
         <div className="flex items-center gap-2">
-          <FlaskConical className="h-5 w-5 text-muted-foreground" />
+          <Puzzle className="h-5 w-5 text-muted-foreground" />
           <h2 className="text-base font-semibold">Available Plugins</h2>
-          <Badge variant="outline">Examples</Badge>
         </div>
 
-        {examplesQuery.isLoading ? (
-          <div className="text-sm text-muted-foreground">Loading bundled examples...</div>
-        ) : examplesQuery.error ? (
-          <div className="text-sm text-destructive">Failed to load bundled examples.</div>
-        ) : examples.length === 0 ? (
+        {availableQuery.isLoading ? (
+          <div className="text-sm text-muted-foreground">Loading available plugins...</div>
+        ) : availableQuery.error ? (
+          <div className="text-sm text-destructive">Failed to load available plugins.</div>
+        ) : availablePlugins.length === 0 ? (
           <div className="rounded-md border border-dashed px-4 py-3 text-sm text-muted-foreground">
-            No bundled example plugins were found in this checkout.
+            No available plugins were found in this build.
           </div>
         ) : (
           <ul className="divide-y rounded-md border bg-card">
-            {examples.map((example) => {
-              const installedPlugin = installedByPackageName.get(example.packageName);
+            {availablePlugins.map((availablePlugin) => {
+              const installedPlugin =
+                installedByPackageName.get(availablePlugin.packageName) ??
+                installedByPluginKey.get(availablePlugin.pluginKey);
+              const isExample = availablePlugin.tag === "example";
               const installPending =
                 installMutation.isPending &&
                 installMutation.variables?.isLocalPath &&
-                installMutation.variables.packageName === example.localPath;
+                installMutation.variables.packageName === availablePlugin.localPath;
 
               return (
-                <li key={example.packageName}>
+                <li key={availablePlugin.packageName}>
                   <div className="flex items-center gap-4 px-4 py-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{example.displayName}</span>
-                        <Badge variant="outline">Example</Badge>
+                        <span className="font-medium">{availablePlugin.displayName}</span>
+                        {isExample ? <Badge variant="outline">Example</Badge> : null}
                         {installedPlugin ? (
                           <Badge
                             variant={installedPlugin.status === "ready" ? "default" : "secondary"}
@@ -261,8 +269,8 @@ export function PluginManager() {
                           <Badge variant="secondary">Not installed</Badge>
                         )}
                       </div>
-                      <p className="mt-1 text-sm text-muted-foreground">{example.description}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{example.packageName}</p>
+                      <p className="mt-1 text-sm text-muted-foreground">{availablePlugin.description}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{availablePlugin.packageName}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {installedPlugin ? (
@@ -289,12 +297,12 @@ export function PluginManager() {
                           disabled={installPending || installMutation.isPending}
                           onClick={() =>
                             installMutation.mutate({
-                              packageName: example.localPath,
+                              packageName: availablePlugin.localPath,
                               isLocalPath: true,
                             })
                           }
                         >
-                          {installPending ? "Installing..." : "Install Example"}
+                          {installPending ? "Installing..." : isExample ? "Install Example" : "Install Plugin"}
                         </Button>
                       )}
                     </div>
@@ -337,7 +345,7 @@ export function PluginManager() {
                       >
                         {plugin.manifestJson.displayName ?? plugin.packageName}
                       </Link>
-                      {examplePackageNames.has(plugin.packageName) && (
+                      {(examplePackageNames.has(plugin.packageName) || examplePluginKeys.has(plugin.pluginKey)) && (
                         <Badge variant="outline">Example</Badge>
                       )}
                     </div>

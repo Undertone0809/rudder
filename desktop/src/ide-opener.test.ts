@@ -1,7 +1,13 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   listAvailableIdeTargets,
+  listWorkspaceLaunchTargets,
+  openWorkspace,
   openWorkspaceFileInIde,
+  resolveWorkspaceRootDirectory,
   resolveWorkspaceFileAbsolutePath,
 } from "./ide-opener.js";
 
@@ -33,6 +39,93 @@ describe("listAvailableIdeTargets", () => {
       { id: "vscode", label: "VS Code" },
       { id: "intellij", label: "IntelliJ IDEA" },
     ]);
+  });
+});
+
+describe("listWorkspaceLaunchTargets", () => {
+  it("detects local editors, terminals, and the folder fallback in launcher order", async () => {
+    const targets = await listWorkspaceLaunchTargets({
+      platform: "darwin",
+      homeDir: "/Users/tester",
+      pathExists: async (targetPath) =>
+        targetPath === "/Applications/Cursor.app"
+        || targetPath === "/Applications/Visual Studio Code.app"
+        || targetPath === "/System/Applications/Utilities/Terminal.app"
+        || targetPath === "/Applications/Warp.app",
+      commandExists: async () => false,
+    });
+
+    expect(targets).toEqual([
+      { id: "cursor", label: "Cursor", kind: "ide", iconPath: "/Applications/Cursor.app" },
+      { id: "vscode", label: "VS Code", kind: "ide", iconPath: "/Applications/Visual Studio Code.app" },
+      { id: "terminal", label: "Terminal", kind: "terminal", iconPath: "/System/Applications/Utilities/Terminal.app" },
+      { id: "warp", label: "Warp", kind: "terminal", iconPath: "/Applications/Warp.app" },
+      { id: "finder", label: "Finder", kind: "folder", iconPath: "/System/Library/CoreServices/Finder.app" },
+    ]);
+  });
+
+  it("keeps the folder fallback available when no app or command is detected", async () => {
+    const targets = await listWorkspaceLaunchTargets({
+      platform: "linux",
+      pathExists: async () => false,
+      commandExists: async () => false,
+    });
+
+    expect(targets).toEqual([
+      { id: "finder", label: "Folder", kind: "folder" },
+    ]);
+  });
+});
+
+describe("openWorkspace", () => {
+  it("opens an IDE with the workspace root path", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-open-"));
+    const openDarwinApp = vi.fn(async () => {});
+
+    const result = await openWorkspace(root, "cursor", {
+      platform: "darwin",
+      homeDir: "/Users/tester",
+      pathExists: async (targetPath) => targetPath === "/Applications/Cursor.app",
+      commandExists: async () => false,
+      openDarwinApp,
+    });
+
+    expect(openDarwinApp).toHaveBeenCalledWith("/Applications/Cursor.app", root);
+    expect(result).toEqual({
+      id: "cursor",
+      label: "Cursor",
+      kind: "ide",
+      absolutePath: root,
+    });
+  });
+
+  it("opens terminal targets with the workspace root as cwd", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-terminal-"));
+    const runTerminalCommand = vi.fn(async () => {});
+
+    await openWorkspace(root, "terminal", {
+      platform: "darwin",
+      homeDir: "/Users/tester",
+      pathExists: async (targetPath) => targetPath === "/Applications/Terminal.app",
+      commandExists: async () => false,
+      runTerminalCommand,
+    });
+
+    expect(runTerminalCommand).toHaveBeenCalledWith("/Applications/Terminal.app", root, "darwin");
+  });
+
+  it("opens the folder fallback with the workspace root", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-folder-"));
+    const openFolder = vi.fn(async () => {});
+
+    await openWorkspace(root, "finder", {
+      platform: "linux",
+      pathExists: async () => false,
+      commandExists: async () => false,
+      openFolder,
+    });
+
+    expect(openFolder).toHaveBeenCalledWith(root, "linux");
   });
 });
 
@@ -82,6 +175,22 @@ describe("openWorkspaceFileInIde", () => {
         commandExists: async () => false,
       }),
     ).rejects.toThrow("No supported local IDE was detected.");
+  });
+});
+
+describe("resolveWorkspaceRootDirectory", () => {
+  it("resolves existing workspace root directories", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-root-"));
+
+    await expect(resolveWorkspaceRootDirectory(root)).resolves.toBe(root);
+  });
+
+  it("rejects file paths as workspace roots", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-file-root-"));
+    const filePath = path.join(root, "notes.md");
+    await fs.writeFile(filePath, "# Notes\n", "utf8");
+
+    await expect(resolveWorkspaceRootDirectory(filePath)).rejects.toThrow("Workspace root must be a directory.");
   });
 });
 

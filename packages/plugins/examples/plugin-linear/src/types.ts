@@ -19,6 +19,8 @@ export type LinearOrganizationMapping = {
 
 export type LinearPluginConfig = {
   apiTokenSecretRef?: string;
+  teamMappings: LinearTeamMapping[];
+  /** Legacy per-organization setup, retained for reading older configs. */
   organizationMappings: LinearOrganizationMapping[];
   /** Internal test-only switch. Not exposed in the public settings schema. */
   fixtureMode?: boolean;
@@ -112,6 +114,7 @@ export type LinearLinkState = {
 
 export type SettingsBootstrapData = {
   config: LinearPluginConfig;
+  /** Available orgs are used only as a storage scope for creating the secret ref. */
   organizations: Array<Pick<Organization, "id" | "name" | "issuePrefix">>;
   fixtureMode: boolean;
 };

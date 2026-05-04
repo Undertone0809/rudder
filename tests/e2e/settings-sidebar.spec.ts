@@ -228,6 +228,10 @@ test.describe("Settings sidebar", () => {
     await expect(page.getByRole("heading", { name: "Plugin Manager" })).toBeVisible();
     await expect(page.getByText("File Browser (Example)", { exact: true })).toBeVisible();
     await expect(page.getByText("Kitchen Sink (Example)", { exact: true })).toBeVisible();
+    const linearRow = page.locator("li").filter({ hasText: "@rudderhq/plugin-linear" }).first();
+    await expect(linearRow).toBeVisible();
+    await expect(linearRow.getByText("Example", { exact: true })).toHaveCount(0);
+    await expect(linearRow.getByRole("button", { name: "Install Example" })).toHaveCount(0);
     await expect(page.getByText("Hello World Widget (Example)", { exact: true })).toHaveCount(0);
   });
 

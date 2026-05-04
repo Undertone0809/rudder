@@ -187,6 +187,46 @@ export interface OrganizationPortabilityExportPreviewResult {
   rudderExtensionPath: string;
 }
 
+export type OrganizationExportJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
+
+export type OrganizationExportJobStage =
+  | "queued"
+  | "collecting"
+  | "resolving_selection"
+  | "rendering_skills"
+  | "rendering_agents"
+  | "rendering_projects"
+  | "rendering_tasks"
+  | "generating_assets"
+  | "finalizing"
+  | "ready"
+  | "failed"
+  | "canceled";
+
+export interface OrganizationExportJobProgress {
+  stage: OrganizationExportJobStage;
+  message: string;
+  completed: number;
+  total: number;
+  fileCount: number | null;
+}
+
+export interface OrganizationExportJob {
+  id: string;
+  orgId: string;
+  status: OrganizationExportJobStatus;
+  progress: OrganizationExportJobProgress;
+  error: string | null;
+  resultAvailable: boolean;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+}
+
+export interface OrganizationExportJobCreateResult {
+  job: OrganizationExportJob;
+}
+
 export type OrganizationPortabilitySource =
   | {
       type: "inline";

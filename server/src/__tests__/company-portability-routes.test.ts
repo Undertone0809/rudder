@@ -60,6 +60,12 @@ vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
   budgetService: () => mockBudgetService,
+  organizationExportJobService: () => ({
+    create: vi.fn(),
+    get: vi.fn(),
+    getResult: vi.fn(),
+    cancel: vi.fn(),
+  }),
   organizationPortabilityService: () => mockCompanyPortabilityService,
   organizationSkillService: () => mockOrganizationSkillService,
   resourceCatalogService: () => mockResourceCatalogService,

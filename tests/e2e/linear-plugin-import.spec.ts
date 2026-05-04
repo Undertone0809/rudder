@@ -1,4 +1,3 @@
-import path from "node:path";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
 type Organization = {
@@ -15,6 +14,12 @@ type PluginRecord = {
   id: string;
   pluginKey: string;
   status: string;
+};
+
+type AvailablePlugin = {
+  packageName: string;
+  pluginKey: string;
+  localPath: string;
 };
 
 type SecretRecord = {
@@ -51,7 +56,6 @@ type ImportResult = {
 };
 
 const LINEAR_PLUGIN_KEY = "rudder.linear";
-const LINEAR_PLUGIN_PATH = path.resolve(process.cwd(), "packages/plugins/examples/plugin-linear");
 
 async function createLinearFixtureOrg(request: APIRequestContext) {
   const orgRes = await request.post("/api/orgs", {
@@ -94,9 +98,15 @@ async function installLinearPlugin(request: APIRequestContext): Promise<PluginRe
   const existing = await findLinearPlugin(request);
   if (existing) return existing;
 
+  const availableRes = await request.get("/api/plugins/available");
+  expect(availableRes.ok()).toBe(true);
+  const availablePlugins = await availableRes.json() as AvailablePlugin[];
+  const linearPlugin = availablePlugins.find((plugin) => plugin.pluginKey === LINEAR_PLUGIN_KEY);
+  expect(linearPlugin).toBeTruthy();
+
   const installRes = await request.post("/api/plugins/install", {
     data: {
-      packageName: LINEAR_PLUGIN_PATH,
+      packageName: linearPlugin!.localPath,
       isLocalPath: true,
     },
     timeout: 30_000,
@@ -118,7 +128,7 @@ async function installLinearPlugin(request: APIRequestContext): Promise<PluginRe
 async function configureLinearPlugin(
   request: APIRequestContext,
   plugin: PluginRecord,
-  organization: Organization,
+  _organization: Organization,
   secret: SecretRecord,
 ) {
   const configRes = await request.post(`/api/plugins/${plugin.id}/config`, {
@@ -126,9 +136,27 @@ async function configureLinearPlugin(
       configJson: {
         apiTokenSecretRef: secret.id,
         fixtureMode: true,
+        teamMappings: [
+          {
+            teamId: "team-eng",
+            teamName: "Engineering",
+            stateMappings: [
+              {
+                linearStateId: "state-backlog",
+                linearStateName: "Backlog",
+                rudderStatus: "backlog",
+              },
+              {
+                linearStateId: "state-progress",
+                linearStateName: "In Progress",
+                rudderStatus: "in_progress",
+              },
+            ],
+          },
+        ],
         organizationMappings: [
           {
-            orgId: organization.id,
+            orgId: "__global__",
             teamMappings: [
               {
                 teamId: "team-eng",
@@ -165,6 +193,7 @@ async function configureLinearTokenOnly(
       configJson: {
         apiTokenSecretRef: secret.id,
         fixtureMode: true,
+        teamMappings: [],
         organizationMappings: [],
       },
     },

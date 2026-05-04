@@ -28,6 +28,7 @@ export { boardAuthService } from "./board-auth.js";
 export { instanceSettingsService } from "./instance-settings.js";
 export { operatorProfileService } from "./operator-profile.js";
 export { organizationPortabilityService, organizationPortabilityFacade } from "./organization-portability.js";
+export { organizationExportJobService } from "./export-jobs.js";
 export { executionWorkspaceService } from "./execution-workspaces.js";
 export { workspaceOperationService } from "./workspace-operations.js";
 export { workspaceBackupService } from "./workspace-backups.js";

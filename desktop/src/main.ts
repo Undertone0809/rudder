@@ -10,7 +10,14 @@ import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml } from "./boot-screen.js";
 import { DESKTOP_CLI_FLAG, ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
-import { listAvailableIdeTargets, openWorkspaceFileInIde } from "./ide-opener.js";
+import {
+  listAvailableIdeTargets,
+  listWorkspaceLaunchTargets,
+  openWorkspace,
+  openWorkspaceFileInIde,
+  type DesktopWorkspaceLaunchTarget,
+  type DesktopWorkspaceLaunchTargetId,
+} from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
 import { resolveDesktopSystemPermissions, type DesktopSystemPermissions } from "./system-permissions.js";
 import {
@@ -133,6 +140,10 @@ type DesktopIdeTarget = {
   label: string;
 };
 
+type DesktopWorkspaceLaunchTargetPayload = Omit<DesktopWorkspaceLaunchTarget, "iconPath"> & {
+  iconDataUrl?: string;
+};
+
 type ActiveRunSummary = {
   totalRuns: number;
   organizations: Array<{
@@ -201,6 +212,30 @@ function resolveDesktopCapabilities(): DesktopCapabilities {
     badgeCount: typeof app.setBadgeCount === "function",
     notifications,
   };
+}
+
+async function toWorkspaceLaunchTargetPayload(
+  target: DesktopWorkspaceLaunchTarget,
+): Promise<DesktopWorkspaceLaunchTargetPayload> {
+  let iconDataUrl: string | undefined;
+
+  if (target.iconPath) {
+    try {
+      const icon = await app.getFileIcon(target.iconPath, { size: "normal" });
+      if (!icon.isEmpty()) {
+        iconDataUrl = icon.toDataURL();
+      }
+    } catch {
+      iconDataUrl = undefined;
+    }
+  }
+
+  const payload = {
+    id: target.id,
+    label: target.label,
+    kind: target.kind,
+  };
+  return iconDataUrl ? { ...payload, iconDataUrl } : payload;
 }
 
 async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
@@ -1460,6 +1495,16 @@ function registerIpc(): void {
   ipcMain.handle("desktop:list-available-ides", async (): Promise<DesktopIdeTarget[]> => {
     return await listAvailableIdeTargets();
   });
+  ipcMain.handle("desktop:list-workspace-launch-targets", async (): Promise<DesktopWorkspaceLaunchTargetPayload[]> => {
+    const targets = await listWorkspaceLaunchTargets();
+    return await Promise.all(targets.map(toWorkspaceLaunchTargetPayload));
+  });
+  ipcMain.handle(
+    "desktop:open-workspace",
+    async (_event, payload: { rootPath: string; targetId?: DesktopWorkspaceLaunchTargetId }) => {
+      await openWorkspace(payload.rootPath, payload.targetId);
+    },
+  );
   ipcMain.handle(
     "desktop:open-workspace-file-in-ide",
     async (_event, payload: { rootPath: string; filePath: string; ideId?: DesktopIdeTarget["id"] }) => {

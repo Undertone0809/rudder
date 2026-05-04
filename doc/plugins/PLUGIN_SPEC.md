@@ -26,6 +26,7 @@ Current limitations to keep in mind:
 - Runtime npm installs assume `npm` is available in the running environment and that the host can reach the configured package registry.
 - Published npm packages are the intended install artifact for deployed plugins.
 - The repo example plugins under `packages/plugins/examples/` are development conveniences. They work from a source checkout and should not be assumed to exist in a generic published build unless they are explicitly shipped with that build.
+- Linear is a first-party available plugin. Production builds stage it into the server package so Desktop/prod users can install it from Plugin Manager without a source checkout.
 - Dynamic plugin install is not yet cloud-ready for horizontally scaled or ephemeral deployments. There is no shared artifact store, install coordination, or cross-node distribution layer yet.
 - The current runtime does not yet ship a real host-provided plugin UI component kit, and it does not support plugin asset uploads/reads. Treat those as future-scope ideas in this spec, not current implementation promises.
 

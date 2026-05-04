@@ -33,18 +33,38 @@ import type {
 function emptyConfig(): LinearPluginConfig {
   return {
     apiTokenSecretRef: "",
+    teamMappings: [],
     organizationMappings: [],
   };
 }
 
 export function normalizeConfig(raw: LinearPluginConfig | Record<string, unknown> | undefined | null): LinearPluginConfig {
+  const legacyOrganizationMappings = Array.isArray((raw as LinearPluginConfig | undefined)?.organizationMappings)
+    ? ((raw as LinearPluginConfig).organizationMappings ?? [])
+    : [];
+  const explicitTeamMappings = Array.isArray((raw as LinearPluginConfig | undefined)?.teamMappings)
+    ? ((raw as LinearPluginConfig).teamMappings ?? [])
+    : [];
+
   return {
     ...emptyConfig(),
     ...(raw as LinearPluginConfig),
-    organizationMappings: Array.isArray((raw as LinearPluginConfig | undefined)?.organizationMappings)
-      ? ((raw as LinearPluginConfig).organizationMappings ?? [])
-      : [],
+    teamMappings: explicitTeamMappings.length > 0
+      ? explicitTeamMappings
+      : mergeLegacyTeamMappings(legacyOrganizationMappings),
+    organizationMappings: legacyOrganizationMappings,
   };
+}
+
+function mergeLegacyTeamMappings(mappings: LinearOrganizationMapping[]): LinearTeamMapping[] {
+  const byTeamId = new Map<string, LinearTeamMapping>();
+  for (const mapping of mappings) {
+    for (const team of mapping.teamMappings ?? []) {
+      if (!team.teamId || byTeamId.has(team.teamId)) continue;
+      byTeamId.set(team.teamId, team);
+    }
+  }
+  return [...byTeamId.values()];
 }
 
 async function getConfig(ctx: PluginContext): Promise<LinearPluginConfig> {
@@ -71,6 +91,9 @@ function requireOrgId(params: Record<string, unknown>): string {
 }
 
 function getOrgMapping(config: LinearPluginConfig, orgId: string): LinearOrganizationMapping | null {
+  if (config.teamMappings.length > 0) {
+    return { orgId, teamMappings: config.teamMappings };
+  }
   return config.organizationMappings.find((mapping) => mapping.orgId === orgId) ?? null;
 }
 
@@ -116,7 +139,7 @@ async function resolveLinearClient(ctx: PluginContext, orgId: string) {
   const config = await getConfig(ctx);
   const mapping = getOrgMapping(config, orgId);
   if (!config.apiTokenSecretRef) throw new Error("Add a Linear token in plugin settings.");
-  if (!mapping) throw new Error("Connect Linear for this Rudder organization before importing issues.");
+  if (!mapping) throw new Error("Connect Linear in plugin settings before importing issues.");
   const token = await ctx.secrets.resolve(config.apiTokenSecretRef);
   const client = createLinearApiClient(token, adaptHostFetch(ctx.http.fetch), {
     fixtureMode: config.fixtureMode === true,
@@ -193,7 +216,7 @@ function findTeamMapping(mapping: LinearOrganizationMapping, issue: LinearIssueS
 function assertIssueTeamAllowed(mapping: LinearOrganizationMapping, issue: LinearIssueSummary): void {
   if (findTeamMapping(mapping, issue)) return;
   throw new Error(
-    `Linear issue ${issue.identifier} belongs to team ${issue.team.name} (${issue.team.id}), which is not allowed for this Rudder organization.`,
+    `Linear issue ${issue.identifier} belongs to team ${issue.team.name} (${issue.team.id}), which is not selected for import.`,
   );
 }
 
@@ -273,7 +296,7 @@ async function buildPageBootstrap(ctx: PluginContext, orgId: string): Promise<Pa
   if (!mapping) {
     return {
       configured: false,
-      message: "Refresh Linear settings for this Rudder organization before importing issues.",
+      message: "Refresh Linear settings before importing issues.",
       projects,
       teamMappings: [],
     };
@@ -281,7 +304,7 @@ async function buildPageBootstrap(ctx: PluginContext, orgId: string): Promise<Pa
   if (mapping.teamMappings.length === 0) {
     return {
       configured: false,
-      message: "Add at least one allowed Linear team for this organization.",
+      message: "Add at least one allowed Linear team.",
       projects,
       teamMappings: [],
     };
@@ -445,40 +468,25 @@ async function validateConfig(ctx: PluginContext, config: LinearPluginConfig): P
   if (!config.apiTokenSecretRef?.trim()) {
     errors.push("Linear token is required.");
   }
-  if (!Array.isArray(config.organizationMappings) || config.organizationMappings.length === 0) {
-    warnings.push("No Rudder organization has been prepared for import yet. Use Refresh from Linear in settings.");
+  if (!Array.isArray(config.teamMappings) || config.teamMappings.length === 0) {
+    warnings.push("No Linear teams have been prepared for import yet. Use Refresh from Linear in settings.");
   }
 
-  const seenOrgs = new Set<string>();
-  for (const mapping of config.organizationMappings ?? []) {
-    if (!mapping.orgId) {
-      errors.push("Each Rudder organization setup must choose an organization.");
+  const seenTeams = new Set<string>();
+  for (const team of config.teamMappings ?? []) {
+    if (!team.teamId?.trim()) {
+      errors.push("A Linear team choice has no team.");
       continue;
     }
-    if (seenOrgs.has(mapping.orgId)) {
-      errors.push(`This Rudder organization is configured more than once: ${mapping.orgId}`);
+    if (seenTeams.has(team.teamId)) {
+      errors.push(`Linear team ${team.teamName ?? team.teamId} is selected more than once.`);
     }
-    seenOrgs.add(mapping.orgId);
-    const seenTeams = new Set<string>();
-    if (!Array.isArray(mapping.teamMappings) || mapping.teamMappings.length === 0) {
-      errors.push(`Organization ${mapping.orgId} must include at least one Linear team.`);
-      continue;
-    }
-    for (const team of mapping.teamMappings) {
-      if (!team.teamId?.trim()) {
-        errors.push(`Organization ${mapping.orgId} has a Linear team choice with no team.`);
-        continue;
-      }
-      if (seenTeams.has(team.teamId)) {
-        errors.push(`Linear team ${team.teamName ?? team.teamId} is selected more than once.`);
-      }
-      seenTeams.add(team.teamId);
-      for (const stateMapping of team.stateMappings ?? []) {
-        if (stateMapping.rudderStatus === "in_progress") {
-          warnings.push(
-            `Linear team ${team.teamName ?? team.teamId} has a status rule that imports as in progress. Imports stay unassigned in v1, so those issues are downgraded to todo.`,
-          );
-        }
+    seenTeams.add(team.teamId);
+    for (const stateMapping of team.stateMappings ?? []) {
+      if (stateMapping.rudderStatus === "in_progress") {
+        warnings.push(
+          `Linear team ${team.teamName ?? team.teamId} has a status rule that imports as in progress. Imports stay unassigned in v1, so those issues are downgraded to todo.`,
+        );
       }
     }
   }

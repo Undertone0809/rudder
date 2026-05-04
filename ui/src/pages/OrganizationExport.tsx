@@ -6,6 +6,7 @@ import type {
   OrganizationPortabilityExportPreviewResult,
   OrganizationPortabilityExportResult,
   OrganizationPortabilityManifest,
+  OrganizationExportJob,
   Project,
 } from "@rudderhq/shared";
 import { useNavigate, useLocation } from "@/lib/router";
@@ -29,9 +30,13 @@ import { useProjectOrder } from "../hooks/useProjectOrder";
 import { buildPortableSidebarOrder } from "../lib/organization-portability-sidebar";
 import { getPortableFileDataUrl, getPortableFileText, isPortableImageFile } from "../lib/portable-files";
 import {
+  AlertCircle,
+  CheckCircle2,
   Download,
   Package,
+  RefreshCw,
   Search,
+  X,
 } from "lucide-react";
 import {
   type FileTreeNode,
@@ -554,6 +559,120 @@ function ExportPreviewPane({
   );
 }
 
+const EXPORT_STAGE_LABELS: Record<string, string> = {
+  queued: "Queued",
+  collecting: "Collecting data",
+  resolving_selection: "Resolving selection",
+  rendering_skills: "Rendering skills",
+  rendering_agents: "Rendering agents",
+  rendering_projects: "Rendering projects",
+  rendering_tasks: "Rendering tasks",
+  generating_assets: "Generating assets",
+  finalizing: "Finalizing package",
+  ready: "Ready",
+  failed: "Failed",
+  canceled: "Canceled",
+};
+
+function ExportBuildPanel({
+  job,
+  ready,
+  stale,
+  cancelPending,
+  onCancel,
+  onRetry,
+  onDownload,
+}: {
+  job: OrganizationExportJob | null;
+  ready: boolean;
+  stale: boolean;
+  cancelPending: boolean;
+  onCancel: () => void;
+  onRetry: () => void;
+  onDownload: () => void;
+}) {
+  if (!job) return null;
+
+  const active = job.status === "queued" || job.status === "running";
+  const failed = job.status === "failed";
+  const canceled = job.status === "canceled";
+  const progress = job.progress.total > 0
+    ? Math.max(0, Math.min(100, Math.round((job.progress.completed / job.progress.total) * 100)))
+    : 0;
+  const title = ready
+    ? "Export ready"
+    : failed
+      ? "Export build failed"
+      : canceled
+        ? "Export build canceled"
+        : stale
+          ? "Selection changed"
+          : "Building export package";
+  const Icon = ready ? CheckCircle2 : failed ? AlertCircle : canceled || stale ? AlertCircle : Package;
+
+  return (
+    <div className={cn(
+      "mx-5 mt-3 rounded-md border px-4 py-3",
+      ready && "border-emerald-500/30 bg-emerald-500/5",
+      failed && "border-destructive/40 bg-destructive/5",
+      canceled && "border-amber-500/30 bg-amber-500/5",
+      stale && !ready && !failed && !canceled && "border-amber-500/30 bg-amber-500/5",
+      active && !stale && "border-border bg-accent/10",
+    )}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <Icon className={cn(
+              "h-4 w-4 shrink-0",
+              ready && "text-emerald-500",
+              (failed || canceled || stale) && "text-amber-500",
+              active && !stale && "text-muted-foreground",
+            )} />
+            <div className="font-medium">{title}</div>
+          </div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            {stale
+              ? "The selected files changed after this build started. Rebuild before downloading."
+              : job.error ?? job.progress.message}
+          </div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-border">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all",
+                ready ? "bg-emerald-500" : failed || canceled || stale ? "bg-amber-500" : "bg-primary",
+              )}
+              style={{ width: `${ready ? 100 : progress}%` }}
+            />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>{EXPORT_STAGE_LABELS[job.progress.stage] ?? job.progress.stage}</span>
+            <span>{ready ? "100" : progress}%</span>
+            {job.progress.fileCount !== null ? <span>{job.progress.fileCount} files</span> : null}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {active ? (
+            <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={cancelPending}>
+              <X className="h-3.5 w-3.5" />
+              Cancel
+            </Button>
+          ) : failed || canceled || stale ? (
+            <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+              <RefreshCw className="h-3.5 w-3.5" />
+              Retry
+            </Button>
+          ) : ready ? (
+            <Button type="button" size="sm" onClick={onDownload}>
+              <Download className="h-3.5 w-3.5" />
+              Download .zip
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────
 
 /** Extract the file path from the current URL pathname (after /organization/export/files/) */
@@ -604,6 +723,9 @@ export function OrganizationExport() {
   const [checkedFiles, setCheckedFiles] = useState<Set<string>>(new Set());
   const [treeSearch, setTreeSearch] = useState("");
   const [taskLimit, setTaskLimit] = useState(TASKS_PAGE_SIZE);
+  const [exportJob, setExportJob] = useState<OrganizationExportJob | null>(null);
+  const [exportJobSelectionKey, setExportJobSelectionKey] = useState<string | null>(null);
+  const [exportResult, setExportResult] = useState<OrganizationPortabilityExportResult | null>(null);
   const savedExpandedRef = useRef<Set<string> | null>(null);
   const initialFileFromUrl = useRef(filePathFromLocation(location.pathname));
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
@@ -637,6 +759,10 @@ export function OrganizationExport() {
   const sidebarOrderKey = useMemo(
     () => JSON.stringify(sidebarOrder ?? null),
     [sidebarOrder],
+  );
+  const exportSelectionKey = useMemo(
+    () => JSON.stringify(Array.from(checkedFiles).sort()),
+    [checkedFiles],
   );
 
   // Navigate-aware file selection: updates state + URL without page reload.
@@ -725,27 +851,75 @@ export function OrganizationExport() {
     },
   });
 
-  const downloadMutation = useMutation({
+  const buildExportMutation = useMutation({
     mutationFn: () =>
-      organizationsApi.exportPackage(selectedOrganizationId!, {
+      organizationsApi.createExportJob(selectedOrganizationId!, {
         include: { organization: true, agents: true, projects: true, issues: true },
         selectedFiles: Array.from(checkedFiles).sort(),
         sidebarOrder,
       }),
-    onSuccess: (result) => {
-      const resultCheckedFiles = new Set(Object.keys(result.files));
-      downloadZip(result, resultCheckedFiles, result.files);
+    onSuccess: ({ job }) => {
+      setExportJob(job);
+      setExportJobSelectionKey(exportSelectionKey);
+      setExportResult(null);
       pushToast({
-        tone: "success",
-        title: "Export downloaded",
-        body: `${resultCheckedFiles.size} file${resultCheckedFiles.size === 1 ? "" : "s"} exported as ${result.rootPath}.zip`,
+        tone: "info",
+        title: "Export build started",
+        body: "Rudder is preparing the package.",
       });
     },
     onError: (err) => {
       pushToast({
         tone: "error",
         title: "Export failed",
-        body: err instanceof Error ? err.message : "Failed to build export package.",
+        body: err instanceof Error ? err.message : "Failed to start export build.",
+      });
+    },
+  });
+
+  const activeExportJob = exportJob?.status === "queued" || exportJob?.status === "running";
+  const exportJobQuery = useQuery({
+    queryKey: ["organization-export-job", selectedOrganizationId, exportJob?.id],
+    queryFn: () => organizationsApi.getExportJob(selectedOrganizationId!, exportJob!.id),
+    enabled: !!selectedOrganizationId && !!exportJob?.id && activeExportJob,
+    refetchInterval: (query) => {
+      const data = query.state.data as OrganizationExportJob | undefined;
+      return !data || data.status === "queued" || data.status === "running" ? 700 : false;
+    },
+    refetchIntervalInBackground: true,
+  });
+
+  useEffect(() => {
+    if (!exportJobQuery.data) return;
+    setExportJob(exportJobQuery.data);
+  }, [exportJobQuery.data]);
+
+  const exportJobResultQuery = useQuery({
+    queryKey: ["organization-export-job-result", selectedOrganizationId, exportJob?.id],
+    queryFn: () => organizationsApi.getExportJobResult(selectedOrganizationId!, exportJob!.id),
+    enabled:
+      !!selectedOrganizationId
+      && !!exportJob?.id
+      && exportJob.status === "succeeded"
+      && !exportResult,
+  });
+
+  useEffect(() => {
+    if (!exportJobResultQuery.data) return;
+    setExportResult(exportJobResultQuery.data);
+  }, [exportJobResultQuery.data]);
+
+  const cancelExportMutation = useMutation({
+    mutationFn: () => organizationsApi.cancelExportJob(selectedOrganizationId!, exportJob!.id),
+    onSuccess: (job) => {
+      setExportJob(job);
+      setExportResult(null);
+    },
+    onError: (err) => {
+      pushToast({
+        tone: "error",
+        title: "Cancel failed",
+        body: err instanceof Error ? err.message : "Failed to cancel export build.",
       });
     },
   });
@@ -804,12 +978,20 @@ export function OrganizationExport() {
 
   const totalFiles = useMemo(() => countFiles(tree), [tree]);
   const selectedCount = checkedFiles.size;
+  const exportResultIsCurrent = !!exportResult && exportJobSelectionKey === exportSelectionKey;
+  const exportBuildIsStale = !!exportJobSelectionKey && exportJobSelectionKey !== exportSelectionKey;
+  const exportBuildActive = exportJob?.status === "queued" || exportJob?.status === "running";
 
   // Filter out terminated agent messages — they don't need to be shown
   const warnings = useMemo(() => {
     if (!exportData) return [] as string[];
     return exportData.warnings.filter((w) => !/terminated agent/i.test(w));
   }, [exportData]);
+
+  useEffect(() => {
+    if (!exportResult || exportJobSelectionKey === exportSelectionKey) return;
+    setExportResult(null);
+  }, [exportResult, exportJobSelectionKey, exportSelectionKey]);
 
   function handleToggleDir(path: string) {
     setExpandedDirs((prev) => {
@@ -905,9 +1087,25 @@ export function OrganizationExport() {
     });
   }
 
-  function handleDownload() {
-    if (!exportData || checkedFiles.size === 0 || downloadMutation.isPending) return;
-    downloadMutation.mutate();
+  function handleBuildExport() {
+    if (!exportData || checkedFiles.size === 0 || buildExportMutation.isPending || exportBuildActive) return;
+    buildExportMutation.mutate();
+  }
+
+  function handleCancelExport() {
+    if (!exportJob || !exportBuildActive || cancelExportMutation.isPending) return;
+    cancelExportMutation.mutate();
+  }
+
+  function handleDownloadBuiltExport() {
+    if (!exportResultIsCurrent || !exportResult) return;
+    const resultCheckedFiles = new Set(Object.keys(exportResult.files));
+    downloadZip(exportResult, resultCheckedFiles, exportResult.files);
+    pushToast({
+      tone: "success",
+      title: "Export downloaded",
+      body: `${resultCheckedFiles.size} file${resultCheckedFiles.size === 1 ? "" : "s"} exported as ${exportResult.rootPath}.zip`,
+    });
   }
 
   if (!selectedOrganizationId) {
@@ -948,16 +1146,28 @@ export function OrganizationExport() {
           </div>
           <Button
             size="sm"
-            onClick={handleDownload}
-            disabled={selectedCount === 0 || downloadMutation.isPending}
+            onClick={exportResultIsCurrent ? handleDownloadBuiltExport : handleBuildExport}
+            disabled={selectedCount === 0 || buildExportMutation.isPending || exportBuildActive || exportJobResultQuery.isFetching}
           >
             <Download className="mr-1.5 h-3.5 w-3.5" />
-            {downloadMutation.isPending
-              ? "Building export..."
-              : `Export ${selectedCount} file${selectedCount === 1 ? "" : "s"}`}
+            {exportBuildActive || buildExportMutation.isPending
+              ? "Building..."
+              : exportResultIsCurrent
+                ? "Download .zip"
+                : `Build ${selectedCount} file${selectedCount === 1 ? "" : "s"}`}
           </Button>
         </div>
       </div>
+
+      <ExportBuildPanel
+        job={exportJob}
+        ready={exportResultIsCurrent}
+        stale={exportBuildIsStale}
+        cancelPending={cancelExportMutation.isPending}
+        onCancel={handleCancelExport}
+        onRetry={handleBuildExport}
+        onDownload={handleDownloadBuiltExport}
+      />
 
       {/* Warnings */}
       {warnings.length > 0 && (

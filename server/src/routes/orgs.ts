@@ -22,6 +22,7 @@ import {
   agentService,
   budgetService,
   resourceCatalogService,
+  organizationExportJobService,
   organizationPortabilityService,
   workspaceBackupService,
   organizationSkillService,
@@ -43,6 +44,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   const resources = resourceCatalogService(db);
   const workspaceBrowser = organizationWorkspaceBrowserService(db);
   const workspaceBackups = workspaceBackupService(db);
+  const exportJobs = organizationExportJobService();
   const linearImportSourceSchema = z.object({
     apiKey: z.string().min(1),
     teamIdOrKey: z.string().trim().min(1).optional(),
@@ -590,6 +592,61 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     await assertCanManagePortability(req, orgId, "exports");
     const preview = await portability.previewExport(orgId, req.body);
     res.json(preview);
+  });
+
+  router.post("/:orgId/exports/jobs", validate(organizationPortabilityExportSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    await assertCanManagePortability(req, orgId, "exports");
+    const job = exportJobs.create(orgId, ({ signal, onProgress }) =>
+      portability.exportBundle(orgId, req.body, { signal, onProgress })
+    );
+    res.status(202).json({ job });
+  });
+
+  router.get("/:orgId/exports/jobs/:jobId", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const jobId = req.params.jobId as string;
+    await assertCanManagePortability(req, orgId, "exports");
+    const job = exportJobs.get(jobId);
+    if (!job || job.orgId !== orgId) {
+      res.status(404).json({ error: "Export job not found" });
+      return;
+    }
+    res.json(job);
+  });
+
+  router.delete("/:orgId/exports/jobs/:jobId", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const jobId = req.params.jobId as string;
+    await assertCanManagePortability(req, orgId, "exports");
+    const existing = exportJobs.get(jobId);
+    if (!existing || existing.orgId !== orgId) {
+      res.status(404).json({ error: "Export job not found" });
+      return;
+    }
+    const job = exportJobs.cancel(jobId);
+    res.json(job);
+  });
+
+  router.get("/:orgId/exports/jobs/:jobId/result", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const jobId = req.params.jobId as string;
+    await assertCanManagePortability(req, orgId, "exports");
+    const job = exportJobs.get(jobId);
+    if (!job || job.orgId !== orgId) {
+      res.status(404).json({ error: "Export job not found" });
+      return;
+    }
+    if (job.status !== "succeeded") {
+      res.status(409).json({ error: "Export job is not ready" });
+      return;
+    }
+    const result = exportJobs.getResult(jobId);
+    if (!result) {
+      res.status(404).json({ error: "Export result expired" });
+      return;
+    }
+    res.json(result);
   });
 
   router.post("/:orgId/exports", validate(organizationPortabilityExportSchema), async (req, res) => {
