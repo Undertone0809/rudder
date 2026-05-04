@@ -6,15 +6,19 @@ import { buildCalendarDisplayItems } from "./calendar-display-items";
 
 function event(overrides: Partial<CalendarEvent> & Pick<CalendarEvent, "id" | "startAt" | "endAt">): CalendarEvent {
   const { id, startAt, endAt, ...rest } = overrides;
-  const agentId = overrides.ownerAgentId ?? "agent-1";
+  const agentId = overrides.ownerType === "user"
+    ? null
+    : overrides.ownerAgentId === undefined
+      ? "agent-1"
+      : overrides.ownerAgentId;
   return {
     id,
     orgId: "org-1",
     sourceId: null,
     eventKind: "agent_work_block",
     eventStatus: "planned",
-    ownerType: "agent",
-    ownerUserId: null,
+    ownerType: agentId ? "agent" : "user",
+    ownerUserId: agentId ? null : "user-1",
     ownerAgentId: agentId,
     title: `${agentId === "agent-2" ? "Other Bot" : "Cluster Bot"} · Calendar block`,
     description: null,
@@ -71,14 +75,37 @@ describe("compactDenseTimedSegments", () => {
     expect(items[0].endAt).toEqual(new Date(2026, 4, 1, 10, 15));
   });
 
-  it("keeps readable three-column overlap groups expanded", () => {
+  it("compacts three-column agent-owned overlaps that are unreadable in week view", () => {
     const items = compactDenseTimedSegments(segments([
-      event({ id: "a", startAt: new Date(2026, 4, 1, 9, 0), endAt: new Date(2026, 4, 1, 10, 0) }),
-      event({ id: "b", startAt: new Date(2026, 4, 1, 9, 5), endAt: new Date(2026, 4, 1, 10, 5) }),
-      event({ id: "c", startAt: new Date(2026, 4, 1, 9, 10), endAt: new Date(2026, 4, 1, 10, 10) }),
+      event({ id: "a", startAt: new Date(2026, 4, 1, 9, 0), endAt: new Date(2026, 4, 1, 10, 0), ownerAgentId: "agent-1" }),
+      event({ id: "b", startAt: new Date(2026, 4, 1, 9, 5), endAt: new Date(2026, 4, 1, 10, 5), ownerAgentId: "agent-2" }),
+      event({ id: "c", startAt: new Date(2026, 4, 1, 9, 10), endAt: new Date(2026, 4, 1, 10, 10), ownerAgentId: "agent-3" }),
+    ]));
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.event.kind).toBe("collision_cluster");
+    if (items[0]?.event.kind !== "collision_cluster") throw new Error("Expected a collision cluster");
+    expect(items[0].event.events.map((clusteredEvent) => clusteredEvent.id)).toEqual(["a", "b", "c"]);
+    expect(items[0].event.agentIds).toEqual(["agent-1", "agent-2", "agent-3"]);
+  });
+
+  it("keeps three-column human overlaps expanded for direct manipulation", () => {
+    const items = compactDenseTimedSegments(segments([
+      event({ id: "a", startAt: new Date(2026, 4, 1, 9, 0), endAt: new Date(2026, 4, 1, 10, 0), ownerType: "user", ownerAgentId: null }),
+      event({ id: "b", startAt: new Date(2026, 4, 1, 9, 5), endAt: new Date(2026, 4, 1, 10, 5), ownerType: "user", ownerAgentId: null }),
+      event({ id: "c", startAt: new Date(2026, 4, 1, 9, 10), endAt: new Date(2026, 4, 1, 10, 10), ownerType: "user", ownerAgentId: null }),
     ]));
 
     expect(items.map((item) => item.event.kind)).toEqual(["single", "single", "single"]);
+  });
+
+  it("keeps two-column agent-owned overlaps expanded", () => {
+    const items = compactDenseTimedSegments(segments([
+      event({ id: "a", startAt: new Date(2026, 4, 1, 9, 0), endAt: new Date(2026, 4, 1, 10, 0), ownerAgentId: "agent-1" }),
+      event({ id: "b", startAt: new Date(2026, 4, 1, 9, 15), endAt: new Date(2026, 4, 1, 10, 15), ownerAgentId: "agent-2" }),
+    ]));
+
+    expect(items.map((item) => item.event.kind)).toEqual(["single", "single"]);
   });
 
   it("does not compact long chains unless concurrency crosses the threshold", () => {

@@ -237,13 +237,13 @@ test.describe("Calendar V1", () => {
     await expect(drawer.getByRole("link", { name: "Open agent" })).toBeVisible();
   });
 
-  test("compacts dense overlapping week blocks into an inspectable busy cluster", async ({ page }) => {
+  test("compacts unreadable three-column agent week blocks into an inspectable busy cluster", async ({ page }) => {
     test.slow();
     await page.setViewportSize({ width: 1490, height: 1003 });
 
     const organization = await createCalendarOrg(page, `Calendar-Collisions-${Date.now()}`);
     const todayKey = localDateKey(new Date());
-    const agents = await Promise.all(["Ada", "Diana", "Grace", "Ken"].map(async (name) => {
+    const agents = await Promise.all(["Diana", "Mira", "Grace"].map(async (name) => {
       const response = await page.request.post(`/api/orgs/${organization.id}/agents`, {
         data: { name, role: "engineer" },
       });
@@ -266,20 +266,20 @@ test.describe("Calendar V1", () => {
     await page.goto("/calendar");
 
     await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
-    const busyCluster = page.locator('[data-testid^="calendar-collision-cluster-"]').filter({ hasText: "4 events · 4 agents" }).first();
+    const busyCluster = page.locator('[data-testid^="calendar-collision-cluster-"]').filter({ hasText: "3 events · 3 agents" }).first();
     await expect(busyCluster).toBeVisible();
     await expect(busyCluster).not.toContainText("Dense overlap");
 
     await busyCluster.click();
-    const drawer = page.getByRole("dialog", { name: "4 events · 4 agents" });
+    const drawer = page.getByRole("dialog", { name: "3 events · 3 agents" });
     await expect(drawer).toBeVisible();
     await expect(drawer.getByText("Underlying events", { exact: true })).toBeVisible();
-    await expect(drawer.getByText("Ada · Dense overlap 1")).toBeVisible();
-    await expect(drawer.getByText("Ken · Dense overlap 4")).toBeVisible();
+    await expect(drawer.getByText("Diana · Dense overlap 1")).toBeVisible();
+    await expect(drawer.getByText("Grace · Dense overlap 3")).toBeVisible();
 
     await drawer.getByRole("button", { name: "Open day view" }).click();
     await expect(page.locator('[data-testid^="calendar-collision-cluster-"]')).toHaveCount(0);
-    await expect(page.getByText("Ada · Dense overlap 1").first()).toBeVisible();
+    await expect(page.getByText("Diana · Dense overlap 1").first()).toBeVisible();
   });
 
   test("creates a planned agent work block as a read-only human-facing annotation", async ({ page }) => {
