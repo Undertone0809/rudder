@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -214,21 +214,74 @@ function resolveDesktopCapabilities(): DesktopCapabilities {
   };
 }
 
+function execFileText(command: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { encoding: "utf8" }, (error, stdout) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(stdout.trim());
+    });
+  });
+}
+
+async function readPlistRawValue(plistPath: string, key: string): Promise<string | null> {
+  if (process.platform !== "darwin") return null;
+  try {
+    const value = await execFileText("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", plistPath]);
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveDarwinAppBundleIconPath(appPath: string): Promise<string | null> {
+  if (process.platform !== "darwin" || !appPath.endsWith(".app")) return null;
+
+  const infoPlistPath = path.join(appPath, "Contents", "Info.plist");
+  const resourcesPath = path.join(appPath, "Contents", "Resources");
+  const iconName = await readPlistRawValue(infoPlistPath, "CFBundleIconFile")
+    ?? await readPlistRawValue(infoPlistPath, "CFBundleIconName");
+  if (!iconName) return null;
+
+  const candidates = path.extname(iconName)
+    ? [iconName]
+    : [iconName, `${iconName}.icns`, `${iconName}.png`];
+  for (const candidate of candidates) {
+    const iconPath = path.join(resourcesPath, candidate);
+    if (fs.existsSync(iconPath)) return iconPath;
+  }
+  return null;
+}
+
+async function readWorkspaceLaunchTargetIconDataUrl(target: DesktopWorkspaceLaunchTarget): Promise<string | undefined> {
+  if (!target.iconPath) return undefined;
+
+  const bundleIconPath = await resolveDarwinAppBundleIconPath(target.iconPath);
+  if (bundleIconPath) {
+    const icon = nativeImage.createFromPath(bundleIconPath);
+    if (!icon.isEmpty()) {
+      return icon.resize({ width: 32, height: 32 }).toDataURL();
+    }
+  }
+
+  try {
+    const icon = await app.getFileIcon(target.iconPath, { size: "normal" });
+    if (!icon.isEmpty()) {
+      return icon.toDataURL();
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
 async function toWorkspaceLaunchTargetPayload(
   target: DesktopWorkspaceLaunchTarget,
 ): Promise<DesktopWorkspaceLaunchTargetPayload> {
-  let iconDataUrl: string | undefined;
-
-  if (target.iconPath) {
-    try {
-      const icon = await app.getFileIcon(target.iconPath, { size: "normal" });
-      if (!icon.isEmpty()) {
-        iconDataUrl = icon.toDataURL();
-      }
-    } catch {
-      iconDataUrl = undefined;
-    }
-  }
+  const iconDataUrl = await readWorkspaceLaunchTargetIconDataUrl(target);
 
   const payload = {
     id: target.id,
