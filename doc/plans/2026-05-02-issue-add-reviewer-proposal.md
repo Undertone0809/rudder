@@ -25,6 +25,7 @@ related_code:
   - server/src/services/issues.ts
   - server/src/routes/issues.ts
   - server/src/services/issue-assignment-wakeup.ts
+  - server/src/services/issue-review-wakeup.ts
   - server/src/services/messenger.ts
   - ui/src/api/issues.ts
   - ui/src/lib/assignees.ts
@@ -34,9 +35,10 @@ related_code:
   - ui/src/pages/Inbox.tsx
   - tests/e2e/issues-assigned-to-me.spec.ts
   - tests/e2e/issues-inline-assignee.spec.ts
+  - tests/e2e/issues-reviewer-routing.spec.ts
 commit_refs:
   - docs: refine issue reviewer routing proposal
-updated_at: 2026-05-02
+updated_at: 2026-05-04
 ---
 
 # Issue Reviewer Routing
@@ -115,6 +117,8 @@ issue create/detail UI.
 
 4. Route review attention:
    - creating an issue with a reviewer does not wake anyone immediately
+   - creating an issue directly in `in_review` with `reviewerAgentId` queues a
+     reviewer wakeup
    - entering `in_review` with `reviewerAgentId` queues a reviewer wakeup
    - entering `in_review` with `reviewerUserId` makes the issue appear in
      reviewer-oriented human attention surfaces
@@ -146,6 +150,8 @@ issue create/detail UI.
   - reviewer user sees the issue in reviewer issue filters and human attention
     surfaces
 - Reviewer wakeups are not confused with assignment wakeups.
+- Directly creating an `in_review` issue with a reviewer agent is treated as a
+  review request, not as a silent create.
 - E2E coverage proves the create and detail reviewer path.
 
 ## Out Of Scope
@@ -184,7 +190,8 @@ issue create/detail UI.
    - the current board user
    - another eligible organization user, if user listing is available
    - an active organization agent
-5. The issue is created. No reviewer is woken at create time.
+5. The issue is created. A reviewer is not woken at create time unless the issue
+   is created directly in `in_review`.
 6. The assignee works the issue normally.
 7. When work is ready, the assignee or board moves the issue to `in_review` and
    leaves the relevant output signal: comment, document, work product, PR, or
@@ -257,12 +264,13 @@ reviewerUserId?: string;
 
 Review routing triggers:
 
+- Issue created directly in `in_review` with `reviewerAgentId`.
 - Status changed from any non-`in_review` value to `in_review`.
 - Reviewer changed while current issue status is already `in_review`.
 
 Review routing does not trigger:
 
-- issue create
+- issue create outside `in_review`
 - reviewer change while issue is not `in_review`
 - repeated patches that leave status and reviewer unchanged
 - self-authored comments alone
@@ -366,12 +374,13 @@ Recommended wakeup properties:
 }
 ```
 
-If the existing heartbeat wakeup source type cannot accept `review`, extend the
-type. Do not reuse `issue_assigned` for reviewer wakeups.
+The heartbeat wakeup source type is extended with `review`. Do not reuse
+`issue_assigned` for reviewer wakeups.
 
 Idempotency rule:
 
-- one wakeup per reviewer agent per qualifying transition or reviewer change
+- one wakeup per reviewer agent per qualifying create, transition, or reviewer
+  change
 - no wakeup for repeated identical `PATCH` calls
 - no wakeup when the reviewer agent is the actor currently making the update
 
@@ -532,26 +541,21 @@ Update these docs if the proposal lands:
 
 ## Open Issues
 
-1. Should the new heartbeat wakeup source be `review`, or should it reuse an
-   existing source with distinct `reason: "issue_review_requested"`?
-   Recommendation: add `review` if the type change is small; otherwise keep the
-   distinct reason and context snapshot mandatory.
-
-2. Should reviewer be allowed to equal assignee?
+1. Should reviewer be allowed to equal assignee?
    Recommendation: allow in the API for V1, warn in UI later if this becomes
    confusing.
 
-3. Do we need a separate `review_requests` table?
+2. Do we need a separate `review_requests` table?
    Recommendation: no for V1. Add it only if we need multiple review attempts,
    explicit review SLA, separate review assignment history, or parallel
    reviewers.
 
-4. Should review outcome be modeled explicitly?
+3. Should review outcome be modeled explicitly?
    Recommendation: no for this proposal. Use existing comments and status
    transitions first. Introduce explicit review outcome only when the product
    needs analytics or stronger workflow gates.
 
-5. How broad should user picker support be in local trusted mode?
+4. How broad should user picker support be in local trusted mode?
    Recommendation: support current user immediately, and support broader
    organization users only if the member list API is already reliable enough for
    the dialog.

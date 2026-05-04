@@ -16,6 +16,7 @@ import {
   heartbeatRuns,
   issueComments,
   issues,
+  organizationMemberships,
   projects,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
@@ -103,6 +104,7 @@ describe("issueService.list participantAgentId", () => {
 
   afterEach(async () => {
     await db.delete(issueComments);
+    await db.delete(organizationMemberships);
     await db.delete(activityLog);
     await db.delete(issues);
     await db.delete(assets);
@@ -290,6 +292,160 @@ describe("issueService.list participantAgentId", () => {
     });
 
     expect(result.map((issue) => issue.id)).toEqual([matchedIssueId]);
+  });
+
+  it("persists and filters reviewer principals", async () => {
+    const orgId = randomUUID();
+    const reviewerAgentId = randomUUID();
+    const reviewerUserId = "reviewer-user";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Reviewer Org",
+      urlKey: deriveOrganizationUrlKey("Reviewer Org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: reviewerAgentId,
+      orgId,
+      name: "Reviewer Agent",
+      role: "reviewer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(organizationMemberships).values({
+      orgId,
+      principalType: "user",
+      principalId: reviewerUserId,
+      status: "active",
+      membershipRole: "member",
+    });
+
+    const agentReviewed = await svc.create(orgId, {
+      title: "Agent reviewed issue",
+      status: "todo",
+      priority: "medium",
+      reviewerAgentId,
+    });
+    const userReviewed = await svc.create(orgId, {
+      title: "User reviewed issue",
+      status: "todo",
+      priority: "medium",
+      reviewerUserId,
+    });
+
+    expect(agentReviewed.reviewerAgentId).toBe(reviewerAgentId);
+    expect(agentReviewed.reviewerUserId).toBeNull();
+    expect(userReviewed.reviewerUserId).toBe(reviewerUserId);
+
+    await expect(svc.create(orgId, {
+      title: "Invalid reviewer issue",
+      status: "todo",
+      priority: "medium",
+      reviewerAgentId,
+      reviewerUserId,
+    })).rejects.toThrow(/one reviewer/i);
+
+    expect((await svc.list(orgId, { reviewerAgentId })).map((issue) => issue.id)).toEqual([agentReviewed.id]);
+    expect((await svc.list(orgId, { reviewerUserId })).map((issue) => issue.id)).toEqual([userReviewed.id]);
+  });
+
+  it("clears reviewer and preserves reviewer when update omits reviewer fields", async () => {
+    const orgId = randomUUID();
+    const reviewerAgentId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Reviewer Update Org",
+      urlKey: deriveOrganizationUrlKey("Reviewer Update Org"),
+      issuePrefix: `U${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: reviewerAgentId,
+      orgId,
+      name: "Reviewer Agent",
+      role: "reviewer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const created = await svc.create(orgId, {
+      title: "Reviewer update issue",
+      status: "todo",
+      priority: "medium",
+      reviewerAgentId,
+    });
+
+    const priorityUpdate = await svc.update(created.id, { priority: "high" });
+    expect(priorityUpdate?.reviewerAgentId).toBe(reviewerAgentId);
+
+    const cleared = await svc.update(created.id, { reviewerAgentId: null });
+    expect(cleared?.reviewerAgentId).toBeNull();
+    expect(cleared?.reviewerUserId).toBeNull();
+  });
+
+  it("rejects reviewers outside the organization or inactive membership", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const reviewerAgentId = randomUUID();
+    const reviewerUserId = "inactive-reviewer";
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Reviewer Boundary Org",
+        urlKey: deriveOrganizationUrlKey("Reviewer Boundary Org"),
+        issuePrefix: `B${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Reviewer Org",
+        urlKey: deriveOrganizationUrlKey("Other Reviewer Org"),
+        issuePrefix: `O${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(agents).values({
+      id: reviewerAgentId,
+      orgId: otherOrgId,
+      name: "External Reviewer",
+      role: "reviewer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(organizationMemberships).values({
+      orgId,
+      principalType: "user",
+      principalId: reviewerUserId,
+      status: "suspended",
+      membershipRole: "member",
+    });
+
+    await expect(svc.create(orgId, {
+      title: "Cross org reviewer",
+      status: "todo",
+      priority: "medium",
+      reviewerAgentId,
+    })).rejects.toThrow(/Reviewer must belong to same organization/i);
+
+    await expect(svc.create(orgId, {
+      title: "Inactive reviewer",
+      status: "todo",
+      priority: "medium",
+      reviewerUserId,
+    })).rejects.toThrow(/Reviewer user not found/i);
   });
 
   it("lists only issue-level attachments", async () => {

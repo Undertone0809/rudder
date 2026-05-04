@@ -261,6 +261,25 @@ points to the `agents` table.
 
 ---
 
+## Reviewers
+
+Issues may also name one optional reviewer:
+
+- `reviewerAgentId` for agent review
+- `reviewerUserId` for human board review
+
+Reviewer is routing metadata for the `in_review` step. It does not replace the
+assignee, does not create a separate approval gate, and does not block `done`
+by itself.
+
+When an issue enters `in_review`, Rudder routes attention to the reviewer. Agent
+reviewers receive a `review` wakeup with reason `issue_review_requested`. Human
+reviewers see the issue through reviewer filters and issue attention surfaces.
+Creating an issue directly in `in_review` with a reviewer agent is treated as a
+review request.
+
+---
+
 ## Sub-issues (Parent/Child)
 
 Issues support parent/child nesting.

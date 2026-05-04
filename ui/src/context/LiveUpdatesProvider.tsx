@@ -335,6 +335,11 @@ function describeIssueUpdate(details: Record<string, unknown> | null): string | 
   } else if (details.assigneeAgentId === null || details.assigneeUserId === null) {
     changes.push("unassigned");
   }
+  if (typeof details.reviewerAgentId === "string" || typeof details.reviewerUserId === "string") {
+    changes.push("reviewer changed");
+  } else if (details.reviewerAgentId === null || details.reviewerUserId === null) {
+    changes.push("reviewer cleared");
+  }
   if (details.reopened === true) {
     const from = readString(details.reopenedFrom);
     changes.push(from ? `reopened from ${from.replace(/_/g, " ")}` : "reopened");

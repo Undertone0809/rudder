@@ -92,12 +92,14 @@ function createApp(actor = createBoardActor()) {
 function makeIssue(overrides?: Partial<{
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
+  reviewerAgentId: string | null;
+  reviewerUserId: string | null;
   createdByUserId: string | null;
   executionRunId: string | null;
   identifier: string;
   projectId: string | null;
   boardOrder: number;
-  status: "backlog" | "todo" | "in_progress" | "done";
+  status: "backlog" | "todo" | "in_progress" | "in_review" | "done";
   title: string;
 }>) {
   return {
@@ -105,6 +107,8 @@ function makeIssue(overrides?: Partial<{
     orgId: "organization-1",
     assigneeAgentId: null,
     assigneeUserId: null,
+    reviewerAgentId: null,
+    reviewerUserId: null,
     createdByUserId: "local-board",
     executionRunId: null,
     identifier: "RUD-5",
@@ -338,6 +342,76 @@ describe("issue lifecycle routes", () => {
             title: "Lifecycle hardening",
             status: "todo",
           }),
+        }),
+      }),
+    );
+  });
+
+  it("queues a review wakeup when a reviewer issue is created directly in review", async () => {
+    mockIssueService.create.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        reviewerAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp()).post("/api/orgs/organization-1/issues").send({
+      title: "Lifecycle hardening",
+      status: "in_review",
+      priority: "high",
+      reviewerAgentId: ASSIGNEE_AGENT_ID,
+    });
+
+    expect(res.status).toBe(201);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        source: "review",
+        reason: "issue_review_requested",
+        payload: { issueId: "11111111-1111-4111-8111-111111111111", mutation: "create_in_review" },
+        contextSnapshot: expect.objectContaining({
+          source: "issue.create",
+          wakeSource: "review",
+          wakeReason: "issue_review_requested",
+          role: "reviewer",
+          reviewInstructions: expect.stringContaining("You are the reviewer"),
+        }),
+      }),
+    );
+  });
+
+  it("queues a review wakeup when an issue enters review", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_progress",
+        reviewerAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "in_review",
+        reviewerAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "in_review" });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        source: "review",
+        reason: "issue_review_requested",
+        payload: { issueId: "11111111-1111-4111-8111-111111111111", mutation: "status_to_in_review" },
+        contextSnapshot: expect.objectContaining({
+          source: "issue.status_change",
+          wakeSource: "review",
+          wakeReason: "issue_review_requested",
+          role: "reviewer",
         }),
       }),
     );

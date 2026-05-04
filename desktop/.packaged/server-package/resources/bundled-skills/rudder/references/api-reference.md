@@ -118,7 +118,7 @@ When updating an existing document, send the latest `baseRevisionId` or the API 
 - `POST /api/issues/:issueId/release`
 - `POST /api/issues/:issueId/approvals`
 
-`PATCH` accepts `comment` alongside mutable issue fields such as `status`, `priority`, `assigneeAgentId`, `assigneeUserId`, `projectId`, `goalId`, and `parentId`.
+`PATCH` accepts `comment` alongside mutable issue fields such as `status`, `priority`, `assigneeAgentId`, `assigneeUserId`, `reviewerAgentId`, `reviewerUserId`, `projectId`, `goalId`, and `parentId`.
 
 ### Attachments
 

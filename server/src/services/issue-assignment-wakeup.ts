@@ -2,7 +2,7 @@ import { logger } from "../middleware/logger.js";
 import { extractCreateAgentBenchmarkMetadata } from "@rudderhq/run-intelligence-core";
 
 type WakeupTriggerDetail = "manual" | "ping" | "callback" | "system";
-type WakeupSource = "timer" | "assignment" | "on_demand" | "automation";
+type WakeupSource = "timer" | "assignment" | "review" | "on_demand" | "automation";
 
 export interface IssueAssignmentWakeupDeps {
   wakeup: (

@@ -525,7 +525,7 @@ describe("agent skill routes", () => {
       expect.objectContaining({
         "HEARTBEAT.md": expect.stringContaining("CEO Heartbeat Checklist"),
         "SOUL.md": expect.stringContaining("You are the CEO."),
-        "TOOLS.md": expect.stringContaining("# Tools"),
+        "TOOLS.md": expect.stringContaining("# TOOLS.md"),
       }),
       { entryFile: "SOUL.md", replaceExisting: false },
     );

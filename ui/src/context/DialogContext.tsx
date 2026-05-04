@@ -20,6 +20,8 @@ export interface NewIssueDefaults {
   labelIds?: string[];
   assigneeAgentId?: string;
   assigneeUserId?: string;
+  reviewerAgentId?: string;
+  reviewerUserId?: string;
   title?: string;
   description?: string;
 }

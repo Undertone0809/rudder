@@ -38,6 +38,7 @@ import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
+import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 
@@ -209,12 +210,17 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const assigneeUserFilterRaw = req.query.assigneeUserId as string | undefined;
+    const reviewerUserFilterRaw = req.query.reviewerUserId as string | undefined;
     const touchedByUserFilterRaw = req.query.touchedByUserId as string | undefined;
     const unreadForUserFilterRaw = req.query.unreadForUserId as string | undefined;
     const assigneeUserId =
       assigneeUserFilterRaw === "me" && req.actor.type === "board"
         ? req.actor.userId
         : assigneeUserFilterRaw;
+    const reviewerUserId =
+      reviewerUserFilterRaw === "me" && req.actor.type === "board"
+        ? req.actor.userId
+        : reviewerUserFilterRaw;
     const touchedByUserId =
       touchedByUserFilterRaw === "me" && req.actor.type === "board"
         ? req.actor.userId
@@ -226,6 +232,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
     if (assigneeUserFilterRaw === "me" && (!assigneeUserId || req.actor.type !== "board")) {
       res.status(403).json({ error: "assigneeUserId=me requires board authentication" });
+      return;
+    }
+    if (reviewerUserFilterRaw === "me" && (!reviewerUserId || req.actor.type !== "board")) {
+      res.status(403).json({ error: "reviewerUserId=me requires board authentication" });
       return;
     }
     if (touchedByUserFilterRaw === "me" && (!touchedByUserId || req.actor.type !== "board")) {
@@ -242,6 +252,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
       assigneeAgentId: req.query.assigneeAgentId as string | undefined,
       participantAgentId: req.query.participantAgentId as string | undefined,
       assigneeUserId,
+      reviewerAgentId: req.query.reviewerAgentId as string | undefined,
+      reviewerUserId,
       touchedByUserId,
       unreadForUserId,
       projectId: req.query.projectId as string | undefined,
@@ -916,7 +928,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   router.post("/orgs/:orgId/issues", validate(createIssueSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
-    if (req.body.assigneeAgentId || req.body.assigneeUserId) {
+    if (req.body.assigneeAgentId || req.body.assigneeUserId || req.body.reviewerAgentId || req.body.reviewerUserId) {
       await assertCanAssignTasks(req, orgId);
     }
 
@@ -949,6 +961,16 @@ export function issueRoutes(db: Db, storage: StorageService) {
       requestedByActorId: actor.actorId,
     });
 
+    void queueIssueReviewWakeup({
+      heartbeat,
+      issue,
+      mutation: "create_in_review",
+      contextSource: "issue.create",
+      requestedByActorType: actor.actorType,
+      requestedByActorId: actor.actorId,
+      actorAgentId: actor.agentId,
+    });
+
     res.status(201).json(issue);
   });
 
@@ -963,6 +985,9 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const assigneeWillChange =
       (req.body.assigneeAgentId !== undefined && req.body.assigneeAgentId !== existing.assigneeAgentId) ||
       (req.body.assigneeUserId !== undefined && req.body.assigneeUserId !== existing.assigneeUserId);
+    const reviewerWillChange =
+      (req.body.reviewerAgentId !== undefined && req.body.reviewerAgentId !== existing.reviewerAgentId) ||
+      (req.body.reviewerUserId !== undefined && req.body.reviewerUserId !== existing.reviewerUserId);
 
     const isAgentReturningIssueToCreator =
       req.actor.type === "agent" &&
@@ -977,6 +1002,9 @@ export function issueRoutes(db: Db, storage: StorageService) {
       if (!isAgentReturningIssueToCreator) {
         await assertCanAssignTasks(req, existing.orgId);
       }
+    }
+    if (reviewerWillChange) {
+      await assertCanAssignTasks(req, existing.orgId);
     }
     if (!(await assertAgentRunCheckoutOwnership(req, res, existing))) return;
 
@@ -1003,10 +1031,16 @@ export function issueRoutes(db: Db, storage: StorageService) {
                 req.body.assigneeAgentId === undefined ? "__omitted__" : req.body.assigneeAgentId,
               assigneeUserId:
                 req.body.assigneeUserId === undefined ? "__omitted__" : req.body.assigneeUserId,
+              reviewerAgentId:
+                req.body.reviewerAgentId === undefined ? "__omitted__" : req.body.reviewerAgentId,
+              reviewerUserId:
+                req.body.reviewerUserId === undefined ? "__omitted__" : req.body.reviewerUserId,
             },
             currentAssignee: {
               assigneeAgentId: existing.assigneeAgentId,
               assigneeUserId: existing.assigneeUserId,
+              reviewerAgentId: existing.reviewerAgentId,
+              reviewerUserId: existing.reviewerUserId,
             },
             error: err.message,
             details: err.details,
@@ -1090,10 +1124,19 @@ export function issueRoutes(db: Db, storage: StorageService) {
     }
 
     const assigneeChanged = assigneeWillChange;
+    const reviewerChanged = reviewerWillChange;
     const statusChangedFromBacklog =
       existing.status === "backlog" &&
       issue.status !== "backlog" &&
       req.body.status !== undefined;
+    const statusChangedToInReview =
+      existing.status !== "in_review" &&
+      issue.status === "in_review" &&
+      req.body.status !== undefined;
+    const reviewerChangedInReview =
+      reviewerChanged &&
+      existing.status === "in_review" &&
+      issue.status === "in_review";
 
     // Merge all wakeups from this update into one enqueue per agent to avoid duplicate runs.
     void (async () => {
@@ -1145,6 +1188,19 @@ export function issueRoutes(db: Db, storage: StorageService) {
             },
           },
         });
+      }
+
+      if ((statusChangedToInReview || reviewerChangedInReview) && issue.reviewerAgentId) {
+        const mutation = statusChangedToInReview ? "status_to_in_review" : "reviewer_changed_in_review";
+        if (!(actor.actorType === "agent" && actor.actorId === issue.reviewerAgentId)) {
+          wakeups.set(issue.reviewerAgentId, buildIssueReviewWakeupOptions({
+            issue,
+            mutation,
+            contextSource: statusChangedToInReview ? "issue.status_change" : "issue.reviewer_change",
+            requestedByActorType: actor.actorType,
+            requestedByActorId: actor.actorId,
+          }));
+        }
       }
 
       if (commentBody && comment) {

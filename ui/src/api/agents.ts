@@ -201,7 +201,7 @@ export const agentsApi = {
   wakeup: (
     id: string,
     data: {
-      source?: "timer" | "assignment" | "on_demand" | "automation";
+      source?: "timer" | "assignment" | "review" | "on_demand" | "automation";
       triggerDetail?: "manual" | "ping" | "callback" | "system";
       reason?: string | null;
       payload?: Record<string, unknown> | null;

@@ -148,6 +148,8 @@ function makeIssue(id: string, isUnreadForMe: boolean): Issue {
     boardOrder: 1000,
     assigneeAgentId: null,
     assigneeUserId: null,
+    reviewerAgentId: null,
+    reviewerUserId: null,
     createdByAgentId: null,
     createdByUserId: null,
     issueNumber: 1,

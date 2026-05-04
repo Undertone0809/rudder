@@ -375,6 +375,7 @@ export type BudgetIncidentResolutionAction = (typeof BUDGET_INCIDENT_RESOLUTION_
 export const HEARTBEAT_INVOCATION_SOURCES = [
   "timer",
   "assignment",
+  "review",
   "on_demand",
   "automation",
 ] as const;

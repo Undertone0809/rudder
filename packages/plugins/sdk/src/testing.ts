@@ -336,6 +336,8 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         out = out.filter((issue) => issue.orgId === orgId);
         if (input?.projectId) out = out.filter((issue) => issue.projectId === input.projectId);
         if (input?.assigneeAgentId) out = out.filter((issue) => issue.assigneeAgentId === input.assigneeAgentId);
+        if (input?.reviewerAgentId) out = out.filter((issue) => issue.reviewerAgentId === input.reviewerAgentId);
+        if (input?.reviewerUserId) out = out.filter((issue) => issue.reviewerUserId === input.reviewerUserId);
         if (input?.status) out = out.filter((issue) => issue.status === input.status);
         if (input?.offset) out = out.slice(input.offset);
         if (input?.limit) out = out.slice(0, input.limit);
@@ -363,6 +365,8 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           boardOrder: (issues.size + 1) * 1000,
           assigneeAgentId: input.assigneeAgentId ?? null,
           assigneeUserId: null,
+          reviewerAgentId: input.reviewerAgentId ?? null,
+          reviewerUserId: input.reviewerUserId ?? null,
           checkoutRunId: null,
           executionRunId: null,
           executionAgentNameKey: null,

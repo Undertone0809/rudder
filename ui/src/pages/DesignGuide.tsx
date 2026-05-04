@@ -479,6 +479,7 @@ export function DesignGuide() {
             {[
               ["timer", "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"],
               ["assignment", "bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300"],
+              ["review", "bg-amber-100 text-amber-700 dark:bg-amber-900/45 dark:text-amber-300"],
               ["on_demand", "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300"],
               ["automation", "bg-muted text-muted-foreground"],
             ].map(([label, cls]) => (

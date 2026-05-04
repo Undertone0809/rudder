@@ -206,6 +206,9 @@ Invariant: at least one root `organization` level goal per organization.
 - `status` enum: `backlog | todo | in_progress | in_review | done | blocked | cancelled`
 - `priority` enum: `critical | high | medium | low`
 - `assignee_agent_id` uuid fk `agents.id` null
+- `assignee_user_id` text null
+- `reviewer_agent_id` uuid fk `agents.id` null
+- `reviewer_user_id` text null
 - `created_by_agent_id` uuid fk `agents.id` null
 - `created_by_user_id` uuid fk `users.id` null
 - `request_depth` int not null default 0
@@ -217,9 +220,23 @@ Invariant: at least one root `organization` level goal per organization.
 Invariants:
 
 - single assignee only
+- optional reviewer only; at most one of `reviewer_agent_id` or
+  `reviewer_user_id` may be set
+- reviewer principals must belong to the issue organization
 - task must trace to organization goal chain via `goal_id`, `parent_id`, or project-goal linkage
 - `in_progress` requires assignee
 - terminal states: `done | cancelled`
+
+Review routing:
+
+- `Reviewer` is issue-level routing metadata for checking output when work is
+  ready for review; it is not an approval gate.
+- Moving an issue into `in_review` routes attention to the reviewer.
+- Creating an issue directly in `in_review` with a reviewer agent queues a
+  review wakeup.
+- Reviewer agent wakeups use invocation source `review` and reason
+  `issue_review_requested`; assignment wakeups must not be reused for review.
+- Reviewer user issues are included in user issue attention surfaces.
 
 ## 7.7 `issue_comments`
 
@@ -306,6 +323,8 @@ Operational policy:
 - `agents(org_id, reports_to)`
 - `issues(org_id, status)`
 - `issues(org_id, assignee_agent_id, status)`
+- `issues(org_id, reviewer_agent_id, status)`
+- `issues(org_id, reviewer_user_id, status)`
 - `issues(org_id, parent_id)`
 - `issues(org_id, project_id)`
 - `cost_events(org_id, occurred_at)`

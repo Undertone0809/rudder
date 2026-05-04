@@ -15,6 +15,7 @@ export interface IssueDraft {
   labelIds?: string[];
   assigneeValue: string;
   assigneeId?: string;
+  reviewerValue?: string;
   projectId: string;
   projectWorkspaceId?: string;
   assigneeModelOverride: string;
@@ -50,6 +51,8 @@ export interface BuildNewIssueCreateRequestInput {
   priority: string;
   assigneeAgentId?: string | null;
   assigneeUserId?: string | null;
+  reviewerAgentId?: string | null;
+  reviewerUserId?: string | null;
   projectId: string;
   labelIds: string[];
   projectWorkspaceId: string;
@@ -69,6 +72,7 @@ export interface ResolvedNewIssueDraftInput {
   labelIds?: string[];
   assigneeValue?: string;
   assigneeId?: string;
+  reviewerValue?: string;
 }
 
 function issueDraftStorage(): Storage | null {
@@ -99,6 +103,7 @@ export function hasMeaningfulIssueDraft(draft: Partial<IssueDraft> | null | unde
       safeTrim(draft.projectId) ||
       safeTrim(draft.assigneeValue) ||
       safeTrim(draft.assigneeId) ||
+      safeTrim(draft.reviewerValue) ||
       (safeTrim(draft.priority) && safeTrim(draft.priority) !== "medium") ||
       (safeTrim(draft.status) && safeTrim(draft.status) !== "todo") ||
       (Array.isArray(draft.labelIds) && draft.labelIds.length > 0) ||
@@ -218,6 +223,8 @@ export interface ResolvedNewIssueDefaultsInput {
   labelIds?: string[];
   assigneeAgentId?: string;
   assigneeUserId?: string;
+  reviewerAgentId?: string;
+  reviewerUserId?: string;
 }
 
 export function resolveDraftBackedNewIssueValues(input: {
@@ -225,14 +232,17 @@ export function resolveDraftBackedNewIssueValues(input: {
   draft: ResolvedNewIssueDraftInput;
   defaultProjectId: string;
   defaultAssigneeValue: string;
+  defaultReviewerValue: string;
 }): {
   status: string;
   priority: string;
   projectId: string;
   labelIds: string[];
   assigneeValue: string;
+  reviewerValue: string;
 } {
   const hasExplicitAssignee = Boolean(input.defaults.assigneeAgentId || input.defaults.assigneeUserId);
+  const hasExplicitReviewer = Boolean(input.defaults.reviewerAgentId || input.defaults.reviewerUserId);
   return {
     status: input.defaults.status ?? input.draft.status ?? "todo",
     priority: input.defaults.priority ?? input.draft.priority ?? "",
@@ -241,6 +251,9 @@ export function resolveDraftBackedNewIssueValues(input: {
     assigneeValue: hasExplicitAssignee
       ? input.defaultAssigneeValue
       : (input.draft.assigneeValue ?? input.draft.assigneeId ?? ""),
+    reviewerValue: hasExplicitReviewer
+      ? input.defaultReviewerValue
+      : (input.draft.reviewerValue ?? ""),
   };
 }
 
@@ -277,6 +290,8 @@ export function buildNewIssueCreateRequest(input: BuildNewIssueCreateRequestInpu
     priority: input.priority || "medium",
     ...(input.assigneeAgentId ? { assigneeAgentId: input.assigneeAgentId } : {}),
     ...(input.assigneeUserId ? { assigneeUserId: input.assigneeUserId } : {}),
+    ...(input.reviewerAgentId ? { reviewerAgentId: input.reviewerAgentId } : {}),
+    ...(input.reviewerUserId ? { reviewerUserId: input.reviewerUserId } : {}),
     ...(input.projectId ? { projectId: input.projectId } : {}),
     ...(input.labelIds.length > 0 ? { labelIds: input.labelIds } : {}),
     ...(input.projectWorkspaceId ? { projectWorkspaceId: input.projectWorkspaceId } : {}),

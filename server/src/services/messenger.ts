@@ -62,6 +62,7 @@ type IssueUniverseRow = {
   status: string;
   priority: string;
   assigneeUserId: string | null;
+  reviewerUserId: string | null;
   createdByUserId: string | null;
   identifier: string | null;
   updatedAt: Date;
@@ -221,11 +222,13 @@ function issueBodyFromSnapshot(
   followed: boolean,
   created: boolean,
   assigned: boolean,
+  reviewer: boolean,
 ) {
   const flags: string[] = [];
   if (followed) flags.push("followed");
   if (created) flags.push("created by me");
   if (assigned) flags.push("assigned to me");
+  if (reviewer) flags.push("review requested");
   const status = issue.status.replaceAll("_", " ");
   const priority = issue.priority.replaceAll("_", " ");
   const prefix = [status, priority].filter(Boolean).join(" · ");
@@ -242,6 +245,9 @@ function summarizeIssueActivity(activity: IssueActivityRow, issue: IssueUniverse
       }
       if (typeof details.assigneeUserId !== "undefined" || typeof details.assigneeAgentId !== "undefined") {
         return "Assignment changed";
+      }
+      if (typeof details.reviewerUserId !== "undefined" || typeof details.reviewerAgentId !== "undefined") {
+        return "Reviewer changed";
       }
       return "Issue updated";
     }
@@ -418,13 +424,14 @@ function issueCard(
 ): MessengerIssueThreadItem {
   const createdByMe = issue.createdByUserId === currentUserId;
   const assignedToMe = issue.assigneeUserId === currentUserId;
+  const reviewerForMe = issue.reviewerUserId === currentUserId && issue.status === "in_review";
   return {
     id: issue.id,
     threadKey: "issues",
     kind: "issues",
     title: `${issue.identifier ?? issue.id} · ${issue.title}`,
-    subtitle: issueBodyFromSnapshot(issue, latestPreview, followed, createdByMe, assignedToMe),
-    body: issueBodyFromSnapshot(issue, latestPreview, followed, createdByMe, assignedToMe),
+    subtitle: issueBodyFromSnapshot(issue, latestPreview, followed, createdByMe, assignedToMe, reviewerForMe),
+    body: issueBodyFromSnapshot(issue, latestPreview, followed, createdByMe, assignedToMe, reviewerForMe),
     preview: latestPreview,
     href: issueHref(issue),
     latestActivityAt,
@@ -437,6 +444,7 @@ function issueCard(
       followed,
       createdByMe,
       assignedToMe,
+      reviewerForMe,
     },
     issueId: issue.id,
     issueIdentifier: issue.identifier,
@@ -587,6 +595,7 @@ export function messengerService(db: Db) {
           status: issues.status,
           priority: issues.priority,
           assigneeUserId: issues.assigneeUserId,
+          reviewerUserId: issues.reviewerUserId,
           createdByUserId: issues.createdByUserId,
           identifier: issues.identifier,
           updatedAt: issues.updatedAt,
@@ -595,7 +604,7 @@ export function messengerService(db: Db) {
         .where(
           and(
             eq(issues.orgId, orgId),
-            or(eq(issues.assigneeUserId, userId), eq(issues.createdByUserId, userId)),
+            or(eq(issues.assigneeUserId, userId), eq(issues.createdByUserId, userId), eq(issues.reviewerUserId, userId)),
             isNull(issues.hiddenAt),
           ),
         )
@@ -710,10 +719,15 @@ export function messengerService(db: Db) {
         issue.assigneeUserId === userId && !latestActivityByIssue.has(issue.id)
           ? normalizeDate(issue.updatedAt)
           : null;
+      const fallbackReviewerActivityAt =
+        issue.reviewerUserId === userId && issue.status === "in_review" && !latestActivityByIssue.has(issue.id)
+          ? normalizeDate(issue.updatedAt)
+          : null;
       const attentionActivityAt = maxDate(
         latestExternalCommentAt,
         latestExternalActivity?.createdAt,
         fallbackAssignedActivityAt,
+        fallbackReviewerActivityAt,
       );
       const attentionPreview =
         latestExternalCommentAt &&
@@ -721,8 +735,15 @@ export function messengerService(db: Db) {
           ? truncate(latestExternalComment?.body)
           : latestExternalActivity
             ? summarizeIssueActivity(latestExternalActivity, issue)
-            : fallbackAssignedActivityAt
-              ? issueBodyFromSnapshot(issue, null, issue.followed, issue.createdByUserId === userId, issue.assigneeUserId === userId)
+            : fallbackAssignedActivityAt || fallbackReviewerActivityAt
+              ? issueBodyFromSnapshot(
+                issue,
+                null,
+                issue.followed,
+                issue.createdByUserId === userId,
+                issue.assigneeUserId === userId,
+                issue.reviewerUserId === userId && issue.status === "in_review",
+              )
               : null;
 
       return {
@@ -770,7 +791,7 @@ export function messengerService(db: Db) {
         unreadCount,
         needsAttention: unreadCount > 0,
         href: "/messenger/issues",
-        description: "Followed issues, issues I created, and issues assigned to me",
+        description: "Followed issues, issues I created, issues assigned to me, and issues ready for my review",
         items: chronologicalItems,
       } satisfies MessengerThreadDetail<MessengerIssueThreadItem>,
     };

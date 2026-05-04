@@ -113,7 +113,7 @@ describe("agent instructions service", () => {
     }));
     await expect(loadDefaultAgentInstructionsBundle("ceo")).resolves.toEqual(expect.objectContaining({
       "SOUL.md": expect.stringContaining("# SOUL.md -- CEO Persona"),
-      "MEMORY.md": expect.stringContaining("# Tacit Memory"),
+      "MEMORY.md": expect.stringContaining("# MEMORY.md"),
     }));
   });
 

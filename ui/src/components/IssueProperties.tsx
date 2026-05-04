@@ -24,7 +24,7 @@ import { formatDate, formatDateTime, cn, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { User, Hexagon, ArrowUpRight, Tag, Plus } from "lucide-react";
+import { User, Hexagon, ArrowUpRight, Tag, Plus, AlertTriangle } from "lucide-react";
 import { AgentIcon } from "./AgentIconPicker";
 
 function defaultProjectWorkspaceIdForProject(project: {
@@ -125,6 +125,8 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
   const orgId = issue.orgId ?? selectedOrganizationId;
   const [assigneeOpen, setAssigneeOpen] = useState(false);
   const [assigneeSearch, setAssigneeSearch] = useState("");
+  const [reviewerOpen, setReviewerOpen] = useState(false);
+  const [reviewerSearch, setReviewerSearch] = useState("");
   const [projectOpen, setProjectOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
   const [labelsOpen, setLabelsOpen] = useState(false);
@@ -210,9 +212,17 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
   const assignee = issue.assigneeAgentId
     ? agents?.find((a) => a.id === issue.assigneeAgentId)
     : null;
+  const reviewer = issue.reviewerAgentId
+    ? agents?.find((a) => a.id === issue.reviewerAgentId)
+    : null;
   const userLabel = (userId: string | null | undefined) => formatAssigneeUserLabel(userId, currentUserId);
   const assigneeUserLabel = userLabel(issue.assigneeUserId);
+  const reviewerUserLabel = userLabel(issue.reviewerUserId);
   const creatorUserLabel = userLabel(issue.createdByUserId);
+  const reviewerMatchesAssignee = Boolean(
+    (issue.reviewerAgentId && issue.reviewerAgentId === issue.assigneeAgentId) ||
+      (issue.reviewerUserId && issue.reviewerUserId === issue.assigneeUserId),
+  );
 
   const labelsTrigger = (issue.labels ?? []).length > 0 ? (
     <div className="flex items-center gap-1 flex-wrap">
@@ -399,6 +409,74 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
     </>
   );
 
+  const reviewerTrigger = reviewer ? (
+    <AssigneeLabel
+      kind="agent"
+      label={formatChatAgentLabel(reviewer)}
+      agentIcon={reviewer.icon}
+      agentRole={reviewer.role}
+    />
+  ) : reviewerUserLabel ? (
+    <AssigneeLabel kind="user" label={reviewerUserLabel} />
+  ) : (
+    <AssigneeLabel kind="unassigned" label="No reviewer" muted />
+  );
+
+  const reviewerContent = (
+    <>
+      <input
+        className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
+        placeholder="Search reviewers..."
+        value={reviewerSearch}
+        onChange={(e) => setReviewerSearch(e.target.value)}
+        autoFocus={!inline}
+      />
+      <div className="max-h-48 overflow-y-auto overscroll-contain">
+        <button
+          className={cn(
+            "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
+            !issue.reviewerAgentId && !issue.reviewerUserId && "bg-accent"
+          )}
+          onClick={() => { onUpdate({ reviewerAgentId: null, reviewerUserId: null }); setReviewerOpen(false); }}
+        >
+          <AssigneeLabel kind="unassigned" label="No reviewer" />
+        </button>
+        {currentUserId && (
+          <button
+            className={cn(
+              "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
+              issue.reviewerUserId === currentUserId && "bg-accent",
+            )}
+            onClick={() => {
+              onUpdate({ reviewerAgentId: null, reviewerUserId: currentUserId });
+              setReviewerOpen(false);
+            }}
+          >
+            <AssigneeLabel kind="user" label="Me" />
+          </button>
+        )}
+        {sortedAgents
+          .filter((a) => {
+            if (!reviewerSearch.trim()) return true;
+            const q = reviewerSearch.toLowerCase();
+            return `${formatChatAgentLabel(a)} ${a.name} ${a.role} ${a.title ?? ""}`.toLowerCase().includes(q);
+          })
+          .map((a) => (
+          <button
+            key={a.id}
+            className={cn(
+              "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
+              a.id === issue.reviewerAgentId && "bg-accent"
+            )}
+            onClick={() => { trackRecentAssignee(a.id); onUpdate({ reviewerAgentId: a.id, reviewerUserId: null }); setReviewerOpen(false); }}
+          >
+            <AssigneeLabel kind="agent" label={formatChatAgentLabel(a)} agentIcon={a.icon} agentRole={a.role} />
+          </button>
+        ))}
+      </div>
+    </>
+  );
+
   const projectTrigger = issue.projectId ? (
     <>
       <span
@@ -512,6 +590,24 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
           popoverClassName="w-52"
         >
           {assigneeContent}
+        </PropertyPicker>
+
+        <PropertyPicker
+          inline={inline}
+          label="Reviewer"
+          open={reviewerOpen}
+          onOpenChange={(open) => { setReviewerOpen(open); if (!open) setReviewerSearch(""); }}
+          triggerContent={reviewerTrigger}
+          triggerClassName="min-w-0 max-w-full"
+          popoverClassName="w-52"
+          extra={reviewerMatchesAssignee ? (
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <AlertTriangle className="h-3 w-3" />
+              Same as assignee
+            </span>
+          ) : undefined}
+        >
+          {reviewerContent}
         </PropertyPicker>
 
         <PropertyPicker

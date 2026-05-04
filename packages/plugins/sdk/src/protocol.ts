@@ -563,6 +563,8 @@ export interface WorkerToHostMethods {
       orgId: string;
       projectId?: string;
       assigneeAgentId?: string;
+      reviewerAgentId?: string;
+      reviewerUserId?: string;
       status?: string;
       limit?: number;
       offset?: number;
@@ -584,6 +586,8 @@ export interface WorkerToHostMethods {
       status?: string;
       priority?: string;
       assigneeAgentId?: string;
+      reviewerAgentId?: string;
+      reviewerUserId?: string;
     },
     result: Issue,
   ];
