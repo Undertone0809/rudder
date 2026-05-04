@@ -319,20 +319,20 @@ export const ISSUE_RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{age
 
 ## Recovery Context
 
-**Original Run ID:** {{context.recovery.originalRunId}}
-**Failure Kind:** {{context.recovery.failureKind}}
-**Failure Summary:** {{context.recovery.failureSummary}}
-**Recovery Trigger:** {{context.recovery.recoveryTrigger}}
-**Recovery Mode:** {{context.recovery.recoveryMode}}
+- Original Run ID: {{context.recovery.originalRunId}}
+- Failure Kind: {{context.recovery.failureKind}}
+- Failure Summary: {{context.recovery.failureSummary}}
+- Recovery Trigger: {{context.recovery.recoveryTrigger}}
+- Recovery Mode: {{context.recovery.recoveryMode}}
 
 ## Current Issue Context
 
-**Issue:** {{issue.title}}
-**ID:** {{issue.id}}
-**Status:** {{issue.status}}
-**Priority:** {{issue.priority}}
+- Issue: {{issue.title}}
+- ID: {{issue.id}}
+- Status: {{issue.status}}
+- Priority: {{issue.priority}}
 
-**Description:**
+- Description:
 {{issue.description}}
 
 Before doing anything else, inspect what the previous run already completed and any side effects it may have caused. Continue the remaining work from the current state. Avoid blindly re-running the whole task.`;
@@ -343,11 +343,11 @@ export const RECOVERY_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.nam
 
 ## Recovery Context
 
-**Original Run ID:** {{context.recovery.originalRunId}}
-**Failure Kind:** {{context.recovery.failureKind}}
-**Failure Summary:** {{context.recovery.failureSummary}}
-**Recovery Trigger:** {{context.recovery.recoveryTrigger}}
-**Recovery Mode:** {{context.recovery.recoveryMode}}
+- Original Run ID: {{context.recovery.originalRunId}}
+- Failure Kind: {{context.recovery.failureKind}}
+- Failure Summary: {{context.recovery.failureSummary}}
+- Recovery Trigger: {{context.recovery.recoveryTrigger}}
+- Recovery Mode: {{context.recovery.recoveryMode}}
 
 Before doing anything else, inspect what the previous run already completed and any side effects it may have caused. Continue the remaining work from the current state. Avoid blindly re-running the whole task.`;
 
@@ -359,19 +359,19 @@ export const ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE = `You are agent {{agent.id}
 
 The previous run ended without sufficient issue close-out.
 
-**Origin Run ID:** {{context.passiveFollowup.originRunId}}
-**Previous Run ID:** {{context.passiveFollowup.previousRunId}}
-**Attempt:** {{context.passiveFollowup.attempt}} / {{context.passiveFollowup.maxAttempts}}
-**Reason:** {{context.passiveFollowup.reason}}
+- Origin Run ID: {{context.passiveFollowup.originRunId}}
+- Previous Run ID: {{context.passiveFollowup.previousRunId}}
+- Attempt: {{context.passiveFollowup.attempt}} / {{context.passiveFollowup.maxAttempts}}
+Reason: {{context.passiveFollowup.reason}}
 
 ## Current Issue Context
 
-**Issue:** {{issue.title}}
-**ID:** {{issue.id}}
-**Status:** {{issue.status}}
-**Priority:** {{issue.priority}}
+- Issue: {{issue.title}}
+- ID: {{issue.id}}
+- Status: {{issue.status}}
+- Priority: {{issue.priority}}
 
-**Description:**
+- Description:
 {{issue.description}}
 
 Before changing the issue, inspect the current issue state and any side effects from the previous run. Then do exactly one close-out action: add a progress comment, mark the issue done, block it with a reason, or hand it off explicitly with explanation.`;
