@@ -213,21 +213,8 @@ export function PluginManager() {
         </Dialog>
       </div>
 
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3">
-        <div className="flex items-start gap-3">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
-          <div className="space-y-1 text-sm">
-            <p className="font-medium text-foreground">Plugins are alpha.</p>
-            <p className="text-muted-foreground">
-              The plugin runtime and API surface are still changing. Expect breaking changes while this feature settles.
-            </p>
-          </div>
-        </div>
-      </div>
-
       <section className="space-y-3">
         <div className="flex items-center gap-2">
-          <Puzzle className="h-5 w-5 text-muted-foreground" />
           <h2 className="text-base font-semibold">Available Plugins</h2>
         </div>
 
@@ -316,7 +303,6 @@ export function PluginManager() {
 
       <section className="space-y-3">
         <div className="flex items-center gap-2">
-          <Puzzle className="h-5 w-5 text-muted-foreground" />
           <h2 className="text-base font-semibold">Installed Plugins</h2>
         </div>
 
