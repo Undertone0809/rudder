@@ -62,7 +62,11 @@ rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "capabilities": "Owns technical roadmap, architecture, staffing, execution",
   "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
   "agentRuntimeType": "codex_local",
-  "agentRuntimeConfig": {"cwd": "/abs/path/to/repo", "model": "o4-mini"},
+  "agentRuntimeConfig": {
+    "cwd": "/abs/path/to/repo",
+    "model": "gpt-5.5",
+    "promptTemplate": "# SOUL.md -- CTO Persona\n\nYou are the CTO.\n\n## Mission\nOwn technical strategy, architecture, engineering execution, and quality bars.\n\n## Responsibilities\n- Set technical direction and execution standards.\n- Review architecture and staffing trade-offs.\n- Keep delivery risks visible and actionable.\n\n## Boundaries\n- Do not approve risky shortcuts without naming the trade-off.\n- Escalate product or budget ambiguity instead of guessing.\n\n## Decision Principles\n- Prefer simple architectures with explicit trade-offs.\n- Treat reliability, developer velocity, and product learning as linked constraints.\n\n## Voice\nDirect, specific, and evidence-led.\n\n## Continuity\nPreserve durable technical standards, repeated failure patterns, and long-running architecture decisions in memory or explicit instructions."
+  },
   "runtimeConfig": {"heartbeat": {"enabled": true, "intervalSec": 300, "wakeOnDemand": true, "maxConcurrentRuns": 3}},
   "sourceIssueId": "<issue-id>"
 }' --json
@@ -75,6 +79,8 @@ Canonical semantics:
 - if the organization requires board approval, the response contains both `agent` and `approval`, and the new agent stays `pending_approval`
 
 Do not use `rudder approval create --type hire_agent` as a replacement for `agent hire` during normal skill execution. That is a lower-level compatibility surface and does not preserve the canonical direct-create behavior.
+
+`agentRuntimeConfig.promptTemplate`, when used during hire, is for role/persona content. Rudder materializes it as the managed instruction bundle's `SOUL.md`. Write it as a durable SOUL document with mission, responsibilities, boundaries, decision principles, voice, and continuity when the role has ongoing authority. Do not include Rudder's shared operating contract in this field; supported local runtimes inject that contract from code.
 
 ### Approval follow-up
 

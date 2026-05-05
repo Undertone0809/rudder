@@ -89,8 +89,8 @@ Request body:
   "agentRuntimeType": "codex_local",
   "agentRuntimeConfig": {
     "cwd": "/absolute/path",
-    "model": "o4-mini",
-    "promptTemplate": "You are CTO..."
+    "model": "gpt-5.5",
+    "promptTemplate": "# SOUL.md -- CTO Persona\n\nYou are the CTO.\n\n## Mission\nOwn technical strategy, architecture, engineering execution, and quality bars.\n\n## Responsibilities\n- Set technical direction and execution standards.\n- Review architecture and staffing trade-offs.\n- Keep delivery risks visible and actionable.\n\n## Boundaries\n- Do not approve risky shortcuts without naming the trade-off.\n- Escalate product or budget ambiguity instead of guessing.\n\n## Decision Principles\n- Prefer simple architectures with explicit trade-offs.\n- Treat reliability, developer velocity, and product learning as linked constraints.\n\n## Voice\nDirect, specific, and evidence-led.\n\n## Continuity\nPreserve durable technical standards, repeated failure patterns, and long-running architecture decisions in memory or explicit instructions."
   },
   "runtimeConfig": {
     "heartbeat": {
@@ -141,6 +141,9 @@ Important notes:
 
 - `name` is optional; if omitted or blank, Rudder assigns a distinct first name automatically
 - `desiredSkills` accepts organization skill ids, canonical keys, or a unique slug; the server resolves and stores canonical organization skill keys
+- `agentRuntimeConfig.promptTemplate`, when present for local runtimes during hire, is role/persona content that Rudder materializes as managed `SOUL.md`
+- write hire-time `promptTemplate` as a durable SOUL document with mission, responsibilities, boundaries, decision principles, voice, and continuity when the role has ongoing authority
+- do not put Rudder's shared operating contract in `promptTemplate`; supported local runtimes inject that contract from code
 - `sourceIssueId` and `sourceIssueIds` are the canonical way to link the hire back to originating issues
 - this route is preferred over creating `hire_agent` approvals manually because it preserves the organization's approval policy
 

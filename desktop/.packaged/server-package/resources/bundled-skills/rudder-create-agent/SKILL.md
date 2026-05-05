@@ -88,8 +88,20 @@ Required thinking:
 - optional `desiredSkills` from the organization skill library
 - adapter and runtime config aligned to this environment
 - capabilities
-- run prompt in adapter config (`promptTemplate` where applicable)
+- structured role/persona instructions for the new agent (`promptTemplate` when the CLI payload is the available surface; Rudder materializes this as `SOUL.md`)
 - source issue linkage (`sourceIssueId` or `sourceIssueIds`) when this hire came from an issue
+
+Do not copy Rudder's shared filesystem, memory, language, or safety contract into the hire prompt. Rudder injects that operating contract from runtime code for supported local runtimes. The hire-specific prompt should only define the new agent's role, identity, scope, tone, and durable responsibilities.
+
+Draft `promptTemplate` as a durable SOUL document, not a one-line command. Use these sections when the role is not trivial:
+
+- Opening: one sentence that captures who the agent is
+- Mission: the outcome this agent owns
+- Responsibilities: durable duties and ownership boundaries
+- Boundaries: what the agent should not do or should escalate
+- Decision Principles: role-specific judgment rules
+- Voice: how the agent should communicate
+- Continuity: what should become memory or explicit instruction updates over time
 
 8. Submit the canonical hire request.
 
@@ -102,7 +114,11 @@ rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "capabilities": "Owns technical roadmap, architecture, staffing, execution",
   "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
   "agentRuntimeType": "codex_local",
-  "agentRuntimeConfig": {"cwd": "/abs/path/to/repo", "model": "o4-mini"},
+  "agentRuntimeConfig": {
+    "cwd": "/abs/path/to/repo",
+    "model": "o4-mini",
+    "promptTemplate": "# SOUL.md -- CTO Persona\n\nYou are the CTO.\n\n## Mission\nOwn technical strategy, architecture, engineering execution, and quality bars.\n\n## Responsibilities\n- Set technical direction and execution standards.\n- Review architecture and staffing trade-offs.\n- Keep delivery risks visible and actionable.\n\n## Boundaries\n- Do not approve risky shortcuts without naming the trade-off.\n- Escalate product or budget ambiguity instead of guessing.\n\n## Decision Principles\n- Prefer simple architectures with explicit trade-offs.\n- Treat reliability, developer velocity, and product learning as linked constraints.\n\n## Voice\nDirect, specific, and evidence-led.\n\n## Continuity\nPreserve durable technical standards, repeated failure patterns, and long-running architecture decisions in memory or explicit instructions."
+  },
   "runtimeConfig": {"heartbeat": {"enabled": true, "intervalSec": 300, "wakeOnDemand": true, "maxConcurrentRuns": 3}},
   "sourceIssueId": "<issue-id>"
 }' --json
@@ -153,7 +169,8 @@ Before sending a hire request:
 - set a concrete `icon` from `rudder agent icons` so the new hire is identifiable in org and task views
 - avoid secrets in plain text unless required by adapter behavior
 - ensure the reporting line is correct and in-org
-- ensure the prompt is role-specific and operationally scoped
+- ensure the prompt is role-specific, operationally scoped, and structured enough to become the agent's durable `SOUL.md`
+- include mission, responsibilities, boundaries, decision principles, voice, and continuity when the role has ongoing authority
 - prefer `sourceIssueId` or `sourceIssueIds` in the hire payload instead of manual approval linking
 - if board requests revision, update the payload and resubmit through the approval flow
 - do not report success unless `rudder agent hire` itself succeeded and you can cite the returned `agent.id` or `approval.id`
