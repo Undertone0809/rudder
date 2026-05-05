@@ -231,17 +231,18 @@ The current Desktop channel is an unsigned portable alpha; signed/notarized
 installer distribution can be restored after Apple and Windows code signing are
 available.
 
-Packaged Desktop checks for updates on startup against GitHub Releases. Stable
-builds compare against the latest stable release, and canary builds compare
-against the latest canary release. Beta prereleases are ignored; if a newer
-matching release exists, the app prompts the user to update.
-The manual About-page check uses the same release comparison. When the operator
-chooses Update, Desktop starts the bundled CLI `start --no-cli` portable
-replacement flow for the discovered version. That flow downloads the matching
-release asset, verifies `SHASUMS256.txt`, requests the running Desktop shell to
-quit, replaces the per-user portable app, refreshes launchers, and reopens
-Rudder. If active agent runs exist, the update is blocked until active work is
-stopped.
+Packaged Desktop checks for updates on startup against GitHub Releases. The
+local Desktop update channel defaults to stable, so update checks compare
+against the latest stable release unless the operator enables canary updates in
+Settings > General. With canary enabled, startup, menu, and About-page checks
+compare against the latest canary release. Beta prereleases are ignored; if a
+newer matching release exists, the app prompts the user to update.
+When the operator chooses Update, Desktop starts the bundled CLI
+`start --no-cli` portable replacement flow for the discovered version. That
+flow downloads the matching release asset, verifies `SHASUMS256.txt`, requests
+the running Desktop shell to quit, replaces the per-user portable app, refreshes
+launchers, and reopens Rudder. If active agent runs exist, the update is blocked
+until active work is stopped.
 
 This is a full portable asset replacement. It is not a binary-delta incremental
 update path.

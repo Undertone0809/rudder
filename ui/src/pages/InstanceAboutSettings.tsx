@@ -65,6 +65,13 @@ function formatEnvironmentValue(value: string | null | undefined, unknownLabel: 
   }
 }
 
+function formatUpdateChannel(
+  t: (key: TranslationKey, vars?: Record<string, string | number>) => string,
+  channel: DesktopUpdateCheckResult["channel"],
+): string {
+  return channel === "canary" ? t("about.updates.channel.canary") : t("about.updates.channel.stable");
+}
+
 function buildUpdateFeedback(
   t: (key: TranslationKey, vars?: Record<string, string | number>) => string,
   result: DesktopUpdateCheckResult,
@@ -353,12 +360,16 @@ export function InstanceAboutSettings() {
                   {updateResult.status === "update-available"
                     ? t("about.updates.available.inline", {
                       latestVersion: formatVersion(updateResult.latestVersion, t("common.unknown")),
+                      channel: formatUpdateChannel(t, updateResult.channel),
                     })
                     : updateResult.status === "up-to-date"
                       ? t("about.updates.current.inline", {
                         currentVersion: formatVersion(updateResult.currentVersion, t("common.unknown")),
+                        channel: formatUpdateChannel(t, updateResult.channel),
                       })
-                      : t("about.updates.unavailable.inline")}
+                      : t("about.updates.unavailable.inline", {
+                        channel: formatUpdateChannel(t, updateResult.channel),
+                      })}
                 </div>
               ) : null}
             </div>

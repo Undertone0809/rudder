@@ -57,6 +57,14 @@ vi.mock("../context/I18nContext", () => ({
         "general.logs.description": "Logs section",
         "general.logs.censor.title": "Censor username in logs",
         "general.logs.censor.description": "Censor description",
+        "general.updates.title": "Desktop updates",
+        "general.updates.description": "Update channel section",
+        "general.updates.loadFailed": "Failed to load desktop update settings.",
+        "general.updates.updateFailed": "Failed to update desktop update settings.",
+        "general.updates.unavailable": "Desktop update settings are unavailable.",
+        "general.updates.canary.title": "Receive canary desktop updates",
+        "general.updates.canary.disabledDescription": "Stable update channel selected",
+        "general.updates.canary.enabledDescription": "Canary update channel selected",
         "general.appearance.title": "Appearance",
         "general.appearance.description": "Appearance section",
         "general.appearance.colorMode": "Color mode",
@@ -84,6 +92,7 @@ let cleanupFn: (() => void) | null = null;
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
+  delete (window as typeof window & { desktopShell?: unknown }).desktopShell;
 });
 
 function renderPage() {
@@ -128,5 +137,23 @@ describe("InstanceGeneralSettings", () => {
     expect(container.textContent).toContain("Color mode");
     expect(container.textContent).not.toContain("Theme behavior");
     expect(container.textContent).not.toContain("Theme changes are stored locally in your browser.");
+  });
+
+  it("renders the desktop update channel control when desktop support is available", async () => {
+    (window as typeof window & { desktopShell?: unknown }).desktopShell = {
+      getUpdateChannel: vi.fn(async () => "canary"),
+      setUpdateChannel: vi.fn(async () => "stable"),
+    };
+
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Desktop updates");
+    expect(container.textContent).toContain("Receive canary desktop updates");
+    expect(container.textContent).toContain("Canary update channel selected");
   });
 });

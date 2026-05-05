@@ -29,6 +29,7 @@ type CheckForRudderDesktopUpdatesOptions = {
   appName: string;
   repo: string;
   releasesUrl: string;
+  channel?: DesktopUpdateChannel;
   fetchImpl?: typeof fetch;
 };
 
@@ -206,8 +207,7 @@ async function fetchLatestReleaseWithFallback(options: {
 export async function checkForRudderDesktopUpdates(
   options: CheckForRudderDesktopUpdatesOptions,
 ): Promise<DesktopUpdateCheckResult> {
-  const { currentVersion, appName, repo, releasesUrl, fetchImpl = fetch } = options;
-  const channel = resolveUpdateChannel(currentVersion);
+  const { currentVersion, appName, repo, releasesUrl, channel = "stable", fetchImpl = fetch } = options;
 
   try {
     const latest = await fetchLatestReleaseWithFallback({

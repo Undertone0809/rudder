@@ -61,12 +61,31 @@ describe("desktop update checks", () => {
     });
   });
 
-  it("reports update availability against the latest canary release for canary builds", async () => {
+  it("defaults update checks to stable even when the running version is canary", async () => {
     const result = await checkForRudderDesktopUpdates({
       currentVersion: "0.1.0-canary.14",
       appName: "Rudder",
       repo: "example/rudder",
       releasesUrl: "https://example.test/releases",
+      fetchImpl: async () => new Response(JSON.stringify([
+        { tag_name: "v0.1.1-canary.1", prerelease: true, html_url: "canary" },
+        { tag_name: "v0.1.0", prerelease: false, html_url: "stable" },
+      ])),
+    });
+
+    expect(result.status).toBe("update-available");
+    expect(result.channel).toBe("stable");
+    expect(result.latestVersion).toBe("0.1.0");
+    expect(result.releaseUrl).toBe("stable");
+  });
+
+  it("reports update availability against the latest canary release when canary is selected", async () => {
+    const result = await checkForRudderDesktopUpdates({
+      currentVersion: "0.1.0-canary.14",
+      appName: "Rudder",
+      repo: "example/rudder",
+      releasesUrl: "https://example.test/releases",
+      channel: "canary",
       fetchImpl: async () => new Response(JSON.stringify([
         { tag_name: "v0.1.1-canary.1", prerelease: true, html_url: "canary" },
         { tag_name: "v0.1.0", prerelease: false, html_url: "stable" },
@@ -87,6 +106,7 @@ describe("desktop update checks", () => {
         appName: "Rudder",
         repo: "example/rudder",
         releasesUrl: "https://github.com/example/rudder/releases",
+        channel: "canary",
         fetchImpl: async (url) => {
           if (String(url).includes("api.github.com")) {
             return new Response("rate limited", { status: 403 });

@@ -42,6 +42,8 @@ type DesktopUpdateCheckResult = {
   checkedAt: string;
 };
 
+type DesktopUpdateChannel = DesktopUpdateCheckResult["channel"];
+
 type DesktopUpdateInstallResult =
   | { status: "started"; version: string }
   | { status: "unavailable"; message: string }
@@ -127,6 +129,9 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:open-workspace-file-in-ide", { rootPath, filePath, ideId }) as Promise<void>,
   copyText: (value: string) => ipcRenderer.invoke("desktop:copy-text", value),
   setAppearance: (theme: "light" | "dark" | "system") => ipcRenderer.invoke("desktop:set-appearance", theme),
+  getUpdateChannel: () => ipcRenderer.invoke("desktop:get-update-channel") as Promise<DesktopUpdateChannel>,
+  setUpdateChannel: (channel: DesktopUpdateChannel) =>
+    ipcRenderer.invoke("desktop:set-update-channel", channel) as Promise<DesktopUpdateChannel>,
   reloadApp: () => ipcRenderer.invoke("desktop:reload-app"),
   restart: () => ipcRenderer.invoke("desktop:restart"),
   getAppVersion: () => ipcRenderer.invoke("desktop:get-app-version") as Promise<string>,
@@ -158,6 +163,8 @@ declare global {
       openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
       copyText(value: string): Promise<void>;
       setAppearance(theme: "light" | "dark" | "system"): Promise<void>;
+      getUpdateChannel(): Promise<DesktopUpdateChannel>;
+      setUpdateChannel(channel: DesktopUpdateChannel): Promise<DesktopUpdateChannel>;
       reloadApp(): Promise<void>;
       restart(): Promise<void>;
       getAppVersion(): Promise<string>;

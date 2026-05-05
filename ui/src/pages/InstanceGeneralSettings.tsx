@@ -16,6 +16,10 @@ import { useI18n } from "../context/I18nContext";
 import { useTheme } from "../context/ThemeContext";
 import { queryKeys } from "../lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
+import {
+  readDesktopShell,
+  type DesktopUpdateChannel,
+} from "@/lib/desktop-shell";
 
 function ThemePreview({ mode }: { mode: "light" | "system" | "dark" }) {
   return (
@@ -94,6 +98,9 @@ export function InstanceGeneralSettings() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
+  const [desktopUpdatesSupported, setDesktopUpdatesSupported] = useState(false);
+  const [updateChannel, setUpdateChannel] = useState<DesktopUpdateChannel>("stable");
+  const [updateChannelPending, setUpdateChannelPending] = useState(false);
   const { theme, setTheme } = useTheme();
 
   useEffect(() => {
@@ -108,6 +115,26 @@ export function InstanceGeneralSettings() {
     queryFn: () => instanceSettingsApi.getGeneral(),
     staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
   });
+
+  useEffect(() => {
+    const desktopShell = readDesktopShell();
+    const supported = Boolean(desktopShell?.getUpdateChannel && desktopShell?.setUpdateChannel);
+    setDesktopUpdatesSupported(supported);
+    if (!supported || !desktopShell?.getUpdateChannel) return;
+
+    let cancelled = false;
+    void desktopShell.getUpdateChannel()
+      .then((channel) => {
+        if (!cancelled) setUpdateChannel(channel);
+      })
+      .catch((error) => {
+        if (!cancelled) setActionError(error instanceof Error ? error.message : t("general.updates.loadFailed"));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [t]);
 
   const toggleMutation = useMutation({
     mutationFn: async (patch: { censorUsernameInLogs?: boolean; locale?: "en" | "zh-CN" }) =>
@@ -144,6 +171,26 @@ export function InstanceGeneralSettings() {
 
   const censorUsernameInLogs = generalQuery.data?.censorUsernameInLogs === true;
   const locale = generalQuery.data?.locale ?? "en";
+
+  async function handleUpdateChannelToggle() {
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.setUpdateChannel) {
+      setActionError(t("general.updates.unavailable"));
+      return;
+    }
+
+    const nextChannel: DesktopUpdateChannel = updateChannel === "canary" ? "stable" : "canary";
+    setUpdateChannelPending(true);
+    try {
+      const savedChannel = await desktopShell.setUpdateChannel(nextChannel);
+      setUpdateChannel(savedChannel);
+      setActionError(null);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : t("general.updates.updateFailed"));
+    } finally {
+      setUpdateChannelPending(false);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl space-y-7 px-1 pb-6">
@@ -217,6 +264,32 @@ export function InstanceGeneralSettings() {
       </SettingsSection>
 
       <SettingsDivider />
+
+      {desktopUpdatesSupported ? (
+        <>
+          <SettingsSection
+            title={t("general.updates.title")}
+            description={t("general.updates.description")}
+          >
+            <SettingsRow
+              title={t("general.updates.canary.title")}
+              description={updateChannel === "canary"
+                ? t("general.updates.canary.enabledDescription")
+                : t("general.updates.canary.disabledDescription")}
+              action={
+                <SettingsToggle
+                  checked={updateChannel === "canary"}
+                  aria-label="Toggle canary desktop updates"
+                  disabled={updateChannelPending}
+                  onClick={() => void handleUpdateChannelToggle()}
+                />
+              }
+            />
+          </SettingsSection>
+
+          <SettingsDivider />
+        </>
+      ) : null}
 
       <SettingsSection
         title={t("general.appearance.title")}

@@ -46,6 +46,8 @@ export type DesktopUpdateCheckResult = {
   checkedAt: string;
 };
 
+export type DesktopUpdateChannel = DesktopUpdateCheckResult["channel"];
+
 export type DesktopUpdateInstallResult =
   | { status: "started"; version: string }
   | { status: "unavailable"; message: string }
@@ -96,6 +98,8 @@ export type DesktopShellApi = {
   openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
   copyText(value: string): Promise<void>;
   setAppearance(theme: "light" | "dark" | "system"): Promise<void>;
+  getUpdateChannel?(): Promise<DesktopUpdateChannel>;
+  setUpdateChannel?(channel: DesktopUpdateChannel): Promise<DesktopUpdateChannel>;
   reloadApp?(): Promise<void>;
   restart(): Promise<void>;
   getAppVersion(): Promise<string>;

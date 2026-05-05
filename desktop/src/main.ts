@@ -26,7 +26,16 @@ import {
   type DesktopAppearance,
   type DesktopThemePreference,
 } from "./theme-preference.js";
-import { checkForRudderDesktopUpdates, type DesktopUpdateCheckResult } from "./update-check.js";
+import {
+  normalizeDesktopUpdateChannel,
+  readDesktopUpdateChannel,
+  writeDesktopUpdateChannel,
+} from "./update-channel-preference.js";
+import {
+  checkForRudderDesktopUpdates,
+  type DesktopUpdateChannel,
+  type DesktopUpdateCheckResult,
+} from "./update-check.js";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -292,12 +301,22 @@ async function toWorkspaceLaunchTargetPayload(
 }
 
 async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
+  const channel = readDesktopUpdateChannel(app.getPath("userData"));
   return checkForRudderDesktopUpdates({
     currentVersion: resolveRudderAppVersion(),
     appName: app.getName(),
     repo: DESKTOP_GITHUB_REPO,
     releasesUrl: DESKTOP_RELEASES_URL,
+    channel,
   });
+}
+
+function getDesktopUpdateChannel(): DesktopUpdateChannel {
+  return readDesktopUpdateChannel(app.getPath("userData"));
+}
+
+function setDesktopUpdateChannel(channel: unknown): DesktopUpdateChannel {
+  return writeDesktopUpdateChannel(app.getPath("userData"), normalizeDesktopUpdateChannel(channel));
 }
 
 function desktopMessageBoxWindow(): BrowserWindow | undefined {
@@ -349,8 +368,8 @@ async function promptToInstallAvailableUpdate(result: DesktopUpdateCheckResult):
     detail:
       `You are running ${formatVersionForDisplay(result.currentVersion)}. `
       + (result.channel === "canary"
-        ? "Canary builds update to newer canary releases."
-        : "Stable builds update to stable releases."),
+        ? "The canary update channel is selected, so Rudder will install the newest canary release."
+        : "The stable update channel is selected, so Rudder will install the newest stable release."),
   });
 
   if (response.response !== 0) return;
@@ -1676,6 +1695,10 @@ function registerIpc(): void {
   ipcMain.handle("desktop:set-appearance", async (_event, preference: DesktopThemePreference) => {
     applyDesktopThemePreference(preference);
   });
+  ipcMain.handle("desktop:get-update-channel", async () => getDesktopUpdateChannel());
+  ipcMain.handle("desktop:set-update-channel", async (_event, channel: DesktopUpdateChannel) =>
+    setDesktopUpdateChannel(channel),
+  );
   ipcMain.handle("desktop:reload-app", async () => {
     await reloadAppWindow();
   });
