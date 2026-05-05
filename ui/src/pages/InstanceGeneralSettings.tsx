@@ -7,7 +7,6 @@ import {
   SettingsDivider,
   SettingsPageHeader,
   SettingsRow,
-  SettingsSection,
   SettingsToggle,
 } from "@/components/settings/SettingsScaffold";
 import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
@@ -127,14 +126,17 @@ export function InstanceGeneralSettings() {
       .then((channel) => {
         if (!cancelled) setUpdateChannel(channel);
       })
-      .catch((error) => {
-        if (!cancelled) setActionError(error instanceof Error ? error.message : t("general.updates.loadFailed"));
+      .catch(() => {
+        if (!cancelled) {
+          setDesktopUpdatesSupported(false);
+          setUpdateChannel("stable");
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [t]);
+  }, []);
 
   const toggleMutation = useMutation({
     mutationFn: async (patch: { censorUsernameInLogs?: boolean; locale?: "en" | "zh-CN" }) =>
@@ -208,121 +210,102 @@ export function InstanceGeneralSettings() {
 
       <SettingsDivider />
 
-      <SettingsSection
-        title={t("general.language.title")}
-        description={t("general.language.description")}
-      >
-        <div className="space-y-3">
-          <div className="text-sm font-medium text-foreground">{t("general.language.label")}</div>
-          <div className="flex flex-wrap gap-2.5">
-            <SettingsChoiceCard
-              label={t("general.language.option.en.label")}
-              description={t("general.language.option.en.description")}
-              selected={locale === "en"}
-              onClick={() => toggleMutation.mutate({ locale: "en" })}
-              preview={
-                <LanguagePreview
-                  primary={t("general.language.preview.en.primary")}
-                  secondary={t("general.language.preview.en.secondary")}
-                />
-              }
-            />
-            <SettingsChoiceCard
-              label={t("general.language.option.zh-CN.label")}
-              description={t("general.language.option.zh-CN.description")}
-              selected={locale === "zh-CN"}
-              onClick={() => toggleMutation.mutate({ locale: "zh-CN" })}
-              preview={
-                <LanguagePreview
-                  primary={t("general.language.preview.zh-CN.primary")}
-                  secondary={t("general.language.preview.zh-CN.secondary")}
-                />
-              }
-            />
-          </div>
+      <div className="space-y-3">
+        <div className="text-sm font-medium text-foreground">{t("general.language.title")}</div>
+        <div className="flex flex-wrap gap-2.5">
+          <SettingsChoiceCard
+            label={t("general.language.option.en.label")}
+            description={t("general.language.option.en.description")}
+            selected={locale === "en"}
+            onClick={() => toggleMutation.mutate({ locale: "en" })}
+            preview={
+              <LanguagePreview
+                primary={t("general.language.preview.en.primary")}
+                secondary={t("general.language.preview.en.secondary")}
+              />
+            }
+          />
+          <SettingsChoiceCard
+            label={t("general.language.option.zh-CN.label")}
+            description={t("general.language.option.zh-CN.description")}
+            selected={locale === "zh-CN"}
+            onClick={() => toggleMutation.mutate({ locale: "zh-CN" })}
+            preview={
+              <LanguagePreview
+                primary={t("general.language.preview.zh-CN.primary")}
+                secondary={t("general.language.preview.zh-CN.secondary")}
+              />
+            }
+          />
         </div>
-      </SettingsSection>
+      </div>
 
       <SettingsDivider />
 
-      <SettingsSection
-        title={t("general.logs.title")}
-        description={t("general.logs.description")}
-      >
-        <SettingsRow
-          title={t("general.logs.censor.title")}
-          description={t("general.logs.censor.description")}
-          action={
-            <SettingsToggle
-              checked={censorUsernameInLogs}
-              aria-label="Toggle username log censoring"
-              disabled={toggleMutation.isPending}
-              onClick={() => toggleMutation.mutate({ censorUsernameInLogs: !censorUsernameInLogs })}
-            />
-          }
-        />
-      </SettingsSection>
+      <SettingsRow
+        title={t("general.logs.censor.title")}
+        description={t("general.logs.censor.description")}
+        className="border-t-0 pt-0"
+        action={
+          <SettingsToggle
+            checked={censorUsernameInLogs}
+            aria-label="Toggle username log censoring"
+            disabled={toggleMutation.isPending}
+            onClick={() => toggleMutation.mutate({ censorUsernameInLogs: !censorUsernameInLogs })}
+          />
+        }
+      />
 
       <SettingsDivider />
 
       {desktopUpdatesSupported ? (
         <>
-          <SettingsSection
-            title={t("general.updates.title")}
-            description={t("general.updates.description")}
-          >
-            <SettingsRow
-              title={t("general.updates.canary.title")}
-              description={updateChannel === "canary"
-                ? t("general.updates.canary.enabledDescription")
-                : t("general.updates.canary.disabledDescription")}
-              action={
-                <SettingsToggle
-                  checked={updateChannel === "canary"}
-                  aria-label="Toggle canary desktop updates"
-                  disabled={updateChannelPending}
-                  onClick={() => void handleUpdateChannelToggle()}
-                />
-              }
-            />
-          </SettingsSection>
+          <SettingsRow
+            title={t("general.updates.canary.title")}
+            description={updateChannel === "canary"
+              ? t("general.updates.canary.enabledDescription")
+              : t("general.updates.canary.disabledDescription")}
+            className="border-t-0 pt-0"
+            action={
+              <SettingsToggle
+                checked={updateChannel === "canary"}
+                aria-label="Toggle canary desktop updates"
+                disabled={updateChannelPending}
+                onClick={() => void handleUpdateChannelToggle()}
+              />
+            }
+          />
 
           <SettingsDivider />
         </>
       ) : null}
 
-      <SettingsSection
-        title={t("general.appearance.title")}
-        description={t("general.appearance.description")}
-      >
-        <div className="space-y-3">
-          <div className="text-sm font-medium text-foreground">{t("general.appearance.colorMode")}</div>
-          <div className="flex flex-wrap gap-2.5">
-            <SettingsChoiceCard
-              label={t("general.appearance.light.label")}
-              description={t("general.appearance.light.description")}
-              selected={theme === "light"}
-              onClick={() => setTheme("light")}
-              preview={<ThemePreview mode="light" />}
-            />
-            <SettingsChoiceCard
-              label={t("general.appearance.system.label")}
-              description={t("general.appearance.system.description")}
-              selected={theme === "system"}
-              onClick={() => setTheme("system")}
-              preview={<ThemePreview mode="system" />}
-            />
-            <SettingsChoiceCard
-              label={t("general.appearance.dark.label")}
-              description={t("general.appearance.dark.description")}
-              selected={theme === "dark"}
-              onClick={() => setTheme("dark")}
-              preview={<ThemePreview mode="dark" />}
-            />
-          </div>
+      <div className="space-y-3">
+        <div className="text-sm font-medium text-foreground">{t("general.appearance.colorMode")}</div>
+        <div className="flex flex-wrap gap-2.5">
+          <SettingsChoiceCard
+            label={t("general.appearance.light.label")}
+            description={t("general.appearance.light.description")}
+            selected={theme === "light"}
+            onClick={() => setTheme("light")}
+            preview={<ThemePreview mode="light" />}
+          />
+          <SettingsChoiceCard
+            label={t("general.appearance.system.label")}
+            description={t("general.appearance.system.description")}
+            selected={theme === "system"}
+            onClick={() => setTheme("system")}
+            preview={<ThemePreview mode="system" />}
+          />
+          <SettingsChoiceCard
+            label={t("general.appearance.dark.label")}
+            description={t("general.appearance.dark.description")}
+            selected={theme === "dark"}
+            onClick={() => setTheme("dark")}
+            preview={<ThemePreview mode="dark" />}
+          />
         </div>
-
-      </SettingsSection>
+      </div>
     </div>
   );
 }

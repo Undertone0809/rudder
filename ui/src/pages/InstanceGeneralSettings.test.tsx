@@ -42,9 +42,9 @@ vi.mock("../context/I18nContext", () => ({
         "general.description": "General settings",
         "general.loadFailed": "Failed to load general settings.",
         "general.updateFailed": "Failed to save general settings.",
-        "general.language.title": "Board language",
+        "general.language.title": "Language",
         "general.language.description": "Language section",
-        "general.language.label": "Language",
+        "general.language.label": "Board language",
         "general.language.option.en.label": "English",
         "general.language.option.en.description": "Default product language",
         "general.language.option.zh-CN.label": "简体中文",
@@ -115,26 +115,28 @@ function renderPage() {
 }
 
 describe("InstanceGeneralSettings", () => {
-  it("does not render the removed board language helper row", async () => {
+  it("renders language as a single settings item", async () => {
     const container = renderPage();
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Board language");
-    expect(container.textContent).not.toContain("Language help");
+    expect(container.textContent).toContain("Language");
+    expect(container.textContent).not.toContain("Board language");
+    expect(container.textContent).not.toContain("Language section");
   });
 
-  it("does not render the removed theme behavior helper row", async () => {
+  it("renders appearance as a single color mode item", async () => {
     const container = renderPage();
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Appearance");
     expect(container.textContent).toContain("Color mode");
+    expect(container.textContent).not.toContain("Appearance");
+    expect(container.textContent).not.toContain("Appearance section");
     expect(container.textContent).not.toContain("Theme behavior");
     expect(container.textContent).not.toContain("Theme changes are stored locally in your browser.");
   });
@@ -152,8 +154,29 @@ describe("InstanceGeneralSettings", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Desktop updates");
     expect(container.textContent).toContain("Receive canary desktop updates");
     expect(container.textContent).toContain("Canary update channel selected");
+    expect(container.textContent).not.toContain("Desktop updates");
+    expect(container.textContent).not.toContain("Update channel section");
+  });
+
+  it("hides desktop update channel control when the desktop bridge rejects the read", async () => {
+    (window as typeof window & { desktopShell?: unknown }).desktopShell = {
+      getUpdateChannel: vi.fn(async () => {
+        throw new Error("No handler registered for 'desktop:get-update-channel'");
+      }),
+      setUpdateChannel: vi.fn(async () => "canary"),
+    };
+
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain("Receive canary desktop updates");
+    expect(container.textContent).not.toContain("No handler registered");
+    expect(container.textContent).not.toContain("Failed to load desktop update settings.");
   });
 });

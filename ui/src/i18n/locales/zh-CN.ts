@@ -263,18 +263,15 @@ export const zhCN: Messages = {
   "general.logs.title": "操作日志",
   "general.logs.description": "调整界面中面向操作员展示的输出方式。",
   "general.logs.censor.title": "对日志中的用户名做脱敏",
-  "general.logs.censor.description":
-    "隐藏主目录路径等操作员可见输出中的用户名片段。当前独立出现的用户名在实时转录中还不会被脱敏。",
+  "general.logs.censor.description": "对日志中显示的主目录路径用户名做脱敏。",
   "general.updates.title": "桌面更新",
   "general.updates.description": "选择这台机器安装 Rudder Desktop 时使用哪个发布渠道。",
   "general.updates.loadFailed": "加载桌面更新设置失败。",
   "general.updates.updateFailed": "更新桌面更新设置失败。",
   "general.updates.unavailable": "当前环境不支持桌面更新设置。",
   "general.updates.canary.title": "接收 canary 桌面更新",
-  "general.updates.canary.disabledDescription":
-    "保持关闭时默认检查正式版。开启后，下一次检查更新会对比并安装 canary 构建。",
-  "general.updates.canary.enabledDescription":
-    "这台机器已开启 canary。检查更新会继续对比 canary release，直到你关闭此选项。",
+  "general.updates.canary.disabledDescription": "允许这台机器在检查更新时安装 canary 构建。",
+  "general.updates.canary.enabledDescription": "这台机器检查更新时会使用 canary 构建。",
   "general.appearance.title": "外观",
   "general.appearance.description": "选择这个设备上的 Rudder 外观。视觉风格遵循低眩光、克制的 Claude 风格界面。",
   "general.appearance.colorMode": "颜色模式",

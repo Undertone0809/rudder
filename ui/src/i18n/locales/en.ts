@@ -284,18 +284,15 @@ export const en = {
   "general.logs.title": "Operator logs",
   "general.logs.description": "Adjust how operator-visible output is rendered in the interface.",
   "general.logs.censor.title": "Censor username in logs",
-  "general.logs.censor.description":
-    "Hide the username segment inside home-directory paths and similar operator-visible output. Standalone usernames outside path strings are not yet masked in live transcripts.",
+  "general.logs.censor.description": "Mask the username in home-directory paths shown in logs.",
   "general.updates.title": "Desktop updates",
   "general.updates.description": "Choose which Rudder Desktop release channel this machine should install from.",
   "general.updates.loadFailed": "Failed to load desktop update settings.",
   "general.updates.updateFailed": "Failed to update desktop update settings.",
   "general.updates.unavailable": "Desktop update settings are unavailable in this environment.",
   "general.updates.canary.title": "Receive canary desktop updates",
-  "general.updates.canary.disabledDescription":
-    "Keep this off to check for stable releases by default. Turn it on when you want the next update check to install canary builds.",
-  "general.updates.canary.enabledDescription":
-    "Canary is enabled on this machine. Check for updates will compare against canary releases until you turn this off.",
+  "general.updates.canary.disabledDescription": "Allow update checks to install canary builds on this machine.",
+  "general.updates.canary.enabledDescription": "Canary builds are enabled for update checks on this machine.",
   "general.appearance.title": "Appearance",
   "general.appearance.description":
     "Choose how Rudder should look on this machine. The visual treatment follows Claude-style low-glare surfaces and restrained chrome.",
