@@ -36,11 +36,10 @@ vi.mock("../context/BreadcrumbContext", () => ({
 
 vi.mock("../context/I18nContext", () => ({
   useI18n: () => ({
-    t: (key: string, params?: Record<string, string | number>) => {
+    t: (key: string) => {
       const messages: Record<string, string> = {
         "common.systemSettings": "System settings",
         "common.profile": "Profile",
-        "common.cancel": "Cancel",
         "profile.title": "Profile",
         "profile.description": "Profile description",
         "profile.loadFailed": "Failed to load profile settings.",
@@ -56,39 +55,12 @@ vi.mock("../context/I18nContext", () => ({
         "profile.moreAboutYou.label": "More about you",
         "profile.moreAboutYou.placeholder": "Share standing context.",
         "profile.moreAboutYou.help": "More about you help",
-        "profile.import.entry.title": "Import profile context",
-        "profile.import.entry.description": "Import context description",
-        "profile.import.open": "Import from another AI",
-        "profile.import.title": "Import profile context",
-        "profile.import.description": "Import dialog description",
-        "profile.import.copyStep.title": "Copy this prompt to the other AI",
-        "profile.import.copy": "Copy",
-        "profile.import.copied": "Copied",
-        "profile.import.promptLabel": "Memory export prompt",
+        "profile.import.copyPrompt": "Copy import prompt",
+        "profile.import.copiedButton": "Copied",
+        "profile.import.copied.title": "Prompt copied",
+        "profile.import.copied.body": "Paste the result into More about you, then edit and save.",
         "profile.import.copyFailed.title": "Prompt was not copied",
         "profile.import.copyFailed.body": "Select the prompt text and copy it manually.",
-        "profile.import.pasteStep.title": "Paste the result",
-        "profile.import.paste.label": "Imported profile context",
-        "profile.import.paste.placeholder": "Paste the exported memories or profile context here.",
-        "profile.import.paste.help": "Paste help",
-        "profile.import.review.title": "Review import",
-        "profile.import.review.count": `${params?.count ?? 0} sections found`,
-        "profile.import.category.instructions": "Instructions",
-        "profile.import.category.identity": "Identity",
-        "profile.import.category.career": "Career",
-        "profile.import.category.projects": "Projects",
-        "profile.import.category.preferences": "Preferences",
-        "profile.import.category.other": "Imported context",
-        "profile.import.mode.append": "Append to current profile",
-        "profile.import.mode.append.description": "Append description",
-        "profile.import.mode.replace": "Replace More about you",
-        "profile.import.mode.replace.description": "Replace description",
-        "profile.import.draft.label": "Profile draft",
-        "profile.import.draft.help": "Draft help",
-        "profile.import.tooLong": "Too long",
-        "profile.import.apply": "Apply to profile",
-        "profile.import.applied.title": "Import applied",
-        "profile.import.applied.body": "Review the profile field, then save when it looks right.",
         "profile.save": "Save profile",
         "profile.saving": "Saving...",
       };
@@ -107,6 +79,7 @@ afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   document.body.innerHTML = "";
+  mutate.mockReset();
 });
 
 function setControlValue(control: HTMLInputElement | HTMLTextAreaElement, value: string) {
@@ -139,22 +112,33 @@ function renderPage() {
 }
 
 describe("InstanceProfileSettings", () => {
-  it("imports selected provider memory into the editable profile field", async () => {
+  it("copies the import prompt and keeps pasted provider memory in the editable profile field", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
     const container = renderPage();
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    const openButton = Array.from(document.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Import from another AI"));
-    expect(openButton).toBeTruthy();
+    const copyButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Copy import prompt"));
+    expect(copyButton).toBeTruthy();
 
-    act(() => {
-      click(openButton!);
+    await act(async () => {
+      click(copyButton!);
+      await Promise.resolve();
     });
 
-    const pastedExport = [
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText.mock.calls[0]?.[0]).toContain("Export all of my stored memories");
+    expect(copyButton?.textContent).toContain("Copied");
+
+    const providerExport = [
       "## Instructions",
       "[unknown] - Always answer concisely.",
       "",
@@ -162,32 +146,26 @@ describe("InstanceProfileSettings", () => {
       "[2026-05-01] - Rudder: agent orchestration control plane.",
     ].join("\n");
 
-    const importTextarea = document.querySelector(
-      'textarea[aria-label="Imported profile context"]',
-    ) as HTMLTextAreaElement | null;
-    expect(importTextarea).toBeTruthy();
+    const profileTextarea = container.querySelector("#profile-more-about-you") as HTMLTextAreaElement | null;
+    expect(profileTextarea).toBeTruthy();
 
     act(() => {
-      setControlValue(importTextarea!, pastedExport);
+      setControlValue(profileTextarea!, providerExport);
     });
 
-    const draftTextarea = document.querySelector("#profile-import-draft") as HTMLTextAreaElement | null;
-    expect(draftTextarea?.value).toContain("Instructions:");
-    expect(draftTextarea?.value).toContain("Projects:");
+    expect(profileTextarea?.value).toContain("[unknown] - Always answer concisely.");
+    expect(profileTextarea?.value).toContain("Rudder: agent orchestration control plane.");
 
-    const applyButton = Array.from(document.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Apply to profile"));
-    expect(applyButton).toBeTruthy();
-    expect((applyButton as HTMLButtonElement).disabled).toBe(false);
+    const saveButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Save profile")) as HTMLButtonElement | undefined;
+    expect(saveButton).toBeTruthy();
+    expect(saveButton?.disabled).toBe(false);
 
     await act(async () => {
-      click(applyButton!);
+      click(saveButton!);
       await Promise.resolve();
     });
 
-    const profileTextarea = container.querySelector("#profile-more-about-you") as HTMLTextAreaElement | null;
-    expect(profileTextarea?.value).toContain("Existing profile context.");
-    expect(profileTextarea?.value).toContain("Instructions:\n[unknown] - Always answer concisely.");
-    expect(profileTextarea?.value).toContain("Projects:\n[2026-05-01] - Rudder: agent orchestration control plane.");
+    expect(mutate).toHaveBeenCalledTimes(1);
   });
 });

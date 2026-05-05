@@ -26,9 +26,9 @@ updated_at: 2026-05-05
 
 ## Summary
 
-Add a guided import workflow to the existing Profile settings page so operators
-can bring standing context from another AI provider into Rudder's lightweight
-operator profile.
+Add a lightweight import prompt helper to the existing Profile settings page so
+operators can bring standing context from another AI provider into Rudder's
+operator profile without a separate import wizard.
 
 The first version remains scoped to `moreAboutYou`. It does not create a general
 memory service, store raw provider exports, or alter agent heartbeat prompts.
@@ -46,27 +46,27 @@ provider-backed memory.
 
 ## Scope
 
-- Add an `Import from another AI` action to Profile settings.
-- Show a modal with a copyable provider-export prompt.
-- Accept pasted markdown/text from another provider.
-- Parse known category headers when possible.
-- Let the operator include/exclude categories, review the generated draft, and
-  append or replace the current `More about you` field.
+- Add a `Copy import prompt` action next to `More about you`.
+- Copy the provider-export prompt to the system clipboard.
+- Tell the operator to paste the other AI's result directly into `More about
+  you`, then edit and save.
 - Increase the `moreAboutYou` profile limit enough for imported context.
 - Keep saving through the existing profile settings API.
 - Do not persist the raw import separately.
+- Do not parse, summarize, transform, or classify the pasted export.
+- Do not add a modal, section picker, draft preview, append/replace mode, or
+  second paste surface.
 - Do not add provider connectors, memory bindings, memory operation logs, or
   automatic memory capture.
 - Do not inject imported context into agent heartbeats or runtime instructions.
 
 ## Implementation Plan
 
-1. Add local parsing and draft-building helpers in `InstanceProfileSettings`.
-2. Add a profile import dialog with copy, paste, category selection, draft
-   preview, append/replace mode, and apply action.
-3. Add English and Chinese i18n strings for the import workflow.
+1. Add the provider-export prompt copy action in `InstanceProfileSettings`.
+2. Keep `More about you` as the only paste, edit, review, and save surface.
+3. Add English and Chinese i18n strings for the copy helper and toast.
 4. Raise the shared `moreAboutYou` validation limit and UI `maxLength`.
-5. Add or update focused tests for the profile page import flow and validator
+5. Add or update focused tests for the direct paste flow and validator
    limit where coverage exists.
 6. Run targeted UI/shared checks, then broader verification as time permits.
 
@@ -74,41 +74,37 @@ provider-backed memory.
 
 - Naming should say "profile context" or "another AI", not generic "memory",
   because the first version only edits the operator profile.
-- The dialog applies changes to the editable form state first. The existing
-  `Save profile` button remains the durable commit path, preserving the current
-  profile settings behavior.
-- Appending is the default when existing context is present. Replacing is an
-  explicit operator choice.
-- Parsed categories are a review aid, not a strict import schema. Unrecognized
-  text remains importable after review.
+- `More about you` remains the durable form field and review point. Users can
+  paste over existing text, append manually, trim, or rewrite before saving.
+- The helper should not create a second editor or imply that Rudder understands
+  provider memory structure. The user owns the final text.
 - Raw provider exports may contain sensitive information. The first version
   avoids storing raw import payloads.
 
 ## Success Criteria
 
-- A user can copy the prompt, paste exported context, review the draft, apply it
-  to `More about you`, and save the profile.
-- Existing profile editing remains unchanged when the import dialog is unused.
+- A user can copy the prompt, paste exported context directly into `More about
+  you`, edit it, and save the profile.
+- Existing profile editing remains unchanged when the copy helper is unused.
 - Long imported context is accepted up to the new shared limit.
 - The UI copy makes clear that imported context affects Rudder chat/profile
   context, not a full memory system.
 
 ## Validation
 
-- Unit/component coverage for the import workflow passed.
+- Unit/component coverage for the copy-helper and direct-paste workflow passed.
 - Shared validator coverage for the raised `moreAboutYou` limit passed.
 - `pnpm -r typecheck` passed.
 - `pnpm build` passed.
-- `pnpm test:run` was attempted. The new tests passed, but existing
-  embedded-Postgres suites failed to initialize with `Postgres init script
-  exited with code 1`.
-- Targeted Playwright E2E was added and attempted, but the isolated E2E server
-  hit the same embedded-Postgres initialization failure before the browser test
-  could run.
-- Browser verification was attempted with the current worktree UI proxied to an
-  existing local backend. Browser MCP calls timed out and local Playwright
-  browser launch hung before page navigation, so no final screenshot was
-  captured in this environment.
+- `pnpm test:run` was attempted. The new tests passed, and the full suite
+  completed with one existing CLI import/export E2E teardown failure:
+  `ENOTEMPTY: directory not empty, rmdir .../organizations`.
+- Targeted Playwright E2E was updated and attempted against the existing local
+  preview, but Chromium launch hung before test execution in this environment.
+  The stuck Playwright/Chromium processes were killed.
+- The current worktree preview health endpoint returned `ok` at
+  `http://127.0.0.1:3310/api/health`. Browser MCP and local headless Playwright
+  both timed out/hung before a visual screenshot could be captured.
 
 ## Open Issues
 
