@@ -52,6 +52,11 @@ cannot be safely inferred.
   npm dist-tag `latest`.
 - Stable tags point at the original source commit, not at a generated release
   commit.
+- For stable releases, `main` is only a selector until you resolve it. Before
+  the real publish, lock the source to an immutable commit SHA or stable tag and
+  use that same ref for dry-run, publish, Desktop recovery, and verification.
+  Do not chase newer `main` commits or newer canaries during the stable unless
+  the user explicitly asks to retarget the release.
 - A stable release is not done until verification, npm, GitHub Release, Desktop
   assets, and public notes/announcement are all handled.
 - Pre-stable public canaries may temporarily be the default `latest` install
@@ -82,6 +87,11 @@ cannot be safely inferred.
   canary still needs npm, tag, Desktop, and Release-title verification. After
   any emergency dist-tag repair, recheck `latest` after in-progress `release.yml`
   runs finish or explicitly report the remaining overwrite risk.
+- Once a stable source ref is locked, unrelated later `main` pushes are not a
+  reason to retarget the stable. Track them only as overwrite or verification
+  risk. After the first stable exists, ordinary canary promotion should not move
+  npm `latest`; verify that invariant instead of waiting indefinitely for every
+  unrelated canary smoke.
 
 ## Required Context
 
@@ -350,6 +360,9 @@ processes started from that path before claiming the app opens.
 Prefer the GitHub Actions workflow over local stable publishing.
 
 1. Pick a source ref: exact commit SHA, `main`, or a trusted canary source.
+   If `main` is used, immediately resolve it to a commit SHA and record that as
+   the release source. From this point on, use the immutable SHA unless the user
+   explicitly authorizes retargeting.
 2. Confirm public packages all share the intended stable semver:
 
 ```bash
@@ -358,12 +371,21 @@ node scripts/release-package-map.mjs list
 ```
 
 3. Confirm `releases/vX.Y.Z.md` exists on the source ref.
-4. Run the `Release` workflow with `dry_run: true`.
-5. If dry-run passes, rerun with `dry_run: false`.
-6. Wait for or request `npm-stable` approval.
-7. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
+4. Check recent and in-progress `release.yml` runs. If there are unrelated
+   `main` push canaries in progress, decide whether they are true blockers:
+   - before npm stable exists, they can temporarily move `latest` to a canary,
+     but the stable publish will move it to the stable version;
+   - after npm stable exists, ordinary canaries should leave `latest` alone via
+     `--only-if-no-stable`;
+   - do not wait for unrelated canaries merely to adopt their newer commits.
+5. Run the `Release` workflow with `dry_run: true`, using the locked SHA as
+   `source_ref`.
+6. If dry-run passes, rerun with `dry_run: false`, again using the same locked
+   SHA as `source_ref`.
+7. Wait for or request `npm-stable` approval.
+8. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
    workflow, and assets.
-8. Smoke test:
+9. Smoke test:
 
 ```bash
 npx @rudderhq/cli@latest start --no-open
@@ -371,6 +393,10 @@ rudder start --no-open
 ```
 
 The second command is only expected to work after the persistent CLI exists.
+
+If the workflow fails after npm publish, do not rerun the whole stable workflow
+without first classifying the partial state. Stable npm versions are immutable;
+repair the missing downstream surfaces for the same version and tag.
 
 ### Version Bump
 
@@ -400,8 +426,34 @@ After rollback, fix forward with a new stable semver.
 
 - npm published but tag/GitHub Release failed: do not republish npm. Push or
   recreate the missing tag/release for the same version.
+- npm published and the stable tag exists, but GitHub Release creation failed:
+  do not republish npm and do not rerun the whole stable workflow. Inspect the
+  job log for the failing command. If the failure is a missing `GH_TOKEN` or
+  `gh` authentication problem after `vX.Y.Z` was pushed, create or update the
+  GitHub Release manually from `releases/vX.Y.Z.md`, then trigger
+  `desktop-release.yml` for that exact stable tag:
+
+```bash
+gh release create vX.Y.Z \
+  --repo Undertone0809/rudder \
+  --title vX.Y.Z \
+  --notes-file releases/vX.Y.Z.md \
+  --target <locked-source-sha>
+
+gh workflow run desktop-release.yml \
+  --repo Undertone0809/rudder \
+  --ref main \
+  -f release_tag=vX.Y.Z \
+  -f source_ref=vX.Y.Z
+```
+
 - GitHub Release exists but Desktop assets failed: rerun `desktop-release.yml`
   for the same `vX.Y.Z` or `canary/vX.Y.Z-canary.N`; do not republish npm.
+- A later `main` canary fails because an earlier concurrent canary already
+  published the same prerelease version. Treat it as a canary concurrency
+  incident, not as evidence that the locked stable source is bad. Verify npm
+  dist-tags, the stable tag, and the selected release source before deciding
+  whether stable should proceed.
 - `GitHub Release ... was not found (403)` from the CLI: do not stop at the CLI
   error. Check whether GitHub API rate limits are exhausted and whether the
   Release and direct assets are actually public:
@@ -483,6 +535,14 @@ a newer canary or move npm tags after your verification:
 ```bash
 gh run list --workflow release.yml --limit 10
 ```
+
+For stable releases, report in-progress unrelated canary or smoke workflows
+separately from the fixed stable result. Do not keep retargeting or revalidating
+against newer `main` commits after `vX.Y.Z` points at the locked source SHA.
+If a supplemental cross-platform public install smoke is still running after the
+stable npm/tag/Release/Desktop surfaces and at least the available local full
+install smoke are verified, state that residual status explicitly instead of
+blocking forever or implying the stable tag moved.
 
 For first-public canary bootstrap where `latest` intentionally equals canary,
 run both smoke checks. The `--dry-run` form is a fast resolver check; the
@@ -577,6 +637,26 @@ Expected behavior:
 - recommend GitHub Actions dry-run before real publish
 - include Desktop and npm verification steps
 
+**Stable source lock with moving main**
+
+User: `发 0.1.0 stable`
+
+Observed state:
+- dry-run passed for `main` when it resolved to `abc123`
+- another unrelated commit later landed on `main` and started a canary run
+
+Expected behavior:
+- record `abc123` as the locked stable source unless the user explicitly
+  retargets
+- run the real stable publish with `source_ref=abc123`
+- monitor later canary runs only for npm tag overwrite risk
+- do not wait for the newer canary merely to adopt its commit into the stable
+
+Must not:
+- silently retarget stable to the newer `main`
+- keep delaying stable to chase unrelated canaries
+- imply the stable tag moved after `vX.Y.Z` points at the locked source
+
 **Desktop failure**
 
 User: `npm latest 已经发了，但是 mac/windows/linux 包没挂到 release 上。`
@@ -586,6 +666,25 @@ Expected behavior:
 - do not republish npm
 - rerun `desktop-release.yml` for the existing stable tag
 - verify Release assets and `SHASUMS256.txt`
+
+**Stable GitHub Release creation failure after npm publish**
+
+Observed state:
+- stable workflow published every `@rudderhq/*@0.1.0`
+- workflow pushed `v0.1.0`
+- `gh release create` failed because `GH_TOKEN` was missing in the job
+
+Expected behavior:
+- classify this as partial release recovery
+- verify npm `latest=0.1.0` across all public packages
+- verify `v0.1.0` points at the locked source SHA
+- manually create or update the GitHub Release from `releases/v0.1.0.md`
+- trigger `desktop-release.yml` for `release_tag=v0.1.0`
+
+Must not:
+- rerun the full stable workflow and attempt to republish `0.1.0`
+- unpublish or rewrite the stable tag
+- call the release done before Desktop assets and checksums are attached
 
 **Broken npx latest install**
 
