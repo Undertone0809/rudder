@@ -23,38 +23,50 @@ test.describe("Issue detail documents UX", () => {
     expect(issueRes.ok()).toBe(true);
     const issue = await issueRes.json();
 
+    const documentRes = await page.request.put(`/api/issues/${issue.id}/documents/ops-checklist`, {
+      data: {
+        title: "Ops checklist",
+        format: "markdown",
+        body: "Confirm staging is healthy before handoff.",
+        baseRevisionId: null,
+      },
+    });
+    expect(documentRes.ok()).toBe(true);
+
     await page.goto(`/issues/${issue.identifier ?? issue.id}`);
 
     await expect(page.getByRole("button", { name: "Copy ID" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Attach", exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "New document" }).click();
-    await expect(page.getByPlaceholder("Document title")).toBeVisible();
+    const focusedEditor = page.getByRole("region", { name: "Focused document editor" });
     await expect(page.getByPlaceholder("Document key")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Expand editor" })).toBeVisible();
+    await expect(focusedEditor.getByPlaceholder("Untitled document")).toBeVisible();
+    await expect(page.getByText("Add some content before creating the document")).toHaveCount(0);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(focusedEditor.getByRole("button", { name: "Back to issue" })).toBeVisible();
+    await expect(focusedEditor.getByRole("button", { name: "Done" })).toHaveCount(0);
+    await expect(focusedEditor.getByRole("button", { name: "Discard" })).toHaveCount(0);
+    await expect(focusedEditor.getByRole("button", { name: "Create" })).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Expand editor" }).click();
-    const expandedEditor = page.getByRole("dialog", { name: "New document" });
-    await expect(expandedEditor).toBeVisible();
-    await expect(expandedEditor.getByRole("button", { name: "Collapse editor" })).toBeVisible();
-
-    const viewport = page.viewportSize();
-    const expandedBox = await expandedEditor.boundingBox();
-    expect(expandedBox).not.toBeNull();
-    if (viewport && expandedBox) {
-      expect(expandedBox.width).toBeGreaterThan(viewport.width * 0.9);
-      expect(expandedBox.height).toBeGreaterThan(viewport.height * 0.9);
-    }
-
-    await expandedEditor.getByPlaceholder("Document title").fill("Ops checklist");
-    const editor = expandedEditor.locator('[contenteditable="true"]').last();
+    await focusedEditor.getByPlaceholder("Untitled document").fill("Release notes");
+    const editor = focusedEditor.locator('[contenteditable="true"]');
     await editor.click();
-    await editor.fill("Confirm staging is healthy before handoff.");
+    await editor.fill("Summarize what changed before handoff.");
+    await expect(focusedEditor.getByText(/Created|Saved/)).toBeVisible({ timeout: 5000 });
 
-    await expandedEditor.getByRole("button", { name: "Create" }).click();
-
-    await expect(page.getByText("Ops checklist")).toBeVisible();
-    await expect(page.getByText("Confirm staging is healthy before handoff.")).toBeVisible();
+    await focusedEditor.getByRole("button", { name: "Back to issue" }).click();
+    await expect(page.getByText("Release notes")).toBeVisible();
     await expect(page.getByText("Document key", { exact: true })).toHaveCount(0);
+
+    await page.locator("#document-ops-checklist").getByRole("button", { name: "Expand editor" }).click();
+    const focusedExistingEditor = page.getByRole("region", { name: "Focused document editor" });
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(focusedExistingEditor.getByRole("button", { name: "Done" })).toHaveCount(0);
+    await expect(focusedExistingEditor.getByRole("button", { name: "Discard" })).toHaveCount(0);
+    await expect(focusedExistingEditor.getByRole("button", { name: "Back to issue" })).toBeVisible();
+    await expect(page.getByText("Sub-issues")).toHaveCount(0);
+    await focusedExistingEditor.getByPlaceholder("Untitled document").fill("Ops checklist revised");
+    await expect(focusedExistingEditor.getByText("Ops checklist revised")).toBeVisible();
   });
 });
