@@ -23,6 +23,20 @@ function currentChatId(pageUrl: string) {
   return chatId!;
 }
 
+function currentOrgRoutePath(pageUrl: string, relativePath: string) {
+  const segments = new URL(pageUrl).pathname.split("/").filter(Boolean);
+  const first = segments[0] ?? "";
+  const prefix = first && !["messenger", "issues", "chat"].includes(first) ? `/${first}` : "";
+  return `${prefix}${relativePath}`;
+}
+
+async function pushSpaRoute(page: Page, path: string) {
+  await page.evaluate((nextPath) => {
+    window.history.pushState({}, "", nextPath);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, path);
+}
+
 test("allows sending a new chat while another chat is still streaming", async ({ page }) => {
   const organization = await createStreamingOrg(page, `Concurrent-Chat-${Date.now()}`);
 
@@ -69,6 +83,52 @@ test("allows sending a new chat while another chat is still streaming", async ({
     timeout: 15_000,
   });
   await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Streaming reply for chat.", {
+    timeout: 15_000,
+  });
+});
+
+test("keeps a streaming chat visible after navigating to issue detail and back", async ({ page }) => {
+  const organization = await createStreamingOrg(page, `Streaming-Route-Persistence-${Date.now()}`);
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Issue detail route used while chat streams",
+      description: "Navigating here should not drop the active chat stream.",
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  const issue = await issueRes.json();
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.goto("/messenger");
+
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.fill("Keep streaming across route changes");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page).toHaveURL(/\/messenger\/chat\/[^/]+$/i, { timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Streaming reply", {
+    timeout: 15_000,
+  });
+  const chatId = currentChatId(page.url());
+  const issuePath = currentOrgRoutePath(page.url(), `/issues/${issue.identifier ?? issue.id}`);
+  const chatPath = currentOrgRoutePath(page.url(), `/messenger/chat/${chatId}`);
+
+  await pushSpaRoute(page, issuePath);
+  await expect(page).toHaveURL(new RegExp(`/issues/${issue.identifier ?? issue.id}$`, "i"), { timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: issue.title })).toBeVisible({ timeout: 15_000 });
+
+  await pushSpaRoute(page, chatPath);
+  await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chatId}$`, "i"), { timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Streaming reply", {
     timeout: 15_000,
   });
 });

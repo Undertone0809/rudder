@@ -60,7 +60,7 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useToast } from "@/context/ToastContext";
-import { useChatGenerations } from "@/context/ChatGenerationContext";
+import { useChatGenerations, type ChatStreamDraft, type ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
 import { ApiError } from "@/api/client";
@@ -86,8 +86,6 @@ import {
 import {
   readChatScopedFlag,
   readChatScopedState,
-  setChatFlagState,
-  setChatScopedState,
   shouldShowMessageDuringActiveStream,
 } from "@/lib/chat-stream-state";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
@@ -100,30 +98,9 @@ import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useI18n } from "@/context/I18nContext";
 
 type ApprovalAction = "approve" | "reject" | "requestRevision";
-type StreamDraftState = "streaming" | "finalizing" | "stopped" | "failed";
-type PendingInitialSend = {
-  chatId: string;
-  body: string;
-  files: File[];
-};
-
 type AttachmentPreviewState = {
   src: string;
   name: string;
-};
-
-type StreamDraft = {
-  chatId: string;
-  userBody: string;
-  userCreatedAt: Date;
-  userMessageId: string | null;
-  chatTurnId: string | null;
-  editedFromCreatedAt: Date | null;
-  body: string;
-  state: StreamDraftState;
-  createdAt: Date;
-  transcript: TranscriptEntry[];
-  replyingAgentId: string | null;
 };
 
 const EMPTY_STATE_PROMPT_GROUPS = [
@@ -777,7 +754,7 @@ function formatChatPrimaryIssueBreadcrumb(issue: ChatPrimaryIssueSummary): strin
   return idPart ?? titlePart ?? issue.id;
 }
 
-function assistantStateLabel(state: StreamDraftState | ChatMessage["status"]) {
+function assistantStateLabel(state: ChatStreamDraftState | ChatMessage["status"]) {
   if (state === "streaming") return "Streaming";
   if (state === "finalizing") return "Finalizing";
   if (state === "stopped") return "Stopped";
@@ -785,7 +762,7 @@ function assistantStateLabel(state: StreamDraftState | ChatMessage["status"]) {
   return null;
 }
 
-function statusChipClassName(state: StreamDraftState | ChatMessage["status"]) {
+function statusChipClassName(state: ChatStreamDraftState | ChatMessage["status"]) {
   return state === "failed"
     ? "border-destructive/30 bg-destructive/10 text-destructive"
     : "chat-chip";
@@ -1320,7 +1297,7 @@ function StreamTranscriptItem({
   onOpenChange,
 }: {
   entries: TranscriptEntry[];
-  state: StreamDraftState | ChatMessage["status"];
+  state: ChatStreamDraftState | ChatMessage["status"];
   streamStartedAt: Date;
   streamEndedAt?: Date | null;
   defaultOpen?: boolean;
@@ -1430,7 +1407,7 @@ function AssistantDraftItem({
 }: {
   body: string;
   createdAt: Date;
-  state: StreamDraftState;
+  state: ChatStreamDraftState;
   replyingAgentId: string | null;
   conversation: ChatConversation;
   agents: Agent[] | undefined;
@@ -1509,7 +1486,14 @@ function ChatWorkspace() {
   const { t } = useI18n();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
-  const { setChatGenerationActive } = useChatGenerations();
+  const {
+    abortChatStream,
+    sendInFlightByChatId,
+    setChatSendInFlight,
+    setStreamAbortController,
+    setStreamDraftForChat,
+    streamDrafts,
+  } = useChatGenerations();
   const draftStorageOrgId = selectedOrganizationId!;
   const draftStorageConversationId = conversationId ?? null;
   const draftStorageScopeKey = `${draftStorageOrgId}:${draftStorageConversationId ?? "__new__"}`;
@@ -1522,9 +1506,7 @@ function ChatWorkspace() {
     setDraftState((current) => ({ ...current, value: nextDraft }));
   }, []);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [sendInFlightByChatId, setSendInFlightByChatId] = useState<Record<string, true>>({});
   const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false);
-  const [streamDrafts, setStreamDrafts] = useState<Record<string, StreamDraft>>({});
   const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, true>>({});
   const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>("__none__");
   const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
@@ -1546,10 +1528,7 @@ function ChatWorkspace() {
   const composerEditorRef = useRef<MarkdownEditorRef>(null);
   const composerContextMenuRef = useRef<HTMLDivElement>(null);
   const skillSearchInputRef = useRef<HTMLInputElement>(null);
-  const streamAbortControllersRef = useRef<Record<string, AbortController>>({});
   const stopRequestedChatIdsRef = useRef<Set<string>>(new Set());
-  const activeGenerationIdsRef = useRef<Set<string>>(new Set());
-  const pendingInitialSendRef = useRef<PendingInitialSend | null>(null);
   const newConversationSendLockRef = useRef(false);
   const chatSendLocksRef = useRef<Record<string, true>>({});
   const lastAppliedPrefillRef = useRef<string | null>(null);
@@ -1966,10 +1945,6 @@ function ChatWorkspace() {
     );
   };
 
-  const setChatSendInFlight = useCallback((chatId: string, inFlight: boolean) => {
-    setSendInFlightByChatId((current) => setChatFlagState(current, chatId, inFlight));
-  }, []);
-
   const acquireNewConversationSendLock = useCallback(() => {
     if (newConversationSendLockRef.current) return false;
     newConversationSendLockRef.current = true;
@@ -1997,50 +1972,6 @@ function ChatWorkspace() {
     const { [chatId]: _removed, ...rest } = chatSendLocksRef.current;
     chatSendLocksRef.current = rest;
   }, []);
-
-  const setStreamDraftForChat = useCallback((
-    chatId: string,
-    nextDraft:
-      | StreamDraft
-      | null
-      | ((current: StreamDraft | null) => StreamDraft | null),
-  ) => {
-    setStreamDrafts((current) => {
-      const existing = current[chatId] ?? null;
-      const resolved =
-        typeof nextDraft === "function"
-          ? nextDraft(existing)
-          : nextDraft;
-      return setChatScopedState(current, chatId, resolved);
-    });
-  }, []);
-
-  useEffect(() => {
-    const nextActiveIds = new Set(Object.keys(streamDrafts));
-    const previousActiveIds = activeGenerationIdsRef.current;
-
-    for (const chatId of previousActiveIds) {
-      if (!nextActiveIds.has(chatId)) {
-        setChatGenerationActive(chatId, false);
-      }
-    }
-    for (const chatId of nextActiveIds) {
-      if (!previousActiveIds.has(chatId)) {
-        setChatGenerationActive(chatId, true);
-      }
-    }
-
-    activeGenerationIdsRef.current = nextActiveIds;
-  }, [setChatGenerationActive, streamDrafts]);
-
-  useEffect(() => {
-    return () => {
-      for (const chatId of activeGenerationIdsRef.current) {
-        setChatGenerationActive(chatId, false);
-      }
-      activeGenerationIdsRef.current = new Set();
-    };
-  }, [setChatGenerationActive]);
 
   const setProcessOpenForMessage = useCallback((messageId: string, open: boolean) => {
     setOpenProcessMessageIds((current) => {
@@ -2077,12 +2008,6 @@ function ChatWorkspace() {
       }
       return changed ? next : current;
     });
-  }, []);
-
-  const clearAbortControllerForChat = useCallback((chatId: string) => {
-    if (!(chatId in streamAbortControllersRef.current)) return;
-    const { [chatId]: _removed, ...rest } = streamAbortControllersRef.current;
-    streamAbortControllersRef.current = rest;
   }, []);
 
   const setDecisionNoteForMessage = useCallback((messageId: string, value: string) => {
@@ -2241,9 +2166,9 @@ function ChatWorkspace() {
         tone: "error",
       });
     });
-    streamAbortControllersRef.current[chatId]?.abort();
+    abortChatStream(chatId);
     setStreamDraftForChat(chatId, (current) => (current ? { ...current, state: "stopped" } : current));
-  }, [pushToast, setStreamDraftForChat]);
+  }, [abortChatStream, pushToast, setStreamDraftForChat]);
 
   const sendMessage = async (
     options?: {
@@ -2287,17 +2212,11 @@ function ChatWorkspace() {
         });
         const startedAt = new Date();
         conversation = upsertOptimisticConversation(createdConversation, body, startedAt);
-        pendingInitialSendRef.current = {
-          chatId: conversation.id,
-          body,
-          files: filesToUpload,
-        };
         setDraft("");
         setPendingFiles([]);
         setEditForkUserMessageId(null);
         setBranchPreview(null);
         navigate(chatConversationPath(conversation.id));
-        return;
       }
 
       const chatId = conversation.id;
@@ -2316,10 +2235,7 @@ function ChatWorkspace() {
       setChatSendInFlight(chatId, true);
       stopRequestedChatIdsRef.current.delete(chatId);
       const abortController = new AbortController();
-      streamAbortControllersRef.current = {
-        ...streamAbortControllersRef.current,
-        [chatId]: abortController,
-      };
+      setStreamAbortController(chatId, abortController);
       const startedAt = new Date();
       conversation = upsertOptimisticConversation(conversation, body, startedAt);
       setStreamDraftForChat(chatId, {
@@ -2433,31 +2349,18 @@ function ChatWorkspace() {
       });
     } finally {
       if (activeChatId) {
-        clearAbortControllerForChat(activeChatId);
+        setStreamAbortController(activeChatId, null);
         stopRequestedChatIdsRef.current.delete(activeChatId);
         if (chatSendLockAcquired) {
           releaseChatSendLock(activeChatId);
         }
         setChatSendInFlight(activeChatId, false);
       }
-      if (newConversationLockAcquired && !pendingInitialSendRef.current) {
+      if (newConversationLockAcquired) {
         releaseNewConversationSendLock();
       }
     }
   };
-
-  useEffect(() => {
-    if (!selectedConversation || sendInFlightByChatId[selectedConversation.id]) return;
-    if (!pendingInitialSendRef.current || pendingInitialSendRef.current.chatId !== selectedConversation.id) return;
-
-    const nextSend = pendingInitialSendRef.current;
-    pendingInitialSendRef.current = null;
-    void sendMessage({
-      conversationOverride: selectedConversation,
-      bodyOverride: nextSend.body,
-      filesOverride: nextSend.files,
-    });
-  }, [selectedConversation, sendInFlightByChatId]);
 
   const conversations = useMemo(() => {
     const items = conversationsQuery.data ?? [];
