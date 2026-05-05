@@ -744,6 +744,7 @@ export function IssueDocumentsSection({
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <Button
+                    type="button"
                     variant="ghost"
                     size="icon-xs"
                     className="text-muted-foreground"
@@ -1000,6 +1001,7 @@ export type IssueDocumentFocusTarget =
 export function IssueDocumentFocusPage({
   issue,
   target,
+  motionState = "open",
   mentions,
   imageUploadHandler,
   onClose,
@@ -1007,6 +1009,7 @@ export function IssueDocumentFocusPage({
 }: {
   issue: Issue;
   target: IssueDocumentFocusTarget;
+  motionState?: "open" | "closing";
   mentions?: MentionOption[];
   imageUploadHandler?: (file: File) => Promise<string>;
   onClose: () => void;
@@ -1211,28 +1214,27 @@ export function IssueDocumentFocusPage({
     : target.kind === "existing"
       ? titleCaseWords(target.key)
       : "Untitled document";
+  const hasMeaningfulBody = Boolean(draft?.body.trim());
+  const hasAutosaveActivity = Boolean(autosaveDocumentKey) || Boolean(draft?.isNew && hasMeaningfulBody);
   const statusLabel = error
     ? "Could not save"
-    : draft?.isNew
-      ? draft.body.trim()
-        ? autosaveState === "saving"
-          ? "Creating..."
-          : autosaveState === "saved"
-            ? "Created"
-            : "Draft"
-        : "Draft"
-      : autosaveDocumentKey === draft?.key && autosaveState === "saving"
-        ? "Autosaving..."
-        : autosaveDocumentKey === draft?.key && autosaveState === "saved"
+    : autosaveState === "saving" && hasAutosaveActivity
+      ? "Saving..."
+      : autosaveState === "error" && hasAutosaveActivity
+        ? "Could not save"
+        : autosaveState === "saved" || (draft && !draft.isNew)
           ? "Saved"
-          : autosaveDocumentKey === draft?.key && autosaveState === "error"
-            ? "Could not save"
-            : "Saved";
+          : "";
 
   return (
     <section
       aria-label="Focused document editor"
-      className="min-h-[calc(100dvh-7rem)] animate-in fade-in-0 slide-in-from-right-2 duration-200"
+      className={cn(
+        "min-h-[calc(100dvh-7rem)]",
+        motionState === "closing"
+          ? "animate-out fade-out-0 slide-out-to-right-2 duration-200"
+          : "animate-in fade-in-0 slide-in-from-right-2 duration-200",
+      )}
     >
       <div className="mb-4 flex items-center justify-between gap-3 border-b border-border/60 pb-3">
         <div className="flex min-w-0 items-center gap-2">

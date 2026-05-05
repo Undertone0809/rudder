@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
+import { organizationsApi } from "../api/orgs";
 import { chatsApi } from "../api/chats";
 import { activityApi } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
@@ -57,14 +58,32 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Activity as ActivityIcon,
   Check,
   ChevronDown,
   ChevronRight,
   Copy,
   EyeOff,
+  FileCode2,
+  Folder,
   Hexagon,
   ListTree,
+  Loader2,
   MessageSquare,
   MoreHorizontal,
   Paperclip,
@@ -72,13 +91,19 @@ import {
   Repeat,
   SlidersHorizontal,
   Trash2,
+  Upload,
 } from "lucide-react";
 import type { ActivityEvent } from "@rudderhq/shared";
-import type { Agent, Issue, IssueAttachment } from "@rudderhq/shared";
+import type { Agent, Issue, IssueAttachment, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 
 type CommentReassignment = {
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
+};
+
+type DocumentFocusState = {
+  target: IssueDocumentFocusTarget;
+  phase: "open" | "closing";
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -175,6 +200,160 @@ function titleizeFilename(input: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function workspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
+  return entry.displayLabel?.trim() || entry.name;
+}
+
+function parentWorkspaceDirectory(directoryPath: string) {
+  const segments = directoryPath.split("/").filter(Boolean);
+  segments.pop();
+  return segments.join("/");
+}
+
+function WorkspaceAttachDialog({
+  orgId,
+  open,
+  onOpenChange,
+  onAttach,
+  attaching,
+  error,
+}: {
+  orgId: string | null | undefined;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onAttach: (filePath: string) => Promise<void>;
+  attaching: boolean;
+  error: string | null;
+}) {
+  const [directoryPath, setDirectoryPath] = useState("");
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setDirectoryPath("");
+    setSelectedPath(null);
+  }, [open, orgId]);
+
+  const filesQuery = useQuery({
+    queryKey: queryKeys.organizations.workspaceFiles(orgId ?? "__none__", directoryPath),
+    queryFn: () => organizationsApi.listWorkspaceFiles(orgId!, directoryPath),
+    enabled: open && !!orgId,
+    refetchOnWindowFocus: false,
+  });
+
+  const entries = filesQuery.data?.entries ?? [];
+  const canGoUp = directoryPath.length > 0;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="text-base">Attach from Workspaces</DialogTitle>
+          <DialogDescription>
+            Choose a file to copy into this issue's attachments.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="flex min-h-8 items-center gap-2 rounded-md border border-border bg-muted/20 px-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">/</span>
+            <span className="truncate">{directoryPath || "workspace"}</span>
+          </div>
+
+          <div className="h-[320px] overflow-hidden rounded-md border border-border">
+            {filesQuery.isLoading ? (
+              <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading files...
+              </div>
+            ) : filesQuery.error ? (
+              <div className="p-3 text-sm text-destructive">
+                {filesQuery.error instanceof Error ? filesQuery.error.message : "Could not load workspace files"}
+              </div>
+            ) : entries.length === 0 && !canGoUp ? (
+              <div className="p-3 text-sm text-muted-foreground">
+                No workspace files available.
+              </div>
+            ) : (
+              <ScrollArea className="h-full">
+                <div className="space-y-0.5 p-1.5">
+                  {canGoUp ? (
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+                      onClick={() => {
+                        setDirectoryPath(parentWorkspaceDirectory(directoryPath));
+                        setSelectedPath(null);
+                      }}
+                    >
+                      <ChevronRight className="h-3.5 w-3.5 rotate-180" />
+                      Parent folder
+                    </button>
+                  ) : null}
+                  {entries.map((entry) => {
+                    const label = workspaceEntryLabel(entry);
+                    const selected = selectedPath === entry.path;
+                    if (entry.isDirectory) {
+                      return (
+                        <button
+                          type="button"
+                          key={entry.path}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent/60"
+                          onClick={() => {
+                            setDirectoryPath(entry.path);
+                            setSelectedPath(null);
+                          }}
+                        >
+                          <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate font-medium">{label}</span>
+                        </button>
+                      );
+                    }
+                    return (
+                      <button
+                        type="button"
+                        key={entry.path}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                          selected ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                        )}
+                        onClick={() => setSelectedPath(entry.path)}
+                        onDoubleClick={() => void onAttach(entry.path)}
+                      >
+                        <FileCode2 className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            )}
+          </div>
+
+          {selectedPath ? (
+            <p className="truncate text-xs text-muted-foreground">Selected: {selectedPath}</p>
+          ) : null}
+          {error ? <p className="text-xs text-destructive">{error}</p> : null}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={attaching}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={() => selectedPath ? void onAttach(selectedPath) : undefined}
+            disabled={!selectedPath || attaching}
+          >
+            {attaching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Paperclip className="h-3.5 w-3.5" />}
+            Attach
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function formatAction(action: string, details?: Record<string, unknown> | null): string {
@@ -284,6 +463,19 @@ function shouldHandleIssueDetailEscape(event: KeyboardEvent) {
   return true;
 }
 
+function shouldHandleDocumentFocusEscape(event: KeyboardEvent) {
+  if (event.key !== "Escape") return false;
+  if (event.defaultPrevented) return false;
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
+
+  if (typeof document !== "undefined") {
+    if (document.querySelector("[role='dialog']")) return false;
+    if (document.querySelector("[data-radix-popper-content-wrapper]")) return false;
+  }
+
+  return true;
+}
+
 function ActorIdentity({
   evt,
   agentMap,
@@ -323,8 +515,10 @@ export function IssueDetail() {
   });
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
-  const [documentFocusTarget, setDocumentFocusTarget] = useState<IssueDocumentFocusTarget | null>(null);
+  const [workspaceAttachOpen, setWorkspaceAttachOpen] = useState(false);
+  const [documentFocusState, setDocumentFocusState] = useState<DocumentFocusState | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const documentFocusCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
 
   const { data: issue, isLoading, error } = useQuery({
@@ -335,8 +529,42 @@ export function IssueDetail() {
   const resolvedCompanyId = issue?.orgId ?? selectedOrganizationId;
 
   useEffect(() => {
-    setDocumentFocusTarget(null);
+    setDocumentFocusState(null);
+    if (documentFocusCloseTimerRef.current) {
+      clearTimeout(documentFocusCloseTimerRef.current);
+      documentFocusCloseTimerRef.current = null;
+    }
   }, [issueId]);
+
+  useEffect(() => {
+    return () => {
+      if (documentFocusCloseTimerRef.current) {
+        clearTimeout(documentFocusCloseTimerRef.current);
+      }
+    };
+  }, []);
+
+  const openDocumentFocus = useCallback((target: IssueDocumentFocusTarget) => {
+    if (documentFocusCloseTimerRef.current) {
+      clearTimeout(documentFocusCloseTimerRef.current);
+      documentFocusCloseTimerRef.current = null;
+    }
+    setDocumentFocusState({ target, phase: "open" });
+  }, []);
+
+  const closeDocumentFocus = useCallback(() => {
+    setDocumentFocusState((current) => {
+      if (!current || current.phase === "closing") return current;
+      return { ...current, phase: "closing" };
+    });
+    if (documentFocusCloseTimerRef.current) {
+      clearTimeout(documentFocusCloseTimerRef.current);
+    }
+    documentFocusCloseTimerRef.current = setTimeout(() => {
+      setDocumentFocusState(null);
+      documentFocusCloseTimerRef.current = null;
+    }, 200);
+  }, []);
 
   useEffect(() => {
     if (!issue?.orgId || !issue.id) return;
@@ -808,6 +1036,23 @@ export function IssueDetail() {
     },
   });
 
+  const attachWorkspaceFile = useMutation({
+    mutationFn: async (filePath: string) => {
+      const issueOrgId = issue?.orgId ?? resolvedCompanyId ?? selectedOrganizationId;
+      if (!issueOrgId) throw new Error("No organization selected");
+      return issuesApi.attachWorkspaceFile(issueOrgId, issueId!, filePath);
+    },
+    onSuccess: () => {
+      setAttachmentError(null);
+      setWorkspaceAttachOpen(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.attachments(issueId!) });
+      invalidateIssue();
+    },
+    onError: (err) => {
+      setAttachmentError(err instanceof Error ? err.message : "Workspace attach failed");
+    },
+  });
+
   const importMarkdownDocument = useMutation({
     mutationFn: async (file: File) => {
       const baseName = fileBaseName(file.name);
@@ -903,13 +1148,19 @@ export function IssueDetail() {
 
   useLayoutEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (documentFocusState) {
+        if (!shouldHandleDocumentFocusEscape(event)) return;
+        event.preventDefault();
+        closeDocumentFocus();
+        return;
+      }
       if (!shouldHandleIssueDetailEscape(event)) return;
       navigate(sourceBreadcrumb.href);
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [navigate, sourceBreadcrumb.href]);
+  }, [closeDocumentFocus, documentFocusState, navigate, sourceBreadcrumb.href]);
 
   useEffect(() => {
     if (!issue?.id) return;
@@ -969,7 +1220,9 @@ export function IssueDetail() {
   const attachmentList = attachments ?? [];
   const hasAttachments = attachmentList.length > 0;
   const subIssueCountLabel = `${orderedChildIssues.length}`;
-  const attachmentUploadButton = (
+  const documentFocusTarget = documentFocusState?.target ?? null;
+  const attachmentBusy = uploadAttachment.isPending || importMarkdownDocument.isPending || attachWorkspaceFile.isPending;
+  const attachmentActions = (
     <>
       <input
         ref={fileInputRef}
@@ -979,24 +1232,43 @@ export function IssueDetail() {
         onChange={handleFilePicked}
         multiple
       />
-      <Button
-        variant="quiet"
-        size="xs"
-        onClick={() => fileInputRef.current?.click()}
-        disabled={uploadAttachment.isPending || importMarkdownDocument.isPending}
-        className={cn(
-          "shadow-none",
-          attachmentDragActive && "border-primary bg-primary/5",
-        )}
-        title={uploadAttachment.isPending || importMarkdownDocument.isPending ? "Uploading" : "Attach file"}
-      >
-        <Paperclip className="h-3.5 w-3.5" />
-        {uploadAttachment.isPending || importMarkdownDocument.isPending ? "Uploading..." : (
-          <>
-            <span className="hidden sm:inline">Attach</span>
-          </>
-        )}
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="quiet"
+            size="xs"
+            disabled={attachmentBusy}
+            className={cn(
+              "shadow-none",
+              attachmentDragActive && "border-primary bg-primary/5",
+            )}
+            title={attachmentBusy ? "Attaching" : "Attach file"}
+          >
+            {attachmentBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Paperclip className="h-3.5 w-3.5" />}
+            {attachmentBusy ? "Attaching..." : <span className="hidden sm:inline">Attach</span>}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem
+            onSelect={() => {
+              fileInputRef.current?.click();
+            }}
+          >
+            <Upload className="h-4 w-4" />
+            Upload from computer
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={() => {
+              setWorkspaceAttachOpen(true);
+            }}
+          >
+            <Folder className="h-4 w-4" />
+            Attach from Workspaces
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </>
   );
 
@@ -1072,13 +1344,16 @@ export function IssueDetail() {
         <IssueDocumentFocusPage
           issue={issue}
           target={documentFocusTarget}
+          motionState={documentFocusState?.phase ?? "open"}
           mentions={mentionOptions}
           imageUploadHandler={async (file) => {
             const attachment = await uploadAttachment.mutateAsync({ file, usage: "document_inline" });
             return attachment.contentPath;
           }}
-          onClose={() => setDocumentFocusTarget(null)}
-          onDocumentCreated={(key) => setDocumentFocusTarget({ kind: "existing", key })}
+          onClose={closeDocumentFocus}
+          onDocumentCreated={(key) => {
+            setDocumentFocusState((current) => current ? { ...current, target: { kind: "existing", key } } : current);
+          }}
         />
       ) : (
         <>
@@ -1421,9 +1696,9 @@ export function IssueDetail() {
           const attachment = await uploadAttachment.mutateAsync({ file, usage: "document_inline" });
           return attachment.contentPath;
         }}
-        extraActions={!hasAttachments ? attachmentUploadButton : undefined}
-        onFocusNewDocument={() => setDocumentFocusTarget({ kind: "new" })}
-        onFocusDocument={(key) => setDocumentFocusTarget({ kind: "existing", key })}
+        extraActions={!hasAttachments ? attachmentActions : undefined}
+        onFocusNewDocument={() => openDocumentFocus({ kind: "new" })}
+        onFocusDocument={(key) => openDocumentFocus({ kind: "existing", key })}
       />
 
       {hasAttachments ? (
@@ -1445,7 +1720,7 @@ export function IssueDetail() {
         >
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
-            {attachmentUploadButton}
+            {attachmentActions}
           </div>
 
           {attachmentError && (
@@ -1675,6 +1950,14 @@ export function IssueDetail() {
       </aside>
       </>
       )}
+      <WorkspaceAttachDialog
+        orgId={issue.orgId ?? resolvedCompanyId ?? selectedOrganizationId}
+        open={workspaceAttachOpen}
+        onOpenChange={setWorkspaceAttachOpen}
+        onAttach={(filePath) => attachWorkspaceFile.mutateAsync(filePath).then(() => undefined).catch(() => undefined)}
+        attaching={attachWorkspaceFile.isPending}
+        error={attachmentError}
+      />
     </div>
   );
 }
