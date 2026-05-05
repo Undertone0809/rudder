@@ -20,7 +20,7 @@ related_code:
   - server/src/routes/issues.ts
   - server/src/services/organization-workspace-browser.ts
 commit_refs:
-  - 8ef1ed9
+  - 966a114
 updated_at: 2026-05-06
 ---
 
