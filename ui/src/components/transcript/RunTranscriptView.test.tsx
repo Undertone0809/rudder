@@ -464,7 +464,10 @@ describe("RunTranscriptView", () => {
               text:
                 "[rudder] Using Rudder-managed Codex home \"/Users/zeeland/.rudder/instances/dev/codex\" (seeded from \"/Users/zeeland/.codex\").\n"
                 + "[rudder] Realized 4 Rudder-managed Codex skill entries in /Users/zeeland/.rudder/instances/dev/codex/skills\n"
-                + "[rudder] Loaded agent instructions file: /Users/zeeland/.rudder/instances/dev/workspaces/agents/rudder-copilot-system/instructions/AGENTS.md",
+                + "[rudder] Loaded agent instructions file: /Users/zeeland/.rudder/instances/dev/workspaces/agents/rudder-copilot-system/instructions/AGENTS.md\n"
+                + "[rudder] Loaded agent soul instructions file: /Users/zeeland/.rudder/instances/dev/workspaces/agents/rudder-copilot-system/instructions/SOUL.md\n"
+                + "[rudder] Loaded agent tool notes file: /Users/zeeland/.rudder/instances/dev/workspaces/agents/rudder-copilot-system/instructions/TOOLS.md\n"
+                + "[rudder] Loaded agent memory instructions file: /Users/zeeland/.rudder/instances/dev/workspaces/agents/rudder-copilot-system/instructions/MEMORY.md",
             },
           ]}
         />
@@ -475,6 +478,9 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("Using Rudder-managed Codex home");
     expect(html).not.toContain("Rudder-managed Codex skill entries");
     expect(html).not.toContain("Loaded agent instructions file");
+    expect(html).not.toContain("Loaded agent soul instructions file");
+    expect(html).not.toContain("Loaded agent tool notes file");
+    expect(html).not.toContain("Loaded agent memory instructions file");
     expect(html).not.toContain("1 log");
   });
 
