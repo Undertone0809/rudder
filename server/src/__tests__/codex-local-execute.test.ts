@@ -81,6 +81,7 @@ process.stdin.resume();
 process.stdin.on("end", () => {
   process.stderr.write([
     "2026-05-02T08:58:43.814979Z  WARN codex_protocol::openai_models: Model personality requested but model_messages is missing, falling back to base instructions. model=gpt-5.5 personality=pragmatic",
+    "2026-05-05T09:41:25.271157Z ERROR codex_core::models_manager::manager: failed to refresh available models: timeout waiting for child process to exit",
     "2026-05-02T08:58:57.468646Z  WARN codex_analytics::analytics_client: events failed with status 403 Forbidden: <html>",
     "  <head>",
     "    <meta name=\\"viewport\\" content=\\"width=device-width, initial-scale=1\\" />",
@@ -1187,7 +1188,7 @@ describe("codex execute", () => {
     }
   });
 
-  it("filters benign Codex model personality and analytics warnings from stderr", async () => {
+  it("filters benign Codex model refresh, model personality, and analytics warnings from stderr", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-runtime-noise-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
