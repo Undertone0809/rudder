@@ -1,28 +1,39 @@
 ---
 name: rudder-worktree-preview-maintainer
 description: >
-  Start the current Rudder branch or worktree as an isolated local preview,
-  verify readiness, and hand the user a stable URL. Use this skill when the
-  user asks to run the current branch, "把当前分支跑起来", "运行起来我自己测试下",
-  "本地看一下效果", "启动这个 worktree", or when multiple Rudder worktrees may be
-  active and the preview must not disturb another local Rudder runtime.
+  Start the current Rudder checkout as a temporary managed preview, verify
+  readiness, and hand the user a stable URL, logs, and stop command. Use this
+  skill when the user asks to run the current branch, "把当前分支跑起来",
+  "运行起来我自己测试下", "本地看一下效果", or wants a background preview
+  handoff. Do not use it as the default Codex worktree isolation mechanism;
+  `pnpm dev` already auto-isolates Codex-managed worktrees.
 ---
 
 # Rudder Worktree Preview Maintainer
 
-Run the current Rudder checkout so the user can inspect the feature in a
-browser, while keeping parallel worktrees isolated.
+Run the current Rudder checkout as a temporary preview so the user can inspect
+the feature in a browser without leaving a foreground command running.
 
 This skill is for the common post-implementation hand-off: the branch already
 contains the work, and the user wants a local URL to test. It is not a PR
-checkout workflow and it is not a broad process cleanup workflow.
+checkout workflow, it is not a broad process cleanup workflow, and it is not
+the canonical developer environment for Codex-managed worktrees.
+
+Rudder's normal `pnpm dev` entrypoint is the canonical development path. In
+Codex-managed worktrees under `~/.codex/worktrees/<id>/<repo>`, `pnpm dev`
+auto-derives an isolated `RUDDER_HOME`, instance id, server port, embedded
+PostgreSQL port, and worktree branding when no repo-local `.rudder/` config
+exists. Use this preview skill only when the user wants a managed background
+preview handoff with health verification, logs, and a stop command.
 
 ## Use This Skill When
 
 - The user asks to run the current branch or current worktree locally.
 - The user wants to manually test a recently implemented UI or workflow change.
-- Several Rudder worktrees may be active and `3100` may already belong to a
-  different checkout.
+- The assistant needs to hand off a stable preview URL after implementation
+  without leaving `pnpm dev` in the foreground.
+- The user asks for logs, a stop command, or a temporary preview that can be
+  cleaned up independently.
 - The task is to provide a preview URL, not to package Desktop or publish a
   release.
 
@@ -32,6 +43,13 @@ checkout workflow and it is not a broad process cleanup workflow.
   `pr-local-preview-maintainer` instead.
 - The user asks only to stop or clean local dev processes; use
   `stop-rudder-dev-maintainer` instead.
+- The user is asking why Codex worktrees interfere, how normal development
+  should be isolated, or whether `pnpm dev` is using the current worktree. In
+  that case inspect `scripts/dev-local-env.mjs`, `doc/DEVELOPING.md`, and the
+  `/api/health` payload for the active dev runtime.
+- The user simply wants to develop inside the current Codex worktree. Use
+  `pnpm dev`, which should auto-isolate Codex-managed worktrees, instead of
+  starting a separate `/tmp/rudder-worktree-preview` instance.
 - The change needs packaged Desktop verification; follow the Desktop validation
   workflow in the repo docs.
 - The user wants production-like `pnpm prod` behavior rather than a dev preview.
@@ -52,7 +70,9 @@ worktree is normal after implementation work.
 
 ### 2. Choose isolated runtime settings
 
-The preview must not assume that the default dev instance is available.
+The preview is intentionally temporary and may use a different instance than
+the canonical `pnpm dev` runtime for the same worktree. Tell the user this if
+they are comparing data between surfaces.
 
 Prefer a branch-derived instance id, a non-default app port, and an isolated
 `RUDDER_HOME` under `/tmp`:
@@ -65,6 +85,11 @@ RUDDER_HOME=/tmp/rudder-worktree-preview/<branch-slug>/home
 
 Use `3100` only when the user explicitly asks for the default dev runtime and
 the port is free. Otherwise choose a free port starting near `3310`.
+
+If the user wants the same data and instance as their normal Codex worktree
+development surface, do not use this launcher by default. Start or inspect
+`pnpm dev` instead and verify the `/api/health` response matches the expected
+worktree-derived instance id.
 
 If embedded PostgreSQL works, use a free
 `RUDDER_EMBEDDED_POSTGRES_PORT`. If embedded PostgreSQL fails in the local
@@ -161,6 +186,10 @@ databases, or stop other Rudder sessions unless the user explicitly asks.
 ## Judgment Rules
 
 - Isolation matters more than preserving the default port.
+- Do not present this skill as the fix for Codex worktree isolation. That
+  belongs in the default `pnpm dev` environment resolution.
+- Be explicit when this preview uses a temporary `/tmp` instance that differs
+  from the normal `pnpm dev` instance for the same checkout.
 - A health-checked URL is the minimum hand-off; logs and a stop command make it
   usable.
 - Never stop unrelated Rudder sessions just because they occupy `3100`.

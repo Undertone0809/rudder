@@ -191,8 +191,13 @@ Use that path for a personal staging worktree sandbox.
 ### Concurrent Codex / Worktree Development
 
 Multiple local Codex threads should not run Rudder from separate checkouts with the default shared `dev` profile.
-Without a worktree-local `.rudder/` config, every checkout uses `~/.rudder/instances/dev`, API port `3100`,
-and embedded PostgreSQL port `54329`.
+The shared default `dev` profile uses `~/.rudder/instances/dev`, API port `3100`, and embedded PostgreSQL
+port `54329`.
+
+Codex-managed worktrees under `~/.codex/worktrees/<id>/<repo>` are auto-isolated by `pnpm dev` when no
+repo-local `.rudder/` config exists. The dev runner derives a worktree-specific instance id, uses
+`~/.rudder-worktrees`, chooses non-default server and embedded PostgreSQL ports, and enables worktree branding
+so the browser/desktop surface identifies the current worktree.
 
 Before running `pnpm dev` in a second local checkout, initialize an isolated worktree instance:
 
@@ -201,7 +206,8 @@ pnpm rudder worktree init
 pnpm dev
 ```
 
-This writes `.rudder/.env` and `.rudder/config.json` in that checkout. The dev runner, Desktop shell,
+This is still recommended for manually created git worktrees or staging sandboxes outside Codex's worktree root.
+It writes `.rudder/.env` and `.rudder/config.json` in that checkout. The dev runner, Desktop shell,
 and CLI use the isolated `RUDDER_HOME`, instance id, server port, and database port automatically.
 If the server has to bind a fallback port because the configured port is busy, the dev runner follows the
 runtime descriptor instead of polling only the requested port.

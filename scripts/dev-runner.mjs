@@ -113,6 +113,10 @@ if (tailscaleAuth) {
 console.log(
   `[rudder] local env: ${localEnvName} (instance=${env.RUDDER_INSTANCE_ID}, port=${env.PORT}, embedded-pg=${env.RUDDER_EMBEDDED_POSTGRES_PORT})`,
 );
+if (env.RUDDER_IN_WORKTREE === "true") {
+  const worktreeLabel = env.RUDDER_WORKTREE_NAME?.trim() || env.RUDDER_INSTANCE_ID;
+  console.log(`[rudder] worktree instance: ${worktreeLabel} (home=${env.RUDDER_HOME})`);
+}
 
 const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 let previousSnapshot = collectWatchedSnapshot();

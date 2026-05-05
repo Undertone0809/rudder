@@ -18,6 +18,12 @@ This command:
 - picks a free app port and embedded PostgreSQL port
 - by default seeds the isolated DB in `minimal` mode from the current effective Rudder instance/config (repo-local worktree config when present, otherwise the default instance) via a logical SQL snapshot
 
+Codex-managed worktrees under `~/.codex/worktrees/<id>/<repo>` get a lighter automatic isolation path for
+`pnpm dev` when no repo-local `.rudder/` config exists. The dev scripts derive a stable instance id from the
+Codex worktree id and repo name, store data under `~/.rudder-worktrees`, and choose non-default server and
+embedded PostgreSQL ports. Use `pnpm rudder worktree init` when you want a seeded database, explicit ports,
+or the same isolation behavior for worktrees outside Codex's worktree directory.
+
 Seed modes:
 
 - `minimal` keeps core app state like organizations, projects, issues, comments, approvals, and auth state, preserves schema for all tables, but omits row data from heavy operational history such as heartbeat runs, wake requests, activity logs, runtime services, and agent session state
