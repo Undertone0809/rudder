@@ -1669,7 +1669,6 @@ function renderTranscriptBlock({
           block={block}
           density={density}
           className={thinkingClassName}
-          collapsibleSummary={presentation === "chat"}
           onMarkdownLinkClick={onMarkdownLinkClick}
         />
       )}

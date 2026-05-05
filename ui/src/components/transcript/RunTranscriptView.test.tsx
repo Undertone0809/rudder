@@ -276,6 +276,39 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("Final answer shown in the assistant message.");
   });
 
+  it("renders chat thinking inline instead of behind a collapsed summary", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          hideAssistantMessages
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "thinking",
+              ts: "2026-03-12T00:00:02.000Z",
+              text: [
+                "**Planning the response** with enough context to keep the operator oriented.",
+                "The full reasoning note stays readable in the chat transcript instead of being clipped.",
+                "Final planning checkpoint remains visible inline.",
+              ].join("\n\n"),
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).not.toContain("Expand thinking");
+    expect(html).not.toContain("Collapse thinking");
+    expect(html).toContain("<strong>Planning the response</strong>");
+    expect(html).toContain("Final planning checkpoint remains visible inline.");
+  });
+
   it("renders a single chat log inline instead of behind a log-count disclosure", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

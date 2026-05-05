@@ -107,6 +107,7 @@ Use presentation language that matches the entry type:
 - Generic tool entries may show structured request and response payloads when expanded, because the payload shape is part of understanding the tool call.
 - Standalone stdout/stderr entries should remain clearly labeled as stream output and should not be merged into generic tool metadata.
 - Top-level transcript summaries should describe operator-meaningful activity such as reading, searching, editing, or running commands; expandable details are for the exact command, tool payload, or stream body.
+- Agent thinking that explains intermediate progress should stay readable inline in chat and run-detail transcript narratives; reserve default folding for tool payloads, raw command detail, and noisy stream output.
 
 ### 3.4.2 Review Blocks Inside Chat
 
