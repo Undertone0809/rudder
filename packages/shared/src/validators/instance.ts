@@ -36,9 +36,11 @@ export const patchInstanceLangfuseSettingsSchema = z.object({
   clearSecretKey: z.boolean().optional(),
 }).strict();
 
+export const OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH = 8000;
+
 export const operatorProfileSettingsSchema = z.object({
   nickname: z.string().max(80).default(""),
-  moreAboutYou: z.string().max(2000).default(""),
+  moreAboutYou: z.string().max(OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH).default(""),
 }).strict();
 
 export const patchOperatorProfileSettingsSchema = operatorProfileSettingsSchema.partial();

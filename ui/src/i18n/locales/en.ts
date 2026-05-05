@@ -34,6 +34,7 @@ export const en = {
   "common.organizations": "Organizations",
   "common.yourOrganizations": "Your organizations",
   "common.unknown": "unknown",
+  "common.cancel": "Cancel",
   "chat.emptyState.heading": "What can I help with?",
   "chat.emptyState.headingNamed": "What can I help with, {{name}}?",
   "chat.composer.placeholder": "Ask anything",
@@ -517,6 +518,15 @@ export const en = {
     "Share any standing context that helps Rudder interpret your requests in chat.",
   "profile.moreAboutYou.help":
     "Rudder only injects this into the chat scene. If you leave it blank, nothing is added to the chat system prompt.",
+  "profile.import.helper.title": "Import memories from another AI",
+  "profile.import.helper.description":
+    "Copy this prompt into ChatGPT, Claude, or another AI provider, then paste the exported memory below.",
+  "profile.import.copyPrompt": "Copy memory import prompt",
+  "profile.import.copiedButton": "Copied",
+  "profile.import.copied.title": "Prompt copied",
+  "profile.import.copied.body": "Paste the result into More about you, then edit and save.",
+  "profile.import.copyFailed.title": "Prompt was not copied",
+  "profile.import.copyFailed.body": "Select the prompt text and copy it manually.",
   "profile.save": "Save profile",
   "profile.saving": "Saving...",
   "heartbeats.title": "Heartbeats",

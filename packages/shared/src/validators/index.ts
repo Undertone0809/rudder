@@ -13,6 +13,7 @@ export {
   patchInstanceLangfuseSettingsSchema,
   type InstanceLangfuseSettings,
   type PatchInstanceLangfuseSettings,
+  OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH,
   operatorProfileSettingsSchema,
   patchOperatorProfileSettingsSchema,
   type OperatorProfileSettings,

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { IdCard, MessageSquareText, UserRound } from "lucide-react";
+import { Brain, Check, Copy, IdCard, MessageSquareText, UserRound } from "lucide-react";
+import { OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH } from "@rudderhq/shared";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import {
   SettingsDivider,
@@ -17,6 +18,32 @@ import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 
+const PROFILE_IMPORT_PROMPT = `Export all of my stored memories and any context you've learned about me from past conversations. Preserve my words verbatim where possible, especially for instructions and preferences.
+
+## Categories (output in this order):
+
+1. **Instructions**: Rules I've explicitly asked you to follow going forward — tone, format, style, "always do X", "never do Y", and corrections to your behavior. Only include rules from stored memories, not from conversations.
+
+2. **Identity**: Name, age, location, education, family, relationships, languages, and personal interests.
+
+3. **Career**: Current and past roles, companies, and general skill areas.
+
+4. **Projects**: Projects I meaningfully built or committed to. Ideally ONE entry per project. Include what it does, current status, and any key decisions. Use the project name or a short descriptor as the first words of the entry.
+
+5. **Preferences**: Opinions, tastes, and working-style preferences that apply broadly.
+
+## Format:
+
+Use section headers for each category. Within each category, list one entry per line, sorted by oldest date first. Format each line as:
+
+[YYYY-MM-DD] - Entry content here.
+
+If no date is known, use [unknown] instead.
+
+## Output:
+- Wrap the entire export in a single code block for easy copying.
+- After the code block, state whether this is the complete set or if more remain.`;
+
 export function InstanceProfileSettings() {
   const { t } = useI18n();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -24,6 +51,7 @@ export function InstanceProfileSettings() {
   const queryClient = useQueryClient();
   const [nickname, setNickname] = useState("");
   const [moreAboutYou, setMoreAboutYou] = useState("");
+  const [promptCopied, setPromptCopied] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -69,6 +97,29 @@ export function InstanceProfileSettings() {
     },
   });
 
+  const hasChanges =
+    nickname !== (profileQuery.data?.nickname ?? "") ||
+    moreAboutYou !== (profileQuery.data?.moreAboutYou ?? "");
+
+  const handleCopyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(PROFILE_IMPORT_PROMPT);
+      setPromptCopied(true);
+      pushToast({
+        title: t("profile.import.copied.title"),
+        body: t("profile.import.copied.body"),
+        tone: "success",
+      });
+    } catch {
+      setPromptCopied(false);
+      pushToast({
+        title: t("profile.import.copyFailed.title"),
+        body: t("profile.import.copyFailed.body"),
+        tone: "error",
+      });
+    }
+  };
+
   if (profileQuery.isLoading) {
     return <SettingsPageSkeleton />;
   }
@@ -82,10 +133,6 @@ export function InstanceProfileSettings() {
       </div>
     );
   }
-
-  const hasChanges =
-    nickname !== (profileQuery.data?.nickname ?? "") ||
-    moreAboutYou !== (profileQuery.data?.moreAboutYou ?? "");
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-1 pb-6">
@@ -130,17 +177,31 @@ export function InstanceProfileSettings() {
               <MessageSquareText className="h-4 w-4 text-muted-foreground" />
               {t("profile.moreAboutYou.label")}
             </label>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[calc(var(--radius-md)-1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_76%,transparent)] px-3 py-2.5">
+              <div className="min-w-0 space-y-0.5">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Brain className="h-4 w-4 text-muted-foreground" />
+                  {t("profile.import.helper.title")}
+                </div>
+                <p className="text-xs leading-5 text-muted-foreground">{t("profile.import.helper.description")}</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={handleCopyPrompt} className="shrink-0">
+                {promptCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {promptCopied ? t("profile.import.copiedButton") : t("profile.import.copyPrompt")}
+              </Button>
+            </div>
             <Textarea
               id="profile-more-about-you"
               value={moreAboutYou}
               onChange={(event) => setMoreAboutYou(event.target.value)}
               placeholder={t("profile.moreAboutYou.placeholder")}
-              maxLength={2000}
+              maxLength={OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH}
               className="min-h-36"
             />
-            <p className="text-xs leading-5 text-muted-foreground">
-              {t("profile.moreAboutYou.help")}
-            </p>
+            <div className="flex items-center justify-between gap-3 text-xs leading-5 text-muted-foreground">
+              <p>{t("profile.moreAboutYou.help")}</p>
+              <span className="shrink-0 tabular-nums">{moreAboutYou.length}/{OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH}</span>
+            </div>
           </div>
         </div>
 
