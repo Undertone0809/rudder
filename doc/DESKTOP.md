@@ -154,6 +154,18 @@ The boot screen and Desktop settings page show the active profile, instance, run
 
 In packaged mode, resident-shell actions can restart the local runtime without changing the shared instance path.
 
+## Failure recovery
+
+Desktop has two operator-facing recovery layers after the local runtime starts:
+
+- If the React UI throws during render, the board shows a recovery surface instead
+  of unmounting to a blank window. The operator can reload the UI, copy a
+  diagnostic, or restart Rudder from Desktop.
+- If Electron detects that the renderer process exited, failed to load the main
+  frame, or stopped responding, Desktop shows or prompts for recovery instead of
+  leaving a dark empty window. Reloading the UI keeps the local runtime running;
+  restarting Rudder restarts the owned or attached local startup flow.
+
 ## Smoke and isolated runs
 
 For smoke tests or isolated manual runs, override both the shared Rudder home and the Electron shell data root:

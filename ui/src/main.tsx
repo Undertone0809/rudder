@@ -16,6 +16,7 @@ import { ThemeProvider } from "./context/ThemeContext";
 import { I18nProvider } from "./context/I18nContext";
 import { ChatGenerationProvider } from "./context/ChatGenerationContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { initPluginBridge } from "./plugins/bridge-init";
 import { PluginLauncherProvider } from "./plugins/launchers";
 import "@mdxeditor/editor/style.css";
@@ -90,33 +91,35 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <I18nProvider>
-        <ThemeProvider>
-          <BrowserRouter>
-            <OrganizationProvider>
-              <ToastProvider>
-                <LiveUpdatesProvider>
-                  <TooltipProvider>
-                    <BreadcrumbProvider>
-                      <SidebarProvider>
-                        <PanelProvider>
-                          <PluginLauncherProvider>
-                            <DialogProvider>
-                              <ChatGenerationProvider>
-                                <App />
-                              </ChatGenerationProvider>
-                            </DialogProvider>
-                          </PluginLauncherProvider>
-                        </PanelProvider>
-                      </SidebarProvider>
-                    </BreadcrumbProvider>
-                  </TooltipProvider>
-                </LiveUpdatesProvider>
-              </ToastProvider>
-            </OrganizationProvider>
-          </BrowserRouter>
-        </ThemeProvider>
-      </I18nProvider>
+      <AppErrorBoundary>
+        <I18nProvider>
+          <ThemeProvider>
+            <BrowserRouter>
+              <OrganizationProvider>
+                <ToastProvider>
+                  <LiveUpdatesProvider>
+                    <TooltipProvider>
+                      <BreadcrumbProvider>
+                        <SidebarProvider>
+                          <PanelProvider>
+                            <PluginLauncherProvider>
+                              <DialogProvider>
+                                <ChatGenerationProvider>
+                                  <App />
+                                </ChatGenerationProvider>
+                              </DialogProvider>
+                            </PluginLauncherProvider>
+                          </PanelProvider>
+                        </SidebarProvider>
+                      </BreadcrumbProvider>
+                    </TooltipProvider>
+                  </LiveUpdatesProvider>
+                </ToastProvider>
+              </OrganizationProvider>
+            </BrowserRouter>
+          </ThemeProvider>
+        </I18nProvider>
+      </AppErrorBoundary>
     </QueryClientProvider>
   </StrictMode>
 );

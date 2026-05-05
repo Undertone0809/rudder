@@ -7,7 +7,7 @@ import { Notification, app, BrowserWindow, Menu, MenuItem, Tray, clipboard, dial
 import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electron";
 import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { resolveDesktopAppName } from "./app-identity.js";
-import { createBootScreenHtml } from "./boot-screen.js";
+import { createBootScreenHtml, createRendererRecoveryScreenHtml } from "./boot-screen.js";
 import { DESKTOP_CLI_FLAG, ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
 import {
@@ -628,6 +628,8 @@ let quitting = false;
 let quitExceptionGuardInstalled = false;
 let startupUpdateNoticeShown = false;
 let pendingDesktopNavigationPath: string | null = null;
+let lastKnownAppUrl: string | null = null;
+let rendererRecoveryInFlight = false;
 
 function resolveDesktopWindowBackgroundColor(appearance: DesktopAppearance = currentAppearance): string {
   return DESKTOP_WINDOW_BACKGROUND[appearance];
@@ -813,6 +815,106 @@ function resolveBootScreenUrl(): string {
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
+function resolveRendererRecoveryScreenUrl(reason: {
+  title?: string;
+  message?: string;
+  detail?: string;
+}): string {
+  const html = createRendererRecoveryScreenHtml(APP_NAME, reason);
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+function rememberAppUrl(targetUrl: string): void {
+  if (!targetUrl.startsWith("http")) return;
+  lastKnownAppUrl = targetUrl;
+}
+
+function fallbackAppUrl(): string | null {
+  if (lastKnownAppUrl) return lastKnownAppUrl;
+  const baseUrl = resolveDesktopAppBaseUrl();
+  return baseUrl;
+}
+
+async function reloadAppWindow(): Promise<void> {
+  const targetUrl = fallbackAppUrl();
+  if (!targetUrl) {
+    await restartFromResidentControls();
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    await openAppWindow(targetUrl);
+    return;
+  }
+  rendererRecoveryInFlight = false;
+  rememberAppUrl(targetUrl);
+  await mainWindow.loadURL(targetUrl);
+  showMainWindow();
+}
+
+async function showRendererRecovery(reason: {
+  title?: string;
+  message?: string;
+  detail?: string;
+}): Promise<void> {
+  if (quitting || rendererRecoveryInFlight || !mainWindow || mainWindow.isDestroyed()) return;
+  rendererRecoveryInFlight = true;
+  console.error("[rudder-desktop] renderer recovery screen shown", reason);
+  updateBootState({
+    stage: "renderer_error",
+    message: reason.message ?? "Rudder hit a UI failure.",
+    detail: reason.detail ?? "The desktop renderer stopped responding.",
+  });
+  await mainWindow.loadURL(resolveRendererRecoveryScreenUrl(reason));
+  showMainWindow();
+}
+
+async function promptForUnresponsiveRenderer(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed() || quitting) return;
+  const result = await dialog.showMessageBox(mainWindow, {
+    type: "warning",
+    title: APP_NAME,
+    buttons: ["Reload UI", "Restart Rudder", "Wait"],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+    message: "Rudder is not responding.",
+    detail: "The local runtime may still be running. Reload the UI first; restart Rudder if it stays stuck.",
+  });
+  if (result.response === 0) {
+    await reloadAppWindow();
+  } else if (result.response === 1) {
+    await restartFromResidentControls();
+  }
+}
+
+function installRendererRecoveryHandlers(window: BrowserWindow): void {
+  window.webContents.on("did-navigate", (_event, targetUrl) => {
+    rememberAppUrl(targetUrl);
+    rendererRecoveryInFlight = false;
+  });
+
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3 || validatedURL.startsWith("data:")) return;
+    void showRendererRecovery({
+      title: "Load failed",
+      message: "Rudder could not load the UI.",
+      detail: `${errorDescription || "Unknown load error"} (${errorCode})`,
+    });
+  });
+
+  window.webContents.on("render-process-gone", (_event, details) => {
+    void showRendererRecovery({
+      title: "Renderer exited",
+      message: "Rudder's UI process exited unexpectedly.",
+      detail: `${details.reason}${typeof details.exitCode === "number" ? ` (${details.exitCode})` : ""}`,
+    });
+  });
+
+  window.on("unresponsive", () => {
+    void promptForUnresponsiveRenderer();
+  });
+}
+
 async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   const preloadPath = path.resolve(MODULE_DIR, "preload.js");
   const macWindowEffects = process.platform === "darwin"
@@ -835,6 +937,8 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   window.once("ready-to-show", () => {
     window.show();
   });
+
+  installRendererRecoveryHandlers(window);
 
   window.on("close", (event) => {
     if (!shouldHideToResidentShell() || quitRequested || quitting) return;
@@ -877,6 +981,7 @@ async function openBootWindow(): Promise<void> {
 }
 
 async function openAppWindow(loadUrl: string): Promise<void> {
+  rememberAppUrl(loadUrl);
   await replaceMainWindow(await createDesktopWindow(loadUrl));
 }
 
@@ -955,6 +1060,7 @@ async function openDesktopRoute(targetPath: string): Promise<void> {
   }
 
   showMainWindow();
+  rememberAppUrl(targetUrl);
   if (mainWindow.webContents.getURL() !== targetUrl && !(await navigateExistingAppWindowToRoute(normalizedPath, targetUrl))) {
     await mainWindow.loadURL(targetUrl);
   }
@@ -1569,6 +1675,9 @@ function registerIpc(): void {
   });
   ipcMain.handle("desktop:set-appearance", async (_event, preference: DesktopThemePreference) => {
     applyDesktopThemePreference(preference);
+  });
+  ipcMain.handle("desktop:reload-app", async () => {
+    await reloadAppWindow();
   });
   ipcMain.handle("desktop:restart", async () => {
     await restartFromResidentControls();

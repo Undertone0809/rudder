@@ -96,6 +96,7 @@ export type DesktopShellApi = {
   openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
   copyText(value: string): Promise<void>;
   setAppearance(theme: "light" | "dark" | "system"): Promise<void>;
+  reloadApp?(): Promise<void>;
   restart(): Promise<void>;
   getAppVersion(): Promise<string>;
   checkForUpdates(): Promise<DesktopUpdateCheckResult>;

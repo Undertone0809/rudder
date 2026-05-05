@@ -127,6 +127,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
     ipcRenderer.invoke("desktop:open-workspace-file-in-ide", { rootPath, filePath, ideId }) as Promise<void>,
   copyText: (value: string) => ipcRenderer.invoke("desktop:copy-text", value),
   setAppearance: (theme: "light" | "dark" | "system") => ipcRenderer.invoke("desktop:set-appearance", theme),
+  reloadApp: () => ipcRenderer.invoke("desktop:reload-app"),
   restart: () => ipcRenderer.invoke("desktop:restart"),
   getAppVersion: () => ipcRenderer.invoke("desktop:get-app-version") as Promise<string>,
   checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates") as Promise<DesktopUpdateCheckResult>,
@@ -157,6 +158,7 @@ declare global {
       openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
       copyText(value: string): Promise<void>;
       setAppearance(theme: "light" | "dark" | "system"): Promise<void>;
+      reloadApp(): Promise<void>;
       restart(): Promise<void>;
       getAppVersion(): Promise<string>;
       checkForUpdates(): Promise<DesktopUpdateCheckResult>;

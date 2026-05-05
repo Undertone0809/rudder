@@ -272,3 +272,152 @@ export function createBootScreenHtml(appName: string): string {
   </body>
 </html>`;
 }
+
+export type RendererRecoveryReason = {
+  title?: string;
+  message?: string;
+  detail?: string;
+};
+
+export function createRendererRecoveryScreenHtml(appName: string, reason: RendererRecoveryReason = {}): string {
+  const title = escapeHtml(appName);
+  const message = escapeHtml(reason.message?.trim() || "Rudder hit a UI failure.");
+  const detail = escapeHtml(
+    reason.detail?.trim()
+      || "The local runtime may still be running. Reload the UI first; restart Rudder if the problem continues.",
+  );
+  const failureTitle = escapeHtml(reason.title?.trim() || "UI recovery");
+  const diagnosticJson = JSON.stringify({
+    title: reason.title ?? "UI recovery",
+    message: reason.message ?? "Rudder hit a UI failure.",
+    detail: reason.detail ?? null,
+  }).replaceAll("<", "\\u003c");
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>${title}</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #262523;
+        --panel: rgba(250, 250, 248, 0.88);
+        --border: rgba(94, 109, 130, 0.18);
+        --text: #1f2937;
+        --muted: #64748b;
+        --accent: #365776;
+        --danger: #912941;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --panel: rgba(38, 37, 35, 0.92);
+          --border: rgba(226, 232, 240, 0.14);
+          --text: #f8fafc;
+          --muted: #a7b0bd;
+          --accent: #9db6cc;
+          --danger: #f2a3b4;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "SF Pro Display", "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: grid;
+        place-items: center;
+      }
+      main {
+        width: min(680px, calc(100vw - 48px));
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: var(--panel);
+        padding: 28px;
+        box-shadow: 0 32px 72px rgba(0, 0, 0, 0.24);
+      }
+      .eyebrow {
+        color: var(--danger);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 10px 0 0;
+        font-size: 30px;
+        line-height: 1.1;
+      }
+      p {
+        margin: 12px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .detail {
+        margin-top: 18px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px 14px;
+        color: var(--muted);
+        font-family: ui-monospace, "SFMono-Regular", monospace;
+        font-size: 12px;
+        word-break: break-word;
+      }
+      .actions {
+        margin-top: 22px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        padding: 11px 16px;
+        font: inherit;
+        cursor: pointer;
+      }
+      .primary {
+        background: var(--accent);
+        color: #fff;
+        font-weight: 700;
+      }
+      .secondary {
+        background: transparent;
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">${failureTitle}</div>
+      <h1>${message}</h1>
+      <p>${detail}</p>
+      <div class="detail" id="diagnostic"></div>
+      <div class="actions">
+        <button class="primary" id="reload-button" type="button">Reload UI</button>
+        <button class="secondary" id="restart-button" type="button">Restart Rudder</button>
+        <button class="secondary" id="copy-button" type="button">Copy diagnostic</button>
+      </div>
+    </main>
+    <script>
+      const diagnostic = ${diagnosticJson};
+      const diagnosticEl = document.getElementById("diagnostic");
+      diagnosticEl.textContent = [diagnostic.title, diagnostic.detail].filter(Boolean).join(" · ");
+      document.getElementById("reload-button").addEventListener("click", () => {
+        window.desktopShell.reloadApp();
+      });
+      document.getElementById("restart-button").addEventListener("click", () => {
+        window.desktopShell.restart();
+      });
+      document.getElementById("copy-button").addEventListener("click", () => {
+        window.desktopShell.copyText(JSON.stringify(diagnostic, null, 2));
+      });
+    </script>
+  </body>
+</html>`;
+}
