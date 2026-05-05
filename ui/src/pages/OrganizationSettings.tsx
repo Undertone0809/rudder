@@ -4,6 +4,7 @@ import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
 import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
 import type { AgentRuntimeEnvironmentTestResult, AgentRuntimeType, OrganizationSecret } from "@rudderhq/shared";
 import { useOrganization } from "../context/OrganizationContext";
+import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { organizationsApi } from "../api/orgs";
 import { accessApi } from "../api/access";
@@ -102,6 +103,7 @@ function stableJson(value: unknown): string {
 
 export function OrganizationSettings() {
   const { t } = useI18n();
+  const { confirm } = useDialog();
   const {
     organizations,
     loading: organizationsLoading,
@@ -619,12 +621,15 @@ export function OrganizationSettings() {
     );
   }
 
-  function handleArchiveOrganization() {
+  async function handleArchiveOrganization() {
     if (!viewedOrganization || !viewedOrganizationId) return;
 
-    const confirmed = window.confirm(
-      t("organizationSettings.danger.confirm", { name: viewedOrganization.name }),
-    );
+    const confirmed = await confirm({
+      title: "Archive organization?",
+      description: t("organizationSettings.danger.confirm", { name: viewedOrganization.name }),
+      confirmLabel: "Archive",
+      tone: "destructive",
+    });
     if (!confirmed) return;
 
     const nextAvailableOrganization = organizations.find(
@@ -652,6 +657,10 @@ export function OrganizationSettings() {
   }
 
   const organizationWorkspacesPath = applyOrganizationPrefix("/workspaces", viewedOrganization.issuePrefix);
+  const organizationWorkspaceBackupsPath = applyOrganizationPrefix(
+    "/workspaces/backups",
+    viewedOrganization.issuePrefix,
+  );
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -834,6 +843,9 @@ export function OrganizationSettings() {
           <div className="flex items-center gap-2">
             <Button asChild size="sm" variant="outline">
               <Link to={organizationWorkspacesPath}>{t("organizationSettings.workspace.open")}</Link>
+            </Button>
+            <Button asChild size="sm" variant="outline">
+              <Link to={organizationWorkspaceBackupsPath}>{t("organizationSettings.workspace.backups")}</Link>
             </Button>
           </div>
         </div>

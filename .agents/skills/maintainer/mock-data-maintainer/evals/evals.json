@@ -24,6 +24,25 @@
       "prompt": "做一个 SaaS billing dashboard 的 mock JSON，要包含 trial、failed payment、overage、enterprise security review 和 churn risk。",
       "expected_output": "Uses the generic SaaS dashboard scenario, produces realistic JSON-ready entities and metrics with mixed states and clear usage notes.",
       "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "我想构建一个真实的 Rudder Studio org，也就是用 Rudder 开发和运营 Rudder。Calendar 不要单独造 QA 场景，应该自然看到一个月 agent 运行历史。",
+      "expected_output": "Uses the Rudder Studio scenario, treats Calendar as downstream of issues and heartbeat runs, points to the reusable JSON fixture and seed command, and avoids creating a Calendar-only component fixture.",
+      "files": [
+        "references/rudder-studio-scenario.md",
+        "data/rudder-studio/scenario.json",
+        "scripts/seed-rudder-studio.ts"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "mkt project 里放一些真正推进 Rudder 增长的 issue，比如发推文、运营推广、具体计划和落实。以后这套数据要能复用。",
+      "expected_output": "Keeps the Rudder Studio scenario as the spine, adds concrete Marketing & Growth execution issues instead of positioning-only rows, and stores them in durable fixture data rather than a one-off live seed.",
+      "files": [
+        "data/rudder-studio/issues.json",
+        "references/rudder-studio-scenario.md"
+      ]
     }
   ]
 }

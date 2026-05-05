@@ -21,7 +21,7 @@ import {
   projectWorkspaces,
   projects,
 } from "@rudderhq/db";
-import { extractAgentMentionIds, extractProjectMentionIds } from "@rudderhq/shared";
+import { extractAgentMentionIds, extractProjectMentionIds, type ReorderIssue } from "@rudderhq/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
@@ -34,6 +34,7 @@ import { getDefaultCompanyGoal } from "./goals.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
+const BOARD_ORDER_STEP = 1000;
 
 function isUniqueConstraintConflict(error: unknown, constraintName: string) {
   return (
@@ -883,6 +884,15 @@ export function issueService(db: Db) {
         if (values.status === "cancelled") {
           values.cancelledAt = new Date();
         }
+        if (values.boardOrder === undefined) {
+          const statusForOrder = values.status ?? "backlog";
+          const currentMax = await tx
+            .select({ value: sql<number>`coalesce(max(${issues.boardOrder}), 0)` })
+            .from(issues)
+            .where(and(eq(issues.orgId, orgId), eq(issues.status, statusForOrder)))
+            .then((rows) => Number(rows[0]?.value ?? 0));
+          values.boardOrder = currentMax + BOARD_ORDER_STEP;
+        }
 
         const [issue] = await tx.insert(issues).values(values).returning();
         if (inputLabelIds) {
@@ -987,6 +997,111 @@ export function issueService(db: Db) {
         return enriched;
       });
     },
+
+    reorder: async (orgId: string, input: ReorderIssue) =>
+      db.transaction(async (tx) => {
+        const existing = await tx
+          .select()
+          .from(issues)
+          .where(and(eq(issues.id, input.issueId), eq(issues.orgId, orgId)))
+          .then((rows) => rows[0] ?? null);
+        if (!existing) return null;
+
+        assertTransition(existing.status, input.targetStatus);
+
+        const targetRows = await tx
+          .select()
+          .from(issues)
+          .where(
+            and(
+              eq(issues.orgId, orgId),
+              eq(issues.status, input.targetStatus),
+              ne(issues.id, input.issueId),
+              isNull(issues.hiddenAt),
+            ),
+          )
+          .orderBy(asc(issues.boardOrder), desc(issues.updatedAt), desc(issues.createdAt), asc(issues.id));
+
+        const targetIds = new Set(targetRows.map((row) => row.id));
+        if (input.previousIssueId && !targetIds.has(input.previousIssueId)) {
+          throw unprocessable("previousIssueId must belong to the target status lane");
+        }
+        if (input.nextIssueId && !targetIds.has(input.nextIssueId)) {
+          throw unprocessable("nextIssueId must belong to the target status lane");
+        }
+
+        let insertIndex = input.position === "start" ? 0 : targetRows.length;
+        const previousIndex = input.previousIssueId
+          ? targetRows.findIndex((row) => row.id === input.previousIssueId)
+          : -1;
+        const nextIndex = input.nextIssueId
+          ? targetRows.findIndex((row) => row.id === input.nextIssueId)
+          : -1;
+
+        if (previousIndex >= 0 && nextIndex >= 0) {
+          if (nextIndex !== previousIndex + 1) {
+            throw unprocessable("previousIssueId and nextIssueId must be adjacent in the target lane");
+          }
+          insertIndex = nextIndex;
+        } else if (previousIndex >= 0) {
+          insertIndex = previousIndex + 1;
+        } else if (nextIndex >= 0) {
+          insertIndex = nextIndex;
+        }
+
+        const orderedRows: IssueRow[] = [...targetRows];
+        orderedRows.splice(insertIndex, 0, existing);
+
+        const now = new Date();
+        let updatedIssue: IssueRow | null = null;
+        for (const [index, row] of orderedRows.entries()) {
+          const nextOrder = (index + 1) * BOARD_ORDER_STEP;
+          if (row.id === existing.id) {
+            const patch: Partial<typeof issues.$inferInsert> = {
+              boardOrder: nextOrder,
+            };
+            if (existing.status !== input.targetStatus) {
+              patch.status = input.targetStatus;
+              patch.updatedAt = now;
+              applyStatusSideEffects(input.targetStatus, patch);
+              if (input.targetStatus !== "done") {
+                patch.completedAt = null;
+              }
+              if (input.targetStatus !== "cancelled") {
+                patch.cancelledAt = null;
+              }
+              if (input.targetStatus !== "in_progress") {
+                patch.checkoutRunId = null;
+                patch.executionRunId = null;
+                patch.executionAgentNameKey = null;
+                patch.executionLockedAt = null;
+              }
+            }
+
+            updatedIssue = await tx
+              .update(issues)
+              .set(patch)
+              .where(and(eq(issues.id, row.id), eq(issues.orgId, orgId)))
+              .returning()
+              .then((rows) => rows[0] ?? null);
+            continue;
+          }
+
+          if (row.boardOrder === nextOrder) continue;
+          await tx
+            .update(issues)
+            .set({ boardOrder: nextOrder })
+            .where(and(eq(issues.id, row.id), eq(issues.orgId, orgId)));
+        }
+
+        if (!updatedIssue) return null;
+        const [enriched] = await withIssueLabels(tx, [updatedIssue]);
+        return {
+          issue: enriched,
+          previousStatus: existing.status,
+          previousBoardOrder: existing.boardOrder,
+        };
+      }),
 
     remove: (id: string) =>
       db.transaction(async (tx) => {

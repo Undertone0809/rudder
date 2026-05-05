@@ -26,14 +26,24 @@ import {
   quotePlugin,
   tablePlugin,
   thematicBreakPlugin,
+  type Translation,
   type RealmPlugin,
 } from "@mdxeditor/editor";
-import { Sparkles } from "lucide-react";
+import { Boxes } from "lucide-react";
 import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
 import { AgentIcon } from "./AgentIconPicker";
+import {
+  $createRangeSelection,
+  $getRoot,
+  $isElementNode,
+  $isTextNode,
+  $setSelection,
+  type LexicalNode,
+  type TextNode,
+} from "lexical";
 import {
   applyMentionChipDecoration,
   clearMentionChipDecoration,
@@ -49,9 +59,12 @@ import {
   applySkillTokenDecoration,
   clearSkillTokenDecoration,
   parseSkillReference,
-  removeSkillReferenceFromMarkdown,
 } from "../lib/skill-reference";
-import { findAdjacentSkillTokenElement } from "../lib/skill-token-dom";
+import {
+  findAdjacentAtomicInlineTokenElement,
+  removeAtomicInlineTokenFromMarkdown,
+  type AtomicInlineTokenElement,
+} from "../lib/inline-token-dom";
 import { skillTokenPlugin } from "../lib/skill-token-node";
 import { cn } from "../lib/utils";
 
@@ -127,7 +140,10 @@ function getLastCaretTarget(node: Node): CaretTarget {
     return { kind: "text", node: textNode, offset: textNode.textContent?.length ?? 0 };
   }
 
-  if (node instanceof HTMLElement && node.dataset.skillToken === "true") {
+  if (
+    node instanceof HTMLElement
+    && (node.dataset.skillToken === "true" || node.dataset.mentionKind)
+  ) {
     return { kind: "after", node };
   }
 
@@ -139,7 +155,7 @@ function getLastCaretTarget(node: Node): CaretTarget {
   return { kind: "inside", node, offset: node.childNodes.length };
 }
 
-function placeCaretNearInlineToken(token: HTMLElement, clientX: number) {
+function placeCaretNearInlineToken(token: HTMLElement) {
   const editable = token.closest('[contenteditable="true"]');
   if (!(editable instanceof HTMLElement)) return;
 
@@ -148,16 +164,106 @@ function placeCaretNearInlineToken(token: HTMLElement, clientX: number) {
   const selection = window.getSelection();
   if (!selection) return;
 
-  const rect = token.getBoundingClientRect();
   const range = document.createRange();
-  if (clientX < rect.left + rect.width / 2) {
-    range.setStartBefore(token);
+  // Contenteditable=false inline chips are a brittle selection boundary for
+  // Lexical. A click on the chip should leave the user in the useful editing
+  // position: after the chip, where Backspace can remove it and typing can
+  // continue normally.
+  range.setStartAfter(token);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function getVisibleTextOffsetBeforeNode(editable: HTMLElement, node: Node) {
+  const range = document.createRange();
+  range.setStart(editable, 0);
+  range.setEndBefore(node);
+  return range.toString().length;
+}
+
+function placeCaretAtVisibleTextOffset(editable: HTMLElement, offset: number) {
+  editable.focus();
+
+  const selection = window.getSelection();
+  if (!selection) return;
+
+  const walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT);
+  let remaining = Math.max(0, offset);
+  let lastTextNode: Text | null = null;
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    lastTextNode = node;
+    const length = node.textContent?.length ?? 0;
+    if (remaining <= length) {
+      const range = document.createRange();
+      range.setStart(node, remaining);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return;
+    }
+    remaining -= length;
+  }
+
+  const range = document.createRange();
+  if (lastTextNode) {
+    range.setStart(lastTextNode, lastTextNode.textContent?.length ?? 0);
   } else {
-    range.setStartAfter(token);
+    range.setStart(editable, editable.childNodes.length);
   }
   range.collapse(true);
   selection.removeAllRanges();
   selection.addRange(range);
+}
+
+type LexicalTextPosition = {
+  node: TextNode;
+  offset: number;
+};
+
+function findLexicalTextPositionAtOffset(
+  node: LexicalNode,
+  remainingOffset: { value: number },
+  lastTextPosition: { value: LexicalTextPosition | null },
+): LexicalTextPosition | null {
+  if ($isTextNode(node)) {
+    const length = node.getTextContentSize();
+    lastTextPosition.value = { node, offset: length };
+    if (remainingOffset.value <= length) {
+      return { node, offset: Math.max(0, remainingOffset.value) };
+    }
+    remainingOffset.value -= length;
+    return null;
+  }
+
+  if (!$isElementNode(node)) return null;
+
+  for (const child of node.getChildren()) {
+    const match = findLexicalTextPositionAtOffset(child, remainingOffset, lastTextPosition);
+    if (match) return match;
+  }
+
+  return null;
+}
+
+function selectLexicalTextOffset(offset: number) {
+  const root = $getRoot();
+  const remainingOffset = { value: Math.max(0, offset) };
+  const lastTextPosition = { value: null as LexicalTextPosition | null };
+  const position = findLexicalTextPositionAtOffset(root, remainingOffset, lastTextPosition)
+    ?? lastTextPosition.value;
+
+  if (!position) {
+    root.selectEnd();
+    return;
+  }
+
+  const selection = $createRangeSelection();
+  selection.anchor.set(position.node.getKey(), position.offset, "text");
+  selection.focus.set(position.node.getKey(), position.offset, "text");
+  $setSelection(selection);
 }
 
 function closestAtomicInlineToken(target: EventTarget | null): HTMLElement | null {
@@ -189,7 +295,7 @@ function stopAtomicInlineTokenEvent(
   event.stopPropagation();
   event.nativeEvent.stopImmediatePropagation?.();
   if (options.placeCaret && typeof event.clientX === "number") {
-    placeCaretNearInlineToken(token, event.clientX);
+    placeCaretNearInlineToken(token);
   }
   return true;
 }
@@ -259,6 +365,29 @@ const FALLBACK_CODE_BLOCK_DESCRIPTOR: CodeBlockEditorDescriptor = {
 function EmptyImageToolbar() {
   return null;
 }
+
+const mdxEditorTranslations: Translation = (key, defaultValue, interpolations) => {
+  const overrides: Record<string, string> = {
+    "createLink.url": "Page or URL",
+    "createLink.urlPlaceholder": "Paste a URL",
+    "createLink.text": "Link title",
+    "createLink.textTooltip": "The text shown for this link",
+    "createLink.saveTooltip": "Apply link changes",
+    "createLink.cancelTooltip": "Cancel",
+    "dialogControls.save": "Done",
+    "dialogControls.cancel": "Cancel",
+    "linkPreview.edit": "Edit",
+    "linkPreview.copyToClipboard": "Copy link",
+    "linkPreview.copied": "Copied",
+    "linkPreview.remove": "Remove Link",
+  };
+  const template = overrides[key] ?? defaultValue;
+  if (!interpolations) return template;
+  return Object.entries(interpolations).reduce(
+    (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
+    template,
+  );
+};
 
 function detectMention(container: HTMLElement): MentionState | null {
   const sel = window.getSelection();
@@ -593,29 +722,45 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     });
   }, []);
 
-  const removeSkillTokenByLabel = useCallback((label: string) => {
-    const normalizedLabel = label.trim();
-    if (!normalizedLabel) return false;
-
+  const removeAtomicToken = useCallback((token: AtomicInlineTokenElement) => {
     const current = latestValueRef.current;
-    const next = removeSkillReferenceFromMarkdown(current, normalizedLabel);
+    const next = removeAtomicInlineTokenFromMarkdown(current, token);
     if (next === current) return false;
+
+    const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+    const caretOffset = editable instanceof HTMLElement && editable.contains(token.element)
+      ? getVisibleTextOffsetBeforeNode(editable, token.element)
+      : null;
+
+    const restoreCaret = () => {
+      const currentEditable = containerRef.current?.querySelector('[contenteditable="true"]');
+      if (currentEditable instanceof HTMLElement && caretOffset !== null) {
+        ref.current?.focus(() => {
+          selectLexicalTextOffset(caretOffset);
+        }, { defaultSelection: "rootEnd" });
+        placeCaretAtVisibleTextOffset(currentEditable, caretOffset);
+        return;
+      }
+      focusEditorAtEnd();
+    };
 
     latestValueRef.current = next;
     ref.current?.setMarkdown(next);
     onChange(next);
+    restoreCaret();
     requestAnimationFrame(() => {
-      focusEditorAtEnd();
+      restoreCaret();
+      requestAnimationFrame(restoreCaret);
     });
     return true;
   }, [focusEditorAtEnd, onChange]);
 
-  const removeAdjacentSkillToken = useCallback((direction: "backward" | "forward") => {
+  const removeAdjacentAtomicToken = useCallback((direction: "backward" | "forward") => {
     const selection = window.getSelection();
-    const skillToken = findAdjacentSkillTokenElement(selection, direction);
-    const label = skillToken?.textContent?.trim() ?? "";
-    return removeSkillTokenByLabel(label);
-  }, [removeSkillTokenByLabel]);
+    const token = findAdjacentAtomicInlineTokenElement(selection, direction);
+    if (!token) return false;
+    return removeAtomicToken(token);
+  }, [removeAtomicToken]);
 
   useImperativeHandle(forwardedRef, () => ({
     focus: () => {
@@ -671,7 +816,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       quotePlugin(),
       tablePlugin(),
       linkPlugin({ validateUrl: isSafeMarkdownLinkUrl }),
-      linkDialogPlugin(),
+      linkDialogPlugin({ showLinkTitleField: false }),
       mentionTokenPlugin(),
       skillTokenPlugin(),
       mentionDeletionPlugin(),
@@ -708,7 +853,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 
         const skillReference = parseSkillReference(link.getAttribute("href") ?? "", link.textContent ?? "");
         if (skillReference) {
-          applySkillTokenDecoration(link);
+          applySkillTokenDecoration(link, skillReference.href);
           continue;
         }
 
@@ -814,7 +959,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     const handleNativeKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Backspace" && event.key !== "Delete") return;
       const direction = event.key === "Backspace" ? "backward" : "forward";
-      if (!removeAdjacentSkillToken(direction)) return;
+      if (!removeAdjacentAtomicToken(direction)) return;
       event.preventDefault();
       event.stopPropagation();
     };
@@ -824,7 +969,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         return;
       }
       const direction = event.inputType === "deleteContentBackward" ? "backward" : "forward";
-      if (!removeAdjacentSkillToken(direction)) return;
+      if (!removeAdjacentAtomicToken(direction)) return;
       event.preventDefault();
       event.stopPropagation();
     };
@@ -835,7 +980,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       editable.removeEventListener("keydown", handleNativeKeyDown, true);
       editable.removeEventListener("beforeinput", handleNativeBeforeInput, true);
     };
-  }, [removeAdjacentSkillToken, value]);
+  }, [removeAdjacentAtomicToken, value]);
 
   const selectMention = useCallback(
     (option: MentionOption) => {
@@ -955,7 +1100,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 
         if (e.key === "Backspace" || e.key === "Delete") {
           const direction = e.key === "Backspace" ? "backward" : "forward";
-          if (removeAdjacentSkillToken(direction)) {
+          if (removeAdjacentAtomicToken(direction)) {
             e.preventDefault();
             e.stopPropagation();
             return;
@@ -1006,7 +1151,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         if (!(nativeEvent instanceof InputEvent)) return;
 
         if (nativeEvent.inputType === "deleteContentBackward") {
-          if (removeAdjacentSkillToken("backward")) {
+          if (removeAdjacentAtomicToken("backward")) {
             event.preventDefault();
             event.stopPropagation();
           }
@@ -1014,7 +1159,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         }
 
         if (nativeEvent.inputType === "deleteContentForward") {
-          if (removeAdjacentSkillToken("forward")) {
+          if (removeAdjacentAtomicToken("forward")) {
             event.preventDefault();
             event.stopPropagation();
           }
@@ -1086,6 +1231,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           "rudder-mdxeditor-content focus:outline-none [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:list-item",
           contentClassName,
         )}
+        translation={mdxEditorTranslations}
         additionalLexicalNodes={[MentionAwareLinkNode, mentionAwareLinkNodeReplacement]}
         plugins={plugins}
       />
@@ -1134,7 +1280,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                           onMouseEnter={() => setMentionIndex(i)}
                         >
                           {option.kind === "skill" ? (
-                            <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            <Boxes className="h-4 w-4 shrink-0 text-[#2f80ed]" />
                           ) : option.kind === "project" && option.projectId ? (
                             <span
                               className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full border border-border/50"

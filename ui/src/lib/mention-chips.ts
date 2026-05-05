@@ -102,6 +102,7 @@ export function applyMentionChipDecoration(element: HTMLElement, mention: Parsed
 
 export function clearMentionChipDecoration(element: HTMLElement) {
   delete element.dataset.mentionKind;
+  delete element.dataset.mentionHref;
   element.classList.remove(
     "rudder-mention-chip",
     "rudder-mention-chip--agent",

@@ -10,6 +10,7 @@ import {
   createIssueSchema,
   linkIssueApprovalSchema,
   issueDocumentKeySchema,
+  reorderIssueSchema,
   updateIssueLabelSchema,
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
@@ -253,6 +254,41 @@ export function issueRoutes(db: Db, storage: StorageService) {
       q: req.query.q as string | undefined,
     });
     res.json(result);
+  });
+
+  router.post("/orgs/:orgId/issues/reorder", validate(reorderIssueSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const result = await svc.reorder(orgId, req.body);
+    if (!result) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId: result.issue.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.reordered",
+      entityType: "issue",
+      entityId: result.issue.id,
+      details: {
+        identifier: result.issue.identifier,
+        status: result.issue.status,
+        boardOrder: result.issue.boardOrder,
+        previousIssueId: req.body.previousIssueId ?? null,
+        nextIssueId: req.body.nextIssueId ?? null,
+        position: req.body.position ?? null,
+        _previous: {
+          status: result.previousStatus,
+          boardOrder: result.previousBoardOrder,
+        },
+      },
+    });
+    res.json(result.issue);
   });
 
   router.get("/orgs/:orgId/issues/follows", async (req, res) => {

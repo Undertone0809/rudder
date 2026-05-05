@@ -64,4 +64,20 @@ describe("MentionTokenNode", () => {
       expect(token.getNextSibling()).toBeNull();
     });
   });
+
+  it("can be cloned for writable updates without recursing", () => {
+    const editor = createTestEditor();
+
+    editor.update(() => {
+      const root = $getRoot();
+      const paragraph = $createParagraphNode();
+      const token = $createMentionTokenNode(MENTION_LABEL, MENTION_HREF);
+      paragraph.append(token);
+      root.append(paragraph);
+
+      token.setHref(buildAgentMentionHref("agent-456", "code"));
+      expect(token.getLatest().getHref()).toContain("agent-456");
+      expect(token.getLatest().getMode()).toBe("token");
+    });
+  });
 });

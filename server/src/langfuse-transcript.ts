@@ -18,6 +18,7 @@ interface EmitExecutionTranscriptTreeInput {
   context: ExecutionObservabilityContext;
   parentObservation: LangfuseObservation | null;
   transcript: TranscriptEntry[];
+  initialTurnInput?: unknown;
   fallbackResult?: TranscriptFallbackResult | null;
 }
 
@@ -32,6 +33,7 @@ interface ActiveTurnState {
   hasError: boolean;
   model: string | null;
   sessionId: string | null;
+  input: unknown;
   pendingToolKeys: Set<string>;
 }
 
@@ -64,6 +66,14 @@ function appendTranscriptText(current: string, next: string, isDelta = false) {
   if (next.startsWith(current)) return next;
   if (current.endsWith(next) || current.includes(next)) return current;
   return current + next;
+}
+
+function appendTurnInput(current: unknown, next: string) {
+  const normalized = next.trim();
+  if (!normalized) return current;
+  if (typeof current === "string" && current.trim()) return appendTranscriptText(current, `\n\n${normalized}`);
+  if (current == null) return normalized;
+  return current;
 }
 
 function usageDetailsFromTokens(inputTokens: number, outputTokens: number) {
@@ -121,6 +131,7 @@ export function emitExecutionTranscriptTree(
   let fallbackToolIndex = 0;
   let pendingModel = input.fallbackResult?.model ?? null;
   let pendingSessionId: string | null = input.context.sessionKey ?? null;
+  let pendingTurnInput: unknown = input.initialTurnInput;
   let finalOutput: string | null = null;
   let finalModel: string | null = pendingModel ?? null;
   let finalUsage: UsageSummary | null = null;
@@ -172,6 +183,7 @@ export function emitExecutionTranscriptTree(
       name: `model_turn:${turnCount}`,
       asType: "generation",
       startTime: parseTs(ts),
+      input: pendingTurnInput,
       model: pendingModel ?? undefined,
       metadata: {
         turnIndex: turnCount,
@@ -190,8 +202,10 @@ export function emitExecutionTranscriptTree(
       hasError: false,
       model: pendingModel,
       sessionId: pendingSessionId,
+      input: pendingTurnInput,
       pendingToolKeys: new Set<string>(),
     };
+    pendingTurnInput = undefined;
     return activeTurn;
   };
 
@@ -224,6 +238,7 @@ export function emitExecutionTranscriptTree(
     const hasError = turn.hasError || result?.isError === true || Boolean(errors?.length);
 
     updateExecutionObservation(turn.observation, input.context, {
+      input: turn.input,
       output,
       model: turn.model ?? result?.model ?? undefined,
       usageDetails: usage ?? undefined,
@@ -406,6 +421,14 @@ export function emitExecutionTranscriptTree(
       }
 
       case "user":
+        {
+          const turn = activeTurn as ActiveTurnState | null;
+          if (turn && !turn.assistantText.trim() && !turn.thinkingText.trim() && turn.toolCallCount === 0) {
+            turn.input = appendTurnInput(turn.input, entry.text);
+          } else {
+            pendingTurnInput = appendTurnInput(pendingTurnInput, entry.text);
+          }
+        }
         break;
     }
   }

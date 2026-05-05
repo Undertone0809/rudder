@@ -19,7 +19,19 @@ export type CalendarDisplayCluster = {
   statusCounts: Array<{ status: CalendarEventStatus; count: number }>;
 };
 
-export type CalendarDisplayItem = CalendarDisplaySingle | CalendarDisplayCluster;
+export type CalendarDisplayCollisionCluster = {
+  kind: "collision_cluster";
+  id: string;
+  startAt: Date;
+  endAt: Date;
+  items: CalendarDisplayItem[];
+  events: CalendarEvent[];
+  agentIds: string[];
+  agentNames: string[];
+  statusCounts: Array<{ status: CalendarEventStatus; count: number }>;
+};
+
+export type CalendarDisplayItem = CalendarDisplaySingle | CalendarDisplayCluster | CalendarDisplayCollisionCluster;
 
 type BuildCalendarDisplayItemsOptions = {
   groupAgentActivity?: boolean;
@@ -54,7 +66,7 @@ function durationMinutes(event: Pick<CalendarEvent, "startAt" | "endAt">) {
   return (new Date(event.endAt).getTime() - new Date(event.startAt).getTime()) / 60_000;
 }
 
-function agentNameFor(event: CalendarEvent) {
+export function calendarAgentNameFor(event: CalendarEvent) {
   const titleAgent = event.title.split(" · ")[0]?.trim();
   return event.agent?.name ?? titleAgent ?? "Agent";
 }
@@ -78,7 +90,7 @@ function toSingle(event: CalendarEvent): CalendarDisplaySingle {
   };
 }
 
-function statusCounts(events: CalendarEvent[]) {
+export function calendarStatusCounts(events: CalendarEvent[]) {
   const counts = new Map<CalendarEventStatus, number>();
   for (const event of events) {
     counts.set(event.eventStatus, (counts.get(event.eventStatus) ?? 0) + 1);
@@ -87,6 +99,11 @@ function statusCounts(events: CalendarEvent[]) {
     const count = counts.get(status) ?? 0;
     return count > 0 ? [{ status, count }] : [];
   });
+}
+
+export function calendarDisplayItemEvents(item: CalendarDisplayItem): CalendarEvent[] {
+  if (item.kind === "single") return [item.event];
+  return item.events;
 }
 
 function compareDisplayItems(a: CalendarDisplayItem, b: CalendarDisplayItem) {
@@ -154,11 +171,11 @@ export function buildCalendarDisplayItems(
       kind: "cluster",
       id: `cluster:${firstEvent.ownerAgentId}:${group.bucketStart.toISOString()}`,
       agentId: firstEvent.ownerAgentId!,
-      agentName: agentNameFor(firstEvent),
+      agentName: calendarAgentNameFor(firstEvent),
       startAt: new Date(Math.max(group.bucketStart.getTime(), minStart)),
       endAt: new Date(Math.min(group.bucketEnd.getTime(), maxEnd)),
       events: sortedEvents,
-      statusCounts: statusCounts(sortedEvents),
+      statusCounts: calendarStatusCounts(sortedEvents),
     });
   }
 

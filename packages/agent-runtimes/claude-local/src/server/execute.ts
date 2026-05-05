@@ -472,7 +472,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     effectiveInstructionsFilePath = combinedPath;
   }
   const commandNotes = (() => {
-    if (!instructionsFilePath) return [] as string[];
+    if (!instructionsFilePath) {
+      return [
+        ...loadedInstructions.commandNotes,
+        "Injected Rudder operating contract via --append-system-prompt-file.",
+      ];
+    }
     if (!loadedInstructions.prefix) return loadedInstructions.commandNotes;
     return [
       ...loadedInstructions.commandNotes,

@@ -8,32 +8,25 @@ import type {
   OrganizationPortabilityExportRequest,
   OrganizationPortabilityExportPreviewResult,
   OrganizationPortabilityExportResult,
+  OrganizationExportJob,
+  OrganizationExportJobCreateResult,
   OrganizationPortabilityImportRequest,
   OrganizationPortabilityImportResult,
   OrganizationPortabilityPreviewRequest,
   OrganizationPortabilityPreviewResult,
+  WorkspaceBackupCreateRequest,
+  WorkspaceBackupFileDetail,
+  WorkspaceBackupFileList,
+  WorkspaceBackupList,
+  WorkspaceBackupRestoreRequest,
+  WorkspaceBackupRestoreResult,
+  WorkspaceBackupSummary,
   UpdateOrganizationBranding,
   UpdateOrganizationResourceRequest,
 } from "@rudderhq/shared";
 import { api } from "./client";
 
 export type OrganizationStats = Record<string, { agentCount: number; issueCount: number }>;
-export interface LinearImportSourceRequest {
-  apiKey: string;
-  teamIdOrKey?: string;
-  projectIds?: string[];
-  issueLimit?: number;
-  projectLimit?: number;
-}
-
-export interface LinearImportSourceResult {
-  rootPath: string;
-  files: Record<string, string>;
-  summary: {
-    projectCount: number;
-    issueCount: number;
-  };
-}
 
 export const organizationsApi = {
   list: () => api.get<Organization[]>("/orgs"),
@@ -97,6 +90,30 @@ export const organizationsApi = {
       data,
     );
   },
+  listWorkspaceBackups: (orgId: string) =>
+    api.get<WorkspaceBackupList>(`/orgs/${orgId}/workspace/backups`),
+  createWorkspaceBackup: (orgId: string, data: WorkspaceBackupCreateRequest = {}) =>
+    api.post<WorkspaceBackupSummary>(`/orgs/${orgId}/workspace/backups`, data),
+  listWorkspaceBackupFiles: (orgId: string, backupId: string, directoryPath: string = "") => {
+    const search = new URLSearchParams();
+    if (directoryPath) search.set("path", directoryPath);
+    const query = search.toString();
+    return api.get<WorkspaceBackupFileList>(
+      `/orgs/${orgId}/workspace/backups/${backupId}/files${query ? `?${query}` : ""}`,
+    );
+  },
+  readWorkspaceBackupFile: (orgId: string, backupId: string, filePath: string) => {
+    const search = new URLSearchParams();
+    if (filePath) search.set("path", filePath);
+    const query = search.toString();
+    return api.get<WorkspaceBackupFileDetail>(
+      `/orgs/${orgId}/workspace/backups/${backupId}/file${query ? `?${query}` : ""}`,
+    );
+  },
+  restoreWorkspaceBackup: (orgId: string, backupId: string, data: WorkspaceBackupRestoreRequest) =>
+    api.post<WorkspaceBackupRestoreResult>(`/orgs/${orgId}/workspace/backups/${backupId}/restore`, data),
+  deleteWorkspaceBackup: (orgId: string, backupId: string) =>
+    api.delete<WorkspaceBackupSummary>(`/orgs/${orgId}/workspace/backups/${backupId}`),
   archive: (orgId: string) => api.post<Organization>(`/orgs/${orgId}/archive`, {}),
   remove: (orgId: string) => api.delete<{ ok: true }>(`/orgs/${orgId}`),
   exportBundle: (
@@ -114,10 +131,19 @@ export const organizationsApi = {
     data: OrganizationPortabilityExportRequest,
   ) =>
     api.post<OrganizationPortabilityExportResult>(`/orgs/${orgId}/exports`, data),
+  createExportJob: (
+    orgId: string,
+    data: OrganizationPortabilityExportRequest,
+  ) =>
+    api.post<OrganizationExportJobCreateResult>(`/orgs/${orgId}/exports/jobs`, data),
+  getExportJob: (orgId: string, jobId: string) =>
+    api.get<OrganizationExportJob>(`/orgs/${orgId}/exports/jobs/${jobId}`),
+  cancelExportJob: (orgId: string, jobId: string) =>
+    api.delete<OrganizationExportJob>(`/orgs/${orgId}/exports/jobs/${jobId}`),
+  getExportJobResult: (orgId: string, jobId: string) =>
+    api.get<OrganizationPortabilityExportResult>(`/orgs/${orgId}/exports/jobs/${jobId}/result`),
   importPreview: (data: OrganizationPortabilityPreviewRequest) =>
     api.post<OrganizationPortabilityPreviewResult>("/orgs/import/preview", data),
   importBundle: (data: OrganizationPortabilityImportRequest) =>
     api.post<OrganizationPortabilityImportResult>("/orgs/import", data),
-  buildLinearImportSource: (data: LinearImportSourceRequest) =>
-    api.post<LinearImportSourceResult>("/orgs/import/linear-source", data),
 };

@@ -13,6 +13,7 @@ const mockIssueService = vi.hoisted(() => ({
   createAttachment: vi.fn(),
   findMentionedAgents: vi.fn(),
   getById: vi.fn(),
+  reorder: vi.fn(),
   update: vi.fn(),
 }));
 
@@ -95,6 +96,7 @@ function makeIssue(overrides?: Partial<{
   executionRunId: string | null;
   identifier: string;
   projectId: string | null;
+  boardOrder: number;
   status: "backlog" | "todo" | "in_progress" | "done";
   title: string;
 }>) {
@@ -107,6 +109,7 @@ function makeIssue(overrides?: Partial<{
     executionRunId: null,
     identifier: "RUD-5",
     projectId: null,
+    boardOrder: 1000,
     status: "todo" as const,
     title: "Lifecycle hardening",
     ...overrides,
@@ -176,6 +179,65 @@ describe("issue lifecycle routes", () => {
       }),
     );
     expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("reorders an issue within an organization lane and logs activity", async () => {
+    const issue = makeIssue({
+      boardOrder: 2000,
+      status: "todo",
+    });
+    mockIssueService.reorder.mockResolvedValue({
+      issue,
+      previousStatus: "todo",
+      previousBoardOrder: 3000,
+    });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/issues/reorder")
+      .send({
+        issueId: "11111111-1111-4111-8111-111111111111",
+        targetStatus: "todo",
+        previousIssueId: "22222222-2222-4222-8222-222222222222",
+        nextIssueId: "33333333-3333-4333-8333-333333333333",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.reorder).toHaveBeenCalledWith("organization-1", {
+      issueId: "11111111-1111-4111-8111-111111111111",
+      targetStatus: "todo",
+      previousIssueId: "22222222-2222-4222-8222-222222222222",
+      nextIssueId: "33333333-3333-4333-8333-333333333333",
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.reordered",
+        entityType: "issue",
+        entityId: issue.id,
+        details: expect.objectContaining({
+          identifier: "RUD-5",
+          status: "todo",
+          boardOrder: 2000,
+          _previous: {
+            status: "todo",
+            boardOrder: 3000,
+          },
+        }),
+      }),
+    );
+  });
+
+  it("requires board access to reorder issue board lanes", async () => {
+    const res = await request(createApp(createAgentActor()))
+      .post("/api/orgs/organization-1/issues/reorder")
+      .send({
+        issueId: "11111111-1111-4111-8111-111111111111",
+        targetStatus: "todo",
+        position: "end",
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockIssueService.reorder).not.toHaveBeenCalled();
   });
 
   it("stores inline comment uploads without logging them as issue attachments", async () => {

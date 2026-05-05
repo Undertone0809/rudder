@@ -1,0 +1,80 @@
+[
+  {
+    "key": "weekly-loop-review-1",
+    "title": "Weekly loop review",
+    "description": "Ada, Linus, and Grace review completed work loops, blocked work, and whether runs produced artifacts or decisions.",
+    "ownerType": "user",
+    "day": 8,
+    "startHour": 10,
+    "durationMinutes": 45,
+    "eventKind": "human_event",
+    "eventStatus": "actual",
+    "projectKey": "agent-work-loop",
+    "goalKey": "weekly-loops"
+  },
+  {
+    "key": "calendar-story-review",
+    "title": "Calendar story review",
+    "description": "Review whether Calendar reads as a work-history view over actual runs rather than a standalone scheduling demo.",
+    "ownerType": "user",
+    "day": 18,
+    "startHour": 15,
+    "durationMinutes": 50,
+    "eventKind": "human_event",
+    "eventStatus": "actual",
+    "projectKey": "calendar-work-history",
+    "goalKey": "calendar-history"
+  },
+  {
+    "key": "growth-standup",
+    "title": "Growth standup: posts, replies, objections",
+    "description": "Diana reports shipped posts, founder DM replies, qualified conversations, objections, and follow-up issues.",
+    "ownerType": "user",
+    "day": 24,
+    "startHour": 11,
+    "durationMinutes": 30,
+    "eventKind": "human_event",
+    "eventStatus": "actual",
+    "projectKey": "marketing-growth",
+    "goalKey": "qualified-builders"
+  },
+  {
+    "key": "desktop-release-gate",
+    "title": "Desktop release gate",
+    "description": "Atlas walks through packaged smoke, npm latest path, release notes, and remaining blockers.",
+    "ownerType": "user",
+    "day": 25,
+    "startHour": 16,
+    "durationMinutes": 45,
+    "eventKind": "human_event",
+    "eventStatus": "actual",
+    "projectKey": "desktop-release",
+    "goalKey": "weekly-loops"
+  },
+  {
+    "key": "demo-clip-review",
+    "title": "Review 90-second demo clip",
+    "description": "Watch the issue-to-run-to-approval-to-calendar clip and decide whether it is strong enough for HN.",
+    "ownerType": "user",
+    "day": 29,
+    "startHour": 14,
+    "durationMinutes": 40,
+    "eventKind": "human_event",
+    "eventStatus": "planned",
+    "projectKey": "marketing-growth",
+    "goalKey": "qualified-builders"
+  },
+  {
+    "key": "budget-override-review",
+    "title": "Budget override review",
+    "description": "Decide whether to resume paused agents after monthly spend exceeded the Rudder Studio budget.",
+    "ownerType": "user",
+    "day": 29,
+    "startHour": 17,
+    "durationMinutes": 30,
+    "eventKind": "human_event",
+    "eventStatus": "planned",
+    "projectKey": "operator-experience",
+    "goalKey": "weekly-loops"
+  }
+]

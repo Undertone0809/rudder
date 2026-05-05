@@ -18,7 +18,7 @@ export const help: Record<string, string> = {
   capabilities: "Describes what this agent can do. Shown in the Organization Structure and used for task routing.",
   agentRuntimeType: "How this agent runs: local CLI (Claude/Codex/OpenCode), OpenClaw Gateway, spawned process, or generic HTTP webhook.",
   cwd: "Deprecated legacy working directory fallback for local runtimes. Existing agents may still carry this value, but new configurations should use project workspaces instead.",
-  promptTemplate: "Sent on every heartbeat. Keep this small and dynamic. Use it for current-task framing, not large static instructions. Supports {{ agent.id }}, {{ agent.name }}, {{ agent.role }} and other template variables.",
+  promptTemplate: "For new local agents, Rudder can materialize this as SOUL.md. For existing runtime configs, it is sent on every heartbeat; keep it small and use it for dynamic task framing, not large static instructions.",
   model: "Override the default model used by the runtime.",
   modelFallbacks: "Fallback runtime/model attempts tried in order when the primary invocation fails. Each fallback can use its own provider and advanced config.",
   thinkingEffort: "Control model reasoning depth. Supported values vary by runtime/model.",

@@ -45,6 +45,12 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("transform var(--motion-duration-standard) var(--motion-ease-enter)");
   });
 
+  it("highlights kanban card borders on hover and keyboard focus", () => {
+    expect(motionCss).toContain(".motion-kanban-card:is(:hover, :focus-within)");
+    expect(motionCss).toContain("border-color: color-mix(in oklab, var(--accent-base) 58%, var(--border))");
+    expect(motionCss).toContain("inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 34%, transparent)");
+  });
+
   it("defines a pop animation for organization menu disclosure", () => {
     expect(motionCss).toContain("@keyframes rudder-organization-menu-pop");
     expect(motionCss).toContain("@keyframes rudder-organization-menu-close");

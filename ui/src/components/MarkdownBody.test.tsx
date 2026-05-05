@@ -120,7 +120,8 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain('class="rudder-skill-token"');
-    expect(html).toContain("rudder/rudder-create-plugin");
+    expect(html).toContain("rudder-create-plugin");
+    expect(html).not.toContain("rudder/rudder-create-plugin");
     expect(html).not.toContain("href=");
     expect(html).not.toContain("/Users/zeeland/projects/rudder/.agents/skills/rudder-create-plugin/SKILL.md");
   });

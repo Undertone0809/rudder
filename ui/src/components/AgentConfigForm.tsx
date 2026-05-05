@@ -42,6 +42,7 @@ import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption }
 import { resolveRuntimeModels } from "../lib/runtime-models";
 import { queryKeys } from "../lib/queryKeys";
 import { useOrganization } from "../context/OrganizationContext";
+import { useDialog } from "../context/DialogContext";
 import {
   Field,
   ToggleField,
@@ -690,7 +691,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       String(config.promptTemplate ?? ""),
                     )}
                     onChange={(v) => mark("agentRuntimeConfig", "promptTemplate", v ?? "")}
-                    placeholder="You are agent {{ agent.name }}. Your role is {{ agent.role }}..."
+                    placeholder="Use this only for compact per-run task framing..."
                     contentClassName="min-h-[88px] text-sm font-mono"
                     imageUploadHandler={async (file) => {
                       const namespace = `agents/${props.agent.id}/prompt-template`;
@@ -703,7 +704,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   data-testid="prompt-template-helper"
                   className="rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
                 >
-                  Prompt template is replayed on every heartbeat. Keep it compact and dynamic to avoid recurring token cost and cache churn.
+                  Prompt template is replayed on every heartbeat for existing runtime configs. Keep it compact and dynamic to avoid recurring token cost and cache churn.
                 </div>
               </>
             )}
@@ -897,7 +898,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 <MarkdownEditor
                   value={val!.promptTemplate}
                   onChange={(v) => set!({ promptTemplate: v })}
-                  placeholder="You are agent {{ agent.name }}. Your role is {{ agent.role }}..."
+                  placeholder={"# SOUL.md\n\nYou are agent {{ agent.name }}. Your role is {{ agent.role }}..."}
                   contentClassName="min-h-[88px] text-sm font-mono"
                   imageUploadHandler={async (file) => {
                     const namespace = "agents/drafts/prompt-template";
@@ -910,7 +911,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 data-testid="prompt-template-helper"
                 className="rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
               >
-                Prompt template is replayed on every heartbeat. Prefer small task framing and variables like <code>{"{{ context.* }}"}</code> or <code>{"{{ run.* }}"}</code>; avoid repeating stable instructions here.
+                For new local agents, Rudder materializes this as SOUL.md in the managed instructions bundle. Define role, scope, responsibilities, boundaries, and voice; leave Rudder's shared operating contract out.
               </div>
             </>
           )}
@@ -1430,6 +1431,7 @@ function EnvVarEditor({
   onCreateSecret: (name: string, value: string) => Promise<OrganizationSecret>;
   onChange: (env: Record<string, EnvBinding> | undefined) => void;
 }) {
+  const { promptText } = useDialog();
   type Row = {
     key: string;
     source: "plain" | "secret";
@@ -1559,7 +1561,12 @@ function EnvVarEditor({
     if (!key || plain.length === 0) return;
 
     const suggested = defaultSecretName(key) || "secret";
-    const name = window.prompt("Secret name", suggested)?.trim();
+    const name = (await promptText({
+      title: "Secret name",
+      label: "Name",
+      defaultValue: suggested,
+      confirmLabel: "Create secret",
+    }))?.trim();
     if (!name) return;
 
     try {

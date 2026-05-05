@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { useDialog } from "@/context/DialogContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useNavigate, useSearchParams } from "@/lib/router";
@@ -42,6 +43,7 @@ export function ApprovalDetailDialog({
   onOpenChange,
 }: ApprovalDetailDialogProps) {
   const { selectedOrganizationId, setSelectedOrganizationId } = useOrganization();
+  const { confirm } = useDialog();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -412,8 +414,14 @@ export function ApprovalDetailDialog({
                         size="sm"
                         variant="outline"
                         className="border-destructive/40 text-destructive"
-                        onClick={() => {
-                          if (!window.confirm("Delete this disapproved agent? This cannot be undone.")) return;
+                        onClick={async () => {
+                          const confirmed = await confirm({
+                            title: "Delete this disapproved agent?",
+                            description: "This cannot be undone.",
+                            confirmLabel: "Delete",
+                            tone: "destructive",
+                          });
+                          if (!confirmed) return;
                           deleteAgentMutation.mutate(linkedAgentId);
                         }}
                         disabled={deleteAgentMutation.isPending}

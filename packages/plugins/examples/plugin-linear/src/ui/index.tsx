@@ -223,12 +223,35 @@ const layoutStyles: Record<string, CSSProperties> = {
   },
 };
 
+const LINEAR_TOKEN_SECRET_NAME = "Linear token";
+
+type SecretSummary = {
+  id: string;
+  name: string;
+};
+
 function normalizeConfig(config: LinearPluginConfig | null | undefined): LinearPluginConfig {
+  const legacyOrganizationMappings = Array.isArray(config?.organizationMappings) ? config.organizationMappings : [];
+  const explicitTeamMappings = Array.isArray(config?.teamMappings) ? config.teamMappings : [];
   return {
     apiTokenSecretRef: config?.apiTokenSecretRef ?? "",
-    organizationMappings: Array.isArray(config?.organizationMappings) ? config.organizationMappings : [],
+    teamMappings: explicitTeamMappings.length > 0
+      ? explicitTeamMappings
+      : mergeLegacyTeamMappings(legacyOrganizationMappings),
+    organizationMappings: legacyOrganizationMappings,
     ...(config?.fixtureMode === true ? { fixtureMode: true } : {}),
   };
+}
+
+function mergeLegacyTeamMappings(mappings: LinearOrganizationMapping[]): LinearTeamMapping[] {
+  const byTeamId = new Map<string, LinearTeamMapping>();
+  for (const mapping of mappings) {
+    for (const team of mapping.teamMappings ?? []) {
+      if (!team.teamId || byTeamId.has(team.teamId)) continue;
+      byTeamId.set(team.teamId, team);
+    }
+  }
+  return [...byTeamId.values()];
 }
 
 function getOrgPrefix(context: Record<string, unknown>): string | null {
@@ -279,11 +302,8 @@ function inferRudderStatus(state: LinearStateSummary): LinearStateMapping["rudde
   return "backlog";
 }
 
-function buildMappingFromCatalog(orgId: string, catalog: SettingsCatalogData): LinearOrganizationMapping {
-  return {
-    orgId,
-    teamMappings: catalog.teams.map((team) => buildTeamMappingFromCatalog(team)),
-  };
+function buildTeamMappingsFromCatalog(catalog: SettingsCatalogData): LinearTeamMapping[] {
+  return catalog.teams.map((team) => buildTeamMappingFromCatalog(team));
 }
 
 function buildTeamMappingFromCatalog(
@@ -304,30 +324,26 @@ function buildTeamMappingFromCatalog(
   };
 }
 
-function buildMappingForSelectedTeams(
-  orgId: string,
+function buildTeamMappingsForSelectedTeams(
   catalog: SettingsCatalogData,
   selectedTeamIds: string[],
-  existingMapping: LinearOrganizationMapping | null | undefined,
-): LinearOrganizationMapping {
+  existingTeamMappings: LinearTeamMapping[],
+): LinearTeamMapping[] {
   const selected = new Set(selectedTeamIds);
-  const existingByTeamId = new Map((existingMapping?.teamMappings ?? []).map((team) => [team.teamId, team]));
-  return {
-    orgId,
-    teamMappings: catalog.teams
-      .filter((team) => selected.has(team.id))
-      .map((team) => buildTeamMappingFromCatalog(team, existingByTeamId.get(team.id))),
-  };
+  const existingByTeamId = new Map(existingTeamMappings.map((team) => [team.teamId, team]));
+  return catalog.teams
+    .filter((team) => selected.has(team.id))
+    .map((team) => buildTeamMappingFromCatalog(team, existingByTeamId.get(team.id)));
 }
 
-function countMappedStates(mapping: LinearOrganizationMapping | null | undefined): number {
-  return mapping?.teamMappings.reduce((sum, team) => sum + team.stateMappings.length, 0) ?? 0;
+function countMappedStates(teamMappings: LinearTeamMapping[] | null | undefined): number {
+  return teamMappings?.reduce((sum, team) => sum + team.stateMappings.length, 0) ?? 0;
 }
 
-function summarizeMapping(mapping: LinearOrganizationMapping | null | undefined): string {
-  if (!mapping) return "No Linear workspace loaded yet.";
-  const teamCount = mapping.teamMappings.length;
-  const stateCount = countMappedStates(mapping);
+function summarizeMapping(teamMappings: LinearTeamMapping[] | null | undefined): string {
+  if (!teamMappings) return "No Linear workspace loaded yet.";
+  const teamCount = teamMappings.length;
+  const stateCount = countMappedStates(teamMappings);
   return `${teamCount} team${teamCount === 1 ? "" : "s"} and ${stateCount} workflow state${stateCount === 1 ? "" : "s"} ready.`;
 }
 
@@ -337,27 +353,28 @@ function isMissingSettingsCatalogHandler(error: unknown): boolean {
 }
 
 function prepareConfigForSubmit(config: LinearPluginConfig): LinearPluginConfig {
+  const teamMappings = config.teamMappings
+    .map((team) => ({
+      teamId: team.teamId.trim(),
+      teamName: team.teamName?.trim() || undefined,
+      stateMappings: team.stateMappings
+        .map((state) => ({
+          linearStateId: state.linearStateId.trim(),
+          linearStateName: state.linearStateName?.trim() || undefined,
+          rudderStatus: state.rudderStatus,
+        }))
+        .filter((state) => state.linearStateId),
+    }))
+    .filter((team) => team.teamId);
+
   return {
     apiTokenSecretRef: config.apiTokenSecretRef?.trim() ?? "",
     ...(config.fixtureMode === true ? { fixtureMode: true } : {}),
-    organizationMappings: config.organizationMappings
-      .map((mapping) => ({
-        orgId: mapping.orgId.trim(),
-        teamMappings: mapping.teamMappings
-          .map((team) => ({
-            teamId: team.teamId.trim(),
-            teamName: team.teamName?.trim() || undefined,
-            stateMappings: team.stateMappings
-              .map((state) => ({
-                linearStateId: state.linearStateId.trim(),
-                linearStateName: state.linearStateName?.trim() || undefined,
-                rudderStatus: state.rudderStatus,
-              }))
-              .filter((state) => state.linearStateId),
-          }))
-          .filter((team) => team.teamId),
-      }))
-      .filter((mapping) => mapping.orgId),
+    teamMappings,
+    // Keep a legacy-compatible shape for already-installed manifests that still
+    // require organizationMappings during config validation. New runtime code
+    // reads the top-level teamMappings field.
+    organizationMappings: [{ orgId: "__global__", teamMappings }],
   };
 }
 
@@ -384,6 +401,14 @@ function pageHref(orgPrefix: string | null, query?: string): string {
   if (!orgPrefix) return "/linear";
   const url = new URL(`/${orgPrefix}/linear`, "https://local.invalid");
   if (query) url.searchParams.set("q", query);
+  return `${url.pathname}${url.search}`;
+}
+
+function linearIssueBoardHref(orgPrefix: string | null | undefined, teamId?: string | null): string {
+  const basePath = orgPrefix ? `/${encodeURIComponent(orgPrefix)}/issues` : "/issues";
+  const url = new URL(basePath, "https://local.invalid");
+  url.searchParams.set("source", "linear");
+  if (teamId) url.searchParams.set("linearTeamId", teamId);
   return `${url.pathname}${url.search}`;
 }
 
@@ -907,7 +932,6 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
   const toast = usePluginToast();
   const bootstrap = usePluginData<SettingsBootstrapData>(DATA_KEYS.settingsBootstrap);
   const [draft, setDraft] = useState<LinearPluginConfig>(normalizeConfig(null));
-  const [selectedOrgId, setSelectedOrgId] = useState("");
   const [tokenInput, setTokenInput] = useState("");
   const [settingsCatalog, setSettingsCatalog] = useState<SettingsCatalogData | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -919,15 +943,11 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
   useEffect(() => {
     if (!bootstrap.data) return;
     const nextDraft = normalizeConfig(bootstrap.data.config);
-    const firstOrganizationId = bootstrap.data.organizations[0]?.id ?? "";
     setDraft(nextDraft);
-    setSelectedOrgId((current) =>
-      current || nextDraft.organizationMappings[0]?.orgId || firstOrganizationId,
-    );
   }, [bootstrap.data]);
 
   useEffect(() => {
-    if (!pluginId || !selectedOrgId || !draft.apiTokenSecretRef) {
+    if (!pluginId || !draft.apiTokenSecretRef) {
       setSettingsCatalog(null);
       setCatalogError(null);
       setCatalogLoading(false);
@@ -938,25 +958,21 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
     setCatalogLoading(true);
     setCatalogError(null);
 
-    void fetchSettingsCatalog(selectedOrgId)
+    void fetchSettingsCatalog()
       .then((catalog) => {
         if (cancelled) return;
         setSettingsCatalog(catalog);
         setDraft((current) => {
           const normalized = normalizeConfig(current);
-          const existingMapping = normalized.organizationMappings.find((mapping) => mapping.orgId === selectedOrgId) ?? null;
-          const selectedTeamIds = (existingMapping?.teamMappings ?? [])
+          const selectedTeamIds = normalized.teamMappings
             .map((team) => team.teamId)
             .filter(Boolean);
-          const nextMapping = selectedTeamIds.length > 0
-            ? buildMappingForSelectedTeams(selectedOrgId, catalog, selectedTeamIds, existingMapping)
-            : buildMappingFromCatalog(selectedOrgId, catalog);
+          const nextTeamMappings = selectedTeamIds.length > 0
+            ? buildTeamMappingsForSelectedTeams(catalog, selectedTeamIds, normalized.teamMappings)
+            : buildTeamMappingsFromCatalog(catalog);
           return {
             ...normalized,
-            organizationMappings: [
-              ...normalized.organizationMappings.filter((mapping) => mapping.orgId !== selectedOrgId),
-              nextMapping,
-            ],
+            teamMappings: nextTeamMappings,
           };
         });
       })
@@ -972,15 +988,18 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [draft.apiTokenSecretRef, pluginId, selectedOrgId]);
+  }, [draft.apiTokenSecretRef, pluginId]);
 
-  const selectedMapping = draft.organizationMappings.find((mapping) => mapping.orgId === selectedOrgId) ?? null;
-  const selectedTeamIds = (selectedMapping?.teamMappings ?? [])
+  const selectedTeamIds = draft.teamMappings
     .map((team) => team.teamId)
     .filter(Boolean);
   const selectedTeamIdSet = new Set(selectedTeamIds);
   const selectedTeamCount = selectedTeamIds.length;
   const catalogTeamCount = settingsCatalog?.teams.length ?? 0;
+  const issueBoardHref = linearIssueBoardHref(
+    bootstrap.data?.organizations[0]?.issuePrefix ?? null,
+    selectedTeamIds[0] ?? null,
+  );
 
   async function savePluginConfig(config: LinearPluginConfig) {
     if (!pluginId) throw new Error("Unable to resolve plugin id");
@@ -990,26 +1009,68 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
     });
   }
 
-  async function fetchPluginData<T>(key: string, orgId: string, params: Record<string, unknown> = {}): Promise<T> {
+  async function listOrgSecrets(orgId: string): Promise<SecretSummary[]> {
+    return await apiFetch<SecretSummary[]>(`/api/orgs/${encodeURIComponent(orgId)}/secrets`);
+  }
+
+  async function rotateSecret(secretId: string, value: string): Promise<SecretSummary> {
+    return await apiFetch<SecretSummary>(`/api/secrets/${encodeURIComponent(secretId)}/rotate`, {
+      method: "POST",
+      body: JSON.stringify({ value }),
+    });
+  }
+
+  async function createLinearTokenSecret(orgId: string, value: string): Promise<SecretSummary> {
+    return await apiFetch<SecretSummary>(`/api/orgs/${encodeURIComponent(orgId)}/secrets`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: LINEAR_TOKEN_SECRET_NAME,
+        value,
+        description: "Used by the Linear plugin to read issues across Rudder organizations.",
+      }),
+    });
+  }
+
+  async function saveLinearTokenSecret(orgId: string, value: string, currentSecretRef: string): Promise<string> {
+    if (currentSecretRef) {
+      const rotated = await rotateSecret(currentSecretRef, value);
+      return rotated.id;
+    }
+
+    try {
+      const created = await createLinearTokenSecret(orgId, value);
+      return created.id;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/Secret already exists/i.test(message)) throw error;
+
+      const existing = (await listOrgSecrets(orgId)).find((secret) => secret.name === LINEAR_TOKEN_SECRET_NAME);
+      if (!existing) throw error;
+      const rotated = await rotateSecret(existing.id, value);
+      return rotated.id;
+    }
+  }
+
+  async function fetchPluginData<T>(key: string, params: Record<string, unknown> = {}, orgId?: string): Promise<T> {
     if (!pluginId) throw new Error("Unable to resolve plugin id");
     const payload = await apiFetch<{ data: T }>(`/api/plugins/${encodeURIComponent(pluginId)}/data/${key}`, {
       method: "POST",
       body: JSON.stringify({
-        orgId,
+        ...(orgId ? { orgId } : {}),
         params: {
-          orgId,
           ...params,
+          ...(orgId ? { orgId } : {}),
         },
       }),
     });
     return payload.data;
   }
 
-  async function fetchSettingsCatalogWithRetry(orgId: string): Promise<SettingsCatalogData> {
+  async function fetchSettingsCatalogWithRetry(): Promise<SettingsCatalogData> {
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
-        return await fetchPluginData<SettingsCatalogData>(DATA_KEYS.settingsCatalog, orgId);
+        return await fetchPluginData<SettingsCatalogData>(DATA_KEYS.settingsCatalog);
       } catch (error) {
         if (isMissingSettingsCatalogHandler(error)) throw error;
         lastError = error;
@@ -1031,88 +1092,64 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
     });
   }
 
-  async function fetchSettingsCatalog(orgId: string): Promise<SettingsCatalogData> {
+  async function fetchSettingsCatalog(): Promise<SettingsCatalogData> {
     try {
-      return await fetchSettingsCatalogWithRetry(orgId);
+      return await fetchSettingsCatalogWithRetry();
     } catch (error) {
       if (!isMissingSettingsCatalogHandler(error)) throw error;
       await refreshPluginRuntime();
-      return await fetchSettingsCatalogWithRetry(orgId);
+      return await fetchSettingsCatalogWithRetry();
     }
   }
 
-  function setMappingForSelectedOrg(nextMapping: LinearOrganizationMapping) {
-    setDraft((current) => {
-      const normalized = normalizeConfig(current);
-      return {
-        ...normalized,
-        organizationMappings: [
-          ...normalized.organizationMappings.filter((mapping) => mapping.orgId !== nextMapping.orgId),
-          nextMapping,
-        ],
-      };
-    });
-  }
-
   function toggleTeam(teamId: string) {
-    if (!settingsCatalog || !selectedOrgId) return;
+    if (!settingsCatalog) return;
     setDraft((current) => {
       const normalized = normalizeConfig(current);
-      const existingMapping = normalized.organizationMappings.find((mapping) => mapping.orgId === selectedOrgId) ?? null;
-      const nextTeamIds = new Set((existingMapping?.teamMappings ?? []).map((team) => team.teamId).filter(Boolean));
+      const nextTeamIds = new Set(normalized.teamMappings.map((team) => team.teamId).filter(Boolean));
       if (nextTeamIds.has(teamId)) {
         nextTeamIds.delete(teamId);
       } else {
         nextTeamIds.add(teamId);
       }
-      const nextMapping = buildMappingForSelectedTeams(selectedOrgId, settingsCatalog, [...nextTeamIds], existingMapping);
       return {
         ...normalized,
-        organizationMappings: [
-          ...normalized.organizationMappings.filter((mapping) => mapping.orgId !== selectedOrgId),
-          nextMapping,
-        ],
+        teamMappings: buildTeamMappingsForSelectedTeams(settingsCatalog, [...nextTeamIds], normalized.teamMappings),
       };
     });
   }
 
   function selectAllTeams() {
-    if (!settingsCatalog || !selectedOrgId) return;
-    setMappingForSelectedOrg(buildMappingForSelectedTeams(
-      selectedOrgId,
-      settingsCatalog,
-      settingsCatalog.teams.map((team) => team.id),
-      selectedMapping,
-    ));
+    if (!settingsCatalog) return;
+    setDraft((current) => {
+      const normalized = normalizeConfig(current);
+      return {
+        ...normalized,
+        teamMappings: buildTeamMappingsForSelectedTeams(
+          settingsCatalog,
+          settingsCatalog.teams.map((team) => team.id),
+          normalized.teamMappings,
+        ),
+      };
+    });
   }
 
   function setStatusRule(teamId: string, stateId: string, rudderStatus: LinearStateMapping["rudderStatus"]) {
     setDraft((current) => ({
       ...current,
-      organizationMappings: current.organizationMappings.map((mapping) => {
-        if (mapping.orgId !== selectedOrgId) return mapping;
+      teamMappings: current.teamMappings.map((team) => {
+        if (team.teamId !== teamId) return team;
         return {
-          ...mapping,
-          teamMappings: mapping.teamMappings.map((team) => {
-            if (team.teamId !== teamId) return team;
-            return {
-              ...team,
-              stateMappings: team.stateMappings.map((state) =>
-                state.linearStateId === stateId ? { ...state, rudderStatus } : state,
-              ),
-            };
-          }),
+          ...team,
+          stateMappings: team.stateMappings.map((state) =>
+            state.linearStateId === stateId ? { ...state, rudderStatus } : state,
+          ),
         };
       }),
     }));
   }
 
   async function connectLinear() {
-    const orgId = selectedOrgId || bootstrap.data?.organizations[0]?.id || "";
-    if (!orgId) {
-      toast({ title: "Choose a Rudder organization", tone: "warn" });
-      return;
-    }
     if (!pluginId) {
       toast({ title: "Unable to resolve plugin id", tone: "error" });
       return;
@@ -1123,15 +1160,16 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
       let apiTokenSecretRef = draft.apiTokenSecretRef?.trim() ?? "";
       const trimmedToken = tokenInput.trim();
       if (trimmedToken) {
-        const secret = await apiFetch<{ id: string }>(`/api/orgs/${encodeURIComponent(orgId)}/secrets`, {
-          method: "POST",
-          body: JSON.stringify({
-            name: "Linear token",
-            value: trimmedToken,
-            description: "Used by the Linear plugin to read issues for import.",
-          }),
-        });
-        apiTokenSecretRef = secret.id;
+        const secretOrgId = bootstrap.data?.organizations[0]?.id ?? "";
+        if (!secretOrgId) {
+          toast({
+            title: "Create a Rudder organization first",
+            body: "Rudder needs one organization to store the Linear token reference.",
+            tone: "warn",
+          });
+          return;
+        }
+        apiTokenSecretRef = await saveLinearTokenSecret(secretOrgId, trimmedToken, apiTokenSecretRef);
       }
       if (!apiTokenSecretRef) {
         toast({
@@ -1145,21 +1183,17 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
       const seedConfig = {
         ...draft,
         apiTokenSecretRef,
-        organizationMappings: draft.organizationMappings,
       };
       await savePluginConfig(seedConfig);
 
-      const catalog = await fetchSettingsCatalog(orgId);
+      const catalog = await fetchSettingsCatalog();
       if (catalog.teams.length === 0) {
         throw new Error("Linear returned no teams for this token.");
       }
-      const generatedMapping = buildMappingFromCatalog(orgId, catalog);
+      const generatedTeamMappings = buildTeamMappingsFromCatalog(catalog);
       const nextConfig = prepareConfigForSubmit({
         ...seedConfig,
-        organizationMappings: [
-          ...draft.organizationMappings.filter((mapping) => mapping.orgId !== orgId),
-          generatedMapping,
-        ],
+        teamMappings: generatedTeamMappings,
       });
       await savePluginConfig(nextConfig);
       setSettingsCatalog(catalog);
@@ -1167,10 +1201,16 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
       setDraft(nextConfig);
       setTokenInput("");
       bootstrap.refresh();
+      const firstTeamId = generatedTeamMappings[0]?.teamId ?? null;
+      const firstOrgPrefix = bootstrap.data?.organizations[0]?.issuePrefix ?? null;
       toast({
         title: "Linear is ready",
-        body: summarizeMapping(generatedMapping),
+        body: summarizeMapping(generatedTeamMappings),
         tone: "success",
+        action: {
+          label: "Open Linear issues",
+          href: linearIssueBoardHref(firstOrgPrefix, firstTeamId),
+        },
       });
     } catch (error) {
       toast({
@@ -1188,7 +1228,7 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
       toast({ title: "Unable to resolve plugin id", tone: "error" });
       return;
     }
-    if (draft.apiTokenSecretRef && settingsCatalog && selectedOrgId && selectedTeamCount === 0) {
+    if (draft.apiTokenSecretRef && settingsCatalog && selectedTeamCount === 0) {
       toast({
         title: "Choose at least one Linear team",
         body: "The import page needs one or more teams to show Linear issues.",
@@ -1223,7 +1263,7 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
       return `Connected. ${catalogTeamCount} Linear team${catalogTeamCount === 1 ? "" : "s"} found; ${selectedTeamCount} selected for import.`;
     }
     if (draft.apiTokenSecretRef) return "Token saved. Refresh from Linear to load teams.";
-    return "Paste a Linear token to connect this Rudder organization.";
+    return "Paste a Linear token to connect this instance.";
   }
 
   return (
@@ -1245,28 +1285,15 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
           <div>
             <h3 style={{ margin: 0 }}>Connect Linear</h3>
             <p style={layoutStyles.subtitle}>
-              Pick a Rudder organization, paste a token, and Rudder will prepare the import setup from Linear.
+              Paste a token and Rudder will prepare the import setup from Linear.{" "}
+              <a href={LINEAR_TOKEN_SETTINGS_URL} target="_blank" rel="noreferrer" style={layoutStyles.monoLink}>
+                Create a Linear token
+              </a>
+              .
             </p>
           </div>
         </div>
         <div style={{ ...layoutStyles.connectionGrid, marginTop: 14 }}>
-          <div style={layoutStyles.field}>
-            <label style={layoutStyles.label} htmlFor="linear-rudder-org">Rudder organization</label>
-            <select
-              id="linear-rudder-org"
-              data-testid="linear-rudder-org"
-              style={layoutStyles.select}
-              value={selectedOrgId}
-              onChange={(event) => setSelectedOrgId(event.target.value)}
-            >
-              <option value="">Choose an organization</option>
-              {(bootstrap.data?.organizations ?? []).map((organization: SettingsBootstrapData["organizations"][number], index) => (
-                <option key={`${organization.id}-${index}`} value={organization.id}>
-                  {organization.name} ({organization.issuePrefix})
-                </option>
-              ))}
-            </select>
-          </div>
           <div style={layoutStyles.field}>
             <label style={layoutStyles.label} htmlFor="linear-token">Linear token</label>
             <input
@@ -1293,7 +1320,12 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
             </button>
           </div>
         </div>
-        <div style={layoutStyles.statusLine}>{connectionStatusText()}</div>
+        <div style={{ ...layoutStyles.statusLine, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <span>{connectionStatusText()}</span>
+          {settingsCatalog && selectedTeamCount > 0 ? (
+            <a href={issueBoardHref} style={layoutStyles.monoLink}>Open Linear issues</a>
+          ) : null}
+        </div>
       </section>
 
       {draft.apiTokenSecretRef ? (
@@ -1376,7 +1408,7 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
         </section>
       ) : null}
 
-      {settingsCatalog && selectedMapping && selectedMapping.teamMappings.length > 0 ? (
+      {settingsCatalog && draft.teamMappings.length > 0 ? (
         <section key="linear-settings-status-rules" style={layoutStyles.card}>
           <details>
             <summary style={{ cursor: "pointer", fontWeight: 700 }}>Status rules (optional)</summary>
@@ -1384,7 +1416,7 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
               Rudder applies smart defaults from Linear. Change these only if imported issues land in the wrong Rudder status.
             </p>
             <div style={{ display: "grid", gap: 18, marginTop: 14 }}>
-              {selectedMapping.teamMappings.map((teamMapping, teamIndex) => {
+              {draft.teamMappings.map((teamMapping, teamIndex) => {
                 const catalogTeam = settingsCatalog.teams.find((team) => team.id === teamMapping.teamId);
                 const states = catalogTeam?.states ?? teamMapping.stateMappings.map((state) => ({
                   id: state.linearStateId,

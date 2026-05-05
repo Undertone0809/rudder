@@ -63,4 +63,20 @@ describe("SkillTokenNode", () => {
       expect(token.getNextSibling()).toBeNull();
     });
   });
+
+  it("can be cloned for writable updates without recursing", () => {
+    const editor = createTestEditor();
+
+    editor.update(() => {
+      const root = $getRoot();
+      const paragraph = $createParagraphNode();
+      const token = $createSkillTokenNode(SKILL_LABEL, SKILL_HREF);
+      paragraph.append(token);
+      root.append(paragraph);
+
+      token.setHref("/workspace/.agents/skills/other/SKILL.md");
+      expect(token.getLatest().getHref()).toBe("/workspace/.agents/skills/other/SKILL.md");
+      expect(token.getLatest().getMode()).toBe("token");
+    });
+  });
 });

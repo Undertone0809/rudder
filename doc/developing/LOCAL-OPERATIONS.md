@@ -123,6 +123,23 @@ pnpm db:backup
 Environment overrides:
 
 - `RUDDER_DB_BACKUP_ENABLED=true|false`
+
+## Automatic Workspace Backups
+
+Workspace backups are separate from DB backups. They snapshot organization
+workspace files so an operator can browse, restore, or delete workspace
+versions from `/:orgPrefix/workspaces/backups`.
+
+Defaults:
+
+- enabled
+- one scheduled snapshot every 24 hours per active organization
+- retain 30 days
+- backup dir: `~/.rudder/instances/default/data/backups/workspaces/<org-id>/`
+
+Restore creates a pre-restore workspace backup before replacing live workspace
+files. Workspace backups do not include the database, secrets, logs, or storage
+assets.
 - `RUDDER_DB_BACKUP_INTERVAL_MINUTES=<minutes>`
 - `RUDDER_DB_BACKUP_RETENTION_DAYS=<days>`
 - `RUDDER_DB_BACKUP_DIR=/absolute/or/~/path`

@@ -222,21 +222,23 @@ export function BreadcrumbBar({
           <h1 className="truncate text-[15px] font-semibold tracking-tight text-foreground">{threeColumnTitle}</h1>
         </div>
         {desktopChrome ? <div className="desktop-window-drag hidden min-h-full flex-1 md:block" /> : null}
-        {isIssuesRoute && !isLinearIssueSource ? (
+        {isIssuesRoute ? (
           <div className={cn("hidden items-center gap-3 md:flex", desktopChrome && "desktop-window-no-drag")}>
             <div className="relative w-80">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={issueSearch}
                 onChange={(event) => setIssueSearch(event.target.value)}
-                placeholder="Search issues..."
+                placeholder={isLinearIssueSource ? "Search Linear issues..." : "Search issues..."}
                 className="h-9 border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] pl-8 text-sm"
               />
             </div>
-            <Button size="sm" className="px-4" onClick={() => openNewIssue()}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Issue
-            </Button>
+            {!isLinearIssueSource ? (
+              <Button size="sm" className="px-4" onClick={() => openNewIssue()}>
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Create Issue
+              </Button>
+            ) : null}
           </div>
         ) : null}
         {isProjectsRoute && (!isProjectsIndex || (visibleProjects?.length ?? 0) > 0) ? (

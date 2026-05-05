@@ -42,7 +42,7 @@ const manifest: PaperclipPluginManifestV1 = {
   },
   instanceConfigSchema: {
     type: "object",
-    required: ["apiTokenSecretRef", "organizationMappings"],
+    required: ["apiTokenSecretRef", "teamMappings"],
     properties: {
       apiTokenSecretRef: {
         type: "string",
@@ -50,9 +50,52 @@ const manifest: PaperclipPluginManifestV1 = {
         format: "secret-ref",
         minLength: 1,
       },
+      teamMappings: {
+        type: "array",
+        title: "Allowed Linear teams",
+        items: {
+          type: "object",
+          required: ["teamId"],
+          properties: {
+            teamId: {
+              type: "string",
+              title: "Linear team",
+              minLength: 1,
+            },
+            teamName: {
+              type: "string",
+              title: "Linear team name",
+            },
+            stateMappings: {
+              type: "array",
+              title: "Status rules",
+              items: {
+                type: "object",
+                required: ["linearStateId", "rudderStatus"],
+                properties: {
+                  linearStateId: {
+                    type: "string",
+                    title: "Linear status",
+                    minLength: 1,
+                  },
+                  linearStateName: {
+                    type: "string",
+                    title: "Linear status name",
+                  },
+                  rudderStatus: {
+                    type: "string",
+                    title: "Rudder status",
+                    enum: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
       organizationMappings: {
         type: "array",
-        title: "Rudder organization import setup",
+        title: "Legacy Rudder organization import setup",
         items: {
           type: "object",
           required: ["orgId", "teamMappings"],

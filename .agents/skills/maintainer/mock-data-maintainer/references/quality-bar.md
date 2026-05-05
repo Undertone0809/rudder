@@ -46,6 +46,19 @@ For screenshots, empty pages are usually bad. Prefer:
 For tests, density should be purposeful. Include only enough records to cover
 the behavior and edge cases being asserted.
 
+## Scenario Source Of Truth
+
+For whole-product scenarios, do not start from the screen that looks empty.
+Start from the user activity that should make the screen meaningful.
+
+- Issues, runs, costs, approvals, chats, and activity are primary work records.
+- Calendar events, dashboard counts, messenger threads, and summaries are often
+  downstream views.
+- If a user rejects a component-specific fixture and asks for a real user
+  scenario, preserve that framing in the fixture source and docs.
+- Store durable scenario facts in small JSON files, and generate repetitive
+  derived rows with a deterministic script.
+
 ## Output Hygiene
 
 Always include:

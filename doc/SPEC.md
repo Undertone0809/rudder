@@ -65,11 +65,18 @@ The Board sets Organization-level budgets. The CEO can set budgets for Agents be
 
 Every employee is an agent. Agents are the workforce.
 
-### Agent Identity (Adapter-Level)
+### Agent Identity (Runtime-Level)
 
-Concepts like SOUL.md (identity/mission) and HEARTBEAT.md (loop definition) are **not part of the Rudder protocol**. They are adapter-specific configurations. For example, an OpenClaw adapter might use SOUL.md and HEARTBEAT.md files. A Claude Code adapter might use CLAUDE.md. A bare Python script might use command-line args.
+Rudder-managed local coding runtimes use `SOUL.md` as the conventional durable
+identity/persona entry file and inject Rudder's shared operating contract from
+runtime code. Other adapters can still define their own identity surface. For
+example, an OpenClaw adapter might use SOUL.md and HEARTBEAT.md files, a Claude
+Code adapter might use CLAUDE.md, and a bare Python script might use
+command-line args.
 
-Rudder doesn't prescribe how an agent defines its identity or behavior. It provides the control plane; the adapter defines the agent's inner workings.
+Rudder provides the control plane and shared contract for supported managed
+local runtimes. Adapter-specific runtimes remain responsible for their own
+inner prompt shape when they do not use Rudder's managed instruction bundle.
 
 ### Agent Configuration [DRAFT]
 

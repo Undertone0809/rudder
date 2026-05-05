@@ -501,7 +501,8 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const section = document.querySelector("[data-testid='issue-linear-section']");
     expect(section?.textContent).toContain("Linear");
-    expect(section?.textContent).toContain("External");
+    expect(section?.textContent).not.toContain("External");
+    expect(document.querySelector("[data-testid='issue-linear-section-toggle']")).not.toBeNull();
 
     const teamLink = document.querySelector<HTMLAnchorElement>("[data-testid='issue-linear-team-team-rudder']");
     expect(teamLink?.textContent).toContain("Rudder");
@@ -531,7 +532,8 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const activeLink = document.querySelector<HTMLAnchorElement>("[data-testid='issue-linear-team-team-rudder']");
     expect(activeLink?.getAttribute("aria-current")).toBe("page");
-    expect(document.querySelector("[data-testid='issue-linear-sidebar-active-indicator']")).not.toBeNull();
+    expect(activeLink?.className).toContain("bg-[color:color-mix");
+    expect(document.querySelector("[data-testid='issue-linear-sidebar-active-indicator']")).toBeNull();
   });
 
   it("shows Linear projects under their connected team and routes them into the issue board", () => {

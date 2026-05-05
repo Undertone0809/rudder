@@ -131,6 +131,17 @@ export type {
   WorkspaceOperationStatus,
 } from "./workspace-operation.js";
 export type {
+  WorkspaceBackupStatus,
+  WorkspaceBackupTriggerSource,
+  WorkspaceBackupSummary,
+  WorkspaceBackupList,
+  WorkspaceBackupCreateRequest,
+  WorkspaceBackupRestoreRequest,
+  WorkspaceBackupRestoreResult,
+  WorkspaceBackupFileList,
+  WorkspaceBackupFileDetail,
+} from "./workspace-backup.js";
+export type {
   ExecutionObservabilityContext,
   ExecutionObservabilitySurface,
   ExecutionLangfuseLink,
@@ -157,7 +168,7 @@ export type {
   IssueAttachment,
   IssueLabel,
 } from "./issue.js";
-export type { Goal } from "./goal.js";
+export type { Goal, GoalDependencies, GoalDependencyPreview } from "./goal.js";
 export type { Approval, ApprovalComment } from "./approval.js";
 export type {
   MessengerThreadUserState,
@@ -257,6 +268,11 @@ export type {
   OrganizationPortabilityExportResult,
   OrganizationPortabilityExportPreviewFile,
   OrganizationPortabilityExportPreviewResult,
+  OrganizationExportJobStatus,
+  OrganizationExportJobStage,
+  OrganizationExportJobProgress,
+  OrganizationExportJob,
+  OrganizationExportJobCreateResult,
   OrganizationPortabilitySource,
   OrganizationPortabilityImportTarget,
   OrganizationPortabilityAgentSelection,

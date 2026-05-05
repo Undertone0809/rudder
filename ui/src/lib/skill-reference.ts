@@ -8,6 +8,13 @@ function normalizeSkillReferenceLabel(value: string | null | undefined) {
   return trimmed.replace(/^\$/u, "").trim();
 }
 
+export function formatSkillReferenceDisplayLabel(value: string | null | undefined) {
+  const normalized = normalizeSkillReferenceLabel(value);
+  if (!normalized) return "";
+  const parts = normalized.split("/").filter(Boolean);
+  return parts.at(-1) ?? normalized;
+}
+
 function stripUrlDecoration(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -27,7 +34,7 @@ function isCanonicalSkillMarkdownPath(value: string) {
 }
 
 function isSkillReferenceLabel(value: string) {
-  return /^[a-z0-9._-]+(?:\/[a-z0-9._-]+)+$/iu.test(value);
+  return /^[a-z0-9._-]+(?:\/[a-z0-9._-]+)*$/iu.test(value);
 }
 
 export function parseSkillReference(href: string | null | undefined, label: string | null | undefined): ParsedSkillReference | null {
@@ -39,7 +46,7 @@ export function parseSkillReference(href: string | null | undefined, label: stri
   if (rawLabel.startsWith("$") && !isMarkdownSkillPath(normalizedHref)) return null;
   return {
     href: normalizedHref,
-    label: normalizedLabel,
+    label: formatSkillReferenceDisplayLabel(normalizedLabel),
   };
 }
 
@@ -51,9 +58,12 @@ export function removeSkillReferenceFromMarkdown(markdown: string, label: string
   const normalizedMarkdown = markdown.replace(/\r\n/g, "\n");
   const normalizedLabel = normalizeSkillReferenceLabel(label);
   if (!normalizedLabel) return markdown;
+  const labelPattern = normalizedLabel.includes("/")
+    ? escapeRegExp(normalizedLabel)
+    : String.raw`(?:[a-z0-9._-]+\/)*${escapeRegExp(normalizedLabel)}`;
 
   const referencePattern = new RegExp(
-    String.raw`\[(?:\$)?${escapeRegExp(normalizedLabel)}\]\(([^)\n]+(?:\/SKILL\.md|\.md))\)`,
+    String.raw`\[(?:\$)?${labelPattern}\]\(([^)\n]+(?:\/SKILL\.md|\.md))\)`,
     "u",
   );
   const nextMarkdown = normalizedMarkdown.replace(referencePattern, "");
@@ -66,8 +76,11 @@ export function removeSkillReferenceFromMarkdown(markdown: string, label: string
     .replace(/^[\s\u00A0]+|[\s\u00A0]+$/g, "");
 }
 
-export function applySkillTokenDecoration(element: HTMLElement) {
+export function applySkillTokenDecoration(element: HTMLElement, href?: string | null) {
   element.dataset.skillToken = "true";
+  if (href) {
+    element.dataset.skillHref = href;
+  }
   element.setAttribute("contenteditable", "false");
   element.setAttribute("tabindex", "-1");
   element.setAttribute("draggable", "false");
@@ -76,6 +89,7 @@ export function applySkillTokenDecoration(element: HTMLElement) {
 
 export function clearSkillTokenDecoration(element: HTMLElement) {
   delete element.dataset.skillToken;
+  delete element.dataset.skillHref;
   element.removeAttribute("contenteditable");
   element.removeAttribute("tabindex");
   element.removeAttribute("draggable");

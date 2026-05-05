@@ -1,4 +1,5 @@
 import { parseSkillReference } from "./skill-reference";
+import { findAdjacentAtomicInlineTokenElement } from "./inline-token-dom";
 
 function getSkillReferenceLabelFromElement(node: Node | null | undefined): string | null {
   if (!(node instanceof HTMLElement)) return null;
@@ -59,6 +60,10 @@ export function findAdjacentSkillTokenElement(
   selection: Selection | null,
   direction: "backward" | "forward",
 ): HTMLElement | null {
+  const atomicToken = findAdjacentAtomicInlineTokenElement(selection, direction);
+  if (atomicToken?.kind === "skill") return atomicToken.element;
+  if (atomicToken) return null;
+
   if (!selection || !selection.isCollapsed) return null;
 
   const anchorNode = selection.anchorNode;

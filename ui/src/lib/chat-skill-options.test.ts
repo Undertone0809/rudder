@@ -104,7 +104,7 @@ describe("chat-skill-options", () => {
     });
 
     expect(options.map((option) => option.name)).toEqual([
-      "rudder/build-advisor",
+      "build-advisor",
     ]);
   });
 
@@ -113,10 +113,10 @@ describe("chat-skill-options", () => {
       [
         {
           id: "skill:bundled:rudder/build-advisor",
-          name: "rudder/build-advisor",
+          name: "build-advisor",
           kind: "skill",
           searchText: "rudder/build-advisor build advisor",
-          skillRefLabel: "rudder/build-advisor",
+          skillRefLabel: "build-advisor",
           skillMarkdownTarget: "/workspace/.agents/skills/build-advisor/SKILL.md",
           skillDisplayName: "Build Advisor",
           skillDescription: "Turns vague build feedback into expert diagnosis.",

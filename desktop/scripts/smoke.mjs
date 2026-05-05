@@ -377,6 +377,66 @@ async function closeDesktop(electronApp) {
   await electronApp.close();
 }
 
+async function verifyNativeApplicationMenu(electronApp, page, companyId, issuePrefix) {
+  const platform = await electronApp.evaluate(() => process.platform);
+  if (platform !== "darwin") {
+    console.log("[desktop-smoke] native macOS application menu check skipped");
+    return page;
+  }
+
+  console.log("[desktop-smoke] verifying native macOS application menu");
+  await page.evaluate(({ nextCompanyId, nextPath }) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", nextCompanyId);
+    window.history.replaceState({}, "", nextPath);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, {
+    nextCompanyId: companyId,
+    nextPath: `/${issuePrefix}/dashboard`,
+  });
+  await page.waitForURL(new RegExp(`/${issuePrefix}/dashboard$`), { timeout: 30_000 });
+
+  const appMenuItems = await electronApp.evaluate(({ Menu }) => {
+    const menu = Menu.getApplicationMenu();
+    const appMenu = menu?.items.find((item) =>
+      Boolean(item.submenu?.getMenuItemById("rudder-settings")),
+    );
+    return appMenu?.submenu?.items.map((item) => ({
+      id: item.id,
+      label: item.label,
+      accelerator: item.accelerator ?? null,
+      type: item.type,
+    })) ?? [];
+  });
+
+  assert.ok(
+    appMenuItems.some((item) => item.id === "rudder-settings" && item.label === "Settings..."),
+    "native app menu should expose Settings...",
+  );
+  assert.ok(
+    appMenuItems.some((item) => item.id === "rudder-check-for-updates" && item.label === "Check for Updates..."),
+    "native app menu should expose Check for Updates...",
+  );
+
+  await electronApp.evaluate(({ BrowserWindow, Menu }) => {
+    const settingsItem = Menu.getApplicationMenu()?.getMenuItemById("rudder-settings");
+    if (!settingsItem) throw new Error("Missing rudder-settings menu item");
+    settingsItem.click(undefined, BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0], undefined);
+  });
+
+  page = await waitForBoardWindow(electronApp, page, {
+    expectedUrlPattern: /\/instance\/settings\/general$/,
+  });
+  const modal = page.getByTestId("settings-modal-shell");
+  await modal.waitFor({ state: "visible", timeout: 15_000 });
+  await modal.getByRole("heading", { name: "General" }).waitFor({ state: "visible", timeout: 15_000 });
+  console.log("[desktop-smoke] native Settings menu item opened settings");
+
+  await page.keyboard.press("Escape");
+  await page.waitForURL(new RegExp(`/${issuePrefix}/dashboard$`), { timeout: 15_000 });
+  await modal.waitFor({ state: "detached", timeout: 15_000 });
+  return page;
+}
+
 async function verifySettingsOverlayFlow(page, companyId, issuePrefix) {
   console.log("[desktop-smoke] verifying settings overlay open/close flow");
   await page.evaluate(({ nextCompanyId, nextPath }) => {
@@ -600,6 +660,7 @@ async function runCleanScenario(mode) {
       await verifyPackagedDesktopCli(firstRun.baseUrl, ceo, issue);
     }
     firstRun.page = await verifyReloadRecovery(firstRun.electronApp, firstRun.page, company.id, company.issuePrefix);
+    firstRun.page = await verifyNativeApplicationMenu(firstRun.electronApp, firstRun.page, company.id, company.issuePrefix);
     await verifySettingsOverlayFlow(firstRun.page, company.id, company.issuePrefix);
     console.log("[desktop-smoke] closing first app run");
     await closeDesktop(firstRun.electronApp);

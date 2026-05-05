@@ -5,7 +5,11 @@ import type { MouseEventHandler, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Issue } from "@rudderhq/shared";
-import { KanbanBoard } from "./KanbanBoard";
+import {
+  KanbanBoard,
+  applyKanbanDropOrderPreview,
+  doesKanbanDropOrderPreviewMatchBase,
+} from "./KanbanBoard";
 
 vi.mock("@/lib/router", () => ({
   Link: ({
@@ -70,6 +74,7 @@ const issue: Issue = {
   description: null,
   status: "todo",
   priority: "medium",
+  boardOrder: 1000,
   assigneeAgentId: "agent-1",
   assigneeUserId: null,
   checkoutRunId: null,
@@ -95,6 +100,35 @@ const issue: Issue = {
 };
 
 describe("KanbanBoard", () => {
+  it("projects the dropped card order before the server refetch settles", () => {
+    const first = { ...issue, id: "issue-1", identifier: "RUD-1", title: "First", boardOrder: 1000 };
+    const second = { ...issue, id: "issue-2", identifier: "RUD-2", title: "Second", boardOrder: 2000 };
+    const third = { ...issue, id: "issue-3", identifier: "RUD-3", title: "Third", boardOrder: 3000 };
+    const base = {
+      backlog: [],
+      todo: [first, second, third],
+      in_progress: [],
+      in_review: [],
+      blocked: [],
+      done: [],
+      cancelled: [],
+    };
+
+    const projected = applyKanbanDropOrderPreview(base, [first, second, third], {
+      laneIdsByStatus: {
+        todo: ["issue-3", "issue-1", "issue-2"],
+      },
+    });
+
+    expect(projected.todo.map((candidate) => candidate.id)).toEqual(["issue-3", "issue-1", "issue-2"]);
+    expect(base.todo.map((candidate) => candidate.id)).toEqual(["issue-1", "issue-2", "issue-3"]);
+    expect(doesKanbanDropOrderPreviewMatchBase(projected, {
+      laneIdsByStatus: {
+        todo: ["issue-3", "issue-1", "issue-2"],
+      },
+    })).toBe(true);
+  });
+
   it("notifies callers when a board card opens", () => {
     const onOpenIssue = vi.fn();
     const container = render(

@@ -360,6 +360,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           description: input.description ?? null,
           status: input.status ?? "todo",
           priority: input.priority ?? "medium",
+          boardOrder: (issues.size + 1) * 1000,
           assigneeAgentId: input.assigneeAgentId ?? null,
           assigneeUserId: null,
           checkoutRunId: null,

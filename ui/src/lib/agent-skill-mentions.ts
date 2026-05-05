@@ -7,6 +7,7 @@ import {
   type OrganizationSkillListItem,
 } from "@rudderhq/shared";
 import { organizationSkillMarkdownTarget } from "./organization-skill-picker";
+import { formatSkillReferenceDisplayLabel } from "./skill-reference";
 
 export interface SkillMentionOption {
   id: string;
@@ -58,6 +59,10 @@ function fallbackOrganizationSkillSearchText(publicRef: string, entry: AgentSkil
 
 function buildExternalSkillPublicRef(agent: Pick<Agent, "urlKey">, entry: AgentSkillEntry) {
   return `agent/${agent.urlKey}/${entry.key}`;
+}
+
+function buildSkillMentionLabel(entry: AgentSkillEntry, fallbackRef: string) {
+  return formatSkillReferenceDisplayLabel(entry.runtimeName ?? entry.key ?? fallbackRef);
 }
 
 function buildExternalSkillDisplayName(entry: AgentSkillEntry) {
@@ -120,9 +125,10 @@ export function buildAgentSkillMentionOptions(params: {
         : normalizeMarkdownTarget(entry.sourcePath ?? entry.targetPath);
       if (!markdownTarget) continue;
 
+      const mentionLabel = organizationSkill?.slug ?? buildSkillMentionLabel(entry, organizationSkillKey);
       options.set(entry.selectionKey, {
         id: `skill:${entry.selectionKey}`,
-        name: publicRef,
+        name: mentionLabel,
         kind: "skill",
         searchText: organizationSkill
           ? buildOrganizationSkillSearchText(organizationSkill, {
@@ -131,7 +137,7 @@ export function buildAgentSkillMentionOptions(params: {
               scope: "agent",
             })
           : fallbackOrganizationSkillSearchText(publicRef, entry),
-        skillRefLabel: publicRef,
+        skillRefLabel: mentionLabel,
         skillMarkdownTarget: markdownTarget,
         skillDisplayName: organizationSkill?.name ?? entry.runtimeName ?? entry.key,
         skillDescription: normalizeOptionalText(organizationSkill?.description ?? entry.description ?? entry.detail),
@@ -142,13 +148,14 @@ export function buildAgentSkillMentionOptions(params: {
     const publicRef = buildExternalSkillPublicRef(agent, entry);
     const markdownTarget = normalizeMarkdownTarget(entry.sourcePath ?? entry.targetPath);
     if (!markdownTarget) continue;
+    const mentionLabel = buildSkillMentionLabel(entry, publicRef);
 
     options.set(entry.selectionKey, {
       id: `skill:${entry.selectionKey}`,
-      name: publicRef,
+      name: mentionLabel,
       kind: "skill",
       searchText: buildExternalSkillSearchText(publicRef, entry),
-      skillRefLabel: publicRef,
+      skillRefLabel: mentionLabel,
       skillMarkdownTarget: markdownTarget,
       skillDisplayName: buildExternalSkillDisplayName(entry),
       skillDescription: normalizeOptionalText(entry.description ?? entry.detail),

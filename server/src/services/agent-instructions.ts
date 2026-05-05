@@ -7,7 +7,7 @@ import {
   resolveHomeAwarePath,
 } from "../home-paths.js";
 
-const ENTRY_FILE_DEFAULT = "AGENTS.md";
+const ENTRY_FILE_DEFAULT = "SOUL.md";
 const MEMORY_FILE_NAME = "MEMORY.md";
 const MODE_KEY = "instructionsBundleMode";
 const ROOT_KEY = "instructionsRootPath";
@@ -567,10 +567,8 @@ export function agentInstructionsService() {
     const entryStat = await statIfExists(entryPath);
     if (!entryStat?.isFile()) {
       const legacyInstructions = await readLegacyInstructions(agent, current.config);
-      if (legacyInstructions.trim().length > 0) {
-        await fs.mkdir(path.dirname(entryPath), { recursive: true });
-        await fs.writeFile(entryPath, legacyInstructions, "utf8");
-      }
+      await fs.mkdir(path.dirname(entryPath), { recursive: true });
+      await fs.writeFile(entryPath, legacyInstructions.trim().length > 0 ? legacyInstructions : "", "utf8");
     }
 
     return {
@@ -711,7 +709,7 @@ export function agentInstructionsService() {
 
     const legacyBody = await readLegacyInstructions(agent, state.config);
     return {
-      files: { [state.entryFile]: legacyBody || "_No AGENTS instructions were resolved from current agent config._" },
+      files: { [state.entryFile]: legacyBody || "_No SOUL instructions were resolved from current agent config._" },
       entryFile: state.entryFile,
       warnings: state.warnings,
     };

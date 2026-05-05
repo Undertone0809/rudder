@@ -1,0 +1,49 @@
+{
+  "skill_name": "agent-work-reviewer-maintainer",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "review 一下 codex session id 019ddc2d-6290-7023-926c-761194c2fde4 的任务，as a 专业产品经理 review，第一性原理思考一下。重点判断它有没有解决正确的产品问题。",
+      "expected_output": "Produces an evidence-backed product review of the Codex session, gives an early verdict, distinguishes product correctness from implementation activity, and names concrete gaps or acceptance criteria.",
+      "files": [],
+      "expectations": [
+        "The result looks up or asks for the session evidence instead of judging from the prompt alone.",
+        "The result gives an early accept/conditional accept/reject/needs-more-evidence verdict.",
+        "The result frames the task around user job, product object model, and validation evidence rather than only code quality."
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "这个 PR 本地跑起来了，你作为 reviewer 看看 UI 和用户路径有没有问题。这个 PR 改了 ui/src 下的页面，我需要知道是不是可以 merge。",
+      "expected_output": "Reviews the PR as a UI/product workflow, requires rendered browser or screenshot evidence, and does not approve solely based on diffs or typecheck.",
+      "files": [],
+      "expectations": [
+        "The result treats UI screenshot or browser verification as required evidence for merge confidence.",
+        "The result checks user path and visual states, not only changed files.",
+        "The result ends with a clear merge recommendation or explicitly says more evidence is needed."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "这次 release 验证做完了吗？看一下 0.1.0 canary/latest、npx start、desktop packaged、多平台安装链路有没有闭环。",
+      "expected_output": "Audits release completion across npm, tags, GitHub Releases, Desktop assets, install commands, and platform coverage, while separating proven checks from unverified surfaces.",
+      "files": [],
+      "expectations": [
+        "The result checks multiple release surfaces rather than only local build/test status.",
+        "The result distinguishes dry-run, attempted, skipped, and actually passed install or packaged verification.",
+        "The result calls out exact remaining release risks or says the release is complete with evidence."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "我觉得这个功能之前有，现在没了。review 一下这次改动是不是重构误删了旧能力，看看 commit 和现在的 UI 行为。",
+      "expected_output": "Performs a regression-oriented review that compares current behavior to prior commits or plans, verifies the user-facing path, and states whether the refactor removed a real shipped capability.",
+      "files": [],
+      "expectations": [
+        "The result treats the task as a regression review, not a new feature request.",
+        "The result inspects historical evidence such as git history, plan docs, or previous implementation paths.",
+        "The result requires current UI or behavior evidence before declaring the capability restored or missing."
+      ]
+    }
+  ]
+}

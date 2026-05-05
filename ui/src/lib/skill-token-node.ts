@@ -48,19 +48,17 @@ export class SkillTokenNode extends TextNode {
   constructor(text: string, href: string, key?: NodeKey) {
     super(text, key);
     this.__href = href;
-    this.setMode("token");
-    this.toggleUnmergeable();
   }
 
   createDOM(config: EditorConfig): HTMLElement {
     const element = super.createDOM(config);
-    applySkillTokenDecoration(element);
+    applySkillTokenDecoration(element, this.__href);
     return element;
   }
 
   updateDOM(prevNode: this, dom: HTMLElement, config: EditorConfig): boolean {
     const didUpdate = super.updateDOM(prevNode, dom, config);
-    applySkillTokenDecoration(dom);
+    applySkillTokenDecoration(dom, this.__href);
     return didUpdate;
   }
 
@@ -104,7 +102,7 @@ export class SkillTokenNode extends TextNode {
 }
 
 export function $createSkillTokenNode(label: string, href: string) {
-  return new SkillTokenNode(label, href);
+  return new SkillTokenNode(label, href).setMode("token").toggleUnmergeable();
 }
 
 export function $isSkillTokenNode(node: LexicalNode | null | undefined): node is SkillTokenNode {

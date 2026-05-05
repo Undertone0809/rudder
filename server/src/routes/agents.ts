@@ -598,15 +598,16 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     const promptTemplate = typeof agentRuntimeConfig.promptTemplate === "string"
       ? agentRuntimeConfig.promptTemplate
       : "";
-    // Always load the full default bundle, then override AGENTS.md with promptTemplate if provided
+    // Always load the full default bundle, then override SOUL.md with promptTemplate if provided.
+    // The shared Rudder operating contract is injected by runtime code, not stored in the bundle.
     const defaultFiles = await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role));
     const files = promptTemplate.trim().length === 0
       ? defaultFiles
-      : { ...defaultFiles, "AGENTS.md": promptTemplate };
+      : { ...defaultFiles, "SOUL.md": promptTemplate };
     const materialized = await instructions.materializeManagedBundle(
       agent,
       files,
-      { entryFile: "AGENTS.md", replaceExisting: false },
+      { entryFile: "SOUL.md", replaceExisting: false },
     );
     const nextAdapterConfig = { ...materialized.agentRuntimeConfig };
     delete nextAdapterConfig.promptTemplate;

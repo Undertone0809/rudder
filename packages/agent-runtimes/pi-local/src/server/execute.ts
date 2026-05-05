@@ -464,7 +464,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   };
 
   const commandNotes = (() => {
-    if (!resolvedInstructionsFilePath) return [] as string[];
+    if (!resolvedInstructionsFilePath) {
+      return [
+        ...loadedInstructions.commandNotes,
+        "Appended Rudder operating contract to system prompt.",
+      ];
+    }
     if (loadedInstructions.readFailed) return loadedInstructions.commandNotes;
     return [
       ...loadedInstructions.commandNotes,

@@ -8,7 +8,7 @@ import { ChoosePathButton } from "../../components/PathInstructionsModal";
 const inputClass =
   "w-full rounded-md border border-border px-2.5 py-1.5 bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40";
 const instructionsFileHint =
-  "Absolute path to a markdown file (e.g. AGENTS.md) that defines this agent's behavior. Prepended to the Gemini prompt at runtime.";
+  "Absolute path to a markdown file (e.g. SOUL.md) that defines this agent's role and persona. Rudder injects its shared operating contract separately.";
 
 export function GeminiLocalConfigFields({
   isCreate,
@@ -41,7 +41,7 @@ export function GeminiLocalConfigFields({
             }
             immediate
             className={inputClass}
-            placeholder="/absolute/path/to/AGENTS.md"
+            placeholder="/absolute/path/to/SOUL.md"
           />
           <ChoosePathButton
             selectionType="file"

@@ -7,7 +7,12 @@ import { stdin, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 import type { Request as ExpressRequest, RequestHandler } from "express";
 import { and, eq } from "drizzle-orm";
-import type { DeploymentExposure, DeploymentMode } from "@rudderhq/shared";
+import {
+  WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
+  WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
+  type DeploymentExposure,
+  type DeploymentMode,
+} from "@rudderhq/shared";
 import {
   createDb,
   cleanupStaleSysvSharedMemorySegments,
@@ -53,6 +58,8 @@ import {
   heartbeatService,
   reconcilePersistedRuntimeServicesOnStartup,
   automationService,
+  workspaceBackupService,
+  logActivity,
 } from "./services/index.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
@@ -88,6 +95,7 @@ type EmbeddedPostgresCtor = new (opts: {
   onError?: (message: unknown) => void;
 }) => EmbeddedPostgresInstance;
 
+const WORKSPACE_BACKUP_SCHEDULER_TICK_MS = 60 * 60 * 1000;
 
 export interface StartedServer {
   server: ReturnType<typeof createServer>;
@@ -919,6 +927,88 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     intervalHandles.push(setInterval(() => {
       void runScheduledBackup();
     }, backupIntervalMs));
+  }
+
+  {
+    const workspaceBackups = workspaceBackupService(db as any);
+    let workspaceBackupInFlight = false;
+
+    const runScheduledWorkspaceBackups = async () => {
+      if (workspaceBackupInFlight) {
+        logger.warn("Skipping scheduled workspace backup tick because a previous tick is still running");
+        return;
+      }
+
+      workspaceBackupInFlight = true;
+      try {
+        const result = await workspaceBackups.runScheduledBackups();
+        for (const backup of [...result.created, ...result.failed]) {
+          await logActivity(db as any, {
+            orgId: backup.orgId,
+            actorType: "system",
+            actorId: "workspace-backup-scheduler",
+            action: backup.status === "succeeded"
+              ? "organization.workspace_backup.created"
+              : "organization.workspace_backup.failed",
+            entityType: "workspace_backup",
+            entityId: backup.id,
+            details: {
+              status: backup.status,
+              fileCount: backup.fileCount,
+              byteSize: backup.byteSize,
+              warnings: backup.warnings,
+              error: backup.error,
+              triggerSource: backup.triggerSource,
+              expiresAt: backup.expiresAt,
+            },
+          });
+        }
+        for (const backup of result.deleted) {
+          await logActivity(db as any, {
+            orgId: backup.orgId,
+            actorType: "system",
+            actorId: "workspace-backup-scheduler",
+            action: "organization.workspace_backup.deleted",
+            entityType: "workspace_backup",
+            entityId: backup.id,
+            details: {
+              fileCount: backup.fileCount,
+              byteSize: backup.byteSize,
+              expiresAt: backup.expiresAt,
+              reason: "retention_expired",
+            },
+          });
+        }
+        if (result.created.length > 0 || result.failed.length > 0 || result.deleted.length > 0 || result.errors.length > 0) {
+          logger.info(
+            {
+              created: result.created.length,
+              failed: result.failed.length,
+              deleted: result.deleted.length,
+              skipped: result.skipped,
+              errors: result.errors,
+            },
+            "Scheduled workspace backup tick complete",
+          );
+        }
+      } catch (err) {
+        logger.error({ err }, "Scheduled workspace backup tick failed");
+      } finally {
+        workspaceBackupInFlight = false;
+      }
+    };
+
+    logger.info(
+      {
+        intervalHours: WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
+        retentionDays: WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
+      },
+      "Automatic workspace backups enabled",
+    );
+    void runScheduledWorkspaceBackups();
+    intervalHandles.push(setInterval(() => {
+      void runScheduledWorkspaceBackups();
+    }, WORKSPACE_BACKUP_SCHEDULER_TICK_MS));
   }
   
   options.onEvent?.({ stage: "listening", message: "Starting local HTTP server" });

@@ -42,6 +42,7 @@ function applyMentionTokenDecoration(element: HTMLElement, href: string) {
   const parsed = parseMentionChipHref(href);
   if (!parsed) return;
   applyMentionChipDecoration(element, parsed);
+  element.dataset.mentionHref = href;
 }
 
 export class MentionTokenNode extends TextNode {
@@ -62,8 +63,6 @@ export class MentionTokenNode extends TextNode {
   constructor(text: string, href: string, key?: NodeKey) {
     super(normalizeMentionLabel(text), key);
     this.__href = href;
-    this.setMode("token");
-    this.toggleUnmergeable();
   }
 
   createDOM(config: EditorConfig): HTMLElement {
@@ -118,7 +117,7 @@ export class MentionTokenNode extends TextNode {
 }
 
 export function $createMentionTokenNode(label: string, href: string) {
-  return new MentionTokenNode(label, href);
+  return new MentionTokenNode(label, href).setMode("token").toggleUnmergeable();
 }
 
 export function $isMentionTokenNode(node: LexicalNode | null | undefined): node is MentionTokenNode {

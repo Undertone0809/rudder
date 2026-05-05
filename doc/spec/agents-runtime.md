@@ -68,6 +68,12 @@ You can set:
 
 Templates support variables like `{{agent.id}}`, `{{agent.name}}`, and run context values.
 
+During agent hire for supported local runtimes, Rudder may use
+`agentRuntimeConfig.promptTemplate` as a one-time role/persona bootstrap and
+materialize it into the managed instruction bundle's `SOUL.md`. After that,
+stable identity should live in the instructions bundle, not in a repeating run
+prompt.
+
 ## 4. Instruction And Context Loading Strategy
 
 Rudder treats **stable instructions** and **dynamic run context** as different
@@ -87,15 +93,16 @@ The default strategy is:
 Stable instructions come from the agent runtime configuration and managed
 instruction bundle:
 
-- `instructionsFilePath` / managed `AGENTS.md` for local coding runtimes
+- `instructionsFilePath` / managed `SOUL.md` for local coding runtimes
 - adapter-owned config such as model, CLI args, sandbox flags, and prompt
   templates
 - enabled Rudder organization/private/bundled skills resolved for that agent
 
 These instructions should be long-lived and mostly cache-friendly. They should
-describe who the agent is, what operating rules it follows, and which control
-plane workflow to use. They should not duplicate issue descriptions, current
-comments, one-off project notes, or the full organization resource catalog.
+describe who the agent is, its mission, durable responsibilities, boundaries,
+decision principles, communication style, and continuity expectations. They
+should not duplicate issue descriptions, current comments, one-off project
+notes, or the full organization resource catalog.
 
 ### 4.2 Scene Prompts
 

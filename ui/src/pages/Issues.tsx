@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Agent, Project } from "@rudderhq/shared";
+import type { Agent, Project, ReorderIssue } from "@rudderhq/shared";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -152,9 +152,9 @@ function DraftIssuesView({
 }
 
 export function Issues() {
-  const { selectedOrganizationId } = useOrganization();
+  const { selectedOrganizationId, selectedOrganization } = useOrganization();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { openNewIssue } = useDialog();
+  const { openNewIssue, confirm } = useDialog();
   const { pushToast } = useToast();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -333,6 +333,14 @@ export function Issues() {
     },
   });
 
+  const reorderIssue = useMutation({
+    mutationFn: (data: ReorderIssue) =>
+      issuesApi.reorder(selectedOrganizationId!, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(selectedOrganizationId!) });
+    },
+  });
+
   if (!selectedOrganizationId) {
     return <EmptyState icon={CircleDot} message="Select a organization to view issues." />;
   }
@@ -347,8 +355,13 @@ export function Issues() {
         onOpenDraft={(draft) => {
           openNewIssue({ draftId: draft.id });
         }}
-        onDeleteDraft={(draft) => {
-          const confirmed = window.confirm(`Delete draft issue "${draft.title}"? This cannot be undone.`);
+        onDeleteDraft={async (draft) => {
+          const confirmed = await confirm({
+            title: `Delete draft issue "${draft.title}"?`,
+            description: "This cannot be undone.",
+            confirmLabel: "Delete",
+            tone: "destructive",
+          });
           if (!confirmed) return;
           deleteIssueDraft(draft.id);
           pushToast({ title: "Draft issue deleted", tone: "success" });
@@ -362,11 +375,11 @@ export function Issues() {
       <div className="flex h-full min-h-0 flex-col">
         <LinearIssueSourceBoard
           orgId={selectedOrganizationId}
+          orgName={selectedOrganization?.name}
           projects={projects}
           linearTeamId={linearTeamId}
           linearProjectId={linearProjectId}
           initialSearch={initialSearch}
-          onSearchChange={handleSearchChange}
         />
       </div>
     );
@@ -398,6 +411,7 @@ export function Issues() {
         }}
         onSearchChange={handleSearchChange}
         onUpdateIssue={(id, data) => updateIssue.mutate({ id, data })}
+        onReorderIssue={(data) => reorderIssue.mutate(data)}
         searchFilters={participantAgentId ? { participantAgentId } : undefined}
       />
     </div>

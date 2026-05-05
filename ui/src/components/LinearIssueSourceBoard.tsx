@@ -1,14 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "@/lib/router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Import, List, Search, Columns3, Check, ArrowUpDown, Filter, FolderKanban, UserRound } from "lucide-react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, Import, List, Columns3, Check, ArrowUpDown, Filter, FolderKanban, UserRound } from "lucide-react";
 import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { queryKeys } from "@/lib/queryKeys";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/timeAgo";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { StatusIcon } from "@/components/StatusIcon";
@@ -127,11 +135,11 @@ type ImportLinearIssuesActionResult = {
 
 type LinearIssueSourceBoardProps = {
   orgId: string;
+  orgName?: string;
   projects?: Array<Pick<Project, "id" | "name" | "archivedAt">>;
   linearTeamId?: string;
   linearProjectId?: string;
   initialSearch?: string;
-  onSearchChange?: (search: string) => void;
 };
 
 type LinearViewMode = "list" | "board";
@@ -183,12 +191,20 @@ function issueRudderHref(row: LinearIssueRow): string | null {
   return ref ? `/issues/${ref}` : null;
 }
 
-function SourceBadge({ children }: { children: string }) {
+function ToolbarField({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-[calc(var(--radius-sm)-2px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
-      <ExternalLink className="h-3 w-3" />
+    <label className={cn("flex min-w-0 flex-col gap-1", className)}>
+      <span className="text-[11px] font-medium text-muted-foreground">{label}</span>
       {children}
-    </span>
+    </label>
   );
 }
 
@@ -229,62 +245,40 @@ function resolveLinearTypeStatus(type: string | null | undefined): IssueStatus {
   return "todo";
 }
 
-function LinearRowAction({
+function LinearImportedAction({
   row,
   orgId,
-  targetProjectId,
-  importing,
-  onImport,
 }: {
   row: LinearIssueRow;
   orgId: string;
-  targetProjectId: string;
-  importing: boolean;
-  onImport: (row: LinearIssueRow) => void;
 }) {
-  if (row.imported) {
-    const href = issueRudderHref(row);
-    const sameOrgLink = !row.importedOrgId || row.importedOrgId === orgId;
-    if (href && sameOrgLink) {
-      return (
-        <Button asChild variant="ghost" size="sm">
-          <Link to={href}>Open Rudder issue</Link>
-        </Button>
-      );
-    }
-    return <span className="text-xs text-muted-foreground">Imported elsewhere</span>;
+  if (!row.imported) return null;
+
+  const href = issueRudderHref(row);
+  const sameOrgLink = !row.importedOrgId || row.importedOrgId === orgId;
+  if (href && sameOrgLink) {
+    return (
+      <Button asChild variant="ghost" size="sm">
+        <Link to={href}>Open issue</Link>
+      </Button>
+    );
   }
 
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      disabled={!targetProjectId || importing}
-      onClick={() => onImport(row)}
-    >
-      <Import className="h-3.5 w-3.5" />
-      Import
-    </Button>
-  );
+  return <span className="text-xs text-muted-foreground">Imported elsewhere</span>;
 }
 
 function LinearListView({
   rows,
   selectedIssueIds,
   orgId,
-  targetProjectId,
   importing,
   onToggleSelected,
-  onImport,
 }: {
   rows: LinearIssueRow[];
   selectedIssueIds: string[];
   orgId: string;
-  targetProjectId: string;
   importing: boolean;
   onToggleSelected: (issueId: string) => void;
-  onImport: (row: LinearIssueRow) => void;
 }) {
   return (
     <div className="min-h-0 overflow-hidden rounded-[calc(var(--radius-sm)+1px)] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)]">
@@ -317,23 +311,42 @@ function LinearListView({
                   {" "}
                   {row.title}
                 </a>
-                <SourceBadge>External</SourceBadge>
                 {row.imported ? <ImportedBadge /> : null}
               </div>
               <LinearIssueMeta row={row} />
             </div>
             <div className="flex shrink-0 items-center">
-              <LinearRowAction
-                row={row}
-                orgId={orgId}
-                targetProjectId={targetProjectId}
-                importing={importing}
-                onImport={onImport}
-              />
+              <LinearImportedAction row={row} orgId={orgId} />
             </div>
           </article>
         );
       })}
+    </div>
+  );
+}
+
+function LinearHiddenBoardStatus({
+  status,
+  issueCount,
+}: {
+  status: IssueStatus;
+  issueCount: number;
+}) {
+  return (
+    <div
+      data-testid={`linear-source-hidden-column-${status}`}
+      className={cn(
+        "flex items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] border px-2 py-2",
+        laneSurfaceClasses[status],
+      )}
+    >
+      <StatusIcon status={status} />
+      <span className="min-w-0 flex-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {statusLabel(status)}
+      </span>
+      <span className="text-xs text-muted-foreground/60 tabular-nums">
+        {issueCount}
+      </span>
     </div>
   );
 }
@@ -343,19 +356,15 @@ function LinearBoardView({
   teamMappings,
   selectedIssueIds,
   orgId,
-  targetProjectId,
   importing,
   onToggleSelected,
-  onImport,
 }: {
   rows: LinearIssueRow[];
   teamMappings: LinearTeamMapping[] | undefined;
   selectedIssueIds: string[];
   orgId: string;
-  targetProjectId: string;
   importing: boolean;
   onToggleSelected: (issueId: string) => void;
-  onImport: (row: LinearIssueRow) => void;
 }) {
   const grouped = useMemo(() => {
     const next = new Map<IssueStatus, LinearIssueRow[]>();
@@ -368,10 +377,11 @@ function LinearBoardView({
   }, [rows, teamMappings]);
 
   const visibleStatuses = boardStatuses.filter((status) => (grouped.get(status)?.length ?? 0) > 0);
+  const hiddenStatuses = boardStatuses.filter((status) => (grouped.get(status)?.length ?? 0) === 0);
 
   return (
     <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-x-auto overflow-y-hidden pb-3">
-      <div className="flex h-full min-h-[440px] min-w-max items-stretch gap-3 pr-2">
+      <div className="flex h-full min-h-full min-w-max items-stretch gap-3 pr-2">
         {visibleStatuses.map((status) => {
           const laneRows = grouped.get(status) ?? [];
           return (
@@ -415,7 +425,7 @@ function LinearBoardView({
                       >
                         {row.identifier}
                       </a>
-                      {row.imported ? <ImportedBadge /> : <SourceBadge>External</SourceBadge>}
+                      {row.imported ? <ImportedBadge /> : null}
                     </div>
                     <p className="mb-2 line-clamp-2 text-sm leading-snug">{row.title}</p>
                     <div className="space-y-1.5 text-xs text-muted-foreground">
@@ -433,21 +443,41 @@ function LinearBoardView({
                       </span>
                       <span>Updated {timeAgo(row.updatedAt)}</span>
                     </div>
-                    <div className="mt-3 flex justify-end">
-                      <LinearRowAction
-                        row={row}
-                        orgId={orgId}
-                        targetProjectId={targetProjectId}
-                        importing={importing}
-                        onImport={onImport}
-                      />
-                    </div>
+                    {row.imported ? (
+                      <div className="mt-3 flex justify-end">
+                        <LinearImportedAction row={row} orgId={orgId} />
+                      </div>
+                    ) : null}
                   </article>
                 ))}
               </div>
             </section>
           );
         })}
+        {hiddenStatuses.length > 0 ? (
+          <div
+            data-testid="linear-source-hidden-columns"
+            className="flex h-full min-h-0 w-[228px] min-w-[228px] shrink-0 flex-col rounded-[calc(var(--radius-sm)+1px)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_78%,transparent)] p-2"
+          >
+            <div className="mb-2 flex items-center gap-2 px-1">
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Hidden columns
+              </span>
+              <span className="ml-auto text-xs text-muted-foreground/60 tabular-nums">
+                {hiddenStatuses.length}
+              </span>
+            </div>
+            <div className="space-y-2">
+              {hiddenStatuses.map((status) => (
+                <LinearHiddenBoardStatus
+                  key={status}
+                  status={status}
+                  issueCount={grouped.get(status)?.length ?? 0}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -455,25 +485,27 @@ function LinearBoardView({
 
 export function LinearIssueSourceBoard({
   orgId,
+  orgName,
   projects,
   linearTeamId = "",
   linearProjectId = "",
   initialSearch = "",
-  onSearchChange,
 }: LinearIssueSourceBoardProps) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const [viewMode, setViewMode] = useState<LinearViewMode>(() => getStoredViewMode());
-  const [targetProjectId, setTargetProjectId] = useState("");
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [pendingImportMode, setPendingImportMode] = useState<"selected" | "allMatching">("selected");
+  const [importTargetProjectId, setImportTargetProjectId] = useState("");
   const [stateId, setStateId] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
   const [sortField, setSortField] = useState<LinearSortField>("updated");
   const [sortDir, setSortDir] = useState<LinearSortDir>("desc");
   const [search, setSearch] = useState(initialSearch);
   const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
-  const [afterCursor, setAfterCursor] = useState<string | null>(null);
-  const [cursorHistory, setCursorHistory] = useState<string[]>([]);
   const [selectedIssueIds, setSelectedIssueIds] = useState<string[]>([]);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const orgDisplayName = orgName?.trim() || "this organization";
 
   useEffect(() => {
     setSearch(initialSearch);
@@ -486,8 +518,6 @@ export function LinearIssueSourceBoard({
   }, [search]);
 
   useEffect(() => {
-    setAfterCursor(null);
-    setCursorHistory([]);
     setSelectedIssueIds([]);
   }, [linearTeamId, linearProjectId, stateId, assigneeId, debouncedSearch]);
 
@@ -533,19 +563,27 @@ export function LinearIssueSourceBoard({
     stateId || "__all__",
     assigneeId || "__all__",
     debouncedSearch || "__none__",
-    afterCursor ?? "__first__",
   ] as const;
 
-  const { data: issueData, isLoading: issuesLoading, error: issuesError } = useQuery({
+  const {
+    data: issuePages,
+    isLoading: issuesLoading,
+    error: issuesError,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: issuesQueryKey,
-    queryFn: async () => {
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }) => {
+      const after = typeof pageParam === "string" && pageParam ? pageParam : undefined;
       const response = await pluginsApi.bridgeGetData(
         pluginId,
         DATA_KEY_ISSUES,
         {
           orgId,
           limit: LINEAR_PAGE_SIZE,
-          after: afterCursor ?? undefined,
+          after,
           teamId: linearTeamId || undefined,
           projectId: linearProjectId || undefined,
           stateId: stateId || undefined,
@@ -556,18 +594,19 @@ export function LinearIssueSourceBoard({
       );
       return response.data as LinearIssuesData;
     },
+    getNextPageParam: (lastPage) => lastPage.hasNextPage && lastPage.endCursor ? lastPage.endCursor : undefined,
     enabled: !!orgId && !!pluginId && bootstrap?.configured === true,
   });
 
   const importMutation = useMutation({
-    mutationFn: async ({ mode, issueIds }: { mode: "single" | "selected" | "allMatching"; issueIds?: string[] }) => {
-      if (!targetProjectId) throw new Error("Choose a target Rudder project before importing.");
+    mutationFn: async ({ mode, issueIds }: { mode: "selected" | "allMatching"; issueIds?: string[] }) => {
+      if (!importTargetProjectId) throw new Error(`Choose a project in ${orgDisplayName} before importing.`);
       const response = await pluginsApi.bridgePerformAction(
         pluginId,
         ACTION_KEY_IMPORT_ISSUES,
         {
           orgId,
-          targetProjectId,
+          targetProjectId: importTargetProjectId,
           mode,
           issueIds,
           filters: {
@@ -589,6 +628,7 @@ export function LinearIssueSourceBoard({
         tone: "success",
       });
       setSelectedIssueIds([]);
+      setImportDialogOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["plugins", LINEAR_PLUGIN_KEY, DATA_KEY_ISSUES, orgId] }),
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(orgId) }),
@@ -604,7 +644,7 @@ export function LinearIssueSourceBoard({
   });
 
   const rows = useMemo(() => {
-    const sourceRows = [...(issueData?.rows ?? [])];
+    const sourceRows = [...(issuePages?.pages.flatMap((page) => page.rows) ?? [])];
     sourceRows.sort((left, right) => {
       let delta = 0;
       if (sortField === "updated") delta = compareNullableIso(left.updatedAt, right.updatedAt);
@@ -613,7 +653,7 @@ export function LinearIssueSourceBoard({
       return sortDir === "asc" ? delta : -delta;
     });
     return sourceRows;
-  }, [issueData?.rows, sortDir, sortField]);
+  }, [issuePages?.pages, sortDir, sortField]);
 
   useEffect(() => {
     const visibleIds = new Set(rows.map((row) => row.id));
@@ -635,6 +675,14 @@ export function LinearIssueSourceBoard({
     const source = bootstrap?.projects?.length ? bootstrap.projects : (projects ?? []);
     return source.filter((project) => !("archivedAt" in project) || !project.archivedAt);
   }, [bootstrap?.projects, projects]);
+  useEffect(() => {
+    if (targetProjects.length === 0) {
+      if (importTargetProjectId) setImportTargetProjectId("");
+      return;
+    }
+    if (targetProjects.some((project) => project.id === importTargetProjectId)) return;
+    setImportTargetProjectId(targetProjects.length === 1 ? targetProjects[0]!.id : "");
+  }, [importTargetProjectId, targetProjects]);
   const stateOptions = useMemo(() => {
     const sourceTeams = linearTeamId
       ? (catalog?.teams ?? []).filter((candidate) => candidate.id === linearTeamId)
@@ -652,6 +700,12 @@ export function LinearIssueSourceBoard({
   const importing = importMutation.isPending;
   const loading = contributionsLoading || bootstrapLoading || catalogLoading || issuesLoading;
   const error = bootstrapError ?? issuesError;
+  const selectedImportCount = selectedIssueIds.length;
+  const selectedTargetProject = targetProjects.find((project) => project.id === importTargetProjectId) ?? null;
+  const totalLoaded = rows.length;
+  const activeFilterCount = Number(Boolean(stateId)) + Number(Boolean(assigneeId));
+  const selectedStateLabel = stateOptions.find((state) => state.id === stateId)?.name ?? "All states";
+  const selectedAssigneeLabel = catalog?.users.find((user) => user.id === assigneeId)?.name ?? "Anyone";
 
   const toggleSelected = useCallback((issueId: string) => {
     setSelectedIssueIds((current) =>
@@ -659,9 +713,25 @@ export function LinearIssueSourceBoard({
     );
   }, []);
 
-  const importRow = useCallback((row: LinearIssueRow) => {
-    importMutation.mutate({ mode: "single", issueIds: [row.id] });
-  }, [importMutation]);
+  const openImportDialog = useCallback((mode: "selected" | "allMatching") => {
+    setPendingImportMode(mode);
+    setImportDialogOpen(true);
+  }, []);
+
+  useEffect(() => {
+    const node = loadMoreRef.current;
+    if (!node || !hasNextPage || loading || importing || isFetchingNextPage) return;
+    if (typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.some((entry) => entry.isIntersecting);
+      if (!visible || !hasNextPage || isFetchingNextPage || importing) return;
+      void fetchNextPage();
+    }, { root: null, rootMargin: "280px 0px" });
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [fetchNextPage, hasNextPage, importing, isFetchingNextPage, loading, totalLoaded]);
 
   if (!contributionsLoading && !contribution) {
     return (
@@ -687,75 +757,22 @@ export function LinearIssueSourceBoard({
 
   return (
     <div data-testid="linear-source-board" className="flex h-full min-h-0 flex-col gap-4">
-      <div className="surface-panel flex flex-col gap-3 rounded-[calc(var(--radius-sm)+1px)] px-3 py-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <h1 className="shrink-0 text-base font-semibold text-foreground">Linear Issues</h1>
-            <SourceBadge>External</SourceBadge>
+      <div
+        data-testid="linear-source-toolbar"
+        className="surface-panel flex items-center justify-between gap-2 rounded-[calc(var(--radius-sm)+1px)] px-3 py-3 sm:gap-3"
+      >
+        <div className="flex min-w-0 items-baseline gap-3">
+          <div className="truncate text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            {sourceLabel}
           </div>
-          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span className="truncate">{sourceLabel}</span>
-            <span>{rows.length} shown</span>
+          <div className="hidden min-w-0 items-center gap-2 text-xs text-muted-foreground md:flex">
+            <span>{totalLoaded} loaded</span>
             {importedCount > 0 ? <span>{importedCount} imported</span> : null}
+            {hasNextPage ? <span>Loads as you scroll</span> : null}
           </div>
         </div>
 
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <div className="relative w-full min-w-44 sm:w-64">
-            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                onSearchChange?.(event.target.value);
-              }}
-              placeholder="Search Linear issues..."
-              className="pl-7 text-xs sm:text-sm"
-              aria-label="Search Linear issues"
-            />
-          </div>
-          <select
-            className={selectClassName("w-40")}
-            value={stateId}
-            aria-label="Filter by Linear state"
-            onChange={(event) => setStateId(event.target.value)}
-          >
-            <option value="">All states</option>
-            {stateOptions.map((state) => (
-              <option key={state.id} value={state.id}>{state.name}</option>
-            ))}
-          </select>
-          <select
-            className={selectClassName("w-40")}
-            value={assigneeId}
-            aria-label="Filter by Linear assignee"
-            onChange={(event) => setAssigneeId(event.target.value)}
-          >
-            <option value="">Anyone</option>
-            {(catalog?.users ?? []).map((user) => (
-              <option key={user.id} value={user.id}>{user.name}</option>
-            ))}
-          </select>
-          <select
-            className={selectClassName("w-36")}
-            value={sortField}
-            aria-label="Sort Linear issues"
-            onChange={(event) => setSortField(event.target.value as LinearSortField)}
-          >
-            <option value="updated">Updated</option>
-            <option value="created">Created</option>
-            <option value="identifier">Identifier</option>
-          </select>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            title={`Sort ${sortDir === "asc" ? "ascending" : "descending"}`}
-            onClick={() => setSortDir((current) => (current === "asc" ? "desc" : "asc"))}
-          >
-            <ArrowUpDown className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{sortDir === "asc" ? "Asc" : "Desc"}</span>
-          </Button>
+        <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
           <div className="flex items-center overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_82%,transparent)]">
             <button
               className={cn(
@@ -780,23 +797,104 @@ export function LinearIssueSourceBoard({
               <Columns3 className="h-3.5 w-3.5" />
             </button>
           </div>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className={cn("text-xs", activeFilterCount > 0 && "text-[color:var(--accent-strong)]")}>
+                <Filter className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+                <span className="hidden sm:inline">{activeFilterCount > 0 ? `Filters: ${activeFilterCount}` : "Filter"}</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 p-3">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Filters</span>
+                  {activeFilterCount > 0 ? (
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        setStateId("");
+                        setAssigneeId("");
+                      }}
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+                <ToolbarField label="State">
+                  <select
+                    className={selectClassName("h-8 w-full")}
+                    value={stateId}
+                    aria-label="Filter by Linear state"
+                    onChange={(event) => setStateId(event.target.value)}
+                  >
+                    <option value="">All states</option>
+                    {stateOptions.map((state) => (
+                      <option key={state.id} value={state.id}>{state.name}</option>
+                    ))}
+                  </select>
+                </ToolbarField>
+                <ToolbarField label="Assignee">
+                  <select
+                    className={selectClassName("h-8 w-full")}
+                    value={assigneeId}
+                    aria-label="Filter by Linear assignee"
+                    onChange={(event) => setAssigneeId(event.target.value)}
+                  >
+                    <option value="">Anyone</option>
+                    {(catalog?.users ?? []).map((user) => (
+                      <option key={user.id} value={user.id}>{user.name}</option>
+                    ))}
+                  </select>
+                </ToolbarField>
+                <div className="rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] px-2.5 py-2 text-xs text-muted-foreground">
+                  {selectedStateLabel} / {selectedAssigneeLabel}
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-xs">
+                <ArrowUpDown className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
+                <span className="hidden sm:inline">Sort</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-56 p-3">
+              <div className="space-y-3">
+                <ToolbarField label="Sort by">
+                  <select
+                    className={selectClassName("h-8 w-full")}
+                    value={sortField}
+                    aria-label="Sort Linear issues"
+                    onChange={(event) => setSortField(event.target.value as LinearSortField)}
+                  >
+                    <option value="updated">Updated</option>
+                    <option value="created">Created</option>
+                    <option value="identifier">Identifier</option>
+                  </select>
+                </ToolbarField>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-full justify-start"
+                  title={`Sort ${sortDir === "asc" ? "ascending" : "descending"}`}
+                  onClick={() => setSortDir((current) => (current === "asc" ? "desc" : "asc"))}
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5" />
+                  <span>{sortDir === "asc" ? "Ascending" : "Descending"}</span>
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
 
-      <div className="surface-panel flex flex-col gap-3 rounded-[calc(var(--radius-sm)+1px)] px-3 py-3 md:flex-row md:items-center md:justify-between">
+      <div className="surface-panel flex flex-col gap-3 rounded-[calc(var(--radius-sm)+1px)] px-3 py-2.5 md:flex-row md:items-center md:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <select
-            data-testid="linear-source-target-project"
-            className={selectClassName("w-60 max-w-full")}
-            value={targetProjectId}
-            aria-label="Target Rudder project"
-            onChange={(event) => setTargetProjectId(event.target.value)}
-          >
-            <option value="">Choose target Rudder project</option>
-            {targetProjects.map((project) => (
-              <option key={project.id} value={project.id}>{project.name}</option>
-            ))}
-          </select>
           <Button
             type="button"
             variant="ghost"
@@ -805,7 +903,7 @@ export function LinearIssueSourceBoard({
             onClick={() => setSelectedIssueIds(selectableRows.map((row) => row.id))}
           >
             <Filter className="h-3.5 w-3.5" />
-            Select page
+            Select loaded
           </Button>
           <Button
             type="button"
@@ -818,14 +916,14 @@ export function LinearIssueSourceBoard({
           </Button>
         </div>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-          <span className="text-xs text-muted-foreground">{selectedIssueIds.length} selected</span>
+          <span className="text-xs text-muted-foreground">{selectedImportCount} selected</span>
           <Button
             type="button"
             variant="outline"
             size="sm"
             data-testid="linear-source-import-selected"
-            disabled={!targetProjectId || selectedIssueIds.length === 0 || importing}
-            onClick={() => importMutation.mutate({ mode: "selected", issueIds: selectedIssueIds })}
+            disabled={selectedImportCount === 0 || importing}
+            onClick={() => openImportDialog("selected")}
           >
             <Import className="h-3.5 w-3.5" />
             Import selected
@@ -833,8 +931,8 @@ export function LinearIssueSourceBoard({
           <Button
             type="button"
             size="sm"
-            disabled={!targetProjectId || importing}
-            onClick={() => importMutation.mutate({ mode: "allMatching" })}
+            disabled={totalLoaded === 0 || importing}
+            onClick={() => openImportDialog("allMatching")}
           >
             Import matching
           </Button>
@@ -855,10 +953,8 @@ export function LinearIssueSourceBoard({
           rows={rows}
           selectedIssueIds={selectedIssueIds}
           orgId={orgId}
-          targetProjectId={targetProjectId}
           importing={importing}
           onToggleSelected={toggleSelected}
-          onImport={importRow}
         />
       ) : null}
 
@@ -868,49 +964,78 @@ export function LinearIssueSourceBoard({
           teamMappings={bootstrap?.teamMappings}
           selectedIssueIds={selectedIssueIds}
           orgId={orgId}
-          targetProjectId={targetProjectId}
           importing={importing}
           onToggleSelected={toggleSelected}
-          onImport={importRow}
         />
       ) : null}
 
       {!loading && !error && rows.length > 0 ? (
-        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <span>Showing {issueData?.totalShown ?? rows.length} issue(s).</span>
-          <div className="flex items-center gap-2">
+        <div
+          ref={loadMoreRef}
+          data-testid="linear-source-load-more-sentinel"
+          className="flex min-h-8 items-center justify-between gap-3 text-xs text-muted-foreground"
+        >
+          <span>
+            Loaded {totalLoaded} issue{totalLoaded === 1 ? "" : "s"}
+            {isFetchingNextPage ? " - loading more" : hasNextPage ? " - more load as you scroll" : " - all matching issues loaded"}
+          </span>
+        </div>
+      ) : null}
+
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {pendingImportMode === "selected" ? "Import selected Linear issues" : "Import matching Linear issues"}
+            </DialogTitle>
+            <DialogDescription>
+              Choose the project in {orgDisplayName} where these issues should land.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Project in {orgDisplayName}</span>
+              <select
+                data-testid="linear-source-import-project"
+                className={selectClassName("w-full")}
+                value={importTargetProjectId}
+                aria-label={`Project in ${orgDisplayName}`}
+                onChange={(event) => setImportTargetProjectId(event.target.value)}
+              >
+                <option value="">Choose a project in {orgDisplayName}</option>
+                {targetProjects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+            </label>
+            <div className="rounded-[calc(var(--radius-sm)-1px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] px-3 py-2 text-xs text-muted-foreground">
+              {pendingImportMode === "selected"
+                ? `${selectedImportCount} selected Linear issue${selectedImportCount === 1 ? "" : "s"}`
+                : `All matching Linear issues from ${sourceLabel}`}
+              {selectedTargetProject ? ` -> ${selectedTargetProject.name}` : ""}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setImportDialogOpen(false)}>
+              Cancel
+            </Button>
             <Button
               type="button"
-              variant="ghost"
-              size="sm"
-              disabled={cursorHistory.length === 0 || importing}
+              data-testid="linear-source-confirm-import"
+              disabled={!importTargetProjectId || importing || (pendingImportMode === "selected" && selectedImportCount === 0)}
               onClick={() => {
-                setCursorHistory((current) => {
-                  const nextHistory = [...current];
-                  const previousCursor = nextHistory.pop() ?? null;
-                  setAfterCursor(previousCursor);
-                  return nextHistory;
+                importMutation.mutate({
+                  mode: pendingImportMode,
+                  issueIds: pendingImportMode === "selected" ? selectedIssueIds : undefined,
                 });
               }}
             >
-              Previous
+              <Import className="h-3.5 w-3.5" />
+              {importing ? "Importing" : "Import"}
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={!issueData?.hasNextPage || importing}
-              onClick={() => {
-                if (!issueData?.endCursor) return;
-                setCursorHistory((current) => [...current, afterCursor ?? ""]);
-                setAfterCursor(issueData.endCursor);
-              }}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-      ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

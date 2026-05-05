@@ -1,0 +1,75 @@
+[
+  {
+    "key": "approval-producthunt-gate",
+    "type": "approve_ceo_strategy",
+    "status": "pending",
+    "requestedByAgentKey": "diana",
+    "issueKeys": ["mkt-producthunt-gate", "mkt-weekly-growth-report"],
+    "day": 27,
+    "payload": {
+      "summary": "Schedule Product Hunt only after qualified builder proof is real.",
+      "criteria": [
+        "10 qualified builder conversations logged",
+        "90-second demo clip complete",
+        "HN launch packet ready",
+        "waitlist captures weekly agent-run count"
+      ],
+      "risk": "A broad launch before proof would create vanity traffic and weak onboarding signal."
+    }
+  },
+  {
+    "key": "approval-hn-launch",
+    "type": "approve_ceo_strategy",
+    "status": "revision_requested",
+    "requestedByAgentKey": "diana",
+    "issueKeys": ["mkt-hn-launch", "mkt-demo-clip"],
+    "day": 25,
+    "decisionNote": "Tighten the demo and include a real issue-to-run-to-calendar path before scheduling.",
+    "payload": {
+      "summary": "HN launch packet is close but needs stronger proof.",
+      "launchWindow": "2026-05-08T23:00:00+08:00",
+      "openRisks": ["demo clip missing", "desktop smoke not green"]
+    }
+  },
+  {
+    "key": "approval-release-note",
+    "type": "approve_ceo_strategy",
+    "status": "approved",
+    "requestedByAgentKey": "atlas",
+    "issueKeys": ["desktop-release-notes", "desktop-packaged-smoke"],
+    "day": 22,
+    "decisionNote": "Approved. Keep the release copy focused on operating agent teams, not generic AI task management.",
+    "payload": {
+      "summary": "Release note framing for local desktop build.",
+      "approvedCopyAngle": "Rudder is a control plane for real agent-work loops."
+    }
+  },
+  {
+    "key": "approval-auto-dm-tool",
+    "type": "chat_operation",
+    "status": "rejected",
+    "requestedByAgentKey": "diana",
+    "issueKeys": ["mkt-founder-dm-list", "mkt-dm-reply-classifier"],
+    "day": 23,
+    "decisionNote": "Rejected. Keep the first 30 founder DMs manually reviewed so the team learns the objection language.",
+    "payload": {
+      "summary": "Automate first-touch founder DMs from the growth list.",
+      "patch": { "autoSendFounderDms": true },
+      "risk": "Would optimize throughput before learning."
+    }
+  },
+  {
+    "key": "approval-budget-overage",
+    "type": "budget_override_required",
+    "status": "pending",
+    "requestedByAgentKey": "ada",
+    "issueKeys": ["messenger-budget-alert", "operator-dashboard-signal"],
+    "day": 28,
+    "payload": {
+      "summary": "Rudder Studio exceeded the monthly budget while growth and release runs were both active.",
+      "currentSpendCents": 35181,
+      "budgetMonthlyCents": 25000,
+      "options": ["pause growth experiments", "approve one-week override", "resume only release reliability"]
+    }
+  }
+]

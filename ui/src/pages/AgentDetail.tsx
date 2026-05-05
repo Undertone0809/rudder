@@ -19,7 +19,7 @@ import {
 import { agentLearningApi } from "../api/agentLearning";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { budgetsApi } from "../api/budgets";
-import { heartbeatsApi } from "../api/heartbeats";
+import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { ApiError } from "../api/client";
 import {
@@ -131,6 +131,7 @@ import {
 } from "@/components/ui/semanticTones";
 import { AgentIcon, AgentIconPicker } from "../components/AgentIconPicker";
 import { RunTranscriptView, type TranscriptMode } from "../components/transcript/RunTranscriptView";
+import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import {
   getBundledRudderSkillSlug,
   isUuidLike,
@@ -2302,6 +2303,8 @@ function ConfigurationTab({
 
 /* ---- Prompts Tab ---- */
 
+const DEFAULT_INSTRUCTIONS_ENTRY_FILE = "SOUL.md";
+
 function PromptsTab({
   agent,
   orgId,
@@ -2318,9 +2321,10 @@ function PromptsTab({
   onSavingChange: (saving: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const { confirm } = useDialog();
   const { selectedOrganizationId } = useOrganization();
   const { isMobile } = useSidebar();
-  const [selectedFile, setSelectedFile] = useState<string>("AGENTS.md");
+  const [selectedFile, setSelectedFile] = useState<string>(DEFAULT_INSTRUCTIONS_ENTRY_FILE);
   const [showFilePanel, setShowFilePanel] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   const [bundleDraft, setBundleDraft] = useState<{
@@ -2343,7 +2347,7 @@ function PromptsTab({
   } | null>(null);
 
   useEffect(() => {
-    setSelectedFile("AGENTS.md");
+    setSelectedFile(DEFAULT_INSTRUCTIONS_ENTRY_FILE);
     setShowFilePanel(false);
     setDraft(null);
     setBundleDraft(null);
@@ -2375,7 +2379,7 @@ function PromptsTab({
     ? (bundle?.managedRootPath ?? bundle?.rootPath ?? "")
     : (bundle?.rootPath ?? "");
   const currentMode = bundleDraft?.mode ?? persistedMode;
-  const currentEntryFile = bundleDraft?.entryFile ?? bundle?.entryFile ?? "AGENTS.md";
+  const currentEntryFile = bundleDraft?.entryFile ?? bundle?.entryFile ?? DEFAULT_INSTRUCTIONS_ENTRY_FILE;
   const currentRootPath = bundleDraft?.rootPath ?? persistedRootPath;
   const fileOptions = useMemo(
     () => bundle?.files.map((file) => file.path) ?? [],
@@ -2530,7 +2534,7 @@ function PromptsTab({
       (
         bundleDraft.mode !== persistedMode ||
         bundleDraft.rootPath !== persistedRootPath ||
-        bundleDraft.entryFile !== (bundle?.entryFile ?? "AGENTS.md")
+        bundleDraft.entryFile !== (bundle?.entryFile ?? DEFAULT_INSTRUCTIONS_ENTRY_FILE)
       ),
   );
   const fileDirty = draft !== null && draft !== currentContent;
@@ -2671,7 +2675,7 @@ function PromptsTab({
                           selectedFile: selectedOrEntryFile,
                         };
                       }
-                      const nextEntryFile = currentEntryFile || "AGENTS.md";
+                      const nextEntryFile = currentEntryFile || DEFAULT_INSTRUCTIONS_ENTRY_FILE;
                       setBundleDraft({
                         mode: "managed",
                         rootPath: bundle?.managedRootPath ?? currentRootPath,
@@ -2688,7 +2692,7 @@ function PromptsTab({
                     variant={currentMode === "external" ? "default" : "outline"}
                     onClick={() => {
                       const externalBundle = externalBundleRef.current;
-                      const nextEntryFile = externalBundle?.entryFile ?? currentEntryFile ?? "AGENTS.md";
+                      const nextEntryFile = externalBundle?.entryFile ?? currentEntryFile ?? DEFAULT_INSTRUCTIONS_ENTRY_FILE;
                       setBundleDraft({
                         mode: "external",
                         rootPath: externalBundle?.rootPath ?? (bundle?.mode === "external" ? (bundle.rootPath ?? "") : ""),
@@ -2758,14 +2762,14 @@ function PromptsTab({
                       <HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent side="right" sideOffset={4}>
-                      The main file the agent reads first when loading instructions. Defaults to AGENTS.md.
+                      The main file the agent reads first when loading role and persona instructions. Defaults to SOUL.md.
                     </TooltipContent>
                   </Tooltip>
                 </span>
                 <Input
                   value={currentEntryFile}
                   onChange={(event) => {
-                    const nextEntryFile = event.target.value || "AGENTS.md";
+                    const nextEntryFile = event.target.value || DEFAULT_INSTRUCTIONS_ENTRY_FILE;
                     const nextSelectedFile = selectedOrEntryFile === currentEntryFile
                       ? nextEntryFile
                       : selectedOrEntryFile;
@@ -2960,15 +2964,19 @@ function PromptsTab({
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => {
-                  if (confirm(`Delete ${selectedOrEntryFile}?`)) {
-                    deleteFile.mutate(selectedOrEntryFile, {
-                      onSuccess: () => {
-                        setSelectedFile(currentEntryFile);
-                        setDraft(null);
-                      },
-                    });
-                  }
+                onClick={async () => {
+                  const confirmed = await confirm({
+                    title: `Delete ${selectedOrEntryFile}?`,
+                    confirmLabel: "Delete",
+                    tone: "destructive",
+                  });
+                  if (!confirmed) return;
+                  deleteFile.mutate(selectedOrEntryFile, {
+                    onSuccess: () => {
+                      setSelectedFile(currentEntryFile);
+                      setDraft(null);
+                    },
+                  });
                 }}
                 disabled={deleteFile.isPending}
               >
@@ -4669,6 +4677,7 @@ function RunFeedbackSheet({
 function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: HeartbeatRun; agentRouteId: string; agentRuntimeType: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { confirm } = useDialog();
   const { data: hydratedRun } = useQuery({
     queryKey: queryKeys.runDetail(initialRun.id),
     queryFn: () => heartbeatsApi.get(initialRun.id),
@@ -5037,11 +5046,13 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
                       type="button"
                       className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-60"
                       disabled={clearSessionsForTouchedIssues.isPending}
-                      onClick={() => {
+                      onClick={async () => {
                         const issueCount = touchedIssueIds.length;
-                        const confirmed = window.confirm(
-                          `Clear session for ${issueCount} issue${issueCount === 1 ? "" : "s"} touched by this run?`,
-                        );
+                        const confirmed = await confirm({
+                          title: `Clear session for ${issueCount} issue${issueCount === 1 ? "" : "s"} touched by this run?`,
+                          confirmLabel: "Clear session",
+                          tone: "destructive",
+                        });
                         if (!confirmed) return;
                         clearSessionsForTouchedIssues.mutate();
                       }}
@@ -5129,6 +5140,11 @@ function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: H
 
 /* ---- Log Viewer ---- */
 
+function runDateToIso(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  return typeof value === "string" ? value : value.toISOString();
+}
+
 function LogViewer({
   run,
   agentRuntimeType,
@@ -5170,6 +5186,39 @@ function LogViewer({
     distanceFromBottom: Number.POSITIVE_INFINITY,
   });
   const isLive = run.status === "running" || run.status === "queued";
+  const liveTranscriptRuns = useMemo<LiveRunForIssue[]>(() => {
+    if (!isLive) return [];
+    return [{
+      id: run.id,
+      status: run.status,
+      invocationSource: run.invocationSource,
+      triggerDetail: run.triggerDetail,
+      startedAt: runDateToIso(run.startedAt),
+      finishedAt: runDateToIso(run.finishedAt),
+      createdAt: runDateToIso(run.createdAt) ?? new Date().toISOString(),
+      agentId: run.agentId,
+      agentName: "",
+      agentRuntimeType,
+      issueId: null,
+    }];
+  }, [
+    agentRuntimeType,
+    isLive,
+    run.agentId,
+    run.createdAt,
+    run.finishedAt,
+    run.id,
+    run.invocationSource,
+    run.startedAt,
+    run.status,
+    run.triggerDetail,
+  ]);
+  const { transcriptByRun: liveTranscriptByRun } = useLiveRunTranscripts({
+    runs: liveTranscriptRuns,
+    orgId: run.orgId,
+    maxChunksPerRun: 500,
+    includeRunEvents: false,
+  });
   const { data: workspaceOperations = [] } = useQuery({
     queryKey: queryKeys.runWorkspaceOperations(run.id),
     queryFn: () => heartbeatsApi.workspaceOperations(run.id),
@@ -5546,14 +5595,18 @@ function LogViewer({
   const adapter = useMemo(() => getUIAdapter(agentRuntimeType), [agentRuntimeType]);
   const transcript = useMemo(() => {
     const logTranscript = buildTranscript(logLines, adapter.parseStdoutLine, { censorUsernameInLogs });
+    const liveLogTranscript = liveTranscriptByRun.get(run.id) ?? [];
+    const effectiveLogTranscript = liveLogTranscript.length > logTranscript.length
+      ? liveLogTranscript
+      : logTranscript;
     const eventTranscript = events.map((event) =>
       heartbeatRunEventToTranscriptEntry(event, {
         redactText: (value) => redactPathText(value, censorUsernameInLogs),
         redactValue: (value) => redactPathValue(value, censorUsernameInLogs),
       }),
     );
-    return mergeTranscriptEntries(logTranscript, eventTranscript);
-  }, [adapter, censorUsernameInLogs, events, logLines]);
+    return mergeTranscriptEntries(effectiveLogTranscript, eventTranscript);
+  }, [adapter, censorUsernameInLogs, events, liveTranscriptByRun, logLines, run.id]);
   const hasInvocationTab = Boolean(adapterInvokePayload);
   const invocationPromptText =
     adapterInvokePayload?.prompt !== undefined

@@ -103,7 +103,7 @@ describe("BreadcrumbBar", () => {
 
     expect(html).toContain("Linear Issues");
     expect(html).not.toContain("Issue Tracker");
-    expect(html).not.toContain("Search issues...");
+    expect(html).toContain("Search Linear issues...");
     expect(html).not.toContain("Create Issue");
   });
 });

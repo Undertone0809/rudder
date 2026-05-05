@@ -2967,6 +2967,7 @@ export function heartbeatService(db: Db) {
       isError?: boolean;
       errors?: string[];
     } | null = null;
+    let modelTurnInput: unknown;
     let finalObservationOutput: string | null = null;
     let finalObservationStatus: string | null = run.status;
     let finalObservationSessionId: string | null = heartbeatObservationContext.sessionKey ?? null;
@@ -3555,6 +3556,7 @@ export function heartbeatService(db: Db) {
             if (key in meta.env) meta.env[key] = "***REDACTED***";
           }
         }
+        modelTurnInput = meta.prompt;
         heartbeatObservationContext.metadata = {
           ...(heartbeatObservationContext.metadata ?? {}),
           ...buildHeartbeatRuntimeTraceMetadata({
@@ -3918,6 +3920,7 @@ export function heartbeatService(db: Db) {
           context: heartbeatObservationContext,
           parentObservation: observation,
           transcript: executionTranscript,
+          initialTurnInput: modelTurnInput,
           fallbackResult: transcriptFallbackResult,
         });
         finalObservationOutput = transcriptStats.finalOutput ?? transcriptFallbackResult?.output ?? null;

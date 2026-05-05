@@ -131,13 +131,13 @@ export interface PluginDashboardData {
   checkedAt: string;
 }
 
-export interface AvailablePluginExample {
+export interface AvailablePluginCatalogEntry {
   packageName: string;
   pluginKey: string;
   displayName: string;
   description: string;
   localPath: string;
-  tag: "example";
+  tag: "available" | "example";
 }
 
 /**
@@ -165,11 +165,13 @@ export const pluginsApi = {
   list: (status?: PluginStatus) =>
     api.get<PluginRecord[]>(`/plugins${status ? `?status=${status}` : ""}`),
 
-  /**
-   * List bundled example plugins available from the current repo checkout.
-   */
+  /** List first-party plugins available for one-click install. */
+  listAvailable: () =>
+    api.get<AvailablePluginCatalogEntry[]>("/plugins/available"),
+
+  /** List bundled example plugins available from the current repo checkout. */
   listExamples: () =>
-    api.get<AvailablePluginExample[]>("/plugins/examples"),
+    api.get<AvailablePluginCatalogEntry[]>("/plugins/examples"),
 
   /**
    * Fetch a single plugin record by its UUID or plugin key.

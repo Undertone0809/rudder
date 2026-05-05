@@ -36,6 +36,9 @@ Read only the references needed for the request:
 
 - `references/scenario-index.md`: scenario catalog and selection rules
 - `references/quality-bar.md`: realism, determinism, privacy, and output rules
+- `references/rudder-studio-scenario.md`: canonical month-long "Rudder uses
+  Rudder to build and grow Rudder" org, with reusable JSON fixtures and seed
+  script
 - `references/rudder-landing-demo-org.md`: canonical screenshot-ready Rudder org
 - `references/rudder-test-fixtures.md`: Rudder testing and edge-state fixtures
 - `references/rudder-user-scenarios.md`: Rudder user stories and scenario spines
@@ -52,6 +55,10 @@ records:
   seeds the canonical landing demo org, and optionally captures proof-shot
   screenshots. Use `LANDING_SHOTS_SKIP_CAPTURE=1 LANDING_SHOTS_HOLD_OPEN=1`
   for seed-only local screenshot prep.
+- `scripts/seed-rudder-studio.ts`: seeds the reusable Rudder Studio org into a
+  running local dev instance. Use it when the user wants a realistic month-long
+  Rudder org, "using Rudder to build Rudder", natural Calendar work history,
+  or durable user-scenario data.
 
 Prefer these scripts over rewriting the seed flow in a one-off answer.
 
@@ -110,6 +117,13 @@ opaque generated IDs.
   organization should have a clear org owner.
 - Keep entities relationally coherent: org -> goals -> projects -> issues ->
   agents, approvals, chats, heartbeat runs, costs, and activity.
+- For whole-product user scenarios, prefer a causal scenario spine over
+  component-specific fixtures. Start from real work records, then let Calendar,
+  Dashboard, Messenger, approvals, and cost views reflect those records.
+- When the user wants "Rudder Studio", "using Rudder to build Rudder", a
+  month-long realistic org, or Calendar data that should emerge from real agent
+  work, use `references/rudder-studio-scenario.md` and the Rudder Studio
+  fixture files instead of inventing a new one-off org.
 - For screenshots, make data visually legible across pages. Avoid empty shells.
 - For testing, include deterministic setup and reset strategy.
 - For workflow explanation, include persona, motivation, conflict, decision

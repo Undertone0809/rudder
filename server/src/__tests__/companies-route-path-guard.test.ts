@@ -19,6 +19,12 @@ vi.mock("../services/index.js", () => ({
     previewImport: vi.fn(),
     importBundle: vi.fn(),
   }),
+  organizationExportJobService: () => ({
+    create: vi.fn(),
+    get: vi.fn(),
+    getResult: vi.fn(),
+    cancel: vi.fn(),
+  }),
   organizationSkillService: () => ({
     syncWorkspaceFileChange: vi.fn(),
   }),
@@ -27,6 +33,14 @@ vi.mock("../services/index.js", () => ({
     createOrganizationResource: vi.fn(),
     updateOrganizationResource: vi.fn(),
     deleteOrganizationResource: vi.fn(),
+  }),
+  workspaceBackupService: () => ({
+    list: vi.fn(),
+    create: vi.fn(),
+    listFiles: vi.fn(),
+    readFile: vi.fn(),
+    restore: vi.fn(),
+    remove: vi.fn(),
   }),
   accessService: () => ({
     canUser: vi.fn(),

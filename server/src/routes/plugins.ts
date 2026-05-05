@@ -85,13 +85,13 @@ interface PluginInstallRequest {
   isLocalPath?: boolean;
 }
 
-interface AvailablePluginExample {
+interface AvailablePluginCatalogEntry {
   packageName: string;
   pluginKey: string;
   displayName: string;
   description: string;
   localPath: string;
-  tag: "example";
+  tag: "available" | "example";
 }
 
 /** Response body for GET /api/plugins/:pluginId/health */
@@ -113,8 +113,9 @@ const UUID_REGEX =
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "../../..");
+const SERVER_PACKAGE_ROOT = path.resolve(__dirname, "../..");
 
-const BUNDLED_PLUGIN_EXAMPLES: AvailablePluginExample[] = [
+const BUNDLED_PLUGIN_CATALOG: AvailablePluginCatalogEntry[] = [
   {
     packageName: "@rudderhq/plugin-file-browser-example",
     pluginKey: "rudder-file-browser-example",
@@ -137,16 +138,30 @@ const BUNDLED_PLUGIN_EXAMPLES: AvailablePluginExample[] = [
     displayName: "Linear",
     description: "Import-first Linear connector for Rudder issues.",
     localPath: "packages/plugins/examples/plugin-linear",
-    tag: "example",
+    tag: "available",
   },
 ];
 
-function listBundledPluginExamples(): AvailablePluginExample[] {
-  return BUNDLED_PLUGIN_EXAMPLES.flatMap((plugin) => {
-    const absoluteLocalPath = path.resolve(REPO_ROOT, plugin.localPath);
-    if (!existsSync(absoluteLocalPath)) return [];
-    return [{ ...plugin, localPath: absoluteLocalPath }];
+function resolveBundledPluginPath(plugin: AvailablePluginCatalogEntry): string | null {
+  const sourceCheckoutPath = path.resolve(REPO_ROOT, plugin.localPath);
+  if (existsSync(sourceCheckoutPath)) return sourceCheckoutPath;
+
+  const packagedPath = path.resolve(SERVER_PACKAGE_ROOT, "dist/bundled-plugins", path.basename(plugin.localPath));
+  if (existsSync(packagedPath)) return packagedPath;
+
+  return null;
+}
+
+function listBundledPlugins(): AvailablePluginCatalogEntry[] {
+  return BUNDLED_PLUGIN_CATALOG.flatMap((plugin) => {
+    const resolvedLocalPath = resolveBundledPluginPath(plugin);
+    if (!resolvedLocalPath) return [];
+    return [{ ...plugin, localPath: resolvedLocalPath }];
   });
+}
+
+function listBundledPluginExamples(): AvailablePluginCatalogEntry[] {
+  return listBundledPlugins().filter((plugin) => plugin.tag === "example");
 }
 
 /**
@@ -397,6 +412,17 @@ export function pluginRoutes(
   router.get("/plugins/examples", async (req, res) => {
     assertBoard(req);
     res.json(listBundledPluginExamples());
+  });
+
+  /**
+   * GET /api/plugins/available
+   *
+   * Return first-party plugins available for one-click local-path install.
+   * Production builds can include non-example plugins in this catalog.
+   */
+  router.get("/plugins/available", async (req, res) => {
+    assertBoard(req);
+    res.json(listBundledPlugins());
   });
 
   // IMPORTANT: Static routes must come before parameterized routes

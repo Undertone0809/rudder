@@ -173,26 +173,28 @@ describe("buildAgentSkillMentionOptions", () => {
     });
 
     expect(options.map((option) => option.name)).toEqual([
-      "agent/ella/adapter-helper",
-      "agent/ella/agent-helper",
-      "agent/ella/global-helper",
-      "org/acme/ella/alpha-test",
-      "rudder/build-advisor",
+      "adapter-helper",
+      "agent-helper",
+      "alpha-test",
+      "build-advisor",
+      "global-helper",
     ]);
 
-    expect(options.find((option) => option.name === "org/acme/ella/alpha-test")).toMatchObject({
+    expect(options.find((option) => option.name === "alpha-test")).toMatchObject({
+      skillRefLabel: "alpha-test",
       skillMarkdownTarget: "/workspace/skills/alpha-test/SKILL.md",
       skillDisplayName: "Alpha Test",
     });
-    expect(options.find((option) => option.name === "rudder/build-advisor")).toMatchObject({
+    expect(options.find((option) => option.name === "build-advisor")).toMatchObject({
+      skillRefLabel: "build-advisor",
       skillDescription: "Turn vague build feedback into expert diagnosis.",
     });
-    expect(options.find((option) => option.name === "agent/ella/agent-helper")).toMatchObject({
+    expect(options.find((option) => option.name === "agent-helper")).toMatchObject({
       skillMarkdownTarget: "/workspace/agents/ella/skills/agent-helper/SKILL.md",
       skillDisplayName: "Agent skill · AGENT_HOME/skills",
     });
-    expect(options.find((option) => option.name === "agent/ella/global-helper")?.searchText).toContain("global skill");
-    expect(options.find((option) => option.name === "agent/ella/adapter-helper")?.searchText).toContain("adapter:codex_local:adapter-helper");
+    expect(options.find((option) => option.name === "global-helper")?.searchText).toContain("global skill");
+    expect(options.find((option) => option.name === "adapter-helper")?.searchText).toContain("adapter:codex_local:adapter-helper");
   });
 
   it("falls back to the selection key when the organization skill catalog is not loaded yet", () => {
@@ -228,7 +230,8 @@ describe("buildAgentSkillMentionOptions", () => {
 
     expect(options).toHaveLength(1);
     expect(options[0]).toMatchObject({
-      name: "organization/org-1/alpha-test",
+      name: "alpha-test",
+      skillRefLabel: "alpha-test",
       skillMarkdownTarget: "/workspace/skills/alpha-test/SKILL.md",
     });
   });

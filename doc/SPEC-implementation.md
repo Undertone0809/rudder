@@ -708,8 +708,12 @@ Rudder separates stable instructions from dynamic run context.
 Stable instruction inputs:
 
 - agent runtime config and adapter-owned defaults
-- managed or explicit `AGENTS.md` / `instructionsFilePath` content when the
-  selected runtime supports file-based instructions
+- Rudder's code-owned agent operating contract for supported local runtimes
+- managed or explicit role/persona instruction content such as `SOUL.md` /
+  `instructionsFilePath` when the selected runtime supports file-based
+  instructions
+- sibling `SOUL.md`, `TOOLS.md`, and `MEMORY.md` files when present beside the
+  configured instruction entry file
 - enabled Rudder skills resolved for the agent/runtime
 - scene-level invariant rules for `heartbeat` or `chat`
 
@@ -1000,6 +1004,12 @@ V1 supports organization import/export using a portable package contract:
   - `skills/<slug>/SKILL.md`
 
 Export/import behavior in V1:
+
+The `agents/<slug>/AGENTS.md` convention belongs to the portable package
+format. It does not mean Rudder-managed local runtimes use `AGENTS.md` as their
+runtime identity entry. New managed local agents use `SOUL.md` for durable
+role/persona instructions while Rudder injects the shared operating contract
+from runtime code.
 
 - export emits a clean vendor-neutral markdown package plus `.rudder.yaml`
 - projects and starter tasks are opt-in export content rather than default package content

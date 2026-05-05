@@ -820,6 +820,26 @@ export function chatService(db: Db) {
       );
   }
 
+  async function copyMessageAttachments(sourceMessageId: string, targetMessageId: string) {
+    const sourceAttachments = await db
+      .select()
+      .from(chatAttachments)
+      .where(eq(chatAttachments.messageId, sourceMessageId))
+      .orderBy(chatAttachments.createdAt);
+    if (sourceAttachments.length === 0) return;
+
+    await db
+      .insert(chatAttachments)
+      .values(
+        sourceAttachments.map((attachment) => ({
+          orgId: attachment.orgId,
+          conversationId: attachment.conversationId,
+          messageId: targetMessageId,
+          assetId: attachment.assetId,
+        })),
+      );
+  }
+
   async function addUserChatMessage(
     conversationId: string,
     orgId: string,
@@ -855,7 +875,7 @@ export function chatService(db: Db) {
       await supersedeActiveMessagesFrom(conversationId, target.createdAt);
       const turnId = target.chatTurnId!;
       const nextVariant = target.turnVariant + 1;
-      return addMessage(conversationId, {
+      const editedMessage = await addMessage(conversationId, {
         orgId,
         role: "user",
         kind: "message",
@@ -863,6 +883,8 @@ export function chatService(db: Db) {
         chatTurnId: turnId,
         turnVariant: nextVariant,
       });
+      await copyMessageAttachments(target.id, editedMessage.id);
+      return (await getMessage(conversationId, editedMessage.id)) ?? editedMessage;
     }
 
     const turnId = randomUUID();

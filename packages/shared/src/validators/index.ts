@@ -186,6 +186,7 @@ export {
   createIssueLabelSchema,
   updateIssueLabelSchema,
   updateIssueSchema,
+  reorderIssueSchema,
   issueExecutionWorkspaceSettingsSchema,
   checkoutIssueSchema,
   addIssueCommentSchema,
@@ -198,6 +199,7 @@ export {
   type CreateIssueLabel,
   type UpdateIssueLabel,
   type UpdateIssue,
+  type ReorderIssue,
   type IssueExecutionWorkspaceSettings,
   type CheckoutIssue,
   type AddIssueComment,
@@ -222,6 +224,14 @@ export {
   executionWorkspaceStatusSchema,
   type UpdateExecutionWorkspace,
 } from "./execution-workspace.js";
+
+export {
+  workspaceBackupTriggerSourceSchema,
+  createWorkspaceBackupSchema,
+  restoreWorkspaceBackupSchema,
+  type CreateWorkspaceBackup,
+  type RestoreWorkspaceBackup,
+} from "./workspace-backup.js";
 
 export {
   createGoalSchema,

@@ -344,6 +344,7 @@ describe("@rudderhq/plugin-linear UI", () => {
     expect(container.textContent).not.toContain("Linear team id");
     expect(container.textContent).not.toContain("Linear state id");
     expect(container.textContent).not.toContain("Add team mapping");
+    expect(container.querySelector("[data-testid='linear-rudder-org']")).toBeNull();
     expect(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")?.value).toBe("");
     expect(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")?.placeholder).toContain("Token saved");
     expect(findLink("Create a Linear token")?.getAttribute("href")).toBe("https://linear.app/settings/account/security");
@@ -435,10 +436,14 @@ describe("@rudderhq/plugin-linear UI", () => {
 
     const saveCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"));
     const body = JSON.parse(String((saveCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
-    expect(body.configJson.organizationMappings[0].teamMappings).toEqual([
+    expect(body.configJson.teamMappings).toEqual([
       expect.objectContaining({ teamId: "team-1", teamName: "Engineering" }),
       expect.objectContaining({ teamId: "team-2", teamName: "Design" }),
     ]);
+    expect(body.configJson.organizationMappings[0]).toMatchObject({
+      orgId: "__global__",
+      teamMappings: body.configJson.teamMappings,
+    });
   });
 
   it("creates a secret and fills mappings from Linear catalog", async () => {
@@ -515,22 +520,188 @@ describe("@rudderhq/plugin-linear UI", () => {
     const finalBody = JSON.parse(String((finalConfigCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
     expect(finalBody.configJson).toMatchObject({
       apiTokenSecretRef: "secret-1",
-      organizationMappings: [
+      teamMappings: [
         {
-          orgId: "org-1",
-          teamMappings: [
-            {
-              teamId: "team-1",
-              teamName: "Engineering",
-              stateMappings: [
-                { linearStateId: "state-backlog", rudderStatus: "backlog" },
-                { linearStateId: "state-done", rudderStatus: "done" },
-              ],
-            },
+          teamId: "team-1",
+          teamName: "Engineering",
+          stateMappings: [
+            { linearStateId: "state-backlog", rudderStatus: "backlog" },
+            { linearStateId: "state-done", rudderStatus: "done" },
           ],
         },
       ],
     });
+    expect(finalBody.configJson.organizationMappings[0]).toMatchObject({
+      orgId: "__global__",
+      teamMappings: finalBody.configJson.teamMappings,
+    });
+    expect(findLink("Open Linear issues")?.getAttribute("href")).toBe("/ACME/issues?source=linear&linearTeamId=team-1");
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("recovers from an existing Linear token secret by rotating it", async () => {
+    const refresh = vi.fn();
+    mockedUsePluginData.mockReturnValue({
+      data: {
+        config: {
+          apiTokenSecretRef: "",
+          organizationMappings: [],
+        },
+        organizations: [{ id: "org-1", name: "Acme", issuePrefix: "ACME" }],
+        fixtureMode: false,
+      },
+      loading: false,
+      error: null,
+      refresh,
+    });
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/orgs/org-1/secrets") && init?.method === "POST") {
+        return new Response(JSON.stringify({ error: "Secret already exists: Linear token" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/orgs/org-1/secrets") && !init?.method) {
+        return new Response(JSON.stringify([{ id: "secret-existing", name: "Linear token" }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/secrets/secret-existing/rotate")) {
+        return new Response(JSON.stringify({ id: "secret-existing", name: "Linear token" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/config")) {
+        return new Response(JSON.stringify({ id: "config-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/data/settings-catalog")) {
+        return new Response(JSON.stringify({
+          data: {
+            orgId: "org-1",
+            teams: [
+              {
+                id: "team-1",
+                key: "ENG",
+                name: "Engineering",
+                states: [{ id: "state-done", name: "Done", type: "completed" }],
+              },
+            ],
+            projects: [],
+            users: [],
+          },
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    render(<LinearPluginSettingsPage {...makePageProps()} />);
+
+    changeValue(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")!, "lin_api_replacement");
+    await clickAsync(container.querySelector<HTMLButtonElement>("[data-testid='linear-connect']")!);
+    await flushAsync();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/secrets/secret-existing/rotate",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ value: "lin_api_replacement" }),
+      }),
+    );
+    const finalConfigCall = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"))
+      .at(-1);
+    const finalBody = JSON.parse(String((finalConfigCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
+    expect(finalBody.configJson.apiTokenSecretRef).toBe("secret-existing");
+    expect(finalBody.configJson.teamMappings[0]).toMatchObject({
+      teamId: "team-1",
+      teamName: "Engineering",
+    });
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("rotates the saved token ref instead of creating a duplicate secret", async () => {
+    const refresh = vi.fn();
+    mockedUsePluginData.mockReturnValue({
+      data: {
+        config: {
+          apiTokenSecretRef: "secret-1",
+          teamMappings: [],
+          organizationMappings: [],
+        },
+        organizations: [{ id: "org-1", name: "Acme", issuePrefix: "ACME" }],
+        fixtureMode: false,
+      },
+      loading: false,
+      error: null,
+      refresh,
+    });
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/secrets/secret-1/rotate")) {
+        return new Response(JSON.stringify({ id: "secret-1", name: "Linear token" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/config")) {
+        return new Response(JSON.stringify({ id: "config-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/data/settings-catalog")) {
+        return new Response(JSON.stringify({
+          data: {
+            orgId: "org-1",
+            teams: [
+              {
+                id: "team-1",
+                key: "ENG",
+                name: "Engineering",
+                states: [{ id: "state-done", name: "Done", type: "completed" }],
+              },
+            ],
+            projects: [],
+            users: [],
+          },
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    render(<LinearPluginSettingsPage {...makePageProps()} />);
+    await flushAsync();
+
+    changeValue(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")!, "lin_api_new");
+    await clickAsync(container.querySelector<HTMLButtonElement>("[data-testid='linear-connect']")!);
+    await flushAsync();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/secrets/secret-1/rotate",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/orgs/org-1/secrets"))).toBe(false);
+    const finalConfigCall = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"))
+      .at(-1);
+    const finalBody = JSON.parse(String((finalConfigCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
+    expect(finalBody.configJson.apiTokenSecretRef).toBe("secret-1");
     expect(refresh).toHaveBeenCalled();
   });
 
@@ -628,10 +799,11 @@ describe("@rudderhq/plugin-linear UI", () => {
       .filter(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"))
       .at(-1);
     const finalBody = JSON.parse(String((finalConfigCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
-    expect(finalBody.configJson.organizationMappings[0].teamMappings[0].stateMappings[0]).toMatchObject({
+    expect(finalBody.configJson.teamMappings[0].stateMappings[0]).toMatchObject({
       linearStateId: "state-done",
       rudderStatus: "done",
     });
+    expect(finalBody.configJson.organizationMappings[0].orgId).toBe("__global__");
     expect(refresh).toHaveBeenCalled();
   });
 

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   loadAgentInstructionsPrefix,
   renderTemplate,
+  RUDDER_AGENT_OPERATING_CONTRACT,
   runChildProcess,
   selectPromptTemplate,
 } from "./server-utils.js";
@@ -47,7 +48,7 @@ describe("selectPromptTemplate", () => {
     });
 
     expect(rendered).toContain("This is a recovery run, not a fresh task.");
-    expect(rendered).toContain("**Original Run ID:** run-123");
+    expect(rendered).toContain("- Original Run ID: run-123");
     expect(rendered).toContain("Finish CMO onboarding");
     expect(rendered).toContain("inspect what the previous run already completed");
     expect(rendered).toContain("Avoid blindly re-running the whole task.");
@@ -72,8 +73,8 @@ describe("selectPromptTemplate", () => {
     });
 
     expect(rendered).toContain("This is a recovery run, not a fresh task.");
-    expect(rendered).toContain("**Original Run ID:** run-456");
-    expect(rendered).toContain("**Failure Kind:** process_lost");
+    expect(rendered).toContain("- Original Run ID: run-456");
+    expect(rendered).toContain("- Failure Kind: process_lost");
     expect(rendered).toContain("inspect what the previous run already completed");
     expect(rendered).not.toContain("Current Issue Context");
   });
@@ -106,7 +107,7 @@ describe("selectPromptTemplate", () => {
 
     expect(rendered).toContain("This is a passive issue follow-up");
     expect(rendered).toContain("The previous run ended without sufficient issue close-out.");
-    expect(rendered).toContain("**Origin Run ID:** run-origin");
+    expect(rendered).toContain("- Origin Run ID: run-origin");
     expect(rendered).toContain("Publish onboarding notes");
     expect(rendered).toContain("add a progress comment, mark the issue done, block it with a reason, or hand it off");
   });
@@ -131,7 +132,24 @@ describe("selectPromptTemplate", () => {
 });
 
 describe("loadAgentInstructionsPrefix", () => {
-  it("loads only the entry instructions file when no sibling memory file exists", async () => {
+  it("loads the runtime operating contract without an instruction file", async () => {
+    const loaded = await loadAgentInstructionsPrefix({
+      instructionsFilePath: "",
+      onLog: async () => {},
+    });
+
+    expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
+    expect(loaded.prefix).toContain(RUDDER_AGENT_OPERATING_CONTRACT);
+    expect(loaded.commandNotes).toEqual(["Loaded Rudder agent operating contract from runtime code"]);
+    expect(loaded.readFailed).toBe(false);
+    expect(loaded.memoryFilePath).toBeNull();
+    expect(loaded.metrics.instructionsChars).toBe(loaded.prefix.length);
+    expect(loaded.metrics.operatingContractChars).toBeGreaterThan(0);
+    expect(loaded.metrics.instructionEntryChars).toBe(0);
+    expect(loaded.metrics.memoryChars).toBe(0);
+  });
+
+  it("loads the operating contract and entry instructions when no sibling memory file exists", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-entry-"));
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
     const logs: Array<{ stream: "stdout" | "stderr"; chunk: string }> = [];
@@ -146,12 +164,17 @@ describe("loadAgentInstructionsPrefix", () => {
         },
       });
 
+      expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
       expect(loaded.prefix).toContain("# Agent Instructions");
       expect(loaded.prefix).toContain(`loaded from ${instructionsPath}`);
       expect(loaded.prefix).not.toContain("Tacit Memory");
-      expect(loaded.commandNotes).toEqual([`Loaded agent instructions from ${instructionsPath}`]);
+      expect(loaded.commandNotes).toEqual([
+        "Loaded Rudder agent operating contract from runtime code",
+        `Loaded agent instructions from ${instructionsPath}`,
+      ]);
       expect(loaded.memoryFilePath).toBeNull();
       expect(loaded.metrics.instructionsChars).toBe(loaded.prefix.length);
+      expect(loaded.metrics.operatingContractChars).toBeGreaterThan(0);
       expect(loaded.metrics.instructionEntryChars).toBeGreaterThan(0);
       expect(loaded.metrics.memoryChars).toBe(0);
       expect(logs).toContainEqual(expect.objectContaining({
@@ -163,12 +186,16 @@ describe("loadAgentInstructionsPrefix", () => {
     }
   });
 
-  it("loads the entry instructions file plus sibling MEMORY.md", async () => {
+  it("loads the entry instructions file plus sibling SOUL.md, TOOLS.md, and MEMORY.md", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-load-agent-instructions-memory-"));
     const instructionsPath = path.join(root, "instructions", "AGENTS.md");
+    const soulPath = path.join(root, "instructions", "SOUL.md");
+    const toolsPath = path.join(root, "instructions", "TOOLS.md");
     const memoryPath = path.join(root, "instructions", "MEMORY.md");
     await fs.mkdir(path.dirname(instructionsPath), { recursive: true });
     await fs.writeFile(instructionsPath, "# Agent Instructions\n", "utf8");
+    await fs.writeFile(soulPath, "# Persona\n\nYou are QA.\n", "utf8");
+    await fs.writeFile(toolsPath, "# Tools\n\n- Use rudder.\n", "utf8");
     await fs.writeFile(memoryPath, "# Tacit Memory\n\n- Prefer concise updates.\n", "utf8");
 
     try {
@@ -178,16 +205,22 @@ describe("loadAgentInstructionsPrefix", () => {
       });
 
       expect(loaded.prefix).toContain("# Agent Instructions");
+      expect(loaded.prefix).toContain("# Persona");
+      expect(loaded.prefix).toContain("# Tools");
       expect(loaded.prefix).toContain("# Tacit Memory");
       expect(loaded.commandNotes).toContain(`Loaded agent instructions from ${instructionsPath}`);
+      expect(loaded.commandNotes).toContain(`Loaded agent soul instructions from ${soulPath}`);
+      expect(loaded.commandNotes).toContain(`Loaded agent tool notes from ${toolsPath}`);
       expect(loaded.commandNotes).toContain(`Loaded agent memory instructions from ${memoryPath}`);
+      expect(loaded.soulFilePath).toBe(soulPath);
+      expect(loaded.toolsFilePath).toBe(toolsPath);
       expect(loaded.memoryFilePath).toBe(memoryPath);
       expect(loaded.metrics.instructionsChars).toBe(loaded.prefix.length);
+      expect(loaded.metrics.operatingContractChars).toBeGreaterThan(0);
       expect(loaded.metrics.instructionEntryChars).toBeGreaterThan(0);
+      expect(loaded.metrics.soulChars).toBeGreaterThan(0);
+      expect(loaded.metrics.toolsChars).toBeGreaterThan(0);
       expect(loaded.metrics.memoryChars).toBeGreaterThan(0);
-      expect(loaded.metrics.instructionsChars).toBe(
-        loaded.metrics.instructionEntryChars + loaded.metrics.memoryChars + 2,
-      );
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -207,16 +240,16 @@ describe("loadAgentInstructionsPrefix", () => {
         },
       });
 
-      expect(loaded.prefix).toBe("");
+      expect(loaded.prefix).toContain("# Rudder Agent Operating Contract");
+      expect(loaded.prefix).not.toContain("# Agent Instructions");
       expect(loaded.readFailed).toBe(true);
-      expect(loaded.commandNotes).toEqual([
+      expect(loaded.commandNotes).toContain(
         `Configured instructionsFilePath ${instructionsPath}, but file could not be read; continuing without injected instructions.`,
-      ]);
-      expect(loaded.metrics).toEqual({
-        instructionsChars: 0,
-        instructionEntryChars: 0,
-        memoryChars: 0,
-      });
+      );
+      expect(loaded.metrics.instructionsChars).toBe(loaded.prefix.length);
+      expect(loaded.metrics.operatingContractChars).toBeGreaterThan(0);
+      expect(loaded.metrics.instructionEntryChars).toBe(0);
+      expect(loaded.metrics.memoryChars).toBe(0);
       expect(logs).toContainEqual(expect.objectContaining({
         stream: "stderr",
         chunk: expect.stringContaining(`could not read agent instructions file "${instructionsPath}"`),

@@ -8,6 +8,12 @@ export const queryKeys = {
       ["organizations", orgId, "workspace-files", directoryPath] as const,
     workspaceFile: (orgId: string, filePath: string) =>
       ["organizations", orgId, "workspace-file", filePath] as const,
+    workspaceBackups: (orgId: string) =>
+      ["organizations", orgId, "workspace-backups"] as const,
+    workspaceBackupFiles: (orgId: string, backupId: string, directoryPath: string) =>
+      ["organizations", orgId, "workspace-backup-files", backupId, directoryPath] as const,
+    workspaceBackupFile: (orgId: string, backupId: string, filePath: string) =>
+      ["organizations", orgId, "workspace-backup-file", backupId, filePath] as const,
   },
   organizationSkills: {
     list: (orgId: string) => ["organization-skills", orgId] as const,
@@ -122,6 +128,7 @@ export const queryKeys = {
   goals: {
     list: (orgId: string) => ["goals", orgId] as const,
     detail: (id: string) => ["goals", "detail", id] as const,
+    dependencies: (id: string) => ["goals", "detail", id, "dependencies"] as const,
   },
   budgets: {
     overview: (orgId: string) => ["budgets", "overview", orgId] as const,
@@ -188,6 +195,7 @@ export const queryKeys = {
   },
   plugins: {
     all: ["plugins"] as const,
+    available: ["plugins", "available"] as const,
     examples: ["plugins", "examples"] as const,
     detail: (pluginId: string) => ["plugins", pluginId] as const,
     health: (pluginId: string) => ["plugins", pluginId, "health"] as const,

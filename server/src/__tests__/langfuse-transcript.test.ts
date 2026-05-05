@@ -57,6 +57,7 @@ describe("emitExecutionTranscriptTree", () => {
     const stats = emitExecutionTranscriptTree({
       context: makeContext(),
       parentObservation: parent,
+      initialTurnInput: "System prompt sent to the runtime.",
       transcript: [
         { kind: "init", ts: "2026-04-12T10:00:00.000Z", model: "gpt-5.4", sessionId: "session-1" },
         { kind: "assistant", ts: "2026-04-12T10:00:01.000Z", text: "Inspecting the issue.", delta: true },
@@ -108,10 +109,19 @@ describe("emitExecutionTranscriptTree", () => {
       "model_turn:1",
       "read_file",
     ]);
+    expect(mockStartExecutionChildObservation).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(Object),
+      expect.objectContaining({
+        name: "model_turn:1",
+        input: "System prompt sent to the runtime.",
+      }),
+    );
     expect(mockUpdateExecutionObservation).toHaveBeenCalledWith(
       expect.objectContaining({ id: "obs-model_turn:1" }),
       expect.objectContaining({ surface: "chat_turn" }),
       expect.objectContaining({
+        input: "System prompt sent to the runtime.",
         model: "gpt-5.4",
         output: "Inspecting the issue.",
         usageDetails: {
@@ -133,6 +143,40 @@ describe("emitExecutionTranscriptTree", () => {
           transcriptToolCount: 1,
           transcriptEventCount: 1,
         }),
+      }),
+    );
+  });
+
+  it("uses transcript user entries as model turn input when no adapter prompt is available", () => {
+    const parent = makeObservation("root");
+
+    emitExecutionTranscriptTree({
+      context: makeContext(),
+      parentObservation: parent,
+      transcript: [
+        { kind: "user", ts: "2026-04-12T10:00:00.000Z", text: "Please inspect the system prompt." },
+        { kind: "assistant", ts: "2026-04-12T10:00:01.000Z", text: "Inspecting.", delta: true },
+        {
+          kind: "result",
+          ts: "2026-04-12T10:00:02.000Z",
+          text: "Inspecting.",
+          inputTokens: 10,
+          outputTokens: 4,
+          cachedTokens: 0,
+          costUsd: 0,
+          subtype: "success",
+          isError: false,
+          errors: [],
+        },
+      ],
+    });
+
+    expect(mockStartExecutionChildObservation).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(Object),
+      expect.objectContaining({
+        name: "model_turn:1",
+        input: "Please inspect the system prompt.",
       }),
     );
   });
