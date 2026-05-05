@@ -535,6 +535,173 @@ describe("@rudderhq/plugin-linear UI", () => {
       orgId: "__global__",
       teamMappings: finalBody.configJson.teamMappings,
     });
+    expect(findLink("Open Linear issues")?.getAttribute("href")).toBe("/ACME/issues?source=linear&linearTeamId=team-1");
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("recovers from an existing Linear token secret by rotating it", async () => {
+    const refresh = vi.fn();
+    mockedUsePluginData.mockReturnValue({
+      data: {
+        config: {
+          apiTokenSecretRef: "",
+          organizationMappings: [],
+        },
+        organizations: [{ id: "org-1", name: "Acme", issuePrefix: "ACME" }],
+        fixtureMode: false,
+      },
+      loading: false,
+      error: null,
+      refresh,
+    });
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/orgs/org-1/secrets") && init?.method === "POST") {
+        return new Response(JSON.stringify({ error: "Secret already exists: Linear token" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/orgs/org-1/secrets") && !init?.method) {
+        return new Response(JSON.stringify([{ id: "secret-existing", name: "Linear token" }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/secrets/secret-existing/rotate")) {
+        return new Response(JSON.stringify({ id: "secret-existing", name: "Linear token" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/config")) {
+        return new Response(JSON.stringify({ id: "config-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/data/settings-catalog")) {
+        return new Response(JSON.stringify({
+          data: {
+            orgId: "org-1",
+            teams: [
+              {
+                id: "team-1",
+                key: "ENG",
+                name: "Engineering",
+                states: [{ id: "state-done", name: "Done", type: "completed" }],
+              },
+            ],
+            projects: [],
+            users: [],
+          },
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    render(<LinearPluginSettingsPage {...makePageProps()} />);
+
+    changeValue(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")!, "lin_api_replacement");
+    await clickAsync(container.querySelector<HTMLButtonElement>("[data-testid='linear-connect']")!);
+    await flushAsync();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/secrets/secret-existing/rotate",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ value: "lin_api_replacement" }),
+      }),
+    );
+    const finalConfigCall = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"))
+      .at(-1);
+    const finalBody = JSON.parse(String((finalConfigCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
+    expect(finalBody.configJson.apiTokenSecretRef).toBe("secret-existing");
+    expect(finalBody.configJson.teamMappings[0]).toMatchObject({
+      teamId: "team-1",
+      teamName: "Engineering",
+    });
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("rotates the saved token ref instead of creating a duplicate secret", async () => {
+    const refresh = vi.fn();
+    mockedUsePluginData.mockReturnValue({
+      data: {
+        config: {
+          apiTokenSecretRef: "secret-1",
+          teamMappings: [],
+          organizationMappings: [],
+        },
+        organizations: [{ id: "org-1", name: "Acme", issuePrefix: "ACME" }],
+        fixtureMode: false,
+      },
+      loading: false,
+      error: null,
+      refresh,
+    });
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/secrets/secret-1/rotate")) {
+        return new Response(JSON.stringify({ id: "secret-1", name: "Linear token" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/config")) {
+        return new Response(JSON.stringify({ id: "config-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/api/plugins/plugin-linear/data/settings-catalog")) {
+        return new Response(JSON.stringify({
+          data: {
+            orgId: "org-1",
+            teams: [
+              {
+                id: "team-1",
+                key: "ENG",
+                name: "Engineering",
+                states: [{ id: "state-done", name: "Done", type: "completed" }],
+              },
+            ],
+            projects: [],
+            users: [],
+          },
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    render(<LinearPluginSettingsPage {...makePageProps()} />);
+    await flushAsync();
+
+    changeValue(container.querySelector<HTMLInputElement>("[data-testid='linear-token-input']")!, "lin_api_new");
+    await clickAsync(container.querySelector<HTMLButtonElement>("[data-testid='linear-connect']")!);
+    await flushAsync();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/secrets/secret-1/rotate",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/orgs/org-1/secrets"))).toBe(false);
+    const finalConfigCall = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"))
+      .at(-1);
+    const finalBody = JSON.parse(String((finalConfigCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
+    expect(finalBody.configJson.apiTokenSecretRef).toBe("secret-1");
     expect(refresh).toHaveBeenCalled();
   });
 

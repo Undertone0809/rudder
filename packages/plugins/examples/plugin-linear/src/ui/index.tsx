@@ -223,6 +223,13 @@ const layoutStyles: Record<string, CSSProperties> = {
   },
 };
 
+const LINEAR_TOKEN_SECRET_NAME = "Linear token";
+
+type SecretSummary = {
+  id: string;
+  name: string;
+};
+
 function normalizeConfig(config: LinearPluginConfig | null | undefined): LinearPluginConfig {
   const legacyOrganizationMappings = Array.isArray(config?.organizationMappings) ? config.organizationMappings : [];
   const explicitTeamMappings = Array.isArray(config?.teamMappings) ? config.teamMappings : [];
@@ -394,6 +401,14 @@ function pageHref(orgPrefix: string | null, query?: string): string {
   if (!orgPrefix) return "/linear";
   const url = new URL(`/${orgPrefix}/linear`, "https://local.invalid");
   if (query) url.searchParams.set("q", query);
+  return `${url.pathname}${url.search}`;
+}
+
+function linearIssueBoardHref(orgPrefix: string | null | undefined, teamId?: string | null): string {
+  const basePath = orgPrefix ? `/${encodeURIComponent(orgPrefix)}/issues` : "/issues";
+  const url = new URL(basePath, "https://local.invalid");
+  url.searchParams.set("source", "linear");
+  if (teamId) url.searchParams.set("linearTeamId", teamId);
   return `${url.pathname}${url.search}`;
 }
 
@@ -981,6 +996,10 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
   const selectedTeamIdSet = new Set(selectedTeamIds);
   const selectedTeamCount = selectedTeamIds.length;
   const catalogTeamCount = settingsCatalog?.teams.length ?? 0;
+  const issueBoardHref = linearIssueBoardHref(
+    bootstrap.data?.organizations[0]?.issuePrefix ?? null,
+    selectedTeamIds[0] ?? null,
+  );
 
   async function savePluginConfig(config: LinearPluginConfig) {
     if (!pluginId) throw new Error("Unable to resolve plugin id");
@@ -988,6 +1007,48 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
       method: "POST",
       body: JSON.stringify({ configJson: prepareConfigForSubmit(config) }),
     });
+  }
+
+  async function listOrgSecrets(orgId: string): Promise<SecretSummary[]> {
+    return await apiFetch<SecretSummary[]>(`/api/orgs/${encodeURIComponent(orgId)}/secrets`);
+  }
+
+  async function rotateSecret(secretId: string, value: string): Promise<SecretSummary> {
+    return await apiFetch<SecretSummary>(`/api/secrets/${encodeURIComponent(secretId)}/rotate`, {
+      method: "POST",
+      body: JSON.stringify({ value }),
+    });
+  }
+
+  async function createLinearTokenSecret(orgId: string, value: string): Promise<SecretSummary> {
+    return await apiFetch<SecretSummary>(`/api/orgs/${encodeURIComponent(orgId)}/secrets`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: LINEAR_TOKEN_SECRET_NAME,
+        value,
+        description: "Used by the Linear plugin to read issues across Rudder organizations.",
+      }),
+    });
+  }
+
+  async function saveLinearTokenSecret(orgId: string, value: string, currentSecretRef: string): Promise<string> {
+    if (currentSecretRef) {
+      const rotated = await rotateSecret(currentSecretRef, value);
+      return rotated.id;
+    }
+
+    try {
+      const created = await createLinearTokenSecret(orgId, value);
+      return created.id;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/Secret already exists/i.test(message)) throw error;
+
+      const existing = (await listOrgSecrets(orgId)).find((secret) => secret.name === LINEAR_TOKEN_SECRET_NAME);
+      if (!existing) throw error;
+      const rotated = await rotateSecret(existing.id, value);
+      return rotated.id;
+    }
   }
 
   async function fetchPluginData<T>(key: string, params: Record<string, unknown> = {}, orgId?: string): Promise<T> {
@@ -1108,15 +1169,7 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
           });
           return;
         }
-        const secret = await apiFetch<{ id: string }>(`/api/orgs/${encodeURIComponent(secretOrgId)}/secrets`, {
-          method: "POST",
-          body: JSON.stringify({
-            name: "Linear token",
-            value: trimmedToken,
-            description: "Used by the Linear plugin to read issues across Rudder organizations.",
-          }),
-        });
-        apiTokenSecretRef = secret.id;
+        apiTokenSecretRef = await saveLinearTokenSecret(secretOrgId, trimmedToken, apiTokenSecretRef);
       }
       if (!apiTokenSecretRef) {
         toast({
@@ -1148,10 +1201,16 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
       setDraft(nextConfig);
       setTokenInput("");
       bootstrap.refresh();
+      const firstTeamId = generatedTeamMappings[0]?.teamId ?? null;
+      const firstOrgPrefix = bootstrap.data?.organizations[0]?.issuePrefix ?? null;
       toast({
         title: "Linear is ready",
         body: summarizeMapping(generatedTeamMappings),
         tone: "success",
+        action: {
+          label: "Open Linear issues",
+          href: linearIssueBoardHref(firstOrgPrefix, firstTeamId),
+        },
       });
     } catch (error) {
       toast({
@@ -1226,7 +1285,7 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
           <div>
             <h3 style={{ margin: 0 }}>Connect Linear</h3>
             <p style={layoutStyles.subtitle}>
-              Pick a Rudder organization, paste a token, and Rudder will prepare the import setup from Linear.{" "}
+              Paste a token and Rudder will prepare the import setup from Linear.{" "}
               <a href={LINEAR_TOKEN_SETTINGS_URL} target="_blank" rel="noreferrer" style={layoutStyles.monoLink}>
                 Create a Linear token
               </a>
@@ -1261,7 +1320,12 @@ export function LinearPluginSettingsPage(_props: PluginSettingsPageProps) {
             </button>
           </div>
         </div>
-        <div style={layoutStyles.statusLine}>{connectionStatusText()}</div>
+        <div style={{ ...layoutStyles.statusLine, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <span>{connectionStatusText()}</span>
+          {settingsCatalog && selectedTeamCount > 0 ? (
+            <a href={issueBoardHref} style={layoutStyles.monoLink}>Open Linear issues</a>
+          ) : null}
+        </div>
       </section>
 
       {draft.apiTokenSecretRef ? (
