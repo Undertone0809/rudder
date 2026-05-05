@@ -106,6 +106,9 @@ Request body:
 }
 ```
 
+`role` is validated as a fixed enum: `ceo`, `cto`, `cmo`, `cfo`, `engineer`, `designer`, `pm`, `qa`, `devops`, `researcher`, `general`.
+Use `title`, `capabilities`, and `agentRuntimeConfig.promptTemplate` for narrower job titles. For example, a Founding Engineer should be submitted as `"role": "engineer"` and `"title": "Founding Engineer"`.
+
 Response when approval is required:
 
 ```json

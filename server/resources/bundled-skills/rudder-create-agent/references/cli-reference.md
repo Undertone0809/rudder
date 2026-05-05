@@ -102,7 +102,7 @@ Notes:
 The `agent hire` payload accepts the same shape as the hire API, including:
 
 - `name` optional; blank or omitted means Rudder assigns a distinct first name
-- `role`
+- `role`: one of `ceo`, `cto`, `cmo`, `cfo`, `engineer`, `designer`, `pm`, `qa`, `devops`, `researcher`, `general`
 - `title`
 - `icon`
 - `reportsTo`
@@ -115,6 +115,8 @@ The `agent hire` payload accepts the same shape as the hire API, including:
 - `metadata`
 - `sourceIssueId`
 - `sourceIssueIds`
+
+`role` is a fixed enum. Do not invent role keys such as `founding_engineer`, `frontend_engineer`, or `reviewer`. Use the closest enum value, then put the specialization in `title`, `capabilities`, and `agentRuntimeConfig.promptTemplate`; for example use `"role": "engineer"` with `"title": "Founding Engineer"`.
 
 Issue linkage rule:
 
