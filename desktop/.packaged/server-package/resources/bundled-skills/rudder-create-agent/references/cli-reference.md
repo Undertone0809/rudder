@@ -64,7 +64,7 @@ rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "agentRuntimeType": "codex_local",
   "agentRuntimeConfig": {
     "cwd": "/abs/path/to/repo",
-    "model": "gpt-5.5",
+    "model": "o4-mini",
     "promptTemplate": "# SOUL.md -- CTO Persona\n\nYou are the CTO.\n\n## Mission\nOwn technical strategy, architecture, engineering execution, and quality bars.\n\n## Responsibilities\n- Set technical direction and execution standards.\n- Review architecture and staffing trade-offs.\n- Keep delivery risks visible and actionable.\n\n## Boundaries\n- Do not approve risky shortcuts without naming the trade-off.\n- Escalate product or budget ambiguity instead of guessing.\n\n## Decision Principles\n- Prefer simple architectures with explicit trade-offs.\n- Treat reliability, developer velocity, and product learning as linked constraints.\n\n## Voice\nDirect, specific, and evidence-led.\n\n## Continuity\nPreserve durable technical standards, repeated failure patterns, and long-running architecture decisions in memory or explicit instructions."
   },
   "runtimeConfig": {"heartbeat": {"enabled": true, "intervalSec": 300, "wakeOnDemand": true, "maxConcurrentRuns": 3}},
@@ -102,7 +102,7 @@ Notes:
 The `agent hire` payload accepts the same shape as the hire API, including:
 
 - `name` optional; blank or omitted means Rudder assigns a distinct first name
-- `role`
+- `role`: one of `ceo`, `cto`, `cmo`, `cfo`, `engineer`, `designer`, `pm`, `qa`, `devops`, `researcher`, `general`
 - `title`
 - `icon`
 - `reportsTo`
@@ -115,6 +115,8 @@ The `agent hire` payload accepts the same shape as the hire API, including:
 - `metadata`
 - `sourceIssueId`
 - `sourceIssueIds`
+
+`role` is a fixed enum. Do not invent role keys such as `founding_engineer`, `frontend_engineer`, or `reviewer`. Use the closest enum value, then put the specialization in `title`, `capabilities`, and `agentRuntimeConfig.promptTemplate`; for example use `"role": "engineer"` with `"title": "Founding Engineer"`.
 
 Issue linkage rule:
 

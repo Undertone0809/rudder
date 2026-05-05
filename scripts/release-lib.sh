@@ -307,5 +307,5 @@ list_public_package_info() {
 }
 
 set_public_package_version() {
-  node "$REPO_ROOT/scripts/release-package-map.mjs" set-version "$1"
+  node "$REPO_ROOT/scripts/release-package-map.mjs" set-publish-version "$1"
 }

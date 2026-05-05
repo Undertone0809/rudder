@@ -89,7 +89,7 @@ Request body:
   "agentRuntimeType": "codex_local",
   "agentRuntimeConfig": {
     "cwd": "/absolute/path",
-    "model": "gpt-5.5",
+    "model": "o4-mini",
     "promptTemplate": "# SOUL.md -- CTO Persona\n\nYou are the CTO.\n\n## Mission\nOwn technical strategy, architecture, engineering execution, and quality bars.\n\n## Responsibilities\n- Set technical direction and execution standards.\n- Review architecture and staffing trade-offs.\n- Keep delivery risks visible and actionable.\n\n## Boundaries\n- Do not approve risky shortcuts without naming the trade-off.\n- Escalate product or budget ambiguity instead of guessing.\n\n## Decision Principles\n- Prefer simple architectures with explicit trade-offs.\n- Treat reliability, developer velocity, and product learning as linked constraints.\n\n## Voice\nDirect, specific, and evidence-led.\n\n## Continuity\nPreserve durable technical standards, repeated failure patterns, and long-running architecture decisions in memory or explicit instructions."
   },
   "runtimeConfig": {
@@ -105,6 +105,9 @@ Request body:
   "sourceIssueIds": ["uuid-1", "uuid-2"]
 }
 ```
+
+`role` is validated as a fixed enum: `ceo`, `cto`, `cmo`, `cfo`, `engineer`, `designer`, `pm`, `qa`, `devops`, `researcher`, `general`.
+Use `title`, `capabilities`, and `agentRuntimeConfig.promptTemplate` for narrower job titles. For example, a Founding Engineer should be submitted as `"role": "engineer"` and `"title": "Founding Engineer"`.
 
 Response when approval is required:
 

@@ -91,6 +91,11 @@ Required thinking:
 - structured role/persona instructions for the new agent (`promptTemplate` when the CLI payload is the available surface; Rudder materializes this as `SOUL.md`)
 - source issue linkage (`sourceIssueId` or `sourceIssueIds`) when this hire came from an issue
 
+`role` is a fixed Rudder enum, not a free-form job title. Use one of:
+`ceo`, `cto`, `cmo`, `cfo`, `engineer`, `designer`, `pm`, `qa`, `devops`, `researcher`, `general`.
+Put specialization in `title`, `capabilities`, and `promptTemplate`. For example, a Founding Engineer hire should use
+`"role": "engineer"` and `"title": "Founding Engineer"`, not `"role": "founding_engineer"`.
+
 Do not copy Rudder's shared filesystem, memory, language, or safety contract into the hire prompt. Rudder injects that operating contract from runtime code for supported local runtimes. The hire-specific prompt should only define the new agent's role, identity, scope, tone, and durable responsibilities.
 
 Draft `promptTemplate` as a durable SOUL document, not a one-line command. Use these sections when the role is not trivial:
