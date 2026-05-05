@@ -92,6 +92,7 @@ export interface MentionOption {
   skillMarkdownTarget?: string | null;
   skillDisplayName?: string | null;
   skillDescription?: string | null;
+  skillDetailsHref?: string | null;
 }
 
 /* ---- Editor props ---- */

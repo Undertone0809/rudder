@@ -48,6 +48,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MarkdownBody } from "@/components/MarkdownBody";
+import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
@@ -833,6 +834,7 @@ function ProposalCard({
   onResolveOperationProposal,
   onConvertToIssue,
   actionPending,
+  skillReferences,
 }: {
   conversation: ChatConversation;
   message: ChatMessage;
@@ -843,6 +845,7 @@ function ProposalCard({
   onResolveOperationProposal: (messageId: string, action: ChatOperationProposalDecisionAction, decisionNote: string) => void;
   onConvertToIssue: (message: ChatMessage) => void;
   actionPending: boolean;
+  skillReferences: MarkdownSkillReferencePreview[];
 }) {
   const issueProposal = message.kind === "issue_proposal" ? issueProposalFromMessage(message) : null;
   const planDocument = message.kind === "issue_proposal" ? planDocumentFromMessage(message) : null;
@@ -894,7 +897,7 @@ function ProposalCard({
         <div className="chat-review-summary mt-4 rounded-[var(--radius-lg)] px-4 py-3">
           <div className="text-[11px] font-medium text-muted-foreground">Proposal context</div>
           <div className="mt-2 text-sm leading-6 text-muted-foreground">
-            <MarkdownBody>{message.body}</MarkdownBody>
+            <MarkdownBody skillReferences={skillReferences}>{message.body}</MarkdownBody>
           </div>
         </div>
       ) : null}
@@ -906,7 +909,7 @@ function ProposalCard({
             Priority · {String(issueProposal.priority ?? "medium")}
           </div>
           <div className="mt-3 text-sm leading-6 text-muted-foreground">
-            <MarkdownBody>{String(issueProposal.description)}</MarkdownBody>
+            <MarkdownBody skillReferences={skillReferences}>{String(issueProposal.description)}</MarkdownBody>
           </div>
         </div>
       ) : null}
@@ -915,7 +918,7 @@ function ProposalCard({
         <div className="chat-proposal-inset mt-4 rounded-[var(--radius-lg)] p-4">
           <div className="text-[11px] font-medium text-muted-foreground">{planDocument.title}</div>
           <div className="mt-3 text-sm leading-6 text-foreground">
-            <MarkdownBody>{planDocument.body}</MarkdownBody>
+            <MarkdownBody skillReferences={skillReferences}>{planDocument.body}</MarkdownBody>
           </div>
         </div>
       ) : null}
@@ -1059,6 +1062,7 @@ function ChatMessageItem({
   onEditUserMessage,
   onOpenImage,
   turnBranchControls,
+  skillReferences,
 }: {
   conversation: ChatConversation;
   message: ChatMessage;
@@ -1072,6 +1076,7 @@ function ChatMessageItem({
   onCopyMessageText: (text: string) => void | Promise<void>;
   onEditUserMessage: (message: ChatMessage) => void;
   onOpenImage: (preview: AttachmentPreviewState) => void;
+  skillReferences: MarkdownSkillReferencePreview[];
   turnBranchControls?: {
     current: number;
     total: number;
@@ -1093,6 +1098,7 @@ function ChatMessageItem({
         onResolveOperationProposal={onResolveOperationProposal}
         onConvertToIssue={onConvertToIssue}
         actionPending={actionPending}
+        skillReferences={skillReferences}
       />
     );
   }
@@ -1102,7 +1108,7 @@ function ChatMessageItem({
       <div className="chat-system-pill rounded-[calc(var(--radius-sm)+2px)] px-4 py-2 text-sm transition-all duration-200">
         <div className="flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4 text-[color:var(--accent-strong)]" />
-          <MarkdownBody>{message.body}</MarkdownBody>
+          <MarkdownBody skillReferences={skillReferences}>{message.body}</MarkdownBody>
         </div>
       </div>
     );
@@ -1128,7 +1134,7 @@ function ChatMessageItem({
             </div>
           ) : null}
           <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
-            <MarkdownBody>{message.body}</MarkdownBody>
+            <MarkdownBody skillReferences={skillReferences}>{message.body}</MarkdownBody>
           </div>
           <ChatAttachmentList attachments={message.attachments} onOpenImage={onOpenImage} />
           <div
@@ -1164,7 +1170,7 @@ function ChatMessageItem({
           className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
         >
           <div className="text-[15px] leading-7">
-            <MarkdownBody>{message.body}</MarkdownBody>
+            <MarkdownBody skillReferences={skillReferences}>{message.body}</MarkdownBody>
           </div>
           <ChatAttachmentList attachments={message.attachments} onOpenImage={onOpenImage} />
         </div>
@@ -1232,18 +1238,20 @@ function OptimisticUserDraftItem({
   createdAt,
   onCopyMessageText,
   onEditDraftOnly,
+  skillReferences,
 }: {
   body: string;
   createdAt: Date;
   onCopyMessageText: (text: string) => void | Promise<void>;
   onEditDraftOnly: (text: string) => void;
+  skillReferences: MarkdownSkillReferencePreview[];
 }) {
   return (
     <div className="flex justify-end transition-all duration-200">
       <div className="group flex max-w-[82%] flex-col items-end text-left">
         <div className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]">
           <div className="text-[15px] leading-7">
-            <MarkdownBody>{body}</MarkdownBody>
+            <MarkdownBody skillReferences={skillReferences}>{body}</MarkdownBody>
           </div>
         </div>
         <div
@@ -1418,6 +1426,7 @@ function AssistantDraftItem({
   conversation,
   agents,
   onCopyMessageText,
+  skillReferences,
 }: {
   body: string;
   createdAt: Date;
@@ -1426,6 +1435,7 @@ function AssistantDraftItem({
   conversation: ChatConversation;
   agents: Agent[] | undefined;
   onCopyMessageText: (text: string) => void | Promise<void>;
+  skillReferences: MarkdownSkillReferencePreview[];
 }) {
   const streamingActive = state === "streaming" || state === "finalizing";
   const statusLabel = streamingActive ? null : assistantStateLabel(state);
@@ -1450,7 +1460,7 @@ function AssistantDraftItem({
           </div>
         ) : null}
         <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
-          {body.trim() ? <MarkdownBody>{body}</MarkdownBody> : <span className="text-muted-foreground">Thinking...</span>}
+          {body.trim() ? <MarkdownBody skillReferences={skillReferences}>{body}</MarkdownBody> : <span className="text-muted-foreground">Thinking...</span>}
         </div>
         {body.trim() ? (
           <div
@@ -2578,6 +2588,16 @@ function ChatWorkspace() {
     }),
     [activeAgentSkillSnapshot, activeSkillAgent, organizationSkills, selectedOrganization?.urlKey],
   );
+  const chatSkillReferences = useMemo<MarkdownSkillReferencePreview[]>(
+    () => availableChatSkills.map((skill) => ({
+      href: skill.skillMarkdownTarget,
+      label: skill.skillRefLabel,
+      displayName: skill.skillDisplayName,
+      description: skill.skillDescription,
+      detailsHref: skill.skillDetailsHref,
+    })),
+    [availableChatSkills],
+  );
   const filteredChatSkills = useMemo(
     () => filterChatSkillOptions(availableChatSkills, skillSearchQuery),
     [availableChatSkills, skillSearchQuery],
@@ -2649,6 +2669,7 @@ function ChatWorkspace() {
         skillMarkdownTarget: skill.skillMarkdownTarget,
         skillDisplayName: skill.skillDisplayName,
         skillDescription: skill.skillDescription,
+        skillDetailsHref: skill.skillDetailsHref,
       });
     }
     return options;
@@ -3412,6 +3433,7 @@ function ChatWorkspace() {
                                   onEditUserMessage={beginEditUserMessage}
                                   onOpenImage={setAttachmentPreview}
                                   turnBranchControls={turnBranchControlsFor(message)}
+                                  skillReferences={chatSkillReferences}
                                 />
                               </Fragment>
                             );
@@ -3424,6 +3446,7 @@ function ChatWorkspace() {
                                   createdAt={activeStream.userCreatedAt}
                                   onCopyMessageText={copyChatMessageText}
                                   onEditDraftOnly={editDraftOnly}
+                                  skillReferences={chatSkillReferences}
                                 />
                               ) : null}
                               <StreamTranscriptItem
@@ -3440,6 +3463,7 @@ function ChatWorkspace() {
                                 conversation={selectedConversation}
                                 agents={agents}
                                 onCopyMessageText={copyChatMessageText}
+                                skillReferences={chatSkillReferences}
                               />
                             </>
                           ) : null}

@@ -1584,16 +1584,16 @@ a.rudder-mention-chip[data-mention-kind="agent"]::before {
 a.rudder-skill-token {
   display: inline-flex;
   align-items: center;
-  gap: 0.32rem;
-  margin: 0 0.1rem;
-  padding: 0.14rem 0.52rem;
-  border: 1px solid color-mix(in oklab, #8b5cf6 22%, var(--border) 78%);
-  border-radius: var(--radius-sm);
-  background: color-mix(in oklab, #8b5cf6 15%, var(--background) 85%);
-  color: color-mix(in oklab, #7c3aed 78%, var(--foreground) 22%);
-  font-size: 0.75rem;
-  font-weight: 650;
-  line-height: 1.2;
+  gap: 0.28em;
+  margin: 0 0.05em;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in oklab, #2f80ed 82%, var(--foreground) 18%);
+  font-size: inherit;
+  font-weight: 560;
+  line-height: inherit;
   letter-spacing: 0;
   text-decoration: none;
   vertical-align: baseline;
@@ -1607,11 +1607,93 @@ a.rudder-skill-token {
 a.rudder-skill-token::before {
   content: "";
   display: inline-block;
-  width: 0.76rem;
-  height: 0.76rem;
-  background: #2f80ed;
+  width: 0.9em;
+  height: 0.9em;
+  background: currentColor;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.rudder-skill-token-wrap {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  vertical-align: baseline;
+}
+
+.rudder-skill-token-wrap--preview {
+  cursor: default;
+}
+
+.rudder-skill-token-wrap--preview::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: -0.75rem;
+  width: calc(100% + 1.5rem);
+  height: 0.45rem;
+  pointer-events: none;
+}
+
+.rudder-skill-token-wrap--preview:hover::after,
+.rudder-skill-token-wrap--preview:focus-within::after {
+  pointer-events: auto;
+}
+
+.rudder-skill-hover-card {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 0.38rem);
+  left: 50%;
+  width: min(20rem, calc(100vw - 2rem));
+  padding: 0.85rem;
+  border: 1px solid color-mix(in oklab, var(--border) 74%, transparent);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--popover) 96%, var(--background) 4%);
+  box-shadow: 0 18px 44px color-mix(in oklab, var(--foreground) 15%, transparent);
+  color: var(--foreground);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -0.18rem) scale(0.98);
+  transform-origin: top center;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.rudder-skill-token-wrap--preview:hover .rudder-skill-hover-card,
+.rudder-skill-token-wrap--preview:focus-within .rudder-skill-hover-card {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.rudder-markdown:has(.rudder-skill-token-wrap--preview:hover),
+.rudder-markdown:has(.rudder-skill-token-wrap--preview:focus-within) {
+  overflow: visible;
+}
+
+.rudder-skill-hover-card-action,
+.rudder-markdown .rudder-skill-hover-card-action,
+.rudder-markdown .rudder-skill-hover-card-action:hover {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: fit-content;
+  margin-top: 0.75rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, #2f80ed 10%, transparent);
+  color: color-mix(in oklab, #2f80ed 86%, var(--foreground) 14%);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.rudder-skill-hover-card-action:hover,
+.rudder-markdown .rudder-skill-hover-card-action:hover {
+  background: color-mix(in oklab, #2f80ed 16%, transparent);
 }
 
 .rudder-mdxeditor-content .rudder-skill-token:hover,

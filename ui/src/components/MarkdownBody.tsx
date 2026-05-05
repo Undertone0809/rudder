@@ -5,6 +5,7 @@ import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
 import { mentionChipInlineStyle, parseMentionChipHref, stripMentionChipLabelPrefix } from "../lib/mention-chips";
 import { parseSkillReference } from "../lib/skill-reference";
+import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 
 interface MarkdownBodyProps {
   children: string;
@@ -12,6 +13,7 @@ interface MarkdownBodyProps {
   /** Optional resolver for relative image paths (e.g. within export packages) */
   resolveImageSrc?: (src: string) => string | null;
   onLinkClick?: MarkdownLinkClickHandler;
+  skillReferences?: MarkdownSkillReferencePreview[];
 }
 
 export type MarkdownLinkClickHandler = (input: {
@@ -34,6 +36,10 @@ function flattenText(value: ReactNode): string {
   if (typeof value === "string" || typeof value === "number") return String(value);
   if (Array.isArray(value)) return value.map((item) => flattenText(item)).join("");
   return "";
+}
+
+function normalizeSkillReferenceLookupKey(value: string | null | undefined) {
+  return value?.trim().replace(/\/+$/u, "").toLowerCase() ?? "";
 }
 
 function extractMermaidSource(children: ReactNode): string | null {
@@ -99,8 +105,18 @@ function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: b
   );
 }
 
-export function MarkdownBody({ children, className, resolveImageSrc, onLinkClick }: MarkdownBodyProps) {
+export function MarkdownBody({ children, className, resolveImageSrc, onLinkClick, skillReferences }: MarkdownBodyProps) {
   const { resolvedTheme } = useTheme();
+  const skillPreviewByHref = new Map(
+    (skillReferences ?? [])
+      .map((preview) => [normalizeSkillReferenceLookupKey(preview.href), preview] as const)
+      .filter(([key]) => key.length > 0),
+  );
+  const skillPreviewByLabel = new Map(
+    (skillReferences ?? [])
+      .map((preview) => [normalizeSkillReferenceLookupKey(preview.label), preview] as const)
+      .filter(([key]) => key.length > 0),
+  );
   const components: Components = {
     pre: ({ node: _node, children: preChildren, ...preProps }) => {
       const mermaidSource = extractMermaidSource(preChildren);
@@ -135,10 +151,12 @@ export function MarkdownBody({ children, className, resolveImageSrc, onLinkClick
       }
       const skillReference = parseSkillReference(href, flattenText(linkChildren));
       if (skillReference) {
+        const preview =
+          skillPreviewByHref.get(normalizeSkillReferenceLookupKey(skillReference.href))
+          ?? skillPreviewByLabel.get(normalizeSkillReferenceLookupKey(skillReference.label))
+          ?? null;
         return (
-          <span className="rudder-skill-token" data-skill-token="true">
-            {skillReference.label}
-          </span>
+          <SkillReferenceToken label={skillReference.label} preview={preview} />
         );
       }
       return (

@@ -126,6 +126,32 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain("/Users/zeeland/projects/rudder/.agents/skills/rudder-create-plugin/SKILL.md");
   });
 
+  it("renders skill reference hover card metadata when provided", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody
+          skillReferences={[
+            {
+              href: "/workspace/.agents/skills/build-advisor/SKILL.md",
+              label: "build-advisor",
+              displayName: "Build Advisor",
+              description: "Turn vague build feedback into expert diagnosis.",
+              detailsHref: "/skills/skill-1",
+            },
+          ]}
+        >
+          {"Use [$rudder/build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('class="rudder-skill-hover-card"');
+    expect(html).toContain("Turn vague build feedback into expert diagnosis.");
+    expect(html).toContain('href="/skills/skill-1"');
+    expect(html).toContain(">build-advisor</span>");
+    expect(html).not.toContain("rudder/build-advisor");
+  });
+
   it("lets callers intercept ordinary markdown links", () => {
     const onLinkClick = vi.fn(({ event }) => event.preventDefault());
     const container = render(

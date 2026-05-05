@@ -18,6 +18,7 @@ export interface SkillMentionOption {
   skillMarkdownTarget: string;
   skillDisplayName: string;
   skillDescription: string | null;
+  skillDetailsHref: string | null;
 }
 
 function normalizeMarkdownTarget(candidate: string | null | undefined) {
@@ -141,6 +142,7 @@ export function buildAgentSkillMentionOptions(params: {
         skillMarkdownTarget: markdownTarget,
         skillDisplayName: organizationSkill?.name ?? entry.runtimeName ?? entry.key,
         skillDescription: normalizeOptionalText(organizationSkill?.description ?? entry.description ?? entry.detail),
+        skillDetailsHref: organizationSkill ? `/skills/${organizationSkill.id}` : null,
       });
       continue;
     }
@@ -159,6 +161,7 @@ export function buildAgentSkillMentionOptions(params: {
       skillMarkdownTarget: markdownTarget,
       skillDisplayName: buildExternalSkillDisplayName(entry),
       skillDescription: normalizeOptionalText(entry.description ?? entry.detail),
+      skillDetailsHref: null,
     });
   }
 
