@@ -66,8 +66,11 @@ export function removeSkillReferenceFromMarkdown(markdown: string, label: string
     .replace(/^[\s\u00A0]+|[\s\u00A0]+$/g, "");
 }
 
-export function applySkillTokenDecoration(element: HTMLElement) {
+export function applySkillTokenDecoration(element: HTMLElement, href?: string | null) {
   element.dataset.skillToken = "true";
+  if (href) {
+    element.dataset.skillHref = href;
+  }
   element.setAttribute("contenteditable", "false");
   element.setAttribute("tabindex", "-1");
   element.setAttribute("draggable", "false");
@@ -76,6 +79,7 @@ export function applySkillTokenDecoration(element: HTMLElement) {
 
 export function clearSkillTokenDecoration(element: HTMLElement) {
   delete element.dataset.skillToken;
+  delete element.dataset.skillHref;
   element.removeAttribute("contenteditable");
   element.removeAttribute("tabindex");
   element.removeAttribute("draggable");
