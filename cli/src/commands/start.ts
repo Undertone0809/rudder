@@ -50,6 +50,7 @@ interface StartCommandOptions {
   cli?: boolean;
   desktop?: boolean;
   version?: string;
+  targetVersion?: string;
   repo?: string;
   outputDir?: string;
   desktopInstallDir?: string;
@@ -749,7 +750,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
   const installCli = opts.cli !== false;
   const installDesktop = opts.desktop !== false;
   const repo = opts.repo?.trim() || DEFAULT_DESKTOP_RELEASE_REPO;
-  const version = opts.version?.trim() || resolveCurrentCliVersion();
+  const version = opts.targetVersion?.trim() || opts.version?.trim() || resolveCurrentCliVersion();
   const dryRun = opts.dryRun === true;
 
   if (!installCli && !installDesktop) {

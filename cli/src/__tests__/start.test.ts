@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Writable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
+import { runCli } from "../program.js";
 import {
   CLI_NPM_PACKAGE_NAME,
   detectPersistentCliState,
@@ -37,6 +38,7 @@ import {
   resolveDesktopReleaseTag,
   selectChecksumAsset,
   selectDesktopAsset,
+  startCommand,
 } from "../commands/start.js";
 import { createByteProgress, formatByteProgress } from "../utils/progress.js";
 
@@ -251,6 +253,52 @@ describe("persistent CLI install helpers", () => {
 });
 
 describe("desktop start command helpers", () => {
+  it("parses an explicit desktop target version without invoking the root CLI version flag", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await expect(runCli([
+        process.execPath,
+        "rudder",
+        "start",
+        "--no-cli",
+        "--target-version",
+        "0.3.1",
+        "--repo",
+        "example/rudder",
+        "--dry-run",
+        "--no-open",
+      ])).resolves.toBe(0);
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+
+    const output = [
+      ...stdout.mock.calls.map((call) => String(call[0])),
+      ...stderr.mock.calls.map((call) => String(call[0])),
+    ].join("");
+    expect(output).not.toBe("0.3.1\n");
+  });
+
+  it("uses the explicit desktop target version before the legacy start version option", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await expect(startCommand({
+        cli: false,
+        targetVersion: "0.3.1",
+        version: "0.3.1-beta.1",
+        repo: "example/rudder",
+        dryRun: true,
+        open: false,
+      })).resolves.toBeUndefined();
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+
   it("copies portable app bundles without rewriting relative symlinks", async () => {
     if (process.platform === "win32") return;
 

@@ -461,7 +461,7 @@ async function installUpdate(version: string | null | undefined): Promise<Deskto
       ...(profileName ? ["--local-env", profileName] : []),
       "start",
       "--no-cli",
-      "--version",
+      "--target-version",
       normalizedVersion,
       "--repo",
       DESKTOP_GITHUB_REPO,

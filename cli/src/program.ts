@@ -58,6 +58,7 @@ export function createProgram(): Command {
     .option("--no-cli", "Skip persistent CLI installation")
     .option("--no-desktop", "Skip desktop app installation")
     .option("--version <version>", "Rudder version to start (default: current CLI version)")
+    .option("--target-version <version>", "Rudder version to start; avoids the root CLI version flag")
     .option("--repo <owner/repo>", "GitHub repository that hosts desktop releases")
     .option("--output-dir <path>", "Directory for downloaded desktop release assets")
     .option("--desktop-install-dir <path>", "Directory for the portable Desktop install")
