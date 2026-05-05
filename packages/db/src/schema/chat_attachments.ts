@@ -1,4 +1,4 @@
-import { index, pgTable, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { index, pgTable, timestamp, uuid } from "drizzle-orm/pg-core";
 import { assets } from "./assets.js";
 import { chatConversations } from "./chat_conversations.js";
 import { chatMessages } from "./chat_messages.js";
@@ -24,6 +24,6 @@ export const chatAttachments = pgTable(
       table.orgId,
       table.conversationId,
     ),
-    assetUq: uniqueIndex("chat_attachments_asset_uq").on(table.assetId),
+    assetIdx: index("chat_attachments_asset_idx").on(table.assetId),
   }),
 );

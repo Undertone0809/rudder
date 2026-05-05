@@ -10,6 +10,7 @@ import {
   agents,
   approvalComments,
   approvals,
+  assets,
   chatConversations,
   chatMessages,
   createDb,
@@ -23,6 +24,7 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { issueService } from "../services/issues.ts";
+import { chatService } from "../services/chats.ts";
 import { messengerService } from "../services/messenger.ts";
 
 type EmbeddedPostgresInstance = {
@@ -93,6 +95,7 @@ async function startTempDatabase() {
 
 describe("messengerService and issue follows", () => {
   let db!: ReturnType<typeof createDb>;
+  let chatSvc!: ReturnType<typeof chatService>;
   let issueSvc!: ReturnType<typeof issueService>;
   let messengerSvc!: ReturnType<typeof messengerService>;
   let instance: EmbeddedPostgresInstance | null = null;
@@ -101,6 +104,7 @@ describe("messengerService and issue follows", () => {
   beforeAll(async () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
+    chatSvc = chatService(db);
     issueSvc = issueService(db);
     messengerSvc = messengerService(db);
     instance = started.instance;
@@ -112,6 +116,7 @@ describe("messengerService and issue follows", () => {
     await db.delete(messengerThreadUserStates);
     await db.delete(chatMessages);
     await db.delete(chatConversations);
+    await db.delete(assets);
     await db.delete(approvalComments);
     await db.delete(approvals);
     await db.delete(heartbeatRuns);
@@ -208,6 +213,60 @@ describe("messengerService and issue follows", () => {
     expect(assignedItem?.body).toContain("assigned to me");
     expect(createdItem?.metadata).toMatchObject({ assignedToMe: false, createdByMe: true });
     expect(issuesSummary?.preview).toBe("Review Summary: render enough comment body to judge the issue update");
+  });
+
+  it("preserves chat attachments when editing a user message into a new turn variant", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const userId = "board-user-edit-attachments";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Attachment Org",
+      urlKey: deriveOrganizationUrlKey("Chat Attachment Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Attachment edit",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+
+    const original = await chatSvc.addUserChatMessage(conversationId, orgId, "Original message");
+    await chatSvc.createAttachment({
+      orgId,
+      conversationId,
+      messageId: original.id,
+      provider: "local_disk",
+      objectKey: `orgs/${orgId}/chats/${conversationId}/${randomUUID()}/image.png`,
+      contentType: "image/png",
+      byteSize: 8,
+      sha256: "sha256",
+      originalFilename: "image.png",
+      createdByAgentId: null,
+      createdByUserId: userId,
+    });
+
+    const edited = await chatSvc.addUserChatMessage(
+      conversationId,
+      orgId,
+      "Edited message",
+      original.id,
+    );
+    const messages = await chatSvc.listMessages(conversationId);
+    const originalAfterEdit = messages.find((message) => message.id === original.id);
+    const editedAfterEdit = messages.find((message) => message.id === edited.id);
+
+    expect(originalAfterEdit?.supersededAt).toBeInstanceOf(Date);
+    expect(originalAfterEdit?.attachments).toHaveLength(1);
+    expect(edited.attachments).toHaveLength(1);
+    expect(editedAfterEdit?.attachments).toHaveLength(1);
+    expect(editedAfterEdit?.attachments[0]?.assetId).toBe(originalAfterEdit?.attachments[0]?.assetId);
+    expect(editedAfterEdit?.attachments[0]?.contentPath).toBe(originalAfterEdit?.attachments[0]?.contentPath);
   });
 
   it("does not count self-authored issue activity as Messenger attention", async () => {
