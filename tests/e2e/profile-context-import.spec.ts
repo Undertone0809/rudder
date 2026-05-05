@@ -17,7 +17,9 @@ test.describe("Profile context import", () => {
     await modal.locator('a[href$="/instance/settings/profile"]').click();
     await expect(modal.getByRole("heading", { name: "Profile", exact: true })).toBeVisible();
 
-    await expect(modal.getByRole("button", { name: "Copy import prompt" })).toBeVisible();
+    await expect(modal.getByText("Import memories from another AI")).toBeVisible();
+    await expect(modal.getByText(/paste the exported memory below/i)).toBeVisible();
+    await expect(modal.getByRole("button", { name: "Copy memory import prompt" })).toBeVisible();
 
     const providerExport = [
       "```markdown",

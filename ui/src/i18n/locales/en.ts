@@ -506,7 +506,10 @@ export const en = {
     "Share any standing context that helps Rudder interpret your requests in chat.",
   "profile.moreAboutYou.help":
     "Rudder only injects this into the chat scene. If you leave it blank, nothing is added to the chat system prompt.",
-  "profile.import.copyPrompt": "Copy import prompt",
+  "profile.import.helper.title": "Import memories from another AI",
+  "profile.import.helper.description":
+    "Copy this prompt into ChatGPT, Claude, or another AI provider, then paste the exported memory below.",
+  "profile.import.copyPrompt": "Copy memory import prompt",
   "profile.import.copiedButton": "Copied",
   "profile.import.copied.title": "Prompt copied",
   "profile.import.copied.body": "Paste the result into More about you, then edit and save.",

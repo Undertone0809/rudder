@@ -46,7 +46,9 @@ provider-backed memory.
 
 ## Scope
 
-- Add a `Copy import prompt` action next to `More about you`.
+- Add a lightweight import helper next to `More about you` that names the
+  workflow: import memories from ChatGPT, Claude, or another AI provider.
+- Include a `Copy memory import prompt` action inside that helper.
 - Copy the provider-export prompt to the system clipboard.
 - Tell the operator to paste the other AI's result directly into `More about
   you`, then edit and save.
@@ -62,7 +64,7 @@ provider-backed memory.
 
 ## Implementation Plan
 
-1. Add the provider-export prompt copy action in `InstanceProfileSettings`.
+1. Add the provider-export prompt helper in `InstanceProfileSettings`.
 2. Keep `More about you` as the only paste, edit, review, and save surface.
 3. Add English and Chinese i18n strings for the copy helper and toast.
 4. Raise the shared `moreAboutYou` validation limit and UI `maxLength`.

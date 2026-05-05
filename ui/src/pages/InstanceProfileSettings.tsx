@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, IdCard, MessageSquareText, UserRound } from "lucide-react";
+import { Brain, Check, Copy, IdCard, MessageSquareText, UserRound } from "lucide-react";
 import { OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH } from "@rudderhq/shared";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import {
@@ -173,12 +173,19 @@ export function InstanceProfileSettings() {
           </div>
 
           <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label htmlFor="profile-more-about-you" className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <MessageSquareText className="h-4 w-4 text-muted-foreground" />
-                {t("profile.moreAboutYou.label")}
-              </label>
-              <Button type="button" variant="outline" size="sm" onClick={handleCopyPrompt}>
+            <label htmlFor="profile-more-about-you" className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <MessageSquareText className="h-4 w-4 text-muted-foreground" />
+              {t("profile.moreAboutYou.label")}
+            </label>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[calc(var(--radius-md)-1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_76%,transparent)] px-3 py-2.5">
+              <div className="min-w-0 space-y-0.5">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Brain className="h-4 w-4 text-muted-foreground" />
+                  {t("profile.import.helper.title")}
+                </div>
+                <p className="text-xs leading-5 text-muted-foreground">{t("profile.import.helper.description")}</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={handleCopyPrompt} className="shrink-0">
                 {promptCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                 {promptCopied ? t("profile.import.copiedButton") : t("profile.import.copyPrompt")}
               </Button>

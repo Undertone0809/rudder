@@ -55,7 +55,9 @@ vi.mock("../context/I18nContext", () => ({
         "profile.moreAboutYou.label": "More about you",
         "profile.moreAboutYou.placeholder": "Share standing context.",
         "profile.moreAboutYou.help": "More about you help",
-        "profile.import.copyPrompt": "Copy import prompt",
+        "profile.import.helper.title": "Import memories from another AI",
+        "profile.import.helper.description": "Copy this prompt into another AI provider, then paste the exported memory below.",
+        "profile.import.copyPrompt": "Copy memory import prompt",
         "profile.import.copiedButton": "Copied",
         "profile.import.copied.title": "Prompt copied",
         "profile.import.copied.body": "Paste the result into More about you, then edit and save.",
@@ -125,8 +127,11 @@ describe("InstanceProfileSettings", () => {
       await Promise.resolve();
     });
 
+    expect(container.textContent).toContain("Import memories from another AI");
+    expect(container.textContent).toContain("paste the exported memory below");
+
     const copyButton = Array.from(document.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Copy import prompt"));
+      .find((button) => button.textContent?.includes("Copy memory import prompt"));
     expect(copyButton).toBeTruthy();
 
     await act(async () => {
