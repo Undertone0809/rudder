@@ -18,7 +18,7 @@ describe("skill-reference", () => {
       ),
     ).toEqual({
       href: "/workspace/.agents/skills/build-advisor/SKILL.md",
-      label: "rudder/build-advisor",
+      label: "build-advisor",
     });
 
     expect(
@@ -28,7 +28,17 @@ describe("skill-reference", () => {
       ),
     ).toEqual({
       href: "/workspace/.agents/skills/build-advisor/SKILL.md",
-      label: "rudder/build-advisor",
+      label: "build-advisor",
+    });
+
+    expect(
+      parseSkillReference(
+        "/workspace/.agents/skills/build-advisor/SKILL.md",
+        "build-advisor",
+      ),
+    ).toEqual({
+      href: "/workspace/.agents/skills/build-advisor/SKILL.md",
+      label: "build-advisor",
     });
 
     expect(
@@ -68,7 +78,7 @@ describe("skill-reference", () => {
     expect(
       removeSkillReferenceFromMarkdown(
         "Use this\n\n[rudder/build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md)\u00A0",
-        "rudder/build-advisor",
+        "build-advisor",
       ),
     ).toBe("Use this");
   });

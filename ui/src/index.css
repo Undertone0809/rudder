@@ -1594,7 +1594,7 @@ a.rudder-skill-token {
   font-size: 0.75rem;
   font-weight: 650;
   line-height: 1.2;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   text-decoration: none;
   vertical-align: baseline;
   white-space: nowrap;
@@ -1607,12 +1607,11 @@ a.rudder-skill-token {
 a.rudder-skill-token::before {
   content: "";
   display: inline-block;
-  width: 0.48rem;
-  height: 0.48rem;
-  border-radius: 999px;
-  background: currentColor;
-  opacity: 0.92;
-  box-shadow: 0 0 0 0.12rem color-mix(in oklab, currentColor 18%, transparent);
+  width: 0.76rem;
+  height: 0.76rem;
+  background: #2f80ed;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .rudder-mdxeditor-content .rudder-skill-token:hover,

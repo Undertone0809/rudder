@@ -180,9 +180,15 @@ export function removeAtomicInlineTokenFromMarkdown(
   token: Pick<AtomicInlineTokenElement, "href" | "kind" | "label">,
 ) {
   const normalizedMarkdown = normalizeMarkdown(markdown);
-  const labelPrefix = token.kind === "skill" ? String.raw`(?:\$)?` : String.raw`(?:@)?`;
+  const tokenLabel = token.label.trim();
+  const skillLabelPattern = tokenLabel.includes("/")
+    ? escapeRegExp(tokenLabel)
+    : String.raw`(?:[a-z0-9._-]+\/)*${escapeRegExp(tokenLabel)}`;
+  const labelPattern = token.kind === "skill"
+    ? String.raw`(?:\$)?${skillLabelPattern}`
+    : String.raw`(?:@)?${escapeRegExp(tokenLabel)}`;
   const referencePattern = new RegExp(
-    String.raw`\[${labelPrefix}${escapeRegExp(token.label)}\]\(${escapeRegExp(token.href)}\)[ \t\u00A0]?`,
+    String.raw`\[${labelPattern}\]\(${escapeRegExp(token.href)}\)[ \t\u00A0]?`,
     "u",
   );
   const nextMarkdown = normalizedMarkdown.replace(referencePattern, "");

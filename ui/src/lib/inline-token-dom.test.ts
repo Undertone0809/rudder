@@ -37,7 +37,7 @@ describe("inline token DOM deletion", () => {
     const token = findAdjacentAtomicInlineTokenElement(selection, "backward");
     expect(token?.element).toBe(skill);
     expect(token?.kind).toBe("skill");
-    expect(token?.label).toBe("rudder/build-advisor");
+    expect(token?.label).toBe("build-advisor");
   });
 
   it("finds a mention token when backspacing from the trailing inline space", () => {
@@ -90,5 +90,18 @@ describe("inline token DOM deletion", () => {
         label: "QA",
       }),
     ).toBe("Ask about this");
+  });
+
+  it("removes a prefixed skill reference when the rendered token only shows the slug", () => {
+    const href = "/workspace/.agents/skills/build-advisor/SKILL.md";
+    const markdown = `Use [rudder/build-advisor](${href}) here`;
+
+    expect(
+      removeAtomicInlineTokenFromMarkdown(markdown, {
+        href,
+        kind: "skill",
+        label: "build-advisor",
+      }),
+    ).toBe("Use here");
   });
 });

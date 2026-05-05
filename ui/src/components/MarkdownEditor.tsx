@@ -29,7 +29,7 @@ import {
   type Translation,
   type RealmPlugin,
 } from "@mdxeditor/editor";
-import { Sparkles } from "lucide-react";
+import { Boxes } from "lucide-react";
 import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
@@ -1280,7 +1280,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                           onMouseEnter={() => setMentionIndex(i)}
                         >
                           {option.kind === "skill" ? (
-                            <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            <Boxes className="h-4 w-4 shrink-0 text-[#2f80ed]" />
                           ) : option.kind === "project" && option.projectId ? (
                             <span
                               className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full border border-border/50"

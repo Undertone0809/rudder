@@ -484,7 +484,8 @@ describe("IssueDetail", () => {
     expect(capturedMentions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: "skill",
-        name: "org/org-two/builder/build-advisor",
+        name: "build-advisor",
+        skillRefLabel: "build-advisor",
         skillMarkdownTarget: "/workspace/skills/build-advisor/SKILL.md",
       }),
     ]));

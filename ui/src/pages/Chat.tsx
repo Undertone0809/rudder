@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
+  Boxes,
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -2961,7 +2962,7 @@ function ChatWorkspace() {
                       className="chat-composer-menu-row"
                       onClick={() => insertSkillReference(entry)}
                     >
-                      <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <Boxes className="h-4 w-4 shrink-0 text-[#2f80ed]" />
                       <span className="flex min-w-0 flex-1 items-baseline gap-3">
                         <span className="shrink-0 truncate font-medium text-foreground">
                           {entry.skillDisplayName}
