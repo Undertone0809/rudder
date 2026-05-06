@@ -152,6 +152,30 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain("rudder/build-advisor");
   });
 
+  it("renders markdown when agent comments contain escaped newline sequences", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"Plan complete.\\n\\n1. Confirm positioning\\n2. Run R-3 and R-4 first"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("<ol>");
+    expect(html).toContain("<li>Confirm positioning</li>");
+    expect(html).not.toContain("\\n");
+  });
+
+  it("leaves isolated escaped newline examples alone", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{"Use `\\n` for a newline escape."}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("\\n");
+  });
+
   it("lets callers intercept ordinary markdown links", () => {
     const onLinkClick = vi.fn(({ event }) => event.preventDefault());
     const container = render(

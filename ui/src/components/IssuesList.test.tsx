@@ -95,6 +95,8 @@ const baseIssue: Issue = {
   boardOrder: 1000,
   assigneeAgentId: null,
   assigneeUserId: null,
+  reviewerAgentId: null,
+  reviewerUserId: null,
   checkoutRunId: null,
   executionRunId: null,
   executionAgentNameKey: null,

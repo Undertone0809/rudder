@@ -73,6 +73,24 @@ export function describeRunReason(run: RunReasonInput): RunReasonSummary {
         description: "This run started because an issue was assigned to the agent.",
         tone: "task",
       };
+    case "issue_review_requested":
+      return {
+        label: "Review requested",
+        description: "This run started because an issue is ready for this agent to review.",
+        tone: "task",
+      };
+    case "issue_convergence_review_requested":
+      return {
+        label: "Convergence review",
+        description: "This run started because the assignee did not converge the issue after follow-up.",
+        tone: "followup",
+      };
+    case "issue_changes_requested":
+      return {
+        label: "Changes requested",
+        description: "This run started because a reviewer requested changes on the issue.",
+        tone: "task",
+      };
     case "issue_commented":
       return {
         label: "Comment added",
@@ -133,6 +151,14 @@ export function describeRunReason(run: RunReasonInput): RunReasonSummary {
     return {
       label: "Task assigned",
       description: "This run started because work was assigned to the agent.",
+      tone: "task",
+    };
+  }
+
+  if (run.invocationSource === "review") {
+    return {
+      label: "Review requested",
+      description: "This run started because an issue was routed to this agent for review.",
       tone: "task",
     };
   }

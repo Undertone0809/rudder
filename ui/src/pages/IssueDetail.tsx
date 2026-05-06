@@ -445,6 +445,13 @@ function formatAction(action: string, details?: Record<string, unknown> | null):
           : "unassigned the issue",
       );
     }
+    if (details.reviewerAgentId !== undefined || details.reviewerUserId !== undefined) {
+      parts.push(
+        details.reviewerAgentId || details.reviewerUserId
+          ? "changed the reviewer"
+          : "cleared the reviewer",
+      );
+    }
     if (details.title !== undefined) parts.push("updated the title");
     if (details.description !== undefined) parts.push("updated the description");
 

@@ -574,6 +574,8 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             orgId: input.orgId,
             projectId: input.projectId,
             assigneeAgentId: input.assigneeAgentId,
+            reviewerAgentId: input.reviewerAgentId,
+            reviewerUserId: input.reviewerUserId,
             status: input.status,
             limit: input.limit,
             offset: input.offset,
@@ -595,6 +597,8 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             status: input.status,
             priority: input.priority,
             assigneeAgentId: input.assigneeAgentId,
+            reviewerAgentId: input.reviewerAgentId,
+            reviewerUserId: input.reviewerUserId,
           });
         },
 

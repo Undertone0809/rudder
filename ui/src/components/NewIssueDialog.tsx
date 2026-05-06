@@ -238,6 +238,7 @@ export function NewIssueDialog() {
   const [selectedLabelIds, setSelectedLabelIds] = useState<string[]>([]);
   const [labelSearch, setLabelSearch] = useState("");
   const [assigneeValue, setAssigneeValue] = useState("");
+  const [reviewerValue, setReviewerValue] = useState("");
   const [projectId, setProjectId] = useState("");
   const [projectWorkspaceId, setProjectWorkspaceId] = useState("");
   const [assigneeOptionsOpen, setAssigneeOptionsOpen] = useState(false);
@@ -300,8 +301,14 @@ export function NewIssueDialog() {
   const selectedAssignee = useMemo(() => parseAssigneeValue(assigneeValue), [assigneeValue]);
   const selectedAssigneeAgentId = selectedAssignee.assigneeAgentId;
   const selectedAssigneeUserId = selectedAssignee.assigneeUserId;
+  const selectedReviewer = useMemo(() => parseAssigneeValue(reviewerValue), [reviewerValue]);
+  const selectedReviewerAgentId = selectedReviewer.assigneeAgentId;
+  const selectedReviewerUserId = selectedReviewer.assigneeUserId;
   const currentAssignee = selectedAssigneeAgentId
     ? (agents ?? []).find((agent) => agent.id === selectedAssigneeAgentId) ?? null
+    : null;
+  const currentReviewer = selectedReviewerAgentId
+    ? (agents ?? []).find((agent) => agent.id === selectedReviewerAgentId) ?? null
     : null;
 
   const assigneeAdapterType = currentAssignee?.agentRuntimeType ?? null;
@@ -478,6 +485,7 @@ export function NewIssueDialog() {
       priority,
       labelIds: selectedLabelIds,
       assigneeValue,
+      reviewerValue,
       projectId,
       projectWorkspaceId,
       assigneeModelOverride,
@@ -494,6 +502,7 @@ export function NewIssueDialog() {
       priority,
       labelIds: selectedLabelIds,
       assigneeValue,
+      reviewerValue,
       projectId,
       projectWorkspaceId,
       assigneeModelOverride,
@@ -507,6 +516,7 @@ export function NewIssueDialog() {
     priority,
     selectedLabelIds,
     assigneeValue,
+    reviewerValue,
     projectId,
     projectWorkspaceId,
     assigneeModelOverride,
@@ -545,6 +555,10 @@ export function NewIssueDialog() {
         draft: savedDraft,
         defaultProjectId,
         defaultAssigneeValue: assigneeValueFromSelection(newIssueDefaults),
+        defaultReviewerValue: assigneeValueFromSelection({
+          assigneeAgentId: newIssueDefaults.reviewerAgentId,
+          assigneeUserId: newIssueDefaults.reviewerUserId,
+        }),
       });
       const restoredProjectId = restoredValues.projectId;
       const restoredProject = orderedProjects.find((project) => project.id === restoredProjectId);
@@ -555,6 +569,7 @@ export function NewIssueDialog() {
       setSelectedLabelIds(restoredValues.labelIds);
       setLabelSearch("");
       setAssigneeValue(restoredValues.assigneeValue);
+      setReviewerValue(restoredValues.reviewerValue);
       setProjectId(restoredProjectId);
       setProjectWorkspaceId(savedDraft.projectWorkspaceId ?? defaultProjectWorkspaceIdForProject(restoredProject));
       setAssigneeModelOverride(savedDraft.assigneeModelOverride ?? "");
@@ -571,6 +586,10 @@ export function NewIssueDialog() {
       setProjectId(defaultProjectId);
       setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(defaultProject));
       setAssigneeValue(assigneeValueFromSelection(newIssueDefaults));
+      setReviewerValue(assigneeValueFromSelection({
+        assigneeAgentId: newIssueDefaults.reviewerAgentId,
+        assigneeUserId: newIssueDefaults.reviewerUserId,
+      }));
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
@@ -580,6 +599,10 @@ export function NewIssueDialog() {
         draft,
         defaultProjectId,
         defaultAssigneeValue: assigneeValueFromSelection(newIssueDefaults),
+        defaultReviewerValue: assigneeValueFromSelection({
+          assigneeAgentId: newIssueDefaults.reviewerAgentId,
+          assigneeUserId: newIssueDefaults.reviewerUserId,
+        }),
       });
       const restoredProjectId = restoredValues.projectId;
       const restoredProject = orderedProjects.find((project) => project.id === restoredProjectId);
@@ -590,6 +613,7 @@ export function NewIssueDialog() {
       setSelectedLabelIds(restoredValues.labelIds);
       setLabelSearch("");
       setAssigneeValue(restoredValues.assigneeValue);
+      setReviewerValue(restoredValues.reviewerValue);
       setProjectId(restoredProjectId);
       setProjectWorkspaceId(draft.projectWorkspaceId ?? defaultProjectWorkspaceIdForProject(restoredProject));
       setAssigneeModelOverride(draft.assigneeModelOverride ?? "");
@@ -606,6 +630,10 @@ export function NewIssueDialog() {
       setProjectId(defaultProjectId);
       setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(defaultProject));
       setAssigneeValue(assigneeValueFromSelection(newIssueDefaults));
+      setReviewerValue(assigneeValueFromSelection({
+        assigneeAgentId: newIssueDefaults.reviewerAgentId,
+        assigneeUserId: newIssueDefaults.reviewerUserId,
+      }));
       setAssigneeModelOverride("");
       setAssigneeThinkingEffort("");
       setAssigneeChrome(false);
@@ -647,6 +675,7 @@ export function NewIssueDialog() {
     setSelectedLabelIds([]);
     setLabelSearch("");
     setAssigneeValue("");
+    setReviewerValue("");
     setProjectId("");
     setProjectWorkspaceId("");
     setAssigneeOptionsOpen(false);
@@ -665,6 +694,7 @@ export function NewIssueDialog() {
     if (orgId === effectiveCompanyId) return;
     setDialogCompanyId(orgId);
     setAssigneeValue("");
+    setReviewerValue("");
     setProjectId("");
     setProjectWorkspaceId("");
     setSelectedLabelIds([]);
@@ -683,6 +713,7 @@ export function NewIssueDialog() {
       priority,
       labelIds: selectedLabelIds,
       assigneeValue,
+      reviewerValue,
       projectId,
       projectWorkspaceId,
       assigneeModelOverride,
@@ -721,6 +752,8 @@ export function NewIssueDialog() {
         priority,
         assigneeAgentId: selectedAssigneeAgentId,
         assigneeUserId: selectedAssigneeUserId,
+        reviewerAgentId: selectedReviewerAgentId,
+        reviewerUserId: selectedReviewerUserId,
         projectId,
         labelIds: selectedLabelIds,
         projectWorkspaceId,
@@ -884,6 +917,20 @@ export function NewIssueDialog() {
     ],
     [agents, currentUserId, recentAssigneeIds],
   );
+  const reviewerOptions = useMemo<InlineEntityOption[]>(
+    () => [
+      ...currentUserAssigneeOption(currentUserId),
+      ...sortAgentsByRecency(
+        (agents ?? []).filter((agent) => agent.status !== "terminated"),
+        recentAssigneeIds,
+      ).map((agent) => ({
+        id: assigneeValueFromSelection({ assigneeAgentId: agent.id }),
+        label: formatChatAgentLabel(agent),
+        searchText: `${agent.name} ${agent.role} ${agent.title ?? ""}`,
+      })),
+    ],
+    [agents, currentUserId, recentAssigneeIds],
+  );
   const projectOptions = useMemo<InlineEntityOption[]>(
     () =>
       orderedProjects.map((project) => ({
@@ -900,6 +947,7 @@ export function NewIssueDialog() {
     priority,
     labelIds: selectedLabelIds,
     assigneeValue,
+    reviewerValue,
     projectId,
     projectWorkspaceId,
     assigneeModelOverride,
@@ -952,8 +1000,8 @@ export function NewIssueDialog() {
         className={cn(
           "p-0 gap-0 flex flex-col max-h-[calc(100dvh-2rem)]",
           expanded
-            ? "sm:max-w-2xl h-[calc(100dvh-2rem)]"
-            : "sm:max-w-lg"
+            ? "sm:max-w-[1040px]"
+            : "sm:max-w-[920px]"
         )}
         onKeyDown={handleKeyDown}
         onEscapeKeyDown={(event) => {
@@ -1100,10 +1148,10 @@ export function NewIssueDialog() {
           />
         </div>
 
-        <div className="px-4 pb-2 shrink-0">
-          <div className="overflow-x-auto overscroll-x-contain">
-            <div className="inline-flex items-center gap-2 text-sm text-muted-foreground flex-wrap sm:flex-nowrap sm:min-w-max">
-              <span>For</span>
+        <div className="px-4 pb-3 shrink-0">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="min-w-0 space-y-1">
+              <div className="text-[11px] font-medium text-muted-foreground">Assignee</div>
               <InlineEntitySelector
                 ref={assigneeSelectorRef}
                 value={assigneeValue}
@@ -1113,6 +1161,8 @@ export function NewIssueDialog() {
                 noneLabel="No assignee"
                 searchPlaceholder="Search assignees..."
                 emptyMessage="No assignees found."
+                variant="field"
+                className="w-full"
                 onChange={(value) => {
                   const nextAssignee = parseAssigneeValue(value);
                   if (nextAssignee.assigneeAgentId) {
@@ -1138,7 +1188,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     )
                   ) : (
-                    <span className="text-muted-foreground">Assignee</span>
+                    <span className="text-muted-foreground">No assignee</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1154,7 +1204,9 @@ export function NewIssueDialog() {
                   );
                 }}
               />
-              <span>in</span>
+            </div>
+            <div className="min-w-0 space-y-1">
+              <div className="text-[11px] font-medium text-muted-foreground">Project</div>
               <InlineEntitySelector
                 ref={projectSelectorRef}
                 value={projectId}
@@ -1164,6 +1216,8 @@ export function NewIssueDialog() {
                 noneLabel="No project"
                 searchPlaceholder="Search projects..."
                 emptyMessage="No projects found."
+                variant="field"
+                className="w-full"
                 onChange={handleProjectChange}
                 onConfirm={() => {
                   descriptionEditorRef.current?.focus();
@@ -1178,7 +1232,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
-                    <span className="text-muted-foreground">Project</span>
+                    <span className="text-muted-foreground">No project</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1190,6 +1244,56 @@ export function NewIssueDialog() {
                         className="h-3.5 w-3.5 shrink-0 rounded-sm"
                         style={projectColorBackgroundStyle(project?.color)}
                       />
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  );
+                }}
+              />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <div className="text-[11px] font-medium text-muted-foreground">Reviewer</div>
+              <InlineEntitySelector
+                value={reviewerValue}
+                options={reviewerOptions}
+                placeholder="Reviewer"
+                disablePortal
+                noneLabel="No reviewer"
+                searchPlaceholder="Search reviewers..."
+                emptyMessage="No reviewers found."
+                variant="field"
+                className="w-full"
+                onChange={(value) => {
+                  const nextReviewer = parseAssigneeValue(value);
+                  if (nextReviewer.assigneeAgentId) {
+                    trackRecentAssignee(nextReviewer.assigneeAgentId);
+                  }
+                  setReviewerValue(value);
+                }}
+                onConfirm={() => {
+                  descriptionEditorRef.current?.focus();
+                }}
+                renderTriggerValue={(option) =>
+                  option ? (
+                    currentReviewer ? (
+                      <>
+                        <AgentIcon icon={currentReviewer.icon} role={currentReviewer.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    ) : (
+                      <span className="truncate">{option.label}</span>
+                    )
+                  ) : (
+                    <span className="text-muted-foreground">No reviewer</span>
+                  )
+                }
+                renderOption={(option) => {
+                  if (!option.id) return <span className="truncate">{option.label}</span>;
+                  const reviewer = parseAssigneeValue(option.id).assigneeAgentId
+                    ? (agents ?? []).find((agent) => agent.id === parseAssigneeValue(option.id).assigneeAgentId)
+                    : null;
+                  return (
+                    <>
+                      {reviewer ? <AgentIcon icon={reviewer.icon} role={reviewer.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
                       <span className="truncate">{option.label}</span>
                     </>
                   );
@@ -1259,7 +1363,7 @@ export function NewIssueDialog() {
 
         {/* Description */}
         <div
-          className={cn("px-4 pb-2 overflow-y-auto min-h-0 border-t border-border/60 pt-3", expanded ? "flex-1" : "")}
+          className="px-4 pb-2 overflow-y-auto min-h-0 border-t border-border/60 pt-3"
           onDragEnter={handleFileDragEnter}
           onDragOver={handleFileDragOver}
           onDragLeave={handleFileDragLeave}
@@ -1278,7 +1382,7 @@ export function NewIssueDialog() {
               placeholder="Add description..."
               bordered={false}
               mentions={mentionOptions}
-              contentClassName={cn("text-sm text-muted-foreground pb-12", expanded ? "min-h-[220px]" : "min-h-[120px]")}
+              contentClassName="text-sm text-muted-foreground pb-12 min-h-[88px]"
               imageUploadHandler={async (file) => {
                 const asset = await uploadDescriptionImage.mutateAsync(file);
                 return asset.contentPath;

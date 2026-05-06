@@ -23,6 +23,8 @@ export const issuesApi = {
       assigneeAgentId?: string;
       participantAgentId?: string;
       assigneeUserId?: string;
+      reviewerAgentId?: string;
+      reviewerUserId?: string;
       touchedByUserId?: string;
       unreadForUserId?: string;
       labelId?: string;
@@ -39,6 +41,8 @@ export const issuesApi = {
     if (filters?.assigneeAgentId) params.set("assigneeAgentId", filters.assigneeAgentId);
     if (filters?.participantAgentId) params.set("participantAgentId", filters.participantAgentId);
     if (filters?.assigneeUserId) params.set("assigneeUserId", filters.assigneeUserId);
+    if (filters?.reviewerAgentId) params.set("reviewerAgentId", filters.reviewerAgentId);
+    if (filters?.reviewerUserId) params.set("reviewerUserId", filters.reviewerUserId);
     if (filters?.touchedByUserId) params.set("touchedByUserId", filters.touchedByUserId);
     if (filters?.unreadForUserId) params.set("unreadForUserId", filters.unreadForUserId);
     if (filters?.labelId) params.set("labelId", filters.labelId);

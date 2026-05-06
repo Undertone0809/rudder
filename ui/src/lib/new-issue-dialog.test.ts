@@ -111,6 +111,25 @@ describe("buildNewIssueCreateRequest", () => {
       }),
     );
   });
+
+  it("includes reviewer fields in the create payload", () => {
+    expect(
+      buildNewIssueCreateRequest({
+        title: "Route review",
+        description: "",
+        status: "in_review",
+        priority: "medium",
+        reviewerAgentId: "11111111-1111-4111-8111-111111111111",
+        projectId: "",
+        labelIds: [],
+        projectWorkspaceId: "",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        reviewerAgentId: "11111111-1111-4111-8111-111111111111",
+      }),
+    );
+  });
 });
 
 describe("resolveDraftBackedNewIssueValues", () => {
@@ -133,6 +152,7 @@ describe("resolveDraftBackedNewIssueValues", () => {
         },
         defaultProjectId: "project-2",
         defaultAssigneeValue: "agent:agent-1",
+        defaultReviewerValue: "agent:reviewer-1",
       }),
     ).toEqual({
       status: "todo",
@@ -140,6 +160,7 @@ describe("resolveDraftBackedNewIssueValues", () => {
       projectId: "project-2",
       labelIds: ["label-1"],
       assigneeValue: "agent:agent-1",
+      reviewerValue: "",
     });
   });
 
@@ -153,9 +174,11 @@ describe("resolveDraftBackedNewIssueValues", () => {
           projectId: "project-1",
           labelIds: ["label-draft"],
           assigneeValue: "user:user-1",
+          reviewerValue: "agent:reviewer-1",
         },
         defaultProjectId: "",
         defaultAssigneeValue: "",
+        defaultReviewerValue: "",
       }),
     ).toEqual({
       status: "in_review",
@@ -163,6 +186,7 @@ describe("resolveDraftBackedNewIssueValues", () => {
       projectId: "project-1",
       labelIds: ["label-draft"],
       assigneeValue: "user:user-1",
+      reviewerValue: "agent:reviewer-1",
     });
   });
 });
@@ -176,6 +200,7 @@ describe("issue autosave and draft persistence", () => {
     priority: "high",
     labelIds: ["label-1"],
     assigneeValue: "agent:agent-1",
+    reviewerValue: "agent:reviewer-1",
     projectId: "project-1",
     projectWorkspaceId: "",
     assigneeModelOverride: "",

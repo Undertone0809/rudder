@@ -132,7 +132,7 @@ export const createAgentKeySchema = z.object({
 export type CreateAgentKey = z.infer<typeof createAgentKeySchema>;
 
 export const wakeAgentSchema = z.object({
-  source: z.enum(["timer", "assignment", "on_demand", "automation"]).optional().default("on_demand"),
+  source: z.enum(["timer", "assignment", "review", "on_demand", "automation"]).optional().default("on_demand"),
   triggerDetail: z.enum(["manual", "ping", "callback", "system"]).optional(),
   reason: z.string().optional().nullable(),
   payload: z.record(z.unknown()).optional().nullable(),

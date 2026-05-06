@@ -166,6 +166,8 @@ describe("heartbeat passive issue closeout", () => {
     agentRuntimeConfig?: Record<string, unknown>;
     runtimeConfig?: Record<string, unknown>;
     issueStatus?: "todo" | "in_progress";
+    reviewerAgent?: boolean;
+    reviewerUserId?: string | null;
   }) {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -205,6 +207,8 @@ describe("heartbeat passive issue closeout", () => {
       status: input?.issueStatus ?? "in_progress",
       priority: "medium",
       assigneeAgentId: agentId,
+      reviewerAgentId: input?.reviewerAgent ? agentId : null,
+      reviewerUserId: input?.reviewerUserId ?? null,
       issueNumber: 1,
       identifier: `${issuePrefix}-1`,
     });
@@ -309,6 +313,177 @@ describe("heartbeat passive issue closeout", () => {
     const issue = await getIssue(issueId);
     expect(issue?.executionRunId).toBe(followup?.id);
     expect(issue?.status).toBe("in_progress");
+  });
+
+  it("queues passive follow-up for reviewed assignee runs that comment without routing to review", async () => {
+    const { agentId, issueId, orgId } = await seedFixture({
+      reviewerAgent: true,
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => process.exit(0), 750)"],
+        timeoutSec: 5,
+      },
+    });
+    const run = await wakeIssueRun({ agentId, issueId });
+
+    await waitFor(async () => {
+      const current = await getRun(run.id);
+      return current?.status === "running" ? current : null;
+    });
+
+    const commentId = randomUUID();
+    await db.insert(issueComments).values({
+      id: commentId,
+      orgId,
+      issueId,
+      authorAgentId: agentId,
+      body: "Implementation is ready for review.",
+    });
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "agent",
+      actorId: agentId,
+      action: "issue.comment_added",
+      entityType: "issue",
+      entityId: issueId,
+      agentId,
+      runId: run.id,
+      details: { commentId },
+    });
+
+    const followup = await waitFor(async () => {
+      const runs = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, agentId));
+      return runs.find((row) => row.id !== run.id && row.invocationSource === "automation") ?? null;
+    });
+
+    expect(followup.contextSnapshot).toMatchObject({
+      issueId,
+      wakeReason: "issue_passive_followup",
+      reviewGate: {
+        reviewerAgentId: agentId,
+        closeOutRequirement: expect.stringContaining("Move the issue to in_review"),
+      },
+    });
+
+    const reviewWakeups = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.reason, "issue_review_requested"));
+    expect(reviewWakeups).toHaveLength(0);
+
+    const issue = await getIssue(issueId);
+    expect(issue?.status).toBe("in_progress");
+    expect(issue?.executionRunId).toBe(followup.id);
+  });
+
+  it("routes reviewed issues to reviewer convergence when passive follow-up attempts are exhausted", async () => {
+    const { agentId, issueId } = await seedFixture({ reviewerAgent: true });
+    const originRunId = randomUUID();
+    const run = await wakeIssueRun({
+      agentId,
+      issueId,
+      reason: "issue_passive_followup",
+      passiveFollowup: {
+        originRunId,
+        previousRunId: randomUUID(),
+        attempt: 2,
+        maxAttempts: 2,
+        reason: "missing_closure",
+        queuedAt: new Date().toISOString(),
+      },
+    });
+
+    const reviewRun = await waitFor(async () => {
+      const runs = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, agentId));
+      return runs.find((row) => row.id !== run.id && row.invocationSource === "review") ?? null;
+    });
+
+    expect(reviewRun.contextSnapshot).toMatchObject({
+      issueId,
+      source: "issue.passive_followup_exhausted",
+      wakeSource: "review",
+      wakeReason: "issue_convergence_review_requested",
+      role: "reviewer",
+      convergenceReview: {
+        originRunId,
+        previousRunId: run.id,
+        attempts: 2,
+        maxAttempts: 2,
+      },
+    });
+
+    const reviewWake = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, reviewRun.wakeupRequestId ?? ""))
+      .then((rows) => rows[0] ?? null);
+    expect(reviewWake).toMatchObject({
+      source: "review",
+      reason: "issue_convergence_review_requested",
+      requestedByActorType: "system",
+      requestedByActorId: "issue_closure_governance",
+    });
+
+    const convergenceActivity = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "issue.convergence_review_requested"))
+      .then((rows) => rows[0] ?? null);
+    expect(convergenceActivity?.details).toMatchObject({
+      issueId,
+      reviewerAgentId: agentId,
+      originRunId,
+      previousRunId: run.id,
+      attempts: 2,
+      maxAttempts: 2,
+      reason: "missing_closure",
+    });
+  });
+
+  it("records convergence attention for user-reviewed issues without agent reviewer wakeup", async () => {
+    const reviewerUserId = randomUUID();
+    const { agentId, issueId } = await seedFixture({ reviewerUserId });
+    const originRunId = randomUUID();
+    await wakeIssueRun({
+      agentId,
+      issueId,
+      reason: "issue_passive_followup",
+      passiveFollowup: {
+        originRunId,
+        previousRunId: randomUUID(),
+        attempt: 2,
+        maxAttempts: 2,
+        reason: "missing_closure",
+        queuedAt: new Date().toISOString(),
+      },
+    });
+
+    const convergenceActivity = await waitFor(async () => {
+      return db
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "issue.convergence_review_requested"))
+        .then((rows) => rows[0] ?? null);
+    });
+    expect(convergenceActivity?.details).toMatchObject({
+      issueId,
+      reviewerUserId,
+      attempts: 2,
+      maxAttempts: 2,
+      reason: "missing_closure",
+    });
+
+    const reviewWakeups = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.reason, "issue_convergence_review_requested"));
+    expect(reviewWakeups).toHaveLength(0);
   });
 
   it("does not queue passive follow-up when the run leaves a run-attributed progress comment", async () => {

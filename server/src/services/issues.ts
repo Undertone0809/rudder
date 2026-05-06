@@ -77,6 +77,8 @@ export interface IssueFilters {
   assigneeAgentId?: string;
   participantAgentId?: string;
   assigneeUserId?: string;
+  reviewerAgentId?: string;
+  reviewerUserId?: string;
   touchedByUserId?: string;
   unreadForUserId?: string;
   projectId?: string;
@@ -110,6 +112,7 @@ type IssueUserCommentStats = {
 type IssueUserContextInput = {
   createdByUserId: string | null;
   assigneeUserId: string | null;
+  reviewerUserId: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
 };
@@ -130,6 +133,7 @@ function touchedByUserCondition(orgId: string, userId: string) {
     (
       ${issues.createdByUserId} = ${userId}
       OR ${issues.assigneeUserId} = ${userId}
+      OR ${issues.reviewerUserId} = ${userId}
       OR EXISTS (
         SELECT 1
         FROM ${issueReadStates}
@@ -153,6 +157,7 @@ function participatedByAgentCondition(orgId: string, agentId: string) {
     (
       ${issues.createdByAgentId} = ${agentId}
       OR ${issues.assigneeAgentId} = ${agentId}
+      OR ${issues.reviewerAgentId} = ${agentId}
       OR EXISTS (
         SELECT 1
         FROM ${issueComments}
@@ -204,7 +209,8 @@ function myLastTouchAtExpr(orgId: string, userId: string) {
       COALESCE(${myLastCommentAt}, to_timestamp(0)),
       COALESCE(${myLastReadAt}, to_timestamp(0)),
       COALESCE(CASE WHEN ${issues.createdByUserId} = ${userId} THEN ${issues.createdAt} ELSE NULL END, to_timestamp(0)),
-      COALESCE(CASE WHEN ${issues.assigneeUserId} = ${userId} THEN ${issues.updatedAt} ELSE NULL END, to_timestamp(0))
+      COALESCE(CASE WHEN ${issues.assigneeUserId} = ${userId} THEN ${issues.updatedAt} ELSE NULL END, to_timestamp(0)),
+      COALESCE(CASE WHEN ${issues.reviewerUserId} = ${userId} THEN ${issues.updatedAt} ELSE NULL END, to_timestamp(0))
     )
   `;
 }
@@ -253,7 +259,8 @@ export function deriveIssueUserContext(
   const myLastReadAt = normalizeDate(stats?.myLastReadAt);
   const createdTouchAt = issue.createdByUserId === userId ? normalizeDate(issue.createdAt) : null;
   const assignedTouchAt = issue.assigneeUserId === userId ? normalizeDate(issue.updatedAt) : null;
-  const myLastTouchAt = [myLastCommentAt, myLastReadAt, createdTouchAt, assignedTouchAt]
+  const reviewerTouchAt = issue.reviewerUserId === userId ? normalizeDate(issue.updatedAt) : null;
+  const myLastTouchAt = [myLastCommentAt, myLastReadAt, createdTouchAt, assignedTouchAt, reviewerTouchAt]
     .filter((value): value is Date => value instanceof Date)
     .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
   const lastExternalCommentAt = normalizeDate(stats?.lastExternalCommentAt);
@@ -361,8 +368,8 @@ export function issueService(db: Db) {
     };
   }
 
-  async function assertAssignableAgent(orgId: string, agentId: string) {
-    const assignee = await db
+  async function assertIssueAgentPrincipal(orgId: string, agentId: string, label: "Assignee" | "Reviewer") {
+    const principal = await db
       .select({
         id: agents.id,
         orgId: agents.orgId,
@@ -372,19 +379,19 @@ export function issueService(db: Db) {
       .where(eq(agents.id, agentId))
       .then((rows) => rows[0] ?? null);
 
-    if (!assignee) throw notFound("Assignee agent not found");
-    if (assignee.orgId !== orgId) {
-      throw unprocessable("Assignee must belong to same organization");
+    if (!principal) throw notFound(`${label} agent not found`);
+    if (principal.orgId !== orgId) {
+      throw unprocessable(`${label} must belong to same organization`);
     }
-    if (assignee.status === "pending_approval") {
-      throw conflict("Cannot assign work to pending approval agents");
+    if (principal.status === "pending_approval") {
+      throw conflict(`Cannot ${label === "Assignee" ? "assign work to" : "select"} pending approval agents`);
     }
-    if (assignee.status === "terminated") {
-      throw conflict("Cannot assign work to terminated agents");
+    if (principal.status === "terminated") {
+      throw conflict(`Cannot ${label === "Assignee" ? "assign work to" : "select"} terminated agents`);
     }
   }
 
-  async function assertAssignableUser(orgId: string, userId: string) {
+  async function assertIssueUserPrincipal(orgId: string, userId: string, label: "Assignee" | "Reviewer") {
     const membership = await db
       .select({ id: organizationMemberships.id })
       .from(organizationMemberships)
@@ -398,8 +405,24 @@ export function issueService(db: Db) {
       )
       .then((rows) => rows[0] ?? null);
     if (!membership) {
-      throw notFound("Assignee user not found");
+      throw notFound(`${label} user not found`);
     }
+  }
+
+  async function assertAssignableAgent(orgId: string, agentId: string) {
+    await assertIssueAgentPrincipal(orgId, agentId, "Assignee");
+  }
+
+  async function assertAssignableUser(orgId: string, userId: string) {
+    await assertIssueUserPrincipal(orgId, userId, "Assignee");
+  }
+
+  async function assertReviewerAgent(orgId: string, agentId: string) {
+    await assertIssueAgentPrincipal(orgId, agentId, "Reviewer");
+  }
+
+  async function assertReviewerUser(orgId: string, userId: string) {
+    await assertIssueUserPrincipal(orgId, userId, "Reviewer");
   }
 
   async function assertValidProjectWorkspace(orgId: string, projectId: string | null | undefined, projectWorkspaceId: string) {
@@ -531,6 +554,7 @@ export function issueService(db: Db) {
             priority: issues.priority,
             assigneeAgentId: issues.assigneeAgentId,
             assigneeUserId: issues.assigneeUserId,
+            reviewerUserId: issues.reviewerUserId,
             createdByUserId: issues.createdByUserId,
             updatedAt: issues.updatedAt,
           },
@@ -620,6 +644,12 @@ export function issueService(db: Db) {
       }
       if (filters?.assigneeUserId) {
         conditions.push(eq(issues.assigneeUserId, filters.assigneeUserId));
+      }
+      if (filters?.reviewerAgentId) {
+        conditions.push(eq(issues.reviewerAgentId, filters.reviewerAgentId));
+      }
+      if (filters?.reviewerUserId) {
+        conditions.push(eq(issues.reviewerUserId, filters.reviewerUserId));
       }
       if (touchedByUserId) {
         conditions.push(touchedByUserCondition(orgId, touchedByUserId));
@@ -808,6 +838,15 @@ export function issueService(db: Db) {
       if (data.assigneeUserId) {
         await assertAssignableUser(orgId, data.assigneeUserId);
       }
+      if (data.reviewerAgentId && data.reviewerUserId) {
+        throw unprocessable("Issue can only have one reviewer");
+      }
+      if (data.reviewerAgentId) {
+        await assertReviewerAgent(orgId, data.reviewerAgentId);
+      }
+      if (data.reviewerUserId) {
+        await assertReviewerUser(orgId, data.reviewerUserId);
+      }
       if (data.projectWorkspaceId) {
         await assertValidProjectWorkspace(orgId, data.projectId, data.projectWorkspaceId);
       }
@@ -926,9 +965,16 @@ export function issueService(db: Db) {
         issueData.assigneeAgentId !== undefined ? issueData.assigneeAgentId : existing.assigneeAgentId;
       const nextAssigneeUserId =
         issueData.assigneeUserId !== undefined ? issueData.assigneeUserId : existing.assigneeUserId;
+      const nextReviewerAgentId =
+        issueData.reviewerAgentId !== undefined ? issueData.reviewerAgentId : existing.reviewerAgentId;
+      const nextReviewerUserId =
+        issueData.reviewerUserId !== undefined ? issueData.reviewerUserId : existing.reviewerUserId;
 
       if (nextAssigneeAgentId && nextAssigneeUserId) {
         throw unprocessable("Issue can only have one assignee");
+      }
+      if (nextReviewerAgentId && nextReviewerUserId) {
+        throw unprocessable("Issue can only have one reviewer");
       }
       if (patch.status === "in_progress" && !nextAssigneeAgentId && !nextAssigneeUserId) {
         throw unprocessable("in_progress issues require an assignee");
@@ -938,6 +984,12 @@ export function issueService(db: Db) {
       }
       if (issueData.assigneeUserId) {
         await assertAssignableUser(existing.orgId, issueData.assigneeUserId);
+      }
+      if (issueData.reviewerAgentId) {
+        await assertReviewerAgent(existing.orgId, issueData.reviewerAgentId);
+      }
+      if (issueData.reviewerUserId) {
+        await assertReviewerUser(existing.orgId, issueData.reviewerUserId);
       }
       const nextProjectId = issueData.projectId !== undefined ? issueData.projectId : existing.projectId;
       const nextProjectWorkspaceId =
@@ -1788,7 +1840,9 @@ export function issueService(db: Db) {
       const raw: Array<{
         id: string; identifier: string | null; title: string; description: string | null;
         status: string; priority: string;
-        assigneeAgentId: string | null; projectId: string | null; goalId: string | null;
+        assigneeAgentId: string | null; assigneeUserId: string | null;
+        reviewerAgentId: string | null; reviewerUserId: string | null;
+        projectId: string | null; goalId: string | null;
       }> = [];
       const visited = new Set<string>([issueId]);
       const start = await db.select().from(issues).where(eq(issues.id, issueId)).then(r => r[0] ?? null);
@@ -1798,7 +1852,9 @@ export function issueService(db: Db) {
         const parent = await db.select({
           id: issues.id, identifier: issues.identifier, title: issues.title, description: issues.description,
           status: issues.status, priority: issues.priority,
-          assigneeAgentId: issues.assigneeAgentId, projectId: issues.projectId,
+          assigneeAgentId: issues.assigneeAgentId, assigneeUserId: issues.assigneeUserId,
+          reviewerAgentId: issues.reviewerAgentId, reviewerUserId: issues.reviewerUserId,
+          projectId: issues.projectId,
           goalId: issues.goalId, parentId: issues.parentId,
         }).from(issues).where(eq(issues.id, currentId)).then(r => r[0] ?? null);
         if (!parent) break;
@@ -1806,6 +1862,9 @@ export function issueService(db: Db) {
           id: parent.id, identifier: parent.identifier ?? null, title: parent.title, description: parent.description ?? null,
           status: parent.status, priority: parent.priority,
           assigneeAgentId: parent.assigneeAgentId ?? null,
+          assigneeUserId: parent.assigneeUserId ?? null,
+          reviewerAgentId: parent.reviewerAgentId ?? null,
+          reviewerUserId: parent.reviewerUserId ?? null,
           projectId: parent.projectId ?? null, goalId: parent.goalId ?? null,
         });
         currentId = parent.parentId ?? null;

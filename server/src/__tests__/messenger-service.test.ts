@@ -269,6 +269,91 @@ describe("messengerService and issue follows", () => {
     expect(editedAfterEdit?.attachments[0]?.contentPath).toBe(originalAfterEdit?.attachments[0]?.contentPath);
   });
 
+  it("includes reviewer issues in Messenger attention when they are in review", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-reviewer";
+    const reviewerIssueId = randomUUID();
+    const unrelatedIssueId = randomUUID();
+    const reviewRequestedAt = new Date("2026-04-10T14:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Reviewer Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Reviewer Org"),
+      issuePrefix: `V${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: reviewerIssueId,
+        orgId,
+        title: "Reviewer issue",
+        status: "in_review",
+        priority: "medium",
+        reviewerUserId: userId,
+        createdAt: reviewRequestedAt,
+        updatedAt: reviewRequestedAt,
+      },
+      {
+        id: unrelatedIssueId,
+        orgId,
+        title: "Unrelated review issue",
+        status: "in_review",
+        priority: "medium",
+        createdAt: reviewRequestedAt,
+        updatedAt: reviewRequestedAt,
+      },
+    ]);
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const issuesSummary = summaries.find((item) => item.threadKey === "issues");
+    const item = thread.detail.items.find((entry) => entry.issueId === reviewerIssueId);
+
+    expect(thread.detail.items.map((entry) => entry.issueId)).toEqual([reviewerIssueId]);
+    expect(item?.metadata).toMatchObject({ reviewerForMe: true, assignedToMe: false, createdByMe: false });
+    expect(item?.body).toContain("review requested");
+    expect(thread.detail.unreadCount).toBe(1);
+    expect(thread.detail.needsAttention).toBe(true);
+    expect(thread.summary.latestActivityAt?.toISOString()).toBe(reviewRequestedAt.toISOString());
+    expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(reviewRequestedAt.toISOString());
+  });
+
+  it("does not treat pre-review reviewer issues as review attention", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-pre-reviewer";
+    const issueId = randomUUID();
+    const updatedAt = new Date("2026-04-10T14:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Pre Review Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Pre Review Org"),
+      issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Reviewer issue before review",
+      status: "todo",
+      priority: "medium",
+      reviewerUserId: userId,
+      createdAt: updatedAt,
+      updatedAt,
+    });
+
+    const thread = await messengerSvc.getIssuesThread(orgId, userId);
+    const item = thread.detail.items.find((entry) => entry.issueId === issueId);
+
+    expect(item?.metadata).toMatchObject({ reviewerForMe: false });
+    expect(item?.body).not.toContain("review requested");
+    expect(thread.detail.unreadCount).toBe(0);
+    expect(thread.detail.needsAttention).toBe(false);
+  });
+
   it("does not count self-authored issue activity as Messenger attention", async () => {
     const orgId = randomUUID();
     const userId = "board-user-self-activity";
