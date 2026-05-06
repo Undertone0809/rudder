@@ -1000,8 +1000,8 @@ export function NewIssueDialog() {
         className={cn(
           "p-0 gap-0 flex flex-col max-h-[calc(100dvh-2rem)]",
           expanded
-            ? "sm:max-w-2xl h-[calc(100dvh-2rem)]"
-            : "sm:max-w-lg"
+            ? "sm:max-w-[980px] h-[calc(100dvh-2rem)]"
+            : "sm:max-w-[860px]"
         )}
         onKeyDown={handleKeyDown}
         onEscapeKeyDown={(event) => {
@@ -1148,10 +1148,10 @@ export function NewIssueDialog() {
           />
         </div>
 
-        <div className="px-4 pb-2 shrink-0">
-          <div className="overflow-x-auto overscroll-x-contain">
-            <div className="inline-flex items-center gap-2 text-sm text-muted-foreground flex-wrap sm:flex-nowrap sm:min-w-max">
-              <span>For</span>
+        <div className="px-4 pb-3 shrink-0">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="min-w-0 space-y-1">
+              <div className="text-[11px] font-medium text-muted-foreground">Assignee</div>
               <InlineEntitySelector
                 ref={assigneeSelectorRef}
                 value={assigneeValue}
@@ -1161,6 +1161,7 @@ export function NewIssueDialog() {
                 noneLabel="No assignee"
                 searchPlaceholder="Search assignees..."
                 emptyMessage="No assignees found."
+                className="w-full justify-start"
                 onChange={(value) => {
                   const nextAssignee = parseAssigneeValue(value);
                   if (nextAssignee.assigneeAgentId) {
@@ -1186,7 +1187,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     )
                   ) : (
-                    <span className="text-muted-foreground">Assignee</span>
+                    <span className="text-muted-foreground">No assignee</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1202,7 +1203,9 @@ export function NewIssueDialog() {
                   );
                 }}
               />
-              <span>in</span>
+            </div>
+            <div className="min-w-0 space-y-1">
+              <div className="text-[11px] font-medium text-muted-foreground">Project</div>
               <InlineEntitySelector
                 ref={projectSelectorRef}
                 value={projectId}
@@ -1212,6 +1215,7 @@ export function NewIssueDialog() {
                 noneLabel="No project"
                 searchPlaceholder="Search projects..."
                 emptyMessage="No projects found."
+                className="w-full justify-start"
                 onChange={handleProjectChange}
                 onConfirm={() => {
                   descriptionEditorRef.current?.focus();
@@ -1226,7 +1230,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
-                    <span className="text-muted-foreground">Project</span>
+                    <span className="text-muted-foreground">No project</span>
                   )
                 }
                 renderOption={(option) => {
@@ -1243,7 +1247,9 @@ export function NewIssueDialog() {
                   );
                 }}
               />
-              <span>review by</span>
+            </div>
+            <div className="min-w-0 space-y-1">
+              <div className="text-[11px] font-medium text-muted-foreground">Reviewer</div>
               <InlineEntitySelector
                 value={reviewerValue}
                 options={reviewerOptions}
@@ -1252,6 +1258,7 @@ export function NewIssueDialog() {
                 noneLabel="No reviewer"
                 searchPlaceholder="Search reviewers..."
                 emptyMessage="No reviewers found."
+                className="w-full justify-start"
                 onChange={(value) => {
                   const nextReviewer = parseAssigneeValue(value);
                   if (nextReviewer.assigneeAgentId) {
@@ -1273,7 +1280,7 @@ export function NewIssueDialog() {
                       <span className="truncate">{option.label}</span>
                     )
                   ) : (
-                    <span className="text-muted-foreground">Reviewer</span>
+                    <span className="text-muted-foreground">No reviewer</span>
                   )
                 }
                 renderOption={(option) => {
