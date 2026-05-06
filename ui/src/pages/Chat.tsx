@@ -37,7 +37,6 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { appendTranscriptEntry } from "@/agent-runtimes/transcript";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import {
@@ -48,6 +47,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MarkdownBody } from "@/components/MarkdownBody";
+import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { AgentIcon } from "@/components/AgentIconPicker";
@@ -298,24 +298,24 @@ function ChatImageAttachmentTile({
   return (
     <div
       data-testid={testId}
-      className="relative inline-flex max-w-full items-center gap-2 rounded-[calc(var(--radius-sm)+4px)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_42%,transparent)] p-1.5"
+      className="relative inline-flex max-w-full"
     >
       <button
         type="button"
         aria-label={`Open image preview: ${name}`}
-        className="flex min-w-0 items-center rounded-[calc(var(--radius-sm)+2px)] text-left transition-colors hover:bg-[color:var(--surface-active)]"
+        className="flex h-12 w-12 min-w-0 items-center justify-center overflow-hidden rounded-[calc(var(--radius-sm)+4px)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_42%,transparent)] text-left transition-[border-color,box-shadow] hover:border-[color:var(--border-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         onClick={onOpen}
       >
         <img
           src={src}
           alt={name}
-          className="h-10 w-10 shrink-0 rounded-[calc(var(--radius-sm)+1px)] border border-black/5 object-cover"
+          className="h-full w-full shrink-0 object-cover"
         />
       </button>
       {onRemove ? (
         <button
           type="button"
-          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground"
+          className="absolute -right-1.5 -top-1.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:var(--surface-elevated)] text-muted-foreground shadow-[var(--shadow-sm)] transition-colors hover:text-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           aria-label={`Remove ${name}`}
           onClick={onRemove}
         >
@@ -447,57 +447,13 @@ function ChatAttachmentPreviewDialog({
   preview: AttachmentPreviewState | null;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
-
-  useEffect(() => {
-    if (!preview?.src) {
-      setNaturalSize(null);
-      return;
-    }
-    const image = new window.Image();
-    image.onload = () => {
-      setNaturalSize({ width: image.naturalWidth, height: image.naturalHeight });
-    };
-    image.onerror = () => {
-      setNaturalSize(null);
-    };
-    image.src = preview.src;
-    return () => {
-      image.onload = null;
-      image.onerror = null;
-    };
-  }, [preview?.src]);
-
-  const dialogWidth = naturalSize
-    ? `min(calc(100vw - 1.5rem), ${naturalSize.width}px, 1440px)`
-    : "min(calc(100vw - 1.5rem), 1440px)";
-
   return (
-    <Dialog open={preview !== null} onOpenChange={onOpenChange}>
-      <DialogContent
-        showCloseButton={false}
-        className="rudder-markdown-editor-image-preview-panel top-[50%] w-fit translate-y-[-50%] border-0 bg-transparent p-0 shadow-none"
-        style={{ maxWidth: dialogWidth }}
-      >
-        <DialogTitle className="sr-only">{preview?.name ?? "Attachment preview"}</DialogTitle>
-        {preview ? (
-          <div
-            data-testid="chat-image-preview-dialog"
-            className="rudder-markdown-editor-image-preview-media relative flex w-fit max-w-full items-center justify-center overflow-hidden"
-          >
-            <DialogClose className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-sm bg-black/55 text-white shadow-[0_6px_18px_rgb(0_0_0/0.28)] transition-colors hover:bg-black/70 focus:outline-none focus:ring-2 focus:ring-white/80">
-              <X className="size-4" aria-hidden="true" />
-              <span className="sr-only">Close image preview</span>
-            </DialogClose>
-            <img
-              src={preview.src}
-              alt={preview.name}
-              className="chat-attachment-preview-image"
-            />
-          </div>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+    <ImagePreviewDialog
+      preview={preview ? { src: preview.src, name: preview.name, alt: preview.name } : null}
+      onOpenChange={onOpenChange}
+      testId="chat-image-preview-dialog"
+      titleFallback="Attachment preview"
+    />
   );
 }
 

@@ -139,6 +139,29 @@ test("pastes clipboard images and files into chat as pending attachments and exp
     const sentImage = userBubble.getByTestId("chat-image-attachment");
     await expect(sentImage).toBeVisible({ timeout: 15_000 });
     await expect(sentImage.getByAltText("clipboard-image.png")).toBeVisible({ timeout: 15_000 });
+    const sentImageChrome = await sentImage.evaluate((element) => {
+      const button = element.querySelector("button");
+      const image = element.querySelector("img");
+      if (!(button instanceof HTMLButtonElement) || !(image instanceof HTMLImageElement)) {
+        throw new Error("Expected image attachment button and image");
+      }
+      const wrapperStyle = window.getComputedStyle(element);
+      const buttonStyle = window.getComputedStyle(button);
+      const imageStyle = window.getComputedStyle(image);
+
+      return {
+        wrapperBackgroundColor: wrapperStyle.backgroundColor,
+        wrapperBorderTopWidth: wrapperStyle.borderTopWidth,
+        wrapperPaddingTop: wrapperStyle.paddingTop,
+        buttonBorderTopWidth: buttonStyle.borderTopWidth,
+        imageBorderTopWidth: imageStyle.borderTopWidth,
+      };
+    });
+    expect(sentImageChrome.wrapperBackgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(sentImageChrome.wrapperBorderTopWidth).toBe("0px");
+    expect(sentImageChrome.wrapperPaddingTop).toBe("0px");
+    expect(sentImageChrome.buttonBorderTopWidth).toBe("1px");
+    expect(sentImageChrome.imageBorderTopWidth).toBe("0px");
     await expect(userBubble.getByRole("link", { name: "notes.txt" })).toBeVisible({ timeout: 15_000 });
 
     await sentImage.click();
