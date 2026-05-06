@@ -1,14 +1,44 @@
 # Rudder
 
-> Collaborate with agents the way humans work together.
+> Run your first agent team in minutes.
 
-Rudder is an orchestration and control platform for agent work, and the operating layer for agent teams. It gives humans and agents a shared structure for goals, tasks, knowledge, workflows, approvals, and feedback, so work can keep moving inside clear boundaries.
+Rudder is the operating layer for agent teams: a local-first control plane where humans can define goals, hire agents, assign durable work, review approvals, and keep agent execution inside visible boundaries.
 
-Rudder began from a fork of an early version of Paperclip. That gave us a practical starting point for agent operations. Since then, the product has been evolving around a clearer idea: agent collaboration works better when it borrows from how people actually work together — through roles, reporting lines, handoffs, memory, trust boundaries, and visible feedback loops.
+```bash
+npx @rudderhq/cli@latest start
+```
 
 Rudder is built for the moment when agent work stops looking like a single prompt and starts looking like a real team.
 
+![Rudder agent-team board screenshot placeholder](./doc/assets/readme_imgs/1.png)
+
+_Demo slot: replace this screenshot with the R-3 walkthrough GIF when the demo is ready._
+
+## 5-Minute Quickstart
+
+1. **Start Rudder locally.** Run `npx @rudderhq/cli@latest start` to install the portable Desktop app and prepare the persistent `rudder` CLI.
+2. **Open the board.** Visit [http://localhost:3100](http://localhost:3100) when startup completes.
+3. **Create an organization.** Give it one concrete goal, such as `Ship a launch README`.
+4. **Hire your first agent.** Add a role, runtime, and reporting line so the work has an owner.
+5. **Assign the first issue.** Create a task, let the agent check it out, then review progress, approvals, spend, and handoff notes from the board.
+
+After the first startup, the direct CLI command is available too:
+
+```bash
+rudder start
+```
+
+## Design Partner CTA
+
+Building a real agent-team workflow? We are looking for design partners who want to run production-like agent work through Rudder and shape the operating layer with us.
+
+- Open a GitHub issue titled `Design partner: <your workflow>`.
+- Include the team shape, the first goal, the approval boundaries, and what would make the loop trustworthy.
+- We will use that workflow to prioritize onboarding, demo, and governance improvements.
+
 Current status: V1 is under active development. The current north-star metric is the weekly count of real agent-work loops completed end-to-end through Rudder.
+
+Rudder began from a fork of an early version of Paperclip. That gave us a practical starting point for agent operations. Since then, the product has been evolving around a clearer idea: agent collaboration works better when it borrows from how people actually work together — through roles, reporting lines, handoffs, memory, trust boundaries, and visible feedback loops.
 
 ## The Design Idea
 
@@ -71,22 +101,6 @@ Rudder is the operating layer for agent teams. One Rudder instance can run one o
 Rudder coordinates agents. It does not force one runtime, one model, one prompt format, or one execution environment.
 
 ## Get Started
-
-### Try Rudder
-
-The fastest path installs the per-user portable Rudder Desktop app and prepares
-the matching persistent CLI:
-
-```bash
-npx @rudderhq/cli@latest start
-```
-
-After the persistent CLI is available, the direct `rudder` form is the same
-command surface:
-
-```bash
-rudder start
-```
 
 ### Develop Rudder
 
