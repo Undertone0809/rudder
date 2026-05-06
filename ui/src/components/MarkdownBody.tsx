@@ -44,6 +44,25 @@ function extractMermaidSource(children: ReactNode): string | null {
   return flattenText(childProps.children).replace(/\n$/, "");
 }
 
+export function normalizeEscapedMarkdownNewlines(source: string) {
+  if (!source.includes("\\n")) return source;
+  const escapedNewlineCount = source.match(/\\n/g)?.length ?? 0;
+  if (escapedNewlineCount === 0) return source;
+
+  const realNewlineCount = source.match(/\n/g)?.length ?? 0;
+  const hasEscapedParagraph = source.includes("\\n\\n");
+  const hasEscapedMarkdownList = /\\n\s*(?:[-*+]\s|\d+\.\s)/.test(source);
+  const looksLikeEscapedBlock = realNewlineCount === 0 && escapedNewlineCount >= 3;
+
+  if (!hasEscapedParagraph && !hasEscapedMarkdownList && !looksLikeEscapedBlock) {
+    return source;
+  }
+
+  return source
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n");
+}
+
 function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: boolean }) {
   const renderId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const [svg, setSvg] = useState<string | null>(null);
@@ -101,6 +120,7 @@ function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: b
 
 export function MarkdownBody({ children, className, resolveImageSrc, onLinkClick }: MarkdownBodyProps) {
   const { resolvedTheme } = useTheme();
+  const normalizedChildren = normalizeEscapedMarkdownNewlines(children);
   const components: Components = {
     pre: ({ node: _node, children: preChildren, ...preProps }) => {
       const mermaidSource = extractMermaidSource(preChildren);
@@ -171,7 +191,7 @@ export function MarkdownBody({ children, className, resolveImageSrc, onLinkClick
       )}
     >
       <Markdown remarkPlugins={[remarkGfm]} components={components} urlTransform={(url) => url}>
-        {children}
+        {normalizedChildren}
       </Markdown>
     </div>
   );

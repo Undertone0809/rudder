@@ -179,6 +179,14 @@ export function issueRoutes(db: Db, storage: StorageService) {
     return req.actor.userId ?? "local-board";
   }
 
+  function issueHasReviewer(issue: { reviewerAgentId: string | null; reviewerUserId: string | null }) {
+    return Boolean(issue.reviewerAgentId || issue.reviewerUserId);
+  }
+
+  function isReviewerAgentForIssue(actor: ReturnType<typeof getActorInfo>, issue: { reviewerAgentId: string | null }) {
+    return actor.actorType === "agent" && Boolean(actor.agentId) && actor.agentId === issue.reviewerAgentId;
+  }
+
   // Resolve issue identifiers (e.g. "PAP-39") to UUIDs for all /issues/:id routes
   router.param("id", async (req, res, next, rawId) => {
     try {
@@ -1017,6 +1025,16 @@ export function issueRoutes(db: Db, storage: StorageService) {
     if (commentBody && reopenRequested === true && isClosed && updateFields.status === undefined) {
       updateFields.status = "todo";
     }
+    let reviewedCompletionNormalized = false;
+    if (
+      updateFields.status === "done" &&
+      issueHasReviewer(existing) &&
+      actor.actorType === "agent" &&
+      !(existing.status === "in_review" && isReviewerAgentForIssue(actor, existing))
+    ) {
+      updateFields.status = "in_review";
+      reviewedCompletionNormalized = true;
+    }
     let issue;
     try {
       issue = await svc.update(id, updateFields);
@@ -1091,6 +1109,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
         identifier: issue.identifier,
         ...(commentBody ? { source: "comment" } : {}),
         ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus } : {}),
+        ...(reviewedCompletionNormalized
+          ? {
+              normalizedFromStatus: "done",
+              normalizedReason: "reviewed_issue_assignee_completion",
+            }
+          : {}),
         _previous: hasFieldChanges ? previous : undefined,
       },
     });
@@ -1132,6 +1156,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const statusChangedToInReview =
       existing.status !== "in_review" &&
       issue.status === "in_review" &&
+      req.body.status !== undefined;
+    const statusChangedFromReviewToInProgress =
+      existing.status === "in_review" &&
+      issue.status === "in_progress" &&
       req.body.status !== undefined;
     const reviewerChangedInReview =
       reviewerChanged &&
@@ -1190,9 +1218,36 @@ export function issueRoutes(db: Db, storage: StorageService) {
         });
       }
 
+      if (!assigneeChanged && statusChangedFromReviewToInProgress && issue.assigneeAgentId) {
+        wakeups.set(issue.assigneeAgentId, {
+          source: "assignment",
+          triggerDetail: "system",
+          reason: "issue_changes_requested",
+          payload: { issueId: issue.id, mutation: "review_changes_requested" },
+          requestedByActorType: actor.actorType,
+          requestedByActorId: actor.actorId,
+          contextSnapshot: {
+            issueId: issue.id,
+            source: "issue.review_changes_requested",
+            wakeSource: "assignment",
+            wakeReason: "issue_changes_requested",
+            issue: {
+              id: issue.id,
+              title: issue.title,
+              description: issue.description,
+              status: issue.status,
+              priority: issue.priority,
+            },
+          },
+        });
+      }
+
       if ((statusChangedToInReview || reviewerChangedInReview) && issue.reviewerAgentId) {
         const mutation = statusChangedToInReview ? "status_to_in_review" : "reviewer_changed_in_review";
-        if (!(actor.actorType === "agent" && actor.actorId === issue.reviewerAgentId)) {
+        const actorIsReviewerAgent = actor.actorType === "agent" && actor.actorId === issue.reviewerAgentId;
+        const actorIsAssigneeAgent = actor.actorType === "agent" && actor.actorId === issue.assigneeAgentId;
+        const assigneeHandoffToReview = statusChangedToInReview && actorIsAssigneeAgent;
+        if (!actorIsReviewerAgent || assigneeHandoffToReview) {
           wakeups.set(issue.reviewerAgentId, buildIssueReviewWakeupOptions({
             issue,
             mutation,

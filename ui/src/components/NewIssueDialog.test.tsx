@@ -134,7 +134,9 @@ vi.mock("@/context/ToastContext", () => ({
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ open, children }: { open: boolean; children: ReactNode }) => (open ? <div>{children}</div> : null),
-  DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogContent: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <div className={className}>{children}</div>
+  ),
 }));
 
 vi.mock("@/components/ui/popover", () => ({
@@ -146,15 +148,21 @@ vi.mock("@/components/ui/popover", () => ({
 }));
 
 vi.mock("./MarkdownEditor", () => ({
-  MarkdownEditor: ({ mentions }: { mentions?: Array<Record<string, unknown>> }) => {
+  MarkdownEditor: ({
+    mentions,
+    contentClassName,
+  }: {
+    mentions?: Array<Record<string, unknown>>;
+    contentClassName?: string;
+  }) => {
     capturedMentions = mentions ?? [];
-    return <textarea aria-label="Description" />;
+    return <textarea aria-label="Description" className={contentClassName} />;
   },
 }));
 
 vi.mock("./InlineEntitySelector", () => ({
-  InlineEntitySelector: ({ placeholder }: { placeholder?: string }) => (
-    <button type="button">{placeholder ?? "selector"}</button>
+  InlineEntitySelector: ({ placeholder, variant }: { placeholder?: string; variant?: string }) => (
+    <button type="button" data-variant={variant}>{placeholder ?? "selector"}</button>
   ),
 }));
 
@@ -229,6 +237,21 @@ describe("NewIssueDialog", () => {
     expect(html).toContain("Save Draft");
     expect(html).toContain("disabled:opacity-100");
     expect(html).toContain("disabled:bg-muted/20");
+  });
+
+  it("renders primary metadata controls as field selectors", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain('data-variant="field"');
+    expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("uses a wider dialog with a compact description editor", () => {
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain("sm:max-w-[920px]");
+    expect(html).toContain("min-h-[88px]");
+    expect(html).not.toContain("min-h-[120px]");
   });
 
   it("does not render the execution workspace controls", () => {

@@ -73,7 +73,7 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "../workspace-runtime.js";
 import { issueService } from "../issues.js";
-import { buildIssueReviewWakeupOptions } from "../issue-review-wakeup.js";
+import { buildIssueConvergenceReviewWakeupOptions } from "../issue-review-wakeup.js";
 import { executionWorkspaceService } from "../execution-workspaces.js";
 import { buildObservedRunLangfuseScores } from "../run-intelligence.js";
 import { workspaceOperationService } from "../workspace-operations.js";
@@ -1074,12 +1074,6 @@ type PassiveFollowupIssueRow = Pick<
   | "reviewerUserId"
 >;
 
-type AutoReviewRequest = {
-  issue: PassiveFollowupIssueRow & { status: "in_review" };
-  previousStatus: string;
-  reviewerWakeupAlreadyDeferred: boolean;
-};
-
 type PassiveFollowupContext = {
   originRunId: string;
   previousRunId: string | null;
@@ -1107,6 +1101,14 @@ type PassiveIssueClosureOutcome =
       previousRunId: string;
       attempts: number;
       reason: typeof ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON;
+    }
+  | {
+      kind: "reviewer_convergence";
+      issue: PassiveFollowupIssueRow;
+      originRunId: string;
+      previousRunId: string;
+      attempts: number;
+      reason: typeof ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON;
     };
 
 function normalizePassiveFollowupContext(raw: unknown): PassiveFollowupContext | null {
@@ -1126,6 +1128,10 @@ function normalizePassiveFollowupContext(raw: unknown): PassiveFollowupContext |
 
 function passiveFollowupCooldownMs(attempt: number) {
   return ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT.get(attempt) ?? 5 * 60 * 1000;
+}
+
+function issueHasReviewer(issue: Pick<PassiveFollowupIssueRow, "reviewerAgentId" | "reviewerUserId">) {
+  return Boolean(issue.reviewerAgentId || issue.reviewerUserId);
 }
 
 function isAgentEligibleForTimerContinuation(agent: typeof agents.$inferSelect) {
@@ -1198,6 +1204,16 @@ function buildPassiveFollowupContextSnapshot(input: {
       reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
       queuedAt: input.now.toISOString(),
     },
+    ...(issueHasReviewer(input.issue)
+      ? {
+          reviewGate: {
+            reviewerAgentId: input.issue.reviewerAgentId,
+            reviewerUserId: input.issue.reviewerUserId,
+            closeOutRequirement:
+              "Move the issue to in_review when work is ready, or to blocked/cancelled if it cannot proceed.",
+          },
+        }
+      : {}),
   };
 }
 
@@ -2411,7 +2427,10 @@ export function heartbeatService(db: Db) {
       .where(
         and(
           eq(activityLog.runId, runId),
-          eq(activityLog.action, "issue.closure_needs_operator_review"),
+          inArray(activityLog.action, [
+            "issue.closure_needs_operator_review",
+            "issue.convergence_review_requested",
+          ]),
         ),
       )
       .limit(1)
@@ -2437,7 +2456,7 @@ export function heartbeatService(db: Db) {
       return { kind: "none", reason: "issue_no_longer_assigned_to_run_agent" };
     }
 
-    if (await runHasIssueClosureComment(tx, run, issue.id)) {
+    if (!issueHasReviewer(issue) && await runHasIssueClosureComment(tx, run, issue.id)) {
       return { kind: "none", reason: "run_authored_issue_comment" };
     }
     if (await issueHasDeferredWake(tx, issue.orgId, issue.id)) {
@@ -2465,6 +2484,16 @@ export function heartbeatService(db: Db) {
     const currentAttempt = passiveContext?.attempt ?? 0;
     const originRunId = passiveContext?.originRunId ?? run.id;
     if (currentAttempt >= ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS) {
+      if (issueHasReviewer(issue)) {
+        return {
+          kind: "reviewer_convergence",
+          issue,
+          originRunId,
+          previousRunId: run.id,
+          attempts: currentAttempt,
+          reason: ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON,
+        };
+      }
       return {
         kind: "operator_review",
         issue,
@@ -2556,13 +2585,6 @@ export function heartbeatService(db: Db) {
       attempt: nextAttempt,
       requestedAt,
     };
-  }
-
-  function shouldAutoRequestIssueReview(run: typeof heartbeatRuns.$inferSelect, issue: PassiveFollowupIssueRow) {
-    if (run.status !== "succeeded") return false;
-    if (issue.status !== "todo" && issue.status !== "in_progress") return false;
-    if (issue.assigneeAgentId !== run.agentId) return false;
-    return Boolean(issue.reviewerAgentId || issue.reviewerUserId);
   }
 
   async function countRunningRunsForAgent(agentId: string) {
@@ -4008,55 +4030,29 @@ export function heartbeatService(db: Db) {
         .where(and(eq(issues.orgId, run.orgId), eq(issues.executionRunId, run.id)))
         .then((rows) => rows[0] ?? null);
 
-      if (!issue) return { promotedRun: null, passiveClosure: null, autoReviewRequest: null };
+      if (!issue) return { promotedRun: null, passiveClosure: null };
 
       const now = new Date();
-      let autoReviewRequest: AutoReviewRequest | null = null;
-      const shouldAutoReview = shouldAutoRequestIssueReview(run, issue);
-
-      const passiveClosure = shouldAutoReview
-        ? ({ kind: "none", reason: "issue_sent_to_review" } as const)
-        : await evaluatePassiveIssueClosureForLockedIssue({
-          tx,
-          run,
-          issue,
-          now,
-        });
+      const passiveClosure = await evaluatePassiveIssueClosureForLockedIssue({
+        tx,
+        run,
+        issue,
+        now,
+      });
 
       if (passiveClosure.kind === "queued") {
-        return { promotedRun: passiveClosure.run, passiveClosure, autoReviewRequest: null };
+        return { promotedRun: passiveClosure.run, passiveClosure };
       }
 
-      if (shouldAutoReview) {
-        await tx
-          .update(issues)
-          .set({
-            status: "in_review",
-            executionRunId: null,
-            executionAgentNameKey: null,
-            executionLockedAt: null,
-            completedAt: null,
-            cancelledAt: null,
-            updatedAt: now,
-          })
-          .where(eq(issues.id, issue.id));
-
-        autoReviewRequest = {
-          issue: { ...issue, status: "in_review" },
-          previousStatus: issue.status,
-          reviewerWakeupAlreadyDeferred: false,
-        };
-      } else {
-        await tx
-          .update(issues)
-          .set({
-            executionRunId: null,
-            executionAgentNameKey: null,
-            executionLockedAt: null,
-            updatedAt: now,
-          })
-          .where(eq(issues.id, issue.id));
-      }
+      await tx
+        .update(issues)
+        .set({
+          executionRunId: null,
+          executionAgentNameKey: null,
+          executionLockedAt: null,
+          updatedAt: now,
+        })
+        .where(eq(issues.id, issue.id));
 
       while (true) {
         const deferred = await tx
@@ -4073,16 +4069,7 @@ export function heartbeatService(db: Db) {
           .limit(1)
           .then((rows) => rows[0] ?? null);
 
-        if (!deferred) return { promotedRun: null, passiveClosure, autoReviewRequest };
-
-        if (
-          autoReviewRequest &&
-          issue.reviewerAgentId &&
-          deferred.agentId === issue.reviewerAgentId &&
-          deferred.source === "review"
-        ) {
-          autoReviewRequest.reviewerWakeupAlreadyDeferred = true;
-        }
+        if (!deferred) return { promotedRun: null, passiveClosure };
 
         const deferredAgent = await tx
           .select()
@@ -4173,60 +4160,9 @@ export function heartbeatService(db: Db) {
           })
           .where(eq(issues.id, issue.id));
 
-        return { promotedRun: newRun, passiveClosure, autoReviewRequest };
+        return { promotedRun: newRun, passiveClosure };
       }
     });
-
-    const autoReviewRequest = outcome.autoReviewRequest;
-    if (autoReviewRequest) {
-      await appendRunEvent(run, await nextRunEventSeq(run.id), {
-        eventType: "issue.review_requested",
-        stream: "system",
-        level: "info",
-        message: "Issue moved to review after successful assignee run",
-        payload: {
-          issueId: autoReviewRequest.issue.id,
-          reviewerAgentId: autoReviewRequest.issue.reviewerAgentId,
-          reviewerUserId: autoReviewRequest.issue.reviewerUserId,
-          previousStatus: autoReviewRequest.previousStatus,
-          status: "in_review",
-        },
-      });
-      await logActivity(db, {
-        orgId: autoReviewRequest.issue.orgId,
-        actorType: "system",
-        actorId: "issue_review_routing",
-        action: "issue.updated",
-        entityType: "issue",
-        entityId: autoReviewRequest.issue.id,
-        agentId: run.agentId,
-        runId: run.id,
-        details: {
-          status: "in_review",
-          identifier: autoReviewRequest.issue.identifier,
-          source: "run_completion",
-          reviewerAgentId: autoReviewRequest.issue.reviewerAgentId,
-          reviewerUserId: autoReviewRequest.issue.reviewerUserId,
-          _previous: { status: autoReviewRequest.previousStatus },
-        },
-      });
-
-      if (autoReviewRequest.issue.reviewerAgentId && !autoReviewRequest.reviewerWakeupAlreadyDeferred) {
-        await enqueueWakeup(autoReviewRequest.issue.reviewerAgentId, {
-          ...buildIssueReviewWakeupOptions({
-            issue: autoReviewRequest.issue,
-            mutation: "status_to_in_review",
-            contextSource: "issue.run_completion",
-            requestedByActorType: "system",
-            requestedByActorId: "issue_review_routing",
-          }),
-          idempotencyKey: `issue_review_requested:${run.id}`,
-        }).catch((err) => {
-          logger.warn({ err, issueId: autoReviewRequest.issue.id }, "failed to wake reviewer after issue run completion");
-          return null;
-        });
-      }
-    }
 
     const passiveClosure = outcome.passiveClosure;
     if (passiveClosure?.kind === "queued") {
@@ -4316,6 +4252,62 @@ export function heartbeatService(db: Db) {
           reason: passiveClosure.reason,
         },
       });
+    } else if (passiveClosure?.kind === "reviewer_convergence") {
+      await appendRunEvent(run, await nextRunEventSeq(run.id), {
+        eventType: "issue.convergence_review_requested",
+        stream: "system",
+        level: "warn",
+        message: "Passive issue follow-up stopped and needs reviewer convergence",
+        payload: {
+          issueId: passiveClosure.issue.id,
+          reviewerAgentId: passiveClosure.issue.reviewerAgentId,
+          reviewerUserId: passiveClosure.issue.reviewerUserId,
+          originRunId: passiveClosure.originRunId,
+          previousRunId: passiveClosure.previousRunId,
+          attempts: passiveClosure.attempts,
+          maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+          reason: passiveClosure.reason,
+        },
+      });
+      await logActivity(db, {
+        orgId: passiveClosure.issue.orgId,
+        actorType: "system",
+        actorId: "issue_closure_governance",
+        action: "issue.convergence_review_requested",
+        entityType: "issue",
+        entityId: passiveClosure.issue.id,
+        agentId: run.agentId,
+        runId: run.id,
+        details: {
+          issueId: passiveClosure.issue.id,
+          issueTitle: passiveClosure.issue.title,
+          reviewerAgentId: passiveClosure.issue.reviewerAgentId,
+          reviewerUserId: passiveClosure.issue.reviewerUserId,
+          originRunId: passiveClosure.originRunId,
+          previousRunId: passiveClosure.previousRunId,
+          attempts: passiveClosure.attempts,
+          maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+          reason: passiveClosure.reason,
+        },
+      });
+      if (passiveClosure.issue.reviewerAgentId) {
+        await enqueueWakeup(passiveClosure.issue.reviewerAgentId, {
+          ...buildIssueConvergenceReviewWakeupOptions({
+            issue: passiveClosure.issue,
+            contextSource: "issue.passive_followup_exhausted",
+            originRunId: passiveClosure.originRunId,
+            previousRunId: passiveClosure.previousRunId,
+            attempts: passiveClosure.attempts,
+            maxAttempts: ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS,
+            requestedByActorType: "system",
+            requestedByActorId: "issue_closure_governance",
+          }),
+          idempotencyKey: `issue_convergence_review_requested:${passiveClosure.originRunId}`,
+        }).catch((err) => {
+          logger.warn({ err, issueId: passiveClosure.issue.id }, "failed to wake reviewer after passive issue close-out exhaustion");
+          return null;
+        });
+      }
     }
 
     const promotedRun = outcome.promotedRun;

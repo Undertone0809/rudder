@@ -38,6 +38,7 @@ const mockDocumentService = vi.hoisted(() => ({
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 
 const ASSIGNEE_AGENT_ID = "22222222-2222-4222-8222-222222222222";
+const REVIEWER_AGENT_ID = "33333333-3333-4333-8333-333333333333";
 const RUN_ID = "run-1";
 
 vi.mock("../services/index.js", () => ({
@@ -67,10 +68,10 @@ function createBoardActor() {
   };
 }
 
-function createAgentActor() {
+function createAgentActor(agentId = ASSIGNEE_AGENT_ID) {
   return {
     type: "agent" as const,
-    agentId: ASSIGNEE_AGENT_ID,
+    agentId,
     orgId: "organization-1",
     orgIds: ["organization-1"],
     runId: RUN_ID,
@@ -127,6 +128,7 @@ async function flushAsyncWork() {
 describe("issue lifecycle routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIssueService.assertCheckoutOwner.mockResolvedValue({ adoptedFromRunId: null });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
     mockIssueService.addComment.mockResolvedValue({
       id: "comment-1",
@@ -412,6 +414,127 @@ describe("issue lifecycle routes", () => {
           wakeSource: "review",
           wakeReason: "issue_review_requested",
           role: "reviewer",
+        }),
+      }),
+    );
+  });
+
+  it("normalizes assignee done on a reviewed issue into review and wakes the reviewer", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_progress",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "done" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "in_review" }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.updated",
+        details: expect.objectContaining({
+          status: "in_review",
+          normalizedFromStatus: "done",
+          normalizedReason: "reviewed_issue_assignee_completion",
+        }),
+      }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        source: "review",
+        reason: "issue_review_requested",
+        contextSnapshot: expect.objectContaining({
+          source: "issue.status_change",
+          wakeReason: "issue_review_requested",
+          role: "reviewer",
+        }),
+      }),
+    );
+  });
+
+  it("allows the reviewer agent to mark an in-review issue done without another review wakeup", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "done",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "done" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "done" }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("wakes the assignee when a reviewer requests changes", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "in_progress",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "in_progress", comment: "Please tighten the lifecycle tests." });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        source: "assignment",
+        reason: "issue_changes_requested",
+        payload: {
+          issueId: "11111111-1111-4111-8111-111111111111",
+          mutation: "review_changes_requested",
+        },
+        contextSnapshot: expect.objectContaining({
+          source: "issue.review_changes_requested",
+          wakeSource: "assignment",
+          wakeReason: "issue_changes_requested",
+          issue: expect.objectContaining({ status: "in_progress" }),
         }),
       }),
     );

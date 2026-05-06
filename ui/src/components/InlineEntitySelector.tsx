@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "../lib/utils";
 
@@ -23,6 +23,7 @@ interface InlineEntitySelectorProps {
   renderOption?: (option: InlineEntityOption, isSelected: boolean) => ReactNode;
   /** Skip the Portal so the popover stays in the DOM tree (fixes scroll inside Dialogs). */
   disablePortal?: boolean;
+  variant?: "inline" | "field";
 }
 
 export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySelectorProps>(
@@ -40,6 +41,7 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
       renderTriggerValue,
       renderOption,
       disablePortal,
+      variant = "inline",
     },
     ref,
   ) {
@@ -98,7 +100,10 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
             ref={ref}
             type="button"
             className={cn(
-              "inline-flex min-w-0 items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-sm font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "inline-flex min-w-0 items-center gap-1 border border-border text-sm font-medium text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              variant === "field"
+                ? "h-10 w-full justify-between rounded-md bg-background px-3 hover:bg-accent/30"
+                : "rounded-md bg-muted/40 px-2 py-1 hover:bg-accent/50",
               className,
             )}
             onPointerDown={() => { isPointerDownRef.current = true; }}
@@ -107,16 +112,27 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
               isPointerDownRef.current = false;
             }}
           >
-            {renderTriggerValue
-              ? renderTriggerValue(currentOption)
-              : (currentOption?.label ?? <span className="text-muted-foreground">{placeholder}</span>)}
+            <span className={cn(
+              "flex min-w-0 items-center gap-2",
+              variant === "field" && "flex-1 overflow-hidden",
+            )}>
+              {renderTriggerValue
+                ? renderTriggerValue(currentOption)
+                : (currentOption?.label ?? <span className="text-muted-foreground">{placeholder}</span>)}
+            </span>
+            {variant === "field" ? <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" /> : null}
           </button>
         </PopoverTrigger>
         <PopoverContent
           align="start"
           side="bottom"
           collisionPadding={16}
-          className="w-[min(20rem,calc(100vw-2rem))] p-1"
+          className={cn(
+            "p-1",
+            variant === "field"
+              ? "w-[var(--radix-popover-trigger-width)] min-w-64 max-w-[calc(100vw-2rem)]"
+              : "w-[min(20rem,calc(100vw-2rem))]",
+          )}
           disablePortal={disablePortal}
           onOpenAutoFocus={(event) => {
             event.preventDefault();

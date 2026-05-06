@@ -38,7 +38,9 @@ related_code:
   - tests/e2e/issues-reviewer-routing.spec.ts
 commit_refs:
   - docs: refine issue reviewer routing proposal
-updated_at: 2026-05-04
+  - fix: route completed reviewed issues to review
+  - fix: enforce reviewed issue completion gate
+updated_at: 2026-05-06
 ---
 
 # Issue Reviewer Routing
@@ -124,9 +126,17 @@ issue create/detail UI.
      reviewer-oriented human attention surfaces
    - changing reviewer while an issue is already `in_review` routes attention to
      the new reviewer
+   - for reviewed issues, an assignee marking `done` is treated as
+     assignee-complete and normalized to `in_review`; it is not final issue
+     completion
+   - if assignee passive follow-up attempts are exhausted and the issue still
+     has not reached `in_review`, `done`, `blocked`, or `cancelled`, reviewer
+     attention is requested for convergence
 
 5. Add issue UI:
    - New Issue dialog exposes a `Reviewer` selector
+   - Assignee, Project, and Reviewer use full-width field selectors in the
+     create dialog, not chip-like toolbar controls
    - Issue Properties shows, edits, and clears reviewer
    - dense issue rows and board cards do not show reviewer by default in this
      iteration
@@ -152,6 +162,13 @@ issue create/detail UI.
 - Reviewer wakeups are not confused with assignment wakeups.
 - Directly creating an `in_review` issue with a reviewer agent is treated as a
   review request, not as a silent create.
+- On reviewed issues, assignee attempts to mark `done` route the issue to
+  `in_review`; reviewer acceptance or board override is required for final
+  `done`.
+- If bounded assignee passive follow-up cannot converge the issue, reviewer
+  attention is requested with a distinct convergence reason.
+- Reviewer-requested changes move the issue back to `in_progress` and wake the
+  assignee agent when one exists.
 - E2E coverage proves the create and detail reviewer path.
 
 ## Out Of Scope
@@ -195,7 +212,8 @@ issue create/detail UI.
 6. The assignee works the issue normally.
 7. When work is ready, the assignee or board moves the issue to `in_review` and
    leaves the relevant output signal: comment, document, work product, PR, or
-   preview.
+   preview. If the assignee attempts to mark a reviewed issue `done`, Rudder
+   treats that as "work complete for review" and stores `in_review`.
 8. If the reviewer is a human user:
    - the issue appears in reviewer issue filters
    - Inbox or Messenger issue attention treats the issue as relevant to that
@@ -210,6 +228,67 @@ issue create/detail UI.
 10. If the reviewer changes while the issue is already `in_review`, the new
     reviewer receives attention. The old reviewer no longer matches reviewer
     filters for that issue.
+11. If the assignee does not move the issue to `in_review`, `done`, `blocked`,
+    or `cancelled` after bounded passive follow-up attempts, the reviewer
+    receives convergence attention. This is separate from normal review
+    attention: the reviewer is being asked to help decide the next step, not to
+    review a clean handoff.
+
+## Reviewed Issue Completion Contract
+
+Reviewer ownership introduces two distinct completion moments:
+
+- **Assignee completion** means the assignee believes the work is ready to
+  inspect. The durable issue status is `in_review`.
+- **Reviewer acceptance** means the reviewer has accepted the result. The
+  durable issue status is `done`.
+
+For issues without a reviewer, `in_progress -> done` remains a valid assignee
+close-out. For issues with a reviewer, final completion is gated:
+
+- an assignee agent that patches `status: "done"` before review has that patch
+  normalized to `status: "in_review"`
+- a reviewer agent may mark the issue `done` from `in_review`
+- a board actor may override and mark `done`, but the activity log must make
+  the status change auditable
+- if assignee and reviewer are the same agent, the phase still matters:
+  assignee-phase completion routes to `in_review`, and reviewer-phase
+  completion closes the issue
+
+## Reviewer Return-To-Work Contract
+
+When a reviewer rejects or asks for changes, the reviewer moves the issue from
+`in_review` back to `in_progress` and leaves feedback in the issue thread. If
+the issue has an assignee agent, Rudder wakes the assignee with an assignment
+reason that says changes were requested. This is not a reviewer takeover.
+
+The assignee then works the issue again under the normal close-out governance.
+When ready, the assignee routes the issue back to `in_review`; if it fails to
+do so, passive follow-up applies again.
+
+## Convergence Escalation Contract
+
+Passive follow-up is an assignee close-out watchdog. Its first job is to give
+the assignee bounded chances to make an explicit state decision. For reviewed
+issues, a run-attributed comment alone is not enough to close the watchdog if
+the issue remains `todo` or `in_progress`; the assignee must move the issue to
+`in_review`, `done` (normalized to `in_review`), `blocked`, or `cancelled`.
+
+If the passive follow-up budget is exhausted:
+
+- reviewed issue with reviewer agent: enqueue
+  `issue_convergence_review_requested` to the reviewer agent
+- reviewed issue with reviewer user: log reviewer convergence activity so the
+  human attention surfaces can show that reviewer intervention is needed
+- issue without reviewer: keep the existing
+  `issue.closure_needs_operator_review` operator escalation
+
+Normal review and convergence review are distinct:
+
+- `issue_review_requested` means there is an assignee handoff ready to inspect
+- `issue_convergence_review_requested` means the assignee loop failed to
+  converge and the reviewer should decide whether to request changes, mark
+  blocked, reassign/escalate, or accept only if there is enough evidence
 
 ## Implementation
 
@@ -294,6 +373,8 @@ Reviewer means:
 - allowed to request changes through the existing issue status model
 - allowed to mark done when review passes, if the actor otherwise has issue
   update permission
+- responsible for convergence review when assignee passive follow-up attempts
+  are exhausted on a reviewed issue
 
 Reviewer does not mean:
 
@@ -301,6 +382,7 @@ Reviewer does not mean:
 - approval gate owner
 - required compliance approver
 - automatic blocker for completion
+- license for the assignee to bypass review by setting `done`
 
 `Assignee` owns execution. `Reviewer` owns checking. `Approver` remains a
 governance concept and is not introduced here.
@@ -321,6 +403,10 @@ In `issueService.update`:
 - allow clearing reviewer with explicit `null`
 - preserve current reviewer when fields are omitted
 - validate changed reviewer principals
+- normalize assignee-agent `done` attempts on reviewed issues to `in_review`
+- allow reviewer-agent final `done` from `in_review`
+- wake the assignee agent when reviewer-requested changes move the issue from
+  `in_review` to `in_progress`
 
 Reviewer validation should reuse or factor the existing assignee validation
 shape, but error messages should say `Reviewer`, not `Assignee`.
@@ -343,7 +429,7 @@ can wake agents and route human attention.
 
 Reviewer wakeups must be semantically distinct from assignee wakeups.
 
-Recommended wakeup properties:
+Recommended normal review wakeup properties:
 
 ```ts
 {
@@ -377,10 +463,45 @@ Recommended wakeup properties:
 The heartbeat wakeup source type is extended with `review`. Do not reuse
 `issue_assigned` for reviewer wakeups.
 
+Recommended convergence review wakeup properties:
+
+```ts
+{
+  source: "review",
+  triggerDetail: "system",
+  reason: "issue_convergence_review_requested",
+  payload: {
+    issueId,
+    mutation: "convergence_escalation",
+    originRunId,
+    previousRunId,
+    attempts
+  },
+  contextSnapshot: {
+    issueId,
+    source: "issue.passive_followup_exhausted",
+    wakeSource: "review",
+    wakeReason: "issue_convergence_review_requested",
+    role: "reviewer",
+    issue: {
+      id,
+      identifier,
+      title,
+      description,
+      status,
+      priority
+    },
+    reviewInstructions:
+      "The assignee did not converge this issue after passive follow-up. Review the thread and decide the next step: request changes, mark blocked, escalate/reassign, or mark done only if the evidence is sufficient."
+  }
+}
+```
+
 Idempotency rule:
 
 - one wakeup per reviewer agent per qualifying create, transition, or reviewer
   change
+- one convergence wakeup per exhausted passive follow-up origin
 - no wakeup for repeated identical `PATCH` calls
 - no wakeup when the reviewer agent is the actor currently making the update
 
@@ -407,7 +528,8 @@ New Issue dialog:
 
 - add `Reviewer` near the existing assignee/project metadata controls
 - default to `No reviewer`
-- use the same interaction style as assignee where practical
+- use full-width labeled field selectors for Assignee, Project, and Reviewer so
+  these controls read as form fields instead of toolbar chips
 - options include `No reviewer`, eligible users, and active agents
 - do not allow both user and agent reviewer fields at the same time
 
@@ -488,10 +610,18 @@ Route tests:
   changes
 - entering `in_review` with reviewer agent enqueues `issue_review_requested`
 - repeated identical patch does not enqueue duplicate reviewer wakeups
+- assignee agent patching `status: "done"` on a reviewed `in_progress` issue is
+  normalized to `in_review` and enqueues reviewer attention
+- reviewer agent patching `status: "done"` from `in_review` completes the issue
+- reviewer moving `in_review -> in_progress` wakes the assignee agent with
+  changes-requested context
+- exhausted passive follow-up on a reviewed issue enqueues
+  `issue_convergence_review_requested` for reviewer agents
 
 UI component tests:
 
 - New Issue dialog defaults to `No reviewer`
+- New Issue Assignee, Project, and Reviewer render as field selectors
 - selecting reviewer sends the correct request payload
 - clearing reviewer sends `null`
 - Issue Properties displays reviewer

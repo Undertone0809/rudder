@@ -1000,8 +1000,8 @@ export function NewIssueDialog() {
         className={cn(
           "p-0 gap-0 flex flex-col max-h-[calc(100dvh-2rem)]",
           expanded
-            ? "sm:max-w-[980px]"
-            : "sm:max-w-[860px]"
+            ? "sm:max-w-[1040px]"
+            : "sm:max-w-[920px]"
         )}
         onKeyDown={handleKeyDown}
         onEscapeKeyDown={(event) => {
@@ -1161,7 +1161,8 @@ export function NewIssueDialog() {
                 noneLabel="No assignee"
                 searchPlaceholder="Search assignees..."
                 emptyMessage="No assignees found."
-                className="w-full justify-start"
+                variant="field"
+                className="w-full"
                 onChange={(value) => {
                   const nextAssignee = parseAssigneeValue(value);
                   if (nextAssignee.assigneeAgentId) {
@@ -1215,7 +1216,8 @@ export function NewIssueDialog() {
                 noneLabel="No project"
                 searchPlaceholder="Search projects..."
                 emptyMessage="No projects found."
-                className="w-full justify-start"
+                variant="field"
+                className="w-full"
                 onChange={handleProjectChange}
                 onConfirm={() => {
                   descriptionEditorRef.current?.focus();
@@ -1258,7 +1260,8 @@ export function NewIssueDialog() {
                 noneLabel="No reviewer"
                 searchPlaceholder="Search reviewers..."
                 emptyMessage="No reviewers found."
-                className="w-full justify-start"
+                variant="field"
+                className="w-full"
                 onChange={(value) => {
                   const nextReviewer = parseAssigneeValue(value);
                   if (nextReviewer.assigneeAgentId) {
@@ -1379,7 +1382,7 @@ export function NewIssueDialog() {
               placeholder="Add description..."
               bordered={false}
               mentions={mentionOptions}
-              contentClassName="text-sm text-muted-foreground pb-12 min-h-[120px]"
+              contentClassName="text-sm text-muted-foreground pb-12 min-h-[88px]"
               imageUploadHandler={async (file) => {
                 const asset = await uploadDescriptionImage.mutateAsync(file);
                 return asset.contentPath;
