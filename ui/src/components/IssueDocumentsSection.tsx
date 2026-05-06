@@ -5,6 +5,7 @@ import { useLocation } from "@/lib/router";
 import { ApiError } from "../api/client";
 import { issuesApi } from "../api/issues";
 import { useAutosaveIndicator } from "../hooks/useAutosaveIndicator";
+import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/document-outline";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, relativeTime } from "../lib/utils";
 import { MarkdownBody } from "./MarkdownBody";
@@ -1017,6 +1018,7 @@ export function IssueDocumentFocusPage({
 }) {
   const queryClient = useQueryClient();
   const bodyEditorRef = useRef<MarkdownEditorRef | null>(null);
+  const editorHostRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autosaveDocumentKey, setAutosaveDocumentKey] = useState<string | null>(null);
@@ -1214,6 +1216,7 @@ export function IssueDocumentFocusPage({
     : target.kind === "existing"
       ? titleCaseWords(target.key)
       : "Untitled document";
+  const documentOutline = useMemo(() => extractDocumentOutline(draft?.body ?? ""), [draft?.body]);
   const hasMeaningfulBody = Boolean(draft?.body.trim());
   const hasAutosaveActivity = Boolean(autosaveDocumentKey) || Boolean(draft?.isNew && hasMeaningfulBody);
   const statusLabel = error
@@ -1225,6 +1228,15 @@ export function IssueDocumentFocusPage({
         : autosaveState === "saved" || (draft && !draft.isNew)
           ? "Saved"
           : "";
+  const scrollToOutlineItem = useCallback((item: DocumentOutlineItem) => {
+    const headings = Array.from(editorHostRef.current?.querySelectorAll("h1,h2,h3,h4,h5,h6") ?? []);
+    const targetHeading = headings[item.headingIndex];
+    if (targetHeading instanceof HTMLElement) {
+      targetHeading.scrollIntoView({ block: "center", behavior: "smooth" });
+      return;
+    }
+    bodyEditorRef.current?.focus();
+  }, []);
 
   return (
     <section
@@ -1265,41 +1277,70 @@ export function IssueDocumentFocusPage({
 
       {error ? <p className="mb-3 text-xs text-destructive">{error}</p> : null}
 
-      <div className="flex min-h-[calc(100dvh-13rem)] w-full max-w-[980px] flex-col pl-10 pr-4 pt-3">
-        {!draft ? (
-          <p className="text-sm text-muted-foreground">Loading document...</p>
-        ) : (
-          <>
-            {!isPlanKey(draft.key) ? (
-              <input
-                value={draft.title}
-                onChange={(event) => {
-                  setDraft((current) => current ? { ...current, title: event.target.value } : current);
-                }}
-                placeholder="Untitled document"
-                className="w-full bg-transparent text-[28px] font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/45"
-                autoFocus
-              />
+      <div className="grid min-h-[calc(100dvh-13rem)] w-full grid-cols-1 gap-6 pt-3 xl:grid-cols-[minmax(0,1fr)_220px]">
+        <div className="flex min-h-[calc(100dvh-13rem)] w-full max-w-[980px] min-w-0 flex-col pl-10 pr-4">
+          {!draft ? (
+            <p className="text-sm text-muted-foreground">Loading document...</p>
+          ) : (
+            <>
+              {!isPlanKey(draft.key) ? (
+                <input
+                  value={draft.title}
+                  onChange={(event) => {
+                    setDraft((current) => current ? { ...current, title: event.target.value } : current);
+                  }}
+                  placeholder="Untitled document"
+                  className="w-full bg-transparent text-[28px] font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/45"
+                  autoFocus
+                />
+              ) : (
+                <h2 className="text-[28px] font-semibold leading-tight text-foreground">Plan</h2>
+              )}
+              <div className="mt-4 border-t border-border/60" />
+              <div ref={editorHostRef} className="min-h-0 flex-1">
+                <MarkdownEditor
+                  ref={bodyEditorRef}
+                  value={draft.body}
+                  onChange={(body) => {
+                    setDraft((current) => current ? { ...current, body } : current);
+                  }}
+                  placeholder="Write the document..."
+                  bordered={false}
+                  className="mt-4 min-h-0 flex-1 bg-transparent"
+                  contentClassName="min-h-[calc(100dvh-20rem)] cursor-text text-[16px] leading-7"
+                  mentions={mentions}
+                  imageUploadHandler={imageUploadHandler}
+                  onSubmit={() => void commitDraft(draft, { trackAutosave: true })}
+                />
+              </div>
+            </>
+          )}
+        </div>
+        <aside aria-label="Document sections" className="hidden min-w-0 xl:block">
+          <div className="sticky top-4 border-l border-border/60 py-1 pl-4">
+            <div className="mb-2 text-xs font-medium text-muted-foreground">Sections</div>
+            {documentOutline.length > 0 ? (
+              <nav className="space-y-0.5">
+                {documentOutline.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="block w-full truncate rounded px-2 py-1 text-left text-xs leading-5 text-muted-foreground hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    style={{ paddingLeft: `${8 + Math.max(0, item.level - 1) * 10}px` }}
+                    title={item.title}
+                    onClick={() => scrollToOutlineItem(item)}
+                  >
+                    {item.title}
+                  </button>
+                ))}
+              </nav>
             ) : (
-              <h2 className="text-[28px] font-semibold leading-tight text-foreground">Plan</h2>
+              <p className="max-w-[180px] text-xs leading-5 text-muted-foreground/75">
+                Add Markdown headings to show sections.
+              </p>
             )}
-            <div className="mt-4 border-t border-border/60" />
-            <MarkdownEditor
-              ref={bodyEditorRef}
-              value={draft.body}
-              onChange={(body) => {
-                setDraft((current) => current ? { ...current, body } : current);
-              }}
-              placeholder="Write the document..."
-              bordered={false}
-              className="mt-4 min-h-0 flex-1 bg-transparent"
-              contentClassName="min-h-[calc(100dvh-20rem)] cursor-text text-[16px] leading-7"
-              mentions={mentions}
-              imageUploadHandler={imageUploadHandler}
-              onSubmit={() => void commitDraft(draft, { trackAutosave: true })}
-            />
-          </>
-        )}
+          </div>
+        </aside>
       </div>
     </section>
   );

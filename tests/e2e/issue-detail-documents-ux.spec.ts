@@ -17,6 +17,58 @@ function resolveOrganizationWorkspaceRoot(orgId: string) {
 }
 
 test.describe("Issue detail documents UX", () => {
+  test("shows a section outline in the focused document editor", async ({ page }) => {
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await page.goto("/");
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `Issue-Detail-Outline-${Date.now()}` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Document outline should use the right rail",
+        description: "Focused documents should expose their chapter list.",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json();
+
+    const documentRes = await page.request.put(`/api/issues/${issue.id}/documents/proposal`, {
+      data: {
+        title: "Proposal",
+        format: "markdown",
+        body: [
+          "# Overview",
+          "",
+          "## 1. 摘要",
+          "The first section should appear in the outline.",
+          "",
+          "### Decision details",
+          "Nested headings should stay visible.",
+        ].join("\n"),
+        baseRevisionId: null,
+      },
+    });
+    expect(documentRes.ok()).toBe(true);
+
+    await page.goto(`/issues/${issue.identifier ?? issue.id}`);
+    await page.locator("#document-proposal").getByRole("button", { name: "Expand editor" }).click();
+
+    const focusedEditor = page.getByRole("region", { name: "Focused document editor" });
+    await expect(focusedEditor.getByText("Sections", { exact: true })).toBeVisible();
+    await expect(focusedEditor.getByRole("button", { name: "Overview" })).toBeVisible();
+    await expect(focusedEditor.getByRole("button", { name: "1. 摘要" })).toBeVisible();
+    await expect(focusedEditor.getByRole("button", { name: "Decision details" })).toBeVisible();
+
+    await focusedEditor.getByRole("button", { name: "Decision details" }).click();
+    await expect(focusedEditor.getByRole("heading", { name: "Decision details" })).toBeVisible();
+  });
+
   test("keeps document creation user-facing and exposes copyable issue id", async ({ page }) => {
     await page.goto("/");
 
