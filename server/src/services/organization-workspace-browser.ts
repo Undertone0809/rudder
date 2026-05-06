@@ -16,6 +16,21 @@ import { organizationService } from "./orgs.js";
 
 const MAX_PREVIEW_BYTES = 200_000;
 const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm"]);
+const WORKSPACE_ATTACHMENT_CONTENT_TYPES = new Map([
+  [".md", "text/markdown"],
+  [".markdown", "text/markdown"],
+  [".txt", "text/plain"],
+  [".json", "application/json"],
+  [".csv", "text/csv"],
+  [".html", "text/html"],
+  [".htm", "text/html"],
+  [".pdf", "application/pdf"],
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".webp", "image/webp"],
+  [".gif", "image/gif"],
+]);
 
 type WorkspaceRootResolution = {
   source: OrganizationWorkspaceRootSource;
@@ -63,6 +78,12 @@ function hasBinaryBytes(buffer: Buffer) {
 
 function shouldHideWorkspaceEntry(entryName: string) {
   return HIDDEN_WORKSPACE_ENTRY_NAMES.has(entryName);
+}
+
+function inferWorkspaceAttachmentContentType(filePath: string, buffer: Buffer) {
+  const mapped = WORKSPACE_ATTACHMENT_CONTENT_TYPES.get(path.extname(filePath).toLowerCase());
+  if (mapped) return mapped;
+  return hasBinaryBytes(buffer) ? "application/octet-stream" : "text/plain";
 }
 
 export function organizationWorkspaceBrowserService(db: Db) {
@@ -240,6 +261,31 @@ export function organizationWorkspaceBrowserService(db: Db) {
         content: rawContent,
         message: truncated ? "Preview truncated to the first 200 KB." : null,
         truncated,
+      };
+    },
+
+    async readAttachmentFile(orgId: string, filePath: string): Promise<{
+      normalizedPath: string;
+      originalFilename: string;
+      contentType: string;
+      buffer: Buffer;
+    }> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, filePath);
+      const rootExists = await pathExistsAsDirectory(resolvedRoot);
+      if (!rootExists) {
+        throw notFound("The workspace root is not available on this machine yet.");
+      }
+      if (!(await pathExistsAsFile(resolvedTarget))) {
+        throw notFound("File not found inside the organization workspace");
+      }
+
+      const buffer = await fs.readFile(resolvedTarget);
+      return {
+        normalizedPath,
+        originalFilename: path.basename(resolvedTarget),
+        contentType: inferWorkspaceAttachmentContentType(normalizedPath || resolvedTarget, buffer),
+        buffer,
       };
     },
 

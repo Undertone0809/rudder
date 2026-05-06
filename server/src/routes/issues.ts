@@ -4,6 +4,7 @@ import type { Db } from "@rudderhq/db";
 import {
   addIssueCommentSchema,
   createIssueAttachmentMetadataSchema,
+  createIssueWorkspaceAttachmentSchema,
   createIssueWorkProductSchema,
   createIssueLabelSchema,
   checkoutIssueSchema,
@@ -32,6 +33,7 @@ import {
   automationService,
   workProductService,
 } from "../services/index.js";
+import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import { logger } from "../middleware/logger.js";
 import { forbidden, HttpError, unauthorized } from "../errors.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -54,6 +56,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
   const workProductsSvc = workProductService(db);
   const documentsSvc = documentService(db);
   const automationsSvc = automationService(db);
+  const workspaceBrowser = organizationWorkspaceBrowserService(db);
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_ATTACHMENT_BYTES, files: 1 },
@@ -1748,6 +1751,83 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
     res.status(201).json(withContentPath(attachment));
   });
+
+  router.post(
+    "/orgs/:orgId/issues/:issueId/attachments/workspace-file",
+    validate(createIssueWorkspaceAttachmentSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      const issueId = req.params.issueId as string;
+      assertCompanyAccess(req, orgId);
+      const issue = await svc.getById(issueId);
+      if (!issue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      if (issue.orgId !== orgId) {
+        res.status(422).json({ error: "Issue does not belong to organization" });
+        return;
+      }
+
+      const workspaceFile = await workspaceBrowser.readAttachmentFile(orgId, req.body.path);
+      if (workspaceFile.buffer.length <= 0) {
+        res.status(422).json({ error: "Attachment is empty" });
+        return;
+      }
+      if (workspaceFile.buffer.length > MAX_ATTACHMENT_BYTES) {
+        res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
+        return;
+      }
+      if (!isAllowedContentType(workspaceFile.contentType)) {
+        res.status(422).json({ error: `Unsupported attachment type: ${workspaceFile.contentType || "unknown"}` });
+        return;
+      }
+
+      const actor = getActorInfo(req);
+      const stored = await storage.putFile({
+        orgId,
+        namespace: `issues/${issueId}`,
+        originalFilename: workspaceFile.originalFilename,
+        contentType: workspaceFile.contentType,
+        body: workspaceFile.buffer,
+      });
+
+      const attachment = await svc.createAttachment({
+        issueId,
+        issueCommentId: null,
+        usage: "issue",
+        provider: stored.provider,
+        objectKey: stored.objectKey,
+        contentType: stored.contentType,
+        byteSize: stored.byteSize,
+        sha256: stored.sha256,
+        originalFilename: stored.originalFilename,
+        createdByAgentId: actor.agentId,
+        createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      });
+
+      await logActivity(db, {
+        orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.attachment_added",
+        entityType: "issue",
+        entityId: issueId,
+        details: {
+          attachmentId: attachment.id,
+          usage: attachment.usage,
+          originalFilename: attachment.originalFilename,
+          contentType: attachment.contentType,
+          byteSize: attachment.byteSize,
+          workspacePath: workspaceFile.normalizedPath,
+        },
+      });
+
+      res.status(201).json(withContentPath(attachment));
+    },
+  );
 
   router.get("/attachments/:attachmentId/content", async (req, res, next) => {
     const attachmentId = req.params.attachmentId as string;

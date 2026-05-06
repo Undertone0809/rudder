@@ -109,6 +109,8 @@ export const issuesApi = {
     }
     return api.postForm<IssueAttachment>(`/orgs/${orgId}/issues/${issueId}/attachments`, form);
   },
+  attachWorkspaceFile: (orgId: string, issueId: string, path: string) =>
+    api.post<IssueAttachment>(`/orgs/${orgId}/issues/${issueId}/attachments/workspace-file`, { path }),
   deleteAttachment: (id: string) => api.delete<{ ok: true }>(`/attachments/${id}`),
   listApprovals: (id: string) => api.get<Approval[]>(`/issues/${id}/approvals`),
   linkApproval: (id: string, approvalId: string) =>

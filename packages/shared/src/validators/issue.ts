@@ -126,6 +126,12 @@ export const createIssueAttachmentMetadataSchema = z.object({
 
 export type CreateIssueAttachmentMetadata = z.infer<typeof createIssueAttachmentMetadataSchema>;
 
+export const createIssueWorkspaceAttachmentSchema = z.object({
+  path: z.string().trim().min(1).max(2048),
+});
+
+export type CreateIssueWorkspaceAttachment = z.infer<typeof createIssueWorkspaceAttachmentSchema>;
+
 export const ISSUE_DOCUMENT_FORMATS = ["markdown"] as const;
 
 export const issueDocumentFormatSchema = z.enum(ISSUE_DOCUMENT_FORMATS);
