@@ -73,6 +73,7 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "../workspace-runtime.js";
 import { issueService } from "../issues.js";
+import { buildIssueReviewWakeupOptions } from "../issue-review-wakeup.js";
 import { executionWorkspaceService } from "../execution-workspaces.js";
 import { buildObservedRunLangfuseScores } from "../run-intelligence.js";
 import { workspaceOperationService } from "../workspace-operations.js";
@@ -1060,8 +1061,24 @@ function buildRecoveryContextSnapshot(input: {
 
 type PassiveFollowupIssueRow = Pick<
   typeof issues.$inferSelect,
-  "id" | "orgId" | "title" | "description" | "status" | "priority" | "projectId" | "assigneeAgentId"
+  | "id"
+  | "orgId"
+  | "identifier"
+  | "title"
+  | "description"
+  | "status"
+  | "priority"
+  | "projectId"
+  | "assigneeAgentId"
+  | "reviewerAgentId"
+  | "reviewerUserId"
 >;
+
+type AutoReviewRequest = {
+  issue: PassiveFollowupIssueRow & { status: "in_review" };
+  previousStatus: string;
+  reviewerWakeupAlreadyDeferred: boolean;
+};
 
 type PassiveFollowupContext = {
   originRunId: string;
@@ -2541,6 +2558,13 @@ export function heartbeatService(db: Db) {
     };
   }
 
+  function shouldAutoRequestIssueReview(run: typeof heartbeatRuns.$inferSelect, issue: PassiveFollowupIssueRow) {
+    if (run.status !== "succeeded") return false;
+    if (issue.status !== "todo" && issue.status !== "in_progress") return false;
+    if (issue.assigneeAgentId !== run.agentId) return false;
+    return Boolean(issue.reviewerAgentId || issue.reviewerUserId);
+  }
+
   async function countRunningRunsForAgent(agentId: string) {
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)` })
@@ -3970,39 +3994,69 @@ export function heartbeatService(db: Db) {
         .select({
           id: issues.id,
           orgId: issues.orgId,
+          identifier: issues.identifier,
           title: issues.title,
           description: issues.description,
           status: issues.status,
           priority: issues.priority,
           projectId: issues.projectId,
           assigneeAgentId: issues.assigneeAgentId,
+          reviewerAgentId: issues.reviewerAgentId,
+          reviewerUserId: issues.reviewerUserId,
         })
         .from(issues)
         .where(and(eq(issues.orgId, run.orgId), eq(issues.executionRunId, run.id)))
         .then((rows) => rows[0] ?? null);
 
-      if (!issue) return { promotedRun: null, passiveClosure: null };
+      if (!issue) return { promotedRun: null, passiveClosure: null, autoReviewRequest: null };
 
-      const passiveClosure = await evaluatePassiveIssueClosureForLockedIssue({
-        tx,
-        run,
-        issue,
-        now: new Date(),
-      });
+      const now = new Date();
+      let autoReviewRequest: AutoReviewRequest | null = null;
+      const shouldAutoReview = shouldAutoRequestIssueReview(run, issue);
+
+      const passiveClosure = shouldAutoReview
+        ? ({ kind: "none", reason: "issue_sent_to_review" } as const)
+        : await evaluatePassiveIssueClosureForLockedIssue({
+          tx,
+          run,
+          issue,
+          now,
+        });
 
       if (passiveClosure.kind === "queued") {
-        return { promotedRun: passiveClosure.run, passiveClosure };
+        return { promotedRun: passiveClosure.run, passiveClosure, autoReviewRequest: null };
       }
 
-      await tx
-        .update(issues)
-        .set({
-          executionRunId: null,
-          executionAgentNameKey: null,
-          executionLockedAt: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(issues.id, issue.id));
+      if (shouldAutoReview) {
+        await tx
+          .update(issues)
+          .set({
+            status: "in_review",
+            executionRunId: null,
+            executionAgentNameKey: null,
+            executionLockedAt: null,
+            completedAt: null,
+            cancelledAt: null,
+            updatedAt: now,
+          })
+          .where(eq(issues.id, issue.id));
+
+        autoReviewRequest = {
+          issue: { ...issue, status: "in_review" },
+          previousStatus: issue.status,
+          reviewerWakeupAlreadyDeferred: false,
+        };
+      } else {
+        await tx
+          .update(issues)
+          .set({
+            executionRunId: null,
+            executionAgentNameKey: null,
+            executionLockedAt: null,
+            updatedAt: now,
+          })
+          .where(eq(issues.id, issue.id));
+      }
 
       while (true) {
         const deferred = await tx
@@ -4019,7 +4073,16 @@ export function heartbeatService(db: Db) {
           .limit(1)
           .then((rows) => rows[0] ?? null);
 
-        if (!deferred) return { promotedRun: null, passiveClosure };
+        if (!deferred) return { promotedRun: null, passiveClosure, autoReviewRequest };
+
+        if (
+          autoReviewRequest &&
+          issue.reviewerAgentId &&
+          deferred.agentId === issue.reviewerAgentId &&
+          deferred.source === "review"
+        ) {
+          autoReviewRequest.reviewerWakeupAlreadyDeferred = true;
+        }
 
         const deferredAgent = await tx
           .select()
@@ -4110,9 +4173,60 @@ export function heartbeatService(db: Db) {
           })
           .where(eq(issues.id, issue.id));
 
-        return { promotedRun: newRun, passiveClosure };
+        return { promotedRun: newRun, passiveClosure, autoReviewRequest };
       }
     });
+
+    const autoReviewRequest = outcome.autoReviewRequest;
+    if (autoReviewRequest) {
+      await appendRunEvent(run, await nextRunEventSeq(run.id), {
+        eventType: "issue.review_requested",
+        stream: "system",
+        level: "info",
+        message: "Issue moved to review after successful assignee run",
+        payload: {
+          issueId: autoReviewRequest.issue.id,
+          reviewerAgentId: autoReviewRequest.issue.reviewerAgentId,
+          reviewerUserId: autoReviewRequest.issue.reviewerUserId,
+          previousStatus: autoReviewRequest.previousStatus,
+          status: "in_review",
+        },
+      });
+      await logActivity(db, {
+        orgId: autoReviewRequest.issue.orgId,
+        actorType: "system",
+        actorId: "issue_review_routing",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: autoReviewRequest.issue.id,
+        agentId: run.agentId,
+        runId: run.id,
+        details: {
+          status: "in_review",
+          identifier: autoReviewRequest.issue.identifier,
+          source: "run_completion",
+          reviewerAgentId: autoReviewRequest.issue.reviewerAgentId,
+          reviewerUserId: autoReviewRequest.issue.reviewerUserId,
+          _previous: { status: autoReviewRequest.previousStatus },
+        },
+      });
+
+      if (autoReviewRequest.issue.reviewerAgentId && !autoReviewRequest.reviewerWakeupAlreadyDeferred) {
+        await enqueueWakeup(autoReviewRequest.issue.reviewerAgentId, {
+          ...buildIssueReviewWakeupOptions({
+            issue: autoReviewRequest.issue,
+            mutation: "status_to_in_review",
+            contextSource: "issue.run_completion",
+            requestedByActorType: "system",
+            requestedByActorId: "issue_review_routing",
+          }),
+          idempotencyKey: `issue_review_requested:${run.id}`,
+        }).catch((err) => {
+          logger.warn({ err, issueId: autoReviewRequest.issue.id }, "failed to wake reviewer after issue run completion");
+          return null;
+        });
+      }
+    }
 
     const passiveClosure = outcome.passiveClosure;
     if (passiveClosure?.kind === "queued") {

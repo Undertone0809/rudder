@@ -166,6 +166,8 @@ describe("heartbeat passive issue closeout", () => {
     agentRuntimeConfig?: Record<string, unknown>;
     runtimeConfig?: Record<string, unknown>;
     issueStatus?: "todo" | "in_progress";
+    reviewerAgent?: boolean;
+    reviewerUserId?: string | null;
   }) {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -205,6 +207,8 @@ describe("heartbeat passive issue closeout", () => {
       status: input?.issueStatus ?? "in_progress",
       priority: "medium",
       assigneeAgentId: agentId,
+      reviewerAgentId: input?.reviewerAgent ? agentId : null,
+      reviewerUserId: input?.reviewerUserId ?? null,
       issueNumber: 1,
       identifier: `${issuePrefix}-1`,
     });
@@ -309,6 +313,164 @@ describe("heartbeat passive issue closeout", () => {
     const issue = await getIssue(issueId);
     expect(issue?.executionRunId).toBe(followup?.id);
     expect(issue?.status).toBe("in_progress");
+  });
+
+  it("moves successful reviewed assignee runs to review before passive close-out checks", async () => {
+    const { agentId, issueId, orgId } = await seedFixture({
+      reviewerAgent: true,
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => process.exit(0), 750)"],
+        timeoutSec: 5,
+      },
+    });
+    const run = await wakeIssueRun({ agentId, issueId });
+
+    await waitFor(async () => {
+      const current = await getRun(run.id);
+      return current?.status === "running" ? current : null;
+    });
+
+    const commentId = randomUUID();
+    await db.insert(issueComments).values({
+      id: commentId,
+      orgId,
+      issueId,
+      authorAgentId: agentId,
+      body: "Implementation is ready for review.",
+    });
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "agent",
+      actorId: agentId,
+      action: "issue.comment_added",
+      entityType: "issue",
+      entityId: issueId,
+      agentId,
+      runId: run.id,
+      details: { commentId },
+    });
+
+    const issue = await waitFor(async () => {
+      const current = await getIssue(issueId);
+      return current?.status === "in_review" ? current : null;
+    });
+
+    expect(issue.reviewerAgentId).toBe(agentId);
+
+    const reviewRun = await waitFor(async () => {
+      const runs = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, agentId));
+      return runs.find((row) => row.id !== run.id && row.invocationSource === "review") ?? null;
+    });
+    expect(reviewRun.contextSnapshot).toMatchObject({
+      issueId,
+      source: "issue.run_completion",
+      wakeSource: "review",
+      wakeReason: "issue_review_requested",
+      role: "reviewer",
+    });
+
+    const reviewWake = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, reviewRun.wakeupRequestId ?? ""))
+      .then((rows) => rows[0] ?? null);
+    expect(reviewWake).toMatchObject({
+      source: "review",
+      reason: "issue_review_requested",
+      requestedByActorType: "system",
+      requestedByActorId: "issue_review_routing",
+    });
+
+    const passiveWakeups = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.reason, "issue_passive_followup"));
+    expect(passiveWakeups).toHaveLength(0);
+
+    const reviewActivity = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "issue.updated"))
+      .then((rows) => rows.find((row) => row.entityId === issueId) ?? null);
+    expect(reviewActivity?.details).toMatchObject({
+      status: "in_review",
+      source: "run_completion",
+      reviewerAgentId: agentId,
+      _previous: { status: "in_progress" },
+    });
+  });
+
+  it("moves successful user-reviewed assignee runs to review without agent reviewer wakeup", async () => {
+    const reviewerUserId = randomUUID();
+    const { agentId, issueId, orgId } = await seedFixture({
+      reviewerUserId,
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => process.exit(0), 750)"],
+        timeoutSec: 5,
+      },
+    });
+    const run = await wakeIssueRun({ agentId, issueId });
+
+    await waitFor(async () => {
+      const current = await getRun(run.id);
+      return current?.status === "running" ? current : null;
+    });
+
+    const commentId = randomUUID();
+    await db.insert(issueComments).values({
+      id: commentId,
+      orgId,
+      issueId,
+      authorAgentId: agentId,
+      body: "Implementation is ready for review by the board user.",
+    });
+    await db.insert(activityLog).values({
+      orgId,
+      actorType: "agent",
+      actorId: agentId,
+      action: "issue.comment_added",
+      entityType: "issue",
+      entityId: issueId,
+      agentId,
+      runId: run.id,
+      details: { commentId },
+    });
+
+    const issue = await waitFor(async () => {
+      const current = await getIssue(issueId);
+      return current?.status === "in_review" ? current : null;
+    });
+
+    expect(issue.reviewerUserId).toBe(reviewerUserId);
+
+    const reviewWakeups = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.reason, "issue_review_requested"));
+    expect(reviewWakeups).toHaveLength(0);
+
+    const passiveWakeups = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.reason, "issue_passive_followup"));
+    expect(passiveWakeups).toHaveLength(0);
+
+    const reviewActivity = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "issue.updated"))
+      .then((rows) => rows.find((row) => row.entityId === issueId) ?? null);
+    expect(reviewActivity?.details).toMatchObject({
+      status: "in_review",
+      source: "run_completion",
+      reviewerUserId,
+      _previous: { status: "in_progress" },
+    });
   });
 
   it("does not queue passive follow-up when the run leaves a run-attributed progress comment", async () => {
