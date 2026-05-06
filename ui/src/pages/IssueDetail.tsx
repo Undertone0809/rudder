@@ -9,6 +9,7 @@ import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
 import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
+import { pluginsApi } from "../api/plugins";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { projectsApi } from "../api/projects";
 import { useOrganization } from "../context/OrganizationContext";
@@ -79,6 +80,7 @@ import {
   ChevronRight,
   Copy,
   EyeOff,
+  ExternalLink,
   FileCode2,
   Folder,
   Hexagon,
@@ -167,9 +169,68 @@ const issueStatusOptions = [
 ] as const;
 
 const ISSUE_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
+const LINEAR_PLUGIN_KEY = "rudder.linear";
+const LINEAR_ISSUE_DETAIL_SLOT_ID = "linear-issue-tab";
+const LINEAR_ISSUE_LINK_DATA_KEY = "issue-link";
+
+type LinearIssueActivitySlot = {
+  pluginId: string;
+  pluginKey: string;
+  id: string;
+};
+
+type LinearIssueLinkState = {
+  externalId: string;
+  linearIdentifier: string;
+  linearTitle: string;
+  linearUrl: string;
+  orgId: string;
+  rudderIssueId: string;
+  rudderIssueIdentifier: string | null;
+  teamId: string;
+  teamName: string;
+  projectId: string | null;
+  projectName: string | null;
+  stateId: string;
+  stateName: string;
+  importedAt: string;
+  updatedAt: string;
+};
+
+type LinearIssueSummary = {
+  id: string;
+  identifier: string;
+  title: string;
+  description?: string | null;
+  url: string;
+  updatedAt: string;
+  createdAt: string;
+  team: { id: string; key?: string; name: string };
+  state: { id: string; name: string };
+  project?: { id: string; name: string } | null;
+  assignee?: { id: string; name: string } | null;
+};
+
+type LinearIssueLinkData =
+  | {
+    linked: false;
+    issueTitle: string;
+    searchQuery: string;
+  }
+  | {
+    linked: true;
+    issueTitle: string;
+    link: LinearIssueLinkState;
+    latestIssue: LinearIssueSummary | null;
+    staleReason: string | null;
+  };
 
 function issueStatusLabel(status: string) {
   return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function isLinearIssueDetailSlot(slot: LinearIssueActivitySlot) {
+  return slot.pluginKey === LINEAR_PLUGIN_KEY && slot.id === LINEAR_ISSUE_DETAIL_SLOT_ID;
 }
 
 function isMarkdownFile(file: File) {
@@ -493,6 +554,76 @@ function ActorIdentity({
   return <Identity name={resolveBoardActorLabel(evt.actorType, id, currentBoardUserId)} size="sm" />;
 }
 
+function LinearIssueActivityCard({ data }: { data: Extract<LinearIssueLinkData, { linked: true }> }) {
+  const latest = data.latestIssue;
+  const link = data.link;
+  const identifier = latest?.identifier ?? link.linearIdentifier;
+  const title = latest?.title ?? link.linearTitle;
+  const url = latest?.url ?? link.linearUrl;
+  const description = latest?.description?.trim() ?? "";
+  const teamName = latest?.team.name ?? link.teamName;
+  const stateName = latest?.state.name ?? link.stateName;
+  const projectName = latest?.project?.name ?? link.projectName;
+  const assigneeName = latest?.assignee?.name ?? null;
+  const updatedAt = latest?.updatedAt ?? link.updatedAt;
+
+  return (
+    <section
+      className="mb-3 rounded-lg border border-border bg-card/70 p-3 text-sm"
+      data-testid="issue-activity-linear-link"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+              Linked Linear issue
+            </span>
+            <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+              {identifier}
+            </span>
+          </div>
+          <div className="font-medium text-foreground">{title}</div>
+          <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+            <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">{teamName}</span>
+            <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">{stateName}</span>
+            {projectName ? (
+              <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">{projectName}</span>
+            ) : null}
+            {assigneeName ? (
+              <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">{assigneeName}</span>
+            ) : null}
+            <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">
+              Updated {relativeTime(updatedAt)}
+            </span>
+            <span className="rounded-full border border-border bg-background/70 px-2 py-0.5">
+              Imported {relativeTime(link.importedAt)}
+            </span>
+          </div>
+        </div>
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+        >
+          Open in Linear
+          <ExternalLink className="h-3 w-3" />
+        </a>
+      </div>
+      {data.staleReason ? (
+        <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-200">
+          {data.staleReason}
+        </div>
+      ) : null}
+      {description ? (
+        <p className="mt-3 line-clamp-4 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
+          {description}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 export function IssueDetail() {
   const { issueId } = useParams<{ issueId: string }>();
   const { organizations, selectedOrganizationId, selectedOrganization } = useOrganization();
@@ -702,14 +833,41 @@ export function IssueDetail() {
     enabled: !!resolvedCompanyId,
   });
   const issuePluginTabItems = useMemo(
-    () => issuePluginDetailSlots.map((slot) => ({
-      value: `plugin:${slot.pluginKey}:${slot.id}`,
-      label: slot.displayName,
-      slot,
-    })),
+    () => issuePluginDetailSlots
+      .filter((slot) => !isLinearIssueDetailSlot(slot))
+      .map((slot) => ({
+        value: `plugin:${slot.pluginKey}:${slot.id}`,
+        label: slot.displayName,
+        slot,
+      })),
     [issuePluginDetailSlots],
   );
+  const linearIssueActivitySlot = issuePluginDetailSlots.find((slot) => isLinearIssueDetailSlot(slot)) ?? null;
   const activePluginTab = issuePluginTabItems.find((item) => item.value === detailTab) ?? null;
+
+  const { data: linearIssueLink } = useQuery({
+    queryKey: [
+      "plugins",
+      LINEAR_PLUGIN_KEY,
+      LINEAR_ISSUE_LINK_DATA_KEY,
+      resolvedCompanyId ?? "__none__",
+      issue?.id ?? issueId ?? "__none__",
+      linearIssueActivitySlot?.pluginId ?? "__none__",
+    ] as const,
+    queryFn: async () => {
+      const response = await pluginsApi.bridgeGetData(
+        linearIssueActivitySlot!.pluginId,
+        LINEAR_ISSUE_LINK_DATA_KEY,
+        {
+          orgId: resolvedCompanyId,
+          issueId: issue!.id,
+        },
+        resolvedCompanyId,
+      );
+      return response.data as LinearIssueLinkData;
+    },
+    enabled: Boolean(resolvedCompanyId && issue?.id && linearIssueActivitySlot?.pluginId),
+  });
 
   const agentMap = useMemo(() => {
     const map = new Map<string, Agent>();
@@ -1821,6 +1979,9 @@ export function IssueDetail() {
         </TabsContent>
 
         <TabsContent value="activity">
+          {linearIssueLink?.linked ? (
+            <LinearIssueActivityCard data={linearIssueLink} />
+          ) : null}
           {linkedRuns && linkedRuns.length > 0 && (
             <div className="mb-3 px-3 py-2 rounded-lg border border-border">
               <div className="text-sm font-medium text-muted-foreground mb-1">Cost Summary</div>

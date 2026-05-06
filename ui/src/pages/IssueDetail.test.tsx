@@ -2,11 +2,12 @@
 
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueDetail } from "./IssueDetail";
 
 let capturedMentions: Array<Record<string, unknown>> = [];
 let mockSourceBreadcrumb: { label: string; href: string } | null = null;
+let mockIssuePluginSlots: Array<Record<string, unknown>> = [];
 
 const parentIssue = {
   id: "issue-parent",
@@ -338,7 +339,7 @@ vi.mock("../components/Identity", () => ({
 vi.mock("@/plugins/slots", () => ({
   PluginSlotMount: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   PluginSlotOutlet: () => null,
-  usePluginSlots: () => ({ slots: [] }),
+  usePluginSlots: () => ({ slots: mockIssuePluginSlots }),
 }));
 
 vi.mock("@/plugins/launchers", () => ({
@@ -409,6 +410,7 @@ vi.mock("lucide-react", () => {
     Database: Icon,
     Eye: Icon,
     EyeOff: Icon,
+    ExternalLink: Icon,
     FileCode2: Icon,
     FileCode: Icon,
     Fingerprint: Icon,
@@ -462,6 +464,20 @@ vi.mock("lucide-react", () => {
 });
 
 describe("IssueDetail", () => {
+  beforeEach(() => {
+    capturedMentions = [];
+    mockSourceBreadcrumb = null;
+    mockIssuePluginSlots = [];
+    queryData.delete(JSON.stringify([
+      "plugins",
+      "rudder.linear",
+      "issue-link",
+      "org-2",
+      "issue-parent",
+      "plugin-linear",
+    ]));
+  });
+
   it("renders a clickable source breadcrumb in the issue header", () => {
     mockSourceBreadcrumb = { label: "Inbox", href: "/inbox?scope=recent" };
 
@@ -494,5 +510,83 @@ describe("IssueDetail", () => {
         skillMarkdownTarget: "/workspace/skills/build-advisor/SKILL.md",
       }),
     ]));
+  });
+
+  it("moves the linked Linear issue summary into activity instead of a separate tab", () => {
+    mockIssuePluginSlots = [
+      {
+        type: "detailTab",
+        id: "linear-issue-tab",
+        displayName: "Linear",
+        exportName: "LinearIssueTab",
+        entityTypes: ["issue"],
+        pluginId: "plugin-linear",
+        pluginKey: "rudder.linear",
+        pluginDisplayName: "Linear",
+        pluginVersion: "0.1.0",
+      },
+      {
+        type: "detailTab",
+        id: "delivery-tab",
+        displayName: "Delivery",
+        exportName: "DeliveryTab",
+        entityTypes: ["issue"],
+        pluginId: "plugin-delivery",
+        pluginKey: "rudder.delivery",
+        pluginDisplayName: "Delivery",
+        pluginVersion: "0.1.0",
+      },
+    ];
+    queryData.set(JSON.stringify([
+      "plugins",
+      "rudder.linear",
+      "issue-link",
+      "org-2",
+      "issue-parent",
+      "plugin-linear",
+    ]), {
+      linked: true,
+      issueTitle: "Parent issue",
+      link: {
+        externalId: "lin-1",
+        linearIdentifier: "ENG-42",
+        linearTitle: "Imported Linear issue",
+        linearUrl: "https://linear.app/acme/issue/ENG-42/imported-linear-issue",
+        orgId: "org-2",
+        rudderIssueId: "issue-parent",
+        rudderIssueIdentifier: "ORG2-1",
+        teamId: "team-1",
+        teamName: "Engineering",
+        projectId: "linear-project-1",
+        projectName: "Roadmap",
+        stateId: "state-progress",
+        stateName: "In Progress",
+        importedAt: new Date("2026-04-20T00:00:00.000Z"),
+        updatedAt: new Date("2026-04-20T01:00:00.000Z"),
+      },
+      latestIssue: {
+        id: "lin-1",
+        identifier: "ENG-42",
+        title: "Imported Linear issue",
+        description: "Fresh Linear context.",
+        url: "https://linear.app/acme/issue/ENG-42/imported-linear-issue",
+        updatedAt: new Date("2026-04-20T02:00:00.000Z"),
+        createdAt: new Date("2026-04-19T00:00:00.000Z"),
+        team: { id: "team-1", name: "Engineering" },
+        state: { id: "state-progress", name: "In Progress" },
+        project: { id: "linear-project-1", name: "Roadmap" },
+        assignee: { id: "linear-user-1", name: "Amy Zhang" },
+      },
+      staleReason: null,
+    });
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Linked Linear issue");
+    expect(html).toContain("ENG-42");
+    expect(html).toContain("Fresh Linear context.");
+    expect(html).toContain("Open in Linear");
+    expect(html).toContain(">Delivery</button>");
+    expect(html).not.toContain(">Linear</button>");
   });
 });
