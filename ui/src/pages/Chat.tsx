@@ -1184,7 +1184,7 @@ function ChatMessageItem({
           <button
             type="button"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
-            aria-label="Edit message in composer"
+            aria-label="Steer from this message"
             onClick={() => onEditUserMessage(message)}
           >
             <Pencil className="h-4 w-4" />
@@ -2763,7 +2763,9 @@ function ChatWorkspace() {
   const emptyStateHeading = userNickname
     ? t("chat.emptyState.headingNamed", { name: userNickname })
     : t("chat.emptyState.heading");
-  const composerPlaceholder = t("chat.composer.placeholder");
+  const composerPlaceholder = editForkUserMessageId
+    ? "Steer from this earlier message…"
+    : t("chat.composer.placeholder");
   const expandedPromptGroup = EMPTY_STATE_PROMPT_GROUPS.find((group) => group.label === expandedEmptyStatePrompt) ?? null;
   const emptyStatePromptOptionsId = "chat-empty-state-prompt-options";
   const emptyStatePromptOriginX = expandedEmptyStatePrompt === "Scope a new feature"
@@ -2960,6 +2962,18 @@ function ChatWorkspace() {
       )}
     >
       <div onPasteCapture={handleComposerPasteCapture}>
+        {editForkUserMessageId ? (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:var(--surface-active)] px-3 py-2 text-xs text-muted-foreground">
+            <span>Steering from an earlier message. Sending will create a new branch.</span>
+            <button
+              type="button"
+              className="rounded px-2 py-0.5 text-foreground hover:bg-[color:var(--surface-panel)]"
+              onClick={() => setEditForkUserMessageId(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : null}
         <MarkdownEditor
           ref={composerEditorRef}
           value={draft}
