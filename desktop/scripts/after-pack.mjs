@@ -117,25 +117,20 @@ async function copyPackagedServerBundle(appDir, resourcesDir) {
 
   const destinationDir = path.join(resourcesDir, "server-package");
   await fs.rm(destinationDir, { recursive: true, force: true });
-  await copyTreePreservingSymlinks(stagedServerPackageDir, destinationDir);
+  await copyTreeDereferenceSymlinks(stagedServerPackageDir, destinationDir);
 }
 
-async function copyTreePreservingSymlinks(sourcePath, destinationPath) {
-  const stats = await fs.lstat(sourcePath);
-
-  if (stats.isSymbolicLink()) {
-    const target = await fs.readlink(sourcePath);
-    await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-    await fs.symlink(target, destinationPath);
-    return;
-  }
+async function copyTreeDereferenceSymlinks(sourcePath, destinationPath) {
+  const lstat = await fs.lstat(sourcePath);
+  const resolvedSourcePath = lstat.isSymbolicLink() ? await fs.realpath(sourcePath) : sourcePath;
+  const stats = await fs.stat(resolvedSourcePath);
 
   if (stats.isDirectory()) {
     await fs.mkdir(destinationPath, { recursive: true });
-    const entries = await fs.readdir(sourcePath, { withFileTypes: true });
+    const entries = await fs.readdir(resolvedSourcePath, { withFileTypes: true });
     for (const entry of entries) {
-      await copyTreePreservingSymlinks(
-        path.join(sourcePath, entry.name),
+      await copyTreeDereferenceSymlinks(
+        path.join(resolvedSourcePath, entry.name),
         path.join(destinationPath, entry.name),
       );
     }
@@ -143,7 +138,7 @@ async function copyTreePreservingSymlinks(sourcePath, destinationPath) {
   }
 
   await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-  await fs.copyFile(sourcePath, destinationPath);
+  await fs.copyFile(resolvedSourcePath, destinationPath);
   await fs.chmod(destinationPath, stats.mode);
 }
 
