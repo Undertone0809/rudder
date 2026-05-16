@@ -239,6 +239,7 @@ vi.mock("../components/AgentIconPicker", () => ({
 let cleanupFn: (() => void) | null = null;
 
 beforeEach(() => {
+  document.documentElement.lang = "en";
   automationListState.items = [automation];
   const storage = new Map<string, string>();
   Object.defineProperty(window, "localStorage", {
@@ -259,6 +260,7 @@ afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   document.body.innerHTML = "";
+  document.documentElement.lang = "en";
   markdownEditorProps.length = 0;
   vi.clearAllMocks();
 });
@@ -318,7 +320,10 @@ describe("Automations", () => {
 
     expect(container.textContent).toContain("No automations yet");
     expect(container.textContent).toContain("Bug triage");
+    expect(container.textContent).toContain("Daily standup");
     expect(container.textContent).toContain("Weekly progress report");
+    expect(container.textContent).toContain("Create custom automation");
+    expect(container.textContent).not.toContain("Start from scratch");
     expect(container.querySelector('[data-testid="automation-template-grid"]')).toBeTruthy();
 
     await act(async () => {
@@ -337,6 +342,42 @@ describe("Automations", () => {
     expect(document.body.textContent).toContain("Run output");
     expect(document.body.textContent).toContain("Send to chat");
     expect(document.body.textContent).toContain("Create automation");
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Send to chat"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(runbookInput?.value).toContain("relevant Rudder chat conversation");
+  });
+
+  it("renders localized use-case templates for Chinese UI", async () => {
+    document.documentElement.lang = "zh-CN";
+    automationListState.items = [];
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Bug 分诊");
+    expect(container.textContent).toContain("日会");
+    expect(container.textContent).toContain("周进展报告");
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("日会"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const titleInput = document.querySelector('textarea[placeholder="Automation name"]') as HTMLTextAreaElement | null;
+    const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
+    expect(titleInput?.value).toBe("日会");
+    expect(runbookInput?.value).toContain("上一个工作日以来更新的进行中任务");
+    expect(runbookInput?.value).toContain("发送到相关 Rudder chat");
   });
 
   it("renders last run as a fixed timestamp without the run status caption", async () => {
