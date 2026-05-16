@@ -61,6 +61,12 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function startTempDatabase() {
+  const externalConnectionString = process.env.RUDDER_ACTIVITY_SERVICE_TEST_DATABASE_URL?.trim();
+  if (externalConnectionString) {
+    await applyPendingMigrations(externalConnectionString);
+    return { connectionString: externalConnectionString, dataDir: "", instance: null };
+  }
+
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-activity-service-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
