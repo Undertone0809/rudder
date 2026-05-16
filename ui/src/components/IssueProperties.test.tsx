@@ -145,9 +145,14 @@ describe("IssueProperties", () => {
     expect(label?.textContent).toContain("Chief Technology Officer");
     expect(label?.textContent).not.toContain("Ella (Chief Technology Officer)");
     expect(trigger?.classList.contains("min-w-0")).toBe(true);
+    expect(trigger?.classList.contains("w-full")).toBe(true);
     expect(trigger?.classList.contains("max-w-full")).toBe(true);
+    expect(trigger?.classList.contains("justify-start")).toBe(true);
+    expect(label?.getAttribute("data-layout")).toBe("stacked");
     expect(label?.classList.contains("min-w-0")).toBe(true);
+    expect(label?.classList.contains("w-full")).toBe(true);
     expect(label?.querySelector('[data-slot="agent-title-badge"]')).toBeTruthy();
+    expect(label?.querySelector('[data-slot="agent-title-badge"]')?.classList.contains("max-w-full")).toBe(true);
     expect(label?.querySelector('[data-slot="agent-title-badge"] span')?.classList.contains("truncate")).toBe(true);
   });
 
