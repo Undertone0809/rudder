@@ -48,6 +48,30 @@ describe("activity routes", () => {
     vi.clearAllMocks();
   });
 
+  it("passes activity list principal filters to the service", async () => {
+    mockActivityService.list.mockResolvedValue([]);
+
+    const res = await request(createApp())
+      .get("/api/orgs/organization-1/activity")
+      .query({
+        userId: "user-1",
+        actorType: "user",
+        actorId: "user-1",
+        entityType: "project",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockActivityService.list).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      agentId: undefined,
+      userId: "user-1",
+      actorType: "user",
+      actorId: "user-1",
+      entityType: "project",
+      entityId: undefined,
+    });
+  });
+
   it("resolves issue identifiers before loading runs", async () => {
     mockIssueService.getByIdentifier.mockResolvedValue({
       id: "issue-uuid-1",

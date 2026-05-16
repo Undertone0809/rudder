@@ -5,6 +5,9 @@ import { activityLog, chatContextLinks, chatConversations, heartbeatRuns, issues
 export interface ActivityFilters {
   orgId: string;
   agentId?: string;
+  userId?: string;
+  actorType?: "agent" | "user" | "system";
+  actorId?: string;
   entityType?: string;
   entityId?: string;
 }
@@ -50,7 +53,24 @@ export function activityService(db: Db) {
       conditions.push(ne(activityLog.action, "issue.read_marked"));
 
       if (filters.agentId) {
-        conditions.push(eq(activityLog.agentId, filters.agentId));
+        const agentCondition = or(
+          eq(activityLog.agentId, filters.agentId),
+          and(
+            eq(activityLog.actorType, "agent"),
+            eq(activityLog.actorId, filters.agentId),
+          ),
+        );
+        if (agentCondition) conditions.push(agentCondition);
+      }
+      if (filters.userId) {
+        conditions.push(eq(activityLog.actorType, "user"));
+        conditions.push(eq(activityLog.actorId, filters.userId));
+      }
+      if (filters.actorType) {
+        conditions.push(eq(activityLog.actorType, filters.actorType));
+      }
+      if (filters.actorId) {
+        conditions.push(eq(activityLog.actorId, filters.actorId));
       }
       if (filters.entityType) {
         conditions.push(eq(activityLog.entityType, filters.entityType));

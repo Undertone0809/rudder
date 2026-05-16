@@ -157,7 +157,7 @@ export const queryKeys = {
   dashboard: (orgId: string) => ["dashboard", orgId] as const,
   dashboardSkillsAnalytics: (orgId: string) => ["dashboard", orgId, "skills-analytics"] as const,
   sidebarBadges: (orgId: string) => ["sidebar-badges", orgId] as const,
-  activity: (orgId: string) => ["activity", orgId] as const,
+  activity: (orgId: string, filtersKey: string = "all") => ["activity", orgId, filtersKey] as const,
   costs: (orgId: string, from?: string, to?: string) =>
     ["costs", orgId, from, to] as const,
   costTrend: (orgId: string, from?: string, to?: string, scopeKind: string = "all", scopeId: string = "") =>

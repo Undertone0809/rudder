@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { activityApi } from "../api/activity";
+import { activityApi, type ActivityListFilters } from "../api/activity";
 import { agentsApi } from "../api/agents";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
@@ -23,19 +23,49 @@ import {
 import { History } from "lucide-react";
 import type { Agent } from "@rudderhq/shared";
 
+type PrincipalFilter = "all" | "system" | `agent:${string}` | `user:${string}`;
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 export function Activity() {
   const { selectedOrganizationId } = useOrganization();
   const { setBreadcrumbs } = useBreadcrumbs();
   const operatorDisplayName = useOperatorDisplayName();
-  const [filter, setFilter] = useState("all");
+  const [entityTypeFilter, setEntityTypeFilter] = useState("all");
+  const [principalFilter, setPrincipalFilter] = useState<PrincipalFilter>("all");
+  const [knownActivityUserIds, setKnownActivityUserIds] = useState<string[]>([]);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Activity" }]);
   }, [setBreadcrumbs]);
 
+  useEffect(() => {
+    setKnownActivityUserIds([]);
+  }, [selectedOrganizationId]);
+
+  const activityFilters = useMemo<ActivityListFilters>(() => {
+    const filters: ActivityListFilters = {};
+    if (entityTypeFilter !== "all") filters.entityType = entityTypeFilter;
+    if (principalFilter === "system") {
+      filters.actorType = "system";
+    } else if (principalFilter.startsWith("agent:")) {
+      filters.agentId = principalFilter.slice("agent:".length);
+    } else if (principalFilter.startsWith("user:")) {
+      filters.userId = principalFilter.slice("user:".length);
+    }
+    return filters;
+  }, [entityTypeFilter, principalFilter]);
+
+  const activityFiltersKey = useMemo(
+    () => JSON.stringify(activityFilters),
+    [activityFilters],
+  );
+
   const { data, isLoading, error } = useQuery({
-    queryKey: queryKeys.activity(selectedOrganizationId!),
-    queryFn: () => activityApi.list(selectedOrganizationId!),
+    queryKey: queryKeys.activity(selectedOrganizationId!, activityFiltersKey),
+    queryFn: () => activityApi.list(selectedOrganizationId!, activityFilters),
     enabled: !!selectedOrganizationId,
   });
 
@@ -90,6 +120,48 @@ export function Activity() {
     return map;
   }, [issues]);
 
+  const currentBoardUserId = currentBoardAccess?.user?.id ?? currentBoardAccess?.userId;
+
+  useEffect(() => {
+    setKnownActivityUserIds((previous) => {
+      const ids = new Set(previous);
+      let changed = false;
+      const add = (id: string | null | undefined) => {
+        if (!id || ids.has(id)) return;
+        ids.add(id);
+        changed = true;
+      };
+
+      add(currentBoardUserId);
+      if (principalFilter.startsWith("user:")) add(principalFilter.slice("user:".length));
+      for (const event of data ?? []) {
+        if (event.actorType === "user") add(event.actorId);
+      }
+
+      if (!changed) return previous;
+      return [...ids].sort();
+    });
+  }, [currentBoardUserId, data, principalFilter]);
+
+  const activityUserIds = useMemo(() => {
+    const ids = new Set(knownActivityUserIds);
+    if (currentBoardUserId) ids.add(currentBoardUserId);
+    if (principalFilter.startsWith("user:")) ids.add(principalFilter.slice("user:".length));
+    return [...ids].sort((a, b) => {
+      if (a === currentBoardUserId) return -1;
+      if (b === currentBoardUserId) return 1;
+      return a.localeCompare(b);
+    });
+  }, [currentBoardUserId, knownActivityUserIds, principalFilter]);
+
+  function userFilterLabel(userId: string): string {
+    if (userId === currentBoardUserId) {
+      return operatorDisplayName ?? currentBoardAccess?.user?.name ?? "Current user";
+    }
+    if (userId === "board" || userId === "local-board") return "Board";
+    return `User ${userId.slice(0, 8)}`;
+  }
+
   if (!selectedOrganizationId) {
     return <EmptyState icon={History} message="Select a organization to view activity." />;
   }
@@ -98,27 +170,54 @@ export function Activity() {
     return <PageSkeleton variant="list" />;
   }
 
-  const filtered =
-    data && filter !== "all"
-      ? data.filter((e) => e.entityType === filter)
-      : data;
+  const filtered = data;
 
   const entityTypes = data
-    ? [...new Set(data.map((e) => e.entityType))].sort()
-    : [];
+    ? [
+      ...new Set([
+        ...data.map((e) => e.entityType),
+        entityTypeFilter !== "all" ? entityTypeFilter : "",
+      ]),
+    ].filter(Boolean).sort()
+    : entityTypeFilter !== "all"
+      ? [entityTypeFilter]
+      : [];
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end">
-        <Select value={filter} onValueChange={setFilter}>
-          <SelectTrigger className="w-[140px] h-8 text-xs">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Select
+          value={principalFilter}
+          onValueChange={(value) => setPrincipalFilter(value as PrincipalFilter)}
+        >
+          <SelectTrigger aria-label="Filter by actor" className="h-8 w-[180px] text-xs">
+            <SelectValue placeholder="Filter by actor" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All actors</SelectItem>
+            {agents?.map((agent) => (
+              <SelectItem key={agent.id} value={`agent:${agent.id}`}>
+                {agent.name}
+              </SelectItem>
+            ))}
+            {activityUserIds.map((userId) => (
+              <SelectItem key={userId} value={`user:${userId}`}>
+                {userFilterLabel(userId)}
+              </SelectItem>
+            ))}
+            <SelectItem value="system">System</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={entityTypeFilter} onValueChange={setEntityTypeFilter}>
+          <SelectTrigger aria-label="Filter by type" className="h-8 w-[140px] text-xs">
             <SelectValue placeholder="Filter by type" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All types</SelectItem>
             {entityTypes.map((type) => (
               <SelectItem key={type} value={type}>
-                {type.charAt(0).toUpperCase() + type.slice(1)}
+                {capitalize(type)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -140,7 +239,7 @@ export function Activity() {
               agentMap={agentMap}
               entityNameMap={entityNameMap}
               entityTitleMap={entityTitleMap}
-              currentBoardUserId={currentBoardAccess?.user?.id ?? currentBoardAccess?.userId}
+              currentBoardUserId={currentBoardUserId}
               operatorDisplayName={operatorDisplayName}
             />
           ))}

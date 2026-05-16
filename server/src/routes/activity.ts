@@ -22,6 +22,14 @@ export function activityRoutes(db: Db) {
   const svc = activityService(db);
   const issueSvc = issueService(db);
 
+  function stringQueryParam(value: unknown): string | undefined {
+    return typeof value === "string" && value.trim() ? value : undefined;
+  }
+
+  function actorTypeQueryParam(value: unknown): "agent" | "user" | "system" | undefined {
+    return value === "agent" || value === "user" || value === "system" ? value : undefined;
+  }
+
   async function resolveIssueByRef(rawId: string) {
     if (/^[A-Z]+-\d+$/i.test(rawId)) {
       return issueSvc.getByIdentifier(rawId);
@@ -35,9 +43,12 @@ export function activityRoutes(db: Db) {
 
     const filters = {
       orgId,
-      agentId: req.query.agentId as string | undefined,
-      entityType: req.query.entityType as string | undefined,
-      entityId: req.query.entityId as string | undefined,
+      agentId: stringQueryParam(req.query.agentId),
+      userId: stringQueryParam(req.query.userId),
+      actorType: actorTypeQueryParam(req.query.actorType),
+      actorId: stringQueryParam(req.query.actorId),
+      entityType: stringQueryParam(req.query.entityType),
+      entityId: stringQueryParam(req.query.entityId),
     };
     const result = await svc.list(filters);
     res.json(result);
