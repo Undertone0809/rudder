@@ -333,6 +333,8 @@ describe("selectPromptTemplate", () => {
     expect(mentionPrompt).toContain("You were mentioned in a comment and your attention is needed.");
     expect(mentionPrompt).toContain("From: Alex Operator (user)");
     expect(mentionPrompt).toContain("@builder please use the compact interaction pattern.");
+    expect(mentionPrompt).toContain("An @mention is an explicit request for attention or collaboration");
+    expect(mentionPrompt).toContain("not an automatic transfer of issue ownership");
   });
 });
 

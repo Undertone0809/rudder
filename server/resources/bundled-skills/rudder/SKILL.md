@@ -109,6 +109,7 @@ rudder issue context "$RUDDER_TASK_ID" --wake-comment-id "$RUDDER_WAKE_COMMENT_I
 ```
 
 If the comment explicitly asks you to take ownership, you may self-assign by checkout. Otherwise respond only if useful and continue with your assigned work.
+An `@Name` mention is a request for attention or collaboration. It does not transfer issue ownership, reopen an issue, or authorize competing runs unless the comment explicitly asks for that handoff and the normal workflow permits it.
 
 **Step 5 — Checkout before work.** Never start work without checkout.
 

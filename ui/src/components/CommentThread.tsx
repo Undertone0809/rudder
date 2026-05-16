@@ -7,13 +7,11 @@ import type { LiveRunForIssue } from "../api/heartbeats";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
-import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { MarkdownBody } from "./MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { StatusBadge } from "./StatusBadge";
-import { AgentIcon } from "./AgentIconPicker";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
 import { formatDateTime } from "../lib/utils";
@@ -38,11 +36,6 @@ interface LinkedRunItem {
   contextSnapshot?: Record<string, unknown> | null;
 }
 
-interface CommentReassignment {
-  assigneeAgentId: string | null;
-  assigneeUserId: string | null;
-}
-
 export interface CommentThreadActivityItem {
   id: string;
   createdAt: Date | string;
@@ -55,7 +48,7 @@ interface CommentThreadProps {
   activityItems?: CommentThreadActivityItem[];
   orgId?: string | null;
   projectId?: string | null;
-  onAdd: (body: string, reopen?: boolean, reassignment?: CommentReassignment) => Promise<void>;
+  onAdd: (body: string, reopen?: boolean) => Promise<void>;
   issueStatus?: string;
   agentMap?: Map<string, Agent>;
   imageUploadHandler?: (file: File) => Promise<string>;
@@ -63,10 +56,6 @@ interface CommentThreadProps {
   onAttachImage?: (file: File) => Promise<void>;
   draftKey?: string;
   liveRunSlot?: React.ReactNode;
-  enableReassign?: boolean;
-  reassignOptions?: InlineEntityOption[];
-  currentAssigneeValue?: string;
-  suggestedAssigneeValue?: string;
   mentions?: MentionOption[];
   operatorDisplayName?: string | null;
   heading?: ReactNode;
@@ -121,21 +110,6 @@ function passiveFollowupLabel(contextSnapshot: Record<string, unknown> | null | 
   const maxAttempts = typeof passive?.maxAttempts === "number" ? passive.maxAttempts : null;
   if (!passive) return null;
   return attempt && maxAttempts ? `Passive follow-up ${attempt}/${maxAttempts}` : "Passive follow-up";
-}
-
-function parseReassignment(target: string): CommentReassignment | null {
-  if (!target || target === "__none__") {
-    return { assigneeAgentId: null, assigneeUserId: null };
-  }
-  if (target.startsWith("agent:")) {
-    const assigneeAgentId = target.slice("agent:".length);
-    return assigneeAgentId ? { assigneeAgentId, assigneeUserId: null } : null;
-  }
-  if (target.startsWith("user:")) {
-    const assigneeUserId = target.slice("user:".length);
-    return assigneeUserId ? { assigneeAgentId: null, assigneeUserId } : null;
-  }
-  return null;
 }
 
 function CopyMarkdownButton({ text }: { text: string }) {
@@ -360,10 +334,6 @@ export function CommentThread({
   onAttachImage,
   draftKey,
   liveRunSlot,
-  enableReassign = false,
-  reassignOptions = [],
-  currentAssigneeValue = "",
-  suggestedAssigneeValue,
   mentions: providedMentions,
   operatorDisplayName,
   heading,
@@ -376,8 +346,6 @@ export function CommentThread({
   const [reopen, setReopen] = useState(canReopen);
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
-  const effectiveSuggestedAssigneeValue = suggestedAssigneeValue ?? currentAssigneeValue;
-  const [reassignTarget, setReassignTarget] = useState(effectiveSuggestedAssigneeValue);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
@@ -495,10 +463,6 @@ export function CommentThread({
   }, []);
 
   useEffect(() => {
-    setReassignTarget(effectiveSuggestedAssigneeValue);
-  }, [effectiveSuggestedAssigneeValue]);
-
-  useEffect(() => {
     setReopen(canReopen);
   }, [canReopen]);
 
@@ -525,17 +489,14 @@ export function CommentThread({
   async function handleSubmit() {
     const trimmed = body.trim();
     if (!trimmed) return;
-    const hasReassignment = enableReassign && reassignTarget !== currentAssigneeValue;
-    const reassignment = hasReassignment ? parseReassignment(reassignTarget) : null;
     const reopenRequested = canReopen && reopen ? true : undefined;
 
     setSubmitting(true);
     try {
-      await onAdd(trimmed, reopenRequested, reassignment ?? undefined);
+      await onAdd(trimmed, reopenRequested);
       setBody("");
       if (draftKey) clearDraft(draftKey);
       setReopen(canReopen);
-      setReassignTarget(effectiveSuggestedAssigneeValue);
     } finally {
       setSubmitting(false);
     }
@@ -636,44 +597,6 @@ export function CommentThread({
               Re-open
             </label>
           ) : null}
-          {enableReassign && reassignOptions.length > 0 && (
-            <InlineEntitySelector
-              value={reassignTarget}
-              options={reassignOptions}
-              placeholder="Assignee"
-              noneLabel="No assignee"
-              searchPlaceholder="Search assignees..."
-              emptyMessage="No assignees found."
-              onChange={setReassignTarget}
-              className="text-xs h-8"
-              renderTriggerValue={(option) => {
-                if (!option) return <span className="text-muted-foreground">Assignee</span>;
-                const agentId = option.id.startsWith("agent:") ? option.id.slice("agent:".length) : null;
-                const agent = agentId ? agentMap?.get(agentId) : null;
-                return (
-                  <>
-                    {agent ? (
-                      <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    ) : null}
-                    <span className="truncate">{option.label}</span>
-                  </>
-                );
-              }}
-              renderOption={(option) => {
-                if (!option.id) return <span className="truncate">{option.label}</span>;
-                const agentId = option.id.startsWith("agent:") ? option.id.slice("agent:".length) : null;
-                const agent = agentId ? agentMap?.get(agentId) : null;
-                return (
-                  <>
-                    {agent ? (
-                      <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    ) : null}
-                    <span className="truncate">{option.label}</span>
-                  </>
-                );
-              }}
-            />
-          )}
           <Button size="sm" disabled={!canSubmit} onClick={handleSubmit}>
             {submitting ? "Posting..." : "Comment"}
           </Button>
