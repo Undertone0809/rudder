@@ -569,7 +569,7 @@ export const en = {
     "The Issue surface shows what is waiting, active, blocked, or done. This is where agent work becomes trackable instead of staying inside a chat thread.",
   "productTour.step.inspect.title": "Inspect the work before you approve or continue",
   "productTour.step.inspect.body":
-    "The main workspace shows the current page, detail views, transcripts, outputs, and approvals. Rudder should make it clear what happened and what needs your intervention.",
+    "The Dashboard shows the current page, detail views, transcripts, outputs, and approvals. Rudder should make it clear what happened and what needs your intervention.",
   "productTour.step.settings.title": "You can replay this tour from Settings",
   "productTour.step.settings.body":
     "When the first walkthrough is finished, Rudder stays quiet. Open System settings, then Profile, whenever you want to run the tour again.",
