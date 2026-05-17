@@ -493,6 +493,22 @@ describe("agent skill routes", () => {
     expect(createInput).not.toHaveProperty("name");
   });
 
+  it("generates a DiceBear avatar instead of preserving legacy named icons during direct creation", async () => {
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/agents")
+      .send({
+        name: "QA Agent",
+        role: "qa",
+        icon: "shield",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createInput = mockAgentService.create.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
+    expect(createInput?.icon).toMatch(/^dicebear:notionists:/);
+  });
+
   it("materializes a managed SOUL.md for directly created local agents", async () => {
     const res = await request(createApp())
       .post("/api/orgs/organization-1/agents")
@@ -618,6 +634,53 @@ describe("agent skill routes", () => {
           requestedConfigurationSnapshot: expect.objectContaining({
             desiredSkills: [],
           }),
+        }),
+      }),
+    );
+  });
+
+  it("generates a DiceBear avatar during hires when the request omits icon", async () => {
+    const res = await request(createApp(createDb(true)))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "QA Agent",
+        role: "qa",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createInput = mockAgentService.create.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
+    expect(createInput?.icon).toMatch(/^dicebear:notionists:/);
+    expect(mockApprovalService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          icon: expect.stringMatching(/^dicebear:notionists:/),
+        }),
+      }),
+    );
+  });
+
+  it("generates a DiceBear avatar instead of preserving legacy named icons during hires", async () => {
+    const res = await request(createApp(createDb(true)))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "QA Agent",
+        role: "qa",
+        icon: "shield",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createInput = mockAgentService.create.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
+    expect(createInput?.icon).toMatch(/^dicebear:notionists:/);
+    expect(mockApprovalService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          icon: expect.stringMatching(/^dicebear:notionists:/),
         }),
       }),
     );

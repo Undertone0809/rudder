@@ -43,6 +43,7 @@ import {
   syncInstructionsBundleConfigFromFilePath,
   workspaceOperationService,
 } from "../services/index.js";
+import { normalizeCreatedAgentAvatarIcon } from "../services/agents.js";
 import { assetService } from "../services/assets.js";
 import type { StorageService } from "../storage/types.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
@@ -1432,6 +1433,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     );
     const normalizedHireInput = {
       ...hireInput,
+      icon: normalizeCreatedAgentAvatarIcon(hireInput.icon),
       agentRuntimeConfig: normalizedAdapterConfig,
     };
     await assertAgentAvatarAssetBelongsToOrg(orgId, normalizedHireInput.icon);
@@ -1487,7 +1489,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
           name: agent.name,
           role: normalizedHireInput.role,
           title: normalizedHireInput.title ?? null,
-          icon: agent.icon ?? null,
+          icon: agent.icon ?? normalizedHireInput.icon ?? null,
           reportsTo: normalizedHireInput.reportsTo ?? null,
           capabilities: normalizedHireInput.capabilities ?? null,
           agentRuntimeType: requestedAdapterType,
@@ -1620,6 +1622,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
 
     const createdAgent = await svc.create(orgId, {
       ...createInput,
+      icon: normalizeCreatedAgentAvatarIcon(createInput.icon),
       agentRuntimeConfig: normalizedAdapterConfig,
       status: "idle",
       spentMonthlyCents: 0,

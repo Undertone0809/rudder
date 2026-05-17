@@ -7,7 +7,7 @@ Canonical CLI contract for the bundled `rudder-create-agent` skill. Prefer these
 - All commands support `--json`.
 - `--org-id` defaults to `RUDDER_ORG_ID` when relevant.
 - Mutating commands attach `RUDDER_RUN_ID` automatically when available.
-- `agent config index`, `agent config doc`, and `agent icons` print plain text by default. With `--json`, they emit that text as a JSON string.
+- `agent config index` and `agent config doc` print plain text by default. With `--json`, they emit that text as a JSON string.
 
 ## Core CLI Surface
 
@@ -21,7 +21,6 @@ rudder agent config index
 rudder agent config doc "<agent-runtime-type>"
 rudder agent config list --org-id "$RUDDER_ORG_ID" --json
 rudder agent config get "<agent-id-or-shortname>" --org-id "$RUDDER_ORG_ID" --json
-rudder agent icons
 ```
 
 Use these in order:
@@ -30,7 +29,6 @@ Use these in order:
 2. `agent config index` to discover installed runtimes
 3. `agent config doc` to read one runtime's required fields and examples
 4. `agent list` plus `agent config list/get` to reuse proven patterns from related agents
-5. `agent icons` to choose an allowed `icon`
 
 ### Organization skills
 
@@ -57,7 +55,6 @@ Use these before hiring when the new role needs `desiredSkills`.
 rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "role": "cto",
   "title": "Chief Technology Officer",
-  "icon": "crown",
   "reportsTo": "<ceo-agent-id>",
   "capabilities": "Owns technical roadmap, architecture, staffing, execution",
   "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
@@ -104,7 +101,7 @@ The `agent hire` payload accepts the same shape as the hire API, including:
 - `name` optional; blank or omitted means Rudder assigns a distinct first name
 - `role`: one of `ceo`, `cto`, `cmo`, `cfo`, `engineer`, `designer`, `pm`, `qa`, `devops`, `researcher`, `general`
 - `title`
-- `icon`
+- `icon` optional; omit it for normal hires so Rudder generates a DiceBear Notionists avatar automatically. Only provide an explicit DiceBear reference or uploaded `asset:<uuid>` image avatar reference when the board/UI supplied one.
 - `reportsTo`
 - `capabilities`
 - `desiredSkills`

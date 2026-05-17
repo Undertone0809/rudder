@@ -59,13 +59,7 @@ rudder agent config list --org-id "$RUDDER_ORG_ID" --json
 rudder agent config get "<agent-id>" --json
 ```
 
-5. Discover allowed agent icons and pick one that matches the role.
-
-```sh
-rudder agent icons
-```
-
-6. If the role needs organization skills on day one, inspect or import them before hiring.
+5. If the role needs organization skills on day one, inspect or import them before hiring.
 
 ```sh
 rudder skill list --org-id "$RUDDER_ORG_ID" --json
@@ -76,13 +70,14 @@ rudder skill scan-local --org-id "$RUDDER_ORG_ID" --roots "<csv>" --json
 rudder skill scan-projects --org-id "$RUDDER_ORG_ID" --project-ids "<csv>" --workspace-ids "<csv>" --json
 ```
 
-7. Draft the hire payload.
+6. Draft the hire payload.
 
 Required thinking:
 
 - role / title / optional `name`
 - `name` is optional; if omitted, Rudder assigns a distinct personal name automatically
-- `icon` from `rudder agent icons`
+- omit `icon` for normal hires; Rudder assigns a DiceBear Notionists avatar automatically
+- only set `icon` when preserving an explicit DiceBear avatar reference or an uploaded `asset:<uuid>` image avatar reference provided by the board/UI
 - reporting line (`reportsTo`)
 - adapter type
 - optional `desiredSkills` from the organization skill library
@@ -108,13 +103,12 @@ Draft `promptTemplate` as a durable SOUL document, not a one-line command. Use t
 - Voice: how the agent should communicate
 - Continuity: what should become memory or explicit instruction updates over time
 
-8. Submit the canonical hire request.
+7. Submit the canonical hire request.
 
 ```sh
 rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "role": "cto",
   "title": "Chief Technology Officer",
-  "icon": "crown",
   "reportsTo": "<ceo-agent-id>",
   "capabilities": "Owns technical roadmap, architecture, staffing, execution",
   "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
@@ -136,7 +130,7 @@ rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
 
 Do **not** substitute `rudder approval create --type hire_agent` for this step unless you are doing low-level debugging. That bypasses the canonical direct-create vs pending-approval behavior.
 
-9. Handle governance state.
+8. Handle governance state.
 
 If the hire response includes `approval`, monitor and discuss on the approval thread:
 
@@ -171,7 +165,7 @@ Before sending a hire request:
 
 - if the role needs skills, make sure they already exist in the org library or import them first using the Rudder org-skills workflow
 - reuse proven config patterns from related agents where possible
-- set a concrete `icon` from `rudder agent icons` so the new hire is identifiable in org and task views
+- omit `icon` for normal hires so the server generates the default DiceBear Notionists avatar
 - avoid secrets in plain text unless required by adapter behavior
 - ensure the reporting line is correct and in-org
 - ensure the prompt is role-specific, operationally scoped, and structured enough to become the agent's durable `SOUL.md`

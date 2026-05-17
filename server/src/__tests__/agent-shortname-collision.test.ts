@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createDefaultAgentAvatarIcon, hasAgentShortnameCollision, deduplicateAgentName } from "../services/agents.ts";
+import {
+  createDefaultAgentAvatarIcon,
+  deduplicateAgentName,
+  hasAgentShortnameCollision,
+  normalizeCreatedAgentAvatarIcon,
+} from "../services/agents.ts";
 import { AGENT_NAME_POOL, pickUniqueAgentName } from "../services/agent-name-pool.ts";
 
 describe("hasAgentShortnameCollision", () => {
@@ -98,5 +103,21 @@ describe("createDefaultAgentAvatarIcon", () => {
     expect(createDefaultAgentAvatarIcon()).toMatch(
       /^dicebear:notionists:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
+  });
+});
+
+describe("normalizeCreatedAgentAvatarIcon", () => {
+  it("replaces legacy named icons with a generated DiceBear avatar", () => {
+    expect(normalizeCreatedAgentAvatarIcon("code")).toMatch(
+      /^dicebear:notionists:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it("preserves explicit generated and uploaded image avatar references", () => {
+    const generated = "dicebear:notionists:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb?bg=sky";
+    const uploaded = "asset:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?bg=mint";
+
+    expect(normalizeCreatedAgentAvatarIcon(generated)).toBe(generated);
+    expect(normalizeCreatedAgentAvatarIcon(uploaded)).toBe(uploaded);
   });
 });

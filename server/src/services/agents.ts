@@ -132,6 +132,18 @@ export function createDefaultAgentAvatarIcon() {
   return `${AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX}${randomUUID()}`;
 }
 
+export function normalizeCreatedAgentAvatarIcon(icon: unknown) {
+  if (typeof icon !== "string") return createDefaultAgentAvatarIcon();
+  const trimmed = icon.trim();
+  if (
+    trimmed.startsWith(AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX)
+    || trimmed.startsWith("asset:")
+  ) {
+    return trimmed;
+  }
+  return createDefaultAgentAvatarIcon();
+}
+
 function extractWorkspaceKeyFromManagedInstructionsConfig(
   orgId: string,
   agentRuntimeConfig: unknown,
@@ -561,10 +573,7 @@ export function agentService(db: Db) {
 
       const role = data.role ?? "general";
       const normalizedPermissions = normalizeAgentPermissions(data.permissions, role);
-      const icon =
-        typeof data.icon === "string" && data.icon.trim().length > 0
-          ? data.icon
-          : createDefaultAgentAvatarIcon();
+      const icon = normalizeCreatedAgentAvatarIcon(data.icon);
       const created = await db
         .insert(agents)
         .values({

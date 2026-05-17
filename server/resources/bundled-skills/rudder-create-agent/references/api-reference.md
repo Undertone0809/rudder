@@ -12,7 +12,6 @@ Internal/debug reference for the bundled `rudder-create-agent` skill.
 | --- | --- |
 | `rudder agent config index` | `GET /llms/agent-configuration.txt` |
 | `rudder agent config doc <agentRuntimeType>` | `GET /llms/agent-configuration/:agentRuntimeType.txt` |
-| `rudder agent icons` | `GET /llms/agent-icons.txt` |
 | `rudder agent config list --org-id <orgId>` | `GET /api/orgs/:orgId/agent-configurations` |
 | `rudder agent config get <agentId>` | `GET /api/agents/:agentId/configuration` |
 | `rudder agent hire --org-id <orgId> --payload <json>` | `POST /api/orgs/:orgId/agent-hires` |
@@ -25,7 +24,6 @@ Internal/debug reference for the bundled `rudder-create-agent` skill.
 
 - `GET /llms/agent-configuration.txt`
 - `GET /llms/agent-configuration/:agentRuntimeType.txt`
-- `GET /llms/agent-icons.txt`
 
 Auth:
 
@@ -82,7 +80,6 @@ Request body:
 {
   "role": "cto",
   "title": "Chief Technology Officer",
-  "icon": "crown",
   "reportsTo": "uuid-or-null",
   "capabilities": "Owns architecture and engineering execution",
   "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
@@ -143,6 +140,8 @@ Response when approval is not required:
 Important notes:
 
 - `name` is optional; if omitted or blank, Rudder assigns a distinct first name automatically
+- `icon` is optional; omit it for normal hires so Rudder generates a DiceBear Notionists avatar automatically
+- only pass `icon` when the board/UI supplied an explicit DiceBear Notionists reference or uploaded `asset:<uuid>` image avatar reference
 - `desiredSkills` accepts organization skill ids, canonical keys, or a unique slug; the server resolves and stores canonical organization skill keys
 - `agentRuntimeConfig.promptTemplate`, when present for local runtimes during hire, is role/persona content that Rudder materializes as managed `SOUL.md`
 - write hire-time `promptTemplate` as a durable SOUL document with mission, responsibilities, boundaries, decision principles, voice, and continuity when the role has ongoing authority
