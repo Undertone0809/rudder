@@ -374,6 +374,7 @@ export function IssueProperties({
       badgeLabel={agentTitleBadgeLabel(assignee)}
       agentIcon={assignee.icon}
       agentRole={assignee.role}
+      layout="stacked"
     />
   ) : assigneeUserLabel ? (
     <AssigneeLabel kind="user" label={assigneeUserLabel} />
@@ -464,6 +465,7 @@ export function IssueProperties({
       badgeLabel={agentTitleBadgeLabel(reviewer)}
       agentIcon={reviewer.icon}
       agentRole={reviewer.role}
+      layout="stacked"
     />
   ) : reviewerUserLabel ? (
     <AssigneeLabel kind="user" label={reviewerUserLabel} />
@@ -639,7 +641,7 @@ export function IssueProperties({
           open={assigneeOpen}
           onOpenChange={(open) => { setAssigneeOpen(open); if (!open) setAssigneeSearch(""); }}
           triggerContent={assigneeTrigger}
-          triggerClassName="min-w-0 max-w-full"
+          triggerClassName="min-w-0 w-full max-w-full justify-start"
           popoverClassName="w-[19rem]"
           popoverAlign="start"
         >
@@ -652,7 +654,7 @@ export function IssueProperties({
           open={reviewerOpen}
           onOpenChange={(open) => { setReviewerOpen(open); if (!open) setReviewerSearch(""); }}
           triggerContent={reviewerTrigger}
-          triggerClassName="min-w-0 max-w-full"
+          triggerClassName="min-w-0 w-full max-w-full justify-start"
           popoverClassName="w-[19rem]"
           popoverAlign="start"
           extra={reviewerMatchesAssignee ? (

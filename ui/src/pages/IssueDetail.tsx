@@ -15,7 +15,7 @@ import { useNavigationBack } from "../context/NavigationBackContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { assigneeValueFromSelection, formatAssigneeUserLabel } from "../lib/assignees";
+import { formatAssigneeUserLabel } from "../lib/assignees";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { queryKeys } from "../lib/queryKeys";
@@ -96,11 +96,6 @@ import {
 } from "lucide-react";
 import { summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
 import type { Agent, Issue, IssueAttachment, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
-
-type CommentReassignment = {
-  assigneeAgentId: string | null;
-  assigneeUserId: string | null;
-};
 
 type DocumentFocusState = {
   target: IssueDocumentFocusTarget;
@@ -1206,29 +1201,6 @@ export function IssueDetail() {
     [childIssues],
   );
 
-  const commentReassignOptions = useMemo(() => {
-    const options: Array<{ id: string; label: string; searchText?: string }> = [];
-    const activeAgents = [...(agents ?? [])]
-      .filter((agent) => agent.status !== "terminated")
-      .sort((a, b) => a.name.localeCompare(b.name));
-    for (const agent of activeAgents) {
-      options.push({
-        id: `agent:${agent.id}`,
-        label: formatChatAgentLabel(agent),
-        searchText: `${agent.name} ${agent.role} ${agent.title ?? ""}`,
-      });
-    }
-    if (currentUserId) {
-      options.push({ id: `user:${currentUserId}`, label: "Me" });
-    }
-    return options;
-  }, [agents, currentUserId]);
-
-  const actualAssigneeValue = useMemo(
-    () => assigneeValueFromSelection(issue ?? {}),
-    [issue],
-  );
-
   const commentsWithRunMeta = useMemo(() => {
     const runMetaByCommentId = new Map<string, { runId: string; runAgentId: string | null }>();
     const agentIdByRunId = new Map<string, string>();
@@ -1414,28 +1386,6 @@ export function IssueDetail() {
   const addComment = useMutation({
     mutationFn: ({ body, reopen }: { body: string; reopen?: boolean }) =>
       issuesApi.addComment(issueId!, body, reopen),
-    onSuccess: () => {
-      invalidateIssue();
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId!) });
-    },
-  });
-
-  const addCommentAndReassign = useMutation({
-    mutationFn: ({
-      body,
-      reopen,
-      reassignment,
-    }: {
-      body: string;
-      reopen?: boolean;
-      reassignment: CommentReassignment;
-    }) =>
-      issuesApi.update(issueId!, {
-        comment: body,
-        assigneeAgentId: reassignment.assigneeAgentId,
-        assigneeUserId: reassignment.assigneeUserId,
-        ...(reopen ? { status: "todo" } : {}),
-      }),
     onSuccess: () => {
       invalidateIssue();
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId!) });
@@ -2221,19 +2171,12 @@ export function IssueDetail() {
           issueStatus={issue.status}
           agentMap={agentMap}
           draftKey={`rudder:issue-comment-draft:${issue.id}`}
-          enableReassign
-          reassignOptions={commentReassignOptions}
-          currentAssigneeValue={actualAssigneeValue}
           mentions={mentionOptions}
           operatorDisplayName={operatorDisplayName}
           hideHeading
           emptyMessage="No activity yet."
           escapeBackWhenEmpty
-          onAdd={async (body, reopen, reassignment) => {
-            if (reassignment) {
-              await addCommentAndReassign.mutateAsync({ body, reopen, reassignment });
-              return;
-            }
+          onAdd={async (body, reopen) => {
             await addComment.mutateAsync({ body, reopen });
           }}
           imageUploadHandler={async (file) => {

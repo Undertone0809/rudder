@@ -3,24 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@/lib/router";
 import {
   ArrowRight,
-  BarChart3,
   Bot,
-  Bug,
   CalendarClock,
   CheckCircle2,
-  CircleHelp,
-  FileText,
   FolderOpen,
-  GitPullRequest,
+  MessageSquare,
   MoreHorizontal,
-  Newspaper,
-  Play,
   Plus,
-  Radio,
   Repeat,
-  ShieldCheck,
-  User,
-  Zap,
 } from "lucide-react";
 import { automationsApi } from "../api/automations";
 import { agentsApi } from "../api/agents";
@@ -36,7 +26,8 @@ import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
-import { formatDateTimeSeconds } from "../lib/utils";
+import { formatDateTimeSeconds, getUiLocale } from "../lib/utils";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
@@ -62,7 +53,6 @@ import {
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
@@ -78,124 +68,234 @@ const catchUpPolicyDescriptions: Record<string, string> = {
 
 type AutomationOutputMode = "create_issue" | "send_to_chat";
 
+type LocalizedText = {
+  en: string;
+  "zh-CN": string;
+};
+
 type AutomationTemplate = {
   id: string;
-  title: string;
-  summary: string;
-  description: string;
+  title: LocalizedText;
+  summary: LocalizedText;
+  description: LocalizedText;
   scheduleCron: string;
   outputMode: AutomationOutputMode;
-  icon: typeof Bug;
 };
 
 const automationTemplates: AutomationTemplate[] = [
   {
     id: "bug-triage",
-    title: "Bug triage",
-    summary: "Assess and prioritize new bug reports.",
+    title: { en: "Bug triage", "zh-CN": "Bug 分诊" },
+    summary: { en: "Assess and prioritize new bug reports.", "zh-CN": "评估并排序新提交的缺陷。" },
     scheduleCron: "0 9 * * 1-5",
     outputMode: "create_issue",
-    icon: Bug,
-    description: [
-      "1. List all open issues labeled bug, triage, or backlog that have not been prioritized.",
-      "2. Read the issue description, attached screenshots, logs, and latest comments.",
-      "3. Assess severity as critical, high, medium, or low based on user impact and scope.",
-      "4. Update priority where the evidence is clear, or leave a comment with the recommended priority.",
-      "5. Summarize what changed and call out anything that needs human review.",
-    ].join("\n"),
+    description: {
+      en: [
+        "1. List all open issues labeled bug, triage, or backlog that have not been prioritized.",
+        "2. Read the issue description, attached screenshots, logs, and latest comments.",
+        "3. Assess severity as critical, high, medium, or low based on user impact and scope.",
+        "4. Update priority where the evidence is clear, or leave a comment with the recommended priority.",
+        "5. Summarize what changed and call out anything that needs human review.",
+      ].join("\n"),
+      "zh-CN": [
+        "1. 列出尚未排序的 bug、triage 或 backlog 任务。",
+        "2. 阅读任务描述、截图、日志和最新评论。",
+        "3. 按用户影响和范围评估严重度：紧急、高、中、低。",
+        "4. 证据明确时更新优先级；不明确时留下推荐优先级和理由。",
+        "5. 汇总本轮变更，并标出需要人工确认的内容。",
+      ].join("\n"),
+    },
   },
   {
     id: "pr-review-reminder",
-    title: "PR review reminder",
-    summary: "Flag stale pull requests that need review.",
+    title: { en: "PR review reminder", "zh-CN": "PR review 提醒" },
+    summary: { en: "Flag stale pull requests that need review.", "zh-CN": "找出等待 review 过久的 PR。" },
     scheduleCron: "0 10 * * 1-5",
     outputMode: "create_issue",
-    icon: GitPullRequest,
-    description: [
-      "1. Find pull requests waiting for review for more than one business day.",
-      "2. Check whether each PR is blocked, failing CI, or missing a clear reviewer.",
-      "3. Comment on the related issue or PR with the specific next action.",
-      "4. Escalate only PRs that affect active milestone work.",
-    ].join("\n"),
+    description: {
+      en: [
+        "1. Find pull requests waiting for review for more than one business day.",
+        "2. Check whether each PR is blocked, failing CI, or missing a clear reviewer.",
+        "3. Comment on the related issue or PR with the specific next action.",
+        "4. Escalate only PRs that affect active milestone work.",
+      ].join("\n"),
+      "zh-CN": [
+        "1. 找出等待 review 超过一个工作日的 PR。",
+        "2. 检查每个 PR 是否被阻塞、CI 失败或缺少明确 reviewer。",
+        "3. 在相关任务或 PR 中评论具体下一步。",
+        "4. 只升级影响当前里程碑工作的 PR。",
+      ].join("\n"),
+    },
   },
   {
     id: "weekly-progress-report",
-    title: "Weekly progress report",
-    summary: "Compile a concise summary of team progress.",
+    title: { en: "Weekly progress report", "zh-CN": "周进展报告" },
+    summary: { en: "Compile a concise summary of team progress.", "zh-CN": "整理团队本周进展和风险。" },
     scheduleCron: "0 17 * * 1",
     outputMode: "create_issue",
-    icon: BarChart3,
-    description: [
-      "1. Gather issues completed in the past 7 days.",
-      "2. Gather issues currently in progress and identify blocked work.",
-      "3. Calculate key movement: closed, opened, reopened, and blocked.",
-      "4. Write a structured report with sections for completed, in progress, blocked, and risks.",
-      "5. Post the report where the board can review it.",
-    ].join("\n"),
+    description: {
+      en: [
+        "1. Gather issues completed in the past 7 days.",
+        "2. Gather issues currently in progress and identify blocked work.",
+        "3. Calculate key movement: closed, opened, reopened, and blocked.",
+        "4. Write a structured report with sections for completed, in progress, blocked, and risks.",
+        "5. Post the report where the board can review it.",
+      ].join("\n"),
+      "zh-CN": [
+        "1. 汇总过去 7 天完成的任务。",
+        "2. 汇总进行中的任务，并识别阻塞项。",
+        "3. 统计关键变化：关闭、新增、重开、阻塞。",
+        "4. 输出结构化报告：已完成、进行中、阻塞、风险。",
+        "5. 把报告发布到 board 方便 review。",
+      ].join("\n"),
+    },
   },
   {
     id: "dependency-audit",
-    title: "Dependency audit",
-    summary: "Scan for security and maintenance risks.",
+    title: { en: "Dependency audit", "zh-CN": "依赖审计" },
+    summary: { en: "Scan for security and maintenance risks.", "zh-CN": "检查依赖安全和维护风险。" },
     scheduleCron: "0 11 * * 2",
     outputMode: "create_issue",
-    icon: ShieldCheck,
-    description: [
-      "1. Inspect dependency and lockfile changes since the last audit.",
-      "2. Check for known vulnerabilities, deprecated packages, and risky major updates.",
-      "3. Separate urgent fixes from routine maintenance.",
-      "4. Create follow-up issues only when there is a concrete owner and recommended action.",
-    ].join("\n"),
+    description: {
+      en: [
+        "1. Inspect dependency and lockfile changes since the last audit.",
+        "2. Check for known vulnerabilities, deprecated packages, and risky major updates.",
+        "3. Separate urgent fixes from routine maintenance.",
+        "4. Create follow-up issues only when there is a concrete owner and recommended action.",
+      ].join("\n"),
+      "zh-CN": [
+        "1. 检查上次审计后的依赖和 lockfile 变化。",
+        "2. 查找已知漏洞、废弃包和高风险 major 升级。",
+        "3. 区分紧急修复和常规维护。",
+        "4. 只有在 owner 和建议动作明确时创建后续任务。",
+      ].join("\n"),
+    },
   },
   {
     id: "documentation-check",
-    title: "Documentation check",
-    summary: "Review recent changes for documentation gaps.",
+    title: { en: "Documentation check", "zh-CN": "文档检查" },
+    summary: { en: "Review recent changes for documentation gaps.", "zh-CN": "检查近期变更对应的文档缺口。" },
     scheduleCron: "0 14 * * 3",
     outputMode: "create_issue",
-    icon: FileText,
-    description: [
-      "1. Review merged product or engineering changes from the past week.",
-      "2. Identify user-facing docs, contributor docs, or runbooks that are stale or missing.",
-      "3. Rank gaps by user impact and likelihood of repeated confusion.",
-      "4. Draft precise documentation tasks with file paths and acceptance criteria.",
-    ].join("\n"),
+    description: {
+      en: [
+        "1. Review merged product or engineering changes from the past week.",
+        "2. Identify user-facing docs, contributor docs, or runbooks that are stale or missing.",
+        "3. Rank gaps by user impact and likelihood of repeated confusion.",
+        "4. Draft precise documentation tasks with file paths and acceptance criteria.",
+      ].join("\n"),
+      "zh-CN": [
+        "1. 回顾过去一周合入的产品或工程变更。",
+        "2. 找出过期或缺失的用户文档、贡献者文档、runbook。",
+        "3. 按用户影响和重复困惑概率排序缺口。",
+        "4. 起草带文件路径和验收标准的文档任务。",
+      ].join("\n"),
+    },
   },
   {
     id: "daily-news-digest",
-    title: "Daily news digest",
-    summary: "Search and summarize relevant updates for the team.",
+    title: { en: "Daily news digest", "zh-CN": "每日信息简报" },
+    summary: { en: "Search and summarize relevant updates for the team.", "zh-CN": "检索并总结团队需要知道的外部变化。" },
     scheduleCron: "0 8 * * 1-5",
-    outputMode: "create_issue",
-    icon: Newspaper,
-    description: [
-      "1. Search for important market, customer, or platform updates relevant to the organization.",
-      "2. Filter out duplicate, speculative, or low-signal items.",
-      "3. Summarize each retained item in one paragraph with source and implication.",
-      "4. Call out whether any item should become tracked work.",
-    ].join("\n"),
+    outputMode: "send_to_chat",
+    description: {
+      en: [
+        "1. Search for important market, customer, or platform updates relevant to the organization.",
+        "2. Filter out duplicate, speculative, or low-signal items.",
+        "3. Summarize each retained item in one paragraph with source and implication.",
+        "4. Call out whether any item should become tracked work.",
+      ].join("\n"),
+      "zh-CN": [
+        "1. 搜索和组织相关的市场、客户或平台重要更新。",
+        "2. 过滤重复、猜测性或低信号内容。",
+        "3. 每条保留信息用一段话总结来源和影响。",
+        "4. 标出哪些信息值得转成可跟踪任务。",
+      ].join("\n"),
+    },
+  },
+  {
+    id: "daily-standup",
+    title: { en: "Daily standup", "zh-CN": "日会" },
+    summary: { en: "Collect blockers, priorities, and handoffs for today.", "zh-CN": "汇总今天的阻塞、重点和交接事项。" },
+    scheduleCron: "30 9 * * 1-5",
+    outputMode: "send_to_chat",
+    description: {
+      en: [
+        "1. Review active issues, latest comments, and runs updated since the previous workday.",
+        "2. Summarize what each active owner completed, plans next, and is blocked by.",
+        "3. Keep the output short enough for a daily standup.",
+        "4. Post the summary to chat and create tracked work only for concrete blockers.",
+      ].join("\n"),
+      "zh-CN": [
+        "1. 查看上一个工作日以来更新的进行中任务、最新评论和运行记录。",
+        "2. 汇总每个活跃 owner 已完成、下一步计划和阻塞项。",
+        "3. 输出保持日会可读的长度。",
+        "4. 将摘要发送到 chat；只有明确阻塞才创建可跟踪任务。",
+      ].join("\n"),
+    },
   },
 ];
 
 const blankAutomationTemplate: AutomationTemplate = {
-  id: "scratch",
-  title: "",
-  summary: "Start from scratch.",
-  description: [
-    "# Goal",
-    "What should the agent accomplish?",
-    "",
-    "# Context",
-    "Who is this for? Any constraints?",
-    "",
-    "# Steps",
-    "1. ...",
-    "2. ...",
-  ].join("\n"),
+  id: "custom",
+  title: { en: "", "zh-CN": "" },
+  summary: { en: "Create a custom recurring workflow.", "zh-CN": "创建自定义循环工作流。" },
+  description: {
+    en: [
+      "# Goal",
+      "What should the agent accomplish?",
+      "",
+      "# Context",
+      "Who is this for? Any constraints?",
+      "",
+      "# Steps",
+      "1. ...",
+      "2. ...",
+    ].join("\n"),
+    "zh-CN": [
+      "# 目标",
+      "智能体需要完成什么？",
+      "",
+      "# 背景",
+      "服务谁？有哪些约束？",
+      "",
+      "# 步骤",
+      "1. ...",
+      "2. ...",
+    ].join("\n"),
+  },
   scheduleCron: "0 9 * * *",
   outputMode: "create_issue",
-  icon: Zap,
 };
+
+function localizeText(text: LocalizedText, locale = getUiLocale()) {
+  return text[locale] ?? text.en;
+}
+
+function outputInstruction(mode: AutomationOutputMode, locale = getUiLocale()) {
+  if (mode === "send_to_chat") {
+    return locale === "zh-CN"
+      ? "输出：将结果发送到相关 Rudder chat 对话；只有出现明确阻塞或后续动作时才创建任务。"
+      : "Output: send the result to the relevant Rudder chat conversation; create tracked work only for concrete blockers or follow-up actions.";
+  }
+  return locale === "zh-CN"
+    ? "输出：创建或更新 board 可跟踪任务，确保结果可以被 review。"
+    : "Output: create or update board-tracked work so the result can be reviewed.";
+}
+
+function withOutputInstruction(description: string, mode: AutomationOutputMode, locale = getUiLocale()) {
+  const instruction = outputInstruction(mode, locale);
+  return `${description.trim()}\n\n${instruction}`;
+}
+
+function removeOutputInstruction(description: string) {
+  return description
+    .replace(/\n*Output: create or update board-tracked work so the result can be reviewed\.\s*$/u, "")
+    .replace(/\n*Output: send the result to the relevant Rudder chat conversation; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
+    .replace(/\n*输出：创建或更新 board 可跟踪任务，确保结果可以被 review。\s*$/u, "")
+    .replace(/\n*输出：将结果发送到相关 Rudder chat 对话；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
+    .trim();
+}
 
 function autoResizeTextarea(element: HTMLTextAreaElement | null) {
   if (!element) return;
@@ -231,6 +331,8 @@ export function Automations() {
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
+  const composerBodyScrollRef = useScrollbarActivityRef("rudder:automation-composer-body");
+  const composerMainScrollRef = useScrollbarActivityRef("rudder:automation-composer-main");
   const [runningAutomationId, setRunningAutomationId] = useState<string | null>(null);
   const [statusMutationAutomationId, setStatusMutationAutomationId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -262,15 +364,24 @@ export function Automations() {
   }, []);
 
   const openComposer = useCallback((template: AutomationTemplate = blankAutomationTemplate) => {
+    const locale = getUiLocale();
     setDraft((current) => ({
       ...current,
-      title: template.title,
-      description: template.description,
+      title: localizeText(template.title, locale),
+      description: withOutputInstruction(localizeText(template.description, locale), template.outputMode, locale),
       scheduleCron: template.scheduleCron,
       outputMode: template.outputMode,
     }));
     setAdvancedOpen(false);
     setComposerOpen(true);
+  }, []);
+
+  const selectOutputMode = useCallback((outputMode: AutomationOutputMode) => {
+    setDraft((current) => ({
+      ...current,
+      outputMode,
+      description: withOutputInstruction(removeOutputInstruction(current.description), outputMode),
+    }));
   }, []);
 
   useEffect(() => {
@@ -485,51 +596,35 @@ export function Automations() {
       >
         <DialogContent
           showCloseButton={false}
-          className="max-h-[88vh] gap-0 overflow-hidden rounded-lg border-border/70 p-0 shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:max-w-[min(1180px,calc(100vw-2rem))]"
+          className="h-[calc(100dvh-1.5rem)] gap-0 overflow-hidden rounded-lg border-border/70 p-0 shadow-[0_18px_60px_rgba(0,0,0,0.16)] md:h-[88vh] md:max-h-[760px] sm:max-w-[min(1040px,calc(100vw-2rem))]"
         >
-          <div className="flex min-h-0 flex-col">
+          <div className="flex h-full min-h-0 flex-col" data-testid="automation-composer-shell">
             <DialogTitle className="sr-only">New automation</DialogTitle>
             <DialogDescription className="sr-only">
               Create a recurring automation by writing a runbook and choosing an agent and schedule.
             </DialogDescription>
-            <div className="flex items-center justify-between gap-4 border-b border-border/60 px-4 py-3 sm:px-5">
-              <div className="flex min-w-0 items-center gap-2 text-sm">
-                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                  <Zap className="h-4 w-4" />
-                </span>
-                <span className="shrink-0 font-medium">New automation</span>
-                <span className="hidden text-muted-foreground sm:inline">·</span>
-                <span className="hidden truncate text-muted-foreground sm:inline">Recurring board work</span>
+            <div className="border-b border-border/60 px-4 py-3 sm:px-5">
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+                <span>Automations</span>
+                <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                <span className="font-medium text-foreground">New automation</span>
                 {selectedOrganization?.name ? (
                   <>
-                    <ArrowRight className="hidden h-3.5 w-3.5 shrink-0 text-muted-foreground/70 sm:block" />
-                    <span className="hidden truncate text-muted-foreground sm:inline">{selectedOrganization.name}</span>
+                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                    <span className="truncate">{selectedOrganization.name}</span>
                   </>
                 ) : null}
               </div>
-              <TooltipProvider delayDuration={120}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-                      aria-label="Automation help"
-                    >
-                      <CircleHelp className="h-4 w-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" sideOffset={8} className="max-w-[320px] px-3 py-2 text-xs leading-5">
-                    Start from the runbook. Ownership and schedule keep the recurring work safe.
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
             </div>
 
-            <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px]">
-              <main className="min-h-0 min-w-0 space-y-4 overflow-y-auto px-4 py-5 sm:px-5 lg:px-8 lg:py-7">
+            <div
+              ref={composerBodyScrollRef}
+              className="scrollbar-auto-hide flex min-h-0 flex-1 flex-col overflow-y-auto xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:gap-6 xl:overflow-hidden"
+            >
+              <main ref={composerMainScrollRef} className="scrollbar-auto-hide min-w-0 space-y-4 px-4 py-5 sm:px-5 xl:min-h-0 xl:overflow-y-auto xl:px-6">
                 <textarea
                   ref={titleInputRef}
-                  className="min-h-[44px] w-full resize-none overflow-hidden bg-transparent text-[2rem] font-semibold leading-tight outline-none placeholder:text-muted-foreground/55 sm:text-[2.3rem]"
+                  className="min-h-[34px] w-full resize-none overflow-hidden bg-transparent text-xl font-bold leading-snug outline-none placeholder:text-muted-foreground/55"
                   placeholder="Automation name"
                   rows={1}
                   value={draft.title}
@@ -553,8 +648,8 @@ export function Automations() {
 
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="font-medium text-muted-foreground">Runbook</span>
-                    <span className="text-muted-foreground">Read by the agent on every run</span>
+                    <span className="font-medium text-foreground">Runbook</span>
+                    <span className="text-muted-foreground">Agent instructions for each run</span>
                   </div>
                   <MarkdownEditor
                     ref={descriptionEditorRef}
@@ -564,7 +659,7 @@ export function Automations() {
                     placeholder="# Goal&#10;What should the agent accomplish?&#10;&#10;# Steps&#10;1. ..."
                     bordered
                     className="bg-background/40"
-                    contentClassName="min-h-[320px] text-[15px] leading-7 text-foreground/90 md:min-h-[430px]"
+                    contentClassName="min-h-[300px] text-[15px] leading-7 text-foreground/90 md:min-h-[400px]"
                     onSubmit={() => {
                       if (!createAutomation.isPending && isDraftReady) {
                         createAutomation.mutate();
@@ -574,210 +669,217 @@ export function Automations() {
                 </div>
               </main>
 
-              <aside className="min-w-0 space-y-6 border-t border-border/60 px-4 py-5 sm:px-5 lg:border-l lg:border-t-0 lg:px-6 lg:py-7">
-                <section className="space-y-2.5">
-                  <h2 className="text-xs font-medium text-muted-foreground">Agent</h2>
-                  <div
-                    data-testid="automation-composer-assignee-pill"
-                    className="rounded-md border border-border/80 bg-background/50"
-                  >
-                    <InlineEntitySelector
-                      ref={assigneeSelectorRef}
-                      value={draft.assigneeAgentId}
-                      options={assigneeOptions}
-                      placeholder="Select agent"
-                      noneLabel="No agent"
-                      searchPlaceholder="Search agents..."
-                      emptyMessage="No agents found."
-                      className="min-h-12 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
-                      disablePortal
-                      side="bottom"
-                      sideOffset={8}
-                      onChange={(assigneeAgentId) => {
-                        if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
-                        setDraft((current) => ({ ...current, assigneeAgentId }));
-                      }}
-                      onConfirm={() => projectSelectorRef.current?.focus()}
-                      renderTriggerValue={(option) =>
-                        option ? (
-                          currentAssignee ? (
+              <aside className="min-w-0 border-t border-border/60 px-4 py-5 sm:px-5 xl:border-l xl:border-t-0 xl:px-0 xl:py-5 xl:pr-5">
+                <div className="space-y-5 rounded-lg border border-border bg-background/80 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-muted-foreground">Properties</p>
+                  </div>
+                  <section className="space-y-2.5">
+                    <h2 className="text-xs font-medium text-muted-foreground">Agent</h2>
+                    <div
+                      data-testid="automation-composer-assignee-pill"
+                      className="rounded-md border border-border/80 bg-background/50"
+                    >
+                      <InlineEntitySelector
+                        ref={assigneeSelectorRef}
+                        value={draft.assigneeAgentId}
+                        options={assigneeOptions}
+                        placeholder="Select agent"
+                        noneLabel="No agent"
+                        searchPlaceholder="Search agents..."
+                        emptyMessage="No agents found."
+                        className="min-h-10 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
+                        disablePortal
+                        side="bottom"
+                        sideOffset={8}
+                        onChange={(assigneeAgentId) => {
+                          if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
+                          setDraft((current) => ({ ...current, assigneeAgentId }));
+                        }}
+                        onConfirm={() => projectSelectorRef.current?.focus()}
+                        renderTriggerValue={(option) =>
+                          option ? (
+                            currentAssignee ? (
+                              <span className="flex min-w-0 items-center gap-2">
+                                <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <span className="truncate">{option.label}</span>
+                              </span>
+                            ) : (
+                              <span className="truncate">{option.label}</span>
+                            )
+                          ) : (
+                            <span className="flex items-center gap-2 text-muted-foreground">
+                              <Bot className="h-4 w-4" />
+                              Select agent
+                            </span>
+                          )
+                        }
+                        renderOption={(option) => {
+                          if (!option.id) return <span className="truncate">{option.label}</span>;
+                          const assignee = agentById.get(option.id);
+                          return (
+                            <>
+                              {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                              <span className="truncate">{option.label}</span>
+                            </>
+                          );
+                        }}
+                      />
+                    </div>
+                  </section>
+
+                  <section className="space-y-2.5">
+                    <h2 className="text-xs font-medium text-muted-foreground">Run output</h2>
+                    <div className="grid gap-2">
+                      <button
+                        type="button"
+                        className={`flex min-h-12 items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors ${
+                          draft.outputMode === "create_issue"
+                            ? "border-foreground/70 bg-accent/60 text-foreground"
+                            : "border-border/70 bg-background/40 text-muted-foreground hover:bg-accent/40"
+                        }`}
+                        onClick={() => selectOutputMode("create_issue")}
+                      >
+                        <CheckCircle2 className="h-4 w-4 shrink-0" />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium">Track as issue</span>
+                          <span className="block truncate text-xs text-muted-foreground">Each run opens board-tracked work</span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`flex min-h-12 items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors ${
+                          draft.outputMode === "send_to_chat"
+                            ? "border-foreground/70 bg-accent/60 text-foreground"
+                            : "border-border/70 bg-background/40 text-muted-foreground hover:bg-accent/40"
+                        }`}
+                        onClick={() => selectOutputMode("send_to_chat")}
+                      >
+                        <MessageSquare className="h-4 w-4 shrink-0" />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium">Send to chat</span>
+                          <span className="block truncate text-xs text-muted-foreground">Post summary to a chat conversation</span>
+                        </span>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section className="space-y-2.5">
+                    <h2 className="text-xs font-medium text-muted-foreground">Schedule</h2>
+                    <ScheduleEditor
+                      value={draft.scheduleCron}
+                      onChange={(scheduleCron) => setDraft((current) => ({ ...current, scheduleCron }))}
+                    />
+                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <CalendarClock className="h-3.5 w-3.5" />
+                      {draft.scheduleCron.trim() ? describeSchedule(draft.scheduleCron) : "No schedule set"}
+                    </p>
+                  </section>
+
+                  <section className="space-y-2.5">
+                    <h2 className="text-xs font-medium text-muted-foreground">Project</h2>
+                    <div
+                      data-testid="automation-composer-project-pill"
+                      className="rounded-md border border-border/80 bg-background/50"
+                    >
+                      <InlineEntitySelector
+                        ref={projectSelectorRef}
+                        value={draft.projectId}
+                        options={projectOptions}
+                        placeholder="No project"
+                        noneLabel="No project"
+                        searchPlaceholder="Search projects..."
+                        emptyMessage="No projects found."
+                        className="min-h-10 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
+                        disablePortal
+                        side="bottom"
+                        sideOffset={8}
+                        onChange={(projectId) => setDraft((current) => ({ ...current, projectId }))}
+                        onConfirm={() => descriptionEditorRef.current?.focus()}
+                        renderTriggerValue={(option) =>
+                          option && currentProject ? (
                             <span className="flex min-w-0 items-center gap-2">
-                              <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <span
+                                className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                                style={projectColorBackgroundStyle(currentProject.color)}
+                              />
                               <span className="truncate">{option.label}</span>
                             </span>
                           ) : (
-                            <span className="truncate">{option.label}</span>
+                            <span className="flex items-center gap-2 text-muted-foreground">
+                              <FolderOpen className="h-4 w-4" />
+                              No project
+                            </span>
                           )
-                        ) : (
-                          <span className="flex items-center gap-2 text-muted-foreground">
-                            <Bot className="h-4 w-4" />
-                            Select agent
-                          </span>
-                        )
-                      }
-                      renderOption={(option) => {
-                        if (!option.id) return <span className="truncate">{option.label}</span>;
-                        const assignee = agentById.get(option.id);
-                        return (
-                          <>
-                            {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
-                            <span className="truncate">{option.label}</span>
-                          </>
-                        );
-                      }}
-                    />
-                  </div>
-                </section>
-
-                <section className="space-y-2.5">
-                  <h2 className="text-xs font-medium text-muted-foreground">Run output</h2>
-                  <div className="grid gap-2">
-                    <button
-                      type="button"
-                      className={`flex min-h-14 items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors ${
-                        draft.outputMode === "create_issue"
-                          ? "border-foreground/70 bg-accent/60 text-foreground"
-                          : "border-border/70 bg-background/40 text-muted-foreground hover:bg-accent/40"
-                      }`}
-                      onClick={() => setDraft((current) => ({ ...current, outputMode: "create_issue" }))}
-                    >
-                      <CheckCircle2 className="h-4 w-4 shrink-0" />
-                      <span className="min-w-0">
-                        <span className="block text-sm font-medium">Track as issue</span>
-                        <span className="block truncate text-xs text-muted-foreground">Each run opens board-tracked work</span>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="flex min-h-14 cursor-not-allowed items-center gap-3 rounded-md border border-border/50 bg-background/30 px-3 py-2 text-left text-muted-foreground opacity-70"
-                      disabled
-                    >
-                      <Radio className="h-4 w-4 shrink-0" />
-                      <span className="min-w-0">
-                        <span className="block text-sm font-medium">Send to chat</span>
-                        <span className="block truncate text-xs">Chat delivery is not connected yet</span>
-                      </span>
-                    </button>
-                  </div>
-                </section>
-
-                <section className="space-y-2.5">
-                  <h2 className="text-xs font-medium text-muted-foreground">Schedule</h2>
-                  <ScheduleEditor
-                    value={draft.scheduleCron}
-                    onChange={(scheduleCron) => setDraft((current) => ({ ...current, scheduleCron }))}
-                  />
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <CalendarClock className="h-3.5 w-3.5" />
-                    {draft.scheduleCron.trim() ? describeSchedule(draft.scheduleCron) : "No schedule set"}
-                  </p>
-                </section>
-
-                <section className="space-y-2.5">
-                  <h2 className="text-xs font-medium text-muted-foreground">Project</h2>
-                  <div
-                    data-testid="automation-composer-project-pill"
-                    className="rounded-md border border-border/80 bg-background/50"
-                  >
-                    <InlineEntitySelector
-                      ref={projectSelectorRef}
-                      value={draft.projectId}
-                      options={projectOptions}
-                      placeholder="No project"
-                      noneLabel="No project"
-                      searchPlaceholder="Search projects..."
-                      emptyMessage="No projects found."
-                      className="min-h-10 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
-                      disablePortal
-                      side="bottom"
-                      sideOffset={8}
-                      onChange={(projectId) => setDraft((current) => ({ ...current, projectId }))}
-                      onConfirm={() => descriptionEditorRef.current?.focus()}
-                      renderTriggerValue={(option) =>
-                        option && currentProject ? (
-                          <span className="flex min-w-0 items-center gap-2">
-                            <span
-                              className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                              style={projectColorBackgroundStyle(currentProject.color)}
-                            />
-                            <span className="truncate">{option.label}</span>
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-2 text-muted-foreground">
-                            <FolderOpen className="h-4 w-4" />
-                            No project
-                          </span>
-                        )
-                      }
-                      renderOption={(option) => {
-                        if (!option.id) return <span className="truncate">{option.label}</span>;
-                        const project = projectById.get(option.id);
-                        return (
-                          <>
-                            <span
-                              className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                              style={projectColorBackgroundStyle(project?.color)}
-                            />
-                            <span className="truncate">{option.label}</span>
-                          </>
-                        );
-                      }}
-                    />
-                  </div>
-                </section>
-
-                <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" type="button" className="w-full justify-between">
-                      Delivery rules
-                      <MoreHorizontal className="h-3.5 w-3.5" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" side="top" sideOffset={10} className="w-[320px] space-y-4 p-4">
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium text-muted-foreground">Concurrency</p>
-                      <Select
-                        value={draft.concurrencyPolicy}
-                        onValueChange={(concurrencyPolicy) => setDraft((current) => ({ ...current, concurrencyPolicy }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {concurrencyPolicies.map((value) => (
-                            <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs leading-5 text-muted-foreground">{concurrencyPolicyDescriptions[draft.concurrencyPolicy]}</p>
+                        }
+                        renderOption={(option) => {
+                          if (!option.id) return <span className="truncate">{option.label}</span>;
+                          const project = projectById.get(option.id);
+                          return (
+                            <>
+                              <span
+                                className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                                style={projectColorBackgroundStyle(project?.color)}
+                              />
+                              <span className="truncate">{option.label}</span>
+                            </>
+                          );
+                        }}
+                      />
                     </div>
+                  </section>
 
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium text-muted-foreground">Catch-up</p>
-                      <Select
-                        value={draft.catchUpPolicy}
-                        onValueChange={(catchUpPolicy) => setDraft((current) => ({ ...current, catchUpPolicy }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {catchUpPolicies.map((value) => (
-                            <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs leading-5 text-muted-foreground">{catchUpPolicyDescriptions[draft.catchUpPolicy]}</p>
-                    </div>
-                  </PopoverContent>
-                </Popover>
+                  <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" size="sm" type="button" className="w-full justify-between">
+                        Delivery rules
+                        <MoreHorizontal className="h-3.5 w-3.5" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" side="top" sideOffset={10} className="w-[320px] space-y-4 p-4">
+                      <div className="space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground">Concurrency</p>
+                        <Select
+                          value={draft.concurrencyPolicy}
+                          onValueChange={(concurrencyPolicy) => setDraft((current) => ({ ...current, concurrencyPolicy }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {concurrencyPolicies.map((value) => (
+                              <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs leading-5 text-muted-foreground">{concurrencyPolicyDescriptions[draft.concurrencyPolicy]}</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-medium text-muted-foreground">Catch-up</p>
+                        <Select
+                          value={draft.catchUpPolicy}
+                          onValueChange={(catchUpPolicy) => setDraft((current) => ({ ...current, catchUpPolicy }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {catchUpPolicies.map((value) => (
+                              <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs leading-5 text-muted-foreground">{catchUpPolicyDescriptions[draft.catchUpPolicy]}</p>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
               </aside>
             </div>
-
             <div className="flex flex-col gap-3 border-t border-border/60 px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
-              <p className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                <Zap className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-                <span className="truncate">Once saved, runs automatically until paused.</span>
+              <p className="min-w-0 truncate text-xs text-muted-foreground">
+                Once saved, runs automatically until paused.
               </p>
               <div className="flex items-center justify-end gap-3">
                 <Button
@@ -820,30 +922,27 @@ export function Automations() {
       <div>
         {(automations ?? []).length === 0 ? (
           <div className="mx-auto flex min-h-[min(680px,calc(100vh-12rem))] max-w-5xl flex-col items-center justify-center px-4 py-12 text-center">
-            <div className="mb-5 inline-flex h-12 w-12 items-center justify-center rounded-md border border-border/70 bg-background/60 text-muted-foreground">
-              <Zap className="h-6 w-6" />
-            </div>
             <h1 className="text-xl font-semibold">No automations yet</h1>
             <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-              Schedule recurring work for your agents. Pick a use case or start from scratch.
+              Turn repeated board work into a scheduled agent run. Choose a workflow or create your own.
             </p>
             <div
               data-testid="automation-template-grid"
               className="mt-8 grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-3"
             >
               {automationTemplates.map((template) => {
-                const TemplateIcon = template.icon;
+                const title = localizeText(template.title);
+                const summary = localizeText(template.summary);
                 return (
                   <button
                     key={template.id}
                     type="button"
-                    className="group grid min-h-[116px] grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-md border border-border/70 bg-background/45 p-4 text-left transition-colors hover:border-border hover:bg-accent/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="group min-h-[104px] rounded-md border border-border/70 bg-background/45 p-4 text-left transition-colors hover:border-border hover:bg-accent/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     onClick={() => openComposer(template)}
                   >
-                    <TemplateIcon className="mt-0.5 h-5 w-5 text-muted-foreground transition-colors group-hover:text-foreground" />
                     <span className="min-w-0">
-                      <span className="block text-sm font-medium text-foreground">{template.title}</span>
-                      <span className="mt-1 block text-sm leading-5 text-muted-foreground">{template.summary}</span>
+                      <span className="block text-sm font-medium text-foreground">{title}</span>
+                      <span className="mt-1 block text-sm leading-5 text-muted-foreground">{summary}</span>
                     </span>
                   </button>
                 );
@@ -856,7 +955,7 @@ export function Automations() {
               onClick={() => openComposer()}
             >
               <Plus className="h-4 w-4" />
-              Start from scratch
+              Create custom automation
             </Button>
           </div>
         ) : (

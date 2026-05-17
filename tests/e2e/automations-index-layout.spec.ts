@@ -34,7 +34,10 @@ test.describe("Automations index layout", () => {
     await expect(emptyState).toBeVisible();
     await expect(templateGrid).toBeVisible();
     await expect(page.getByRole("button", { name: /Bug triage/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Daily standup/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Weekly progress report/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Create custom automation/ })).toBeVisible();
+    await expect(page.getByText("Start from scratch")).toHaveCount(0);
 
     const headerActionsBox = await headerActions.boundingBox();
     const createButtonBox = await createButton.boundingBox();
@@ -52,6 +55,7 @@ test.describe("Automations index layout", () => {
     await expect(page.getByPlaceholder("Automation name")).toBeVisible();
     await expect(page.getByText("Run output")).toBeVisible();
     await expect(page.getByText("Every day at 09:00")).toBeVisible();
+    await expect(page.getByTestId("automation-composer-shell")).toBeVisible();
 
     await page.screenshot({
       path: testInfo.outputPath("automations-index-layout.png"),
@@ -147,11 +151,48 @@ test.describe("Automations index layout", () => {
     await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("List all open issues labeled bug");
     await expect(page.getByText("Weekdays at 09:00")).toBeVisible();
     await expect(page.getByRole("button", { name: /Track as issue/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Send to chat/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
+    await page.getByRole("button", { name: /Send to chat/ }).click();
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("relevant Rudder chat conversation");
     await expect(page.getByRole("button", { name: /Create automation/ })).toBeDisabled();
 
     await page.screenshot({
       path: testInfo.outputPath("automations-template-composer.png"),
+      fullPage: true,
+    });
+  });
+
+  test("renders localized use cases and a narrow create layout", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: {
+        name: `Automations-ZH-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
+
+    await page.route("**/api/health", async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({ response, json: { ...body, uiLocale: "zh-CN" } });
+    });
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
+
+    await expect(page.getByRole("button", { name: /日会/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Bug 分诊/ })).toBeVisible();
+    await page.getByRole("button", { name: /日会/ }).click();
+
+    await expect(page.getByPlaceholder("Automation name")).toHaveValue("日会");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("上一个工作日以来更新的进行中任务");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("发送到相关 Rudder chat");
+    await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
+
+    await page.screenshot({
+      path: testInfo.outputPath("automations-zh-narrow-composer.png"),
       fullPage: true,
     });
   });

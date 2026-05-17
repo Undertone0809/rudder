@@ -1574,6 +1574,38 @@ describe("issue lifecycle routes", () => {
     );
   });
 
+  it("does not update assignee when a comment mentions another agent", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({
+        body: "@Peer Agent can you check the interaction copy?",
+        assigneeAgentId: PEER_AGENT_ID,
+        assigneeUserId: null,
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.addComment).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "@Peer Agent can you check the interaction copy?",
+      { userId: "local-board" },
+    );
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      PEER_AGENT_ID,
+      expect.objectContaining({
+        reason: "issue_comment_mentioned",
+      }),
+    );
+  });
+
   it("rejects agent issue comments with invalid run context before persisting", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({

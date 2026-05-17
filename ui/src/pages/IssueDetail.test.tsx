@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueDetail, buildIssueChatHref } from "./IssueDetail";
 
 let capturedMentions: Array<Record<string, unknown>> = [];
+let capturedCommentThreadProps: Record<string, unknown> | null = null;
 let mockSourceBreadcrumb: { label: string; href: string } | null = null;
 let mockIssuePluginSlots: Array<Record<string, unknown>> = [];
 
@@ -212,14 +213,12 @@ vi.mock("../context/BreadcrumbContext", () => ({
 }));
 
 vi.mock("../lib/assignees", () => ({
-  assigneeValueFromSelection: () => "unassigned",
   formatAssigneeUserLabel: (userId: string | null | undefined, currentUserId: string | null | undefined) => {
     if (!userId) return null;
     if (currentUserId && userId === currentUserId) return "Me";
     if (userId === "local-board") return "Board";
     return userId.slice(0, 5);
   },
-  suggestedCommentAssigneeValue: () => "unassigned",
 }));
 
 vi.mock("../lib/issueDetailBreadcrumb", () => ({
@@ -303,14 +302,13 @@ vi.mock("../components/InlineEditor", () => ({
 }));
 
 vi.mock("../components/CommentThread", () => ({
-  CommentThread: ({
-    mentions,
-    activityItems = [],
-  }: {
+  CommentThread: (props: {
     mentions?: Array<Record<string, unknown>>;
     activityItems?: Array<{ id: string; createdAt: Date | string; node: ReactNode }>;
   }) => {
+    const { mentions, activityItems = [] } = props;
     capturedMentions = mentions ?? [];
+    capturedCommentThreadProps = props;
     const sortedActivityItems = [...activityItems].sort(
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
@@ -509,6 +507,7 @@ describe("buildIssueChatHref", () => {
 describe("IssueDetail", () => {
   beforeEach(() => {
     capturedMentions = [];
+    capturedCommentThreadProps = null;
     mockSourceBreadcrumb = null;
     mockIssuePluginSlots = [];
     queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), []);
@@ -546,6 +545,15 @@ describe("IssueDetail", () => {
     expect(html).toContain("Comment thread");
     expect(html).not.toContain(">Activity</button>");
     expect(html).not.toContain("Comments &amp; Runs");
+  });
+
+  it("keeps assignee changes out of the issue comment composer", () => {
+    renderToStaticMarkup(<IssueDetail />);
+
+    expect(capturedCommentThreadProps).not.toHaveProperty("enableReassign");
+    expect(capturedCommentThreadProps).not.toHaveProperty("reassignOptions");
+    expect(capturedCommentThreadProps).not.toHaveProperty("currentAssigneeValue");
+    expect(capturedCommentThreadProps).not.toHaveProperty("suggestedAssigneeValue");
   });
 
   it("includes the issue assignee's enabled skills in mention suggestions", () => {

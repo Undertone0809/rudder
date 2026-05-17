@@ -419,7 +419,8 @@ From: {{comment.authorLabel}} ({{comment.authorKind}})
 
 {{comment.body}}
 
-Please review the comment above and respond or take action as appropriate.`;
+Please review the comment above and respond or take action as appropriate.
+An @mention is an explicit request for attention or collaboration, not an automatic transfer of issue ownership. Only checkout or self-assign when the comment explicitly asks you to take ownership and the normal issue workflow allows it.`;
 
 export const ISSUE_COMMENTED_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). There is a new comment on an issue you own.
 
@@ -542,6 +543,7 @@ Before changing the issue, inspect the current issue state and any side effects 
  * - comment.mention:
  *   "You were mentioned in a comment ..."
  *   Includes issue summary plus mention comment author/body so the agent can respond without extra fetches.
+ *   Mentions request attention; ownership transfer still requires an explicit handoff.
  * - issue_changes_requested:
  *   "A reviewer requested changes on an issue you own ..."
  *   Includes issue summary plus reviewer attribution/comment body so the assignee can act on feedback immediately.

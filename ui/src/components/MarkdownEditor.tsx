@@ -1667,6 +1667,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
             if (e.key === "Enter" || e.key === "Tab") {
               e.preventDefault();
               e.stopPropagation();
+              const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+              const freshState = editable instanceof HTMLElement ? detectMention(editable) : null;
+              if (freshState && freshState.trigger === mentionStateRef.current?.trigger) {
+                mentionStateRef.current = freshState;
+                setMentionState(freshState);
+              }
               selectMention(filteredMentions[mentionIndex]);
               return;
             }

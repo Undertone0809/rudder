@@ -60,6 +60,7 @@ describe("CommentThread", () => {
     expect(html).toContain("text/csv");
     expect(html).toContain('title="Attach file"');
     expect(html).toContain("chat-composer");
+    expect(html).not.toContain("Assignee");
   });
 
   it("passes skill mention metadata into rendered comments", () => {
