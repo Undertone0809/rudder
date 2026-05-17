@@ -11,7 +11,7 @@ import { issuesApi } from "../api/issues";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { Settings, Check, Download, Upload, ArchiveRestore, MessageSquareMore, Trash2, Tags, Plus } from "lucide-react";
+import { Settings, Check, Download, Upload, ArchiveRestore, Trash2, Tags, Plus } from "lucide-react";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { OrganizationPatternIcon } from "../components/OrganizationPatternIcon";
 import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
@@ -758,18 +758,6 @@ export function OrganizationSettings() {
           {t("organizationSettings.section.chat")}
         </div>
         <div className="space-y-4 rounded-xl border border-border/70 bg-card/60 px-4 py-4">
-          <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/40 px-4 py-3">
-            <div className="rounded-full border border-border/60 bg-background/80 p-2">
-              <MessageSquareMore className="h-4 w-4 text-muted-foreground" />
-            </div>
-            <div className="space-y-1">
-              <div className="text-sm font-medium">{t("organizationSettings.chat.assistant.title")}</div>
-              <p className="text-sm text-muted-foreground">
-                {t("organizationSettings.chat.assistant.description")}
-              </p>
-            </div>
-          </div>
-
           <Field
             label={t("organizationSettings.chat.issueMode.label")}
             hint={t("organizationSettings.chat.issueMode.hint")}

@@ -188,9 +188,6 @@ export const en = {
   "organizationSettings.labels.failedDelete": "Failed to delete label",
   "organizationSettings.hiring.requireApproval.label": "Require board approval for new hires",
   "organizationSettings.hiring.requireApproval.hint": "New agent hires stay pending until approved by board.",
-  "organizationSettings.chat.assistant.title": "Chat assistant",
-  "organizationSettings.chat.assistant.description":
-    "Chat replies run through the conversation's selected agent, using that agent's runtime, skills, and instructions. New chats default to the last selected available agent.",
   "organizationSettings.chat.issueMode.label": "Default issue creation mode",
   "organizationSettings.chat.issueMode.hint":
     "Controls whether chat-generated issue proposals wait for approval or create issues immediately.",

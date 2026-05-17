@@ -178,8 +178,6 @@ export const zhCN: Messages = {
   "organizationSettings.labels.failedDelete": "删除标签失败",
   "organizationSettings.hiring.requireApproval.label": "新招聘成员需要 board 审批",
   "organizationSettings.hiring.requireApproval.hint": "新的 agent 招聘会先进入待批准状态，直到 board 批准。",
-  "organizationSettings.chat.assistant.title": "Chat assistant",
-  "organizationSettings.chat.assistant.description": "聊天回复会通过当前会话选择的 agent 执行，并使用该 agent 自己的 runtime、skills 和 instructions。发送前请先在输入框选择 agent。",
   "organizationSettings.chat.issueMode.label": "默认 issue 创建模式",
   "organizationSettings.chat.issueMode.hint": "控制聊天生成的 issue proposal 是等待审批，还是立即创建 issue。",
   "organizationSettings.chat.issueMode.manual": "手动审批",
