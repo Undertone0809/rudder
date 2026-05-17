@@ -10,6 +10,7 @@ import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { resolveDesktopAppName } from "./app-identity.js";
 import { createBootScreenHtml, createRendererRecoveryScreenHtml } from "./boot-screen.js";
 import { DESKTOP_CLI_FLAG, ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
+import { runDesktopCliMode } from "./cli-runner.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
 import {
   canOpenBlockedNavigationExternally,
@@ -2240,15 +2241,11 @@ const desktopCliArgv = resolveDesktopCliArgv(process.argv);
 const updateQuitResponsePath = resolveUpdateQuitResponsePath(process.argv);
 
 if (desktopCliArgv) {
-  void importCliModule()
-    .then((cliModule) => cliModule.runCli(desktopCliArgv))
-    .then((exitCode) => {
-      app.exit(exitCode);
-    })
-    .catch((error) => {
-      console.error("[rudder-desktop] failed to run desktop CLI mode", error);
-      app.exit(1);
-    });
+  void runDesktopCliMode({
+    argv: desktopCliArgv,
+    importCliModule,
+    exit: (exitCode) => app.exit(exitCode),
+  });
 } else {
   const singleInstanceLock = app.requestSingleInstanceLock();
   if (updateQuitResponsePath && singleInstanceLock) {
