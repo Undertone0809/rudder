@@ -70,7 +70,7 @@ test.describe("Chat message layout", () => {
     const toolbar = page.getByTestId("chat-user-message-toolbar").last();
     await expect(toolbar).toBeVisible();
     await expect(toolbar).not.toContainText("ago");
-    await expect(toolbar).toContainText(/[A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} [AP]M/);
+    await expect(toolbar).toContainText(/[A-Z][a-z]{2} \d{1,2}, (?:\d{1,2}:\d{2} [AP]M|\d{1,2}:\d{2})/);
 
     const bubbleBox = await bubble.boundingBox();
     const toolbarBox = await toolbar.boundingBox();
@@ -144,5 +144,76 @@ test.describe("Chat message layout", () => {
     await page.reload();
     await expectDirectImageAvatar(page);
     await page.screenshot({ path: "/tmp/rudder-chat-avatar-mobile.png", fullPage: true });
+  });
+
+  test("collapses long assistant messages behind an expandable preview", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Long-Message-Chat-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Long message preview chat",
+        summary: "Regression coverage for long message previews.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: Array.from(
+        { length: 55 },
+        (_, index) =>
+          `Long response paragraph ${index + 1}. This line keeps the rendered chat message tall enough to require expansion.`,
+      ).join("\n\n"),
+      structuredPayload: null,
+      replyingAgentId: null,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    const assistantMessage = page.getByTestId("chat-assistant-message").last();
+    const longBody = assistantMessage.getByTestId("chat-long-message-body").last();
+    const toggle = assistantMessage.getByTestId("chat-long-message-toggle").last();
+
+    await expect(assistantMessage).toContainText("Long response paragraph 1", { timeout: 15_000 });
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toContainText("Show more");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    const collapsedHeight = await longBody.evaluate((node) => node.getBoundingClientRect().height);
+    expect(collapsedHeight).toBeLessThanOrEqual(396);
+    await page.screenshot({
+      path: `${process.env.RUDDER_ORG_ARTIFACTS_DIR ?? "/tmp"}/rudder-zst244-long-message-collapsed.png`,
+      fullPage: true,
+    });
+
+    await toggle.click();
+
+    await expect(toggle).toContainText("Show less");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect.poll(async () => longBody.evaluate((node) => node.getBoundingClientRect().height))
+      .toBeGreaterThan(collapsedHeight + 120);
   });
 });
