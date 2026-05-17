@@ -103,6 +103,7 @@ function RailNavItem({
       to={to}
       aria-current={active ? "page" : undefined}
       data-tour-target={tourTarget}
+      data-tour-spotlight={tourTarget ? "compact-rail" : undefined}
       onDoubleClick={onDoubleClick}
       className={({ isActive }) =>
         cn(

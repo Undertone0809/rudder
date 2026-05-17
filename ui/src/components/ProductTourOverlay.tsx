@@ -61,6 +61,41 @@ type TargetRect = {
   height: number;
 };
 
+type FloatingBounds = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+const TOUR_MARGIN = 16;
+const DESKTOP_MAC_MIN_LEFT = 96;
+const DESKTOP_MAC_MIN_TOP = 48;
+const CHECKLIST_WIDTH = 220;
+const COMPACT_RAIL_SPOTLIGHT_WIDTH = 52;
+
+function isMacDesktopShellTour(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.documentElement.classList.contains("desktop-shell-macos");
+}
+
+function getFloatingBounds(): FloatingBounds {
+  if (isMacDesktopShellTour()) {
+    return {
+      left: DESKTOP_MAC_MIN_LEFT,
+      top: DESKTOP_MAC_MIN_TOP,
+      right: TOUR_MARGIN,
+      bottom: TOUR_MARGIN,
+    };
+  }
+  return {
+    left: TOUR_MARGIN,
+    top: TOUR_MARGIN,
+    right: TOUR_MARGIN,
+    bottom: TOUR_MARGIN,
+  };
+}
+
 export function hasCompletedProductTour() {
   if (typeof window === "undefined") return true;
   try {
@@ -114,30 +149,49 @@ function resolveTargetRect(selector: string): TargetRect {
   if (!target) return getViewportFallbackRect();
   const rect = target.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return getViewportFallbackRect();
-  const padding = 6;
+  const compactRail = target.dataset.tourSpotlight === "compact-rail";
+  const spotlightWidth = compactRail ? Math.min(rect.width, COMPACT_RAIL_SPOTLIGHT_WIDTH) : rect.width;
+  const left = compactRail ? rect.left + (rect.width - spotlightWidth) / 2 : rect.left;
+  const padding = compactRail ? 4 : 6;
   return {
-    left: Math.max(8, Math.round(rect.left - padding)),
+    left: Math.max(8, Math.round(left - padding)),
     top: Math.max(8, Math.round(rect.top - padding)),
-    width: Math.round(rect.width + padding * 2),
+    width: Math.round(spotlightWidth + padding * 2),
     height: Math.round(rect.height + padding * 2),
   };
 }
 
 function getCalloutPosition(rect: TargetRect) {
+  const bounds = getFloatingBounds();
   const width = Math.min(360, Math.max(292, window.innerWidth - 32));
   const gap = 16;
-  const fitsRight = rect.left + rect.width + gap + width <= window.innerWidth - 16;
-  const fitsLeft = rect.left - gap - width >= 16;
+  const maxLeft = Math.max(bounds.left, window.innerWidth - width - bounds.right);
+  const fitsRight = rect.left + rect.width + gap + width <= window.innerWidth - bounds.right;
+  const fitsLeft = rect.left - gap - width >= bounds.left;
   const left = fitsRight
     ? rect.left + rect.width + gap
     : fitsLeft
       ? rect.left - gap - width
-      : Math.max(16, Math.min(window.innerWidth - width - 16, rect.left));
-  const top = Math.max(16, Math.min(window.innerHeight - 250, rect.top));
+      : Math.max(bounds.left, Math.min(maxLeft, rect.left));
+  const top = Math.max(bounds.top, Math.min(window.innerHeight - 250 - bounds.bottom, rect.top));
   return {
     width,
     left,
     top,
+  };
+}
+
+function getChecklistPosition() {
+  const bounds = getFloatingBounds();
+  if (isMacDesktopShellTour()) {
+    return {
+      top: bounds.top,
+      right: bounds.right,
+    };
+  }
+  return {
+    left: 20,
+    top: 20,
   };
 }
 
@@ -181,6 +235,7 @@ export function ProductTourOverlay() {
     () => (targetRect ? getCalloutPosition(targetRect) : null),
     [targetRect],
   );
+  const checklistPosition = useMemo(() => getChecklistPosition(), [targetRect]);
 
   const dismiss = useCallback(() => {
     markProductTourComplete();
@@ -217,7 +272,13 @@ export function ProductTourOverlay() {
         }}
       />
 
-      <aside className="fixed left-5 top-5 hidden w-[220px] rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--border-strong)_72%,transparent)] bg-popover/98 p-3 text-popover-foreground shadow-[var(--shadow-lg)] backdrop-blur md:block">
+      <aside
+        className="fixed hidden rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--border-strong)_72%,transparent)] bg-popover/98 p-3 text-popover-foreground shadow-[var(--shadow-lg)] backdrop-blur md:block"
+        style={{
+          ...checklistPosition,
+          width: CHECKLIST_WIDTH,
+        }}
+      >
         <div className="mb-2 text-[13px] font-semibold text-foreground">{t("productTour.checklist.title")}</div>
         <div className="space-y-0.5">
           {TOUR_STEPS.map((step, index) => (

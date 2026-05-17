@@ -74,6 +74,7 @@ afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   document.body.innerHTML = "";
+  document.documentElement.classList.remove("desktop-shell-macos");
   window.localStorage.clear();
   closeProductTour.mockReset();
   vi.unstubAllGlobals();
@@ -83,11 +84,30 @@ function click(element: Element) {
   (element as HTMLElement).click();
 }
 
-function renderOverlay() {
+function setViewport(width: number, height: number) {
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: height });
+}
+
+function renderOverlay(targetRect?: Partial<DOMRect>, options?: { compactRailSpotlight?: boolean }) {
   installLocalStorageMock();
 
   const target = document.createElement("button");
   target.dataset.tourTarget = "primary-rail";
+  if (options?.compactRailSpotlight) {
+    target.dataset.tourSpotlight = "compact-rail";
+  }
+  target.getBoundingClientRect = vi.fn(() => ({
+    x: targetRect?.x ?? targetRect?.left ?? 8,
+    y: targetRect?.y ?? targetRect?.top ?? 36,
+    left: targetRect?.left ?? 8,
+    top: targetRect?.top ?? 36,
+    right: targetRect?.right ?? 76,
+    bottom: targetRect?.bottom ?? 720,
+    width: targetRect?.width ?? 68,
+    height: targetRect?.height ?? 684,
+    toJSON: () => ({}),
+  }));
   document.body.appendChild(target);
 
   const container = document.createElement("div");
@@ -110,6 +130,7 @@ function renderOverlay() {
 
 describe("ProductTourOverlay", () => {
   it("steps through the guided tour and marks it complete on finish", async () => {
+    setViewport(1280, 800);
     const container = renderOverlay();
 
     await act(async () => {
@@ -140,5 +161,38 @@ describe("ProductTourOverlay", () => {
 
     expect(closeProductTour).toHaveBeenCalledTimes(1);
     expect(hasCompletedProductTour()).toBe(true);
+  });
+
+  it("keeps desktop tour chrome out of the macOS titlebar and rail area", async () => {
+    setViewport(1440, 900);
+    document.documentElement.classList.add("desktop-shell-macos");
+    const container = renderOverlay({ left: 8, top: 36, width: 68, height: 820, right: 76, bottom: 856 });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const checklist = container.querySelector("aside") as HTMLElement | null;
+    const callout = container.querySelector("section") as HTMLElement | null;
+
+    expect(checklist?.style.top).toBe("48px");
+    expect(checklist?.style.right).toBe("16px");
+    expect(checklist?.style.left).toBe("");
+    expect(callout?.style.left).toBe("104px");
+    expect(callout?.style.top).toBe("48px");
+  });
+
+  it("uses a narrower spotlight for compact rail navigation targets", async () => {
+    setViewport(1440, 900);
+    renderOverlay({ left: 23, top: 300, width: 66, height: 56, right: 89, bottom: 356 }, { compactRailSpotlight: true });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const spotlight = document.querySelector("[aria-hidden='true']") as HTMLElement | null;
+
+    expect(spotlight?.style.left).toBe("26px");
+    expect(spotlight?.style.width).toBe("60px");
   });
 });
