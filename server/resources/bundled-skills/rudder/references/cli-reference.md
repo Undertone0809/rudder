@@ -93,7 +93,7 @@ Do not rely on a free-form reject or accept comment as the review outcome. The s
 - `rudder agent config doc <agent-runtime-type>` — Read adapter-specific configuration guidance for one runtime.
 - `rudder agent config list --org-id <id>` — List redacted agent configuration snapshots for an organization.
 - `rudder agent config get <agent-id-or-shortname>` — Read one redacted agent configuration snapshot by id or shortname.
-- `rudder agent icons` — List allowed agent icon names for create and hire payloads.
+- `rudder agent icons` — List legacy named agent icons for compatibility/debugging. Normal create and hire payloads should omit `icon` so Rudder generates a DiceBear Notionists avatar.
 - `rudder issue create --org-id <id> ...` — Create a new issue or subtask with the generic issue surface; agent-created issues default to the creating agent when no assignee is supplied.
 - `rudder approval create --org-id <id> --type <type> --payload <json>` — Create a new approval request.
 - `rudder approval resubmit <approval-id> [--payload <json>]` — Resubmit a revision-requested approval, optionally with updated payload.

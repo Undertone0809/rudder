@@ -191,7 +191,7 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     id: "agent.icons",
     command: "rudder agent icons",
     category: "agent",
-    description: "List allowed agent icon names for create and hire payloads.",
+    description: "List legacy named agent icons for compatibility/debugging; normal create and hire payloads should omit icon.",
     mutating: false,
     contract: "compat",
     requiresOrgId: false,

@@ -181,7 +181,7 @@ When `RUDDER_APPROVAL_ID` is set, read the approval and its linked issues first.
 
 - `GET /llms/agent-configuration.txt`
 - `GET /llms/agent-configuration/:agentRuntimeType.txt`
-- `GET /llms/agent-icons.txt`
+- `GET /llms/agent-icons.txt` (legacy named icons for compatibility/debugging; normal hires should omit `icon`)
 - `GET /api/orgs/:orgId/agent-configurations`
 - `GET /api/agents/:agentId/configuration`
 - `GET /api/agents/:agentId/config-revisions`

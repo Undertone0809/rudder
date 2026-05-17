@@ -183,7 +183,7 @@ pnpm rudder agent config doc <agent-runtime-type>
 pnpm rudder agent config list --org-id <org-id>
 pnpm rudder agent config get <agent-id-or-shortname> [--org-id <org-id>]
 pnpm rudder agent icons
-pnpm rudder agent hire --org-id <org-id> --payload '{"role":"cto","title":"Chief Technology Officer","icon":"crown","agentRuntimeType":"codex_local","agentRuntimeConfig":{"cwd":"/abs/path"}}'
+pnpm rudder agent hire --org-id <org-id> --payload '{"role":"cto","title":"Chief Technology Officer","agentRuntimeType":"codex_local","agentRuntimeConfig":{"cwd":"/abs/path"}}'
 pnpm rudder agent skills create [agent-id] --name "Skill name" [--slug short-name] [--description "..."] [--markdown-file ./SKILL.md] [--enable]
 pnpm rudder agent skills enable <agent-id> <selection-ref...>
 pnpm rudder agent skills sync <agent-id> --desired-skills "<csv>"
@@ -192,6 +192,7 @@ pnpm rudder agent local-cli <agent-id-or-shortname> --org-id <org-id>
 
 `agent config index`, `agent config doc`, and `agent icons` print plain-text reference docs by default.
 Pass `--json` if you want the raw text wrapped as a JSON string.
+`agent icons` is a legacy compatibility/debugging reference; normal hire and create payloads should omit `icon` so Rudder generates a DiceBear Notionists avatar.
 
 `agent skills create` creates an agent-private skill under `AGENT_HOME/skills` for the target agent. When `[agent-id]` is omitted it defaults to `RUDDER_AGENT_ID`. Pass `--enable` to add the new private skill to the agent's enabled skill set for future runs.
 
@@ -203,6 +204,7 @@ Pass `--json` if you want the raw text wrapped as a JSON string.
 - creates the agent directly when the organization does not require approval
 - returns both `agent` and `approval` when board approval is required
 - accepts the same payload shape as the hire API, including `desiredSkills`, `sourceIssueId`, and `sourceIssueIds`
+- should omit `icon` for normal hires; only pass an explicit DiceBear reference or uploaded `asset:<uuid>` avatar reference supplied by the board/UI
 
 `agent local-cli` is the quickest way to run local Claude/Codex manually as a Rudder agent:
 

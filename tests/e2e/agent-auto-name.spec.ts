@@ -48,10 +48,12 @@ test.describe("Agent auto naming", () => {
         name: string;
         title: string | null;
         role: string;
+        icon: string | null;
       };
       expect(agent.title).toBe(title);
       expect(agent.role).toBe("ceo");
       expect(agent.name).toBe(suggestedName);
+      expect(agent.icon).toMatch(/^dicebear:notionists:/);
     }).toPass({ timeout: 15_000, intervals: [250, 500, 1_000] });
   });
 
@@ -114,10 +116,12 @@ test.describe("Agent auto naming", () => {
         name: string;
         title: string | null;
         role: string;
+        icon: string | null;
       };
       expect(agent.title).toBe(title);
       expect(agent.role).toBe("general");
       expect(agent.name).toBe(suggestedName);
+      expect(agent.icon).toMatch(/^dicebear:notionists:/);
     }).toPass({ timeout: 15_000, intervals: [250, 500, 1_000] });
   });
 });
