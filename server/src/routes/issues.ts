@@ -247,6 +247,17 @@ export function issueRoutes(db: Db, storage: StorageService) {
     return actor.actorType === "agent" && Boolean(actor.agentId) && actor.agentId === issue.reviewerAgentId;
   }
 
+  function canAgentCompleteIssue(actor: ReturnType<typeof getActorInfo>, issue: {
+    status: string;
+    assigneeAgentId: string | null;
+    reviewerAgentId: string | null;
+  }) {
+    if (actor.actorType !== "agent") return true;
+    if (!actor.agentId) return false;
+    if (statusAcceptsReviewerDecision(issue.status) && isReviewerAgentForIssue(actor, issue)) return true;
+    return issue.status === "in_progress" && issue.assigneeAgentId === actor.agentId;
+  }
+
   function statusForReviewDecision(decision: string) {
     switch (decision) {
       case "approve":
@@ -1152,6 +1163,13 @@ export function issueRoutes(db: Db, storage: StorageService) {
       }
     }
     let reviewedCompletionNormalized = false;
+    if (
+      updateFields.status === "done" &&
+      !canAgentCompleteIssue(actor, existing)
+    ) {
+      res.status(403).json({ error: "Only the checked-out assignee or reviewer can complete issue" });
+      return;
+    }
     if (
       updateFields.status === "done" &&
       issueHasReviewer(existing) &&

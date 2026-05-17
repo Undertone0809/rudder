@@ -1702,6 +1702,110 @@ describe("issue lifecycle routes", () => {
     );
   });
 
+  it("keeps ordinary comment mentions as notification-only without reassigning user-owned issues", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: null,
+        assigneeUserId: "local-board",
+        status: "todo",
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "@Peer Agent can you take a look?" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      PEER_AGENT_ID,
+      expect.objectContaining({
+        source: "automation",
+        reason: "issue_comment_mentioned",
+        contextSnapshot: expect.objectContaining({
+          wakeSource: "comment.mention",
+          wakeReason: "issue_comment_mentioned",
+        }),
+      }),
+    );
+  });
+
+  it("treats comment plus explicit assignee change as an ownership handoff instead of a mention wake", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: null,
+        assigneeUserId: "local-board",
+        status: "todo",
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        assigneeAgentId: patch.assigneeAgentId as string,
+        assigneeUserId: null,
+        status: "todo",
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        comment: "@Peer Agent please own this one.",
+        assigneeAgentId: PEER_AGENT_ID,
+        assigneeUserId: null,
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({
+        assigneeAgentId: PEER_AGENT_ID,
+        assigneeUserId: null,
+      }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      PEER_AGENT_ID,
+      expect.objectContaining({
+        source: "assignment",
+        reason: "issue_assigned",
+        contextSnapshot: expect.objectContaining({
+          wakeSource: "assignment",
+          wakeReason: "issue_assigned",
+        }),
+      }),
+    );
+  });
+
+  it("rejects issue completion from a mention-only agent run that does not own the issue", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: null,
+        assigneeUserId: "local-board",
+        status: "todo",
+      }),
+    );
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: PEER_RUN_ID,
+      orgId: "organization-1",
+      agentId: PEER_AGENT_ID,
+      status: "running",
+      contextSnapshot: { issueId: "11111111-1111-4111-8111-111111111111", wakeSource: "comment.mention" },
+    });
+
+    const res = await request(createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "done" });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Only the checked-out assignee or reviewer can complete issue" });
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
   it("does not enqueue a duplicate wakeup when an agent checks out its own issue in-run", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({
