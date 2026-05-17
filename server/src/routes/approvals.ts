@@ -18,6 +18,7 @@ import {
   chatService,
   heartbeatService,
   issueApprovalService,
+  issueService,
   logActivity,
   secretService,
 } from "../services/index.js";
@@ -131,6 +132,7 @@ export function approvalRoutes(db: Db) {
   const heartbeat = heartbeatService(db);
   const chatsSvc = chatService(db);
   const issueApprovalsSvc = issueApprovalService(db);
+  const issuesSvc = issueService(db);
   const secretsSvc = secretService(db);
   const strictSecretsMode = process.env.RUDDER_SECRETS_STRICT_MODE === "true";
 
@@ -305,6 +307,103 @@ export function approvalRoutes(db: Db) {
       const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(approval.id);
       const linkedIssueIds = linkedIssues.map((issue) => issue.id);
       const primaryIssueId = linkedIssueIds[0] ?? null;
+      const reactivatedLinkedIssueIds: string[] = [];
+
+      for (const linkedIssue of linkedIssues) {
+        if (linkedIssue.status !== "blocked") continue;
+
+        const nextStatus = linkedIssue.assigneeAgentId || linkedIssue.assigneeUserId ? "in_progress" : "todo";
+        const updatedIssue = await issuesSvc.update(linkedIssue.id, { status: nextStatus });
+        if (!updatedIssue) continue;
+        reactivatedLinkedIssueIds.push(updatedIssue.id);
+
+        await logActivity(db, {
+          orgId: approval.orgId,
+          actorType: "user",
+          actorId: req.actor.userId ?? "board",
+          action: "issue.updated",
+          entityType: "issue",
+          entityId: updatedIssue.id,
+          details: {
+            status: updatedIssue.status,
+            source: "approval.approved",
+            approvalId: approval.id,
+            identifier: updatedIssue.identifier,
+            _previous: { status: "blocked" },
+          },
+        });
+
+        if (updatedIssue.assigneeAgentId && updatedIssue.assigneeAgentId !== approval.requestedByAgentId) {
+          try {
+            const wakeRun = await heartbeat.wakeup(updatedIssue.assigneeAgentId, {
+              source: "assignment",
+              triggerDetail: "system",
+              reason: "approval_approved",
+              payload: {
+                approvalId: approval.id,
+                approvalStatus: approval.status,
+                issueId: updatedIssue.id,
+                mutation: "approval_approved",
+              },
+              requestedByActorType: "user",
+              requestedByActorId: req.actor.userId ?? "board",
+              contextSnapshot: {
+                source: "approval.approved",
+                approvalId: approval.id,
+                approvalStatus: approval.status,
+                issueId: updatedIssue.id,
+                taskId: updatedIssue.id,
+                wakeSource: "assignment",
+                wakeReason: "approval_approved",
+                issue: {
+                  id: updatedIssue.id,
+                  title: updatedIssue.title,
+                  description: updatedIssue.description,
+                  status: updatedIssue.status,
+                  priority: updatedIssue.priority,
+                },
+              },
+            });
+
+            await logActivity(db, {
+              orgId: approval.orgId,
+              actorType: "user",
+              actorId: req.actor.userId ?? "board",
+              action: "approval.linked_issue_assignee_wakeup_queued",
+              entityType: "approval",
+              entityId: approval.id,
+              details: {
+                issueId: updatedIssue.id,
+                assigneeAgentId: updatedIssue.assigneeAgentId,
+                wakeRunId: wakeRun?.id ?? null,
+              },
+            });
+          } catch (err) {
+            logger.warn(
+              {
+                err,
+                approvalId: approval.id,
+                issueId: updatedIssue.id,
+                assigneeAgentId: updatedIssue.assigneeAgentId,
+              },
+              "failed to queue linked issue assignee wakeup after approval",
+            );
+            await logActivity(db, {
+              orgId: approval.orgId,
+              actorType: "user",
+              actorId: req.actor.userId ?? "board",
+              action: "approval.linked_issue_assignee_wakeup_failed",
+              entityType: "approval",
+              entityId: approval.id,
+              details: {
+                issueId: updatedIssue.id,
+                assigneeAgentId: updatedIssue.assigneeAgentId,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            });
+          }
+        }
+      }
 
       await logActivity(db, {
         orgId: approval.orgId,
@@ -317,6 +416,7 @@ export function approvalRoutes(db: Db) {
           type: approval.type,
           requestedByAgentId: approval.requestedByAgentId,
           linkedIssueIds,
+          reactivatedLinkedIssueIds,
         },
       });
 

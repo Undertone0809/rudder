@@ -33,6 +33,10 @@ const mockIssueApprovalService = vi.hoisted(() => ({
   linkManyForApproval: vi.fn(),
 }));
 
+const mockIssueService = vi.hoisted(() => ({
+  update: vi.fn(),
+}));
+
 const mockSecretService = vi.hoisted(() => ({
   normalizeHireApprovalPayloadForPersistence: vi.fn(),
 }));
@@ -45,6 +49,7 @@ vi.mock("../services/index.js", () => ({
   chatService: () => mockChatService,
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => mockIssueApprovalService,
+  issueService: () => mockIssueService,
   logActivity: mockLogActivity,
   secretService: () => mockSecretService,
 }));

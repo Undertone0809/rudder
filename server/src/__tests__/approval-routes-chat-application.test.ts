@@ -36,6 +36,10 @@ const mockIssueApprovalService = vi.hoisted(() => ({
   linkManyForApproval: vi.fn(),
 }));
 
+const mockIssueService = vi.hoisted(() => ({
+  update: vi.fn(),
+}));
+
 const mockSecretService = vi.hoisted(() => ({
   normalizeHireApprovalPayloadForPersistence: vi.fn(),
 }));
@@ -48,6 +52,7 @@ vi.mock("../services/index.js", () => ({
   chatService: () => mockChatService,
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => mockIssueApprovalService,
+  issueService: () => mockIssueService,
   logActivity: mockLogActivity,
   secretService: () => mockSecretService,
 }));
@@ -81,6 +86,7 @@ describe("approval routes chat application", () => {
     mockHeartbeatService.wakeup.mockResolvedValue(null);
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }]);
     mockLogActivity.mockResolvedValue(undefined);
+    mockIssueService.update.mockResolvedValue(null);
     mockChatService.applyApprovedApproval.mockResolvedValue(null);
     mockAccessService.canUser.mockResolvedValue(true);
     mockApprovalService.getById.mockResolvedValue({
@@ -137,6 +143,95 @@ describe("approval routes chat application", () => {
       }),
       expect.objectContaining({
         name: "chat.approval.applied",
+      }),
+    );
+  });
+
+  it("reactivates blocked linked issues and wakes their assignee after approval is applied", async () => {
+    mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
+    mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([
+      {
+        id: "issue-1",
+        status: "blocked",
+        assigneeAgentId: "agent-assignee",
+        assigneeUserId: null,
+        title: "Create follow-up agent",
+        description: "Waiting for board approval.",
+        priority: "medium",
+      },
+    ]);
+    mockIssueService.update.mockResolvedValue({
+      id: "issue-1",
+      identifier: "RUD-1",
+      status: "in_progress",
+      assigneeAgentId: "agent-assignee",
+      title: "Create follow-up agent",
+      description: "Waiting for board approval.",
+      priority: "medium",
+    });
+    mockApprovalService.approve.mockResolvedValue({
+      approval: {
+        id: "approval-1",
+        orgId: "organization-1",
+        type: "hire_agent",
+        status: "approved",
+        payload: {},
+        requestedByAgentId: "agent-requester",
+      },
+      applied: true,
+    });
+
+    const res = await request(createApp())
+      .post("/api/approvals/approval-1/approve")
+      .send({ decisionNote: "Approved" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith("issue-1", { status: "in_progress" });
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        orgId: "organization-1",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: "issue-1",
+        details: expect.objectContaining({
+          status: "in_progress",
+          source: "approval.approved",
+          approvalId: "approval-1",
+          _previous: { status: "blocked" },
+        }),
+      }),
+    );
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      "agent-assignee",
+      expect.objectContaining({
+        source: "assignment",
+        triggerDetail: "system",
+        reason: "approval_approved",
+        payload: expect.objectContaining({
+          approvalId: "approval-1",
+          issueId: "issue-1",
+          mutation: "approval_approved",
+        }),
+        contextSnapshot: expect.objectContaining({
+          issueId: "issue-1",
+          taskId: "issue-1",
+          wakeSource: "assignment",
+          wakeReason: "approval_approved",
+          issue: expect.objectContaining({
+            status: "in_progress",
+          }),
+        }),
+      }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "approval.approved",
+        details: expect.objectContaining({
+          linkedIssueIds: ["issue-1"],
+          reactivatedLinkedIssueIds: ["issue-1"],
+        }),
       }),
     );
   });
