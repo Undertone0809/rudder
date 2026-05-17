@@ -226,7 +226,7 @@ test.describe("Calendar V1", () => {
     await expect(page.getByRole("button", { name: /^week$/i })).toBeVisible();
     await expect(page.locator('[data-testid^="calendar-cluster-"]')).toHaveCount(0);
 
-    await page.getByLabel("Show projected events").click();
+    await page.getByLabel("Show Projected heartbeats events").click();
     const cluster = page.locator('[data-testid^="calendar-cluster-"]').filter({ hasText: /Cluster Bot · \d+ projected/ }).first();
     await expect(cluster).toBeVisible();
     await expect(cluster).not.toContainText("Projected heartbeat");
