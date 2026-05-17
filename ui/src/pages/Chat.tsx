@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Copy,
   Folder,
   ListChecks,
@@ -1332,11 +1333,12 @@ export function ProposalCard({
       />
 
       {message.body.trim().length > 0 ? (
-        <div className="mt-4 max-w-[72ch] text-[15px] leading-7 text-foreground">
-          <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
-            {message.body}
-          </MarkdownBody>
-        </div>
+        <ChatLongMessageBody
+          body={message.body}
+          skillReferences={skillReferences}
+          onMarkdownLinkClick={onMarkdownLinkClick}
+          className="mt-4 max-w-[72ch] text-[15px] leading-7 text-foreground"
+        />
       ) : null}
 
       <div
@@ -1520,6 +1522,98 @@ export function ProposalCard({
 
 const chatMessageHoverBarClass =
   "opacity-0 pointer-events-none transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100";
+const CHAT_MESSAGE_COLLAPSED_LINES = 14;
+const CHAT_MESSAGE_LINE_HEIGHT_PX = 28;
+const CHAT_MESSAGE_COLLAPSED_HEIGHT = CHAT_MESSAGE_COLLAPSED_LINES * CHAT_MESSAGE_LINE_HEIGHT_PX;
+
+export function ChatLongMessageBody({
+  body,
+  skillReferences,
+  onMarkdownLinkClick,
+  className,
+  collapsedSurface = "var(--surface-page)",
+  collapsible = true,
+}: {
+  body: string;
+  skillReferences: MarkdownSkillReferencePreview[];
+  onMarkdownLinkClick?: MarkdownLinkClickHandler;
+  className?: string;
+  collapsedSurface?: string;
+  collapsible?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!collapsible) {
+      setExpanded(false);
+      setOverflowing(false);
+      return;
+    }
+
+    setExpanded(false);
+  }, [body, collapsible]);
+
+  useEffect(() => {
+    if (!collapsible) {
+      setOverflowing(false);
+      return;
+    }
+
+    const element = contentRef.current;
+    if (!element) return;
+
+    const measure = () => {
+      setOverflowing(element.scrollHeight > CHAT_MESSAGE_COLLAPSED_HEIGHT + 2);
+    };
+    measure();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [body, collapsible]);
+
+  const collapsed = collapsible && overflowing && !expanded;
+
+  return (
+    <div className={cn("min-w-0", className)}>
+      <div className="relative">
+        <div
+          ref={contentRef}
+          data-testid="chat-long-message-body"
+          className={cn("min-w-0", collapsed && "overflow-hidden")}
+          style={collapsed ? { maxHeight: CHAT_MESSAGE_COLLAPSED_HEIGHT } : undefined}
+        >
+          <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+            {body}
+          </MarkdownBody>
+        </div>
+        {collapsed ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-14"
+            style={{ background: `linear-gradient(to bottom, transparent, ${collapsedSurface})` }}
+          />
+        ) : null}
+      </div>
+      {collapsible && overflowing ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          className="mt-1 h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+          data-testid="chat-long-message-toggle"
+        >
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {expanded ? "Show less" : "Show more"}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
 
 function readStructuredPayloadString(payload: Record<string, unknown> | null, key: string): string | null {
   const value = payload?.[key];
@@ -1605,11 +1699,12 @@ function AskUserHistoryRecord({
           agents={agents}
         />
         {message.body.trim().length > 0 ? (
-          <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
-            <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
-              {message.body}
-            </MarkdownBody>
-          </div>
+          <ChatLongMessageBody
+            body={message.body}
+            skillReferences={skillReferences}
+            onMarkdownLinkClick={onMarkdownLinkClick}
+            className="max-w-[72ch] text-[15px] leading-7 text-foreground"
+          />
         ) : null}
         <div className="mt-3 max-w-[72ch] rounded-lg border border-border bg-card px-3 py-2.5 text-sm shadow-[var(--shadow-sm)]">
           <div className="flex flex-wrap items-center gap-2">
@@ -1957,11 +2052,12 @@ function ChatMessageItem({
               ) : null}
             </div>
           ) : null}
-          <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
-            <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
-              {message.body}
-            </MarkdownBody>
-          </div>
+          <ChatLongMessageBody
+            body={message.body}
+            skillReferences={skillReferences}
+            onMarkdownLinkClick={onMarkdownLinkClick}
+            className="max-w-[72ch] text-[15px] leading-7 text-foreground"
+          />
           <ChatRichReferences message={message} />
           <ChatAttachmentList
             attachments={message.attachments}
@@ -2003,11 +2099,13 @@ function ChatMessageItem({
             data-testid="chat-user-message-bubble"
             className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]"
           >
-            <div className="text-[15px] leading-7">
-              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
-                {message.body}
-              </MarkdownBody>
-            </div>
+            <ChatLongMessageBody
+              body={message.body}
+              skillReferences={skillReferences}
+              onMarkdownLinkClick={onMarkdownLinkClick}
+              className="text-[15px] leading-7"
+              collapsedSurface="color-mix(in oklab, var(--surface-elevated) 92%, var(--surface-shell))"
+            />
             <ChatAttachmentList
               attachments={message.attachments}
               onOpenImage={onOpenImage}
@@ -2105,11 +2203,13 @@ function OptimisticUserDraftItem({
           <AskUserAnswerBubble answer={askUserAnswer} />
         ) : (
           <div className="chat-message-user w-fit max-w-[min(100%,72ch)] rounded-[var(--radius-xl)] px-4 py-3 shadow-[var(--shadow-sm)]">
-            <div className="text-[15px] leading-7">
-              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
-                {body}
-              </MarkdownBody>
-            </div>
+            <ChatLongMessageBody
+              body={body}
+              skillReferences={skillReferences}
+              onMarkdownLinkClick={onMarkdownLinkClick}
+              className="text-[15px] leading-7"
+              collapsedSurface="color-mix(in oklab, var(--surface-elevated) 92%, var(--surface-shell))"
+            />
           </div>
         )}
         <div
@@ -2326,9 +2426,12 @@ function AssistantDraftItem({
         ) : null}
         <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
           {body.trim() ? (
-            <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
-              {body}
-            </MarkdownBody>
+            <ChatLongMessageBody
+              body={body}
+              skillReferences={skillReferences}
+              onMarkdownLinkClick={onMarkdownLinkClick}
+              collapsible={!streamingActive}
+            />
           ) : (
             <TextDots text="Thinking" className="text-muted-foreground" />
           )}
