@@ -130,6 +130,32 @@ export function automationRoutes(db: Db) {
     res.json(updated);
   });
 
+  router.delete("/automations/:id", async (req, res) => {
+    const automation = await assertCanManageExistingAutomation(req, req.params.id as string);
+    if (!automation) {
+      res.status(404).json({ error: "Automation not found" });
+      return;
+    }
+    const deleted = await svc.delete(automation.id);
+    if (!deleted) {
+      res.status(404).json({ error: "Automation not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId: automation.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "automation.deleted",
+      entityType: "automation",
+      entityId: automation.id,
+      details: { title: automation.title },
+    });
+    res.status(204).end();
+  });
+
   router.get("/automations/:id/runs", async (req, res) => {
     const automation = await svc.get(req.params.id as string);
     if (!automation) {

@@ -448,8 +448,21 @@ describe("AutomationDetail", () => {
     });
 
     expect(headerContainer.querySelector('button[aria-label="Pause automation"]')).toBeTruthy();
-    expect(headerContainer.querySelector('button[aria-label="Delete automation"]')).toBeTruthy();
+    const deleteButton = headerContainer.querySelector('button[aria-label="Delete automation"]');
+    expect(deleteButton).toBeTruthy();
     expect(Array.from(headerContainer.querySelectorAll("button")).filter((button) => button.textContent?.includes("Run now"))).toHaveLength(1);
+
+    await act(async () => {
+      deleteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: 'Delete "Daily automation review"?',
+      description: "This will permanently remove the automation and stop future runs.",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
 
     act(() => {
       headerRoot.unmount();

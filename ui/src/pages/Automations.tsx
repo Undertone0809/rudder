@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   Plus,
   Repeat,
+  Trash2,
 } from "lucide-react";
 import { automationsApi } from "../api/automations";
 import { agentsApi } from "../api/agents";
@@ -19,6 +20,7 @@ import { organizationSkillsApi } from "../api/organizationSkills";
 import { projectsApi } from "../api/projects";
 import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useDialog } from "../context/DialogContext";
 import { useToast } from "../context/ToastContext";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
@@ -316,8 +318,7 @@ function getLocalTimezone(): string {
   }
 }
 
-function nextAutomationStatus(currentStatus: string, enabled: boolean) {
-  if (currentStatus === "archived" && enabled) return "active";
+function nextAutomationStatus(enabled: boolean) {
   return enabled ? "active" : "paused";
 }
 
@@ -326,6 +327,7 @@ export function Automations() {
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { confirm } = useDialog();
   const { pushToast } = useToast();
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -496,6 +498,24 @@ export function Automations() {
       pushToast({
         title: "Failed to update automation",
         body: mutationError instanceof Error ? mutationError.message : "Rudder could not update the automation.",
+        tone: "error",
+      });
+    },
+  });
+
+  const deleteAutomation = useMutation({
+    mutationFn: (id: string) => automationsApi.delete(id),
+    onSuccess: async (_, id) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.automations.detail(id) }),
+      ]);
+      pushToast({ title: "Automation deleted", tone: "success" });
+    },
+    onError: (mutationError) => {
+      pushToast({
+        title: "Failed to delete automation",
+        body: mutationError instanceof Error ? mutationError.message : "Rudder could not delete the automation.",
         tone: "error",
       });
     },
@@ -974,7 +994,6 @@ export function Automations() {
               <tbody>
                 {(automations ?? []).map((automation) => {
                   const enabled = automation.status === "active";
-                  const isArchived = automation.status === "archived";
                   const isStatusPending = statusMutationAutomationId === automation.id;
                   return (
                     <tr
@@ -987,9 +1006,9 @@ export function Automations() {
                           <span className="font-medium">
                             {automation.title}
                           </span>
-                          {(isArchived || automation.status === "paused") && (
+                          {automation.status === "paused" && (
                             <div className="mt-1 text-xs text-muted-foreground">
-                              {isArchived ? "archived" : "paused"}
+                              paused
                             </div>
                           )}
                         </div>
@@ -1032,16 +1051,16 @@ export function Automations() {
                             size="md"
                             tone="success"
                             aria-label={enabled ? `Disable ${automation.title}` : `Enable ${automation.title}`}
-                            disabled={isStatusPending || isArchived}
+                            disabled={isStatusPending}
                             onClick={() =>
                               updateAutomationStatus.mutate({
                                 id: automation.id,
-                                status: nextAutomationStatus(automation.status, !enabled),
+                                status: nextAutomationStatus(!enabled),
                               })
                             }
                           />
                           <span className="text-xs text-muted-foreground">
-                            {isArchived ? "Archived" : enabled ? "On" : "Off"}
+                            {enabled ? "On" : "Off"}
                           </span>
                         </div>
                       </td>
@@ -1057,7 +1076,7 @@ export function Automations() {
                               Edit
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              disabled={runningAutomationId === automation.id || isArchived}
+                              disabled={runningAutomationId === automation.id || !enabled}
                               onClick={() => runAutomation.mutate(automation.id)}
                             >
                               {runningAutomationId === automation.id ? "Running..." : "Run now"}
@@ -1070,20 +1089,26 @@ export function Automations() {
                                   status: enabled ? "paused" : "active",
                                 })
                               }
-                              disabled={isStatusPending || isArchived}
+                              disabled={isStatusPending}
                             >
                               {enabled ? "Pause" : "Enable"}
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              onClick={() =>
-                                updateAutomationStatus.mutate({
-                                  id: automation.id,
-                                  status: automation.status === "archived" ? "active" : "archived",
-                                })
-                              }
-                              disabled={isStatusPending}
+                              className="text-destructive focus:text-destructive"
+                              disabled={deleteAutomation.isPending}
+                              onClick={async () => {
+                                const confirmed = await confirm({
+                                  title: `Delete "${automation.title}"?`,
+                                  description: "This will permanently remove the automation and stop future runs.",
+                                  confirmLabel: "Delete",
+                                  tone: "destructive",
+                                });
+                                if (!confirmed) return;
+                                deleteAutomation.mutate(automation.id);
+                              }}
                             >
-                              {automation.status === "archived" ? "Restore" : "Archive"}
+                              <Trash2 className="mr-2 h-3.5 w-3.5" />
+                              Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>

@@ -125,7 +125,8 @@ test.describe("Automation detail layout", () => {
     await deleteButton.click();
     const deleteDialog = page.getByRole("dialog", { name: /Delete/ });
     await expect(deleteDialog).toBeVisible();
-    await expect(deleteDialog).toContainText("It will be archived and stop new runs.");
+    await expect(deleteDialog).toContainText("This will permanently remove the automation and stop future runs.");
+    await expect(deleteDialog).not.toContainText("archived");
     await deleteDialog.getByRole("button", { name: "Cancel" }).click();
     await expect(deleteDialog).toBeHidden();
 
@@ -162,6 +163,37 @@ test.describe("Automation detail layout", () => {
       path: testInfo.outputPath("automation-detail-layout.png"),
       fullPage: true,
     });
+  });
+
+  test("deletes an automation from detail and returns to the list", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const { organization, automation } = await createAutomationFixture(page);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`/automations/${automation.id}`);
+
+    await page.getByTestId("workspace-main-header-actions").getByRole("button", { name: "Delete automation" }).click();
+    const deleteDialog = page.getByRole("dialog", { name: /Delete/ });
+    await expect(deleteDialog).toBeVisible();
+    await expect(deleteDialog).toContainText("This will permanently remove the automation and stop future runs.");
+    await expect(page.getByText("It will be archived")).toHaveCount(0);
+
+    const deleteResponsePromise = page.waitForResponse((response) =>
+      response.request().method() === "DELETE" &&
+      response.url().includes(`/api/automations/${automation.id}`),
+    );
+    await deleteDialog.getByRole("button", { name: "Delete" }).click();
+    const deleteResponse = await deleteResponsePromise;
+    expect(deleteResponse.ok()).toBe(true);
+
+    await expect(page).toHaveURL(/\/automations$/);
+    await expect(page.getByText("Every morning summarize onboarding blockers")).toHaveCount(0);
+    await expect(page.getByText("Archive")).toHaveCount(0);
+    await expect(page.getByText("Restore")).toHaveCount(0);
+    await expect(page.getByText("Archived")).toHaveCount(0);
+
+    const detailRes = await page.request.get(`/api/automations/${automation.id}`);
+    expect(detailRes.status()).toBe(404);
   });
 
   test("stacks activity metadata cleanly on narrow viewports", async ({ page }, testInfo) => {

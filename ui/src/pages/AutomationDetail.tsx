@@ -138,7 +138,6 @@ function automationRiskLabel(input: {
   hasLiveRun: boolean;
   latestRunStatus?: string | null;
 }): string {
-  if (input.status === "archived") return "Archived";
   if (input.triggerCount === 0) return "No trigger";
   if (!input.hasAssignee) return "No owner";
   if (input.latestRunStatus === "failed") return "Last failed";
@@ -151,7 +150,6 @@ function automationNextActionLabel(input: {
   triggerCount: number;
   hasLiveRun: boolean;
 }): string {
-  if (input.status === "archived") return "Restore";
   if (input.triggerCount === 0) return "Add trigger";
   if (input.status !== "active") return "Enable";
   if (input.hasLiveRun) return "Monitor run";
@@ -674,15 +672,15 @@ export function AutomationDetail() {
   });
 
   const deleteAutomation = useMutation({
-    mutationFn: () => automationsApi.update(automationId!, { status: "archived" }),
-    onSuccess: async () => {
-      await Promise.all([
+    mutationFn: () => automationsApi.delete(automationId!),
+    onSuccess: () => {
+      navigate("/automations");
+      pushToast({ title: "Automation deleted", tone: "success" });
+      void Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.detail(automationId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.activity(selectedOrganizationId!, automationId!) }),
       ]);
-      pushToast({ title: "Automation deleted", tone: "success" });
-      navigate("/automations");
     },
     onError: (error) => {
       pushToast({
@@ -721,9 +719,8 @@ export function AutomationDetail() {
       return;
     }
 
-    const isArchived = automation.status === "archived";
     const isEnabled = automation.status === "active";
-    const statusActionLabel = isArchived ? "Archived" : isEnabled ? "Pause automation" : "Enable automation";
+    const statusActionLabel = isEnabled ? "Pause automation" : "Enable automation";
     const StatusIcon = updateAutomationStatus.isPending ? RefreshCw : isEnabled ? CirclePause : Repeat;
 
     setHeaderActions(
@@ -733,7 +730,7 @@ export function AutomationDetail() {
           size="icon-sm"
           aria-label={statusActionLabel}
           title={statusActionLabel}
-          disabled={updateAutomationStatus.isPending || isArchived}
+          disabled={updateAutomationStatus.isPending}
           onClick={() => updateAutomationStatus.mutate(isEnabled ? "paused" : "active")}
         >
           <StatusIcon className={updateAutomationStatus.isPending ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
@@ -744,11 +741,11 @@ export function AutomationDetail() {
           className="text-muted-foreground hover:text-destructive"
           aria-label="Delete automation"
           title="Delete automation"
-          disabled={deleteAutomation.isPending || isArchived}
+          disabled={deleteAutomation.isPending}
           onClick={async () => {
             const confirmed = await confirm({
               title: `Delete "${automation.title}"?`,
-              description: "It will be archived and stop new runs.",
+              description: "This will permanently remove the automation and stop future runs.",
               confirmLabel: "Delete",
               tone: "destructive",
             });
@@ -766,7 +763,7 @@ export function AutomationDetail() {
           variant="default"
           size="sm"
           className="min-w-[92px] border-white/70 bg-white px-3 text-black shadow-none hover:bg-white/90"
-          disabled={runAutomation.isPending || isArchived}
+          disabled={runAutomation.isPending || !isEnabled}
           onClick={() => runAutomation.mutate()}
         >
           <Play className="h-3.5 w-3.5" />
@@ -986,15 +983,11 @@ export function AutomationDetail() {
   }
 
   const automationEnabled = automation.status === "active";
-  const automationLabel = automation.status === "archived" ? "Archived" : automationEnabled ? "Active" : "Paused";
-  const automationLabelClassName = automation.status === "archived"
-    ? "text-muted-foreground"
-    : automationEnabled
+  const automationLabel = automationEnabled ? "Active" : "Paused";
+  const automationLabelClassName = automationEnabled
       ? "text-emerald-400"
       : "text-muted-foreground";
-  const automationBadgeClassName = automation.status === "archived"
-    ? "border-border/70 text-muted-foreground"
-    : automationEnabled
+  const automationBadgeClassName = automationEnabled
       ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
       : "border-border/70 bg-muted/20 text-muted-foreground";
   const editSyncLabel = saveAutomation.isPending

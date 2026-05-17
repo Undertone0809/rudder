@@ -236,7 +236,7 @@ export const PROJECT_RESOURCE_ATTACHMENT_ROLES = [
 ] as const;
 export type ProjectResourceAttachmentRole = (typeof PROJECT_RESOURCE_ATTACHMENT_ROLES)[number];
 
-export const AUTOMATION_STATUSES = ["active", "paused", "archived"] as const;
+export const AUTOMATION_STATUSES = ["active", "paused"] as const;
 export type AutomationStatus = (typeof AUTOMATION_STATUSES)[number];
 
 export const AUTOMATION_CONCURRENCY_POLICIES = ["coalesce_if_active", "always_enqueue", "skip_if_active"] as const;

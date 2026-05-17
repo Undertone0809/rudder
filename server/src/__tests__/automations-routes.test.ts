@@ -64,6 +64,7 @@ const mockAutomationService = vi.hoisted(() => ({
   get: vi.fn(),
   getDetail: vi.fn(),
   update: vi.fn(),
+  delete: vi.fn(),
   create: vi.fn(),
   listRuns: vi.fn(),
   createTrigger: vi.fn(),
@@ -108,6 +109,7 @@ describe("automation routes", () => {
     mockAutomationService.get.mockResolvedValue(automation);
     mockAutomationService.getTrigger.mockResolvedValue(trigger);
     mockAutomationService.update.mockResolvedValue({ ...automation, assigneeAgentId: otherAgentId });
+    mockAutomationService.delete.mockResolvedValue(automation);
     mockAutomationService.runAutomation.mockResolvedValue({
       id: "run-1",
       source: "manual",
@@ -238,6 +240,30 @@ describe("automation routes", () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("tasks:assign");
     expect(mockAutomationService.runAutomation).not.toHaveBeenCalled();
+  });
+
+  it("deletes an automation through the destructive delete route", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      orgIds: [orgId],
+    });
+
+    const res = await request(app)
+      .delete(`/api/automations/${automationId}`)
+      .send();
+
+    expect(res.status).toBe(204);
+    expect(mockAutomationService.delete).toHaveBeenCalledWith(automationId);
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      orgId,
+      action: "automation.deleted",
+      entityType: "automation",
+      entityId: automationId,
+      details: { title: automation.title },
+    }));
   });
 
   it("allows automation creation when the board user has tasks:assign", async () => {

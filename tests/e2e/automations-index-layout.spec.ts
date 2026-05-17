@@ -9,6 +9,42 @@ async function selectOrganization(page: Page, orgId: string) {
   }, orgId);
 }
 
+async function createAutomationFixture(page: Page) {
+  const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+    data: {
+      name: `Automations-Delete-${Date.now()}`,
+    },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
+
+  const agentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "Automation Delete Agent",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {
+        model: "gpt-5.4",
+      },
+    },
+  });
+  expect(agentRes.ok()).toBe(true);
+  const agent = (await agentRes.json()) as { id: string };
+
+  const automationRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`, {
+    data: {
+      title: "Remove stale automation",
+      description: "Used to verify destructive deletion from the list.",
+      assigneeAgentId: agent.id,
+      priority: "medium",
+    },
+  });
+  expect(automationRes.ok()).toBe(true);
+  const automation = (await automationRes.json()) as { id: string; title: string };
+
+  return { organization, automation };
+}
+
 test.describe("Automations index layout", () => {
   test("places the create action in the workspace header", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -160,6 +196,39 @@ test.describe("Automations index layout", () => {
       path: testInfo.outputPath("automations-template-composer.png"),
       fullPage: true,
     });
+  });
+
+  test("deletes an automation from the row menu without exposing archive lifecycle actions", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const { organization, automation } = await createAutomationFixture(page);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
+
+    await expect(page.getByText(automation.title)).toBeVisible();
+    await page.getByRole("button", { name: `More actions for ${automation.title}` }).click();
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Archive" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Restore" })).toHaveCount(0);
+    await expect(page.getByText("Archived")).toHaveCount(0);
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+
+    const deleteDialog = page.getByRole("dialog", { name: /Delete/ });
+    await expect(deleteDialog).toContainText("This will permanently remove the automation and stop future runs.");
+    await expect(deleteDialog).not.toContainText("archived");
+
+    const deleteResponsePromise = page.waitForResponse((response) =>
+      response.request().method() === "DELETE" &&
+      response.url().includes(`/api/automations/${automation.id}`),
+    );
+    await deleteDialog.getByRole("button", { name: "Delete" }).click();
+    const deleteResponse = await deleteResponsePromise;
+    expect(deleteResponse.ok()).toBe(true);
+
+    await expect(page.getByText(automation.title)).toHaveCount(0);
+    await expect(page.getByText("Archive")).toHaveCount(0);
+    await expect(page.getByText("Restore")).toHaveCount(0);
+    await expect(page.getByText("Archived")).toHaveCount(0);
   });
 
   test("renders localized use cases and a narrow create layout", async ({ page }, testInfo) => {

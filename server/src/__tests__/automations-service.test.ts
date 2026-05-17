@@ -68,6 +68,16 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function startTempDatabase() {
+  const externalConnectionString = process.env.RUDDER_AUTOMATIONS_SERVICE_TEST_DATABASE_URL?.trim();
+  if (externalConnectionString) {
+    const parsed = new URL(externalConnectionString);
+    const dbName = parsed.pathname.replace(/^\//, "");
+    parsed.pathname = "/postgres";
+    await ensurePostgresDatabase(parsed.toString(), dbName);
+    await applyPendingMigrations(externalConnectionString);
+    return { connectionString: externalConnectionString, dataDir: "", instance: null };
+  }
+
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-automations-service-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
@@ -343,6 +353,35 @@ describe("automation service live-execution coalescing", () => {
       .where(eq(issues.id, run.linkedIssueId!))
       .then((rows) => rows[0] ?? null);
     expect(linkedIssue?.projectId).toBeNull();
+  });
+
+  it("hard-deletes automations and cascades triggers, runs, and webhook secrets", async () => {
+    const { automation, svc } = await seedFixture();
+    const triggerResult = await svc.createTrigger(
+      automation.id,
+      {
+        kind: "webhook",
+        label: "incoming",
+        enabled: true,
+        signingMode: "bearer",
+        replayWindowSec: 300,
+      },
+      {},
+    );
+    expect(triggerResult.trigger.secretId).toBeTruthy();
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+    expect(run.id).toBeTruthy();
+
+    const deleted = await svc.delete(automation.id);
+    expect(deleted?.id).toBe(automation.id);
+
+    await expect(db.select().from(automations).where(eq(automations.id, automation.id))).resolves.toHaveLength(0);
+    await expect(db.select().from(automationTriggers).where(eq(automationTriggers.automationId, automation.id))).resolves.toHaveLength(0);
+    await expect(db.select().from(automationRuns).where(eq(automationRuns.automationId, automation.id))).resolves.toHaveLength(0);
+    await expect(db.select().from(organizationSecrets).where(eq(organizationSecrets.id, triggerResult.trigger.secretId!))).resolves.toHaveLength(0);
+    await expect(db.select().from(organizationSecretVersions).where(eq(organizationSecretVersions.secretId, triggerResult.trigger.secretId!))).resolves.toHaveLength(0);
+    await expect(svc.getDetail(automation.id)).resolves.toBeNull();
   });
 
   it("waits for the assignee wakeup to be queued before returning the automation run", async () => {

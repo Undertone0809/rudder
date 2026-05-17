@@ -706,7 +706,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       const rows = await db
         .select()
         .from(automations)
-        .where(eq(automations.orgId, orgId))
+        .where(and(eq(automations.orgId, orgId), ne(automations.status, "archived")))
         .orderBy(desc(automations.updatedAt), asc(automations.title));
       const automationIds = rows.map((row) => row.id);
       const [triggersByAutomation, latestRunByAutomation, activeIssueByAutomation] = await Promise.all([
@@ -733,6 +733,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     getDetail: async (id: string): Promise<AutomationDetail | null> => {
       const row = await getAutomationById(id);
       if (!row) return null;
+      if (row.status === "archived") return null;
       const [project, assignee, parentIssue, triggers, recentRuns, activeIssue] = await Promise.all([
         row.projectId ? db.select().from(projects).where(eq(projects.id, row.projectId)).then((rows) => rows[0] ?? null) : null,
         db.select().from(agents).where(eq(agents.id, row.assigneeAgentId)).then((rows) => rows[0] ?? null),
@@ -876,6 +877,26 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         .where(eq(automations.id, id))
         .returning();
       return updated ?? null;
+    },
+
+    delete: async (id: string): Promise<Automation | null> => {
+      const existing = await getAutomationById(id);
+      if (!existing) return null;
+
+      const secretRows = await db
+        .select({ secretId: automationTriggers.secretId })
+        .from(automationTriggers)
+        .where(and(eq(automationTriggers.automationId, id), isNotNull(automationTriggers.secretId)));
+      const secretIds = [...new Set(secretRows.map((row) => row.secretId).filter((secretId): secretId is string => Boolean(secretId)))];
+
+      await db.transaction(async (tx) => {
+        if (secretIds.length > 0) {
+          await tx.delete(organizationSecrets).where(inArray(organizationSecrets.id, secretIds));
+        }
+        await tx.delete(automations).where(eq(automations.id, id));
+      });
+
+      return existing;
     },
 
     createTrigger: async (
@@ -1025,7 +1046,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     runAutomation: async (id: string, input: RunAutomation) => {
       const automation = await getAutomationById(id);
       if (!automation) throw notFound("Automation not found");
-      if (automation.status === "archived") throw conflict("Automation is archived");
+      if (automation.status !== "active") throw conflict("Automation is not active");
       const trigger = input.triggerId ? await getTriggerById(input.triggerId) : null;
       if (trigger && trigger.automationId !== automation.id) throw forbidden("Trigger does not belong to automation");
       if (trigger && !trigger.enabled) throw conflict("Automation trigger is not active");

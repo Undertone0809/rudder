@@ -27,6 +27,7 @@ export const automationsApi = {
     api.post<Automation>(`/orgs/${orgId}/automations`, data),
   get: (id: string) => api.get<AutomationDetail>(`/automations/${id}`),
   update: (id: string, data: Record<string, unknown>) => api.patch<Automation>(`/automations/${id}`, data),
+  delete: (id: string) => api.delete<void>(`/automations/${id}`),
   listRuns: (id: string, limit: number = 50) => api.get<AutomationRunSummary[]>(`/automations/${id}/runs?limit=${limit}`),
   createTrigger: (id: string, data: Record<string, unknown>) =>
     api.post<AutomationTriggerResponse>(`/automations/${id}/triggers`, data),

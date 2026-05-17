@@ -11,6 +11,7 @@ import { Automations } from "./Automations";
 
 const mockNavigate = vi.fn();
 const mockSetHeaderActions = vi.fn();
+const mockConfirm = vi.fn(async () => true);
 const markdownEditorProps = vi.hoisted(() => [] as Array<{ mentions?: Array<{ id: string; kind?: string; name: string }> }>);
 const automationListState = vi.hoisted(() => ({ items: [] as unknown[] }));
 
@@ -163,6 +164,12 @@ vi.mock("../context/BreadcrumbContext", () => ({
   }),
 }));
 
+vi.mock("../context/DialogContext", () => ({
+  useDialog: () => ({
+    confirm: mockConfirm,
+  }),
+}));
+
 vi.mock("../context/ToastContext", () => ({
   useToast: () => ({
     pushToast: vi.fn(),
@@ -263,6 +270,7 @@ afterEach(() => {
   document.documentElement.lang = "en";
   markdownEditorProps.length = 0;
   vi.clearAllMocks();
+  mockConfirm.mockResolvedValue(true);
 });
 
 function renderPage() {
@@ -389,6 +397,19 @@ describe("Automations", () => {
 
     expect(container.textContent).toContain("2026-05-11 12:35:18");
     expect(container.textContent).not.toContain("issue created");
+  });
+
+  it("does not expose the archived lifecycle in the list", async () => {
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("flomo memo export");
+    expect(container.textContent).not.toContain("Archive");
+    expect(container.textContent).not.toContain("Restore");
+    expect(container.textContent).not.toContain("Archived");
   });
 
   it("passes agent, project, issue, and selected-assignee skill mentions to the create editor", async () => {
