@@ -332,6 +332,18 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector("[aria-label='Show Run history events']")).not.toBeNull();
   });
 
+  it("uses agent avatars in calendar agent filters", () => {
+    mockState.pathname = "/RUD/calendar";
+    mockState.relativePath = "/calendar";
+
+    renderSidebar();
+
+    const avatar = document.querySelector("[data-testid='calendar-agent-avatar-agent-1']");
+    expect(avatar).not.toBeNull();
+    expect(avatar?.textContent).not.toContain("Penelope");
+    expect(document.body.textContent).toContain("Penelope");
+  });
+
   it("uses auto-hidden scrollbars for chat and agent context sidebars", () => {
     mockState.pathname = "/RUD/chat/chat-1";
     mockState.relativePath = "/chat/chat-1";

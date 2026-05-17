@@ -25,6 +25,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { AgentIcon, AgentIdentity } from "@/components/AgentAvatar";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
@@ -200,6 +201,15 @@ function eventAccent(event: CalendarEvent, agents: Agent[]) {
   return agentAccent(event.ownerAgentId, agents);
 }
 
+function agentById(agentId: string | null | undefined, agents: Agent[]) {
+  if (!agentId) return null;
+  return agents.find((agent) => agent.id === agentId) ?? null;
+}
+
+function eventAgent(event: CalendarEvent, agents: Agent[]) {
+  return agentById(event.ownerAgentId, agents);
+}
+
 function displayItemAccent(item: CalendarDisplayItem, agents: Agent[]) {
   if (item.kind === "cluster") return agentAccent(item.agentId, agents);
   if (item.kind === "collision_cluster") return "bg-slate-500";
@@ -268,6 +278,95 @@ function monthEventDot(event: CalendarEvent, agents: Agent[]) {
   if (event.eventKind === "human_event") return "bg-zinc-500";
   const index = agents.findIndex((agent) => agent.id === event.ownerAgentId);
   return MONTH_AGENT_DOTS[Math.max(0, index) % MONTH_AGENT_DOTS.length]!;
+}
+
+function CalendarAgentMarker({
+  agent,
+  fallbackClassName,
+  compact = false,
+  className,
+}: {
+  agent: Agent | null;
+  fallbackClassName?: string;
+  compact?: boolean;
+  className?: string;
+}) {
+  if (!agent) {
+    return (
+      <span
+        className={cn(
+          compact ? "h-1.5 w-1.5" : "h-2 w-2",
+          "shrink-0 rounded-full",
+          fallbackClassName ?? "bg-slate-500",
+          className,
+        )}
+      />
+    );
+  }
+
+  return (
+    <span
+      data-testid={`calendar-agent-marker-${agent.id}`}
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted ring-1 ring-border/80",
+        compact ? "h-3.5 w-3.5" : "h-4 w-4",
+        className,
+      )}
+      title={agent.name}
+    >
+      <AgentIcon icon={agent.icon} role={agent.role} className="h-full w-full" />
+    </span>
+  );
+}
+
+function CalendarAgentStack({
+  agentIds,
+  agents,
+  max = 5,
+  compact = false,
+}: {
+  agentIds: string[];
+  agents: Agent[];
+  max?: number;
+  compact?: boolean;
+}) {
+  const visibleAgents = agentIds
+    .slice(0, max)
+    .map((agentId) => agentById(agentId, agents));
+
+  if (visibleAgents.length === 0) {
+    return <CalendarAgentMarker agent={null} fallbackClassName="bg-slate-500" compact={compact} />;
+  }
+
+  return (
+    <span className={cn("flex shrink-0 items-center", compact ? "-space-x-1" : "-space-x-1.5")}>
+      {visibleAgents.map((agent, index) => (
+        <CalendarAgentMarker
+          key={agent?.id ?? `${agentIds[index]}-${index}`}
+          agent={agent}
+          fallbackClassName={agent ? undefined : agentAccent(agentIds[index], agents)}
+          compact={compact}
+          className="ring-background"
+        />
+      ))}
+    </span>
+  );
+}
+
+function CalendarEventMarker({
+  event,
+  agents,
+  compact = false,
+}: {
+  event: CalendarEvent;
+  agents: Agent[];
+  compact?: boolean;
+}) {
+  const agent = eventAgent(event, agents);
+  if (agent) {
+    return <CalendarAgentMarker agent={agent} compact={compact} />;
+  }
+  return <CalendarAgentMarker agent={null} fallbackClassName={monthEventDot(event, agents)} compact={compact} />;
 }
 
 function eventIntersectsDay(event: CalendarEvent, day: Date) {
@@ -461,22 +560,11 @@ function EventBlock({
       ) : null}
       <div className="flex min-w-0 items-center gap-1.5 truncate font-medium">
         {item.kind === "collision_cluster" ? (
-          <span className="flex shrink-0 items-center gap-0.5">
-            {(item.agentIds.length ? item.agentIds.slice(0, 5) : [null]).map((agentId, index) => (
-              <span
-                key={agentId ?? `calendar-${index}`}
-                className={cn("h-2 w-1 rounded-full", agentId ? agentAccent(agentId, agents) : "bg-slate-500")}
-              />
-            ))}
-          </span>
+          <CalendarAgentStack agentIds={item.agentIds} agents={agents} compact={compact} />
         ) : item.kind === "cluster" ? (
-          <span className="flex shrink-0 items-center gap-0.5">
-            {item.statusCounts.map(({ status }) => (
-              <span key={status} className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOTS[status])} />
-            ))}
-          </span>
+          <CalendarAgentMarker agent={agentById(item.agentId, agents)} compact={compact} />
         ) : (
-          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", STATUS_DOTS[event.eventStatus])} />
+          <CalendarEventMarker event={event} agents={agents} compact={compact} />
         )}
         <span className="min-w-0 flex-1 truncate">{displayItemTitle(item)}</span>
       </div>
@@ -894,7 +982,7 @@ function MonthView({
                   )}
                   onClick={() => onSelect(event)}
                 >
-                  <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", monthEventDot(event, agents))} />
+                  <CalendarEventMarker event={event} agents={agents} compact />
                   <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
                     {formatMonthEventTime(event, day)}
                   </span>
@@ -947,7 +1035,10 @@ function AgendaView({
                 <span className="text-xs text-muted-foreground">
                   {formatTime(event.startAt)}
                 </span>
-                <span className="truncate font-medium">{visibleEventTitle(event)}</span>
+                <span className="flex min-w-0 items-center gap-2">
+                  <CalendarEventMarker event={event} agents={agents} />
+                  <span className="min-w-0 flex-1 truncate font-medium">{visibleEventTitle(event)}</span>
+                </span>
                 <span className="justify-self-end rounded-[calc(var(--radius-sm)-2px)] border border-border px-2 py-1 text-xs text-muted-foreground">
                   {statusLabel(event.eventStatus)}
                 </span>
@@ -1817,7 +1908,14 @@ export function Calendar() {
             <div className="space-y-5 overflow-y-auto px-4 pb-4 text-sm">
               <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-y-2">
                 <span className="text-muted-foreground">{selectedCluster.kind === "cluster" ? "Agent" : "Participants"}</span>
-                <span>{clusterParticipantText(selectedCluster)}</span>
+                <span className="flex min-w-0 items-center gap-2">
+                  {selectedCluster.kind === "cluster" ? (
+                    <CalendarAgentMarker agent={agentById(selectedCluster.agentId, agents)} />
+                  ) : (
+                    <CalendarAgentStack agentIds={selectedCluster.agentIds} agents={agents} max={4} />
+                  )}
+                  <span className="min-w-0 truncate">{clusterParticipantText(selectedCluster)}</span>
+                </span>
                 <span className="text-muted-foreground">Window</span>
                 <span>{formatDateTime(selectedCluster.startAt)} - {formatShortTime(selectedCluster.endAt)}</span>
                 <span className="text-muted-foreground">Activity</span>
@@ -1837,7 +1935,10 @@ export function Calendar() {
                       onClick={() => openClusterEvent(event)}
                     >
                       <span className="tabular-nums text-muted-foreground">{formatTimeRange(event.startAt, event.endAt)}</span>
-                      <span className="min-w-0 truncate font-medium">{visibleEventTitle(event)}</span>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <CalendarEventMarker event={event} agents={agents} />
+                        <span className="min-w-0 flex-1 truncate font-medium">{visibleEventTitle(event)}</span>
+                      </span>
                       <span className="flex items-center justify-end gap-1.5 text-muted-foreground">
                         <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOTS[event.eventStatus])} />
                         {statusLabel(event.eventStatus)}
@@ -1894,7 +1995,13 @@ export function Calendar() {
                 <CalendarDetailRow label="Agent">
                   {selectedEvent.agent ? (
                     <CalendarDetailLink to={agentUrl(selectedEvent.agent)} ariaLabel={`Open agent ${selectedEvent.agent.name}`}>
-                      {selectedEvent.agent.name}
+                      <AgentIdentity
+                        name={selectedEvent.agent.name}
+                        icon={eventAgent(selectedEvent, agents)?.icon}
+                        role={eventAgent(selectedEvent, agents)?.role ?? null}
+                        size="xs"
+                        className="min-w-0"
+                      />
                     </CalendarDetailLink>
                   ) : (
                     "None"
