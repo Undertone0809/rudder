@@ -66,7 +66,6 @@ interface CommentThreadProps {
   enableReassign?: boolean;
   reassignOptions?: InlineEntityOption[];
   currentAssigneeValue?: string;
-  suggestedAssigneeValue?: string;
   mentions?: MentionOption[];
   operatorDisplayName?: string | null;
   heading?: ReactNode;
@@ -373,7 +372,6 @@ export function CommentThread({
   enableReassign = false,
   reassignOptions = [],
   currentAssigneeValue = "",
-  suggestedAssigneeValue,
   mentions: providedMentions,
   operatorDisplayName,
   heading,
@@ -386,8 +384,7 @@ export function CommentThread({
   const [reopen, setReopen] = useState(canReopen);
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
-  const effectiveSuggestedAssigneeValue = suggestedAssigneeValue ?? currentAssigneeValue;
-  const [reassignTarget, setReassignTarget] = useState(effectiveSuggestedAssigneeValue);
+  const [reassignTarget, setReassignTarget] = useState(currentAssigneeValue);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
@@ -505,8 +502,8 @@ export function CommentThread({
   }, []);
 
   useEffect(() => {
-    setReassignTarget(effectiveSuggestedAssigneeValue);
-  }, [effectiveSuggestedAssigneeValue]);
+    setReassignTarget(currentAssigneeValue);
+  }, [currentAssigneeValue]);
 
   useEffect(() => {
     setReopen(canReopen);
@@ -545,7 +542,7 @@ export function CommentThread({
       setBody("");
       if (draftKey) clearDraft(draftKey);
       setReopen(canReopen);
-      setReassignTarget(effectiveSuggestedAssigneeValue);
+      setReassignTarget(currentAssigneeValue);
     } finally {
       setSubmitting(false);
     }

@@ -15,7 +15,7 @@ import { useNavigationBack } from "../context/NavigationBackContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { assigneeValueFromSelection, formatAssigneeUserLabel, suggestedCommentAssigneeValue } from "../lib/assignees";
+import { assigneeValueFromSelection, formatAssigneeUserLabel } from "../lib/assignees";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { queryKeys } from "../lib/queryKeys";
@@ -1229,11 +1229,6 @@ export function IssueDetail() {
     [issue],
   );
 
-  const suggestedAssigneeValue = useMemo(
-    () => suggestedCommentAssigneeValue(issue ?? {}, comments, currentUserId),
-    [issue, comments, currentUserId],
-  );
-
   const commentsWithRunMeta = useMemo(() => {
     const runMetaByCommentId = new Map<string, { runId: string; runAgentId: string | null }>();
     const agentIdByRunId = new Map<string, string>();
@@ -2229,7 +2224,6 @@ export function IssueDetail() {
           enableReassign
           reassignOptions={commentReassignOptions}
           currentAssigneeValue={actualAssigneeValue}
-          suggestedAssigneeValue={suggestedAssigneeValue}
           mentions={mentionOptions}
           operatorDisplayName={operatorDisplayName}
           hideHeading
