@@ -25,8 +25,23 @@ describe("desktop cli link helpers", () => {
     expect(resolveDesktopCliArgv(argv)).toEqual([process.execPath, "rudder", "issue", "list", "--json"]);
   });
 
+  it("extracts desktop cli argv from legacy desktop-cli.js shim wrappers", () => {
+    const argv = [
+      process.execPath,
+      "/Applications/Rudder.app/Contents/Resources/server-package/desktop-cli.js",
+      "agent",
+      "me",
+      "--json",
+    ];
+    expect(resolveDesktopCliArgv(argv)).toEqual([process.execPath, "rudder", "agent", "me", "--json"]);
+  });
+
   it("ignores normal desktop launches", () => {
     expect(resolveDesktopCliArgv([process.execPath, "ignored"])).toBeNull();
+  });
+
+  it("does not treat later desktop-cli.js path arguments as legacy shim wrappers", () => {
+    expect(resolveDesktopCliArgv([process.execPath, "--open", "/tmp/desktop-cli.js"])).toBeNull();
   });
 
   it("only installs the desktop cli wrapper for packaged desktop builds", () => {

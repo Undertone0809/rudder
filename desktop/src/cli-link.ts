@@ -156,8 +156,12 @@ function wrapperFileName(platform: NodeJS.Platform = process.platform): string {
 
 export function resolveDesktopCliArgv(argv: string[] = process.argv): string[] | null {
   const flagIndex = argv.indexOf(DESKTOP_CLI_FLAG);
-  if (flagIndex === -1) return null;
-  return [process.execPath, "rudder", ...argv.slice(flagIndex + 1)];
+  if (flagIndex !== -1) {
+    return [process.execPath, "rudder", ...argv.slice(flagIndex + 1)];
+  }
+
+  if (path.basename(argv[1] ?? "") !== "desktop-cli.js") return null;
+  return [process.execPath, "rudder", ...argv.slice(2)];
 }
 
 async function chooseInstallDirectory(
