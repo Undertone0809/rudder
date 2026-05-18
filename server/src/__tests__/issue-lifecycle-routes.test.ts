@@ -240,7 +240,7 @@ describe("issue lifecycle routes", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
-  it("includes issue documents in heartbeat context", async () => {
+  it("includes issue document references in heartbeat context without prompt body inlining", async () => {
     const issue = makeIssue({
       description: "Short issue summary",
       priority: "high",
@@ -299,8 +299,10 @@ describe("issue lifecycle routes", () => {
       body: "# Plan\n\nConfirm whether agents can see issue docs.",
     });
     expect(res.body.documentSummaries).toHaveLength(1);
-    expect(res.body.issueDocumentsPrompt).toContain("## Issue Documents");
-    expect(res.body.issueDocumentsPrompt).toContain("Confirm whether agents can see issue docs.");
+    expect(res.body.issueDocumentsPrompt).toContain("## Linked Documents");
+    expect(res.body.issueDocumentsPrompt).toContain("Document bodies are not inlined automatically.");
+    expect(res.body.issueDocumentsPrompt).toContain(`rudder issue documents get ${issue.id} plan --json`);
+    expect(res.body.issueDocumentsPrompt).not.toContain("Confirm whether agents can see issue docs.");
   });
 
   it("records agent-reported commit activity with the authenticated agent and run", async () => {

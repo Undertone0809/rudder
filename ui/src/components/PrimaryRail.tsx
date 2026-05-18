@@ -7,6 +7,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import {
   Bot,
+  BookOpenText,
   CalendarDays,
   MessageCirclePlus,
   FolderKanban,
@@ -164,7 +165,7 @@ export function PrimaryRail({
   const isDesktopShell = readDesktopShell() !== null;
   const previousInboxCountRef = useRef<number | null>(null);
   const requestedNotificationPermissionRef = useRef(false);
-  const orgGroupActive = /^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
+  const orgGroupActive = /^\/(?:org|projects|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const issueEntryPath = readRememberedIssueNavigationPath(selectedOrganizationId);
   const railItems: RailItem[] = [
     {
@@ -197,6 +198,13 @@ export function PrimaryRail({
       label: "Agents",
       icon: Bot,
       active: /^\/agents(?:\/|$)/.test(relativePath),
+    },
+    {
+      key: "library",
+      to: "/library",
+      label: "Library",
+      icon: BookOpenText,
+      active: /^\/(?:library|resources)(?:\/|$)/.test(relativePath),
     },
     {
       key: "organization",

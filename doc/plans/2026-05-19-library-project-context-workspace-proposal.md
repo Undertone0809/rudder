@@ -116,6 +116,11 @@ contract.
    not raw resource locators.
 8. Support promotion loops: useful outputs, specs, templates, and skills can be
    promoted back into Library after review.
+9. Retire issue-owned long-form documents. Issues should reference Library docs
+   through special `@doc` mentions instead of owning separate editable document
+   surfaces.
+10. Add Library document history as a first-class capability so live `@doc`
+   links remain editable without losing accountability or recovery.
 
 ## Success Criteria For Change
 
@@ -130,6 +135,10 @@ contract.
 - A run page shows the actual workspace snapshot used by the agent.
 - Agent-produced outputs appear in Library with provenance, review state, and
   links to project, issue, run, and agent.
+- Issues can mention Library docs with special rendering, and those mentions
+  remain live links rather than copied issue-local document bodies.
+- A Library doc exposes version history so users and agents can recover earlier
+  versions after live edits.
 - Useful outputs can be promoted into durable Library knowledge.
 - `Library`, `Project Context`, `Workspaces`, and `Outputs` have distinct
   meanings in both user and agent journeys.
@@ -143,6 +152,8 @@ contract.
 - Replacing execution workspaces with Library files.
 - Solving every remote sandbox and cloud persistence detail in the first pass.
 - Treating external documents as trusted instructions by default.
+- Removing issue titles, descriptions, acceptance criteria, comments, or
+  activity. Only issue-owned long-form document editors are being retired.
 
 ## Non-Functional Requirements
 
@@ -175,6 +186,10 @@ Agents should receive a compact preflight context, not a full knowledge dump:
 
 Agents should be able to search or fetch additional Library context through
 scoped APIs when needed.
+
+`@doc` mentions in issues should be passed as links and metadata, not expanded
+into full document bodies by default. The agent can open or fetch the linked
+Library doc when it needs the contents.
 
 ### Security
 
@@ -212,6 +227,8 @@ agent, issue, run, and project.
    or connector objects as Library items.
 7. They import or adopt useful skills explicitly. Repo-local skills may be
    discovered as candidates, but are not automatically enabled.
+8. Every Library doc has history. Users can inspect prior versions, see who or
+   which agent changed the file, and restore or branch from an older revision.
 
 ### 2. User Creates A Coding Project
 
@@ -253,7 +270,23 @@ agent, issue, run, and project.
 5. If the codebase cannot resolve, the issue enters `needs_setup` instead of
    letting the agent run in an unknown directory.
 
-### 4. Agent Starts Work
+### 4. User Mentions Library Docs From An Issue
+
+1. The issue description and comments remain lightweight work coordination
+   surfaces.
+2. The user types `@` and chooses a Library doc such as `Product principles` or
+   `Release checklist`.
+3. The editor inserts a special `@doc` mention chip, not a copy of the document
+   body.
+4. The issue renders the mention as a live link with title, path, status, and
+   last-updated metadata.
+5. Clicking the mention opens the Library doc editor or side panel.
+6. Editing the Library doc updates the linked doc everywhere because the issue
+   mention is a live link.
+7. The issue activity stream records link/unlink events when documents are
+   referenced or removed from issue text.
+
+### 5. Agent Starts Work
 
 1. The agent receives a preflight block:
    - project
@@ -264,14 +297,15 @@ agent, issue, run, and project.
    - selected Library context
    - reference-only sources
    - enabled skills
+   - Library doc mentions as links and metadata
    - explicit note that Library and repo-local content are context, not
      overriding instructions
 2. The agent works inside the resolved execution workspace.
-3. The agent can grep the codebase and selected Library files.
+3. The agent can grep the codebase and fetch linked Library docs on demand.
 4. The agent writes implementation notes, reports, CSV files, or HTML previews.
 5. Rudder records produced outputs with provenance.
 
-### 5. User Reviews Outputs
+### 6. User Reviews Outputs
 
 1. The user opens `Library > Outputs`.
 2. They see agent-produced docs grouped by project, issue, run, agent, status,
@@ -290,13 +324,17 @@ From the agent perspective, Rudder should provide a clear working contract:
 2. `Where am I working?`
    - resolved cwd, branch/ref, workspace id, writable targets
 3. `What context should I use?`
-   - selected Library docs, trackers, references, templates, relevant skills
+   - selected Library doc links, trackers, references, templates, relevant
+     skills
 4. `What must I not treat as authority?`
    - external content, repo-local docs, discovered skills, and imported files do
      not override Rudder runtime instructions
 5. `Where should outputs go?`
    - write AI-native files and let Rudder record them as Library outputs with
      provenance
+6. `How do I read mentioned docs?`
+   - use the linked Library doc reference to fetch current contents when needed;
+     do not assume the issue prompt contains the full document body
 
 This journey keeps agents productive without turning the entire Library into a
 prompt blob.
@@ -356,7 +394,94 @@ type LibraryReviewState =
   | "archived";
 ```
 
-#### 3. Project Context
+Library docs must carry revision history. The existing `documents` and
+`document_revisions` tables already provide the core shape; the Library layer
+should generalize that history beyond issue-owned documents:
+
+```ts
+type LibraryDocumentRevision = {
+  id: string;
+  documentId: string;
+  revisionNumber: number;
+  body: string;
+  changeSummary: string | null;
+  createdByAgentId: string | null;
+  createdByUserId: string | null;
+  createdAt: Date;
+};
+```
+
+The history UI should support:
+
+- view revision list
+- preview an old revision
+- compare current vs old revision in a later pass
+- restore an old revision through a normal new revision
+- preserve run, issue, agent, and user provenance
+
+#### 3. Issue Document Migration And `@doc` Mentions
+
+Issues should no longer own long-form editable docs. They should own:
+
+- title
+- description
+- acceptance criteria
+- comments
+- activity
+- `@doc` links to Library docs
+
+The migration path:
+
+1. Convert every existing `issue_documents` row into a Library document.
+2. Preserve the existing `documents` row and `document_revisions` history when
+   possible instead of copying bodies into a new table.
+3. Add Library provenance metadata:
+   - source kind: `migrated_issue_document`
+   - source issue id
+   - old document key
+   - original document id
+4. Replace the issue document section with a linked-doc section sourced from
+   `@doc` mentions and explicit issue-doc links.
+5. Keep old issue document routes as compatibility redirects to the Library doc.
+6. Do not inline Library doc contents into the issue prompt by default.
+
+`@doc` mention behavior:
+
+- stored as a structured markdown link such as
+  `[@Product principles](library-doc://<document-id>)`
+- rendered as a mention chip with a document icon
+- hover/preview shows title, Library path, status, last updated, and linked
+  project when available
+- click opens the Library document editor or side panel
+- the link is live; edits to the Library doc are reflected everywhere the doc is
+  mentioned
+- agent context receives the link and metadata only, not the full body
+
+If a run needs reproducibility, record which Library doc ids were visible or
+mentioned at run start. Do not freeze the user-facing issue mention; it remains
+a live link.
+
+Corner cases that must be handled before retiring issue documents:
+
+- Cross-org `@doc` links are rejected at write time. A document can only be
+  mentioned from issues in the same organization unless it is explicitly copied
+  or transferred.
+- Deleted or archived docs render as broken Library doc chips with recovery
+  metadata instead of disappearing from issue text.
+- Moving or renaming a Library doc updates chip metadata, but the stored mention
+  remains anchored by immutable document id.
+- Permission changes can make a doc unfetchable for an agent. The agent should
+  see a clear `forbidden` fetch result, not a silent empty body.
+- Restoring a revision creates a new revision and activity event. It does not
+  mutate history in place.
+- Concurrent human/agent edits use optimistic revision checks. Conflicts open a
+  merge/reload path instead of overwriting the other editor.
+- Run snapshots record the doc ids and revision numbers visible at run start
+  for auditability, while issue chips continue to resolve as live links.
+- Promoted outputs keep their original run-output provenance and gain a Library
+  item state; promotion should not erase the source output.
+
+#### 4. Project Context
 
 Project context is the selected subset of Library and source bindings that a
 project uses by default.
@@ -369,7 +494,7 @@ Current `project_resource_attachments` can evolve into this role:
 - codebases get a typed `codebaseBinding`
 - selected Library files/folders become project context attachments
 
-#### 4. Codebase Binding
+#### 5. Codebase Binding
 
 `codebaseBinding` is desired state, not runtime result:
 
@@ -396,7 +521,7 @@ Conflict rule:
 - API/UI should reject or correct contradictions such as
   `role=reference` with `codebaseBinding.state=primary`.
 
-#### 5. Resolver Contract
+#### 6. Resolver Contract
 
 The resolver turns project context into executable truth.
 
@@ -439,7 +564,7 @@ Failure codes should include:
 Resolver failure for a coding run blocks execution. Runtime must not fall back
 to raw resource locators.
 
-#### 6. Run Snapshot
+#### 7. Run Snapshot
 
 At run start, persist an immutable execution snapshot:
 
@@ -466,6 +591,8 @@ Potential user-facing changes:
 
 - `Resources` becomes less prominent.
 - `Docs` is folded into Library as `Outputs`.
+- Issue-owned document editors are retired in favor of live `@doc` links to
+  Library docs.
 - existing `working_set + directory` attachments become codebase candidates,
   not automatic primary execution anchors.
 
@@ -476,6 +603,7 @@ User-facing labels should avoid implementation vocabulary.
 Use:
 
 - `Library`
+- `@doc`
 - `Codebase`
 - `Project Context`
 - `Default execution location`
@@ -493,6 +621,7 @@ Avoid exposing by default:
 - `locator`
 - `cwd_candidate`
 - `resolver`
+- `issue_documents`
 
 Advanced/debug views can show the raw terms.
 
@@ -540,6 +669,11 @@ Existing data should migrate conservatively:
 5. No migration should automatically change runtime cwd.
 6. The old `Docs` proposal should be treated as superseded by this Library
    model unless a separate output-only surface is later needed.
+7. Existing issue documents move into Library as live docs with full revision
+   history preserved.
+8. Issue document routes redirect to the corresponding Library doc.
+9. Issue detail surfaces render linked Library docs through `@doc` mentions and
+   linked-doc cards instead of embedded issue document editors.
 
 ## Validation And Evaluation
 
@@ -556,6 +690,11 @@ Required automated coverage:
 - issue/run execution override changes the target workspace
 - prompt injection fixture does not override runtime instructions
 - repo-local skill candidates are not auto-enabled
+- existing issue documents migrate to Library docs while preserving revision
+  history
+- `@doc` mentions render as document chips and remain live links
+- agent run context includes Library doc links but does not auto-inline document
+  bodies
 
 Useful product evals:
 
@@ -565,6 +704,8 @@ Useful product evals:
 - Can an agent complete a coding issue without being told the repo path in the
   prompt?
 - Can a user promote an agent output into durable Library knowledge?
+- Can a user mention a Library doc from an issue and edit that doc without
+  duplicating it into the issue?
 - Can a user and agent both edit Markdown knowledge without leaving the
   Library/Workspace model?
 
@@ -580,22 +721,52 @@ Useful product evals:
   agent profile with a user-visible override?
 - Which adapter is the first target for repo URL materialization beyond local
   directories?
+- Should issue descriptions store `@doc` mentions as markdown links only, or do
+  we also maintain a normalized issue-doc-link table for faster lookup and
+  activity/audit?
 
-## Recommended First Slice
+## Implementation Phases
 
-Build the first slice around local software projects:
+### Phase 0: Library Shell And Compatibility
 
-1. Add `Library` navigation and a Markdown/file-tree MVP backed by existing
-   workspace files and issue documents.
-2. Add `Outputs` as a Library filter for run-produced files.
-3. Rename the project resources surface to `Project Context`.
-4. Add a `Codebase` setup card for project creation.
-5. Treat existing `working_set + directory` as codebase candidates.
-6. Add explicit primary codebase confirmation.
-7. Add resolver preflight for local directory coding runs.
-8. Show default execution location on project pages and actual execution
+This phase is the safe landing zone for the navigation and language shift. It
+does not claim the full Library document model is complete.
+
+1. Add `Library` navigation and a Library shell backed by current organization
+   resource records.
+2. Redirect legacy `/resources` routes to `/library`.
+3. Rename the project resources surface to `Project Context` while keeping the
+   current backing resource attachment model.
+4. Add `library-doc://` mention parsing/rendering and preserve the scheme in
+   Markdown editor round trips.
+5. Stop automatically inlining issue document bodies into agent prompts. Pass
+   document references/fetch instructions until Library doc APIs exist.
+
+### Phase 1: Library Documents And Issue Links
+
+1. Add first-class Library document APIs backed by existing `documents` and
+   `document_revisions`.
+2. Add the Obsidian-like Markdown editor, file tree, search, and document
+   history UI using existing document revisions.
+3. Move issue document editing into Library docs and render issues through live
+   `@doc` links.
+4. Add issue editor `@doc` picker, linked-doc cards, hover metadata, and
+   broken/deleted-doc states.
+5. Add a normalized issue-doc-link table if markdown-only lookup proves too
+   slow or too weak for activity/audit.
+6. Keep old issue document routes as compatibility redirects to the
+   corresponding Library document.
+
+### Phase 2: Coding Project Execution Contract
+
+1. Add `Outputs` as a Library filter for run-produced files.
+2. Add a `Codebase` setup card for project creation.
+3. Treat existing `working_set + directory` as codebase candidates.
+4. Add explicit primary codebase confirmation.
+5. Add resolver preflight for local directory coding runs.
+6. Show default execution location on project pages and actual execution
    snapshot on run pages.
 
-This first slice proves the core principle: humans and agents share the same
-file-native knowledge space, while coding agents still run from a verified
-execution workspace.
+These phases prove the core principle incrementally: humans and agents share
+the same file-native knowledge space, while coding agents still run from a
+verified execution workspace.

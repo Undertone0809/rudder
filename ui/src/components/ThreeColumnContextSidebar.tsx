@@ -208,7 +208,7 @@ function resolveContextColumnHeader(relativePath: string): { title: string; desc
   if (/^\/calendar(?:\/|$)/.test(relativePath)) {
     return { title: "Calendar", description: "Sources and filters" };
   }
-  if (/^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
+  if (/^\/(?:org|projects|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
     return { title: "Org", description: "Organization surfaces" };
   }
   return { title: "Agents", description: "" };
@@ -694,7 +694,7 @@ export function ThreeColumnContextSidebar() {
   const isCalendarRoute = /^\/calendar(?:\/|$)/.test(relativePath);
   const isLinearPluginRoute = /^\/linear(?:\/|$)/.test(relativePath);
   const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath) || isLinearPluginRoute;
-  const isOrgWorkspaceRoute = /^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
+  const isOrgWorkspaceRoute = /^\/(?:org|projects|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const isChatRoute = /^\/chat(?:\/|$)/.test(relativePath);
   const isAgentRoute = !isMessengerRoute && !isIssuesRoute && !isCalendarRoute && !isOrgWorkspaceRoute && !isChatRoute;
   const { selectedOrganizationId } = useOrganization();
@@ -944,7 +944,7 @@ export function ThreeColumnContextSidebar() {
   });
   const orgContextItems = [
     { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
-    { key: "resources", to: "/resources", icon: Boxes, label: "Resources", active: /^\/resources(?:\/|$)/.test(relativePath) },
+    { key: "library", to: "/library", icon: Boxes, label: "Library", active: /^\/(?:library|resources)(?:\/|$)/.test(relativePath) },
     { key: "heartbeats", to: "/heartbeats", icon: Clock3, label: "Heartbeats", active: /^\/heartbeats(?:\/|$)/.test(relativePath) },
     { key: "workspaces", to: "/workspaces", icon: FolderTree, label: "Workspaces", active: /^\/workspaces(?:\/|$)/.test(relativePath) },
     { key: "goals", to: "/goals", icon: Target, label: "Goals", active: /^\/goals(?:\/|$)/.test(relativePath) },

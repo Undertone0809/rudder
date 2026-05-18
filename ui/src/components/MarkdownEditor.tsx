@@ -1341,6 +1341,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           continue;
         }
 
+        if (parsed.kind === "library_doc") {
+          applyMentionChipDecoration(link, parsed);
+          continue;
+        }
+
         const option = mentionOptionByKey.get(`agent:${parsed.agentId}`);
         applyMentionChipDecoration(link, {
           ...parsed,

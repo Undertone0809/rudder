@@ -67,7 +67,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
   const [newResourceDraft, setNewResourceDraft] = useState(createNewResourceDraft());
 
   const projectOrganization = organizations.find((organization) => organization.id === project.orgId) ?? null;
-  const organizationResourcesPath = applyOrganizationPrefix("/resources", projectOrganization?.issuePrefix ?? null);
+  const organizationResourcesPath = applyOrganizationPrefix("/library", projectOrganization?.issuePrefix ?? null);
   const attachedResources = useMemo(
     () => [...project.resources].sort((left, right) => left.sortOrder - right.sortOrder),
     [project.resources],
@@ -102,11 +102,11 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     }) => projectsApi.attachResource(project.id, payload, project.orgId),
     onSuccess: () => {
       invalidateProjectResourceQueries();
-      pushToast({ title: "Project resource attached", tone: "success" });
+      pushToast({ title: "Project context attached", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to attach project resource",
+        title: error instanceof Error ? error.message : "Failed to attach project context",
         tone: "error",
       });
     },
@@ -130,7 +130,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to update project resource",
+        title: error instanceof Error ? error.message : "Failed to update project context",
         tone: "error",
       });
     },
@@ -140,11 +140,11 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
     mutationFn: (attachmentId: string) => projectsApi.removeResourceAttachment(project.id, attachmentId, project.orgId),
     onSuccess: () => {
       invalidateProjectResourceQueries();
-      pushToast({ title: "Project resource removed", tone: "success" });
+      pushToast({ title: "Project context removed", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to remove project resource",
+        title: error instanceof Error ? error.message : "Failed to remove project context",
         tone: "error",
       });
     },
@@ -169,11 +169,11 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       invalidateProjectResourceQueries();
       setNewResourceDraft(createNewResourceDraft());
       setCreateDialogOpen(false);
-      pushToast({ title: "Org resource created and attached", tone: "success" });
+      pushToast({ title: "Library item created and attached", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to create and attach resource",
+        title: error instanceof Error ? error.message : "Failed to create and attach Library item",
         tone: "error",
       });
     },
@@ -187,10 +187,10 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
             <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
               Project Context
             </div>
-            <div className="text-base font-semibold text-foreground">Resources</div>
+            <div className="text-base font-semibold text-foreground">Project Context</div>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Choose the repos, docs, URLs, and connector objects agents should actually use on this project. The org
-              catalog stays canonical; this tab decides what matters here.
+              Choose the repos, docs, URLs, and connector objects agents should actually use on this project. Library
+              stays canonical; this tab decides what matters here.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -207,14 +207,14 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
               </PopoverTrigger>
               <PopoverContent align="end" className="w-[22rem] p-2">
                 <div className="px-2 pb-2 pt-1">
-                  <div className="text-sm font-medium text-foreground">Attach from org catalog</div>
+                  <div className="text-sm font-medium text-foreground">Attach from Library</div>
                   <div className="text-xs text-muted-foreground">
-                    Pick an existing shared resource, then add project-specific role and note below.
+                    Pick an existing Library item, then add project-specific role and note below.
                   </div>
                 </div>
                 {availableResources.length === 0 ? (
                   <div className="px-2 py-3 text-sm text-muted-foreground">
-                    All org resources are already attached to this project.
+                    All Library items are already attached to this project.
                   </div>
                 ) : (
                   <div className="space-y-1">
@@ -261,13 +261,13 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
 
             <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
               <FolderPlus className="mr-1.5 h-3.5 w-3.5" />
-              Add resource
+              Add Library item
             </Button>
 
             <Button asChild variant="outline" size="sm">
               <Link to={organizationResourcesPath}>
                 <Settings2 className="mr-1.5 h-3.5 w-3.5" />
-                Org catalog
+                Library
               </Link>
             </Button>
           </div>
@@ -277,12 +277,12 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
           <div className="rounded-[var(--radius-md)] border border-border/70 bg-background/45 px-4 py-3">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Attached</div>
             <div className="mt-1 text-2xl font-semibold text-foreground">{attachedResources.length}</div>
-            <div className="mt-1 text-xs text-muted-foreground">Resources visible to agents on this project.</div>
+            <div className="mt-1 text-xs text-muted-foreground">Library context visible from this project.</div>
           </div>
           <div className="rounded-[var(--radius-md)] border border-border/70 bg-background/45 px-4 py-3">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Working Set</div>
             <div className="mt-1 text-2xl font-semibold text-foreground">{roleCount(attachedResources, "working_set")}</div>
-            <div className="mt-1 text-xs text-muted-foreground">The resources agents should actively work inside.</div>
+            <div className="mt-1 text-xs text-muted-foreground">The context agents should actively work inside.</div>
           </div>
           <div className="rounded-[var(--radius-md)] border border-border/70 bg-background/45 px-4 py-3">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Reference</div>
@@ -295,9 +295,9 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       <section className="rounded-[var(--radius-lg)] border border-border bg-card">
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
           <div>
-            <div className="text-sm font-medium text-foreground">Attached resources</div>
+            <div className="text-sm font-medium text-foreground">Attached context</div>
             <div className="text-xs text-muted-foreground">
-              Roles and notes here are project-local. They do not change the shared org catalog.
+              Roles and notes here are project-local. They do not change the shared Library item.
             </div>
           </div>
         </div>
@@ -305,8 +305,8 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
         <div className="space-y-3 px-5 py-4">
           {attachedResources.length === 0 ? (
             <div className="rounded-[var(--radius-md)] border border-dashed border-border/80 bg-background/35 px-4 py-5 text-sm text-muted-foreground">
-              No resources attached yet. Start with the repo, spec, tracking system, or any reference agents should
-              not miss when working on this project.
+              No context attached yet. Start with the repo, spec, tracking system, or any Library reference agents
+              should not miss when working on this project.
             </div>
           ) : (
             attachedResources.map((attachment) => {
@@ -398,10 +398,10 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Add resource</DialogTitle>
+            <DialogTitle>Add Library item</DialogTitle>
             <DialogDescription>
-              Create a new org resource and attach it to this project in one step. Keep the description concrete so
-              agents know when this resource matters.
+              Create a new Library item and attach it to this project in one step. Keep the description concrete so
+              agents know when this item matters.
             </DialogDescription>
           </DialogHeader>
 
@@ -449,7 +449,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
               <Textarea
                 value={newResourceDraft.description}
                 onChange={(event) => setNewResourceDraft((current) => ({ ...current, description: event.target.value }))}
-                placeholder="What this resource contains and when agents should use it."
+                placeholder="What this Library item contains and when agents should use it."
               />
             </label>
             <label className="space-y-1.5">

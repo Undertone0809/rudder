@@ -444,7 +444,7 @@ test.describe("Workspace shell", () => {
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/projects/[^/]+/configuration$`));
     await expect(page.locator('[role="tablist"] [role="tab"]')).toHaveText([
       "Configuration",
-      "Resources",
+      "Context",
       "Budget",
       "Issues",
     ]);
@@ -493,7 +493,7 @@ test.describe("Workspace shell", () => {
     });
   });
 
-  test("keeps project resources in a dedicated project tab and org catalog", async ({ page }, testInfo) => {
+  test("keeps project context in a dedicated project tab and Library", async ({ page }, testInfo) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Workspace-Shell-Project-Resources-${Date.now()}`,
@@ -546,11 +546,11 @@ test.describe("Workspace shell", () => {
 
     const mainContent = page.locator("#main-content");
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/projects/[^/]+/resources$`));
-    await expect(page.getByRole("tab", { name: "Resources" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Context" })).toBeVisible();
     await expect(mainContent.getByText("Project Context", { exact: true })).toBeVisible();
     await expect(mainContent.getByRole("button", { name: "Attach existing" })).toBeVisible();
-    await expect(mainContent.getByRole("button", { name: "Add resource" })).toBeVisible();
-    await expect(mainContent.getByRole("link", { name: "Org catalog" })).toBeVisible();
+    await expect(mainContent.getByRole("button", { name: "Add Library item" })).toBeVisible();
+    await expect(mainContent.getByRole("link", { name: "Library" })).toBeVisible();
     await expect(mainContent.getByText("Rudder repo", { exact: true })).toBeVisible();
     await expect(
       mainContent.getByRole("textbox", { name: "Optional project-specific guidance for agents" }),
@@ -562,7 +562,7 @@ test.describe("Workspace shell", () => {
       && response.ok(),
     );
     await mainContent.getByRole("button", { name: "Attach existing" }).click();
-    await expect(page.getByText("Attach from org catalog", { exact: true })).toBeVisible();
+    await expect(page.getByText("Attach from Library", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: /SPEC doc/i }).click();
     await attachResponse;
     await expect(mainContent.getByText("SPEC doc", { exact: true })).toBeVisible();
@@ -572,9 +572,9 @@ test.describe("Workspace shell", () => {
       fullPage: true,
     });
 
-    await mainContent.getByRole("link", { name: "Org catalog" }).click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/resources$`));
-    await expect(page.getByTestId("workspace-main-header").getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+    await mainContent.getByRole("link", { name: "Library" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library$`));
+    await expect(page.getByTestId("workspace-main-header").getByRole("heading", { name: "Library", exact: true })).toBeVisible();
   });
 
   test("surfaces org workspaces in the shared three-column shell", async ({ page }, testInfo) => {
@@ -602,7 +602,7 @@ test.describe("Workspace shell", () => {
     await expect(mainHeader).toBeVisible();
     await expect(mainCard).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Structure" })).toBeVisible();
-    await expect(sidebar.getByRole("link", { name: "Resources" })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Library" })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Heartbeats" })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Workspaces" })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Goals" })).toBeVisible();
@@ -753,21 +753,22 @@ test.describe("Workspace shell", () => {
     expect(renameRes.ok()).toBe(true);
 
     await gotoOrganizationPath(page, organization, "/resources");
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library$`));
 
     const sidebar = page.getByTestId("workspace-sidebar");
     const mainContent = page.locator("#main-content");
     const mainHeader = page.getByTestId("workspace-main-header");
-    const workspacesHelp = mainHeader.getByRole("button", { name: "About organization resources" });
-    await expect(sidebar.getByRole("link", { name: "Resources" })).toHaveClass(/font-medium/);
+    const workspacesHelp = mainHeader.getByRole("button", { name: "About Library" });
+    await expect(sidebar.getByRole("link", { name: "Library" })).toHaveClass(/font-medium/);
     await expect(sidebar.getByRole("link", { name: "Workspaces" })).toBeVisible();
-    await expect(mainHeader.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
-    await expect(mainContent.getByRole("button", { name: "Add resource" })).toBeVisible();
+    await expect(mainHeader.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
+    await expect(mainContent.getByRole("button", { name: "Add Library item" })).toBeVisible();
     await expect(mainContent.getByRole("link", { name: "Browse workspaces" })).toBeVisible();
     await expect(workspacesHelp).toBeVisible();
     await workspacesHelp.hover();
-    await expect(page.getByText(/shared resource catalog for repos, docs, urls, and connector objects/i)).toBeVisible();
-    await expect(mainContent.getByText("Catalog", { exact: true })).toBeVisible();
-    await expect(mainContent.getByText("Agent Run Context")).toBeVisible();
+    await expect(page.getByText(/shared Library for docs, codebases, references, outputs, and reusable context/i)).toBeVisible();
+    await expect(mainContent.getByText("Library items", { exact: true })).toBeVisible();
+    await expect(mainContent.getByText("Human + Agent Knowledge")).toBeVisible();
     await expect(page.getByTestId("org-workspaces-files-card")).toHaveCount(0);
 
     await mainContent.getByRole("link", { name: "Browse workspaces" }).click();

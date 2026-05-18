@@ -321,19 +321,19 @@ export function NewProjectDialog() {
         <div className="border-t border-border px-4 py-3 space-y-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-center gap-1.5">
-              <div className="text-sm font-medium">Resources</div>
+              <div className="text-sm font-medium">Project Context</div>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     type="button"
                     className="inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    aria-label="About project resources"
+                    aria-label="About project context"
                   >
                     <CircleHelp className="h-3.5 w-3.5" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top" sideOffset={8} className="max-w-[260px] px-3 py-2 text-xs leading-5">
-                  Attach the codebases, docs, URLs, and external systems agents should use for this project.
+                  Attach the codebases, Library docs, URLs, and external systems agents should use for this project.
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -348,13 +348,13 @@ export function NewProjectDialog() {
                     disabled={!selectedOrganizationId || (organizationResources ?? []).length === 0 || availableResources.length === 0}
                   >
                     <Link2 className="mr-1.5 h-3 w-3" />
-                    Attach org resource
+                    Attach Library item
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-72 p-1" align="end">
                   {availableResources.length === 0 ? (
                     <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                      No unattached org resources available.
+                      No unattached Library items available.
                     </div>
                   ) : (
                     availableResources.map((resource) => (
@@ -382,7 +382,7 @@ export function NewProjectDialog() {
                 onClick={() => setResourceDrafts((current) => [...current, createInlineResourceDraft()])}
               >
                 <Plus className="mr-1.5 h-3 w-3" />
-                New resource
+                New Library item
               </Button>
             </div>
           </div>
@@ -406,12 +406,12 @@ export function NewProjectDialog() {
                           {resource.kind === "existing" ? (
                             <>
                               <Link2 className="h-3.5 w-3.5 text-muted-foreground" />
-                              <span className="truncate">{existingResource?.name ?? "Missing org resource"}</span>
+                              <span className="truncate">{existingResource?.name ?? "Missing Library item"}</span>
                             </>
                           ) : (
                             <>
                               <Folder className="h-3.5 w-3.5 text-muted-foreground" />
-                              <span>{resource.name.trim() || "New org resource"}</span>
+                              <span>{resource.name.trim() || "New Library item"}</span>
                             </>
                           )}
                         </div>
@@ -419,8 +419,8 @@ export function NewProjectDialog() {
                           {resource.kind === "existing"
                             ? existingResource
                               ? `${organizationResourceKindLabel(existingResource.kind)} · ${existingResource.locator}`
-                              : "This org resource is no longer available."
-                            : "Created in the org catalog and attached to this project on submit."}
+                              : "This Library item is no longer available."
+                            : "Created in Library and attached to this project on submit."}
                         </div>
                       </div>
                       <Button
@@ -493,7 +493,7 @@ export function NewProjectDialog() {
                               description: event.target.value,
                             }))}
                             className={cn(resourceControlClass, "min-h-[72px] resize-y py-2")}
-                            placeholder="What this resource contains and when agents should use it."
+                            placeholder="What this Library item contains and when agents should use it."
                           />
                         </label>
                       </div>
@@ -531,7 +531,7 @@ export function NewProjectDialog() {
 
                     {resource.kind === "new" && (!resource.name.trim() || !resource.locator.trim()) ? (
                       <p className="text-[11px] text-amber-600 dark:text-amber-300">
-                        New resources need both a name and a locator before you can create the project.
+                        New Library items need both a name and a locator before you can create the project.
                       </p>
                     ) : null}
                   </div>
@@ -641,7 +641,7 @@ export function NewProjectDialog() {
             <p className="text-xs text-destructive">Failed to create project.</p>
           ) : (
             <span className="text-xs text-muted-foreground">
-              {resourceDrafts.length > 0 ? `${resourceDrafts.length} resource${resourceDrafts.length === 1 ? "" : "s"} queued` : ""}
+              {resourceDrafts.length > 0 ? `${resourceDrafts.length} context item${resourceDrafts.length === 1 ? "" : "s"} queued` : ""}
             </span>
           )}
           <Button

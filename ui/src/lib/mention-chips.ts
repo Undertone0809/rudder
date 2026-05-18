@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { parseAgentMentionHref, parseIssueMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
+import { parseAgentMentionHref, parseIssueMentionHref, parseLibraryDocMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
 import { getAgentIcon } from "./agent-icons";
 
 export type ParsedMentionChip =
@@ -17,6 +17,11 @@ export type ParsedMentionChip =
       kind: "issue";
       issueId: string;
       ref: string | null;
+    }
+  | {
+      kind: "library_doc";
+      documentId: string;
+      title: string | null;
     };
 
 const iconMaskCache = new Map<string, string>();
@@ -50,6 +55,15 @@ export function parseMentionChipHref(href: string): ParsedMentionChip | null {
       kind: "issue",
       issueId: issue.issueId,
       ref: issue.ref,
+    };
+  }
+
+  const libraryDoc = parseLibraryDocMentionHref(href);
+  if (libraryDoc) {
+    return {
+      kind: "library_doc",
+      documentId: libraryDoc.documentId,
+      title: libraryDoc.title,
     };
   }
 
@@ -107,6 +121,7 @@ export function clearMentionChipDecoration(element: HTMLElement) {
     "rudder-mention-chip",
     "rudder-mention-chip--agent",
     "rudder-mention-chip--issue",
+    "rudder-mention-chip--library_doc",
     "rudder-mention-chip--project",
     "rudder-project-mention-chip",
   );

@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildIssueMentionHref, buildLibraryDocMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { ThemeProvider } from "../context/ThemeContext";
 import { MarkdownBody } from "./MarkdownBody";
 
@@ -84,6 +84,19 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain('<img src="/api/attachments/test/content" alt=""/>');
+  });
+
+  it("renders library document mentions as live Library links", () => {
+    const href = buildLibraryDocMentionHref("doc-123", "Product principles");
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{`[@Product principles](${href})`}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/library?doc=doc-123"');
+    expect(html).toContain('data-mention-kind="library_doc"');
+    expect(html).toContain("Product principles");
   });
 
   it("resolves relative image paths when a resolver is provided", () => {

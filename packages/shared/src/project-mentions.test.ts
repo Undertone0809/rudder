@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   buildAgentMentionHref,
   buildIssueMentionHref,
+  buildLibraryDocMentionHref,
   buildProjectMentionHref,
   extractAgentMentionIds,
   extractIssueMentionIds,
+  extractLibraryDocMentionIds,
   extractProjectMentionIds,
   parseAgentMentionHref,
   parseIssueMentionHref,
+  parseLibraryDocMentionHref,
   parseProjectMentionHref,
 } from "./project-mentions.js";
 import { PROJECT_COLORS } from "./constants.js";
@@ -49,6 +52,15 @@ describe("project-mentions", () => {
     expect(extractIssueMentionIds(`[@PAP-123](${href})`)).toEqual(["issue-123"]);
   });
 
+  it("round-trips library doc mentions with title metadata", () => {
+    const href = buildLibraryDocMentionHref("doc-123", "Product principles");
+    expect(parseLibraryDocMentionHref(href)).toEqual({
+      documentId: "doc-123",
+      title: "Product principles",
+    });
+    expect(extractLibraryDocMentionIds(`[@Product principles](${href})`)).toEqual(["doc-123"]);
+  });
+
   it("ignores mention-looking links inside markdown code", () => {
     expect(extractProjectMentionIds("`[@Project](project://id)` [@Real](project://project-123)"))
       .toEqual(["project-123"]);
@@ -56,5 +68,7 @@ describe("project-mentions", () => {
       .toEqual(["agent-123"]);
     expect(extractIssueMentionIds("`[@PAP-1](issue://id?r=PAP-1)` [@PAP-2](issue://issue-123?r=PAP-2)"))
       .toEqual(["issue-123"]);
+    expect(extractLibraryDocMentionIds("`[@Doc](library-doc://doc-1)` [@Real](library-doc://doc-2)"))
+      .toEqual(["doc-2"]);
   });
 });

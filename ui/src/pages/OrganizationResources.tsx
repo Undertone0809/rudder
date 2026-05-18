@@ -68,7 +68,7 @@ export function OrganizationResources() {
   const [resourceDraft, setResourceDraft] = useState(createOrganizationResourceDraft());
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Resources" }]);
+    setBreadcrumbs([{ label: "Library" }]);
   }, [setBreadcrumbs]);
 
   const resourcesQuery = useQuery({
@@ -89,11 +89,11 @@ export function OrganizationResources() {
       setResourceDialogOpen(false);
       setEditingResourceId(null);
       setResourceDraft(createOrganizationResourceDraft());
-      pushToast({ title: "Org resource created", tone: "success" });
+      pushToast({ title: "Library item created", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to create org resource",
+        title: error instanceof Error ? error.message : "Failed to create Library item",
         tone: "error",
       });
     },
@@ -112,11 +112,11 @@ export function OrganizationResources() {
       setResourceDialogOpen(false);
       setEditingResourceId(null);
       setResourceDraft(createOrganizationResourceDraft());
-      pushToast({ title: "Org resource updated", tone: "success" });
+      pushToast({ title: "Library item updated", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to update org resource",
+        title: error instanceof Error ? error.message : "Failed to update Library item",
         tone: "error",
       });
     },
@@ -126,11 +126,11 @@ export function OrganizationResources() {
     mutationFn: (resourceId: string) => organizationsApi.removeResource(viewedOrganizationId!, resourceId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.organizations.resources(viewedOrganizationId ?? "__none__") });
-      pushToast({ title: "Org resource removed", tone: "success" });
+      pushToast({ title: "Library item removed", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to remove org resource",
+        title: error instanceof Error ? error.message : "Failed to remove Library item",
         tone: "error",
       });
     },
@@ -162,7 +162,7 @@ export function OrganizationResources() {
   };
 
   if (!viewedOrganizationId || !viewedOrganization) {
-    return <EmptyState icon={HardDrive} message="Select an organization to manage shared resources." />;
+    return <EmptyState icon={HardDrive} message="Select an organization to manage the shared Library." />;
   }
 
   if (resourcesQuery.isLoading) {
@@ -176,9 +176,9 @@ export function OrganizationResources() {
   const resourceItems = resourcesQuery.data ?? [];
   const workspacesPath = applyOrganizationPrefix("/workspaces", viewedOrganization.issuePrefix);
   const resourceDialogPending = createResource.isPending || updateResource.isPending;
-  const resourceDialogTitle = editingResourceId ? "Edit resource" : "Add resource";
+  const resourceDialogTitle = editingResourceId ? "Edit Library item" : "Add Library item";
   const resourceDialogDescription = editingResourceId
-    ? "Update the shared catalog entry. Projects that reference this resource will see the new metadata automatically."
+    ? "Update the shared Library entry. Projects that reference this item will see the new metadata automatically."
     : "Add a shared repo, file, URL, or connector object that projects can attach directly.";
 
   return (
@@ -188,27 +188,27 @@ export function OrganizationResources() {
           <div className="space-y-4">
             <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               <Layers3 className="h-3.5 w-3.5" />
-              Org Resource Catalog
+              Shared Library
             </div>
             <div className="space-y-2">
-              <h1 className="text-xl font-semibold tracking-tight text-foreground">Resources</h1>
+              <h1 className="text-xl font-semibold tracking-tight text-foreground">Library</h1>
               <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                Reusable repos, files, URLs, and connector objects for this organization. Keep entries canonical here,
-                then attach them from projects with role-specific notes.
+                The shared knowledge workspace for humans and agents: docs, codebases, references, outputs, and
+                connector-backed context that projects can attach directly.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <span className="rounded-[calc(var(--radius-sm)-1px)] border border-border/70 bg-background/55 px-2.5 py-1 text-xs text-muted-foreground">
-                {resourceItems.length} catalog item{resourceItems.length === 1 ? "" : "s"}
+                {resourceItems.length} Library item{resourceItems.length === 1 ? "" : "s"}
               </span>
               <span className="rounded-[calc(var(--radius-sm)-1px)] border border-border/70 bg-background/55 px-2.5 py-1 text-xs text-muted-foreground">
-                Project attachments add role + note
+                Project Context selects the relevant subset
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <Button type="button" size="sm" onClick={openCreateResourceDialog}>
                 <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Add resource
+                Add Library item
               </Button>
               <Button asChild type="button" variant="outline" size="sm">
                 <Link to={workspacesPath}>Browse workspaces</Link>
@@ -218,20 +218,19 @@ export function OrganizationResources() {
 
           <div className="rounded-[var(--radius-md)] border border-border/75 bg-background/72 p-4 shadow-sm">
             <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Agent Run Context
+              Human + Agent Knowledge
             </div>
             <div className="mt-3 space-y-3 text-sm leading-6 text-muted-foreground">
               <p>
-                Organization resources are loaded as shared context for agent runs. Write descriptions like briefings,
-                not labels.
+                Library items are reusable knowledge and source references. Humans can organize them, and agents can
+                discover or fetch the linked context when a project or issue points at it.
               </p>
               <p>
-                Project resources narrow the working set by attaching catalog items with a role and a project-specific
-                note.
+                Project Context narrows the working set by selecting Library items with role-specific notes.
               </p>
               <p>
-                Keep free-form notes or scratch files in <span className="font-mono">Workspaces</span>. This page is
-                for structured, reusable references.
+                Workspaces remain the execution layer. Library is the durable knowledge layer, with document history
+                and live links planned for Markdown docs.
               </p>
             </div>
           </div>
@@ -240,7 +239,7 @@ export function OrganizationResources() {
 
       <section className="rounded-[var(--radius-lg)] border border-border bg-card">
         <div className="border-b border-border px-5 py-4">
-          <div className="text-sm font-medium text-foreground">Catalog</div>
+          <div className="text-sm font-medium text-foreground">Library items</div>
           <div className="mt-1 text-xs text-muted-foreground">
             Prefer durable names and concrete descriptions so agents can tell what matters without opening the target
             first.
@@ -250,8 +249,8 @@ export function OrganizationResources() {
         <div className="px-5 py-4">
           {resourceItems.length === 0 ? (
             <div className="rounded-[var(--radius-md)] border border-dashed border-border/80 bg-[color:color-mix(in_oklab,var(--surface-elevated)_84%,transparent)] px-5 py-9 text-sm text-muted-foreground">
-              No org resources yet. Start with the main repo, the implementation spec, key URLs, or external systems
-              agents should reference repeatedly.
+              No Library items yet. Start with the main repo, product principles, implementation specs, key URLs, or
+              external systems humans and agents should reference repeatedly.
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -366,7 +365,7 @@ export function OrganizationResources() {
               <Textarea
                 value={resourceDraft.description}
                 onChange={(event) => setResourceDraft((current) => ({ ...current, description: event.target.value }))}
-                placeholder="What this resource contains and when agents should use it."
+                placeholder="What this Library item contains and when agents should use it."
               />
             </label>
           </div>
@@ -395,7 +394,7 @@ export function OrganizationResources() {
                 || resourceDraft.locator.trim().length === 0
               }
             >
-              {resourceDialogPending ? "Saving…" : editingResourceId ? "Save changes" : "Create resource"}
+              {resourceDialogPending ? "Saving…" : editingResourceId ? "Save changes" : "Create Library item"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -211,7 +211,9 @@ export function MarkdownBody({
           ? `/projects/${parsed.projectId}`
           : parsed.kind === "issue"
             ? `/issues/${parsed.ref ?? parsed.issueId}`
-            : `/agents/${parsed.agentId}`;
+            : parsed.kind === "library_doc"
+              ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
+              : `/agents/${parsed.agentId}`;
         return (
           <a
             href={targetHref}

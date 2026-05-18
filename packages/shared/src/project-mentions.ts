@@ -3,6 +3,7 @@ import { PROJECT_COLORS } from "./constants.js";
 export const PROJECT_MENTION_SCHEME = "project://";
 export const AGENT_MENTION_SCHEME = "agent://";
 export const ISSUE_MENTION_SCHEME = "issue://";
+export const LIBRARY_DOC_MENTION_SCHEME = "library-doc://";
 
 const HEX_COLOR_RE = /^[0-9a-f]{6}$/i;
 const HEX_COLOR_SHORT_RE = /^[0-9a-f]{3}$/i;
@@ -11,6 +12,7 @@ const HEX_COLOR_SHORT_WITH_HASH_RE = /^#[0-9a-f]{3}$/i;
 const PROJECT_MENTION_LINK_RE = /\[[^\]]*]\((project:\/\/[^)\s]+)\)/gi;
 const AGENT_MENTION_LINK_RE = /\[[^\]]*]\((agent:\/\/[^)\s]+)\)/gi;
 const ISSUE_MENTION_LINK_RE = /\[[^\]]*]\((issue:\/\/[^)\s]+)\)/gi;
+const LIBRARY_DOC_MENTION_LINK_RE = /\[[^\]]*]\((library-doc:\/\/[^)\s]+)\)/gi;
 const AGENT_ICON_NAME_RE = /^[a-z0-9-]+$/i;
 const PROJECT_COLOR_VALUES = new Set<string>(PROJECT_COLORS);
 
@@ -27,6 +29,11 @@ export interface ParsedAgentMention {
 export interface ParsedIssueMention {
   issueId: string;
   ref: string | null;
+}
+
+export interface ParsedLibraryDocMention {
+  documentId: string;
+  title: string | null;
 }
 
 function normalizeHexColor(input: string | null | undefined): string | null {
@@ -162,6 +169,36 @@ export function parseIssueMentionHref(href: string): ParsedIssueMention | null {
   };
 }
 
+export function buildLibraryDocMentionHref(documentId: string, title?: string | null): string {
+  const trimmedDocumentId = documentId.trim();
+  const trimmedTitle = title?.trim();
+  if (!trimmedTitle) return `${LIBRARY_DOC_MENTION_SCHEME}${trimmedDocumentId}`;
+  return `${LIBRARY_DOC_MENTION_SCHEME}${trimmedDocumentId}?t=${encodeMentionParam(trimmedTitle)}`;
+}
+
+export function parseLibraryDocMentionHref(href: string): ParsedLibraryDocMention | null {
+  if (!href.startsWith(LIBRARY_DOC_MENTION_SCHEME)) return null;
+
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "library-doc:") return null;
+
+  const documentId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
+  if (!documentId) return null;
+
+  const title = (url.searchParams.get("t") ?? url.searchParams.get("title") ?? "").trim() || null;
+
+  return {
+    documentId,
+    title,
+  };
+}
+
 export function extractProjectMentionIds(markdown: string): string[] {
   if (!markdown) return [];
   const ids = new Set<string>();
@@ -197,6 +234,19 @@ export function extractIssueMentionIds(markdown: string): string[] {
   while ((match = re.exec(source)) !== null) {
     const parsed = parseIssueMentionHref(match[1]);
     if (parsed) ids.add(parsed.issueId);
+  }
+  return [...ids];
+}
+
+export function extractLibraryDocMentionIds(markdown: string): string[] {
+  if (!markdown) return [];
+  const ids = new Set<string>();
+  const re = new RegExp(LIBRARY_DOC_MENTION_LINK_RE);
+  const source = stripMarkdownCode(markdown);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    const parsed = parseLibraryDocMentionHref(match[1]);
+    if (parsed) ids.add(parsed.documentId);
   }
   return [...ids];
 }

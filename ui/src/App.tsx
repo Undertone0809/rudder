@@ -190,7 +190,8 @@ function boardRoutes() {
       <Route path="organizations" element={<LegacyOrganizationsRedirect />} />
       <Route path="organization/settings" element={<OrganizationSettings />} />
       <Route path="organization/settings/workspace/backups" element={<LegacyWorkspaceBackupsRedirect />} />
-      <Route path="resources" element={<OrganizationResources />} />
+      <Route path="library" element={<OrganizationResources />} />
+      <Route path="resources" element={<LegacyResourcesRedirect />} />
       <Route path="heartbeats" element={<OrganizationHeartbeats />} />
       <Route path="workspaces" element={<OrganizationWorkspaces />} />
       <Route path="workspaces/backups" element={<OrganizationWorkspaceBackups />} />
@@ -313,6 +314,11 @@ function LegacyWorkspaceBackupsRedirect() {
   const { orgPrefix } = useParams<{ orgPrefix?: string }>();
   const location = useLocation();
   return <Navigate to={`/${orgPrefix ?? ""}/workspaces/backups${location.search}${location.hash}`} replace />;
+}
+
+function LegacyResourcesRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/library${location.search}${location.hash}`} replace />;
 }
 
 function LegacyOrganizationsRedirect() {
@@ -543,6 +549,8 @@ export function App() {
           <Route path="organization/import" element={<UnprefixedBoardRedirect />} />
           <Route path="workspaces" element={<UnprefixedBoardRedirect />} />
           <Route path="workspaces/backups" element={<UnprefixedBoardRedirect />} />
+          <Route path="library" element={<UnprefixedBoardRedirect />} />
+          <Route path="resources" element={<LegacyResourcesRedirect />} />
           <Route path="settings" element={<LegacySettingsRedirect />} />
           <Route path="settings/*" element={<LegacySettingsRedirect />} />
           <Route path="agents" element={<UnprefixedBoardRedirect />} />

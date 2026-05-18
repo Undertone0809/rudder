@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import { applyMentionChipDecoration, mentionChipInlineStyle, stripMentionChipLabelPrefix } from "./mention-chips";
+import {
+  applyMentionChipDecoration,
+  mentionChipInlineStyle,
+  parseMentionChipHref,
+  stripMentionChipLabelPrefix,
+} from "./mention-chips";
 
 describe("mention chips", () => {
   it("strips the legacy visible at-prefix from mention labels", () => {
@@ -34,5 +39,25 @@ describe("mention chips", () => {
     expect(style.color).toBeUndefined();
     expect(style.borderColor).toBeUndefined();
     expect(style.backgroundColor).toBeUndefined();
+  });
+
+  it("parses and decorates library document mention links", () => {
+    expect(parseMentionChipHref("library-doc://doc-123?t=Product%20principles")).toEqual({
+      kind: "library_doc",
+      documentId: "doc-123",
+      title: "Product principles",
+    });
+
+    const element = document.createElement("a");
+    element.textContent = "@Product principles";
+    applyMentionChipDecoration(element, {
+      kind: "library_doc",
+      documentId: "doc-123",
+      title: "Product principles",
+    });
+
+    expect(element.textContent).toBe("Product principles");
+    expect(element.dataset.mentionKind).toBe("library_doc");
+    expect(element.classList.contains("rudder-mention-chip--library_doc")).toBe(true);
   });
 });

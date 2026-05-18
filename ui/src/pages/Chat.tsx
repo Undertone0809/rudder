@@ -4122,7 +4122,7 @@ function ChatWorkspace() {
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium">{projectDisplayName(project)}</span>
                       <span className="block truncate text-xs text-muted-foreground">
-                        {project.resources.length} resources
+                        {project.resources.length} context item{project.resources.length === 1 ? "" : "s"}
                       </span>
                     </span>
                   </button>
