@@ -11,12 +11,10 @@ entities:
   - docs_work_product
 issue:
 related_plans:
-  - 2026-05-18-docs-work-product-layer.md
   - 2026-05-17-knowledge-base-control-plane-proposal.md
   - 2026-04-17-org-resource-catalog-and-agent-run-context.md
   - 2026-03-10-workspace-strategy-and-git-worktrees.md
-supersedes:
-  - 2026-05-18-docs-work-product-layer.md
+supersedes: []
 related_code:
   - ui/src/components/PrimaryRail.tsx
   - ui/src/pages/OrganizationResources.tsx
