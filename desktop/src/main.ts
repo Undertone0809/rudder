@@ -218,7 +218,6 @@ const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
 const DESKTOP_FEEDBACK_EMAIL = "zeeland4work@gmail.com";
 const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
-const DESKTOP_UPDATE_QUIT_AFTER_APPLY_DELAY_MS = 50;
 const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
 
 const LOCAL_ENV_PROFILES: Record<LocalEnvProfile["name"], LocalEnvProfile> = {
@@ -642,7 +641,15 @@ async function applyUpdate(updateId: string | null | undefined): Promise<Desktop
 
   const session = activeDesktopUpdates.get(normalizedUpdateId);
   if (!session?.stdin || session.stdin.destroyed) {
-    return { status: "unavailable", message: "The update session is no longer waiting to apply." };
+    const version = latestDesktopUpdateProgress?.updateId === normalizedUpdateId
+      ? latestDesktopUpdateProgress.version
+      : "unknown";
+    updateDesktopUpdateProgress(normalizedUpdateId, version, {
+      phase: "failed",
+      message: "Update session expired.",
+      error: "The update session is no longer waiting to apply. Start the update again.",
+    });
+    return { status: "unavailable", message: "The update session is no longer waiting to apply. Start the update again." };
   }
 
   try {
@@ -656,31 +663,26 @@ async function applyUpdate(updateId: string | null | undefined): Promise<Desktop
       });
     });
     updateDesktopUpdateProgress(normalizedUpdateId, session.version, {
-      phase: "closing",
-      message: "Rudder is closing to apply the Desktop update...",
+      phase: "preparing_restart",
+      message: "Applying the Desktop update. Rudder will close when replacement is ready...",
     });
-    scheduleQuitForAppliedUpdate();
     return {
       status: "started",
       updateId: normalizedUpdateId,
       version: session.version,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    updateDesktopUpdateProgress(normalizedUpdateId, session.version, {
+      phase: "failed",
+      message: "Update failed to apply.",
+      error: message,
+    });
     return {
       status: "failed",
-      message: error instanceof Error ? error.message : String(error),
+      message,
     };
   }
-}
-
-function scheduleQuitForAppliedUpdate(): void {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.hide();
-  }
-
-  setTimeout(() => {
-    void finalizeQuit({ forceExit: true });
-  }, DESKTOP_UPDATE_QUIT_AFTER_APPLY_DELAY_MS);
 }
 
 function normalizeBooleanEnvFlag(value: string | null | undefined): boolean | null {
@@ -1818,6 +1820,10 @@ async function finalizeQuit(options: { forceExit?: boolean } = {}): Promise<void
   installQuitExceptionGuard();
 
   try {
+    if (options.forceExit && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.destroy();
+      mainWindow = null;
+    }
     await stopLocalRudder();
   } finally {
     residentTray?.destroy();

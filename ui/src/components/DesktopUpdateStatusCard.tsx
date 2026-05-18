@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDesktopUpdateProgress } from "@/context/DesktopUpdateProgressContext";
@@ -41,6 +42,8 @@ function phaseTone(phase: DesktopUpdateProgressPhase): "active" | "ready" | "fai
 export function DesktopUpdateStatusCard() {
   const { progress, dismissProgress } = useDesktopUpdateProgress();
   const { t } = useI18n();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [applyPending, setApplyPending] = useState(false);
 
   if (!progress) return null;
   const currentProgress = progress;
@@ -64,13 +67,29 @@ export function DesktopUpdateStatusCard() {
   async function retryUpdate() {
     const desktopShell = readDesktopShell();
     if (!desktopShell) return;
+    setActionError(null);
     await desktopShell.installUpdate(currentProgress.version);
   }
 
   async function applyUpdate() {
     const desktopShell = readDesktopShell();
-    if (!desktopShell?.applyUpdate) return;
-    await desktopShell.applyUpdate(currentProgress.updateId);
+    setActionError(null);
+    if (!desktopShell?.applyUpdate) {
+      setActionError(t("about.updates.installUnavailable"));
+      return;
+    }
+
+    setApplyPending(true);
+    try {
+      const result = await desktopShell.applyUpdate(currentProgress.updateId);
+      if (result.status !== "started") {
+        setActionError(result.message || t("about.updates.installFailed"));
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : t("about.updates.installFailed"));
+    } finally {
+      setApplyPending(false);
+    }
   }
 
   async function openReleases() {
@@ -119,6 +138,11 @@ export function DesktopUpdateStatusCard() {
             <p className="mt-0.5 text-xs leading-4 text-muted-foreground">
               {currentProgress.error ?? t(PHASE_LABEL_KEYS[currentProgress.phase])}
             </p>
+            {actionError ? (
+              <p className="mt-2 rounded-[var(--radius-sm)] border border-destructive/25 bg-destructive/8 px-2.5 py-2 text-xs leading-4 text-destructive">
+                {actionError}
+              </p>
+            ) : null}
             {hasMeasuredProgress ? (
               <div
                 className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
@@ -146,8 +170,8 @@ export function DesktopUpdateStatusCard() {
             ) : null}
             {currentProgress.phase === "ready_to_install" ? (
               <div className="mt-2">
-                <Button type="button" size="sm" className="h-8 px-3 text-xs" onClick={() => void applyUpdate()}>
-                  {t("about.updates.progress.restartToUpdate")}
+                <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={applyPending} onClick={() => void applyUpdate()}>
+                  {applyPending ? t("about.updates.installing") : t("about.updates.progress.restartToUpdate")}
                 </Button>
               </div>
             ) : null}
