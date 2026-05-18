@@ -2,7 +2,7 @@
 title: Docs work product layer
 date: 2026-05-18
 kind: proposal
-status: proposed
+status: superseded
 area: workspace
 entities:
   - docs_work_product
@@ -11,6 +11,7 @@ entities:
   - issue_documents
 issue:
 related_plans:
+  - 2026-05-19-library-project-context-workspace-proposal.md
   - 2026-04-17-org-resource-catalog-and-agent-run-context.md
   - 2026-04-16-org-workspaces-fixed-root-resources.md
   - 2026-04-20-remove-legacy-project-managed-workspace-paths.md
@@ -24,7 +25,7 @@ related_code:
   - server/src/services/organization-workspace-browser.ts
   - server/src/services/agent-run-context.ts
 commit_refs: []
-updated_at: 2026-05-18
+updated_at: 2026-05-19
 ---
 
 # Docs Work Product Layer
