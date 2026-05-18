@@ -330,7 +330,7 @@ describe("Automations", () => {
     expect(container.textContent).toContain("Bug triage");
     expect(container.textContent).toContain("Daily standup");
     expect(container.textContent).toContain("Weekly progress report");
-    expect(container.textContent).toContain("Create custom automation");
+    expect(container.textContent).not.toContain("Create custom automation");
     expect(container.textContent).not.toContain("Start from scratch");
     expect(container.querySelector('[data-testid="automation-template-grid"]')).toBeTruthy();
 

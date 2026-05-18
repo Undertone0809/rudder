@@ -992,15 +992,6 @@ export function Automations() {
                 );
               })}
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="mt-5"
-              onClick={() => openComposer()}
-            >
-              <Plus className="h-4 w-4" />
-              Create custom automation
-            </Button>
           </div>
         ) : (
           <div className="overflow-x-auto">
