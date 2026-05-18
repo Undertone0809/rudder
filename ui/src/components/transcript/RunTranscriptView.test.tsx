@@ -708,10 +708,22 @@ describe("RunTranscriptView", () => {
         kind: "stdout" as const,
         ts: "2026-03-12T00:00:02.000Z",
         text:
-          "[rudder] Prepared local CLI credential shim for: gh\n"
+          "[rudder] Shared 6 local CLI credential entries into managed HOME /Users/zeeland/.rudder/instances/dev/organizations/org/claude-home:\n"
+          + ".config/gh, .config/configstore, .docker, .kube, .npmrc, .ssh\n"
+          + "[rudder] Prepared local CLI credential shim for: gh\n"
           + "[rudder] Agent workspace \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/vera\" is now the canonical run workspace. Attempting to resume session \"019dfc\" that was previously saved in \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces\".\n"
           + "[rudder] Codex session \"019dfc\" was saved for cwd \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/vera\" and will not be resumed in \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces\".\n"
+          + "[rudder] Using Rudder-managed Claude home \"/tmp/claude-home\" (seeded from \"/Users/zeeland/.claude\").\n"
+          + "[rudder] Using Rudder-managed Cursor home \"/tmp/cursor-home\" (seeded from \"/Users/zeeland/.cursor\").\n"
+          + "[rudder] Using Rudder-managed Gemini home \"/tmp/gemini-home\" (seeded from \"/Users/zeeland/.gemini\").\n"
+          + "[rudder] Using Rudder-managed OpenCode home \"/tmp/opencode-home\" (seeded from \"/Users/zeeland/.opencode\").\n"
+          + "[rudder] Using Rudder-managed Pi home \"/tmp/pi-home\" (seeded from \"/Users/zeeland/.pi\").\n"
           + "Checked the repository status",
+      },
+      {
+        kind: "stderr" as const,
+        ts: "2026-03-12T00:00:03.000Z",
+        text: "[rudder] Failed to post workspace-ready comment: unavailable\nRecoverable adapter warning",
       },
     ];
     const hiddenHtml = renderToStaticMarkup(
@@ -731,16 +743,34 @@ describe("RunTranscriptView", () => {
     );
 
     expect(hiddenHtml).not.toContain("model codex");
+    expect(hiddenHtml).not.toContain("Shared 6 local CLI credential entries");
+    expect(hiddenHtml).not.toContain(".config/gh");
     expect(hiddenHtml).not.toContain("Prepared local CLI credential shim");
     expect(hiddenHtml).not.toContain("canonical run workspace");
     expect(hiddenHtml).not.toContain("will not be resumed");
+    expect(hiddenHtml).not.toContain("Rudder-managed Claude home");
+    expect(hiddenHtml).not.toContain("Rudder-managed Cursor home");
+    expect(hiddenHtml).not.toContain("Rudder-managed Gemini home");
+    expect(hiddenHtml).not.toContain("Rudder-managed OpenCode home");
+    expect(hiddenHtml).not.toContain("Rudder-managed Pi home");
+    expect(hiddenHtml).not.toContain("Failed to post workspace-ready comment");
     expect(hiddenHtml).toContain("Checked the repository status");
+    expect(hiddenHtml).toContain("Recoverable adapter warning");
 
     expect(visibleHtml).toContain("model codex");
+    expect(visibleHtml).toContain("Shared 6 local CLI credential entries");
+    expect(visibleHtml).toContain(".config/gh");
     expect(visibleHtml).toContain("Prepared local CLI credential shim");
     expect(visibleHtml).toContain("canonical run workspace");
     expect(visibleHtml).toContain("will not be resumed");
+    expect(visibleHtml).toContain("Rudder-managed Claude home");
+    expect(visibleHtml).toContain("Rudder-managed Cursor home");
+    expect(visibleHtml).toContain("Rudder-managed Gemini home");
+    expect(visibleHtml).toContain("Rudder-managed OpenCode home");
+    expect(visibleHtml).toContain("Rudder-managed Pi home");
+    expect(visibleHtml).toContain("Failed to post workspace-ready comment");
     expect(visibleHtml).toContain("Checked the repository status");
+    expect(visibleHtml).toContain("Recoverable adapter warning");
   });
 
   it("normalizes agent memory file changes into dedicated memory update blocks", () => {

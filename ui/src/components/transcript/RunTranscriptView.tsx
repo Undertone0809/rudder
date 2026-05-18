@@ -280,25 +280,30 @@ function isTurnStartedText(value: string): boolean {
   return compactWhitespace(value).toLowerCase() === "turn started";
 }
 
-function isDeveloperDiagnosticStdoutLine(trimmed: string): boolean {
-  if (/^\[rudder\] Prepared local CLI credential shim(?:s)? for: .+$/.test(trimmed)) return true;
-  if (/^\[rudder\] Agent workspace ".+" is now the canonical run workspace\. Attempting to resume session ".+" .+$/.test(trimmed)) return true;
-  if (/^\[rudder\] .+ session ".+" was saved for cwd ".+" and will not be resumed in ".+"\.$/.test(trimmed)) return true;
+function isRudderDeveloperDiagnosticLine(trimmed: string): boolean {
+  if (/^\[rudder\](?:\s|$)/.test(trimmed)) return true;
   return false;
+}
+
+function isRudderDeveloperDiagnosticContinuationLine(trimmed: string): boolean {
+  return /^[\s./~,-]/.test(trimmed) || /^[A-Za-z]:[\\/]/.test(trimmed);
 }
 
 function filterRoutineStdout(value: string, showDeveloperDiagnostics: boolean): string {
   if (showDeveloperDiagnostics) return value.trim();
+  let suppressRudderContinuation = false;
   return value
     .split(/\r?\n/)
     .filter((line) => {
       const trimmed = line.trim();
-      if (isDeveloperDiagnosticStdoutLine(trimmed)) return false;
-      if (/^\[rudder\] Using Rudder-managed .+ home ".+"(?: \(seeded from ".+"\))?\.$/.test(trimmed)) return false;
-      if (/^\[rudder\] Prepared isolated Git config at .+ with user\.useConfigOnly=true \(.+\)\.$/.test(trimmed)) return false;
-      if (/^\[rudder\] Prepared repository Git config in .+ with user\.useConfigOnly=true \(.+\)\.$/.test(trimmed)) return false;
-      if (/^\[rudder\] Realized \d+ Rudder-managed .+ skill entries in .+$/.test(trimmed)) return false;
-      if (/^\[rudder\] Loaded agent (?:instructions|soul instructions|tool notes|memory instructions) file: .+$/.test(trimmed)) return false;
+      if (isRudderDeveloperDiagnosticLine(trimmed)) {
+        suppressRudderContinuation = /:\s*$/.test(trimmed);
+        return false;
+      }
+      if (suppressRudderContinuation && isRudderDeveloperDiagnosticContinuationLine(trimmed)) {
+        return false;
+      }
+      suppressRudderContinuation = false;
       return true;
     })
     .join("\n")
@@ -331,6 +336,7 @@ function filterRenderableTranscriptEntries(
     }
 
     const keptLines: string[] = [];
+    let suppressingRudderContinuation = false;
     for (const line of entry.text.split(/\r?\n/)) {
       const trimmed = line.trim();
 
@@ -344,6 +350,14 @@ function filterRenderableTranscriptEntries(
         continue;
       }
 
+      if (isRudderDeveloperDiagnosticLine(trimmed)) {
+        suppressingRudderContinuation = /:\s*$/.test(trimmed);
+        continue;
+      }
+      if (suppressingRudderContinuation && isRudderDeveloperDiagnosticContinuationLine(trimmed)) {
+        continue;
+      }
+      suppressingRudderContinuation = false;
       if (isWarningStderrLine(trimmed)) continue;
       keptLines.push(line);
     }
