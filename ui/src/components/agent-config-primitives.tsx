@@ -94,12 +94,12 @@ export function Field({
 }) {
   return (
     <div>
-      <div className="flex items-center gap-1.5 mb-1">
-        <label className="text-xs text-muted-foreground">{label}</label>
+      <div className="mb-1 flex items-center gap-1.5">
+        <label className={description ? "text-sm text-foreground" : "text-xs text-muted-foreground"}>{label}</label>
         {hint && <HintIcon text={hint} />}
       </div>
       {description ? (
-        <p className="mb-2 text-xs leading-snug text-muted-foreground/75">{description}</p>
+        <p className="mb-2 text-sm leading-snug text-muted-foreground">{description}</p>
       ) : null}
       {children}
     </div>
@@ -123,11 +123,11 @@ export function ToggleField({
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-muted-foreground">{label}</span>
+          <span className={description ? "text-sm text-foreground" : "text-xs text-muted-foreground"}>{label}</span>
           {hint && <HintIcon text={hint} />}
         </div>
         {description ? (
-          <p className="mt-1 max-w-[42rem] text-xs leading-snug text-muted-foreground/75">{description}</p>
+          <p className="mt-1 max-w-[42rem] text-sm leading-snug text-muted-foreground">{description}</p>
         ) : null}
       </div>
       <ToggleSwitch
@@ -172,11 +172,11 @@ export function ToggleWithNumber({
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">{label}</span>
+            <span className={description ? "text-sm text-foreground" : "text-xs text-muted-foreground"}>{label}</span>
             {hint && <HintIcon text={hint} />}
           </div>
           {description ? (
-            <p className="mt-1 max-w-[42rem] text-xs leading-snug text-muted-foreground/75">{description}</p>
+            <p className="mt-1 max-w-[42rem] text-sm leading-snug text-muted-foreground">{description}</p>
           ) : null}
         </div>
         <ToggleSwitch
