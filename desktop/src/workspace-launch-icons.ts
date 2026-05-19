@@ -98,6 +98,16 @@ export async function readWorkspaceLaunchTargetIconDataUrl(
   if (!target.iconPath) return undefined;
   const platform = deps.platform ?? process.platform;
 
+  if (platform === "darwin" && target.iconPath.endsWith(".app")) {
+    const bundleIconPath = deps.resolveBundleIconPath
+      ? await deps.resolveBundleIconPath(target.iconPath)
+      : await resolveDarwinAppBundleIconPath(target.iconPath, { platform });
+    if (!bundleIconPath) return undefined;
+
+    const bundleIcon = deps.createImageFromPath(bundleIconPath);
+    return iconDataUrl(bundleIcon);
+  }
+
   const nativeIconDataUrl = await readNativeFileIconDataUrl(target.iconPath, deps);
   if (nativeIconDataUrl) return nativeIconDataUrl;
 
