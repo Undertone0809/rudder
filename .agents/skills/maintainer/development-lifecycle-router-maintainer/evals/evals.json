@@ -1,0 +1,77 @@
+{
+  "skill_name": "development-lifecycle-router-maintainer",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "这个 Rudder UI 感觉不对，但我不确定是需求问题还是设计问题。先判断应该走哪个链路，必要的话每个阶段结束后找 reviewer 看一下。",
+      "expected_output": "Classifies the request before implementation, starts with requirements/advisor or UI design rather than coding, defines stage exit criteria, and adds a review gate only after a concrete artifact exists.",
+      "files": [],
+      "expectations": [
+        "The result states the lifecycle route and current stage before doing work.",
+        "The result routes vague dissatisfaction to build-advisor or UI design evidence rather than immediately editing CSS.",
+        "The result defines what artifact must exist before reviewer evaluation.",
+        "The result states whether reviewers are spawned or a serial fallback is used."
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "这个问题很明显没修好，没有用他们自己的 app logo。修一下这个问题，最后 review 一下。",
+      "expected_output": "Treats the task as a narrow implementation bug followed by verification and review, not as a full advisor-review loop. It checks git state, fixes the icon path, validates the behavior, then performs a real findings-level review before handoff.",
+      "files": [],
+      "expectations": [
+        "The result routes to implementation -> verification -> review instead of starting with a broad proposal.",
+        "The result performs review after the diff and validation evidence exist.",
+        "The result does not claim review happened without findings, verdict, and blocker assessment.",
+        "The result avoids unsafe amend or unrelated commits in a shared dirty worktree."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "我想从需求设计到 UI 设计到功能实现到测试再到 review 都走一遍，每个阶段结束后 spawn subagent review，没有通过就返工。",
+      "expected_output": "Runs the full lifecycle route, creates stage exit artifacts for requirements, UI, implementation, verification, and review, and uses explicit spawned reviewer gates or honestly reports serial fallback when reviewers are unavailable.",
+      "files": [],
+      "expectations": [
+        "The result keeps stages separate and does not collapse requirements, UI, implementation, and review into one author pass.",
+        "The result spawns reviewers only after each stage artifact exists when subagents are available and explicitly requested.",
+        "The result blocks handoff on reviewer blockers and performs rework before moving on.",
+        "The final handoff summarizes stage outcomes, validation, and residual risks."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "发布 0.2.6，顺便你自己判断是不是需要先 review。",
+      "expected_output": "Routes directly to release-maintainer because this is a release operation, uses live release state rather than a generic lifecycle plan, and applies review only to release evidence or blockers when useful.",
+      "files": [],
+      "expectations": [
+        "The result selects release-maintainer as the primary route.",
+        "The result uses live npm/GitHub/tag/workflow state for release decisions.",
+        "The result does not route through UI, implementation, or advisor stages unless release evidence exposes a specific blocker.",
+        "The result keeps release validation and handoff requirements explicit."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "review 一下 codex session id 019e417b-8e78-7623-9fd9-d1414dde5fe0，看是不是 workflow 用错了。不要改代码。",
+      "expected_output": "Routes to codex-session-product-reviewer-maintainer or agent-work-reviewer-maintainer in review-only mode, reads the local session evidence, gives a verdict on workflow routing, and does not edit files.",
+      "files": [],
+      "expectations": [
+        "The result recognizes review-only mode and avoids implementation or file edits.",
+        "The result extracts real user requests and agent actions from the Codex session log.",
+        "The result judges whether the lifecycle route and skill selection were appropriate.",
+        "The result gives blocking workflow gaps and the smallest next change."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "这个 agent run 为什么失败了？run id 是 7d28669d，先别修，先判断应该怎么看。",
+      "expected_output": "Routes to debug-run-transcript as the first stage, reconstructs the run from run-intelligence/log sources before proposing fixes, and stays out of implementation because the user asked to inspect first.",
+      "files": [],
+      "expectations": [
+        "The result selects the debug stage and debug-run-transcript route.",
+        "The result uses the run-intelligence/log source priority before raw database guesses.",
+        "The result does not start fixing until the failure mode and target artifact are clear.",
+        "The result states what evidence is needed to move from debug to implementation or review."
+      ]
+    }
+  ]
+}
