@@ -705,9 +705,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="outline" size="icon" className="h-9 w-9 shrink-0 rounded-full border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)]" aria-label="Add files and options" >
-                <Plus className="h-4 w-4" /> </Button> </DropdownMenuTrigger>
+            <DropdownMenuTrigger type="button" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-sm font-medium text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Add files and options" >
+              <Plus className="h-4 w-4" /> </DropdownMenuTrigger>
             <DropdownMenuContent align="start"
               sideOffset={8} className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1.5 text-foreground" >
               <DropdownMenuItem className="rounded-[var(--radius-md)] px-3 py-2.5" onSelect={(e) => { e.preventDefault(); setPlusMenuOpen(false); window.setTimeout(() => fileInputRef.current?.click(), 0);
@@ -818,10 +817,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 <div className="shrink-0 border-b panel-divider px-4 py-2 md:hidden">
                   <div className="mx-auto w-full max-w-4xl">
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button type="button" variant="outline" size="sm" className="h-9 w-full justify-between gap-2 rounded-full px-3 font-normal" >
-                          <span className="truncate text-left text-foreground">{conversationDisplayTitle(selectedConversation)}</span>
-                          <ChevronDown className="h-4 w-4 shrink-0 opacity-60" /> </Button> </DropdownMenuTrigger>
+                      <DropdownMenuTrigger type="button" className="inline-flex h-9 w-full items-center justify-between gap-2 rounded-full border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm font-normal text-foreground shadow-none transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" >
+                        <span className="truncate text-left text-foreground">{conversationDisplayTitle(selectedConversation)}</span>
+                        <ChevronDown className="h-4 w-4 shrink-0 opacity-60" /> </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="surface-overlay max-h-[min(60vh,320px)] w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto text-foreground" >
                         {conversations.map((c) => (
                           <DropdownMenuItem key={c.id} className={cn(c.id === selectedConversation.id && "bg-[color:var(--surface-active)]")} onClick={() => { void prefetchChatConversation(queryClient, c.id); navigate(chatConversationPath(c.id));

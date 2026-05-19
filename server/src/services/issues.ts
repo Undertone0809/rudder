@@ -73,6 +73,7 @@ import {
 } from "./issues.helpers.js";
 import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
 export type { IssueFilters } from "./issues.helpers.js";
+export { deriveIssueUserContext } from "./issues.helpers.js";
 export function issueService(db: Db) {
   const instanceSettings = instanceSettingsService(db);
 
