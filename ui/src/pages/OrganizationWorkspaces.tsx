@@ -53,9 +53,12 @@ import {
   Loader2,
   Terminal,
   Trash2,
+  X,
 } from "lucide-react";
 
 const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
+const MOBILE_BREAKPOINT = 768;
+const WORKSPACE_FLUSH_DRAFT_EVENT = "rudder:workspace-flush-draft";
 const WORKSPACE_LAUNCH_TARGET_IDS = [
   "cursor",
   "vscode",
@@ -95,6 +98,11 @@ function readStoredWorkspaceLaunchTargetId() {
 function writeStoredWorkspaceLaunchTargetId(targetId: DesktopWorkspaceLaunchTarget["id"]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY, targetId);
+}
+
+function requestWorkspaceDraftFlush() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(WORKSPACE_FLUSH_DRAFT_EVENT));
 }
 
 export function WorkspaceLaunchTargetIcon({
@@ -235,6 +243,10 @@ function joinWorkspaceEntryPath(parentPath: string, name: string) {
 function joinWorkspacePath(rootPath: string | null, entryPath: string) {
   if (!rootPath) return entryPath;
   return `${rootPath.replace(/\/+$/, "")}/${entryPath}`;
+}
+
+function displayWorkspaceFileTabLabel(filePath: string) {
+  return filePath.split("/").filter(Boolean).at(-1) ?? filePath;
 }
 
 function createUntitledDocumentPath() {
@@ -501,6 +513,596 @@ function WorkspaceTreeNode({
   );
 }
 
+export function OrganizationWorkspaceFilesSidebar() {
+  const queryClient = useQueryClient();
+  const { pushToast } = useToast();
+  const { viewedOrganizationId } = useViewedOrganization();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedFilePath = normalizeRequestedPath(searchParams.get("path"));
+  const filesScrollRef = useScrollbarActivityRef("org-workspaces:files-sidebar");
+  const [createTarget, setCreateTarget] = useState<{
+    parent: OrganizationWorkspaceFileEntry;
+    kind: "file" | "folder";
+  } | null>(null);
+  const [createDraft, setCreateDraft] = useState("");
+  const [renameTarget, setRenameTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
+  const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
+  const [lastWorkspaceLaunchTargetId, setLastWorkspaceLaunchTargetId] = useState<DesktopWorkspaceLaunchTarget["id"] | null>(
+    () => readStoredWorkspaceLaunchTargetId(),
+  );
+  const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<DesktopWorkspaceLaunchTarget["id"] | null>(null);
+
+  const rootQuery = useQuery({
+    queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", ""),
+    queryFn: () => organizationsApi.listWorkspaceFiles(viewedOrganizationId!, ""),
+    enabled: !!viewedOrganizationId,
+    refetchOnWindowFocus: false,
+  });
+
+  const workspaceRootPath = rootQuery.data?.rootExists ? rootQuery.data.rootPath : null;
+  const selectedWorkspaceLaunchTarget = (
+    lastWorkspaceLaunchTargetId
+      ? workspaceLaunchTargets.find((target) => target.id === lastWorkspaceLaunchTargetId)
+      : null
+  ) ?? workspaceLaunchTargets[0] ?? null;
+  const expandedDirectories = useMemo(
+    () => (selectedFilePath ? parentDirectories(selectedFilePath) : new Set<string>()),
+    [selectedFilePath],
+  );
+
+  const invalidateWorkspaceBrowser = useCallback(async () => {
+    if (!viewedOrganizationId) return;
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["organizations", viewedOrganizationId, "workspace-files"] }),
+      queryClient.invalidateQueries({ queryKey: ["organizations", viewedOrganizationId, "workspace-file"] }),
+    ]);
+  }, [queryClient, viewedOrganizationId]);
+
+  useEffect(() => {
+    const desktopShell = readDesktopShell();
+    if (!desktopShell || typeof desktopShell.listWorkspaceLaunchTargets !== "function") {
+      setWorkspaceLaunchTargets([]);
+      return;
+    }
+
+    let cancelled = false;
+    desktopShell.listWorkspaceLaunchTargets()
+      .then((targets) => {
+        if (!cancelled) setWorkspaceLaunchTargets(targets);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaceLaunchTargets([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const createWorkspaceDocument = useMutation({
+    mutationFn: () => {
+      const filePath = createUntitledDocumentPath();
+      return organizationsApi.createWorkspaceFile(viewedOrganizationId!, {
+        filePath,
+        content: "# Untitled document\n\n",
+      });
+    },
+    onSuccess: (detail) => {
+      if (!viewedOrganizationId) return;
+      queryClient.setQueryData(
+        queryKeys.organizations.workspaceFile(viewedOrganizationId, detail.filePath),
+        detail,
+      );
+      void invalidateWorkspaceBrowser();
+      updateSelectedPath(searchParams, setSearchParams, detail.filePath);
+      pushToast({
+        title: "Library doc created",
+        body: detail.filePath,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to create Library doc",
+        tone: "error",
+      });
+    },
+  });
+
+  const createWorkspaceEntry = useMutation({
+    mutationFn: async (payload: {
+      parent: OrganizationWorkspaceFileEntry;
+      kind: "file" | "folder";
+      name: string;
+    }) => {
+      requestWorkspaceDraftFlush();
+      const entryPath = joinWorkspaceEntryPath(payload.parent.path, payload.name.trim());
+      if (payload.kind === "folder") {
+        return {
+          kind: payload.kind,
+          result: await organizationsApi.createWorkspaceDirectory(viewedOrganizationId!, {
+            directoryPath: entryPath,
+          }),
+        };
+      }
+      return {
+        kind: payload.kind,
+        result: await organizationsApi.createWorkspaceFile(viewedOrganizationId!, {
+          filePath: entryPath,
+          content: "",
+        }),
+      };
+    },
+    onSuccess: ({ kind, result }) => {
+      if (!viewedOrganizationId) return;
+      void invalidateWorkspaceBrowser();
+      setCreateTarget(null);
+      setCreateDraft("");
+      if (kind === "file" && "filePath" in result) {
+        queryClient.setQueryData(
+          queryKeys.organizations.workspaceFile(viewedOrganizationId, result.filePath),
+          result,
+        );
+        updateSelectedPath(searchParams, setSearchParams, result.filePath);
+      }
+      const createdPath = "filePath" in result ? result.filePath : result.path;
+      pushToast({
+        title: kind === "file" ? "File created" : "Folder created",
+        body: createdPath,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to create workspace entry",
+        tone: "error",
+      });
+    },
+  });
+
+  const renameWorkspaceEntry = useMutation({
+    mutationFn: (payload: { entry: OrganizationWorkspaceFileEntry; name: string }) =>
+      organizationsApi.renameWorkspaceEntry(viewedOrganizationId!, payload.entry.path, {
+        name: payload.name,
+      }),
+    onSuccess: (result) => {
+      void invalidateWorkspaceBrowser();
+      setRenameTarget(null);
+      setRenameDraft("");
+      if (result.previousPath && selectedFilePath) {
+        const nextSelectedPath = selectedFilePath === result.previousPath
+          ? result.path
+          : selectedFilePath.startsWith(`${result.previousPath}/`)
+            ? `${result.path}${selectedFilePath.slice(result.previousPath.length)}`
+            : selectedFilePath;
+        if (nextSelectedPath !== selectedFilePath) {
+          updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
+        }
+      }
+      pushToast({
+        title: "Workspace entry renamed",
+        body: result.previousPath ? `${result.previousPath} -> ${result.path}` : result.path,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to rename workspace entry",
+        tone: "error",
+      });
+    },
+  });
+
+  const deleteWorkspaceEntry = useMutation({
+    mutationFn: (entry: OrganizationWorkspaceFileEntry) =>
+      organizationsApi.deleteWorkspaceEntry(viewedOrganizationId!, entry.path),
+    onSuccess: (result) => {
+      void invalidateWorkspaceBrowser();
+      setDeleteTarget(null);
+      if (selectedFilePath && (selectedFilePath === result.path || selectedFilePath.startsWith(`${result.path}/`))) {
+        updateSelectedPath(searchParams, setSearchParams, null);
+      }
+      pushToast({
+        title: "Workspace entry deleted",
+        body: result.path,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to delete workspace entry",
+        tone: "error",
+      });
+    },
+  });
+
+  const handleOpenWorkspace = useCallback(async (target: DesktopWorkspaceLaunchTarget) => {
+    if (!workspaceRootPath) return;
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.openWorkspace) return;
+
+    setOpeningWorkspaceTargetId(target.id);
+    try {
+      await desktopShell.openWorkspace(workspaceRootPath, target.id);
+      setLastWorkspaceLaunchTargetId(target.id);
+      writeStoredWorkspaceLaunchTargetId(target.id);
+      pushToast({
+        title: `Opened workspace in ${target.label}`,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to open workspace",
+        body: error instanceof Error ? error.message : `Could not open the workspace in ${target.label}.`,
+        tone: "error",
+      });
+    } finally {
+      setOpeningWorkspaceTargetId(null);
+    }
+  }, [pushToast, workspaceRootPath]);
+
+  async function handleCopyEntryPath(entry: OrganizationWorkspaceFileEntry) {
+    const copyValue = joinWorkspacePath(workspaceRootPath, entry.path);
+    const desktopShell = readDesktopShell();
+    try {
+      if (desktopShell?.copyText) {
+        await desktopShell.copyText(copyValue);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(copyValue);
+      } else {
+        throw new Error("Clipboard is not available in this environment.");
+      }
+      pushToast({
+        title: "File path copied",
+        body: copyValue,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to copy file path",
+        body: error instanceof Error ? error.message : copyValue,
+        tone: "error",
+      });
+    }
+  }
+
+  function handleSelectFile(filePath: string) {
+    updateSelectedPath(searchParams, setSearchParams, filePath);
+  }
+
+  function handleStartCreateEntry(entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") {
+    if (!entry.isDirectory || !canCreateInsideWorkspaceDirectory(entry.path)) return;
+    setCreateTarget({ parent: entry, kind });
+    setCreateDraft(kind === "file" ? "untitled.md" : "new-folder");
+  }
+
+  function handleStartRename(entry: OrganizationWorkspaceFileEntry) {
+    if (isProtectedAgentWorkspaceContainerPath(entry.path)) return;
+    setRenameTarget(entry);
+    setRenameDraft(entry.name);
+  }
+
+  function handleStartDelete(entry: OrganizationWorkspaceFileEntry) {
+    if (isProtectedAgentWorkspaceContainerPath(entry.path)) return;
+    setDeleteTarget(entry);
+  }
+
+  return (
+    <>
+      <aside
+        data-testid="workspace-sidebar"
+        className="workspace-context-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
+      >
+        <header
+          data-testid="workspace-context-header"
+          className="workspace-card-header workspace-context-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4 py-3"
+        >
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-semibold">Library</h2>
+            <p className="truncate text-xs text-muted-foreground">File tree</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2"
+                  onClick={() => {
+                    requestWorkspaceDraftFlush();
+                    createWorkspaceDocument.mutate();
+                  }}
+                  disabled={!workspaceRootPath || createWorkspaceDocument.isPending}
+                  aria-label="New Library doc"
+                >
+                  {createWorkspaceDocument.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="h-3.5 w-3.5" />
+                  )}
+                  <span className="ml-1.5">New doc</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>New Library doc</TooltipContent>
+            </Tooltip>
+            {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
+              <div
+                className="inline-flex h-8 items-stretch overflow-hidden rounded-md border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
+                data-testid="org-workspaces-launcher"
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-full rounded-none border-0 px-2 text-sm text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
+                  aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
+                  onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
+                  disabled={openingWorkspaceTargetId !== null}
+                >
+                  {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <WorkspaceLaunchTargetIcon
+                      target={selectedWorkspaceLaunchTarget}
+                      className="h-3.5 w-3.5"
+                    />
+                  )}
+                  <span className="ml-1.5 max-w-16 truncate">{selectedWorkspaceLaunchTarget.label}</span>
+                </Button>
+                <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-full w-8 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                      aria-label="Open workspace menu"
+                      disabled={openingWorkspaceTargetId !== null}
+                    >
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuRadioGroup
+                      value={selectedWorkspaceLaunchTarget.id}
+                      onValueChange={(targetId) => {
+                        const target = workspaceLaunchTargets.find((candidate) => candidate.id === targetId);
+                        if (!target) return;
+                        setLastWorkspaceLaunchTargetId(target.id);
+                        writeStoredWorkspaceLaunchTargetId(target.id);
+                      }}
+                    >
+                      {workspaceLaunchTargets.map((target) => (
+                        <DropdownMenuRadioItem
+                          key={target.id}
+                          value={target.id}
+                          data-testid={`org-workspaces-launch-target-${target.id}`}
+                        >
+                          <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
+                          <span>{target.label}</span>
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            ) : null}
+          </div>
+        </header>
+
+        <section
+          data-testid="org-workspaces-files-card"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border"
+        >
+          <div className="border-b border-border px-4 py-2">
+            <div className="text-sm font-medium">File tree</div>
+            <div className="text-xs text-muted-foreground">/</div>
+          </div>
+          <div
+            ref={filesScrollRef}
+            data-testid="org-workspaces-files-scroll"
+            className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto"
+          >
+            <div className="px-2 py-2">
+              {!viewedOrganizationId ? (
+                <div className="px-2 py-3 text-sm text-muted-foreground">Select an organization.</div>
+              ) : rootQuery.isLoading ? (
+                <div className="px-2 py-3 text-sm text-muted-foreground">Loading files...</div>
+              ) : rootQuery.error ? (
+                <div className="px-2 py-3 text-sm text-destructive">{rootQuery.error.message}</div>
+              ) : !rootQuery.data?.rootExists ? (
+                <div className="px-2 py-3 text-sm text-muted-foreground">
+                  {rootQuery.data?.message ?? "The shared workspace root is not available on this machine yet."}
+                </div>
+              ) : rootQuery.data.entries.length === 0 ? (
+                <div className="px-2 py-3 text-sm text-muted-foreground">
+                  {rootQuery.data.message ?? "This folder is empty."}
+                </div>
+              ) : (
+                <ul className="space-y-0.5">
+                  {rootQuery.data.entries.map((entry) => (
+                    <WorkspaceTreeNode
+                      key={entry.path}
+                      orgId={viewedOrganizationId}
+                      entry={entry}
+                      selectedFilePath={selectedFilePath}
+                      onSelectFile={handleSelectFile}
+                      onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
+                      onStartCreateEntry={handleStartCreateEntry}
+                      onStartRename={handleStartRename}
+                      onStartDelete={handleStartDelete}
+                      expandedDirectories={expandedDirectories}
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <Dialog open={createTarget !== null} onOpenChange={(open) => {
+        if (!open && !createWorkspaceEntry.isPending) {
+          setCreateTarget(null);
+          setCreateDraft("");
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{createTarget?.kind === "folder" ? "New folder" : "New file"}</DialogTitle>
+            <DialogDescription>
+              Create inside {createTarget?.parent.path ?? "this folder"}.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="space-y-1.5">
+            <span className="text-xs text-muted-foreground">Name</span>
+            <Input
+              value={createDraft}
+              onChange={(event) => setCreateDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || !createTarget || !isValidWorkspaceEntryName(createDraft)) return;
+                event.preventDefault();
+                createWorkspaceEntry.mutate({
+                  parent: createTarget.parent,
+                  kind: createTarget.kind,
+                  name: createDraft,
+                });
+              }}
+              autoFocus
+            />
+          </label>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCreateTarget(null);
+                setCreateDraft("");
+              }}
+              disabled={createWorkspaceEntry.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!createTarget) return;
+                createWorkspaceEntry.mutate({
+                  parent: createTarget.parent,
+                  kind: createTarget.kind,
+                  name: createDraft,
+                });
+              }}
+              disabled={!createTarget || !isValidWorkspaceEntryName(createDraft) || createWorkspaceEntry.isPending}
+            >
+              {createWorkspaceEntry.isPending
+                ? "Creating..."
+                : createTarget?.kind === "folder"
+                  ? "Create folder"
+                  : "Create file"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={renameTarget !== null} onOpenChange={(open) => {
+        if (!open && !renameWorkspaceEntry.isPending) {
+          setRenameTarget(null);
+          setRenameDraft("");
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename entry</DialogTitle>
+            <DialogDescription>
+              Rename this workspace file or folder without changing its parent folder.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="space-y-1.5">
+            <span className="text-xs text-muted-foreground">Name</span>
+            <Input
+              value={renameDraft}
+              onChange={(event) => setRenameDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || !renameTarget) return;
+                event.preventDefault();
+                renameWorkspaceEntry.mutate({ entry: renameTarget, name: renameDraft });
+              }}
+              autoFocus
+            />
+          </label>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setRenameTarget(null);
+                setRenameDraft("");
+              }}
+              disabled={renameWorkspaceEntry.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!renameTarget) return;
+                renameWorkspaceEntry.mutate({ entry: renameTarget, name: renameDraft });
+              }}
+              disabled={
+                !renameTarget
+                || renameDraft.trim().length === 0
+                || renameDraft.trim() === renameTarget.name
+                || renameWorkspaceEntry.isPending
+              }
+            >
+              {renameWorkspaceEntry.isPending ? "Renaming..." : "Rename"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => {
+        if (!open && !deleteWorkspaceEntry.isPending) setDeleteTarget(null);
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete entry</DialogTitle>
+            <DialogDescription>
+              This will permanently delete {deleteTarget?.path ?? "this entry"} from the organization workspace.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleteWorkspaceEntry.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                if (!deleteTarget) return;
+                deleteWorkspaceEntry.mutate(deleteTarget);
+              }}
+              disabled={!deleteTarget || deleteWorkspaceEntry.isPending}
+            >
+              {deleteWorkspaceEntry.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 export function OrganizationWorkspaceBrowser({
   breadcrumbLabel = "Workspaces",
   emptyMessage = "Select an organization to browse its shared workspace.",
@@ -527,6 +1129,7 @@ export function OrganizationWorkspaceBrowser({
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedFilePath = normalizeRequestedPath(searchParams.get("path"));
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(requestedFilePath);
+  const [openFilePaths, setOpenFilePaths] = useState<string[]>(() => requestedFilePath ? [requestedFilePath] : []);
   const [draftContent, setDraftContent] = useState("");
   const [draftFilePath, setDraftFilePath] = useState<string | null>(null);
   const [availableIdes, setAvailableIdes] = useState<DesktopIdeTarget[]>([]);
@@ -538,6 +1141,9 @@ export function OrganizationWorkspaceBrowser({
   const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<
     DesktopWorkspaceLaunchTarget["id"] | null
   >(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false,
+  );
   const [renameTarget, setRenameTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
@@ -557,12 +1163,26 @@ export function OrganizationWorkspaceBrowser({
     selectedFilePath ? `org-workspaces:editor:${selectedFilePath}` : "org-workspaces:editor",
   );
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (typeof window.matchMedia !== "function") return;
+    const mediaQuery = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
+    const handleChange = (event: MediaQueryListEvent) => setIsMobileViewport(event.matches);
+    setIsMobileViewport(mediaQuery.matches);
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
   const flushCurrentDraft = useCallback(() => {
     const { draftContent: currentDraftContent, draftFilePath: currentDraftFilePath } = draftStateRef.current;
     if (!currentDraftFilePath) return;
     const syncedFile = syncedFileRef.current;
     if (syncedFile.filePath === currentDraftFilePath && syncedFile.content === currentDraftContent) return;
     saveWorkspaceFileMutateRef.current?.({ filePath: currentDraftFilePath, content: currentDraftContent });
+  }, []);
+
+  const openWorkspaceFileTab = useCallback((filePath: string) => {
+    setOpenFilePaths((current) => current.includes(filePath) ? current : [...current, filePath]);
   }, []);
 
   useEffect(() => {
@@ -627,16 +1247,18 @@ export function OrganizationWorkspaceBrowser({
   useEffect(() => {
     flushCurrentDraft();
     setSelectedFilePath(requestedFilePath);
-  }, [flushCurrentDraft, requestedFilePath, viewedOrganizationId]);
+    if (requestedFilePath) openWorkspaceFileTab(requestedFilePath);
+  }, [flushCurrentDraft, openWorkspaceFileTab, requestedFilePath, viewedOrganizationId]);
 
   useEffect(() => {
     if (selectedFilePath) return;
     const preferredFile = rootQuery.data?.entries.find((entry) => !entry.isDirectory);
     if (preferredFile) {
       setSelectedFilePath(preferredFile.path);
+      openWorkspaceFileTab(preferredFile.path);
       updateSelectedPath(searchParams, setSearchParams, preferredFile.path);
     }
-  }, [rootQuery.data?.entries, searchParams, selectedFilePath, setSearchParams]);
+  }, [openWorkspaceFileTab, rootQuery.data?.entries, searchParams, selectedFilePath, setSearchParams]);
 
   useEffect(() => {
     if (!selectedFilePath) {
@@ -686,6 +1308,11 @@ export function OrganizationWorkspaceBrowser({
     flushCurrentDraft();
   }, [flushCurrentDraft]);
 
+  useEffect(() => {
+    window.addEventListener(WORKSPACE_FLUSH_DRAFT_EVENT, flushCurrentDraft);
+    return () => window.removeEventListener(WORKSPACE_FLUSH_DRAFT_EVENT, flushCurrentDraft);
+  }, [flushCurrentDraft]);
+
   const invalidateWorkspaceBrowser = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["organizations", viewedOrganizationId, "workspace-files"] }),
@@ -723,6 +1350,13 @@ export function OrganizationWorkspaceBrowser({
 
       const previousPath = result.previousPath;
       if (previousPath && selectedFilePath) {
+        setOpenFilePaths((current) => current.map((filePath) => {
+          if (filePath === previousPath) return result.path;
+          if (filePath.startsWith(`${previousPath}/`)) {
+            return `${result.path}${filePath.slice(previousPath.length)}`;
+          }
+          return filePath;
+        }));
         const nextSelectedPath = selectedFilePath === previousPath
           ? result.path
           : selectedFilePath.startsWith(`${previousPath}/`)
@@ -767,6 +1401,7 @@ export function OrganizationWorkspaceBrowser({
       );
       void invalidateWorkspaceBrowser();
       setSelectedFilePath(detail.filePath);
+      openWorkspaceFileTab(detail.filePath);
       setDraftFilePath(detail.filePath);
       syncedFileRef.current = { filePath: detail.filePath, content: detail.content ?? "" };
       updateSelectedPath(searchParams, setSearchParams, detail.filePath);
@@ -793,6 +1428,7 @@ export function OrganizationWorkspaceBrowser({
       kind: "file" | "folder";
       name: string;
     }) => {
+      requestWorkspaceDraftFlush();
       const entryPath = joinWorkspaceEntryPath(payload.parent.path, payload.name.trim());
       if (payload.kind === "folder") {
         return {
@@ -821,6 +1457,7 @@ export function OrganizationWorkspaceBrowser({
           result,
         );
         setSelectedFilePath(result.filePath);
+        openWorkspaceFileTab(result.filePath);
         setDraftFilePath(result.filePath);
         syncedFileRef.current = { filePath: result.filePath, content: result.content ?? "" };
         updateSelectedPath(searchParams, setSearchParams, result.filePath);
@@ -848,6 +1485,9 @@ export function OrganizationWorkspaceBrowser({
       if (!viewedOrganizationId) return;
       void invalidateWorkspaceBrowser();
       setDeleteTarget(null);
+      setOpenFilePaths((current) =>
+        current.filter((filePath) => filePath !== result.path && !filePath.startsWith(`${result.path}/`)),
+      );
       if (selectedFilePath && (selectedFilePath === result.path || selectedFilePath.startsWith(`${result.path}/`))) {
         setSelectedFilePath(null);
         setDraftFilePath(null);
@@ -929,6 +1569,11 @@ export function OrganizationWorkspaceBrowser({
   }, []);
 
   useEffect(() => {
+    if (!isMobileViewport) {
+      setHeaderActions(null);
+      return () => setHeaderActions(null);
+    }
+
     setHeaderActions(
       <div className="flex items-center gap-2">
         <Button
@@ -1020,6 +1665,7 @@ export function OrganizationWorkspaceBrowser({
     flushCurrentDraft,
     createWorkspaceDocumentMutate,
     isCreatingWorkspaceDocument,
+    isMobileViewport,
     openingWorkspaceTargetId,
     selectedWorkspaceLaunchTarget,
     setHeaderActions,
@@ -1044,9 +1690,25 @@ export function OrganizationWorkspaceBrowser({
 
   const handleSelectFile = (filePath: string) => {
     flushCurrentDraft();
+    openWorkspaceFileTab(filePath);
     setSelectedFilePath(filePath);
     updateSelectedPath(searchParams, setSearchParams, filePath);
   };
+
+  function handleCloseFileTab(filePath: string) {
+    flushCurrentDraft();
+    setOpenFilePaths((current) => {
+      const next = current.filter((candidate) => candidate !== filePath);
+      if (selectedFilePath === filePath) {
+        const closedIndex = current.indexOf(filePath);
+        const nextSelectedPath = next[Math.max(0, closedIndex - 1)] ?? next[0] ?? null;
+        setSelectedFilePath(nextSelectedPath);
+        setDraftFilePath(nextSelectedPath);
+        updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
+      }
+      return next;
+    });
+  }
 
   const selectedFileDetail = fileQuery.data;
   const canEditSelectedFile = Boolean(
@@ -1137,70 +1799,111 @@ export function OrganizationWorkspaceBrowser({
     setCreateDraft(kind === "file" ? "untitled.md" : "new-folder");
   }
 
+  const showInlineFiles = isMobileViewport;
+
   return (
     <>
-      <div className="flex min-h-full flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {!workspace.rootExists ? (
         <EmptyState
           icon={HardDrive}
           message={workspace.message ?? "The shared workspace root is not available on this machine yet."}
         />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-4 lg:h-full lg:overflow-hidden lg:flex-row">
-          <section
-            data-testid="org-workspaces-files-card"
-            className="flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card lg:min-h-0 lg:w-[320px] lg:flex-none"
-          >
-            <div className="border-b border-border px-4 py-3">
-              <div className="text-sm font-medium">{filesTitle}</div>
-              <div className="text-xs text-muted-foreground">
-                {workspace.directoryPath ? workspace.directoryPath : "/"}
-              </div>
-            </div>
-            <div
-              ref={filesScrollRef}
-              data-testid="org-workspaces-files-scroll"
-              className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto"
+        <div className="flex min-h-0 flex-1 flex-col lg:h-full lg:overflow-hidden lg:flex-row">
+          {showInlineFiles ? (
+            <section
+              data-testid="org-workspaces-files-card"
+              className="flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card lg:min-h-0 lg:w-[320px] lg:flex-none"
             >
-              <div className="px-2 py-2">
-                {workspace.entries.length === 0 ? (
-                  <div className="px-2 py-3 text-sm text-muted-foreground">
-                    {workspace.message ?? "This folder is empty."}
-                  </div>
-                ) : (
-                  <ul className="space-y-0.5">
-                    {workspace.entries.map((entry) => (
-                      <WorkspaceTreeNode
-                        key={entry.path}
-                        orgId={viewedOrganizationId}
-                        entry={entry}
-                        selectedFilePath={selectedFilePath}
-                        onSelectFile={handleSelectFile}
-                        onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
-                        onStartCreateEntry={handleStartCreateEntry}
-                        onStartRename={handleStartRename}
-                        onStartDelete={handleStartDelete}
-                        expandedDirectories={expandedDirectories}
-                      />
-                    ))}
-                  </ul>
-                )}
+              <div className="border-b border-border px-4 py-3">
+                <div className="text-sm font-medium">{filesTitle}</div>
+                <div className="text-xs text-muted-foreground">
+                  {workspace.directoryPath ? workspace.directoryPath : "/"}
+                </div>
               </div>
-            </div>
-          </section>
+              <div
+                ref={filesScrollRef}
+                data-testid="org-workspaces-files-scroll"
+                className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto"
+              >
+                <div className="px-2 py-2">
+                  {workspace.entries.length === 0 ? (
+                    <div className="px-2 py-3 text-sm text-muted-foreground">
+                      {workspace.message ?? "This folder is empty."}
+                    </div>
+                  ) : (
+                    <ul className="space-y-0.5">
+                      {workspace.entries.map((entry) => (
+                        <WorkspaceTreeNode
+                          key={entry.path}
+                          orgId={viewedOrganizationId}
+                          entry={entry}
+                          selectedFilePath={selectedFilePath}
+                          onSelectFile={handleSelectFile}
+                          onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
+                          onStartCreateEntry={handleStartCreateEntry}
+                          onStartRename={handleStartRename}
+                          onStartDelete={handleStartDelete}
+                          expandedDirectories={expandedDirectories}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           <section
             data-testid="org-workspaces-editor-card"
-            className="flex min-h-[420px] min-w-0 flex-col rounded-[var(--radius-lg)] border border-border bg-card lg:min-h-0 lg:flex-1"
+            className="flex min-h-[420px] min-w-0 flex-col bg-card lg:min-h-0 lg:flex-1"
           >
-            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
-              <div>
-                <div className="text-sm font-medium">{editorTitle}</div>
-                <div className="text-xs text-muted-foreground">
-                  {selectedFilePath ?? "Select a file to edit"}
-                </div>
+            <div
+              data-testid="org-workspaces-editor-tabs"
+              className="flex h-10 shrink-0 items-stretch justify-between border-b border-border bg-[color:var(--surface-page)]"
+            >
+              <div className="scrollbar-auto-hide flex min-w-0 flex-1 overflow-x-auto">
+                {openFilePaths.length > 0 ? (
+                  openFilePaths.map((filePath) => {
+                    const active = selectedFilePath === filePath;
+                    return (
+                      <div
+                        key={filePath}
+                        className={cn(
+                          "group flex min-w-0 max-w-[240px] items-center border-r border-border",
+                          active
+                            ? "bg-card text-foreground"
+                            : "bg-[color:var(--surface-page)] text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 truncate px-3 text-left text-sm"
+                          title={filePath}
+                          onClick={() => handleSelectFile(filePath)}
+                        >
+                          {displayWorkspaceFileTabLabel(filePath)}
+                        </button>
+                        <button
+                          type="button"
+                          className="mr-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-muted-foreground opacity-70 hover:bg-[color:var(--surface-active)] hover:text-foreground group-hover:opacity-100"
+                          aria-label={`Close ${filePath}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleCloseFileTab(filePath);
+                          }}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="flex items-center px-4 text-sm text-muted-foreground">No file open</div>
+                )}
               </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="flex shrink-0 items-center gap-2 border-l border-border px-3 text-xs text-muted-foreground">
                 {selectedFilePath ? (
                   <span className="rounded-full border border-border px-2 py-0.5 font-mono">
                     {selectedFormatLabel}

@@ -143,6 +143,19 @@ beforeEach(() => {
       setItem: vi.fn(),
     },
   });
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: 500,
+  });
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn((query: string) => ({
+      matches: query.includes("767px"),
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })),
+  });
   mockState.desktopShell = null;
 });
 
