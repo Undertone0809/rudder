@@ -33,7 +33,7 @@ import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { timeAgo } from "../lib/timeAgo";
-import { formatDateTime } from "../lib/utils";
+import { cn, formatDateTime } from "../lib/utils";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
@@ -302,17 +302,17 @@ function TriggerEditor({
   }, [canAutosaveTrigger, draft, isTriggerDirty, onSave, trigger]);
 
   return (
-    <div className="space-y-3 rounded-md border border-border/70 bg-background/35 p-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2 text-sm font-medium">
+    <div className="space-y-3 overflow-hidden rounded-md border border-border/70 bg-background/35 p-3">
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
           {trigger.kind === "schedule" ? <Clock3 className="h-3.5 w-3.5" /> : trigger.kind === "webhook" ? <Webhook className="h-3.5 w-3.5" /> : <Zap className="h-3.5 w-3.5" />}
-          {triggerLabel}
+          <span className="min-w-0 truncate">{triggerLabel}</span>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
           <Badge variant="outline" className={syncClassName}>
             {syncLabel}
           </Badge>
-          <span className="text-xs text-muted-foreground">
+          <span className="min-w-0 max-w-[10rem] truncate text-xs text-muted-foreground" title={trigger.kind === "schedule" && trigger.nextRunAt ? `Next: ${formatDateTime(trigger.nextRunAt)}` : undefined}>
             {trigger.kind === "schedule" && trigger.nextRunAt
               ? `Next: ${formatDateTime(trigger.nextRunAt)}`
               : trigger.kind === "webhook"
@@ -438,6 +438,7 @@ export function AutomationDetail() {
   const [secretMessage, setSecretMessage] = useState<SecretMessage | null>(null);
   const [copiedSecretField, setCopiedSecretField] = useState<"url" | "secret" | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [newTriggerOpen, setNewTriggerOpen] = useState(false);
   const [savingTriggerIds, setSavingTriggerIds] = useState<string[]>([]);
   const [deletingTriggerIds, setDeletingTriggerIds] = useState<string[]>([]);
   const [rotatingTriggerIds, setRotatingTriggerIds] = useState<string[]>([]);
@@ -815,6 +816,7 @@ export function AutomationDetail() {
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.activity(selectedOrganizationId!, automationId!) }),
       ]);
+      setNewTriggerOpen(false);
     },
     onError: (error) => {
       pushToast({
@@ -1159,19 +1161,19 @@ export function AutomationDetail() {
         </main>
 
         <aside ref={sidebarScrollRef} className="scrollbar-auto-hide border-t border-border/70 pt-4 lg:sticky lg:top-20 lg:max-h-[calc(100vh-5.5rem)] lg:self-start lg:overflow-y-auto lg:border-t-0 lg:pt-0">
-          <div data-testid="automation-configuration-card" className="space-y-6 rounded-md border border-border/70 bg-card/55 p-4 shadow-sm">
+          <div data-testid="automation-configuration-card" className="space-y-6 rounded-md border border-border/70 bg-[#fbfaf7] p-4">
             <SidebarSection title="Configuration">
               <div className="space-y-2.5">
-                <Label className="text-xs">Agent</Label>
+                <Label className="text-xs">Assignee</Label>
                 <div data-testid="automation-detail-agent-control" className="rounded-md border border-border/80 bg-background/50">
                   <InlineEntitySelector
                     ref={assigneeSelectorRef}
                     value={editDraft.assigneeAgentId}
                     options={assigneeOptions}
-                    placeholder="Select agent"
-                    noneLabel="No agent"
-                    searchPlaceholder="Search agents..."
-                    emptyMessage="No agents found."
+                    placeholder="Select assignee"
+                    noneLabel="No assignee"
+                    searchPlaceholder="Search assignees..."
+                    emptyMessage="No assignees found."
                     className="min-h-11 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
                     onChange={(assigneeAgentId) => {
                       if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
@@ -1198,7 +1200,7 @@ export function AutomationDetail() {
                         </SidebarSelectValue>
                       ) : (
                         <SidebarSelectValue>
-                          <span className="text-muted-foreground">Select agent</span>
+                          <span className="text-muted-foreground">Select assignee</span>
                         </SidebarSelectValue>
                       )
                     }
@@ -1288,70 +1290,86 @@ export function AutomationDetail() {
             </SidebarSection>
 
             <SidebarSection title="Triggers">
-              <div
-                data-testid="automation-add-trigger-card"
-                className="space-y-3 rounded-md border border-border/70 bg-background/35 p-3"
-              >
-                <div className="space-y-2">
-                  <p className="text-sm leading-5 text-muted-foreground">
-                    Add at least one trigger so the automation has a clear way to start work.
-                  </p>
-                  <Badge variant="outline" className="text-muted-foreground">
-                    Triggers autosave after edits
-                  </Badge>
-                </div>
-                <div className="grid gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Kind</Label>
-                    <Select value={newTrigger.kind} onValueChange={(kind) => setNewTrigger((current) => ({ ...current, kind }))}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {triggerKinds.map((kind) => (
-                          <SelectItem key={kind} value={kind} disabled={kind === "webhook"}>
-                            {kind}{kind === "webhook" ? " - coming soon" : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {newTrigger.kind === "schedule" && (
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Schedule</Label>
-                      <ScheduleEditor
-                        value={newTrigger.cronExpression}
-                        onChange={(cronExpression) => setNewTrigger((current) => ({ ...current, cronExpression }))}
-                      />
-                    </div>
+              <Collapsible open={newTriggerOpen} onOpenChange={setNewTriggerOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button
+                    type="button"
+                    variant={newTriggerOpen ? "outline" : "default"}
+                    size="sm"
+                    className="w-full justify-center"
+                    data-testid="automation-add-trigger-button"
+                  >
+                    {newTriggerOpen ? "Cancel trigger" : "Add trigger"}
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent
+                  data-testid="automation-add-trigger-card"
+                  className={cn(
+                    "overflow-hidden data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-1",
+                    "pt-3",
                   )}
-                  {newTrigger.kind === "webhook" && (
-                    <>
+                >
+                  <div className="space-y-3 rounded-md border border-border/70 bg-background/35 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium">New trigger</span>
+                      <Badge variant="outline" className="shrink-0 text-muted-foreground">
+                        Autosaves after edits
+                      </Badge>
+                    </div>
+                    <div className="grid gap-3">
                       <div className="space-y-1.5">
-                        <Label className="text-xs">Signing mode</Label>
-                        <Select value={newTrigger.signingMode} onValueChange={(signingMode) => setNewTrigger((current) => ({ ...current, signingMode }))}>
+                        <Label className="text-xs">Kind</Label>
+                        <Select value={newTrigger.kind} onValueChange={(kind) => setNewTrigger((current) => ({ ...current, kind }))}>
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {signingModes.map((mode) => (
-                              <SelectItem key={mode} value={mode}>{mode}</SelectItem>
+                            {triggerKinds.map((kind) => (
+                              <SelectItem key={kind} value={kind} disabled={kind === "webhook"}>
+                                {kind}{kind === "webhook" ? " - coming soon" : ""}
+                              </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
-                        <p className="text-xs text-muted-foreground">{signingModeDescriptions[newTrigger.signingMode]}</p>
                       </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Replay window</Label>
-                        <Input value={newTrigger.replayWindowSec} onChange={(event) => setNewTrigger((current) => ({ ...current, replayWindowSec: event.target.value }))} />
-                      </div>
-                    </>
-                  )}
-                  <Button className="w-full justify-center" size="sm" onClick={() => createTrigger.mutate()} disabled={createTrigger.isPending || !canCreateTrigger}>
-                    {createTrigger.isPending ? "Adding..." : "Add trigger"}
-                  </Button>
-                </div>
-              </div>
+                      {newTrigger.kind === "schedule" && (
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Schedule</Label>
+                          <ScheduleEditor
+                            value={newTrigger.cronExpression}
+                            onChange={(cronExpression) => setNewTrigger((current) => ({ ...current, cronExpression }))}
+                          />
+                        </div>
+                      )}
+                      {newTrigger.kind === "webhook" && (
+                        <>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Signing mode</Label>
+                            <Select value={newTrigger.signingMode} onValueChange={(signingMode) => setNewTrigger((current) => ({ ...current, signingMode }))}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {signingModes.map((mode) => (
+                                  <SelectItem key={mode} value={mode}>{mode}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">{signingModeDescriptions[newTrigger.signingMode]}</p>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs">Replay window</Label>
+                            <Input value={newTrigger.replayWindowSec} onChange={(event) => setNewTrigger((current) => ({ ...current, replayWindowSec: event.target.value }))} />
+                          </div>
+                        </>
+                      )}
+                      <Button className="w-full justify-center" size="sm" onClick={() => createTrigger.mutate()} disabled={createTrigger.isPending || !canCreateTrigger}>
+                        {createTrigger.isPending ? "Adding..." : "Create trigger"}
+                      </Button>
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
 
               <div data-testid="automation-triggers-list" className="space-y-3">
                 {automation.triggers.length === 0 ? (

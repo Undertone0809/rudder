@@ -449,7 +449,7 @@ describe("Automations", () => {
 
     await act(async () => {
       Array.from(document.body.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("Select agent"))
+        .find((button) => button.textContent?.includes("Select assignee"))
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
@@ -478,7 +478,7 @@ describe("Automations", () => {
     });
     await act(async () => {
       Array.from(document.body.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("Select agent"))
+        .find((button) => button.textContent?.includes("Select assignee"))
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });

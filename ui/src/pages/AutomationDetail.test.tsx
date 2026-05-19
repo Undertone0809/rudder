@@ -398,7 +398,7 @@ describe("AutomationDetail", () => {
     });
 
     expect(container.textContent).toContain("Configuration");
-    expect(container.textContent).toContain("Agent");
+    expect(container.textContent).toContain("Assignee");
     expect(container.textContent).toContain("Run output");
     expect(container.textContent).toContain("Track as issue");
     expect(container.textContent).toContain("Schedule");
@@ -422,7 +422,8 @@ describe("AutomationDetail", () => {
     const configurationCard = container.querySelector('[data-testid="automation-configuration-card"]');
     expect(configurationCard).toBeTruthy();
     expect(configurationCard?.textContent).toContain("Triggers");
-    expect(configurationCard?.querySelector('[data-testid="automation-add-trigger-card"]')).toBeTruthy();
+    expect(configurationCard?.querySelector('[data-testid="automation-add-trigger-button"]')).toBeTruthy();
+    expect(configurationCard?.querySelector('[data-testid="automation-add-trigger-card"]')?.hasAttribute("hidden")).toBe(true);
     expect(configurationCard?.querySelector('[data-testid="automation-triggers-list"]')).toBeTruthy();
     const overviewStrip = container.querySelector('[data-testid="automation-overview-strip"]');
     expect(overviewStrip?.textContent).toContain("Active");
@@ -491,7 +492,7 @@ describe("AutomationDetail", () => {
     ]));
   });
 
-  it("renders the trigger composer guidance next to the primary add action", async () => {
+  it("opens the compact trigger composer from the primary add action", async () => {
     const container = renderPage();
 
     await act(async () => {
@@ -501,8 +502,17 @@ describe("AutomationDetail", () => {
     const addTriggerButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Add trigger"));
     expect(addTriggerButton).toBeTruthy();
     expect(addTriggerButton?.hasAttribute("disabled")).toBe(false);
-    expect(container.textContent).toContain("Add at least one trigger so the automation has a clear way to start work.");
-    expect(container.textContent).toContain("Triggers autosave after edits");
+    expect(container.querySelector('[data-testid="automation-add-trigger-card"]')?.hasAttribute("hidden")).toBe(true);
+
+    await act(async () => {
+      addTriggerButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="automation-add-trigger-card"]')?.hasAttribute("hidden")).toBe(false);
+    expect(container.textContent).toContain("New trigger");
+    expect(container.textContent).toContain("Autosaves after edits");
+    expect(container.textContent).toContain("Create trigger");
   });
 
   it("shows per-trigger sync status and confirms before deleting a trigger", async () => {

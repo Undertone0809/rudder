@@ -77,7 +77,7 @@ test.describe("Automation detail layout", () => {
     const configurationCard = page.getByTestId("automation-configuration-card");
     const agentControl = page.getByTestId("automation-detail-agent-control");
     const projectControl = page.getByTestId("automation-detail-project-control");
-    const addTriggerCard = page.getByTestId("automation-add-trigger-card");
+    const addTriggerButton = page.getByTestId("automation-add-trigger-button");
     const triggersList = page.getByTestId("automation-triggers-list");
     const statusButton = headerActions.getByRole("button", { name: "Pause automation" });
     const deleteButton = headerActions.getByRole("button", { name: "Delete automation" });
@@ -89,7 +89,8 @@ test.describe("Automation detail layout", () => {
     await expect(configurationCard).toBeVisible();
     await expect(agentControl).toBeVisible();
     await expect(projectControl).toBeVisible();
-    await expect(addTriggerCard).toBeVisible();
+    await expect(addTriggerButton).toBeVisible();
+    await expect(page.getByTestId("automation-add-trigger-card")).toBeHidden();
     await expect(triggersList).toBeVisible();
     await expect(statusButton).toBeVisible();
     await expect(deleteButton).toBeVisible();
@@ -106,7 +107,11 @@ test.describe("Automation detail layout", () => {
     await expect(page.getByText("Run status")).toBeVisible();
     await expect(configurationCard.getByText("Triggers")).toBeVisible();
     await expect(page.getByText("Details")).toHaveCount(0);
-    await expect(addTriggerCard.getByRole("button", { name: "Add trigger" })).toBeVisible();
+    await expect(addTriggerButton).toHaveText("Add trigger");
+    await addTriggerButton.click();
+    const addTriggerCard = page.getByTestId("automation-add-trigger-card");
+    await expect(addTriggerCard).toBeVisible();
+    await expect(addTriggerCard.getByRole("button", { name: "Create trigger" })).toBeVisible();
 
     const assigneeSelector = agentControl.getByRole("button", { name: /Automation Layout Agent/ });
     const projectSelector = projectControl.getByRole("button", { name: /Onboarding/ });

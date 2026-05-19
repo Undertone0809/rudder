@@ -704,10 +704,10 @@ export function Automations() {
                 ref={assigneeSelectorRef}
                 value={draft.assigneeAgentId}
                 options={assigneeOptions}
-                placeholder="Select agent"
-                noneLabel="No agent"
-                searchPlaceholder="Search agents..."
-                emptyMessage="No agents found."
+                placeholder="Select assignee"
+                noneLabel="No assignee"
+                searchPlaceholder="Search assignees..."
+                emptyMessage="No assignees found."
                 className="h-8 max-w-[220px] bg-transparent px-2 text-sm"
                 disablePortal
                 side="top"
@@ -730,7 +730,7 @@ export function Automations() {
                   ) : (
                     <>
                       <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="truncate text-muted-foreground">Select agent</span>
+                      <span className="truncate text-muted-foreground">Assignee</span>
                     </>
                   )
                 }
@@ -1000,7 +1000,7 @@ export function Automations() {
                 <tr className="text-left text-xs text-muted-foreground border-b border-border">
                   <th className="px-3 py-2 font-medium">Name</th>
                   <th className="px-3 py-2 font-medium">Project</th>
-                  <th className="px-3 py-2 font-medium">Agent</th>
+                  <th className="px-3 py-2 font-medium">Assignee</th>
                   <th className="px-3 py-2 font-medium">Last run</th>
                   <th className="px-3 py-2 font-medium">Enabled</th>
                   <th className="w-12 px-3 py-2" />
