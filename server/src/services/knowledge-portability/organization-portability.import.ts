@@ -594,7 +594,7 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
             catchUpPolicy: null,
             triggers: [],
           };
-          const createdAutomation = await automations.create(targetOrganization.id, {
+          const createAutomationInput = {
             projectId,
             goalId: null,
             parentIssueId,
@@ -615,10 +615,15 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
               automationDefinition.catchUpPolicy && AUTOMATION_CATCH_UP_POLICIES.includes(automationDefinition.catchUpPolicy as any)
                 ? automationDefinition.catchUpPolicy as typeof AUTOMATION_CATCH_UP_POLICIES[number]
                 : "skip_missed",
-            outputMode: "track_issue",
-            chatConversationId: null,
-            allowAssigneeChatMismatch: false,
-          }, {
+          } as Parameters<typeof automations.create>[1] & {
+            outputMode?: "track_issue";
+            chatConversationId?: null;
+            allowAssigneeChatMismatch?: false;
+          };
+          createAutomationInput.outputMode = "track_issue";
+          createAutomationInput.chatConversationId = null;
+          createAutomationInput.allowAssigneeChatMismatch = false;
+          const createdAutomation = await automations.create(targetOrganization.id, createAutomationInput, {
             agentId: null,
             userId: actorUserId ?? null,
           });
