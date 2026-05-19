@@ -483,7 +483,7 @@ describe("heartbeat run concurrency", () => {
     await disableExistingTimerAgents();
     const createdAt = new Date("2026-04-27T04:00:00.000Z");
     const tickAt = new Date("2026-04-27T04:05:00.000Z");
-    const { agentId } = await seedAgentFixture({
+    const { orgId, agentId } = await seedAgentFixture({
       createdAt,
       runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
     });
@@ -492,7 +492,10 @@ describe("heartbeat run concurrency", () => {
     const result = await heartbeat.tickTimers(tickAt);
 
     expect(result).toEqual({ checked: 1, enqueued: 0, skipped: 1 });
-    expect(mockBudgetService.getInvocationBlock).not.toHaveBeenCalled();
+    expect(mockBudgetService.getInvocationBlock).toHaveBeenCalledWith(orgId, agentId, {
+      issueId: null,
+      projectId: null,
+    });
     expect(mockRuntimeAdapter.calls).toHaveLength(0);
     expect(await listRunStatuses(agentId)).toHaveLength(0);
 

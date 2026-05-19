@@ -316,7 +316,12 @@ describe("heartbeat managed workspace preflight", () => {
     });
 
     expect(run?.id).toBeTruthy();
-    await waitForCondition(async () => (await getRun(run!.id))?.status === "succeeded");
+    await waitForCondition(async () => {
+      const succeededRun = await getRun(run!.id);
+      if (succeededRun?.status !== "succeeded") return false;
+      const events = await getRunEvents(run!.id);
+      return events.some((event) => event.eventType === "lifecycle" && event.message === "run succeeded");
+    });
 
     expect(mockRuntimeAdapter.execute).toHaveBeenCalledTimes(1);
     expect(mockPreflight.calls).toHaveLength(1);
