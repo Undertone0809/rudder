@@ -68,11 +68,27 @@ type FloatingBounds = {
   bottom: number;
 };
 
+type FloatingBox = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+type ChecklistPosition = {
+  left?: number;
+  right?: number;
+  top: number;
+};
+
 const TOUR_MARGIN = 16;
 const DESKTOP_MAC_MIN_LEFT = 96;
 const DESKTOP_MAC_MIN_TOP = 48;
 const CHECKLIST_WIDTH = 220;
+const CHECKLIST_ESTIMATED_HEIGHT = 214;
 const COMPACT_RAIL_SPOTLIGHT_WIDTH = 52;
+const CALLOUT_ESTIMATED_HEIGHT = 232;
+const FLOATING_GAP = 16;
 
 function isMacDesktopShellTour(): boolean {
   if (typeof document === "undefined") return false;
@@ -161,27 +177,40 @@ function resolveTargetRect(selector: string): TargetRect {
   };
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function floatingBoxesOverlap(a: FloatingBox, b: FloatingBox, gap = 8) {
+  return (
+    a.left < b.left + b.width + gap &&
+    a.left + a.width + gap > b.left &&
+    a.top < b.top + b.height + gap &&
+    a.top + a.height + gap > b.top
+  );
+}
+
 function getCalloutPosition(rect: TargetRect) {
   const bounds = getFloatingBounds();
   const width = Math.min(360, Math.max(292, window.innerWidth - 32));
-  const gap = 16;
   const maxLeft = Math.max(bounds.left, window.innerWidth - width - bounds.right);
-  const fitsRight = rect.left + rect.width + gap + width <= window.innerWidth - bounds.right;
-  const fitsLeft = rect.left - gap - width >= bounds.left;
+  const fitsRight = rect.left + rect.width + FLOATING_GAP + width <= window.innerWidth - bounds.right;
+  const fitsLeft = rect.left - FLOATING_GAP - width >= bounds.left;
   const left = fitsRight
-    ? rect.left + rect.width + gap
+    ? rect.left + rect.width + FLOATING_GAP
     : fitsLeft
-      ? rect.left - gap - width
+      ? rect.left - FLOATING_GAP - width
       : Math.max(bounds.left, Math.min(maxLeft, rect.left));
   const top = Math.max(bounds.top, Math.min(window.innerHeight - 250 - bounds.bottom, rect.top));
   return {
     width,
     left,
     top,
+    height: CALLOUT_ESTIMATED_HEIGHT,
   };
 }
 
-function getChecklistPosition() {
+function getChecklistPosition(callout: FloatingBox): ChecklistPosition {
   const bounds = getFloatingBounds();
   if (isMacDesktopShellTour()) {
     return {
@@ -189,9 +218,41 @@ function getChecklistPosition() {
       right: bounds.right,
     };
   }
+
+  const maxLeft = Math.max(bounds.left, window.innerWidth - CHECKLIST_WIDTH - bounds.right);
+  const maxTop = Math.max(bounds.top, window.innerHeight - CHECKLIST_ESTIMATED_HEIGHT - bounds.bottom);
+  const top = Math.max(bounds.top, 20);
+  const candidates: FloatingBox[] = [
+    {
+      left: maxLeft,
+      top,
+      width: CHECKLIST_WIDTH,
+      height: CHECKLIST_ESTIMATED_HEIGHT,
+    },
+    {
+      left: Math.max(bounds.left, 20),
+      top,
+      width: CHECKLIST_WIDTH,
+      height: CHECKLIST_ESTIMATED_HEIGHT,
+    },
+    {
+      left: clamp(callout.left, bounds.left, maxLeft),
+      top: clamp(callout.top + callout.height + FLOATING_GAP, bounds.top, maxTop),
+      width: CHECKLIST_WIDTH,
+      height: CHECKLIST_ESTIMATED_HEIGHT,
+    },
+    {
+      left: clamp(callout.left, bounds.left, maxLeft),
+      top: clamp(callout.top - CHECKLIST_ESTIMATED_HEIGHT - FLOATING_GAP, bounds.top, maxTop),
+      width: CHECKLIST_WIDTH,
+      height: CHECKLIST_ESTIMATED_HEIGHT,
+    },
+  ];
+  const candidate = candidates.find((box) => !floatingBoxesOverlap(box, callout)) ?? candidates[0]!;
+
   return {
-    left: 20,
-    top: 20,
+    left: Math.round(candidate.left),
+    top: Math.round(candidate.top),
   };
 }
 
@@ -235,14 +296,17 @@ export function ProductTourOverlay() {
     () => (targetRect ? getCalloutPosition(targetRect) : null),
     [targetRect],
   );
-  const checklistPosition = useMemo(() => getChecklistPosition(), [targetRect]);
+  const checklistPosition = useMemo(
+    () => (calloutPosition ? getChecklistPosition(calloutPosition) : null),
+    [calloutPosition],
+  );
 
   const dismiss = useCallback(() => {
     markProductTourComplete();
     closeProductTour();
   }, [closeProductTour]);
 
-  if (!productTourOpen || !targetRect || !calloutPosition) {
+  if (!productTourOpen || !targetRect || !calloutPosition || !checklistPosition) {
     return null;
   }
 
@@ -263,6 +327,7 @@ export function ProductTourOverlay() {
     >
       <div
         aria-hidden="true"
+        data-testid="product-tour-spotlight"
         className="pointer-events-none fixed rounded-[10px] border-2 border-[color:color-mix(in_oklab,var(--accent-base)_72%,white)] shadow-[0_0_0_9999px_rgb(18_17_15/0.68),0_0_0_5px_color-mix(in_oklab,var(--accent-base)_18%,transparent)]"
         style={{
           left: targetRect.left,
@@ -273,6 +338,7 @@ export function ProductTourOverlay() {
       />
 
       <aside
+        data-testid="product-tour-checklist"
         className="fixed hidden rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--border-strong)_72%,transparent)] bg-popover/98 p-3 text-popover-foreground shadow-[var(--shadow-lg)] backdrop-blur md:block"
         style={{
           ...checklistPosition,
@@ -302,6 +368,7 @@ export function ProductTourOverlay() {
       </aside>
 
       <section
+        data-testid="product-tour-callout"
         className="fixed rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--border-strong)_74%,transparent)] bg-popover/98 p-3.5 text-popover-foreground shadow-[var(--shadow-lg)] backdrop-blur"
         style={{
           left: calloutPosition.left,

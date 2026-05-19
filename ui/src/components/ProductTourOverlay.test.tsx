@@ -182,6 +182,22 @@ describe("ProductTourOverlay", () => {
     expect(callout?.style.top).toBe("48px");
   });
 
+  it("keeps the web checklist from covering the first tour callout", async () => {
+    setViewport(1920, 1257);
+    const container = renderOverlay({ left: 0, top: 76, width: 88, height: 1170, right: 88, bottom: 1246 });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const checklist = container.querySelector("[data-testid='product-tour-checklist']") as HTMLElement | null;
+    const callout = container.querySelector("[data-testid='product-tour-callout']") as HTMLElement | null;
+
+    expect(checklist?.style.left).toBe("1684px");
+    expect(checklist?.style.top).toBe("20px");
+    expect(callout?.style.left).toBe("124px");
+  });
+
   it("uses a narrower spotlight for compact rail navigation targets", async () => {
     setViewport(1440, 900);
     renderOverlay({ left: 23, top: 300, width: 66, height: 56, right: 89, bottom: 356 }, { compactRailSpotlight: true });
