@@ -18,7 +18,7 @@ import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
-import { AgentMenuLabel, AssigneeLabel } from "./AssigneeLabel";
+import { AgentMenuLabel, AssigneeLabel, AssigneeSelfActionLabel } from "./AssigneeLabel";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
 import { IssueLabelChip } from "./IssueLabelChip";
@@ -401,7 +401,7 @@ export function IssueProperties({
         {currentUserId && (
           <button
             className={cn(
-              "flex min-w-0 items-center gap-2 w-full px-2 py-1.5 text-left text-xs rounded hover:bg-accent/50",
+              "flex min-w-0 items-center gap-2 w-full px-2 py-2 text-left text-xs rounded hover:bg-accent/50",
               issue.assigneeUserId === currentUserId && "bg-accent",
             )}
             onClick={() => {
@@ -409,7 +409,7 @@ export function IssueProperties({
               setAssigneeOpen(false);
             }}
           >
-            <AssigneeLabel kind="user" label="Assign to me" />
+            <AssigneeSelfActionLabel />
           </button>
         )}
         {issue.createdByUserId && issue.createdByUserId !== currentUserId && (
@@ -492,7 +492,7 @@ export function IssueProperties({
         {currentUserId && (
           <button
             className={cn(
-              "flex min-w-0 items-center gap-2 w-full px-2 py-1.5 text-left text-xs rounded hover:bg-accent/50",
+              "flex min-w-0 items-center gap-2 w-full px-2 py-2 text-left text-xs rounded hover:bg-accent/50",
               issue.reviewerUserId === currentUserId && "bg-accent",
             )}
             onClick={() => {
@@ -500,7 +500,7 @@ export function IssueProperties({
               setReviewerOpen(false);
             }}
           >
-            <AssigneeLabel kind="user" label="Me" />
+            <AssigneeSelfActionLabel />
           </button>
         )}
         {sortedAgents

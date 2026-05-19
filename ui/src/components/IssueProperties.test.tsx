@@ -213,6 +213,37 @@ describe("IssueProperties", () => {
     expect(scrollRegion?.classList.contains("scrollbar-auto-hide")).toBe(true);
   });
 
+  it("renders reviewer self assignment as an explicit action row", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(<IssueProperties issue={baseIssue} onUpdate={vi.fn()} inline />);
+    });
+
+    const reviewerTrigger = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("No reviewer"));
+
+    act(() => {
+      reviewerTrigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const selfAction = container.querySelector('[data-slot="assignee-self-action-label"]');
+    const reviewerScrollRegion = container.querySelector('[data-testid="issue-properties-reviewer-scroll"]');
+
+    expect(selfAction?.textContent).toBe("Assign to me");
+    expect(reviewerScrollRegion?.textContent).toContain("Assign to me");
+    expect(reviewerScrollRegion?.textContent).not.toContain("Me");
+  });
+
   it("renders parent and sub-issues in the properties hierarchy section", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

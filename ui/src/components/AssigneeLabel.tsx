@@ -106,3 +106,14 @@ export function AgentMenuLabel({ agent }: { agent: Pick<Agent, "name" | "role" |
     </span>
   );
 }
+
+export function AssigneeSelfActionLabel({ label = "Assign to me" }: { label?: string }) {
+  return (
+    <span data-slot="assignee-self-action-label" className="flex min-w-0 flex-1 items-center gap-2">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
+        <User className="h-3.5 w-3.5" />
+      </span>
+      <span className="truncate text-xs font-medium leading-4 text-foreground">{label}</span>
+    </span>
+  );
+}
