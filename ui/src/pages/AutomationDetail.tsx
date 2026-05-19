@@ -1089,19 +1089,19 @@ export function AutomationDetail() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="w-full justify-center rounded-full bg-background/55 shadow-none"
+                    className="automation-trigger-menu-trigger group w-full justify-center rounded-full bg-background/55 shadow-none"
                     data-testid="automation-add-trigger-button"
                   >
                     Add trigger
-                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground transition-transform duration-150 group-data-[state=open]:rotate-180" />
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
-	                  data-testid="automation-add-trigger-card"
-	                  align="end"
-	                  side="left"
-	                  sideOffset={8}
-	                  className="w-[min(320px,calc(100vw-2rem))] space-y-3 rounded-xl border-border/70 bg-popover/95 p-3 shadow-lg backdrop-blur"
+                  data-testid="automation-add-trigger-card"
+                  align="end"
+                  side="left"
+                  sideOffset={8}
+                  className="automation-trigger-menu-content glass-popover w-[min(320px,calc(100vw-2rem))] space-y-3 rounded-xl p-3 text-foreground"
                 >
                   <div className="px-1 text-sm font-medium text-muted-foreground">Schedule</div>
                   <ScheduleEditor

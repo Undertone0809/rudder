@@ -61,7 +61,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-[0.97] data-[state=open]:zoom-in-[0.97] data-[state=closed]:slide-out-to-top-[1%] data-[state=open]:slide-in-from-top-[1%] fixed top-[max(0.75rem,env(safe-area-inset-top))] md:top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-1.5rem)] translate-x-[-50%] translate-y-0 gap-4 rounded-lg border bg-card p-6 shadow-[0_32px_90px_-46px_rgb(20_20_20/0.34)] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] outline-none md:translate-y-[-50%] sm:max-w-lg dark:shadow-[0_36px_96px_-48px_rgb(0_0_0/0.58)]",
+        "glass-modal data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-[0.97] data-[state=open]:zoom-in-[0.97] data-[state=closed]:slide-out-to-top-[1%] data-[state=open]:slide-in-from-top-[1%] fixed top-[max(0.75rem,env(safe-area-inset-top))] md:top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-1.5rem)] translate-x-[-50%] translate-y-0 gap-4 rounded-lg border bg-card p-6 shadow-[0_32px_90px_-46px_rgb(20_20_20/0.34)] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] outline-none md:translate-y-[-50%] sm:max-w-lg dark:shadow-[0_36px_96px_-48px_rgb(0_0_0/0.58)]",
           className
         )}
         {...props}
