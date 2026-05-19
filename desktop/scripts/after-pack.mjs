@@ -24,7 +24,8 @@ async function rewriteInternalPackageManifest(packageDir) {
   };
 
   if (manifest.publishConfig.exports) {
-    nextManifest.exports = manifest.publishConfig.exports;
+    nextManifest.exports = JSON.parse(JSON.stringify(manifest.publishConfig.exports));
+    addDefaultExportCondition(nextManifest.exports);
   }
   if (manifest.publishConfig.main) {
     nextManifest.main = manifest.publishConfig.main;
@@ -34,6 +35,21 @@ async function rewriteInternalPackageManifest(packageDir) {
   }
 
   await fs.writeFile(`${manifestPath}`, `${JSON.stringify(nextManifest, null, 2)}\n`, "utf8");
+}
+
+function addDefaultExportCondition(exportsObj) {
+  if (typeof exportsObj !== "object" || exportsObj === null || Array.isArray(exportsObj)) {
+    return;
+  }
+  for (const key of Object.keys(exportsObj)) {
+    const entry = exportsObj[key];
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      if (entry.import && !entry.default) {
+        entry.default = entry.import;
+      }
+      addDefaultExportCondition(entry);
+    }
+  }
 }
 
 async function listTopLevelPackages(nodeModulesDir) {
@@ -126,6 +142,15 @@ async function copyTreePreservingSymlinks(sourcePath, destinationPath) {
   if (stats.isSymbolicLink()) {
     const target = await fs.readlink(sourcePath);
     await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+
+    // Windows symlink creation requires developer mode or admin privileges.
+    // Dereference symlinks on Windows to avoid permission-related packaging failures.
+    if (process.platform === "win32") {
+      const resolvedTarget = path.resolve(path.dirname(sourcePath), target);
+      await copyTreePreservingSymlinks(resolvedTarget, destinationPath);
+      return;
+    }
+
     await fs.symlink(target, destinationPath);
     return;
   }
