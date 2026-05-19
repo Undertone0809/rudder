@@ -138,6 +138,8 @@ type CaretTarget =
   | { kind: "after"; node: Node }
   | { kind: "inside"; node: Node; offset: number };
 
+const INLINE_CARET_BOUNDARY = "\u200B";
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -149,7 +151,9 @@ function isSafeMarkdownLinkUrl(url: string): boolean {
 }
 
 function normalizePlainTextComposerMarkdown(value: string) {
-  return value.replace(/\\([\\`*_[\]{}()#+\-.!|>])/g, "$1");
+  return value
+    .replaceAll(INLINE_CARET_BOUNDARY, "")
+    .replace(/\\([\\`*_[\]{}()#+\-.!|>])/g, "$1");
 }
 
 function findCanonicalReferenceCandidates(markdown: string) {
@@ -245,7 +249,9 @@ function plainTextMarkdownImportPlugin(getMarkdown: () => string): RealmPlugin {
 
 function canonicalMarkdownFromFragment(fragment: DocumentFragment) {
   const read = (node: Node): string => {
-    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+    if (node.nodeType === Node.TEXT_NODE) {
+      return (node.textContent ?? "").replaceAll(INLINE_CARET_BOUNDARY, "");
+    }
     if (node instanceof HTMLBRElement) return "\n";
     if (node instanceof HTMLElement) {
       const token = readAtomicInlineTokenElement(node);
@@ -338,14 +344,19 @@ function findFirstTextNodeAfterNode(root: Node, node: Node): Text | null {
   return null;
 }
 
-function placeCaretAfterAtomicInlineToken(editable: HTMLElement, token: HTMLElement) {
+function placeCaretAfterAtomicInlineToken(
+  editable: HTMLElement,
+  token: HTMLElement,
+  options: { createBoundaryText?: boolean } = {},
+) {
+  const createBoundaryText = options.createBoundaryText ?? true;
   editable.focus();
 
   const selection = window.getSelection();
   if (!selection) return false;
 
   let boundaryText = findFirstTextNodeAfterNode(editable, token);
-  if (!boundaryText && token.parentNode) {
+  if (!boundaryText && createBoundaryText && token.parentNode) {
     boundaryText = document.createTextNode(" ");
     token.parentNode.insertBefore(boundaryText, token.nextSibling);
   }
@@ -353,7 +364,7 @@ function placeCaretAfterAtomicInlineToken(editable: HTMLElement, token: HTMLElem
   const range = document.createRange();
   if (boundaryText) {
     const text = boundaryText.textContent ?? "";
-    const offset = text.length > 0 && /^[\s\u00A0]/u.test(text) ? 1 : 0;
+    const offset = text.length > 0 && /^[\s\u00A0\u200B]/u.test(text) ? 1 : 0;
     range.setStart(boundaryText, offset);
   } else {
     range.setStartAfter(token);
@@ -364,7 +375,11 @@ function placeCaretAfterAtomicInlineToken(editable: HTMLElement, token: HTMLElem
   return true;
 }
 
-function placeCaretAtVisibleTextOffset(editable: HTMLElement, offset: number) {
+function placeCaretAtVisibleTextOffset(
+  editable: HTMLElement,
+  offset: number,
+  options: { createBoundaryText?: boolean } = {},
+) {
   editable.focus();
 
   const selection = window.getSelection();
@@ -406,7 +421,7 @@ function placeCaretAtVisibleTextOffset(editable: HTMLElement, offset: number) {
 
   const range = document.createRange();
   if (lastAtomicToken && lastTextNode && lastAtomicToken.contains(lastTextNode)) {
-    if (placeCaretAfterAtomicInlineToken(editable, lastAtomicToken)) return;
+    if (placeCaretAfterAtomicInlineToken(editable, lastAtomicToken, options)) return;
     range.setStartAfter(lastAtomicToken);
   } else if (lastTextNode) {
     range.setStart(lastTextNode, lastTextNode.textContent?.length ?? 0);
@@ -464,6 +479,13 @@ function selectLexicalTextOffset(offset: number) {
   selection.anchor.set(position.node.getKey(), position.offset, "text");
   selection.focus.set(position.node.getKey(), position.offset, "text");
   $setSelection(selection);
+}
+
+function focusLexicalTextOffset(editor: LexicalEditor, offset: number) {
+  editor.update(() => {
+    selectLexicalTextOffset(offset);
+  }, { discrete: true });
+  editor.focus();
 }
 
 function closestAtomicInlineToken(target: EventTarget | null): HTMLElement | null {
@@ -938,9 +960,9 @@ function replaceMentionInLexicalEditor(
     const mentionNode = token.isSkill
       ? $createSkillTokenNode(token.label, token.href)
       : $createMentionTokenNode(token.label, token.href);
-    const trailingSpace = $createTextNode(" ");
-    selection.insertNodes([mentionNode, trailingSpace]);
-    trailingSpace.selectEnd();
+    const caretBoundary = $createTextNode(INLINE_CARET_BOUNDARY);
+    selection.insertNodes([mentionNode, caretBoundary]);
+    caretBoundary.selectEnd();
     replaced = true;
   }, { discrete: true });
 
@@ -1140,9 +1162,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     requestAnimationFrame(() => {
       const editable = containerRef.current?.querySelector('[contenteditable="true"]');
       if (!(editable instanceof HTMLElement)) return;
-      ref.current?.focus(() => {
-        selectLexicalTextOffset(pendingMentionInput.visibleOffset);
-      }, { defaultSelection: "rootEnd", preventScroll: true });
+      const lexicalEditor = lexicalEditorRef.current;
+      if (lexicalEditor) {
+        focusLexicalTextOffset(lexicalEditor, pendingMentionInput.visibleOffset);
+      } else {
+        ref.current?.focus(() => {
+          selectLexicalTextOffset(pendingMentionInput.visibleOffset);
+        }, { defaultSelection: "rootEnd", preventScroll: true });
+      }
       placeCaretAtVisibleTextOffset(editable, pendingMentionInput.visibleOffset);
     });
     return true;
@@ -1462,6 +1489,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       const replacement = mentionMarkdown(option);
       const activeMarkdownIndex = findActiveMentionIndex(current, state, editableElement);
       const next = applyMention(current, state, option, editableElement);
+      const editorNext = plainText && activeMarkdownIndex !== -1
+        ? next.slice(0, activeMarkdownIndex + replacement.length)
+          + INLINE_CARET_BOUNDARY
+          + next.slice(activeMarkdownIndex + replacement.length)
+        : next;
+      const fallbackCaretOffset = visibleMentionStart !== null
+        ? visibleMentionStart + mentionVisibleLabel(option).length + 1
+        : null;
       let didReplaceInLexical = false;
       if (next !== current) {
         latestValueRef.current = next;
@@ -1477,9 +1512,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           ? replaceMentionInLexicalEditor(lexicalEditor, state, option, editableElement)
           : false);
         if (!didReplaceInLexical) {
-          ref.current?.setMarkdown(next);
+          ref.current?.setMarkdown(editorNext);
         }
         onChange(next);
+        if (didReplaceInLexical && editorNext !== next) {
+          ref.current?.setMarkdown(editorNext);
+        }
       }
 
       requestAnimationFrame(() => {
@@ -1489,11 +1527,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           decorateInlineTokens();
           editable.focus();
 
-          const matchingTargets = option.kind === "skill"
-            ? Array.from(editable.querySelectorAll("[data-skill-token='true']"))
+          const findMatchingTargets = (editableRoot: HTMLElement) => option.kind === "skill"
+            ? Array.from(editableRoot.querySelectorAll("[data-skill-token='true']"))
               .filter((node): node is HTMLElement => node instanceof HTMLElement)
               .filter((node) => node.textContent?.trim() === (option.skillRefLabel ?? option.name))
             : (() => {
+                const visibleLabel = mentionVisibleLabel(option);
                 const mentionHref = option.kind === "project" && option.projectId
                   ? buildProjectMentionHref(option.projectId, option.projectColor ?? null)
                   : option.kind === "issue" && option.issueId
@@ -1502,15 +1541,16 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                         option.agentId ?? option.id.replace(/^agent:/, ""),
                         option.agentIcon ?? null,
                       );
-                return Array.from(editable.querySelectorAll("a, [data-mention-href]"))
+                return Array.from(editableRoot.querySelectorAll("a, [data-mention-href]"))
                   .filter((node): node is HTMLElement => node instanceof HTMLElement)
                   .filter((link) => {
                     const href = link.dataset.mentionHref ?? link.getAttribute("href") ?? "";
-                    return href === mentionHref && stripMentionChipLabelPrefix(link.textContent ?? "") === option.name;
+                    return href === mentionHref && stripMentionChipLabelPrefix(link.textContent ?? "") === visibleLabel;
                   });
               })();
+          const matchingTargets = findMatchingTargets(editable);
           const containerRect = containerRef.current?.getBoundingClientRect();
-          const target = matchingTargets.sort((a, b) => {
+          const sortByMentionAnchorDistance = (targets: HTMLElement[]) => targets.sort((a, b) => {
             const rectA = a.getBoundingClientRect();
             const rectB = b.getBoundingClientRect();
             const leftA = containerRect ? rectA.left - containerRect.left : rectA.left;
@@ -1520,20 +1560,29 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
             const distA = Math.hypot(leftA - state.left, topA - state.top);
             const distB = Math.hypot(leftB - state.left, topB - state.top);
             return distA - distB;
-          })[0] ?? null;
-          if (!target) return;
+          });
+          const target = sortByMentionAnchorDistance(matchingTargets)[0] ?? null;
 
-          const caretOffset = getVisibleTextOffsetBeforeNode(editable, target)
-            + mentionVisibleLabel(option).length
-            + 1;
+          const caretOffset = target
+            ? getVisibleTextOffsetBeforeNode(editable, target) + mentionVisibleLabel(option).length + 1
+            : fallbackCaretOffset;
+          if (caretOffset === null) return;
           const restoreFallbackCaretAfterMention = () => {
             const currentEditable = containerRef.current?.querySelector('[contenteditable="true"]');
-            if (!(currentEditable instanceof HTMLElement) || !currentEditable.contains(target)) return;
-            ref.current?.focus(() => {
-              selectLexicalTextOffset(caretOffset);
-            }, { defaultSelection: "rootEnd", preventScroll: true });
-            if (closestAtomicInlineToken(target)) {
-              placeCaretAfterAtomicInlineToken(currentEditable, target);
+            if (!(currentEditable instanceof HTMLElement)) return;
+            const lexicalEditor = lexicalEditorRef.current;
+            if (lexicalEditor) {
+              focusLexicalTextOffset(lexicalEditor, caretOffset);
+            } else {
+              ref.current?.focus(() => {
+                selectLexicalTextOffset(caretOffset);
+              }, { defaultSelection: "rootEnd", preventScroll: true });
+            }
+            const currentTarget = target && currentEditable.contains(target)
+              ? target
+              : sortByMentionAnchorDistance(findMatchingTargets(currentEditable))[0] ?? null;
+            if (currentTarget && closestAtomicInlineToken(currentTarget)) {
+              placeCaretAfterAtomicInlineToken(currentEditable, currentTarget);
               return;
             }
             placeCaretAtVisibleTextOffset(currentEditable, caretOffset);
@@ -1771,7 +1820,15 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           const normalizedNext = plainText ? normalizePlainTextComposerMarkdown(next) : next;
           latestValueRef.current = normalizedNext;
           onChange(normalizedNext);
-          if (plainText && normalizedNext !== next && hasCanonicalRudderReference(normalizedNext)) {
+          const onlyRemovedCaretBoundary = plainText
+            && next.includes(INLINE_CARET_BOUNDARY)
+            && normalizedNext === next.replaceAll(INLINE_CARET_BOUNDARY, "");
+          if (
+            plainText
+            && normalizedNext !== next
+            && !onlyRemovedCaretBoundary
+            && hasCanonicalRudderReference(normalizedNext)
+          ) {
             requestAnimationFrame(() => {
               ref.current?.setMarkdown(normalizedNext);
             });
