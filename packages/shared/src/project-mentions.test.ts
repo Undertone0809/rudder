@@ -3,14 +3,17 @@ import {
   buildAgentMentionHref,
   buildIssueMentionHref,
   buildLibraryDocMentionHref,
+  buildLibraryFileMentionHref,
   buildProjectMentionHref,
   extractAgentMentionIds,
   extractIssueMentionIds,
   extractLibraryDocMentionIds,
+  extractLibraryFileMentionPaths,
   extractProjectMentionIds,
   parseAgentMentionHref,
   parseIssueMentionHref,
   parseLibraryDocMentionHref,
+  parseLibraryFileMentionHref,
   parseProjectMentionHref,
 } from "./project-mentions.js";
 import { PROJECT_COLORS } from "./constants.js";
@@ -61,6 +64,15 @@ describe("project-mentions", () => {
     expect(extractLibraryDocMentionIds(`[@Product principles](${href})`)).toEqual(["doc-123"]);
   });
 
+  it("round-trips library file mentions with path metadata", () => {
+    const href = buildLibraryFileMentionHref("docs/product-brief.md", "Product brief");
+    expect(parseLibraryFileMentionHref(href)).toEqual({
+      filePath: "docs/product-brief.md",
+      title: "Product brief",
+    });
+    expect(extractLibraryFileMentionPaths(`[@Product brief](${href})`)).toEqual(["docs/product-brief.md"]);
+  });
+
   it("ignores mention-looking links inside markdown code", () => {
     expect(extractProjectMentionIds("`[@Project](project://id)` [@Real](project://project-123)"))
       .toEqual(["project-123"]);
@@ -70,5 +82,8 @@ describe("project-mentions", () => {
       .toEqual(["issue-123"]);
     expect(extractLibraryDocMentionIds("`[@Doc](library-doc://doc-1)` [@Real](library-doc://doc-2)"))
       .toEqual(["doc-2"]);
+    expect(extractLibraryFileMentionPaths(
+      "`[@Doc](library-file://file?p=docs%2Fignored.md)` [@Real](library-file://file?p=docs%2Freal.md)",
+    )).toEqual(["docs/real.md"]);
   });
 });

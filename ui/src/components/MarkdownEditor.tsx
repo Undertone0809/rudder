@@ -33,8 +33,8 @@ import {
   addImportVisitor$,
   createRootEditorSubscription$,
 } from "@mdxeditor/editor";
-import { Boxes } from "lucide-react";
-import { buildAgentMentionHref, buildIssueMentionHref, buildLibraryDocMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
+import { Boxes, FileText } from "lucide-react";
+import { buildAgentMentionHref, buildIssueMentionHref, buildLibraryDocMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
@@ -82,7 +82,7 @@ import { cn } from "../lib/utils";
 export interface MentionOption {
   id: string;
   name: string;
-  kind?: "agent" | "project" | "issue" | "library_doc" | "skill";
+  kind?: "agent" | "project" | "issue" | "library_doc" | "library_file" | "skill";
   searchText?: string;
   agentId?: string;
   agentIcon?: string | null;
@@ -101,6 +101,7 @@ export interface MentionOption {
   libraryDocumentTitle?: string | null;
   libraryDocumentUpdatedAt?: Date | string | null;
   libraryDocumentPath?: string | null;
+  libraryFilePath?: string | null;
   skillRefLabel?: string | null;
   skillMarkdownTarget?: string | null;
   skillDisplayName?: string | null;
@@ -123,6 +124,7 @@ interface MarkdownEditorProps {
   bordered?: boolean;
   /** List of mentionable entities. Enables @-mention autocomplete. */
   mentions?: MentionOption[];
+  onMentionQueryChange?: (query: string | null) => void;
   /** Optional surface used to align the mention menu for larger composer UIs. */
   mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
   mentionMenuPlacement?: "caret" | "container";
@@ -817,6 +819,13 @@ function mentionTokenDetails(option: MentionOption): { href: string; isSkill: bo
       label: option.name,
     };
   }
+  if (option.kind === "library_file" && option.libraryFilePath) {
+    return {
+      href: buildLibraryFileMentionHref(option.libraryFilePath, option.name),
+      isSkill: false,
+      label: option.name,
+    };
+  }
   if (option.kind === "project" && option.projectId) {
     return {
       href: buildProjectMentionHref(option.projectId, option.projectColor ?? null),
@@ -981,6 +990,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
   imageUploadHandler,
   bordered = true,
   mentions,
+  onMentionQueryChange,
   mentionMenuAnchorRef,
   mentionMenuPlacement = "caret",
   onSubmit,
@@ -1033,6 +1043,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       if (mention.kind === "library_doc" && mention.libraryDocumentId) {
         map.set(`library_doc:${mention.libraryDocumentId}`, mention);
       }
+      if (mention.kind === "library_file" && mention.libraryFilePath) {
+        map.set(`library_file:${mention.libraryFilePath}`, mention);
+      }
     }
     return map;
   }, [mentions]);
@@ -1050,6 +1063,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       })
       .slice(0, 8);
   }, [mentionState?.query, mentionState?.trigger, mentions]);
+  useEffect(() => {
+    onMentionQueryChange?.(mentionState?.trigger === "@" ? mentionState.query : null);
+  }, [mentionState?.query, mentionState?.trigger, onMentionQueryChange]);
   const mentionMenuPosition = useMemo(
     () => {
       if (!mentionState) return null;
@@ -1066,7 +1082,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       if (kind === "skill") return "Skills";
       if (kind === "project") return "Projects";
       if (kind === "issue") return "Issues";
-      if (kind === "library_doc") return "Docs";
+      if (kind === "library_doc" || kind === "library_file") return "Docs";
       return "Agents";
     };
 
@@ -1356,7 +1372,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           continue;
         }
 
-        if (parsed.kind === "library_doc") {
+        if (parsed.kind === "library_doc" || parsed.kind === "library_file") {
           applyMentionChipDecoration(link, parsed);
           continue;
         }
@@ -1520,6 +1536,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                     ? buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null)
                     : option.kind === "library_doc" && option.libraryDocumentId
                       ? buildLibraryDocMentionHref(option.libraryDocumentId, option.libraryDocumentTitle ?? option.name)
+                      : option.kind === "library_file" && option.libraryFilePath
+                        ? buildLibraryFileMentionHref(option.libraryFilePath, option.name)
                       : buildAgentMentionHref(
                           option.agentId ?? option.id.replace(/^agent:/, ""),
                           option.agentIcon ?? null,
@@ -1898,6 +1916,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                                 <span className="absolute inset-0 m-auto h-2 w-2 rounded-full bg-current" />
                               ) : null}
                             </span>
+                          ) : option.kind === "library_file" ? (
+                            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                           ) : option.kind === "library_doc" ? (
                             <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
                           ) : (
@@ -1947,9 +1967,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                                   </span>
                                 </div>
                               ) : null}
-                              {option.kind === "library_doc" ? (
+                              {option.kind === "library_doc" || option.kind === "library_file" ? (
                                 <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                                  {option.libraryDocumentPath ?? "Library doc"}
+                                  {option.libraryFilePath ?? option.libraryDocumentPath ?? "Library doc"}
                                 </div>
                               ) : null}
                             </div>
@@ -1964,7 +1984,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                               Project
                             </span>
                           )}
-                          {option.kind === "library_doc" && option.libraryDocumentId && (
+                          {((option.kind === "library_doc" && option.libraryDocumentId) || (option.kind === "library_file" && option.libraryFilePath)) && (
                             <span className="ml-auto text-[11px] text-muted-foreground">
                               Doc
                             </span>

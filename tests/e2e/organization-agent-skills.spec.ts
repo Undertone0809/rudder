@@ -369,15 +369,14 @@ test.describe("Organization and agent skills", () => {
     const workspaceMain = page.locator("#main-content");
     await expect(workspaceMain.getByText("agents/", { exact: false })).toBeVisible();
     const workspaceEditor = workspaceMain.locator("textarea");
-    await workspaceEditor.fill(
-      "---\nname: agent-helper\ndescription: Rewritten agent helper skill.\n---\n\n# Agent Helper\n\nUpdated in Library.\n",
-    );
     const agentSaveResponse = page.waitForResponse((response) =>
       response.request().method() === "PATCH"
       && response.url().includes(`/api/orgs/${organization.id}/workspace/file`)
       && response.ok(),
     );
-    await workspaceMain.getByRole("button", { name: "Save" }).click();
+    await workspaceEditor.fill(
+      "---\nname: agent-helper\ndescription: Rewritten agent helper skill.\n---\n\n# Agent Helper\n\nUpdated in Library.\n",
+    );
     await agentSaveResponse;
     await expect.poll(() => fs.readFile(path.join(agentSkillDir, "SKILL.md"), "utf8")).toContain("Rewritten agent helper skill.");
 
@@ -392,15 +391,14 @@ test.describe("Organization and agent skills", () => {
     const orgWorkspaceMain = page.locator("#main-content");
     await expect(orgWorkspaceMain.getByText("skills/alpha-test/SKILL.md")).toBeVisible();
     const orgWorkspaceEditor = orgWorkspaceMain.locator("textarea");
-    await orgWorkspaceEditor.fill(
-      "---\nname: alpha-test\ndescription: Updated organization skill.\n---\n\n# Alpha Test\n\nEdited from Library.\n",
-    );
     const orgSaveResponse = page.waitForResponse((response) =>
       response.request().method() === "PATCH"
       && response.url().includes(`/api/orgs/${organization.id}/workspace/file`)
       && response.ok(),
     );
-    await orgWorkspaceMain.getByRole("button", { name: "Save" }).click();
+    await orgWorkspaceEditor.fill(
+      "---\nname: alpha-test\ndescription: Updated organization skill.\n---\n\n# Alpha Test\n\nEdited from Library.\n",
+    );
     await orgSaveResponse;
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);

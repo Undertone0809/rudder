@@ -409,6 +409,19 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     res.send(workspaceFile.buffer);
   });
 
+  router.get("/:orgId/workspace/mention-files", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const query = typeof req.query.q === "string" ? req.query.q : "";
+    const rawLimit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : null;
+    const entries = await workspaceBrowser.listMentionableFiles(orgId, {
+      query,
+      limit: Number.isFinite(rawLimit) ? rawLimit : null,
+    });
+    res.json({ entries });
+  });
+
   router.post("/:orgId/workspace/file", validate(createOrganizationWorkspaceFileSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);

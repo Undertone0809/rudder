@@ -4,6 +4,7 @@ export const PROJECT_MENTION_SCHEME = "project://";
 export const AGENT_MENTION_SCHEME = "agent://";
 export const ISSUE_MENTION_SCHEME = "issue://";
 export const LIBRARY_DOC_MENTION_SCHEME = "library-doc://";
+export const LIBRARY_FILE_MENTION_SCHEME = "library-file://";
 
 const HEX_COLOR_RE = /^[0-9a-f]{6}$/i;
 const HEX_COLOR_SHORT_RE = /^[0-9a-f]{3}$/i;
@@ -13,6 +14,7 @@ const PROJECT_MENTION_LINK_RE = /\[[^\]]*]\((project:\/\/[^)\s]+)\)/gi;
 const AGENT_MENTION_LINK_RE = /\[[^\]]*]\((agent:\/\/[^)\s]+)\)/gi;
 const ISSUE_MENTION_LINK_RE = /\[[^\]]*]\((issue:\/\/[^)\s]+)\)/gi;
 const LIBRARY_DOC_MENTION_LINK_RE = /\[[^\]]*]\((library-doc:\/\/[^)\s]+)\)/gi;
+const LIBRARY_FILE_MENTION_LINK_RE = /\[[^\]]*]\((library-file:\/\/[^)\s]+)\)/gi;
 const AGENT_ICON_NAME_RE = /^[a-z0-9-]+$/i;
 const PROJECT_COLOR_VALUES = new Set<string>(PROJECT_COLORS);
 
@@ -33,6 +35,11 @@ export interface ParsedIssueMention {
 
 export interface ParsedLibraryDocMention {
   documentId: string;
+  title: string | null;
+}
+
+export interface ParsedLibraryFileMention {
+  filePath: string;
   title: string | null;
 }
 
@@ -199,6 +206,37 @@ export function parseLibraryDocMentionHref(href: string): ParsedLibraryDocMentio
   };
 }
 
+export function buildLibraryFileMentionHref(filePath: string, title?: string | null): string {
+  const trimmedFilePath = filePath.trim();
+  const trimmedTitle = title?.trim();
+  const search = new URLSearchParams({ p: trimmedFilePath });
+  if (trimmedTitle) search.set("t", trimmedTitle);
+  return `${LIBRARY_FILE_MENTION_SCHEME}file?${search.toString()}`;
+}
+
+export function parseLibraryFileMentionHref(href: string): ParsedLibraryFileMention | null {
+  if (!href.startsWith(LIBRARY_FILE_MENTION_SCHEME)) return null;
+
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "library-file:") return null;
+
+  const filePath = (url.searchParams.get("p") ?? url.searchParams.get("path") ?? "").trim();
+  if (!filePath) return null;
+
+  const title = (url.searchParams.get("t") ?? url.searchParams.get("title") ?? "").trim() || null;
+
+  return {
+    filePath,
+    title,
+  };
+}
+
 export function extractProjectMentionIds(markdown: string): string[] {
   if (!markdown) return [];
   const ids = new Set<string>();
@@ -249,6 +287,19 @@ export function extractLibraryDocMentionIds(markdown: string): string[] {
     if (parsed) ids.add(parsed.documentId);
   }
   return [...ids];
+}
+
+export function extractLibraryFileMentionPaths(markdown: string): string[] {
+  if (!markdown) return [];
+  const paths = new Set<string>();
+  const re = new RegExp(LIBRARY_FILE_MENTION_LINK_RE);
+  const source = stripMarkdownCode(markdown);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    const parsed = parseLibraryFileMentionHref(match[1]);
+    if (parsed) paths.add(parsed.filePath);
+  }
+  return [...paths];
 }
 
 function normalizeAgentIcon(input: string | null | undefined): string | null {

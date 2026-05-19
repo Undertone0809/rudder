@@ -60,4 +60,24 @@ describe("mention chips", () => {
     expect(element.dataset.mentionKind).toBe("library_doc");
     expect(element.classList.contains("rudder-mention-chip--library_doc")).toBe(true);
   });
+
+  it("parses and decorates library file mention links", () => {
+    expect(parseMentionChipHref("library-file://file?p=docs%2Fproduct-brief.md&t=Product%20brief")).toEqual({
+      kind: "library_file",
+      filePath: "docs/product-brief.md",
+      title: "Product brief",
+    });
+
+    const element = document.createElement("a");
+    element.textContent = "@product-brief.md";
+    applyMentionChipDecoration(element, {
+      kind: "library_file",
+      filePath: "docs/product-brief.md",
+      title: "Product brief",
+    });
+
+    expect(element.textContent).toBe("product-brief.md");
+    expect(element.dataset.mentionKind).toBe("library_file");
+    expect(element.classList.contains("rudder-mention-chip--library_file")).toBe(true);
+  });
 });

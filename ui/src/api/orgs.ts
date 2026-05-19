@@ -10,6 +10,7 @@ import type {
   OrganizationWorkspaceEntryRenameRequest,
   OrganizationWorkspaceFileCreateRequest,
   OrganizationWorkspaceFileDetail,
+  OrganizationWorkspaceFileEntry,
   OrganizationWorkspaceFileList,
   OrganizationWorkspaceFileUpdateRequest,
   OrganizationPortabilityExportRequest,
@@ -100,6 +101,16 @@ export const organizationsApi = {
     const query = search.toString();
     return api.get<OrganizationWorkspaceFileList>(
       `/orgs/${orgId}/workspace/files${query ? `?${query}` : ""}`,
+    );
+  },
+  listWorkspaceMentionFiles: (orgId: string, options?: { query?: string | null; limit?: number | null }) => {
+    const search = new URLSearchParams();
+    const query = options?.query?.trim();
+    if (query) search.set("q", query);
+    if (options?.limit) search.set("limit", String(options.limit));
+    const suffix = search.toString();
+    return api.get<{ entries: OrganizationWorkspaceFileEntry[] }>(
+      `/orgs/${orgId}/workspace/mention-files${suffix ? `?${suffix}` : ""}`,
     );
   },
   readWorkspaceFile: (orgId: string, filePath: string) => {

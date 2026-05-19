@@ -59,6 +59,7 @@ describe("getMentionAwareLinkNodeInit", () => {
         node.sanitizeUrl("project://project-123?c=336699"),
         node.sanitizeUrl("issue://issue-123?r=RUD-123"),
         node.sanitizeUrl("library-doc://doc-123?t=Product%20principles"),
+        node.sanitizeUrl("library-file://file?p=docs%2Fproduct-brief.md"),
       ];
     });
 
@@ -67,6 +68,7 @@ describe("getMentionAwareLinkNodeInit", () => {
       "project://project-123?c=336699",
       "issue://issue-123?r=RUD-123",
       "library-doc://doc-123?t=Product%20principles",
+      "library-file://file?p=docs%2Fproduct-brief.md",
     ]);
   });
 });

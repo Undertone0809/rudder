@@ -13,6 +13,7 @@ interface InlineEditorProps {
   multiline?: boolean;
   imageUploadHandler?: (file: File) => Promise<string>;
   mentions?: MentionOption[];
+  onMentionQueryChange?: (query: string | null) => void;
 }
 
 /** Shared padding so display and edit modes occupy the exact same box. */
@@ -35,6 +36,7 @@ export function InlineEditor({
   multiline = false,
   imageUploadHandler,
   mentions,
+  onMentionQueryChange,
 }: InlineEditorProps) {
   const [editing, setEditing] = useState(false);
   const [multilineFocused, setMultilineFocused] = useState(false);
@@ -181,6 +183,7 @@ export function InlineEditor({
           contentClassName={cn("rudder-edit-in-place-content", className)}
           imageUploadHandler={imageUploadHandler}
           mentions={mentions}
+          onMentionQueryChange={onMentionQueryChange}
           onSubmit={() => {
             const trimmed = draft.trim();
             if (!trimmed || trimmed === value) {

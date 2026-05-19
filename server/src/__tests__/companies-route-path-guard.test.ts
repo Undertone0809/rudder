@@ -34,6 +34,13 @@ vi.mock("../services/index.js", () => ({
     updateOrganizationResource: vi.fn(),
     deleteOrganizationResource: vi.fn(),
   }),
+  documentService: () => ({
+    listLibraryDocuments: vi.fn(),
+    createLibraryDocument: vi.fn(),
+    getLibraryDocumentById: vi.fn(),
+    updateLibraryDocument: vi.fn(),
+    deleteLibraryDocument: vi.fn(),
+  }),
   workspaceBackupService: () => ({
     list: vi.fn(),
     create: vi.fn(),

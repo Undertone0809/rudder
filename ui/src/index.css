@@ -1459,7 +1459,9 @@ a.rudder-mention-chip[data-mention-kind="agent"]::before {
 }
 
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
-a.rudder-mention-chip[data-mention-kind="library_doc"]::before {
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]::before,
+a.rudder-mention-chip[data-mention-kind="library_doc"]::before,
+a.rudder-mention-chip[data-mention-kind="library_file"]::before {
   content: "";
   flex: none;
   width: 0.62rem;

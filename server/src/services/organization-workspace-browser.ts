@@ -40,6 +40,8 @@ const WORKSPACE_IMAGE_CONTENT_TYPES = new Map([
 const WORKSPACE_BINARY_CONTENT_TYPES = new Map([
   [".pdf", "application/pdf"],
 ]);
+const DEFAULT_MENTIONABLE_WORKSPACE_FILES_LIMIT = 200;
+const MAX_MENTIONABLE_WORKSPACE_FILES_LIMIT = 500;
 
 type WorkspaceRootResolution = {
   source: OrganizationWorkspaceRootSource;
@@ -274,6 +276,55 @@ export function organizationWorkspaceBrowserService(db: Db) {
         entries,
         message: entries.length === 0 ? "This folder is empty." : null,
       };
+    },
+
+    async listMentionableFiles(orgId: string, options?: {
+      query?: string | null;
+      limit?: number | null;
+    }): Promise<OrganizationWorkspaceFileEntry[]> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot } = resolveWithinRoot(root.rootPath, "");
+      const rootExists = await pathExistsAsDirectory(resolvedRoot);
+      if (!rootExists) return [];
+
+      const entries: OrganizationWorkspaceFileEntry[] = [];
+      const normalizedQuery = options?.query?.trim().toLowerCase() ?? "";
+      const requestedLimit = options?.limit ?? DEFAULT_MENTIONABLE_WORKSPACE_FILES_LIMIT;
+      const limit = Math.max(1, Math.min(MAX_MENTIONABLE_WORKSPACE_FILES_LIMIT, requestedLimit));
+      async function visit(directoryPath: string) {
+        if (entries.length >= limit) return;
+        if (directoryPath === "agents" || directoryPath.startsWith("agents/")) return;
+
+        const directoryAbsolutePath = directoryPath
+          ? path.join(resolvedRoot, ...directoryPath.split("/"))
+          : resolvedRoot;
+        const rawEntries = (await fs.readdir(directoryAbsolutePath, { withFileTypes: true }).catch(() => []))
+          .sort((left, right) => left.name.localeCompare(right.name));
+
+        for (const entry of rawEntries) {
+          if (entries.length >= limit) break;
+          if (shouldHideWorkspaceEntry(entry.name)) continue;
+          const entryPath = directoryPath ? `${directoryPath}/${entry.name}` : entry.name;
+          if (entryPath === "agents" || entryPath.startsWith("agents/")) continue;
+          if (entry.isDirectory()) {
+            await visit(entryPath);
+            continue;
+          }
+          if (!entry.isFile()) continue;
+          if (normalizedQuery) {
+            const searchable = `${entry.name} ${entryPath}`.toLowerCase();
+            if (!searchable.includes(normalizedQuery)) continue;
+          }
+          entries.push({
+            name: entry.name,
+            path: entryPath,
+            isDirectory: false,
+          });
+        }
+      }
+
+      await visit("");
+      return entries.sort((left, right) => left.path.localeCompare(right.path));
     },
 
     async readFile(orgId: string, filePath: string): Promise<OrganizationWorkspaceFileDetail> {

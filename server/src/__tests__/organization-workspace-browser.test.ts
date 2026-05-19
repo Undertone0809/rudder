@@ -270,4 +270,38 @@ describe("organization workspace browser", () => {
     }));
   });
 
+  it("searches mentionable Library files beyond the default result window while excluding agent workspaces", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Mention Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Mention Org"),
+      issuePrefix: "WBM",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const root = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await Promise.all(
+      Array.from({ length: 220 }, (_, index) =>
+        fs.writeFile(path.join(root, "docs", `plain-${String(index).padStart(3, "0")}.md`), "# Plain\n", "utf8"),
+      ),
+    );
+    await fs.writeFile(path.join(root, "docs", "z-special-product-brief.md"), "# Product brief\n", "utf8");
+    await fs.mkdir(path.join(root, "agents", "worker--1234"), { recursive: true });
+    await fs.writeFile(path.join(root, "agents", "worker--1234", "secret-product-brief.md"), "# Agent memory\n", "utf8");
+
+    const defaultEntries = await workspaceBrowser.listMentionableFiles(orgId);
+    expect(defaultEntries).toHaveLength(200);
+    expect(defaultEntries.map((entry) => entry.path)).not.toContain("docs/z-special-product-brief.md");
+
+    const searchEntries = await workspaceBrowser.listMentionableFiles(orgId, { query: "special-product", limit: 20 });
+    expect(searchEntries.map((entry) => entry.path)).toEqual(["docs/z-special-product-brief.md"]);
+  });
+
 });

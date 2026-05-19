@@ -33,11 +33,17 @@ test.describe("Issue detail Library docs UX", () => {
     });
     expect(libraryDocRes.ok()).toBe(true);
     const libraryDoc = await libraryDocRes.json() as { id: string };
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(organization.id);
+    await fs.mkdir(path.join(workspaceRoot, "docs"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "docs", "product-brief.md"), "# Product brief\n", "utf8");
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
         title: "Issue should link docs from Library",
-        description: `Use [@Product brief](library-doc://${libraryDoc.id}?t=Product%20brief) as the source of truth.`,
+        description: [
+          `Use [@Product brief](library-doc://${libraryDoc.id}?t=Product%20brief) as the legacy source.`,
+          "Use [@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md) as the live file source.",
+        ].join("\n\n"),
         status: "todo",
         priority: "medium",
       },
@@ -66,7 +72,10 @@ test.describe("Issue detail Library docs UX", () => {
     await expect(productBriefLinks.first()).toHaveAttribute("href", new RegExp(`/library\\?doc=${libraryDoc.id}$`));
     await expect(page.getByLabel("Linked Library docs")).toBeVisible();
     await expect(page.getByLabel("Linked Library docs").getByText("Product brief")).toBeVisible();
+    await expect(page.getByLabel("Linked Library docs").getByText("product-brief.md")).toBeVisible();
     await expect(page.getByLabel("Linked Library docs").getByText("Ops checklist")).toBeVisible();
+    await expect(page.getByRole("link", { name: "product-brief.md" }).first())
+      .toHaveAttribute("href", new RegExp(`/library\\?path=docs%2Fproduct-brief\\.md$`));
 
     await productBriefLinks.first().click();
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?doc=${libraryDoc.id}$`));

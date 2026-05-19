@@ -540,9 +540,9 @@ describe("IssueDetail", () => {
     expect(html).toContain("Sub-issues");
     expect(html).toContain("Existing child issue");
     expect(html).toContain("Change status for Existing child issue");
-    expect(html).toContain("Documents");
     expect(html).toContain("Activity");
     expect(html).toContain("Comment thread");
+    expect(html).not.toContain("New document");
     expect(html).not.toContain(">Activity</button>");
     expect(html).not.toContain("Comments &amp; Runs");
   });

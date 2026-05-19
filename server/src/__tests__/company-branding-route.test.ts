@@ -42,6 +42,13 @@ const mockResourceCatalogService = vi.hoisted(() => ({
   updateOrganizationResource: vi.fn(),
   deleteOrganizationResource: vi.fn(),
 }));
+const mockDocumentService = vi.hoisted(() => ({
+  listLibraryDocuments: vi.fn(),
+  createLibraryDocument: vi.fn(),
+  getLibraryDocumentById: vi.fn(),
+  updateLibraryDocument: vi.fn(),
+  deleteLibraryDocument: vi.fn(),
+}));
 const mockWorkspaceBackupService = vi.hoisted(() => ({
   list: vi.fn(),
   create: vi.fn(),
@@ -71,6 +78,7 @@ vi.mock("../services/index.js", () => ({
   organizationPortabilityService: () => mockCompanyPortabilityService,
   organizationSkillService: () => mockOrganizationSkillService,
   resourceCatalogService: () => mockResourceCatalogService,
+  documentService: () => mockDocumentService,
   workspaceBackupService: () => mockWorkspaceBackupService,
   organizationService: () => mockCompanyService,
   secretService: () => mockSecretService,

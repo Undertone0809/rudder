@@ -779,7 +779,7 @@ test.describe("Workspace shell", () => {
     const workspaceHelp = workspacesHeader.getByRole("button", { name: "About Library" });
     await expect(page.getByTestId("workspace-context-card")).toHaveCount(0);
     await expect(workspacesHeader.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
     await expect(filesCard.getByText("/", { exact: true })).toBeVisible();
     await workspaceHelp.hover();
     await expect(page.getByText(/shared Library for docs, codebases, references, outputs, and reusable context/i)).toBeVisible();
@@ -790,6 +790,7 @@ test.describe("Workspace shell", () => {
     await expect(page.getByTestId("org-workspaces-editor-textarea")).toHaveValue("# Untitled document\n\n");
 
     await page.getByTestId("org-workspaces-entry-more-draft.md").click();
+    await expect(page.locator('[data-slot="dropdown-menu-content"]')).toHaveClass(/will-change/);
     await expect(page.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
@@ -827,7 +828,7 @@ test.describe("Workspace shell", () => {
     await expect(mainContent.getByRole("button", { name: ".cache", exact: true })).toHaveCount(0);
     await expect(mainContent.getByRole("button", { name: ".npm", exact: true })).toHaveCount(0);
     await expect(mainContent.getByRole("button", { name: ".nvm", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Save" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
     await expect(page.getByTestId("org-workspaces-open-in-ide-button")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Activate for agents" })).toHaveCount(0);
 
@@ -835,8 +836,20 @@ test.describe("Workspace shell", () => {
     await expect(page.locator("textarea")).toHaveValue("# Shared Notes\n");
 
     await page.locator("textarea").fill("# Shared Notes\n\n- Keep project setup docs nearby.\n");
-    await page.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByText("Workspace file saved")).toBeVisible();
+    await expect.poll(async () => fs.readFile(path.join(resolveOrganizationWorkspaceRoot(organization.id), "notes.md"), "utf8"))
+      .toBe("# Shared Notes\n\n- Keep project setup docs nearby.\n");
+    await expect(page.getByTestId("org-workspaces-autosave-status")).toHaveText("Saved");
+
+    const switchFlushResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes(`/api/orgs/${organization.id}/workspace/file`)
+      && response.ok(),
+    );
+    await page.locator("textarea").fill("# Shared Notes\n\n- Flush before switching files.\n");
+    await page.getByRole("button", { name: "New doc" }).click();
+    await switchFlushResponse;
+    await expect.poll(async () => fs.readFile(path.join(resolveOrganizationWorkspaceRoot(organization.id), "notes.md"), "utf8"))
+      .toBe("# Shared Notes\n\n- Flush before switching files.\n");
 
     const [mainCardBox, filesCardBox, editorCardBox, editorTextareaBox] = await Promise.all([
       page.getByTestId("workspace-main-card").boundingBox(),
