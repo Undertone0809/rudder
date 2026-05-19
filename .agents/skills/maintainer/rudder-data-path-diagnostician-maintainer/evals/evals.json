@@ -1,0 +1,33 @@
+[
+  {
+    "name": "calendar_missing_prod_data",
+    "prompt": "为什么我 prod z studio 下的 Calendar 数据基本都没了？截图里 calendar 是空的，但我以为 agent 最近有 run。",
+    "assertions": [
+      "Uses rudder-data-path-diagnostician-maintainer rather than jumping to UI polish",
+      "Verifies the active runtime and selected organization before diagnosing",
+      "Traces Calendar UI request to API route, service aggregation, and source tables",
+      "Distinguishes persisted calendar events from heartbeat/run-derived events",
+      "Reports root cause classification and evidence before suggesting repair"
+    ]
+  },
+  {
+    "name": "dashboard_empty_new_agent",
+    "prompt": "这个 new agent dashboard 为什么一开始是空的？数据是没 seed 进去，还是 dashboard 查询错了？",
+    "assertions": [
+      "Identifies expected data and selected agent/org before querying",
+      "Checks UI data source, API response, and underlying run/issue/cost records",
+      "Classifies the cause as source-empty, seed-gap, filter-window, contract-gap, or render-gap",
+      "Does not create mock data unless the user explicitly asks for seeding"
+    ]
+  },
+  {
+    "name": "chat_output_wrong_surface",
+    "prompt": "Automation detail 里显示 run output，但 chat 里没有对应消息。这个数据链路到底从哪来？",
+    "assertions": [
+      "Traces automation dispatch, automation_run, execution issue, messenger/chat output, and UI query separately",
+      "Checks org scoping and linked ids instead of assuming a rendering-only problem",
+      "Explains whether the missing message is a derived-gap, contract-gap, or render-gap",
+      "Suggests a fix path with tests only after evidence is collected"
+    ]
+  }
+]
