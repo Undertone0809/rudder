@@ -9,7 +9,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
   Copy,
   Folder,
   ListChecks,
@@ -1522,95 +1521,24 @@ export function ProposalCard({
 
 const chatMessageHoverBarClass =
   "opacity-0 pointer-events-none transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100";
-const CHAT_MESSAGE_COLLAPSED_LINES = 14;
-const CHAT_MESSAGE_LINE_HEIGHT_PX = 28;
-const CHAT_MESSAGE_COLLAPSED_HEIGHT = CHAT_MESSAGE_COLLAPSED_LINES * CHAT_MESSAGE_LINE_HEIGHT_PX;
-
 export function ChatLongMessageBody({
   body,
   skillReferences,
   onMarkdownLinkClick,
   className,
-  collapsedSurface = "var(--surface-page)",
-  collapsible = true,
 }: {
   body: string;
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   className?: string;
-  collapsedSurface?: string;
-  collapsible?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [overflowing, setOverflowing] = useState(false);
-  const contentRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!collapsible) {
-      setExpanded(false);
-      setOverflowing(false);
-      return;
-    }
-
-    setExpanded(false);
-  }, [body, collapsible]);
-
-  useEffect(() => {
-    if (!collapsible) {
-      setOverflowing(false);
-      return;
-    }
-
-    const element = contentRef.current;
-    if (!element) return;
-
-    const measure = () => {
-      setOverflowing(element.scrollHeight > CHAT_MESSAGE_COLLAPSED_HEIGHT + 2);
-    };
-    measure();
-
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [body, collapsible]);
-
-  const collapsed = collapsible && overflowing && !expanded;
-
   return (
     <div className={cn("min-w-0", className)}>
-      <div className="relative">
-        <div
-          ref={contentRef}
-          data-testid="chat-long-message-body"
-          className={cn("min-w-0", collapsed && "overflow-hidden")}
-          style={collapsed ? { maxHeight: CHAT_MESSAGE_COLLAPSED_HEIGHT } : undefined}
-        >
-          <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
-            {body}
-          </MarkdownBody>
-        </div>
-        {collapsed ? (
-          <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-14"
-            style={{ background: `linear-gradient(to bottom, transparent, ${collapsedSurface})` }}
-          />
-        ) : null}
+      <div data-testid="chat-long-message-body" className="min-w-0">
+        <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+          {body}
+        </MarkdownBody>
       </div>
-      {collapsible && overflowing ? (
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          className="mt-1 h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((current) => !current)}
-          data-testid="chat-long-message-toggle"
-        >
-          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          {expanded ? "Show less" : "Show more"}
-        </Button>
-      ) : null}
     </div>
   );
 }
@@ -2104,7 +2032,6 @@ function ChatMessageItem({
               skillReferences={skillReferences}
               onMarkdownLinkClick={onMarkdownLinkClick}
               className="text-[15px] leading-7"
-              collapsedSurface="color-mix(in oklab, var(--surface-elevated) 92%, var(--surface-shell))"
             />
             <ChatAttachmentList
               attachments={message.attachments}
@@ -2208,7 +2135,6 @@ function OptimisticUserDraftItem({
               skillReferences={skillReferences}
               onMarkdownLinkClick={onMarkdownLinkClick}
               className="text-[15px] leading-7"
-              collapsedSurface="color-mix(in oklab, var(--surface-elevated) 92%, var(--surface-shell))"
             />
           </div>
         )}
@@ -2430,7 +2356,6 @@ function AssistantDraftItem({
               body={body}
               skillReferences={skillReferences}
               onMarkdownLinkClick={onMarkdownLinkClick}
-              collapsible={!streamingActive}
             />
           ) : (
             <TextDots text="Thinking" className="text-muted-foreground" />
