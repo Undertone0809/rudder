@@ -45,7 +45,7 @@ local production-style instances.
 
 Do not use this skill for:
 
-- a single agent run transcript failure; use `debug-run-transcript`
+- a single agent run transcript failure; use `debug-run-transcript-maintainer`
 - creating demo or screenshot data from scratch; use `mock-data-maintainer`
 - pure UI polish where the data is already known; use
   `rudder-ui-polish-maintainer`
