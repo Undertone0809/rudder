@@ -419,6 +419,11 @@ describe("AutomationDetail", () => {
     expect(container.textContent).not.toContain("Run now");
     expect(container.querySelector('[role="switch"]')).toBeNull();
     expect(container.querySelector("aside")?.className).toContain("lg:sticky");
+    const configurationCard = container.querySelector('[data-testid="automation-configuration-card"]');
+    expect(configurationCard).toBeTruthy();
+    expect(configurationCard?.textContent).toContain("Triggers");
+    expect(configurationCard?.querySelector('[data-testid="automation-add-trigger-card"]')).toBeTruthy();
+    expect(configurationCard?.querySelector('[data-testid="automation-triggers-list"]')).toBeTruthy();
     const overviewStrip = container.querySelector('[data-testid="automation-overview-strip"]');
     expect(overviewStrip?.textContent).toContain("Active");
     expect(overviewStrip?.textContent).not.toContain("Automation UX");

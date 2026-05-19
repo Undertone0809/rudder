@@ -74,6 +74,7 @@ test.describe("Automation detail layout", () => {
     const headerActions = page.getByTestId("workspace-main-header-actions");
     const shell = page.getByTestId("automation-detail-shell");
     const overviewStrip = page.getByTestId("automation-overview-strip");
+    const configurationCard = page.getByTestId("automation-configuration-card");
     const agentControl = page.getByTestId("automation-detail-agent-control");
     const projectControl = page.getByTestId("automation-detail-project-control");
     const addTriggerCard = page.getByTestId("automation-add-trigger-card");
@@ -85,6 +86,7 @@ test.describe("Automation detail layout", () => {
     await expect(headerActions).toBeVisible();
     await expect(shell).toBeVisible();
     await expect(overviewStrip).toBeVisible();
+    await expect(configurationCard).toBeVisible();
     await expect(agentControl).toBeVisible();
     await expect(projectControl).toBeVisible();
     await expect(addTriggerCard).toBeVisible();
@@ -102,6 +104,7 @@ test.describe("Automation detail layout", () => {
     await expect(page.getByText("Run output")).toBeVisible();
     await expect(page.getByText("Track as issue")).toBeVisible();
     await expect(page.getByText("Run status")).toBeVisible();
+    await expect(configurationCard.getByText("Triggers")).toBeVisible();
     await expect(page.getByText("Details")).toHaveCount(0);
     await expect(addTriggerCard.getByRole("button", { name: "Add trigger" })).toBeVisible();
 
@@ -137,6 +140,7 @@ test.describe("Automation detail layout", () => {
     const deleteButtonBox = await deleteButton.boundingBox();
     const runButtonBox = await runButton.boundingBox();
     const overviewBox = await overviewStrip.boundingBox();
+    const configurationCardBox = await configurationCard.boundingBox();
     const addTriggerBox = await addTriggerCard.boundingBox();
     const triggersListBox = await triggersList.boundingBox();
 
@@ -147,6 +151,7 @@ test.describe("Automation detail layout", () => {
     expect(deleteButtonBox).not.toBeNull();
     expect(runButtonBox).not.toBeNull();
     expect(overviewBox).not.toBeNull();
+    expect(configurationCardBox).not.toBeNull();
     expect(addTriggerBox).not.toBeNull();
     expect(triggersListBox).not.toBeNull();
 
@@ -155,9 +160,10 @@ test.describe("Automation detail layout", () => {
     expect(runButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
     expect(runButtonBox!.x).toBeGreaterThan(deleteButtonBox!.x);
     expect(overviewBox!.y).toBeGreaterThan(shellBox!.y);
+    expect(configurationCardBox!.x).toBeGreaterThan(overviewBox!.x + overviewBox!.width);
     expect(overviewBox!.y + overviewBox!.height).toBeLessThan(addTriggerBox!.y + 8);
     expect(addTriggerBox!.y + addTriggerBox!.height).toBeLessThan(triggersListBox!.y + 8);
-    expect(addTriggerBox!.x).toBeGreaterThanOrEqual(shellBox!.x - 2);
+    expect(addTriggerBox!.x).toBeGreaterThanOrEqual(configurationCardBox!.x - 2);
 
     await page.screenshot({
       path: testInfo.outputPath("automation-detail-layout.png"),
