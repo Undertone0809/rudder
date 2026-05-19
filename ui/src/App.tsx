@@ -12,7 +12,6 @@ import { agentsApi } from "./api/agents";
 import { authApi } from "./api/auth";
 import { healthApi } from "./api/health";
 import { Dashboard } from "./pages/Dashboard";
-import { Organizations } from "./pages/Organizations";
 import { Agents } from "./pages/Agents";
 import { AgentDetail } from "./pages/AgentDetail";
 import { Projects } from "./pages/Projects";
@@ -57,7 +56,6 @@ import { InviteLandingPage } from "./pages/InviteLanding";
 import { NotFoundPage } from "./pages/NotFound";
 import { queryKeys } from "./lib/queryKeys";
 import {
-  INSTANCE_SETTINGS_ORGANIZATIONS_PATH,
   normalizeRememberedInstanceSettingsPath,
   resolveDefaultInstanceSettingsPath,
 } from "./lib/instance-settings";
@@ -317,7 +315,11 @@ function LegacyWorkspaceBackupsRedirect() {
 
 function LegacyOrganizationsRedirect() {
   const location = useLocation();
-  return <Navigate to={`${INSTANCE_SETTINGS_ORGANIZATIONS_PATH}${location.search}${location.hash}`} replace />;
+  const { orgPrefix } = useParams<{ orgPrefix?: string }>();
+  const target = orgPrefix
+    ? `/${orgPrefix}/organization/settings${location.search}${location.hash}`
+    : `/organization/settings${location.search}${location.hash}`;
+  return <Navigate to={target} replace />;
 }
 
 function OnboardingRoutePage() {
@@ -516,7 +518,6 @@ export function App() {
             <Route path="profile" element={<InstanceProfileSettings />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
             <Route path="notifications" element={<InstanceNotificationsSettings />} />
-            <Route path="organizations" element={<Organizations />} />
             <Route path="langfuse" element={<InstanceLangfuseSettings />} />
             <Route path="about" element={<InstanceAboutSettings />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
@@ -571,7 +572,6 @@ export function App() {
               <Route path="profile" element={<InstanceProfileSettings />} />
               <Route path="general" element={<InstanceGeneralSettings />} />
               <Route path="notifications" element={<InstanceNotificationsSettings />} />
-              <Route path="organizations" element={<Organizations />} />
               <Route path="langfuse" element={<InstanceLangfuseSettings />} />
               <Route path="about" element={<InstanceAboutSettings />} />
               <Route path="heartbeats" element={<InstanceSettings />} />

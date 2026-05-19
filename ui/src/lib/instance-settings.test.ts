@@ -5,7 +5,6 @@ import {
   DEFAULT_INSTANCE_SETTINGS_PATH,
   INSTANCE_SETTINGS_LANGFUSE_PATH,
   INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
-  INSTANCE_SETTINGS_ORGANIZATIONS_PATH,
   INSTANCE_SETTINGS_PROFILE_PATH,
   normalizeRememberedSettingsPath,
   normalizeRememberedInstanceSettingsPath,
@@ -23,9 +22,6 @@ describe("normalizeRememberedInstanceSettingsPath", () => {
     );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/notifications")).toBe(
       INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
-    );
-    expect(normalizeRememberedInstanceSettingsPath("/instance/settings/organizations")).toBe(
-      INSTANCE_SETTINGS_ORGANIZATIONS_PATH,
     );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/langfuse")).toBe(
       INSTANCE_SETTINGS_LANGFUSE_PATH,
@@ -52,9 +48,6 @@ describe("normalizeRememberedInstanceSettingsPath", () => {
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/notifications", false)).toBe(
       INSTANCE_SETTINGS_PROFILE_PATH,
     );
-    expect(normalizeRememberedInstanceSettingsPath("/instance/settings/organizations", false)).toBe(
-      INSTANCE_SETTINGS_PROFILE_PATH,
-    );
     expect(normalizeRememberedInstanceSettingsPath("/instance/settings/plugins/example", false)).toBe(
       INSTANCE_SETTINGS_PROFILE_PATH,
     );
@@ -76,9 +69,6 @@ describe("normalizeRememberedSettingsPath", () => {
     expect(normalizeRememberedSettingsPath("/instance/settings/notifications")).toBe(
       INSTANCE_SETTINGS_NOTIFICATIONS_PATH,
     );
-    expect(normalizeRememberedSettingsPath("/instance/settings/organizations")).toBe(
-      INSTANCE_SETTINGS_ORGANIZATIONS_PATH,
-    );
     expect(normalizeRememberedSettingsPath("/instance/settings/langfuse")).toBe(INSTANCE_SETTINGS_LANGFUSE_PATH);
     expect(normalizeRememberedSettingsPath("/instance/settings/about")).toBe(INSTANCE_SETTINGS_ABOUT_PATH);
     expect(normalizeRememberedSettingsPath("/instance/settings/plugins/example?tab=config#logs")).toBe(
@@ -96,9 +86,6 @@ describe("normalizeRememberedSettingsPath", () => {
       INSTANCE_SETTINGS_PROFILE_PATH,
     );
     expect(normalizeRememberedSettingsPath("/instance/settings/notifications", false)).toBe(
-      INSTANCE_SETTINGS_PROFILE_PATH,
-    );
-    expect(normalizeRememberedSettingsPath("/instance/settings/organizations", false)).toBe(
       INSTANCE_SETTINGS_PROFILE_PATH,
     );
   });

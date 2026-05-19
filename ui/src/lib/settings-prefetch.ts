@@ -42,11 +42,6 @@ export function listSettingsPrefetchQueryKeys(target: string, organizationId: st
     return keys;
   }
 
-  if (target.startsWith("/instance/settings/organizations")) {
-    keys.push([...queryKeys.organizations.stats]);
-    return keys;
-  }
-
   if (target.startsWith("/instance/settings/langfuse")) {
     keys.push([...queryKeys.instance.langfuseSettings]);
     return keys;
@@ -138,17 +133,6 @@ export function prefetchSettingsQueries(
       queryClient.prefetchQuery({
         queryKey: queryKeys.instance.notificationSettings,
         queryFn: () => instanceSettingsApi.getNotifications(),
-        staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
-      }),
-    );
-    return Promise.allSettled(jobs);
-  }
-
-  if (target.startsWith("/instance/settings/organizations")) {
-    jobs.push(
-      queryClient.prefetchQuery({
-        queryKey: queryKeys.organizations.stats,
-        queryFn: () => organizationsApi.stats(),
         staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
       }),
     );

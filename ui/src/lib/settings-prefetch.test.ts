@@ -30,12 +30,6 @@ describe("listSettingsPrefetchQueryKeys", () => {
       ["instance", "notification-settings"],
     ]);
 
-    expect(listSettingsPrefetchQueryKeys("/instance/settings/organizations", "org_123")).toEqual([
-      ["access", "current-board-access"],
-      ["organizations"],
-      ["organizations", "stats"],
-    ]);
-
     expect(listSettingsPrefetchQueryKeys("/instance/settings/heartbeats", "org_123")).toEqual([
       ["access", "current-board-access"],
       ["organizations"],
