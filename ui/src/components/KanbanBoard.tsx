@@ -28,7 +28,7 @@ import { formatAssigneeUserLabel } from "@/lib/assignees";
 import { sortIssues, type IssueSortState } from "@/lib/issue-sort";
 import { formatPriorityLabel } from "@/lib/priorities";
 import { IssueLabelChip } from "./IssueLabelChip";
-import { timeAgo } from "@/lib/timeAgo";
+import { formatIssueCardDate } from "@/lib/issue-card-date";
 import { CalendarClock, FolderKanban, Plus, Tags, User, UserCheck } from "lucide-react";
 import type { AgentRole, Issue, IssueStatus, ReorderIssue } from "@rudderhq/shared";
 
@@ -568,12 +568,12 @@ function KanbanCard({
             ) : null}
             {showUpdated ? (
               <KanbanMetadataRow icon={<CalendarClock className="h-3 w-3" />} label="Updated">
-                {timeAgo(issue.updatedAt)}
+                {formatIssueCardDate(issue.updatedAt)}
               </KanbanMetadataRow>
             ) : null}
             {showCreated ? (
               <KanbanMetadataRow icon={<CalendarClock className="h-3 w-3" />} label="Created">
-                {timeAgo(issue.createdAt)}
+                {formatIssueCardDate(issue.createdAt)}
               </KanbanMetadataRow>
             ) : null}
           </div>

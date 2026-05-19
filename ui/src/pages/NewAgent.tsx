@@ -271,6 +271,7 @@ export function NewAgent() {
         heartbeat: {
           enabled: configValues.heartbeatEnabled,
           intervalSec: configValues.intervalSec,
+          preflightEnabled: configValues.preflightEnabled,
           wakeOnDemand: true,
           cooldownSec: 10,
           maxConcurrentRuns: configValues.maxConcurrentRuns,

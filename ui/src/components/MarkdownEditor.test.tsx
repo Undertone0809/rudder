@@ -542,6 +542,82 @@ describe("MarkdownEditor", () => {
     expect(onChange).toHaveBeenLastCalledWith("hello [Rudder Bot](agent://agent-1) x");
   });
 
+  it("keeps the caret after a mention selected with Tab in a plain text composer", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="asadsad. @ori"
+          onChange={onChange}
+          plainText
+          mentions={[
+            {
+              id: "agent:agent-1",
+              name: "Orion (Product Release Agent)",
+              kind: "agent",
+              agentId: "agent-1",
+              searchText: "orion product release agent ori",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "asadsad. @ori".length);
+
+    await act(async () => {
+      editable!.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledWith(
+      "asadsad. [Orion (Product Release Agent)](agent://agent-1) ",
+    );
+    await flushAnimationFrames();
+
+    const selection = window.getSelection();
+    expect(selection?.anchorNode?.nodeType).toBe(Node.TEXT_NODE);
+    expect(selection?.anchorNode?.textContent).toBe(" \u200B");
+    expect(selection?.anchorOffset).toBe(1);
+    expect(mdxEditorMocks.focusCalls).toContainEqual({
+      defaultSelection: "rootEnd",
+      preventScroll: true,
+    });
+
+    const copyData = {
+      setData: vi.fn(),
+    };
+    const range = document.createRange();
+    range.selectNodeContents(editable!);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const copyEvent = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copyEvent, "clipboardData", {
+      value: copyData,
+    });
+    editable!.dispatchEvent(copyEvent);
+
+    expect(copyData.setData).toHaveBeenCalled();
+    const copiedPlainText = copyData.setData.mock.calls.at(-1)?.[1] as string;
+    expect(copiedPlainText).toContain("asadsad. Orion (Product Release Agent) ");
+    expect(copiedPlainText).not.toContain("\u200B");
+  });
+
   it("replaces only the active repeated mention query", async () => {
     const restoreCaretRect = stubCaretRect();
     const container = document.createElement("div");

@@ -10,8 +10,6 @@ import { InstanceProfileSettings } from "./InstanceProfileSettings";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mutate = vi.hoisted(() => vi.fn());
-const navigate = vi.hoisted(() => vi.fn());
-const openProductTour = vi.hoisted(() => vi.fn());
 const profileSettings = vi.hoisted(() => ({
   nickname: "Zee",
   moreAboutYou: "Existing profile context.",
@@ -36,14 +34,6 @@ vi.mock("../context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({ setBreadcrumbs: vi.fn() }),
 }));
 
-vi.mock("@/lib/router", () => ({
-  useNavigate: () => navigate,
-}));
-
-vi.mock("../context/DialogContext", () => ({
-  useDialog: () => ({ openProductTour }),
-}));
-
 vi.mock("../context/I18nContext", () => ({
   useI18n: () => ({
     t: (key: string) => {
@@ -57,11 +47,6 @@ vi.mock("../context/I18nContext", () => ({
         "profile.toastSaved.title": "Profile saved",
         "profile.toastSaved.body": "Your operator profile has been updated.",
         "profile.toastSaveFailed.title": "Failed to save profile",
-        "profile.productTour.title": "Product tour",
-        "profile.productTour.description": "Replay the tour",
-        "profile.productTour.cardTitle": "Rudder workspace walkthrough",
-        "profile.productTour.cardDescription": "Shows the primary workspace controls.",
-        "profile.productTour.start": "Start tour",
         "profile.about.title": "About you",
         "profile.about.description": "About section",
         "profile.nickname.label": "Your nickname",
@@ -97,10 +82,6 @@ afterEach(() => {
   cleanupFn = null;
   document.body.innerHTML = "";
   mutate.mockReset();
-  navigate.mockReset();
-  openProductTour.mockReset();
-  vi.clearAllTimers();
-  vi.useRealTimers();
 });
 
 function setControlValue(control: HTMLInputElement | HTMLTextAreaElement, value: string) {
@@ -133,36 +114,6 @@ function renderPage() {
 }
 
 describe("InstanceProfileSettings", () => {
-  it("starts the product tour from profile settings", async () => {
-    vi.useFakeTimers();
-    const container = renderPage();
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(container.textContent).toContain("Product tour");
-    expect(container.textContent).toContain("Rudder workspace walkthrough");
-
-    const startButton = Array.from(document.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Start tour"));
-    expect(startButton).toBeTruthy();
-
-    act(() => {
-      click(startButton!);
-    });
-
-    expect(navigate).toHaveBeenCalledWith("/dashboard");
-    expect(openProductTour).not.toHaveBeenCalled();
-
-    act(() => {
-      vi.runOnlyPendingTimers();
-    });
-
-    expect(openProductTour).toHaveBeenCalledWith({ source: "settings" });
-    vi.useRealTimers();
-  });
-
   it("copies the import prompt and keeps pasted provider memory in the editable profile field", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {

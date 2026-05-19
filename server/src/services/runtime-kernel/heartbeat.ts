@@ -147,6 +147,10 @@ const SESSIONED_LOCAL_ADAPTERS = new Set([
   "pi_local",
 ]);
 
+type TimerPreflightResult =
+  | { shouldRun: true; reason: string }
+  | { shouldRun: false; skipReason: string };
+
 const heartbeatRunListColumns = {
   id: heartbeatRuns.id,
   orgId: heartbeatRuns.orgId,
@@ -2658,8 +2662,143 @@ export function heartbeatService(db: Db) {
       enabled: asBoolean(heartbeat.enabled, true),
       intervalSec: Math.max(0, asNumber(heartbeat.intervalSec, 0)),
       wakeOnDemand: asBoolean(heartbeat.wakeOnDemand ?? heartbeat.wakeOnAssignment ?? heartbeat.wakeOnOnDemand ?? heartbeat.wakeOnAutomation, true),
+      preflightEnabled: asBoolean(heartbeat.preflightEnabled ?? heartbeat.timerPreflightEnabled, true),
       maxConcurrentRuns: normalizeMaxConcurrentRuns(heartbeat.maxConcurrentRuns),
     };
+  }
+
+  async function markAgentHeartbeatChecked(agent: typeof agents.$inferSelect, outcome: "skipped") {
+    const now = new Date();
+    const updated = await db
+      .update(agents)
+      .set({
+        lastHeartbeatAt: now,
+        updatedAt: now,
+      })
+      .where(eq(agents.id, agent.id))
+      .returning()
+      .then((rows) => rows[0] ?? null);
+
+    if (updated) {
+      publishLiveEvent({
+        orgId: updated.orgId,
+        type: "agent.status",
+        payload: {
+          agentId: updated.id,
+          status: updated.status,
+          lastHeartbeatAt: updated.lastHeartbeatAt
+            ? new Date(updated.lastHeartbeatAt).toISOString()
+            : null,
+          outcome,
+        },
+      });
+    }
+  }
+
+  async function evaluateTimerPreflight(agent: typeof agents.$inferSelect): Promise<TimerPreflightResult> {
+    const pendingWakeup = await db
+      .select({ id: agentWakeupRequests.id })
+      .from(agentWakeupRequests)
+      .where(
+        and(
+          eq(agentWakeupRequests.orgId, agent.orgId),
+          eq(agentWakeupRequests.agentId, agent.id),
+          inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
+          sql`${agentWakeupRequests.runId} is null`,
+          lte(agentWakeupRequests.requestedAt, new Date()),
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (pendingWakeup) {
+      return { shouldRun: false, skipReason: "heartbeat.preflight.pending_wakeup_request" };
+    }
+
+    const assigneeIssue = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(
+        and(
+          eq(issues.orgId, agent.orgId),
+          eq(issues.assigneeAgentId, agent.id),
+          inArray(issues.status, ["todo", "in_progress", "blocked"]),
+          sql`${issues.hiddenAt} is null`,
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (assigneeIssue) {
+      return { shouldRun: true, reason: "assignee_issue" };
+    }
+
+    const reviewerIssue = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(
+        and(
+          eq(issues.orgId, agent.orgId),
+          eq(issues.reviewerAgentId, agent.id),
+          inArray(issues.status, ["in_review", "blocked"]),
+          sql`${issues.hiddenAt} is null`,
+          sql<boolean>`
+            NOT (
+              ${issues.status} = 'blocked'
+              AND EXISTS (
+                SELECT 1
+                FROM activity_log confirmed_blocked_review
+                WHERE confirmed_blocked_review.org_id = ${agent.orgId}
+                  AND confirmed_blocked_review.entity_type = 'issue'
+                  AND confirmed_blocked_review.entity_id = ${issues.id}::text
+                  AND confirmed_blocked_review.action = 'issue.review_decision_recorded'
+                  AND confirmed_blocked_review.actor_type = 'agent'
+                  AND confirmed_blocked_review.actor_id = ${agent.id}::text
+                  AND confirmed_blocked_review.details ->> 'decision' = 'blocked'
+                  AND confirmed_blocked_review.created_at >= COALESCE((
+                    SELECT MAX(material_activity.created_at)
+                    FROM activity_log material_activity
+                    WHERE material_activity.org_id = ${agent.orgId}
+                      AND material_activity.entity_type = 'issue'
+                      AND material_activity.entity_id = ${issues.id}::text
+                      AND (
+                        (
+                          material_activity.action = 'issue.updated'
+                          AND jsonb_typeof(material_activity.details) = 'object'
+                          AND EXISTS (
+                            SELECT 1
+                            FROM jsonb_object_keys(material_activity.details) AS detail_key(key)
+                            WHERE detail_key.key NOT IN (
+                              'identifier',
+                              'issueIdentifier',
+                              '_previous',
+                              'source',
+                              'reopened',
+                              'reopenedFrom',
+                              'normalizedFromStatus',
+                              'normalizedReason'
+                            )
+                          )
+                        )
+                        OR (
+                          material_activity.action = 'issue.comment_added'
+                          AND NOT (
+                            material_activity.actor_type = 'agent'
+                            AND material_activity.actor_id = ${agent.id}::text
+                          )
+                        )
+                      )
+                  ), to_timestamp(0))
+              )
+            )
+          `,
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (reviewerIssue) {
+      return { shouldRun: true, reason: "reviewer_issue" };
+    }
+
+    return { shouldRun: false, skipReason: "heartbeat.preflight.no_actionable_work" };
   }
 
   async function runHasIssueClosureComment(tx: any, run: typeof heartbeatRuns.$inferSelect, issueId: string) {
@@ -4980,6 +5119,10 @@ export function heartbeatService(db: Db) {
       });
     };
 
+    if (agent.status === "terminated" || agent.status === "pending_approval") {
+      throw conflict("Agent is not invokable in its current state", { status: agent.status });
+    }
+
     let projectId = readNonEmptyString(enrichedContextSnapshot.projectId);
     if (!projectId && issueId) {
       projectId = await db
@@ -5072,10 +5215,6 @@ export function heartbeatService(db: Db) {
       return null;
     }
 
-    if (agent.status === "terminated" || agent.status === "pending_approval") {
-      throw conflict("Agent is not invokable in its current state", { status: agent.status });
-    }
-
     const policy = parseHeartbeatPolicy(agent);
 
     if (source === "timer" && !policy.enabled) {
@@ -5085,6 +5224,14 @@ export function heartbeatService(db: Db) {
     if (source !== "timer" && !policy.wakeOnDemand) {
       await writeSkippedRequest("heartbeat.wakeOnDemand.disabled");
       return null;
+    }
+    if (source === "timer" && policy.preflightEnabled && !issueId) {
+      const preflight = await evaluateTimerPreflight(agent);
+      if (!preflight.shouldRun) {
+        await writeSkippedRequest(preflight.skipReason);
+        await markAgentHeartbeatChecked(agent, "skipped");
+        return null;
+      }
     }
 
     const bypassIssueExecutionLock =

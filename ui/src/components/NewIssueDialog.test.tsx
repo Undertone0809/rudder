@@ -177,6 +177,7 @@ vi.mock("./InlineEntitySelector", () => ({
     renderTriggerValue,
     renderOption,
     variant,
+    className,
   }: {
     value?: string;
     options?: Array<{ id: string; label: string }>;
@@ -184,10 +185,11 @@ vi.mock("./InlineEntitySelector", () => ({
     renderTriggerValue?: (option: { id: string; label: string } | null) => ReactNode;
     renderOption?: (option: { id: string; label: string }, isSelected: boolean) => ReactNode;
     variant?: string;
+    className?: string;
   }) => {
     const selectedOption = options?.find((option) => option.id === value) ?? null;
     return (
-      <div data-selector-placeholder={placeholder} data-variant={variant}>
+      <div data-selector-placeholder={placeholder} data-variant={variant} className={className}>
         <button type="button">
           {renderTriggerValue ? renderTriggerValue(selectedOption) : (selectedOption?.label ?? placeholder ?? "selector")}
         </button>
@@ -288,9 +290,10 @@ describe("NewIssueDialog", () => {
 
     expect(html).toContain('data-variant="field"');
     expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect((html.match(/h-auto min-h-12 w-full py-2/g) ?? []).length).toBe(3);
   });
 
-  it("promotes labels into the primary metadata fields when the organization has five labels", () => {
+  it("keeps labels in the property chip when the organization has five labels", () => {
     dialogState.labels = Array.from({ length: 5 }, (_, index) => ({
       id: `label-${index + 1}`,
       orgId: "org-1",
@@ -302,17 +305,19 @@ describe("NewIssueDialog", () => {
 
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
-    expect(html).toContain("sm:grid-cols-4");
-    expect(html).toContain(">Labels</div>");
-    expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    expect(html).toContain("sm:grid-cols-3");
+    expect(html).not.toContain("sm:grid-cols-4");
+    expect(html).not.toContain(">Labels</div>");
+    expect((html.match(/data-variant="field"/g) ?? []).length).toBe(3);
+    expect(html).toContain("Search labels...");
   });
 
-  it("renders agent selector titles as badges instead of parenthesized label text", () => {
+  it("renders agent selector titles on a second line instead of parenthesized label text", () => {
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
-    expect(html).toContain('data-slot="agent-title-badge"');
-    expect(html).toContain("max-w-none");
-    expect(html).toContain("shrink-0");
+    expect(html).toContain('data-slot="agent-menu-label"');
+    expect(html).toContain('data-slot="agent-menu-supporting-label"');
+    expect(html).toContain("flex-col text-left");
     expect(html).toContain("Chief Technology Officer");
     expect(html).not.toContain("Ella (Chief Technology Officer)");
   });

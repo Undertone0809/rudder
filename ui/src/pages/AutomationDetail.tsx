@@ -33,7 +33,7 @@ import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { timeAgo } from "../lib/timeAgo";
-import { formatDateTime } from "../lib/utils";
+import { cn, formatDateTime } from "../lib/utils";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
@@ -54,370 +54,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
-import type { AutomationTrigger } from "@rudderhq/shared";
-
-const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
-const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
-const triggerKinds = ["schedule", "webhook"];
-const signingModes = ["bearer", "hmac_sha256"];
-const concurrencyPolicyDescriptions: Record<string, string> = {
-  coalesce_if_active: "Keep one follow-up run queued while an active run is still working.",
-  always_enqueue: "Queue every trigger occurrence, even if several runs stack up.",
-  skip_if_active: "Drop overlapping trigger occurrences while the automation is already active.",
-};
-const catchUpPolicyDescriptions: Record<string, string> = {
-  skip_missed: "Ignore schedule windows that were missed while the automation or scheduler was paused.",
-  enqueue_missed_with_cap: "Catch up missed schedule windows in capped batches after recovery.",
-};
-const signingModeDescriptions: Record<string, string> = {
-  bearer: "Expect a shared bearer token in the Authorization header.",
-  hmac_sha256: "Expect an HMAC SHA-256 signature over the request using the shared secret.",
-};
-
-type SecretMessage = {
-  title: string;
-  webhookUrl: string;
-  webhookSecret: string;
-};
-
-function addUniqueId(ids: string[], id: string) {
-  return ids.includes(id) ? ids : [...ids, id];
-}
-
-function removeId(ids: string[], id: string) {
-  return ids.filter((currentId) => currentId !== id);
-}
-
-function autoResizeTextarea(element: HTMLTextAreaElement | null) {
-  if (!element) return;
-  element.style.height = "auto";
-  element.style.height = `${element.scrollHeight}px`;
-}
-
-function formatActivityDetailValue(value: unknown): string {
-  if (value === null) return "null";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) return value.length === 0 ? "[]" : value.map((item) => formatActivityDetailValue(item)).join(", ");
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "[unserializable]";
-  }
-}
-
-function getLocalTimezone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone;
-  } catch {
-    return "UTC";
-  }
-}
-
-function formatAutomationTimestamp(value: Date | string | null | undefined, fallback: string) {
-  if (!value) return fallback;
-  return formatDateTime(value);
-}
-
-function summarizeTrigger(trigger: Pick<AutomationTrigger, "kind" | "cronExpression" | "label"> | null): string {
-  if (!trigger) return "No triggers configured";
-  if (trigger.kind === "schedule" && trigger.cronExpression) {
-    return describeSchedule(trigger.cronExpression);
-  }
-  if (trigger.kind === "webhook") {
-    return trigger.label?.trim() || "Webhook trigger";
-  }
-  return trigger.label?.trim() || trigger.kind;
-}
-
-function automationRiskLabel(input: {
-  status: string;
-  triggerCount: number;
-  hasAssignee: boolean;
-  hasLiveRun: boolean;
-  latestRunStatus?: string | null;
-}): string {
-  if (input.triggerCount === 0) return "No trigger";
-  if (!input.hasAssignee) return "No owner";
-  if (input.latestRunStatus === "failed") return "Last failed";
-  if (input.hasLiveRun) return "Active run";
-  return "Normal";
-}
-
-function automationNextActionLabel(input: {
-  status: string;
-  triggerCount: number;
-  hasLiveRun: boolean;
-}): string {
-  if (input.triggerCount === 0) return "Add trigger";
-  if (input.status !== "active") return "Enable";
-  if (input.hasLiveRun) return "Monitor run";
-  return "Run now";
-}
-
-function SidebarSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="space-y-2.5">
-      <h2 className="text-xs font-medium text-muted-foreground">{title}</h2>
-      <div className="space-y-2.5">{children}</div>
-    </section>
-  );
-}
-
-function SidebarRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-3 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <div className="min-w-0 text-right text-foreground">{children}</div>
-    </div>
-  );
-}
-
-function SidebarSelectValue({ children }: { children: ReactNode }) {
-  return (
-    <>
-      <span className="flex min-w-0 items-center gap-1.5">{children}</span>
-      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
-    </>
-  );
-}
-
-function OverviewMetaPill({
-  label,
-  value,
-  icon,
-  className,
-}: {
-  label: string;
-  value: ReactNode;
-  icon?: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`inline-flex min-w-0 items-center gap-1.5 rounded-md border border-border/60 bg-background/50 px-2 py-1.5 text-xs text-foreground ${className ?? ""}`}
-    >
-      {icon ? <span className="shrink-0 text-muted-foreground">{icon}</span> : null}
-      <span className="shrink-0 text-muted-foreground">{label}</span>
-      <span className="truncate">{value}</span>
-    </div>
-  );
-}
-
-function TriggerEditor({
-  trigger,
-  onSave,
-  onRotate,
-  onDelete,
-  isSaving,
-  isDeleting,
-  isRotating,
-  saveError,
-}: {
-  trigger: AutomationTrigger;
-  onSave: (id: string, patch: Record<string, unknown>) => void;
-  onRotate: (id: string) => void;
-  onDelete: (id: string) => void;
-  isSaving?: boolean;
-  isDeleting?: boolean;
-  isRotating?: boolean;
-  saveError?: string | null;
-}) {
-  const { confirm } = useDialog();
-  const [draft, setDraft] = useState({
-    label: trigger.label ?? "",
-    cronExpression: trigger.cronExpression ?? "",
-    signingMode: trigger.signingMode ?? "bearer",
-    replayWindowSec: String(trigger.replayWindowSec ?? 300),
-  });
-  const skipNextAutosaveRef = useRef(true);
-
-  useEffect(() => {
-    setDraft({
-      label: trigger.label ?? "",
-      cronExpression: trigger.cronExpression ?? "",
-      signingMode: trigger.signingMode ?? "bearer",
-      replayWindowSec: String(trigger.replayWindowSec ?? 300),
-    });
-    skipNextAutosaveRef.current = true;
-  }, [trigger]);
-
-  const isTriggerDirty = useMemo(() => {
-    if (draft.label !== (trigger.label ?? "")) return true;
-    if (trigger.kind === "schedule") {
-      return draft.cronExpression !== (trigger.cronExpression ?? "");
-    }
-    if (trigger.kind === "webhook") {
-      return (
-        draft.signingMode !== (trigger.signingMode ?? "bearer") ||
-        draft.replayWindowSec !== String(trigger.replayWindowSec ?? 300)
-      );
-    }
-    return false;
-  }, [draft, trigger]);
-
-  const canAutosaveTrigger =
-    trigger.kind !== "schedule" || draft.cronExpression.trim().length > 0;
-  const triggerLabel = trigger.label?.trim() || trigger.kind;
-  const syncLabel = isDeleting
-    ? "Deleting..."
-    : isRotating
-      ? "Rotating..."
-      : isSaving
-        ? "Saving..."
-        : saveError
-          ? "Save failed"
-          : !canAutosaveTrigger
-            ? "Needs schedule"
-            : isTriggerDirty
-              ? "Autosaving..."
-              : "In sync";
-  const syncClassName = isDeleting || isRotating || isSaving || isTriggerDirty
-    ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-    : saveError
-      ? "border-destructive/40 bg-destructive/10 text-destructive"
-      : !canAutosaveTrigger
-        ? "border-border/70 bg-muted/20 text-muted-foreground"
-        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-
-  useEffect(() => {
-    if (skipNextAutosaveRef.current) {
-      skipNextAutosaveRef.current = false;
-      return;
-    }
-    if (!isTriggerDirty || !canAutosaveTrigger) return;
-
-    const timeoutId = window.setTimeout(() => {
-      onSave(trigger.id, buildAutomationTriggerPatch(trigger, draft, getLocalTimezone()));
-    }, 650);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [canAutosaveTrigger, draft, isTriggerDirty, onSave, trigger]);
-
-  return (
-    <div className="space-y-3 border-y border-border/70 py-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          {trigger.kind === "schedule" ? <Clock3 className="h-3.5 w-3.5" /> : trigger.kind === "webhook" ? <Webhook className="h-3.5 w-3.5" /> : <Zap className="h-3.5 w-3.5" />}
-          {triggerLabel}
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-          <Badge variant="outline" className={syncClassName}>
-            {syncLabel}
-          </Badge>
-          <span className="text-xs text-muted-foreground">
-            {trigger.kind === "schedule" && trigger.nextRunAt
-              ? `Next: ${formatDateTime(trigger.nextRunAt)}`
-              : trigger.kind === "webhook"
-                ? "Webhook"
-                : "API"}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="text-muted-foreground hover:text-destructive"
-            aria-label="Delete trigger"
-            disabled={isDeleting}
-            onClick={async () => {
-              const confirmed = await confirm({
-                title: `Delete trigger "${triggerLabel}"?`,
-                description: `It will stop new ${trigger.kind} activations.`,
-                confirmLabel: "Delete",
-                tone: "destructive",
-              });
-              if (!confirmed) return;
-              onDelete(trigger.id);
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-[minmax(160px,0.45fr)_minmax(0,1fr)]">
-        <div className="space-y-1.5">
-          <Label className="text-xs">Label</Label>
-          <Input
-            value={draft.label}
-            onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))}
-          />
-        </div>
-        {trigger.kind === "schedule" && (
-          <div className="space-y-1.5">
-            <Label className="text-xs">Schedule</Label>
-            <ScheduleEditor
-              value={draft.cronExpression}
-              onChange={(cronExpression) => setDraft((current) => ({ ...current, cronExpression }))}
-            />
-          </div>
-        )}
-        {trigger.kind === "webhook" && (
-          <>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Signing mode</Label>
-              <Select
-                value={draft.signingMode}
-                onValueChange={(signingMode) => setDraft((current) => ({ ...current, signingMode }))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {signingModes.map((mode) => (
-                    <SelectItem key={mode} value={mode}>{mode}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Replay window (seconds)</Label>
-              <Input
-                value={draft.replayWindowSec}
-                onChange={(event) => setDraft((current) => ({ ...current, replayWindowSec: event.target.value }))}
-              />
-            </div>
-          </>
-        )}
-      </div>
-
-      {(trigger.lastResult || trigger.kind === "webhook") ? (
-        <div className="flex flex-wrap items-center gap-2">
-          {trigger.lastResult && <span className="text-xs text-muted-foreground">Last: {trigger.lastResult}</span>}
-          {saveError ? (
-            <div className="flex flex-wrap items-center gap-2 text-xs text-destructive">
-              <span>{saveError}</span>
-              {canAutosaveTrigger ? (
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="h-6 px-2 text-destructive hover:text-destructive"
-                  onClick={() => onSave(trigger.id, buildAutomationTriggerPatch(trigger, draft, getLocalTimezone()))}
-                >
-                  Retry save
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
-          <div className="ml-auto flex items-center gap-2">
-            {trigger.kind === "webhook" && (
-              <Button variant="outline" size="sm" disabled={isRotating} onClick={() => onRotate(trigger.id)}>
-                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                {isRotating ? "Rotating..." : "Rotate secret"}
-              </Button>
-            )}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
+import type { ActivityEvent, AutomationRunSummary, AutomationTrigger } from "@rudderhq/shared";
+import { concurrencyPolicies, catchUpPolicies, signingModes, concurrencyPolicyDescriptions, catchUpPolicyDescriptions, SecretMessage, addUniqueId, removeId, autoResizeTextarea, formatActivityDetailValue, getActivityDetailString, humanizeToken, triggerKindLabel, runSourceLabel, runStatusTitle, runStatusDetail, getLocalTimezone, formatAutomationTimestamp, summarizeTrigger, automationRiskLabel, automationNextActionLabel, SidebarSection, SidebarRow, SidebarSelectValue, OverviewMetaPill, TriggerEditor } from "./AutomationDetail.parts";
 
 export function AutomationDetail() {
   const { automationId } = useParams<{ automationId: string }>();
@@ -438,6 +78,7 @@ export function AutomationDetail() {
   const [secretMessage, setSecretMessage] = useState<SecretMessage | null>(null);
   const [copiedSecretField, setCopiedSecretField] = useState<"url" | "secret" | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [newTriggerOpen, setNewTriggerOpen] = useState(false);
   const [savingTriggerIds, setSavingTriggerIds] = useState<string[]>([]);
   const [deletingTriggerIds, setDeletingTriggerIds] = useState<string[]>([]);
   const [rotatingTriggerIds, setRotatingTriggerIds] = useState<string[]>([]);
@@ -815,6 +456,7 @@ export function AutomationDetail() {
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.activity(selectedOrganizationId!, automationId!) }),
       ]);
+      setNewTriggerOpen(false);
     },
     onError: (error) => {
       pushToast({
@@ -947,6 +589,10 @@ export function AutomationDetail() {
   );
   const currentAssignee = editDraft.assigneeAgentId ? agentById.get(editDraft.assigneeAgentId) ?? null : null;
   const currentProject = editDraft.projectId ? projectById.get(editDraft.projectId) ?? null : null;
+  const triggerById = useMemo(
+    () => new Map((automation?.triggers ?? []).map((trigger) => [trigger.id, trigger])),
+    [automation?.triggers],
+  );
   const skillMentionOptions = useMemo(
     () => buildAgentSkillMentionOptions({
       agent: currentAssignee,
@@ -965,6 +611,155 @@ export function AutomationDetail() {
     }),
     [agents, issues, projects, skillMentionOptions],
   );
+  const automationActivityItems = useMemo(() => {
+    const runIds = new Set((automationRuns ?? []).map((run) => run.id));
+    const items: Array<{
+      id: string;
+      title: string;
+      details: ReactNode[];
+      createdAt: Date | string;
+      sortAt: number;
+    }> = [];
+
+    const detailText = (text: string | null | undefined, key: string) =>
+      text ? <span key={key}>{text}</span> : null;
+
+    const describeAgent = (agentId: string | null) => {
+      if (!agentId) return null;
+      const agent = agentById.get(agentId);
+      if (agent) return formatChatAgentLabel(agent);
+      if (automation?.assignee?.id === agentId) return automation.assignee.name;
+      return "Selected agent";
+    };
+
+    const describeProject = (projectId: string | null) => {
+      if (!projectId) return null;
+      const project = projectById.get(projectId);
+      if (project) return project.name;
+      if (automation?.project?.id === projectId) return automation.project.name;
+      return "Selected project";
+    };
+
+    const describeTrigger = (
+      triggerId: string | null | undefined,
+      fallback: Pick<AutomationTrigger, "kind" | "cronExpression" | "label"> | null,
+    ) => {
+      const trigger = triggerId ? triggerById.get(triggerId) : null;
+      const source = trigger ?? fallback;
+      if (!source) return null;
+      const summary = summarizeTrigger(source);
+      const kind = triggerKindLabel(source.kind);
+      return summary && summary !== kind ? `${kind}: ${summary}` : kind;
+    };
+
+    const pushEventItem = (event: ActivityEvent) => {
+      const details = event.details ?? null;
+      const eventDetails: ReactNode[] = [];
+      let title = event.action.replaceAll(".", " ");
+
+      if (event.action === "automation.created") {
+        title = "Automation created";
+        const createdTitle = getActivityDetailString(details, "title");
+        eventDetails.push(detailText(createdTitle ? `"${createdTitle}"` : automation?.title, "title"));
+        eventDetails.push(detailText(`Assigned to ${describeAgent(getActivityDetailString(details, "assigneeAgentId")) ?? "agent"}`, "assignee"));
+      } else if (event.action === "automation.updated") {
+        title = "Automation updated";
+        const updatedTitle = getActivityDetailString(details, "title");
+        eventDetails.push(detailText(updatedTitle ? `Title: ${updatedTitle}` : "Settings changed", "updated"));
+      } else if (event.action === "automation.deleted") {
+        title = "Automation deleted";
+        eventDetails.push(detailText(getActivityDetailString(details, "title"), "title"));
+      } else if (event.action === "automation.trigger_created") {
+        title = "Trigger added";
+        const trigger = triggerById.get(event.entityId);
+        eventDetails.push(detailText(
+          describeTrigger(event.entityId, {
+            kind: getActivityDetailString(details, "kind") ?? "trigger",
+            cronExpression: trigger?.cronExpression ?? null,
+            label: trigger?.label ?? null,
+          }),
+          "trigger",
+        ));
+      } else if (event.action === "automation.trigger_updated") {
+        title = "Trigger updated";
+        eventDetails.push(detailText(
+          describeTrigger(event.entityId, {
+            kind: getActivityDetailString(details, "kind") ?? "trigger",
+            cronExpression: null,
+            label: null,
+          }),
+          "trigger",
+        ));
+      } else if (event.action === "automation.trigger_deleted") {
+        title = "Trigger removed";
+        eventDetails.push(detailText(triggerKindLabel(getActivityDetailString(details, "kind")), "trigger"));
+      } else if (event.action === "automation.trigger_secret_rotated") {
+        title = "Webhook secret rotated";
+      } else if (event.action === "automation.run_triggered") {
+        title = runStatusTitle(getActivityDetailString(details, "status") ?? "started");
+        eventDetails.push(detailText(runSourceLabel(getActivityDetailString(details, "source") ?? "run"), "source"));
+        eventDetails.push(detailText(runStatusDetail(getActivityDetailString(details, "status") ?? ""), "status"));
+      } else {
+        Object.entries(details ?? {})
+          .filter(([key]) => !["automationId", "triggerId", "assigneeAgentId", "projectId"].includes(key))
+          .slice(0, 2)
+          .forEach(([key, value]) => {
+            eventDetails.push(
+              <span key={key}>
+                <span className="text-muted-foreground/70">{key.replaceAll("_", " ")}:</span>{" "}
+                {formatActivityDetailValue(value)}
+              </span>,
+            );
+          });
+      }
+
+      const resolvedDetails = eventDetails.filter(Boolean);
+      items.push({
+        id: `event:${event.id}`,
+        title,
+        details: resolvedDetails.length > 0 ? resolvedDetails : [<span key="fallback">Activity recorded</span>],
+        createdAt: event.createdAt,
+        sortAt: new Date(event.createdAt).getTime(),
+      });
+    };
+
+    for (const run of (automationRuns ?? automation?.recentRuns ?? []) as AutomationRunSummary[]) {
+      const details: ReactNode[] = [];
+      details.push(<span key="source">{runSourceLabel(run.source)}</span>);
+      const statusDetail = runStatusDetail(run.status);
+      if (statusDetail) details.push(<span key="status">{statusDetail}</span>);
+      const triggerDescription = describeTrigger(
+        run.triggerId,
+        run.trigger ? { ...run.trigger, cronExpression: null } : null,
+      );
+      if (triggerDescription) details.push(<span key="trigger">{triggerDescription}</span>);
+      if (run.linkedIssue) {
+        details.push(
+          <Link key="issue" to={`/issues/${run.linkedIssue.identifier ?? run.linkedIssue.id}`} className="font-medium text-foreground hover:underline">
+            {run.linkedIssue.identifier ?? run.linkedIssue.title}
+          </Link>,
+        );
+      }
+      if (run.failureReason) details.push(<span key="failure">{run.failureReason}</span>);
+
+      items.push({
+        id: `run:${run.id}`,
+        title: runStatusTitle(run.status),
+        details,
+        createdAt: run.triggeredAt,
+        sortAt: new Date(run.triggeredAt).getTime(),
+      });
+    }
+
+    for (const event of activity ?? []) {
+      if (event.action === "automation.run_triggered" && event.entityType === "automation_run" && runIds.has(event.entityId)) {
+        continue;
+      }
+      pushEventItem(event);
+    }
+
+    return items.sort((a, b) => b.sortAt - a.sortAt).slice(0, 10);
+  }, [activity, agentById, automation, automationRuns, projectById, triggerById]);
 
   if (!selectedOrganizationId) {
     return <EmptyState icon={Repeat} message="Select an organization to view automations." />;
@@ -1158,369 +953,307 @@ export function AutomationDetail() {
           </section>
         </main>
 
-        <aside ref={sidebarScrollRef} className="scrollbar-auto-hide space-y-6 border-t border-border/70 pt-4 lg:sticky lg:top-20 lg:max-h-[calc(100vh-5.5rem)] lg:self-start lg:overflow-y-auto lg:border-l lg:border-t-0 lg:pl-5 lg:pr-1 lg:pt-1">
-          <SidebarSection title="Configuration">
-            <div className="space-y-2.5">
-              <Label className="text-xs">Agent</Label>
-              <div data-testid="automation-detail-agent-control" className="rounded-md border border-border/80 bg-background/50">
-                <InlineEntitySelector
-                  ref={assigneeSelectorRef}
-                  value={editDraft.assigneeAgentId}
-                  options={assigneeOptions}
-                  placeholder="Select agent"
-                  noneLabel="No agent"
-                  searchPlaceholder="Search agents..."
-                  emptyMessage="No agents found."
-                  className="min-h-11 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
-                  onChange={(assigneeAgentId) => {
-                    if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
-                    setEditDraft((current) => ({ ...current, assigneeAgentId }));
-                  }}
-                  onConfirm={() => {
-                    if (editDraft.projectId) {
-                      descriptionEditorRef.current?.focus();
-                    } else {
-                      projectSelectorRef.current?.focus();
-                    }
-                  }}
-                  renderTriggerValue={(option) =>
-                    option ? (
-                      <SidebarSelectValue>
-                        {currentAssignee ? (
-                          <>
-                            <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <aside ref={sidebarScrollRef} className="scrollbar-auto-hide border-t border-border/70 pt-4 lg:sticky lg:top-20 lg:max-h-[calc(100vh-5.5rem)] lg:self-start lg:overflow-y-auto lg:border-t-0 lg:pt-0">
+          <div data-testid="automation-configuration-card" className="space-y-6 rounded-md border border-border/70 bg-card/85 p-4 shadow-sm">
+            <SidebarSection title="Configuration">
+              <div className="space-y-2.5">
+                <Label className="text-xs">Assignee</Label>
+                <div data-testid="automation-detail-agent-control" className="rounded-md border border-border/80 bg-background/50">
+                  <InlineEntitySelector
+                    ref={assigneeSelectorRef}
+                    value={editDraft.assigneeAgentId}
+                    options={assigneeOptions}
+                    placeholder="Select assignee"
+                    noneLabel="No assignee"
+                    searchPlaceholder="Search assignees..."
+                    emptyMessage="No assignees found."
+                    className="min-h-11 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
+                    onChange={(assigneeAgentId) => {
+                      if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
+                      setEditDraft((current) => ({ ...current, assigneeAgentId }));
+                    }}
+                    onConfirm={() => {
+                      if (editDraft.projectId) {
+                        descriptionEditorRef.current?.focus();
+                      } else {
+                        projectSelectorRef.current?.focus();
+                      }
+                    }}
+                    renderTriggerValue={(option) =>
+                      option ? (
+                        <SidebarSelectValue>
+                          {currentAssignee ? (
+                            <>
+                              <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              <span className="truncate">{option.label}</span>
+                            </>
+                          ) : (
                             <span className="truncate">{option.label}</span>
-                          </>
-                        ) : (
+                          )}
+                        </SidebarSelectValue>
+                      ) : (
+                        <SidebarSelectValue>
+                          <span className="text-muted-foreground">Select assignee</span>
+                        </SidebarSelectValue>
+                      )
+                    }
+                    renderOption={(option) => {
+                      if (!option.id) return <span className="truncate">{option.label}</span>;
+                      const assignee = agentById.get(option.id);
+                      return (
+                        <>
+                          {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
                           <span className="truncate">{option.label}</span>
-                        )}
-                      </SidebarSelectValue>
-                    ) : (
-                      <SidebarSelectValue>
-                        <span className="text-muted-foreground">Select agent</span>
-                      </SidebarSelectValue>
-                    )
-                  }
-                  renderOption={(option) => {
-                    if (!option.id) return <span className="truncate">{option.label}</span>;
-                    const assignee = agentById.get(option.id);
-                    return (
-                      <>
-                        {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
-                        <span className="truncate">{option.label}</span>
-                      </>
-                    );
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2.5">
-              <Label className="text-xs">Run output</Label>
-              <div className="flex min-h-12 items-center gap-3 rounded-md border border-foreground/60 bg-accent/50 px-3 py-2 text-sm">
-                <Check className="h-4 w-4 shrink-0" />
-                <div className="min-w-0">
-                  <div className="font-medium">Track as issue</div>
-                  <div className="truncate text-xs text-muted-foreground">Each run opens board-tracked work</div>
+                        </>
+                      );
+                    }}
+                  />
                 </div>
               </div>
-            </div>
 
-            <div className="space-y-2.5">
-              <Label className="text-xs">Schedule</Label>
-              <div className="rounded-md border border-border/80 bg-background/50 px-3 py-2 text-sm">
-                <div className="flex items-center gap-2">
-                  <Clock3 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 truncate">{summarizeTrigger(nextTrigger)}</span>
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  Next: {formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2.5">
-              <Label className="text-xs">Project</Label>
-              <div data-testid="automation-detail-project-control" className="rounded-md border border-border/80 bg-background/50">
-                <InlineEntitySelector
-                  ref={projectSelectorRef}
-                  value={editDraft.projectId}
-                  options={projectOptions}
-                  placeholder="No project"
-                  noneLabel="No project"
-                  searchPlaceholder="Search projects..."
-                  emptyMessage="No projects found."
-                  className="min-h-10 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
-                  onChange={(projectId) => setEditDraft((current) => ({ ...current, projectId }))}
-                  onConfirm={() => descriptionEditorRef.current?.focus()}
-                  renderTriggerValue={(option) =>
-                    option && currentProject ? (
-                      <SidebarSelectValue>
-                        <span
-                          className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                          style={projectColorBackgroundStyle(currentProject.color)}
-                        />
-                        <span className="truncate">{option.label}</span>
-                      </SidebarSelectValue>
-                    ) : (
-                      <SidebarSelectValue>
-                        <span className="text-muted-foreground">No project</span>
-                      </SidebarSelectValue>
-                    )
-                  }
-                  renderOption={(option) => {
-                    if (!option.id) return <span className="truncate">{option.label}</span>;
-                    const project = projectById.get(option.id);
-                    return (
-                      <>
-                        <span
-                          className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                          style={projectColorBackgroundStyle(project?.color)}
-                        />
-                        <span className="truncate">{option.label}</span>
-                      </>
-                    );
-                  }}
-                />
-              </div>
-            </div>
-          </SidebarSection>
-
-          <SidebarSection title="Run status">
-            <SidebarRow label="Last ran">
-              <span className="truncate">{latestRun ? timeAgo(latestRun.triggeredAt) : "-"}</span>
-            </SidebarRow>
-            <SidebarRow label="Edits">
-              <span className={editSyncClassName}>{editSyncLabel}</span>
-            </SidebarRow>
-            <SidebarRow label="Risk">
-              <span className="truncate">{riskLabel}</span>
-            </SidebarRow>
-            {hasLiveRun ? (
-              <SidebarRow label="Run">
-                <Badge variant="outline" className="border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300">
-                  In progress
-                </Badge>
-              </SidebarRow>
-            ) : null}
-          </SidebarSection>
-
-          <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="border-t border-border/70 pt-5">
-            <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              Delivery rules
-              {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-            </CollapsibleTrigger>
-            <CollapsibleContent className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label className="text-xs">Concurrency</Label>
-                <Select
-                  value={editDraft.concurrencyPolicy}
-                  onValueChange={(concurrencyPolicy) => setEditDraft((current) => ({ ...current, concurrencyPolicy }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {concurrencyPolicies.map((value) => (
-                      <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs leading-5 text-muted-foreground">{concurrencyPolicyDescriptions[editDraft.concurrencyPolicy]}</p>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs">Catch-up</Label>
-                <Select
-                  value={editDraft.catchUpPolicy}
-                  onValueChange={(catchUpPolicy) => setEditDraft((current) => ({ ...current, catchUpPolicy }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {catchUpPolicies.map((value) => (
-                      <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs leading-5 text-muted-foreground">{catchUpPolicyDescriptions[editDraft.catchUpPolicy]}</p>
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-
-          <SidebarSection title="Previous runs">
-            {hasLiveRun && activeIssueId && automation ? (
-              <LiveRunWidget issueId={activeIssueId} orgId={automation.orgId} />
-            ) : null}
-            {(automationRuns ?? []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">No runs yet.</p>
-            ) : (
-              <div className="space-y-2">
-                {(automationRuns ?? []).slice(0, 5).map((run) => (
-                  <div key={run.id} className="space-y-1 rounded-md border border-border/70 px-3 py-2 text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-foreground">{run.status.replaceAll("_", " ")}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(run.triggeredAt)}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>{run.source}</span>
-                      {run.linkedIssue ? (
-                        <Link to={`/issues/${run.linkedIssue.identifier ?? run.linkedIssue.id}`} className="truncate hover:underline">
-                          {run.linkedIssue.identifier ?? run.linkedIssue.id.slice(0, 8)}
-                        </Link>
-                      ) : null}
-                    </div>
+              <div className="space-y-2.5">
+                <Label className="text-xs">Run output</Label>
+                <div className="flex min-h-12 items-center gap-3 rounded-md border border-foreground/60 bg-accent/50 px-3 py-2 text-sm">
+                  <Check className="h-4 w-4 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-medium">Track as issue</div>
+                    <div className="truncate text-xs text-muted-foreground">Each run opens board-tracked work</div>
                   </div>
-                ))}
+                </div>
               </div>
-            )}
-          </SidebarSection>
+
+              <div className="space-y-2.5">
+                <Label className="text-xs">Schedule</Label>
+                <div className="rounded-md border border-border/80 bg-background/50 px-3 py-2 text-sm">
+                  <div className="flex items-center gap-2">
+                    <Clock3 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">{summarizeTrigger(nextTrigger)}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Next: {formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2.5">
+                <Label className="text-xs">Project</Label>
+                <div data-testid="automation-detail-project-control" className="rounded-md border border-border/80 bg-background/50">
+                  <InlineEntitySelector
+                    ref={projectSelectorRef}
+                    value={editDraft.projectId}
+                    options={projectOptions}
+                    placeholder="No project"
+                    noneLabel="No project"
+                    searchPlaceholder="Search projects..."
+                    emptyMessage="No projects found."
+                    className="min-h-10 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
+                    onChange={(projectId) => setEditDraft((current) => ({ ...current, projectId }))}
+                    onConfirm={() => descriptionEditorRef.current?.focus()}
+                    renderTriggerValue={(option) =>
+                      option && currentProject ? (
+                        <SidebarSelectValue>
+                          <span
+                            className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                            style={projectColorBackgroundStyle(currentProject.color)}
+                          />
+                          <span className="truncate">{option.label}</span>
+                        </SidebarSelectValue>
+                      ) : (
+                        <SidebarSelectValue>
+                          <span className="text-muted-foreground">No project</span>
+                        </SidebarSelectValue>
+                      )
+                    }
+                    renderOption={(option) => {
+                      if (!option.id) return <span className="truncate">{option.label}</span>;
+                      const project = projectById.get(option.id);
+                      return (
+                        <>
+                          <span
+                            className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                            style={projectColorBackgroundStyle(project?.color)}
+                          />
+                          <span className="truncate">{option.label}</span>
+                        </>
+                      );
+                    }}
+                  />
+                </div>
+              </div>
+            </SidebarSection>
+
+            <SidebarSection title="Triggers">
+              <Popover open={newTriggerOpen} onOpenChange={setNewTriggerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="automation-trigger-menu-trigger group w-full justify-center rounded-md bg-background/55 shadow-none"
+                    data-testid="automation-add-trigger-button"
+                  >
+                    Add trigger
+                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground transition-transform duration-150 group-data-[state=open]:rotate-180" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  data-testid="automation-add-trigger-card"
+                  align="end"
+                  side="left"
+                  sideOffset={8}
+                  className="automation-trigger-menu-content glass-popover w-[min(320px,calc(100vw-2rem))] space-y-3 rounded-md p-3 text-foreground"
+                >
+                  <div className="px-1 text-sm font-medium text-muted-foreground">Schedule</div>
+                  <ScheduleEditor
+                    variant="compact"
+                    value={newTrigger.cronExpression}
+                    onChange={(cronExpression) => setNewTrigger((current) => ({ ...current, kind: "schedule", cronExpression }))}
+                  />
+                  <Button
+                    className="w-full justify-center"
+                    size="sm"
+                    onClick={() => createTrigger.mutate()}
+                    disabled={createTrigger.isPending || !canCreateTrigger}
+                  >
+                    {createTrigger.isPending ? "Adding..." : "Create trigger"}
+                  </Button>
+                </PopoverContent>
+              </Popover>
+
+              <div data-testid="automation-triggers-list" className="space-y-3">
+                {automation.triggers.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-border/80 px-3 py-4 text-sm text-muted-foreground">
+                    No triggers configured yet.
+                  </div>
+                ) : (
+                  automation.triggers.map((trigger) => (
+                    <TriggerEditor
+                      key={trigger.id}
+                      trigger={trigger}
+                      onSave={saveTriggerDraft}
+                      onRotate={(id) => {
+                        setRotatingTriggerIds((current) => addUniqueId(current, id));
+                        rotateTrigger.mutate(id, {
+                          onSettled: () => setRotatingTriggerIds((current) => removeId(current, id)),
+                        });
+                      }}
+                      onDelete={(id) => {
+                        setDeletingTriggerIds((current) => addUniqueId(current, id));
+                        deleteTrigger.mutate(id, {
+                          onSettled: () => setDeletingTriggerIds((current) => removeId(current, id)),
+                        });
+                      }}
+                      isSaving={savingTriggerIds.includes(trigger.id)}
+                      isDeleting={deletingTriggerIds.includes(trigger.id)}
+                      isRotating={rotatingTriggerIds.includes(trigger.id)}
+                      saveError={triggerSaveErrors[trigger.id] ?? null}
+                    />
+                  ))
+                )}
+              </div>
+            </SidebarSection>
+
+            <SidebarSection title="Run status">
+              <SidebarRow label="Last ran">
+                <span className="truncate">{latestRun ? timeAgo(latestRun.triggeredAt) : "-"}</span>
+              </SidebarRow>
+              <SidebarRow label="Edits">
+                <span className={editSyncClassName}>{editSyncLabel}</span>
+              </SidebarRow>
+              <SidebarRow label="Risk">
+                <span className="truncate">{riskLabel}</span>
+              </SidebarRow>
+              {hasLiveRun ? (
+                <SidebarRow label="Run">
+                  <Badge variant="outline" className="border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300">
+                    In progress
+                  </Badge>
+                </SidebarRow>
+              ) : null}
+            </SidebarSection>
+
+            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="border-t border-border/70 pt-5">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                Delivery rules
+                {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-4 pt-4">
+                <div className="space-y-2">
+                  <Label className="text-xs">Concurrency</Label>
+                  <Select
+                    value={editDraft.concurrencyPolicy}
+                    onValueChange={(concurrencyPolicy) => setEditDraft((current) => ({ ...current, concurrencyPolicy }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {concurrencyPolicies.map((value) => (
+                        <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs leading-5 text-muted-foreground">{concurrencyPolicyDescriptions[editDraft.concurrencyPolicy]}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Catch-up</Label>
+                  <Select
+                    value={editDraft.catchUpPolicy}
+                    onValueChange={(catchUpPolicy) => setEditDraft((current) => ({ ...current, catchUpPolicy }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {catchUpPolicies.map((value) => (
+                        <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs leading-5 text-muted-foreground">{catchUpPolicyDescriptions[editDraft.catchUpPolicy]}</p>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+
+          </div>
         </aside>
       </div>
 
       <div className="grid gap-6 px-4 pt-5 sm:px-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:px-6 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
         <main className="min-w-0 space-y-6">
-
-          <section className="max-w-none space-y-3 border-t border-border/70 pt-4">
-            <div className="flex items-center justify-between gap-4">
-              <h2 className="text-sm font-medium">Triggers</h2>
-            </div>
-            <div
-              data-testid="automation-add-trigger-card"
-              className="space-y-3 rounded-md border border-border/70 bg-background/35 p-3"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm text-muted-foreground">
-                  Add at least one trigger so the automation has a clear way to start work.
-                </p>
-                <Badge variant="outline" className="text-muted-foreground">
-                  Triggers autosave after edits
-                </Badge>
-                <div className="sm:hidden">
-                  <Button size="sm" onClick={() => createTrigger.mutate()} disabled={createTrigger.isPending || !canCreateTrigger}>
-                    {createTrigger.isPending ? "Adding..." : "Add trigger"}
-                  </Button>
-                </div>
-              </div>
-              <div className="grid gap-3 lg:grid-cols-[150px_minmax(0,1fr)_auto] lg:items-start">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Kind</Label>
-                  <Select value={newTrigger.kind} onValueChange={(kind) => setNewTrigger((current) => ({ ...current, kind }))}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {triggerKinds.map((kind) => (
-                        <SelectItem key={kind} value={kind} disabled={kind === "webhook"}>
-                          {kind}{kind === "webhook" ? " - coming soon" : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {newTrigger.kind === "schedule" && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Schedule</Label>
-                    <ScheduleEditor
-                      value={newTrigger.cronExpression}
-                      onChange={(cronExpression) => setNewTrigger((current) => ({ ...current, cronExpression }))}
-                    />
-                  </div>
-                )}
-                {newTrigger.kind === "webhook" && (
-                  <>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Signing mode</Label>
-                      <Select value={newTrigger.signingMode} onValueChange={(signingMode) => setNewTrigger((current) => ({ ...current, signingMode }))}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {signingModes.map((mode) => (
-                            <SelectItem key={mode} value={mode}>{mode}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">{signingModeDescriptions[newTrigger.signingMode]}</p>
-                    </div>
-                    <div className="space-y-1.5 lg:col-start-2">
-                      <Label className="text-xs">Replay window</Label>
-                      <Input value={newTrigger.replayWindowSec} onChange={(event) => setNewTrigger((current) => ({ ...current, replayWindowSec: event.target.value }))} />
-                    </div>
-                  </>
-                )}
-                <div className="hidden sm:contents">
-                  <Button className="justify-self-end lg:self-end" size="sm" onClick={() => createTrigger.mutate()} disabled={createTrigger.isPending || !canCreateTrigger}>
-                    {createTrigger.isPending ? "Adding..." : "Add trigger"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-
-            <div data-testid="automation-triggers-list" className="space-y-3">
-              {automation.triggers.length === 0 ? (
-                <div className="rounded-md border border-dashed border-border/80 px-3 py-4 text-sm text-muted-foreground">
-                  No triggers configured yet.
-                </div>
-              ) : (
-                automation.triggers.map((trigger) => (
-                  <TriggerEditor
-                    key={trigger.id}
-                    trigger={trigger}
-                    onSave={saveTriggerDraft}
-                    onRotate={(id) => {
-                      setRotatingTriggerIds((current) => addUniqueId(current, id));
-                      rotateTrigger.mutate(id, {
-                        onSettled: () => setRotatingTriggerIds((current) => removeId(current, id)),
-                      });
-                    }}
-                    onDelete={(id) => {
-                      setDeletingTriggerIds((current) => addUniqueId(current, id));
-                      deleteTrigger.mutate(id, {
-                        onSettled: () => setDeletingTriggerIds((current) => removeId(current, id)),
-                      });
-                    }}
-                    isSaving={savingTriggerIds.includes(trigger.id)}
-                    isDeleting={deletingTriggerIds.includes(trigger.id)}
-                    isRotating={rotatingTriggerIds.includes(trigger.id)}
-                    saveError={triggerSaveErrors[trigger.id] ?? null}
-                  />
-                ))
-              )}
-            </div>
-          </section>
-
           <section className="max-w-none space-y-3 border-t border-border/70 pt-4">
             <h2 className="text-sm font-medium">Activity</h2>
-            {(activity ?? []).length === 0 ? (
+            {hasLiveRun && activeIssueId && automation ? (
+              <LiveRunWidget issueId={activeIssueId} orgId={automation.orgId} />
+            ) : null}
+            {automationActivityItems.length === 0 ? (
               <p className="text-xs text-muted-foreground">No activity yet.</p>
             ) : (
               <div data-testid="automation-activity-list" className="divide-y divide-border/70 border-y border-border/70">
-                {(activity ?? []).slice(0, 8).map((event) => (
+                {automationActivityItems.map((item) => (
                   <div
-                    key={event.id}
+                    key={item.id}
                     data-testid="automation-activity-row"
                     className="flex flex-col gap-1.5 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-4"
                   >
                     <div data-testid="automation-activity-summary" className="min-w-0 space-y-1 sm:flex sm:items-center sm:gap-2 sm:space-y-0">
-                      <span className="shrink-0 font-medium text-foreground/90">{event.action.replaceAll(".", " ")}</span>
-                      {event.details && Object.keys(event.details).length > 0 && (
+                      <span className="shrink-0 font-medium text-foreground/90">{item.title}</span>
+                      {item.details.length > 0 && (
                         <span
                           data-testid="automation-activity-details"
                           className="block break-words leading-5 text-muted-foreground sm:truncate"
                         >
-                          {Object.entries(event.details).slice(0, 3).map(([key, value], i) => (
-                            <span key={key}>
+                          {item.details.map((detail, i) => (
+                            <span key={i}>
                               {i > 0 && <span className="mx-1 text-border">·</span>}
-                              <span className="text-muted-foreground/70">{key.replaceAll("_", " ")}:</span>{" "}
-                              {formatActivityDetailValue(value)}
+                              {detail}
                             </span>
                           ))}
                         </span>
                       )}
                     </div>
                     <span data-testid="automation-activity-time" className="shrink-0 text-muted-foreground/60">
-                      {timeAgo(event.createdAt)}
+                      {timeAgo(item.createdAt)}
                     </span>
                   </div>
                 ))}

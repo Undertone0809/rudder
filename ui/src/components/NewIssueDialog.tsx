@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type DragEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Agent } from "@rudderhq/shared";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { useDialog } from "../context/DialogContext";
@@ -33,7 +32,6 @@ import {
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
-import { agentTitleBadgeLabel } from "../lib/agent-labels";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { useToast } from "../context/ToastContext";
@@ -78,8 +76,7 @@ import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption }
 import { resolveRuntimeModels } from "../lib/runtime-models";
 import { issueStatusText, issueStatusTextDefault } from "../lib/status-colors";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
-import { AgentIcon } from "./AgentIconPicker";
-import { AgentTitleBadge } from "./AssigneeLabel";
+import { AgentMenuLabel } from "./AssigneeLabel";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { PriorityBarsIcon, PriorityPickerOption, priorityPickerContentClassName } from "./PriorityIcon";
@@ -97,28 +94,11 @@ type StagedIssueFile = {
 
 const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
 const STAGED_FILE_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
+const ISSUE_METADATA_SELECTOR_CLASSNAME = "h-auto min-h-12 w-full py-2";
 
 type ViewTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => { finished: Promise<void> };
 };
-
-function AgentSelectorLabel({
-  agent,
-  label,
-  className,
-}: {
-  agent: Pick<Agent, "name" | "role" | "title">;
-  label?: string;
-  className?: string;
-}) {
-  const badgeLabel = agentTitleBadgeLabel(agent);
-  return (
-    <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
-      <span className="truncate">{label ?? agent.name}</span>
-      {badgeLabel ? <AgentTitleBadge label={badgeLabel} className="max-w-none shrink-0" /> : null}
-    </span>
-  );
-}
 
 function buildCreatedIssueDetailHref(input: {
   issue: { id: string; identifier: string | null };
@@ -987,8 +967,8 @@ export function NewIssueDialog() {
     || newIssueDefaults.parentId?.slice(0, 8)
     || null;
   const parentIssueTitle = parentIssueSnapshot?.title?.trim() || null;
-  const stagedAttachments = stagedFiles;
-  const labelTaxonomyRequiresLabels = (labels?.length ?? 0) >= 5;
+  const stagedDocuments = stagedFiles.filter((file) => file.kind === "document");
+  const stagedAttachments = stagedFiles.filter((file) => file.kind === "attachment");
   const labelPickerContent = (
     <>
       <input
@@ -1271,7 +1251,7 @@ export function NewIssueDialog() {
         </div>
 
         <div className="px-4 pb-3 shrink-0">
-          <div className={cn("grid grid-cols-1 gap-2", labelTaxonomyRequiresLabels ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div className="min-w-0 space-y-1">
               <div className="text-[11px] font-medium text-muted-foreground">Assignee</div>
               <InlineEntitySelector
@@ -1284,7 +1264,7 @@ export function NewIssueDialog() {
                 searchPlaceholder="Search assignees..."
                 emptyMessage="No assignees found."
                 variant="field"
-                className="w-full"
+                className={ISSUE_METADATA_SELECTOR_CLASSNAME}
                 onChange={(value) => {
                   const nextAssignee = parseAssigneeValue(value);
                   if (nextAssignee.assigneeAgentId) {
@@ -1302,10 +1282,7 @@ export function NewIssueDialog() {
                 renderTriggerValue={(option) =>
                   option ? (
                     currentAssignee ? (
-                      <>
-                        <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <AgentSelectorLabel agent={currentAssignee} label={option.label} className="flex-1" />
-                      </>
+                      <AgentMenuLabel agent={currentAssignee} />
                     ) : (
                       <span className="truncate">{option.label}</span>
                     )
@@ -1319,14 +1296,7 @@ export function NewIssueDialog() {
                     ? (agents ?? []).find((agent) => agent.id === parseAssigneeValue(option.id).assigneeAgentId)
                     : null;
                   return (
-                    <span className="flex min-w-0 flex-1 items-center gap-2">
-                      {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
-                      {assignee ? (
-                        <AgentSelectorLabel agent={assignee} label={option.label} className="flex-1" />
-                      ) : (
-                        <span className="truncate">{option.label}</span>
-                      )}
-                    </span>
+                    assignee ? <AgentMenuLabel agent={assignee} /> : <span className="truncate">{option.label}</span>
                   );
                 }}
               />
@@ -1343,7 +1313,7 @@ export function NewIssueDialog() {
                 searchPlaceholder="Search projects..."
                 emptyMessage="No projects found."
                 variant="field"
-                className="w-full"
+                className={ISSUE_METADATA_SELECTOR_CLASSNAME}
                 onChange={handleProjectChange}
                 onConfirm={() => {
                   descriptionEditorRef.current?.focus();
@@ -1387,7 +1357,7 @@ export function NewIssueDialog() {
                 searchPlaceholder="Search reviewers..."
                 emptyMessage="No reviewers found."
                 variant="field"
-                className="w-full"
+                className={ISSUE_METADATA_SELECTOR_CLASSNAME}
                 onChange={(value) => {
                   const nextReviewer = parseAssigneeValue(value);
                   if (nextReviewer.assigneeAgentId) {
@@ -1401,10 +1371,7 @@ export function NewIssueDialog() {
                 renderTriggerValue={(option) =>
                   option ? (
                     currentReviewer ? (
-                      <>
-                        <AgentIcon icon={currentReviewer.icon} role={currentReviewer.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <AgentSelectorLabel agent={currentReviewer} label={option.label} className="flex-1" />
-                      </>
+                      <AgentMenuLabel agent={currentReviewer} />
                     ) : (
                       <span className="truncate">{option.label}</span>
                     )
@@ -1418,48 +1385,11 @@ export function NewIssueDialog() {
                     ? (agents ?? []).find((agent) => agent.id === parseAssigneeValue(option.id).assigneeAgentId)
                     : null;
                   return (
-                    <span className="flex min-w-0 flex-1 items-center gap-2">
-                      {reviewer ? <AgentIcon icon={reviewer.icon} role={reviewer.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
-                      {reviewer ? (
-                        <AgentSelectorLabel agent={reviewer} label={option.label} className="flex-1" />
-                      ) : (
-                        <span className="truncate">{option.label}</span>
-                      )}
-                    </span>
+                    reviewer ? <AgentMenuLabel agent={reviewer} /> : <span className="truncate">{option.label}</span>
                   );
                 }}
               />
             </div>
-            {labelTaxonomyRequiresLabels ? (
-              <div className="min-w-0 space-y-1">
-                <div className="text-[11px] font-medium text-muted-foreground">Labels</div>
-                <Popover open={labelsOpen} onOpenChange={setLabelsOpen}>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      data-variant="field"
-                      className={cn(
-                        "inline-flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        selectedLabels.length === 0 && "text-muted-foreground",
-                      )}
-                      disabled={isCreatingOrRedirecting}
-                    >
-                      <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-                        {labelsTrigger}
-                      </span>
-                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    className="w-[var(--radix-popover-trigger-width)] min-w-56 p-1"
-                    align="start"
-                    disablePortal
-                  >
-                    {labelPickerContent}
-                  </PopoverContent>
-                </Popover>
-              </div>
-            ) : null}
           </div>
         </div>
 
@@ -1646,24 +1576,22 @@ export function NewIssueDialog() {
           </Popover>
 
           {/* Labels chip */}
-          {!labelTaxonomyRequiresLabels ? (
-            <Popover open={labelsOpen} onOpenChange={setLabelsOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors",
-                    selectedLabels.length > 0 ? "text-foreground" : "text-muted-foreground",
-                  )}
-                  disabled={isCreatingOrRedirecting}
-                >
-                  {labelsTrigger}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-56 p-1" align="start" disablePortal>
-                {labelPickerContent}
-              </PopoverContent>
-            </Popover>
-          ) : null}
+          <Popover open={labelsOpen} onOpenChange={setLabelsOpen}>
+            <PopoverTrigger asChild>
+              <button
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors",
+                  selectedLabels.length > 0 ? "text-foreground" : "text-muted-foreground",
+                )}
+                disabled={isCreatingOrRedirecting}
+              >
+                {labelsTrigger}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-56 p-1" align="start" disablePortal>
+              {labelPickerContent}
+            </PopoverContent>
+          </Popover>
 
           <input
             ref={stageFileInputRef}

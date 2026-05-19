@@ -81,6 +81,7 @@ test.describe("Settings sidebar", () => {
     await expect(modalSidebar.locator('a[href$="/instance/settings/profile"]')).toBeVisible();
     await expect(modalSidebar.locator('a[href$="/instance/settings/general"]')).toBeVisible();
     await expect(modalSidebar.locator('a[href$="/instance/settings/notifications"]')).toBeVisible();
+    await expect(modalSidebar.locator('a[href$="/instance/settings/organizations"]')).toHaveCount(0);
     await expect(modalSidebar.locator('a[href$="/instance/settings/about"]')).toBeVisible();
     await expect(modalSidebar.locator('a[href$="/instance/settings/experimental"]')).toHaveCount(0);
 
@@ -219,7 +220,7 @@ test.describe("Settings sidebar", () => {
     await expect(modal).toHaveCount(0);
   });
 
-  test("routes organization management through system settings", async ({ page }) => {
+  test("redirects legacy organizations routes to organization settings", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Settings Organizations ${Date.now()}`,
@@ -234,14 +235,11 @@ test.describe("Settings sidebar", () => {
     const modal = page.getByTestId("settings-modal-shell");
     const modalSidebar = modal.getByTestId("workspace-sidebar");
 
-    await modalSidebar.locator('a[href$="/instance/settings/organizations"]').click();
-    await expect(page).toHaveURL(/\/instance\/settings\/organizations$/);
-    await expect(modal.getByRole("heading", { name: "Organizations", exact: true })).toBeVisible();
-    await expect(modal.getByRole("button", { name: "New Organization" })).toBeVisible();
+    await expect(modalSidebar.locator('a[href$="/instance/settings/organizations"]')).toHaveCount(0);
 
     await page.goto(`/${organization.issuePrefix}/organizations`);
-    await expect(page).toHaveURL(/\/instance\/settings\/organizations$/);
-    await expect(page.getByRole("heading", { name: "Organizations", exact: true })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/organization/settings$`));
+    await expect(page.getByRole("heading", { name: "Organization Settings", exact: true })).toBeVisible();
   });
 
   test("plugin manager no longer lists the hello world example plugin", async ({ page }) => {

@@ -110,7 +110,7 @@ describe("Chat empty-state prompt examples", () => {
 });
 
 describe("ChatLongMessageBody", () => {
-  it("hides overflowing message text until expanded", () => {
+  it("shows overflowing message text without a disclosure toggle", () => {
     const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
     Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
       configurable: true,
@@ -130,19 +130,9 @@ describe("ChatLongMessageBody", () => {
       const body = container.querySelector<HTMLElement>("[data-testid='chat-long-message-body']");
       const toggle = container.querySelector<HTMLButtonElement>("[data-testid='chat-long-message-toggle']");
 
-      expect(body?.style.maxHeight).toBe("392px");
-      expect(body?.className).toContain("overflow-hidden");
-      expect(toggle?.textContent).toContain("Show more");
-      expect(toggle?.getAttribute("aria-expanded")).toBe("false");
-
-      act(() => {
-        toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-
       expect(body?.style.maxHeight).toBe("");
       expect(body?.className).not.toContain("overflow-hidden");
-      expect(toggle?.textContent).toContain("Show less");
-      expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+      expect(toggle).toBeNull();
     } finally {
       if (scrollHeight) {
         Object.defineProperty(HTMLElement.prototype, "scrollHeight", scrollHeight);

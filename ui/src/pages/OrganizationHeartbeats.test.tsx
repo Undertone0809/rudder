@@ -200,6 +200,8 @@ describe("OrganizationHeartbeats", () => {
       /Timer heartbeat state for Blake[\s\S]*?aria-pressed="false"[^>]*>On<\/button>[\s\S]*?aria-pressed="true"[^>]*>Off<\/button>/,
     );
     expect(html).toContain("Run now");
+    expect(html).not.toContain("Preflight");
+    expect(html).not.toContain("Timer preflight for");
     expect(html).toContain("Recent activity");
   });
 });

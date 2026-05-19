@@ -4,7 +4,8 @@
     "outDir": "dist",
     "rootDir": "src",
     "lib": ["ES2023", "DOM"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "types": ["node"]
   },
   "include": ["src"]
 }

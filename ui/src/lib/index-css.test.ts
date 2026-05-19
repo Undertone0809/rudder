@@ -60,7 +60,28 @@ describe("index.css motion rules", () => {
 
     expect(glassPopover).toContain("background:");
     expect(glassPopover).toContain("!important");
+    expect(glassPopover).toContain("border-radius: var(--radius-md)");
     expect(glassPopover).toContain("backdrop-filter: blur(34px) saturate(150%)");
+  });
+
+  it("uses glass surfaces for modals", () => {
+    const glassModal = cssBlock(".glass-modal.glass-modal");
+
+    expect(glassModal).toContain("background:");
+    expect(glassModal).toContain("!important");
+    expect(glassModal).toContain("border-radius: var(--radius-md)");
+    expect(glassModal).toContain("backdrop-filter: blur(34px) saturate(150%)");
+  });
+
+  it("animates automation trigger menus from the trigger", () => {
+    const triggerMenuOpen = cssBlock('.automation-trigger-menu-content[data-state="open"]');
+    const triggerMenuEnter = cssBlock("@keyframes automation-trigger-menu-pop");
+    const reducedMotion = indexCss.match(/@media \(prefers-reduced-motion: reduce\) \{[^}]+automation-trigger-menu-content\[data-state="closed"\][^}]+}/s)?.[0] ?? "";
+
+    expect(triggerMenuOpen).toContain("automation-trigger-menu-pop 180ms");
+    expect(triggerMenuEnter).toContain("translateX(10px)");
+    expect(triggerMenuEnter).toContain("scale(0.94)");
+    expect(reducedMotion).toContain(".automation-trigger-menu-content[data-state=\"open\"]");
   });
 
   it("keeps the macOS desktop shell translucent in light mode", () => {

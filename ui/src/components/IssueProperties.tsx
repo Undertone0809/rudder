@@ -18,7 +18,7 @@ import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
-import { AssigneeLabel } from "./AssigneeLabel";
+import { AgentMenuLabel, AssigneeLabel, AssigneeSelfActionLabel } from "./AssigneeLabel";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
 import { IssueLabelChip } from "./IssueLabelChip";
@@ -27,7 +27,6 @@ import { timeAgo } from "../lib/timeAgo";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { User, Hexagon, ArrowUpRight, Tag, Plus, AlertTriangle, ListTree } from "lucide-react";
-import { AgentIcon } from "./AgentIconPicker";
 
 function defaultProjectWorkspaceIdForProject(project: {
   workspaces?: Array<{ id: string; isPrimary: boolean }>;
@@ -69,26 +68,6 @@ function PropertyRow({
       <span className="text-xs text-muted-foreground shrink-0 w-20">{label}</span>
       <div className="flex items-center gap-1.5 min-w-0 flex-1">{children}</div>
     </div>
-  );
-}
-
-function AgentMenuLabel({ agent }: { agent: Pick<Agent, "name" | "role" | "title" | "icon"> }) {
-  const supportingLabel = agentTitleBadgeLabel(agent);
-
-  return (
-    <span data-slot="agent-menu-label" className="flex min-w-0 flex-1 items-center gap-2">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
-        <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5" />
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col text-left">
-        <span className="truncate text-xs font-medium leading-4 text-foreground">{agent.name}</span>
-        {supportingLabel ? (
-          <span data-slot="agent-menu-supporting-label" className="truncate text-[11px] leading-3 text-muted-foreground">
-            {supportingLabel}
-          </span>
-        ) : null}
-      </span>
-    </span>
   );
 }
 
@@ -422,7 +401,7 @@ export function IssueProperties({
         {currentUserId && (
           <button
             className={cn(
-              "flex min-w-0 items-center gap-2 w-full px-2 py-1.5 text-left text-xs rounded hover:bg-accent/50",
+              "flex min-w-0 items-center gap-2 w-full px-2 py-2 text-left text-xs rounded hover:bg-accent/50",
               issue.assigneeUserId === currentUserId && "bg-accent",
             )}
             onClick={() => {
@@ -430,7 +409,7 @@ export function IssueProperties({
               setAssigneeOpen(false);
             }}
           >
-            <AssigneeLabel kind="user" label="Assign to me" />
+            <AssigneeSelfActionLabel />
           </button>
         )}
         {issue.createdByUserId && issue.createdByUserId !== currentUserId && (
@@ -513,7 +492,7 @@ export function IssueProperties({
         {currentUserId && (
           <button
             className={cn(
-              "flex min-w-0 items-center gap-2 w-full px-2 py-1.5 text-left text-xs rounded hover:bg-accent/50",
+              "flex min-w-0 items-center gap-2 w-full px-2 py-2 text-left text-xs rounded hover:bg-accent/50",
               issue.reviewerUserId === currentUserId && "bg-accent",
             )}
             onClick={() => {
@@ -521,7 +500,7 @@ export function IssueProperties({
               setReviewerOpen(false);
             }}
           >
-            <AssigneeLabel kind="user" label="Me" />
+            <AssigneeSelfActionLabel />
           </button>
         )}
         {sortedAgents

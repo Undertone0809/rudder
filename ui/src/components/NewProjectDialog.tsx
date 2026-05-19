@@ -14,6 +14,7 @@ import { goalsApi } from "../api/goals";
 import { organizationsApi } from "../api/orgs";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
+import { useNavigate } from "@/lib/router";
 import {
   organizationResourceKindOptions,
   organizationResourceKindLabel,
@@ -99,6 +100,7 @@ export function NewProjectDialog() {
   const { newProjectOpen, closeNewProject } = useDialog();
   const { selectedOrganizationId, selectedOrganization } = useOrganization();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState("planned");
@@ -227,6 +229,7 @@ export function NewProjectDialog() {
       queryClient.invalidateQueries({ queryKey: queryKeys.organizations.resources(selectedOrganizationId) });
       reset();
       closeNewProject();
+      navigate(`/issues?projectId=${encodeURIComponent(created.id)}`);
     } catch {
       // surface through createProject.isError
     }

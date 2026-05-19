@@ -270,7 +270,7 @@ if [ "$dry_run" = true ]; then
     [ -z "$pkg_dir" ] && continue
     release_info "  --- $pkg_dir ---"
     cd "$REPO_ROOT/$pkg_dir"
-    npm publish --dry-run --tag "$DIST_TAG" --access public 2>&1 | tail -3
+    pnpm publish --dry-run --tag "$DIST_TAG" --access public 2>&1 | tail -3
   done <<< "$VERSIONED_PACKAGE_INFO"
   release_info "  [dry-run] Would create git tag $tag_name on $CURRENT_SHA"
 else
@@ -283,7 +283,7 @@ else
     if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
       npm_publish_args+=(--provenance)
     fi
-    npm "${npm_publish_args[@]}"
+    pnpm "${npm_publish_args[@]}"
   done <<< "$VERSIONED_PACKAGE_INFO"
   release_info "  ✓ Published all packages under dist-tag $DIST_TAG"
 fi

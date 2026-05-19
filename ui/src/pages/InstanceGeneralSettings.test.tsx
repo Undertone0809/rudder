@@ -9,6 +9,9 @@ import { InstanceGeneralSettings } from "./InstanceGeneralSettings";
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
+const navigate = vi.hoisted(() => vi.fn());
+const openProductTour = vi.hoisted(() => vi.fn());
+
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({
     data: {
@@ -33,6 +36,14 @@ vi.mock("../context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({ setBreadcrumbs: vi.fn() }),
 }));
 
+vi.mock("@/lib/router", () => ({
+  useNavigate: () => navigate,
+}));
+
+vi.mock("../context/DialogContext", () => ({
+  useDialog: () => ({ openProductTour }),
+}));
+
 vi.mock("../context/I18nContext", () => ({
   useI18n: () => ({
     t: (key: string) => {
@@ -54,11 +65,15 @@ vi.mock("../context/I18nContext", () => ({
         "general.language.preview.en.secondary": "Board UI",
         "general.language.preview.zh-CN.primary": "你好",
         "general.language.preview.zh-CN.secondary": "控制台界面",
+        "general.basics.title": "Basics",
+        "general.productTour.title": "Workspace tour",
+        "general.productTour.description": "Replay the guided tour.",
+        "general.productTour.start": "Start tour",
         "general.logs.title": "Operator logs",
         "general.logs.description": "Logs section",
         "general.logs.censor.title": "Censor username in logs",
         "general.logs.censor.description": "Censor description",
-        "general.updates.title": "Desktop updates",
+        "general.updates.title": "Desktop app",
         "general.updates.description": "Update channel section",
         "general.updates.loadFailed": "Failed to load desktop update settings.",
         "general.updates.updateFailed": "Failed to update desktop update settings.",
@@ -68,6 +83,7 @@ vi.mock("../context/I18nContext", () => ({
         "general.updates.canary.enabledDescription": "Early update channel selected",
         "general.diagnostics.developer.title": "Show developer diagnostics",
         "general.diagnostics.developer.description": "Developer diagnostics description",
+        "general.developer.title": "Developer",
         "general.appearance.title": "Appearance",
         "general.appearance.description": "Appearance section",
         "general.appearance.colorMode": "Color mode",
@@ -96,6 +112,10 @@ afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   delete (window as typeof window & { desktopShell?: unknown }).desktopShell;
+  navigate.mockReset();
+  openProductTour.mockReset();
+  vi.clearAllTimers();
+  vi.useRealTimers();
 });
 
 function renderPage() {
@@ -118,6 +138,36 @@ function renderPage() {
 }
 
 describe("InstanceGeneralSettings", () => {
+  it("groups common controls and starts the product tour from general settings", async () => {
+    vi.useFakeTimers();
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Basics");
+    expect(container.textContent).toContain("Workspace tour");
+    expect(container.textContent).toContain("Replay the guided tour.");
+
+    const startButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Start tour"));
+    expect(startButton).toBeTruthy();
+
+    act(() => {
+      startButton!.click();
+    });
+
+    expect(navigate).toHaveBeenCalledWith("/dashboard");
+    expect(openProductTour).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(openProductTour).toHaveBeenCalledWith({ source: "settings" });
+  });
+
   it("renders language as a single settings item", async () => {
     const container = renderPage();
 
@@ -160,7 +210,7 @@ describe("InstanceGeneralSettings", () => {
 
     expect(container.textContent).toContain("Receive early desktop updates");
     expect(container.textContent).toContain("Early update channel selected");
-    expect(container.textContent).not.toContain("Desktop updates");
+    expect(container.textContent).toContain("Desktop app");
     expect(container.textContent).not.toContain("Update channel section");
   });
 
@@ -191,6 +241,8 @@ describe("InstanceGeneralSettings", () => {
       await Promise.resolve();
     });
 
+    expect(container.textContent).toContain("Developer");
+    expect(container.textContent).toContain("Censor username in logs");
     expect(container.textContent).toContain("Show developer diagnostics");
     expect(container.textContent).toContain("Developer diagnostics description");
   });

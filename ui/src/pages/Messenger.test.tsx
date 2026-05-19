@@ -344,7 +344,7 @@ describe("Messenger page headers", () => {
           metadata: {
             contextSnapshot: {
               issueId: "issue-1",
-              issue: { title: "Recover the failed workspace bootstrap" },
+              issue: { title: "Recover the failed workspace bootstrap", status: "blocked" },
             },
           },
         },
@@ -357,6 +357,8 @@ describe("Messenger page headers", () => {
     expect(html).toContain("Recent failed heartbeat runs");
     expect(html).toContain("Run failed for Messenger worker");
     expect(html).toContain("Recover the failed workspace bootstrap");
+    expect(html).toContain('data-testid="messenger-failed-run-issue-status-run-1"');
+    expect(html).toContain("blocked");
     expect(html).toContain('href="/issues/issue-1"');
     expect(html).toContain('data-variant="outline"');
     expect(html).not.toContain("Open issue");

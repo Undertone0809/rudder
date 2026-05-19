@@ -76,7 +76,7 @@ test.describe("New issue project context", () => {
     await expect(dialog.getByRole("button", { name: project.name })).toBeVisible();
   });
 
-  test("shows labels as a primary field when the organization has five labels", async ({ page }) => {
+  test("keeps labels as a property chip when the organization has five labels", async ({ page }) => {
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {
         name: `New-Issue-Labels-${Date.now()}`,
@@ -102,7 +102,6 @@ test.describe("New issue project context", () => {
 
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
     await expect(dialog).toBeVisible();
-    await expect(dialog.locator("div", { hasText: /^Labels$/ })).toBeVisible();
     await dialog.getByRole("button", { name: "Labels" }).click();
     await expect(page.getByPlaceholder("Search labels...")).toBeVisible();
     await page.getByRole("button", { name: "Operations", exact: true }).click();

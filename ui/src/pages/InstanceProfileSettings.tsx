@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Brain, Check, Copy, IdCard, Map, MessageSquareText, UserRound } from "lucide-react";
+import { Brain, Check, Copy, IdCard, MessageSquareText, UserRound } from "lucide-react";
 import { OPERATOR_PROFILE_MORE_ABOUT_YOU_MAX_LENGTH } from "@rudderhq/shared";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import {
@@ -12,9 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { useNavigate } from "@/lib/router";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { useDialog } from "../context/DialogContext";
 import { useI18n } from "../context/I18nContext";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -49,9 +47,7 @@ If no date is known, use [unknown] instead.
 export function InstanceProfileSettings() {
   const { t } = useI18n();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { openProductTour } = useDialog();
   const { pushToast } = useToast();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [nickname, setNickname] = useState("");
   const [moreAboutYou, setMoreAboutYou] = useState("");
@@ -151,35 +147,6 @@ export function InstanceProfileSettings() {
           {actionError}
         </div>
       ) : null}
-
-      <SettingsDivider />
-
-      <SettingsSection
-        title={t("profile.productTour.title")}
-        description={t("profile.productTour.description")}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[calc(var(--radius-md)-1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_72%,transparent)] px-3 py-2.5">
-          <div className="min-w-0 space-y-0.5">
-            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <Map className="h-4 w-4 text-muted-foreground" />
-              {t("profile.productTour.cardTitle")}
-            </div>
-            <p className="text-xs leading-5 text-muted-foreground">{t("profile.productTour.cardDescription")}</p>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            onClick={() => {
-              navigate("/dashboard");
-              window.setTimeout(() => openProductTour({ source: "settings" }), 0);
-            }}
-          >
-            {t("profile.productTour.start")}
-          </Button>
-        </div>
-      </SettingsSection>
 
       <SettingsDivider />
 

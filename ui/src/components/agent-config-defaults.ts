@@ -29,5 +29,6 @@ export const defaultCreateValues: CreateConfigValues = {
   maxTurnsPerRun: 300,
   heartbeatEnabled: false,
   intervalSec: 300,
+  preflightEnabled: true,
   maxConcurrentRuns: AGENT_RUN_CONCURRENCY_DEFAULT,
 };

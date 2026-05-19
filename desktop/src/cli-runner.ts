@@ -6,6 +6,7 @@ type WritableLike = {
   writable?: boolean;
   destroyed?: boolean;
   write(chunk: string, callback?: (error?: Error | null) => void): boolean;
+  on?(event: "error", listener: (error: Error) => void): unknown;
   once?(event: "error", listener: (error: Error) => void): unknown;
   off?(event: "error", listener: (error: Error) => void): unknown;
 };
@@ -22,6 +23,10 @@ type RunDesktopCliModeOptions = {
 export async function runDesktopCliMode(options: RunDesktopCliModeOptions): Promise<void> {
   let exitCode = 1;
   const logError = options.logError ?? console.error;
+  installBrokenPipeGuards({
+    stdout: options.stdout,
+    stderr: options.stderr,
+  }, logError);
 
   try {
     const cliModule = await options.importCliModule();
@@ -84,5 +89,28 @@ async function flushWritableStream(stream: WritableLike): Promise<void> {
 }
 
 function isBrokenPipeError(error: Error): boolean {
-  return (error as NodeJS.ErrnoException).code === "EPIPE";
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "EPIPE" || code === "ERR_STREAM_DESTROYED") return true;
+  const message = error.message.toLowerCase();
+  return message.includes("epipe") || message.includes("broken pipe");
+}
+
+function installBrokenPipeGuards(
+  streams: { stdout?: WritableLike; stderr?: WritableLike },
+  logError: (...args: unknown[]) => void,
+): void {
+  const outputStreams: WritableLike[] = [
+    streams.stdout ?? process.stdout,
+    streams.stderr ?? process.stderr,
+  ];
+  for (const stream of outputStreams) {
+    stream.on?.("error", (error: Error) => {
+      if (isBrokenPipeError(error)) return;
+      try {
+        logError("[rudder-desktop] desktop CLI output stream error", error);
+      } catch {
+        // Logging must not become another shutdown-time stream failure.
+      }
+    });
+  }
 }

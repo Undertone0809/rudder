@@ -254,8 +254,7 @@ export const en = {
   "app.noCompaniesDescription": "Get started by creating a organization.",
   "app.newOrganization": "New Organization",
   "general.title": "General",
-  "general.description":
-    "Your system preferences apply across the board UI and developer tooling on this device.",
+  "general.description": "Core app preferences for this device.",
   "general.updateFailed": "Failed to update general settings.",
   "general.loadLoading": "Loading general settings...",
   "general.loadFailed": "Failed to load general settings.",
@@ -272,11 +271,15 @@ export const en = {
   "general.language.preview.en.secondary": "Board UI",
   "general.language.preview.zh-CN.primary": "你好",
   "general.language.preview.zh-CN.secondary": "控制台界面",
+  "general.basics.title": "Basics",
+  "general.productTour.title": "Workspace tour",
+  "general.productTour.description": "Replay the guided tour.",
+  "general.productTour.start": "Start tour",
   "general.logs.title": "Operator logs",
   "general.logs.description": "Adjust how operator-visible output is rendered in the interface.",
   "general.logs.censor.title": "Censor username in logs",
   "general.logs.censor.description": "Mask the username in home-directory paths shown in logs.",
-  "general.updates.title": "Desktop updates",
+  "general.updates.title": "Desktop app",
   "general.updates.description": "Choose which Rudder Desktop release channel this machine should install from.",
   "general.updates.loadFailed": "Failed to load desktop update settings.",
   "general.updates.updateFailed": "Failed to update desktop update settings.",
@@ -289,6 +292,7 @@ export const en = {
   "general.diagnostics.developer.title": "Show developer diagnostics",
   "general.diagnostics.developer.description":
     "Show internal Rudder runtime, workspace, session, and adapter diagnostics in transcripts.",
+  "general.developer.title": "Developer",
   "general.appearance.title": "Appearance",
   "general.appearance.description":
     "Choose how Rudder should look on this machine. The visual treatment follows Claude-style low-glare surfaces and restrained chrome.",
@@ -521,13 +525,6 @@ export const en = {
   "profile.toastSaved.title": "Profile saved",
   "profile.toastSaved.body": "Your operator profile has been updated.",
   "profile.toastSaveFailed.title": "Failed to save profile",
-  "profile.productTour.title": "Product tour",
-  "profile.productTour.description":
-    "Replay the short guided tour for the Rudder workspace controls.",
-  "profile.productTour.cardTitle": "Rudder workspace walkthrough",
-  "profile.productTour.cardDescription":
-    "Shows the primary rail, task creation, issue tracking, work inspection, and where to reopen this tour.",
-  "profile.productTour.start": "Start tour",
   "profile.about.title": "About you",
   "profile.about.description":
     "Use the same lightweight profile structure as ChatGPT-style personal context: a preferred nickname plus optional background about how you work.",
@@ -572,7 +569,7 @@ export const en = {
     "The Dashboard shows the current page, detail views, transcripts, outputs, and approvals. Rudder should make it clear what happened and what needs your intervention.",
   "productTour.step.settings.title": "You can replay this tour from Settings",
   "productTour.step.settings.body":
-    "When the first walkthrough is finished, Rudder stays quiet. Open System settings, then Profile, whenever you want to run the tour again.",
+    "When the first walkthrough is finished, Rudder stays quiet. Open System settings, then General, whenever you want to run the tour again.",
   "productTour.back": "Back",
   "productTour.next": "Next",
   "productTour.finish": "Finish",

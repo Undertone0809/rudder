@@ -1,0 +1,34 @@
+[
+  {
+    "name": "screenshot_status_badge",
+    "prompt": "This Rudder Messenger card shows Issue RUD-42 but I want a small badge beside the issue link showing the issue status. Use build-advisor if needed, then implement it and show me the UI.",
+    "assertions": [
+      "Uses rudder-ui-polish-maintainer for the implementation pass after any short advice pass",
+      "Finds the existing Messenger issue context data instead of hard-coding a status",
+      "Adds or updates focused tests for the visible badge behavior",
+      "Performs rendered visual verification or clearly reports why it was blocked",
+      "Stages and commits only files touched for this UI task"
+    ]
+  },
+  {
+    "name": "remove_redundant_settings_page",
+    "prompt": "这个 Organizations settings 页面没有存在的必要，去掉它，不要影响 organization settings 的正常入口。",
+    "assertions": [
+      "Treats the request as a narrow UI/navigation removal task",
+      "Removes route, sidebar entry, remembered path, and stale tests where applicable",
+      "Preserves the canonical organization settings route",
+      "Runs relevant tests for settings navigation or explains any skipped checks",
+      "Does not touch unrelated dirty worktree files"
+    ]
+  },
+  {
+    "name": "advice_then_polish",
+    "prompt": "这里 settings 里的三行选项很割裂，文字也太多。先说说怎么改，等我确认再优化。",
+    "assertions": [
+      "Stops after a compact design recommendation because the user asked to discuss first",
+      "Keeps the recommendation consistent with Rudder's dense operational UI",
+      "Does not edit files before user approval",
+      "Explains the implementation shape clearly enough for a follow-up edit"
+    ]
+  }
+]

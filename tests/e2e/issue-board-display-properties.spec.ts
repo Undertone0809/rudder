@@ -113,6 +113,7 @@ test.describe("Issue board display properties", () => {
     expect(reviewerBox!.x + reviewerBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width + 1);
     await expect(card).toContainText("Created");
     await expect(card).not.toContainText("Updated");
+    await expect(card).not.toContainText(/\b\d+[dhw] ago\b|\b\d+mo ago\b/);
     if (issue.identifier) {
       await expect(card).toContainText(issue.identifier);
     }

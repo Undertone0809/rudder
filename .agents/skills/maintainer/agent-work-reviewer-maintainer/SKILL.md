@@ -1,6 +1,6 @@
 ---
 name: agent-work-reviewer-maintainer
-description: Review Rudder agent work. Use for review/第一性原理/PM review of Codex sessions, PRs, commits, UI, releases, regressions, or agent outcomes.
+description: Review Rudder agent work. Use for review/第一性原理/PM review of Codex sessions, PRs, commits, UI, releases, regressions, or agent outcomes. For functional or UI reviews, prefer running the real Rudder scenario with Browser or Computer Use when available instead of judging only from diffs.
 ---
 
 # Agent Work Reviewer Maintainer
@@ -52,6 +52,25 @@ Do not use this skill for:
 
 If the user asks to fix findings after the review, switch to normal
 implementation mode and follow repository validation, commit, and push rules.
+
+### Read-Only Guard
+
+Reviewer mode is read-only by default. Do not edit files, stage changes,
+restore files, commit, push, start destructive cleanup, or "just fix" findings
+while reviewing unless the user explicitly changes the task from review to
+implementation.
+
+If the user says "do not implement", "review only", or assigns a reviewer role,
+that instruction is binding for the whole reviewer pass. Use tools only to
+inspect evidence.
+
+Direct UI inspection with Browser, Desktop, or Computer Use is still reviewer
+work when it only observes or exercises low-risk local/dev flows. If a realistic
+scenario requires mutating Rudder data, prefer an isolated dev org, disposable
+test records, or an existing preview instance, and report what was created or
+changed. Do not delete data, publish, submit external communication, install
+software, change system settings, or perform other risky UI actions without the
+appropriate user confirmation.
 
 ## Evidence Packet
 
@@ -140,6 +159,50 @@ Record which evidence exists:
 Treat timed-out, skipped, or attempted checks as unverified. Do not convert
 "looked plausible in code" into product proof.
 
+### 4.1 Run The Real Scenario When It Matters
+
+For functional review, UI review, Desktop review, or workflow-regression review,
+prefer direct scenario verification over code-only inference:
+
+- Use Browser for local web targets such as `localhost`, `127.0.0.1`, or file
+  previews when the browser can exercise the path.
+- Use Computer Use for the packaged Rudder Desktop app, native dialogs, update
+  prompts, menus, resident shell behavior, drag/drop, or any flow that is only
+  visible in the local Mac UI.
+- Use API/log/database checks as supporting evidence, not a replacement for the
+  real operator path when the user's question is about behavior.
+- If the app is not running, start the appropriate local or packaged Rudder path
+  when that is safe and within the review scope. If startup would be expensive
+  or risky, say exactly why the review is limited.
+- When a real scenario is skipped, the verdict should usually be
+  `needs more evidence` or `conditional accept`, and the missing scenario must
+  be named.
+
+For user-visible work, do not accept "tests pass" as enough proof when Computer
+Use or Browser could cheaply verify the actual Rudder interaction. The minimum
+credible evidence is the observed workflow state plus any relevant logs, API
+responses, screenshots, or failure messages.
+
+### 5. Assemble The Review Packet
+
+Before writing the verdict, make the review packet explicit. It should include
+the relevant subset:
+
+- target: session, run, PR, branch, commit, diff, proposal, screenshot, release,
+  or browser state
+- user intent: original request plus important corrections or constraints
+- changed object: the product/workflow/code object being reviewed
+- evidence inspected: files, diffs, logs, screenshots, docs, plans, tests, CI,
+  browser/Desktop state, release artifacts, or sub-reviewer notes
+- validation status: what passed, what failed, what timed out, what was skipped,
+  and what was only inferred
+- unresolved evidence gaps: missing screenshots, missing E2E, unchecked
+  downstream consumers, branch/CI uncertainty, or unverified public surfaces
+
+If any packet item needed for a trustworthy judgment is missing, use
+`needs more evidence` or `conditional accept`; do not fill the gap with
+confidence.
+
 ## First-Principles Review Frame
 
 Use this frame before writing the verdict.
@@ -203,8 +266,11 @@ For user-visible work, inspect the important states:
 - mobile or constrained width when relevant
 - legacy links and previously shipped features
 
-For UI, ask whether the actual rendered state was seen. Code review alone is
-not enough for layout-sensitive work.
+For UI and functional reviews, ask whether the actual rendered or interactive
+state was seen. Code review alone is not enough for layout-sensitive work,
+native Desktop behavior, update flows, chat/issue workflows, or any path where
+the product claim depends on clicks, typing, selection, focus, async state, or
+cross-page navigation.
 
 ### 6. Trust And Validation
 
@@ -219,18 +285,55 @@ Look for:
 - branch mismatch: work landed somewhere but not on `main`
 - handoff mismatch: URL exists but screenshot or real flow evidence is missing
 
+## Multi-Round Review
+
+When reviewing a proposal, plan, or agent output across multiple rounds, keep a
+blocker ledger instead of relying on memory or tone.
+
+Use this shape when it is useful:
+
+```markdown
+Blocker ledger:
+| blocker | severity | round-one evidence | revised answer | status |
+| --- | --- | --- | --- | --- |
+| ... | P1 | ... | ... | resolved / unresolved |
+```
+
+Second-round review must judge each prior blocker explicitly. An `accept`
+verdict means no unresolved blockers remain for the requested scope; it does not
+mean the proposal is fully implemented or validated.
+
+For reviewer-loop orchestration, disclose whether the review used real spawned
+reviewers or a serial two-role fallback when that distinction affects trust.
+
 ## Lens-Specific Checks
 
 ### UI/UX And Design
 
 - Read `doc/DESIGN.md` before judging.
-- Verify rendered states with browser, screenshot, or Desktop shell evidence.
+- Verify rendered states with Browser, screenshot, Desktop shell evidence, or
+  Computer Use against the real packaged app when native behavior matters.
 - Treat visual hierarchy, density, interaction feedback, animation, native app
   affordances, and copy clarity as product quality, not nitpicks.
 - Check whether menus, hover actions, dialogs, keyboard behavior, and icons match
   expected Rudder patterns.
 - If no visual evidence exists, the verdict should usually be `needs more
   evidence` or `conditional accept`.
+
+### Functional Workflow Review
+
+- Reconstruct the user's real scenario as a short workflow, then run it when
+  the local app, preview, or packaged Desktop is available.
+- Prefer scenario steps such as "open Messenger, send a message, approve the
+  proposal, confirm the issue state" over isolated API calls when the behavior
+  is operator-facing.
+- Use API, logs, DB rows, and code paths to explain why the observed behavior
+  happened after the UI behavior is known.
+- If the scenario would mutate shared or production-like data, use a disposable
+  dev record or ask before the risky step. State any mutation in the review
+  packet.
+- A functional verdict should separate observed user behavior from inferred
+  internal correctness.
 
 ### Release And Desktop
 
@@ -272,6 +375,7 @@ Keep the review compact. Lead with the verdict.
 - Session/commit/PR: ...
 - Inspect: ...
 - Validation: ...
+- Gaps: ...
 
 这次任务本质上是在解决：...
 
@@ -283,6 +387,9 @@ Keep the review compact. Lead with the verdict.
 2. ...
 
 必须补的证据：
+- ...
+
+Blocker ledger:
 - ...
 
 下一步建议：...
@@ -307,3 +414,79 @@ line range tight.
 - "Implemented" means code or docs changed. "Accepted" means the right behavior
   was proven for the relevant user path.
 - Prefer one pragmatic next move over a long wishlist.
+
+## Validation Cases
+
+### Case: Two-Round Proposal Review
+
+Input:
+"Review this proposal as Reviewer A. Do not implement." Then later: "Round 2
+review. Judge whether this revised proposal resolves your round-one blockers."
+
+Expected behavior:
+Round one produces a verdict plus blocker ledger. Round two explicitly checks
+each blocker against the revised proposal and marks it resolved or unresolved
+before giving the final verdict.
+
+Must not:
+Edit files, skip the blocker ledger, or say `accept` without showing why prior
+blockers were closed.
+
+### Case: Functional Review Of A Shipped Workflow
+
+Input:
+"功能性上 review 一下 reviewer routing，现在是不是产品上对？"
+
+Expected behavior:
+The review starts from user intent and workflow semantics, then traces every
+downstream consumer of the relevant object or field, such as attention, filters,
+wakeups, UI state, and recovery paths. When Rudder is available locally, it also
+uses Browser or Computer Use to exercise the real operator path or clearly names
+why live scenario testing was skipped. The verdict separates observed semantic
+behavior from schema/type correctness.
+
+Must not:
+Stop after checking schema, route validation, or the obvious happy-path test.
+
+### Case: Functional Review With Computer Use
+
+Input:
+"review 一下最新版 Desktop update 为什么失败，功能上是不是已经好了."
+
+Expected behavior:
+The review inspects release and code evidence, then uses Computer Use or an
+equivalent packaged Desktop run to exercise the actual update interaction when
+safe. It reports the observed app version, update channel, prompt/toast state,
+and any supporting health/API/log evidence before judging whether the function
+is proven.
+
+Must not:
+Call the update flow accepted from release assets or code inspection alone when
+the packaged Desktop scenario can be tested.
+
+### Case: UI Review Without Rendered Evidence
+
+Input:
+"review 一下这个 UI 改动有没有问题." The diff is available, but no screenshot,
+browser state, or Desktop state was captured.
+
+Expected behavior:
+The review can comment on code and likely risks, but the verdict is
+`conditional accept` or `needs more evidence` if layout, dark/light behavior,
+overflow, hover, dialog, or responsive state matters.
+
+Must not:
+Call a layout-sensitive UI change fully accepted from code review alone.
+
+### Case: Explicit Review-Only Guard
+
+Input:
+"Use agent-work-reviewer-maintainer. Review this proposal. Do not implement or
+edit files."
+
+Expected behavior:
+The reviewer inspects evidence and returns a verdict, findings, blocker ledger
+when useful, and next evidence/fix recommendations. It performs no write action.
+
+Must not:
+Patch files, stage changes, commit, push, or run destructive cleanup.

@@ -55,7 +55,7 @@ vi.mock("@/context/I18nContext", () => ({
         "productTour.step.inspect.title": "Inspect the work before you approve or continue",
         "productTour.step.inspect.body": "The Dashboard shows details and outputs.",
         "productTour.step.settings.title": "You can replay this tour from Settings",
-        "productTour.step.settings.body": "Open System settings, then Profile.",
+        "productTour.step.settings.body": "Open System settings, then General.",
         "productTour.back": "Back",
         "productTour.next": "Next",
         "productTour.finish": "Finish",

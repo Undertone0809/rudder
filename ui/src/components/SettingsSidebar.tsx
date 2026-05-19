@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ActivitySquare,
   ArrowLeft,
-  Building2,
   Check,
   Clock3,
   IdCard,
@@ -153,14 +152,6 @@ export function SettingsSidebar({
                 state={overlayState}
                 label={t("common.systemPermissions")}
                 icon={ShieldCheck}
-                end
-                variant={modalVariant ? "compact" : "default"}
-              />
-              <SidebarNavItem
-                to="/instance/settings/organizations"
-                state={overlayState}
-                label={t("common.organizations")}
-                icon={Building2}
                 end
                 variant={modalVariant ? "compact" : "default"}
               />

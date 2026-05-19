@@ -667,6 +667,42 @@
     animation: rail-create-menu-close 95ms ease-in;
   }
 
+  .automation-trigger-menu-trigger {
+    transition:
+      transform 120ms ease,
+      background-color 150ms ease,
+      border-color 150ms ease,
+      box-shadow 170ms ease;
+  }
+
+  .automation-trigger-menu-trigger:hover {
+    transform: translateY(-1px);
+  }
+
+  .automation-trigger-menu-trigger[data-state="open"] {
+    background: color-mix(in oklab, var(--surface-overlay) 34%, transparent);
+    border-color: color-mix(in oklab, var(--border-strong) 72%, transparent);
+    box-shadow:
+      0 14px 36px -26px rgb(0 0 0 / 0.42),
+      inset 0 1px 0 rgb(255 255 255 / 0.12);
+  }
+
+  .automation-trigger-menu-trigger:active {
+    transform: scale(0.985);
+  }
+
+  .automation-trigger-menu-content {
+    transform-origin: right 2.5rem;
+  }
+
+  .automation-trigger-menu-content[data-state="open"] {
+    animation: automation-trigger-menu-pop 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .automation-trigger-menu-content[data-state="closed"] {
+    animation: automation-trigger-menu-close 105ms ease-in;
+  }
+
   @keyframes rail-create-menu-pop {
     0% {
       opacity: 0;
@@ -698,9 +734,42 @@
     }
   }
 
+  @keyframes automation-trigger-menu-pop {
+    0% {
+      opacity: 0;
+      filter: blur(5px);
+      transform: translateX(10px) translateY(2px) scale(0.94);
+    }
+    72% {
+      opacity: 1;
+      filter: blur(0);
+      transform: translateX(-1px) translateY(0) scale(1.012);
+    }
+    100% {
+      opacity: 1;
+      filter: blur(0);
+      transform: translateX(0) translateY(0) scale(1);
+    }
+  }
+
+  @keyframes automation-trigger-menu-close {
+    from {
+      opacity: 1;
+      filter: blur(0);
+      transform: translateX(0) translateY(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      filter: blur(4px);
+      transform: translateX(7px) translateY(1px) scale(0.97);
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .rail-create-menu-content[data-state="open"],
-    .rail-create-menu-content[data-state="closed"] {
+    .rail-create-menu-content[data-state="closed"],
+    .automation-trigger-menu-content[data-state="open"],
+    .automation-trigger-menu-content[data-state="closed"] {
       animation: none;
     }
   }
@@ -750,6 +819,7 @@
   }
 
   .glass-popover.glass-popover {
+    border-radius: var(--radius-md);
     background:
       linear-gradient(
         180deg,
@@ -775,6 +845,36 @@
     border-color: color-mix(in oklab, var(--border-strong) 68%, transparent);
     box-shadow:
       0 30px 78px -34px rgb(0 0 0 / 0.64),
+      inset 0 1px 0 rgb(255 255 255 / 0.1);
+  }
+
+  .glass-modal.glass-modal {
+    border-radius: var(--radius-md);
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--surface-overlay) 46%, transparent) 0%,
+        color-mix(in oklab, var(--surface-overlay) 34%, transparent) 100%
+      ) !important;
+    border-color: color-mix(in oklab, var(--border-base) 66%, transparent);
+    box-shadow:
+      0 36px 96px -46px rgb(0 0 0 / 0.5),
+      inset 0 1px 0 rgb(255 255 255 / 0.24),
+      inset 0 0 0 1px rgb(255 255 255 / 0.07);
+    -webkit-backdrop-filter: blur(34px) saturate(150%);
+    backdrop-filter: blur(34px) saturate(150%);
+  }
+
+  html.dark .glass-modal.glass-modal {
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--surface-overlay) 58%, transparent) 0%,
+        color-mix(in oklab, var(--surface-overlay) 42%, transparent) 100%
+      ) !important;
+    border-color: color-mix(in oklab, var(--border-strong) 72%, transparent);
+    box-shadow:
+      0 38px 96px -40px rgb(0 0 0 / 0.68),
       inset 0 1px 0 rgb(255 255 255 / 0.1);
   }
 

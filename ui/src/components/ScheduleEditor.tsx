@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { ChevronDown, ChevronRight } from "lucide-react";
 
 type SchedulePreset = "every_minute" | "every_hour" | "every_day" | "weekdays" | "weekly" | "monthly" | "custom";
 
@@ -149,9 +148,11 @@ export { describeSchedule };
 export function ScheduleEditor({
   value,
   onChange,
+  variant = "default",
 }: {
   value: string;
   onChange: (cron: string) => void;
+  variant?: "default" | "compact";
 }) {
   const parsed = useMemo(() => parseCronToPreset(value), [value]);
   const [preset, setPreset] = useState<SchedulePreset>(parsed.preset);
@@ -191,6 +192,122 @@ export function ScheduleEditor({
       emitChange(newPreset, hour, minute, dayOfWeek, dayOfMonth, customCron);
     }
   };
+
+  const handleTimeChange = (timeValue: string) => {
+    const [rawHour, rawMinute] = timeValue.split(":");
+    if (rawHour === undefined || rawMinute === undefined) return;
+    const nextHour = String(Number(rawHour));
+    const nextMinute = String(Number(rawMinute));
+    setHour(nextHour);
+    setMinute(nextMinute);
+    emitChange(preset, nextHour, nextMinute, dayOfWeek, dayOfMonth, customCron);
+  };
+
+  if (variant === "compact") {
+    const showTime = preset !== "every_minute" && preset !== "every_hour" && preset !== "custom";
+
+    return (
+      <div className="space-y-2">
+        <Select value={preset} onValueChange={(v) => handlePresetChange(v as SchedulePreset)}>
+          <SelectTrigger className="h-12 w-full rounded-md border-border/75 bg-background/60 px-3 text-base shadow-none md:text-sm">
+            <SelectValue placeholder="Choose frequency..." />
+          </SelectTrigger>
+          <SelectContent>
+            {PRESETS.map((p) => (
+              <SelectItem key={p.value} value={p.value}>
+                {p.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {showTime ? (
+          <Input
+            type="time"
+            step={300}
+            value={`${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`}
+            onChange={(event) => handleTimeChange(event.target.value)}
+            className="h-12 rounded-md border-border/75 bg-background/60 text-base shadow-none md:text-sm"
+          />
+        ) : null}
+
+        {preset === "every_hour" ? (
+          <Select
+            value={minute}
+            onValueChange={(m) => {
+              setMinute(m);
+              emitChange(preset, hour, m, dayOfWeek, dayOfMonth, customCron);
+            }}
+          >
+            <SelectTrigger className="h-12 w-full rounded-md border-border/75 bg-background/60 px-3 text-base shadow-none md:text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MINUTES.map((m) => (
+                <SelectItem key={m.value} value={m.value}>
+                  :{m.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
+
+        {preset === "weekly" ? (
+          <Select
+            value={dayOfWeek}
+            onValueChange={(dow) => {
+              setDayOfWeek(dow);
+              emitChange(preset, hour, minute, dow, dayOfMonth, customCron);
+            }}
+          >
+            <SelectTrigger className="h-12 w-full rounded-md border-border/75 bg-background/60 px-3 text-base shadow-none md:text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DAYS_OF_WEEK.map((d) => (
+                <SelectItem key={d.value} value={d.value}>
+                  {d.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
+
+        {preset === "monthly" ? (
+          <Select
+            value={dayOfMonth}
+            onValueChange={(dom) => {
+              setDayOfMonth(dom);
+              emitChange(preset, hour, minute, dayOfWeek, dom, customCron);
+            }}
+          >
+            <SelectTrigger className="h-12 w-full rounded-md border-border/75 bg-background/60 px-3 text-base shadow-none md:text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DAYS_OF_MONTH.map((d) => (
+                <SelectItem key={d.value} value={d.value}>
+                  {d.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
+
+        {preset === "custom" ? (
+          <Input
+            value={customCron}
+            onChange={(e) => {
+              setCustomCron(e.target.value);
+              emitChange("custom", hour, minute, dayOfWeek, dayOfMonth, e.target.value);
+            }}
+            placeholder="0 10 * * *"
+            className="h-12 rounded-md border-border/75 bg-background/60 font-mono text-sm shadow-none"
+          />
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">

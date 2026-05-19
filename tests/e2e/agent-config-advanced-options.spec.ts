@@ -55,6 +55,7 @@ test.describe("Agent configuration advanced options", () => {
     const runConcurrencyInput = page.getByRole("spinbutton", { name: "Agent run concurrency" });
     await expect(runConcurrencyInput).toBeVisible();
     await expect(runConcurrencyInput).toHaveValue("3");
+    await expect(page.getByRole("switch", { name: "Preflight before timer run", exact: true })).toBeChecked();
 
     const advancedButton = page.getByRole("button", { name: "Advanced options", exact: true }).first();
     await expect(advancedButton).toHaveAttribute("aria-expanded", "false");
@@ -88,7 +89,7 @@ test.describe("Agent configuration advanced options", () => {
     expect(refreshedRes.ok()).toBe(true);
     const refreshed = await refreshedRes.json() as {
       agentRuntimeConfig: { modelFallbacks?: Array<{ agentRuntimeType: string; model: string; config?: Record<string, unknown> }> };
-      runtimeConfig: { heartbeat?: { maxConcurrentRuns?: number } };
+      runtimeConfig: { heartbeat?: { maxConcurrentRuns?: number; preflightEnabled?: boolean } };
     };
     expect(refreshed.agentRuntimeConfig.modelFallbacks).toEqual([
       { agentRuntimeType: "codex_local", model: "gpt-5.4" },
@@ -98,6 +99,7 @@ test.describe("Agent configuration advanced options", () => {
       }),
     ]);
     expect(refreshed.runtimeConfig.heartbeat?.maxConcurrentRuns).toBe(4);
+    expect(refreshed.runtimeConfig.heartbeat?.preflightEnabled).toBe(true);
   });
 
   test("saves and clears Codex thinking effort", async ({ page }) => {

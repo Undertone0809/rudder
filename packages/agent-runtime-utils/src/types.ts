@@ -379,5 +379,6 @@ export interface CreateConfigValues {
   maxTurnsPerRun: number;
   heartbeatEnabled: boolean;
   intervalSec: number;
+  preflightEnabled: boolean;
   maxConcurrentRuns: number;
 }
