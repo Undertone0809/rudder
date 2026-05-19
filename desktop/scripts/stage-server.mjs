@@ -77,12 +77,25 @@ async function normalizeSelfReference(packageDir) {
   await Promise.all(selfReferencePaths.map((selfReferencePath) => fs.rm(selfReferencePath, { force: true })));
 }
 
+async function rewriteInternalPackages(targetDir) {
+  const rudderDir = path.join(targetDir, "node_modules", "@rudderhq");
+  try {
+    const entries = await fs.readdir(rudderDir);
+    await Promise.all(
+      entries.map((entry) => rewritePublishedManifest(path.join(rudderDir, entry))),
+    );
+  } catch {
+    // @rudderhq scope may not exist
+  }
+}
+
 async function main() {
   await fs.rm(targetDir, { recursive: true, force: true });
   await fs.mkdir(path.dirname(targetDir), { recursive: true });
 
   await run(pnpmBin, ["--filter", "@rudderhq/server", "--prod", "deploy", targetDir], repoRoot);
   await rewritePublishedManifest(targetDir);
+  await rewriteInternalPackages(targetDir);
   await normalizeSelfReference(targetDir);
 
   const deployedEntry = path.join(targetDir, "dist", "index.js");
