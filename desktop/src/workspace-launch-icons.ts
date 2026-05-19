@@ -54,6 +54,18 @@ function iconDataUrl(image: WorkspaceLaunchNativeImage): string | undefined {
   return image.resize({ width: WORKSPACE_LAUNCH_ICON_SIZE, height: WORKSPACE_LAUNCH_ICON_SIZE }).toDataURL();
 }
 
+function readImagePathDataUrl(
+  targetPath: string,
+  deps: Pick<WorkspaceLaunchIconDependencies, "createImageFromPath">,
+): string | undefined {
+  try {
+    const image = deps.createImageFromPath(targetPath);
+    return iconDataUrl(image);
+  } catch {
+    return undefined;
+  }
+}
+
 async function readNativeFileIconDataUrl(
   targetPath: string,
   deps: Pick<WorkspaceLaunchIconDependencies, "getFileIcon">,
@@ -104,8 +116,7 @@ export async function readWorkspaceLaunchTargetIconDataUrl(
       : await resolveDarwinAppBundleIconPath(target.iconPath, { platform });
     if (!bundleIconPath) return undefined;
 
-    const bundleIcon = deps.createImageFromPath(bundleIconPath);
-    return iconDataUrl(bundleIcon);
+    return readImagePathDataUrl(bundleIconPath, deps);
   }
 
   const nativeIconDataUrl = await readNativeFileIconDataUrl(target.iconPath, deps);
@@ -116,6 +127,5 @@ export async function readWorkspaceLaunchTargetIconDataUrl(
     : await resolveDarwinAppBundleIconPath(target.iconPath, { platform });
   if (!bundleIconPath) return undefined;
 
-  const bundleIcon = deps.createImageFromPath(bundleIconPath);
-  return iconDataUrl(bundleIcon);
+  return readImagePathDataUrl(bundleIconPath, deps);
 }
