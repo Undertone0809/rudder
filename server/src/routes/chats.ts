@@ -651,6 +651,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         });
         const issue = await svc.convertToIssue(conversation.id, {
           actorUserId: actor.actorType === "user" ? actor.actorId : null,
+          createdByAgentId: replyingAgentId,
           messageId: proposalMessage.id,
         });
         const systemMessage = await svc.addMessage(conversation.id, {
@@ -689,6 +690,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
         payload: {
           chatConversationId: conversation.id,
+          proposedByAgentId: replyingAgentId,
           proposedIssue: proposedIssuePayload(issueProposalStructuredPayload),
           ...(planDocument ? { planDocument } : {}),
         },

@@ -18,6 +18,7 @@ import type {
   MessengerApprovalThreadItem,
   MessengerEvent,
   MessengerIssueThreadItem,
+  IssueLabel,
   Project,
 } from "@rudderhq/shared";
 import { accessApi } from "@/api/access";
@@ -601,6 +602,7 @@ function MessengerApprovalCard({
   orgId,
   agents,
   projects,
+  labels,
   chatConversations,
   currentUserId,
 }: {
@@ -608,6 +610,7 @@ function MessengerApprovalCard({
   orgId: string;
   agents?: Agent[] | null;
   projects?: Project[] | null;
+  labels?: IssueLabel[] | null;
   chatConversations?: Pick<ChatConversation, "id" | "title">[] | null;
   currentUserId?: string | null;
 }) {
@@ -660,7 +663,7 @@ function MessengerApprovalCard({
           detailLink={`/messenger/approvals/${item.approval.id}`}
           detailLabel="Open full approval"
           supportingText={item.subtitle ?? "Approval update"}
-          payloadContext={{ agents, projects, chatConversation, currentUserId }}
+          payloadContext={{ agents, projects, labels, chatConversation, currentUserId }}
           allowBudgetActions
           isPending={decisionMutation.isPending}
         />
@@ -681,6 +684,11 @@ export function MessengerApprovalsView() {
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(selectedOrganizationId ?? ""),
     queryFn: () => projectsApi.list(selectedOrganizationId ?? ""),
+    enabled: Boolean(selectedOrganizationId),
+  });
+  const { data: labels } = useQuery({
+    queryKey: queryKeys.issues.labels(selectedOrganizationId ?? ""),
+    queryFn: () => issuesApi.listLabels(selectedOrganizationId ?? ""),
     enabled: Boolean(selectedOrganizationId),
   });
   const { data: chatConversations } = useQuery({
@@ -706,6 +714,7 @@ export function MessengerApprovalsView() {
             orgId={selectedOrganizationId}
             agents={agents}
             projects={projects}
+            labels={labels}
             chatConversations={chatConversations}
             currentUserId={currentUserId}
           />

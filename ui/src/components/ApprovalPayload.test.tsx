@@ -190,4 +190,53 @@ describe("ApprovalPayloadRenderer", () => {
     expect(html).not.toContain("agent-raw-id");
     expect(html).not.toContain("chat-raw-id");
   });
+
+  it("surfaces required labels for agent-proposed chat issues when the label taxonomy is mature", () => {
+    const html = renderChatIssueApproval(
+      {
+        chatConversationId: "chat-1",
+        proposedByAgentId: agent.id,
+        proposedIssue: {
+          title: "Fix label routing",
+          description: "Needs classification before board approval.",
+          priority: "medium",
+        },
+      },
+      {
+        labels: Array.from({ length: 5 }, (_, index) => ({
+          id: `label-${index + 1}`,
+          orgId: "org-1",
+          name: `Label ${index + 1}`,
+          color: "#2563eb",
+          createdAt: "",
+          updatedAt: "",
+        })),
+      },
+    );
+
+    expect(html).toContain("Labels");
+    expect(html).toContain("Required before approval");
+  });
+
+  it("renders selected labels by name in chat issue approvals", () => {
+    const html = renderChatIssueApproval(
+      {
+        chatConversationId: "chat-1",
+        proposedByAgentId: agent.id,
+        proposedIssue: {
+          title: "Fix label routing",
+          labelIds: ["label-2"],
+        },
+      },
+      {
+        labels: [
+          { id: "label-1", orgId: "org-1", name: "Operations", color: "#2563eb", createdAt: "", updatedAt: "" },
+          { id: "label-2", orgId: "org-1", name: "Engineering", color: "#0f766e", createdAt: "", updatedAt: "" },
+        ],
+      },
+    );
+
+    expect(html).toContain("Engineering");
+    expect(html).not.toContain("Required before approval");
+  });
 });

@@ -16,6 +16,7 @@ import {
   type IssueAttachment,
   type IssueComment,
   type IssueCommitReport,
+  type IssueLabel,
 } from "@rudderhq/shared";
 import {
   addCommonClientOptions,
@@ -52,7 +53,11 @@ interface IssueCreateOptions extends BaseClientOptions {
   parentId?: string;
   requestDepth?: string;
   billingCode?: string;
+  labelId?: string[];
+  label?: string[];
 }
+
+interface IssueLabelsListOptions extends BaseClientOptions {}
 
 interface IssueUpdateOptions extends BaseClientOptions {
   title?: string;
@@ -253,6 +258,25 @@ export function registerIssueCommands(program: Command): void {
 
   addCommonClientOptions(
     issue
+      .command("labels")
+      .description("Issue label operations")
+      .command("list")
+      .description("List issue labels for an organization")
+      .option("-O, --org-id <id>", "Organization ID")
+      .action(async (opts: IssueLabelsListOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const rows = (await ctx.api.get<IssueLabel[]>(`/api/orgs/${ctx.orgId}/labels`)) ?? [];
+          printOutput(rows, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+    { includeCompany: false },
+  );
+
+  addCommonClientOptions(
+    issue
       .command("create")
       .description(getAgentCliCapabilityById("issue.create").description)
       .option("-O, --org-id <id>", "Organization ID")
@@ -266,9 +290,12 @@ export function registerIssueCommands(program: Command): void {
       .option("--parent-id <id>", "Parent issue ID")
       .option("--request-depth <n>", "Request depth integer")
       .option("--billing-code <code>", "Billing code")
+      .option("--label-id <id>", "Issue label ID; may be repeated", collectNonEmptyOption("--label-id"), [] as string[])
+      .option("--label <name>", "Issue label name to resolve exactly; may be repeated", collectNonEmptyOption("--label"), [] as string[])
       .action(async (opts: IssueCreateOptions) => {
         try {
           const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const labelIds = await resolveIssueLabelIds(ctx, opts);
           const payload = createIssueSchema.parse({
             title: opts.title,
             description: opts.description,
@@ -280,6 +307,7 @@ export function registerIssueCommands(program: Command): void {
             parentId: opts.parentId,
             requestDepth: parseOptionalInt(opts.requestDepth),
             billingCode: opts.billingCode,
+            labelIds: labelIds.length > 0 ? labelIds : undefined,
           });
 
           const created = await ctx.api.post<Issue>(`/api/orgs/${ctx.orgId}/issues`, payload);
@@ -639,6 +667,52 @@ function collectImagePath(value: string, previous: string[]): string[] {
     throw new Error("--image path cannot be empty");
   }
   return [...previous, trimmed];
+}
+
+function collectNonEmptyOption(optionName: string) {
+  return (value: string, previous: string[]): string[] => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw new Error(`${optionName} cannot be empty`);
+    }
+    return [...previous, trimmed];
+  };
+}
+
+async function resolveIssueLabelIds(
+  ctx: CommandContext,
+  opts: Pick<IssueCreateOptions, "label" | "labelId" | "parentId">,
+): Promise<string[]> {
+  const explicitIds = opts.labelId ?? [];
+  const names = opts.label ?? [];
+  if (names.length === 0 && explicitIds.length > 0) return [...new Set(explicitIds)];
+
+  if (names.length === 0 && opts.parentId) return [];
+
+  const labels = (await ctx.api.get<IssueLabel[]>(`/api/orgs/${ctx.orgId}/labels`)) ?? [];
+  if (names.length === 0) {
+    if (ctx.agentId && labels.length >= 5) {
+      throw new Error(
+        `Organization has ${labels.length} issue labels. Choose at least one with --label-id <id> or --label <name>. Available labels: ${formatAvailableLabelNames(labels)}`,
+      );
+    }
+    return [];
+  }
+
+  const resolvedIds = names.map((name) => {
+    const exact = labels.find((label) => label.name === name)
+      ?? labels.find((label) => label.name.toLowerCase() === name.toLowerCase());
+    if (!exact) {
+      throw new Error(`Unknown issue label "${name}". Available labels: ${formatAvailableLabelNames(labels)}`);
+    }
+    return exact.id;
+  });
+
+  return [...new Set([...explicitIds, ...resolvedIds])];
+}
+
+function formatAvailableLabelNames(labels: IssueLabel[]): string {
+  return labels.map((label) => label.name).join(", ") || "(none)";
 }
 
 async function appendUploadedIssueImages(

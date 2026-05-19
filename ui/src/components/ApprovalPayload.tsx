@@ -1,5 +1,5 @@
 import { UserPlus, Lightbulb, MessageSquare, Settings2, ShieldAlert, ShieldCheck } from "lucide-react";
-import type { Agent, ChatConversation, Project } from "@rudderhq/shared";
+import type { Agent, ChatConversation, IssueLabel, Project } from "@rudderhq/shared";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { formatCents } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
@@ -16,6 +16,7 @@ import {
 export interface ApprovalPayloadContext {
   agents?: Agent[] | null;
   projects?: Project[] | null;
+  labels?: IssueLabel[] | null;
   chatConversation?: Pick<ChatConversation, "id" | "title"> | null;
   currentUserId?: string | null;
 }
@@ -64,6 +65,52 @@ function lookupProject(projectId: unknown, projects: Project[] | null | undefine
 function lookupAgent(agentId: unknown, agents: Agent[] | null | undefined) {
   if (typeof agentId !== "string" || !agentId.trim()) return null;
   return agents?.find((agent) => agent.id === agentId) ?? null;
+}
+
+function labelIdsFromProposal(proposal: Record<string, unknown>) {
+  return Array.isArray(proposal.labelIds)
+    ? proposal.labelIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [];
+}
+
+function LabelsField({
+  labelIds,
+  labels,
+  required,
+}: {
+  labelIds: string[];
+  labels?: IssueLabel[] | null;
+  required: boolean;
+}) {
+  if (labelIds.length === 0 && !required) return null;
+  const labelById = new Map((labels ?? []).map((label) => [label.id, label]));
+  const selectedLabels = labelIds.map((id) => labelById.get(id)).filter((label): label is IssueLabel => Boolean(label));
+  const unresolvedIds = labelIds.filter((id) => !labelById.has(id));
+
+  return (
+    <ApprovalField label="Labels" align="start">
+      {selectedLabels.length > 0 || unresolvedIds.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {selectedLabels.map((label) => (
+            <span
+              key={label.id}
+              className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 py-1 text-xs font-medium"
+            >
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: label.color }} />
+              <span className="truncate">{label.name}</span>
+            </span>
+          ))}
+          {unresolvedIds.map((id) => (
+            <ApprovalInlineCode key={id}>{id}</ApprovalInlineCode>
+          ))}
+        </div>
+      ) : (
+        <span className="text-xs font-medium text-destructive">
+          Required before approval
+        </span>
+      )}
+    </ApprovalField>
+  );
 }
 
 export function chatConversationIdFromApprovalPayload(payload: Record<string, unknown> | null | undefined) {
@@ -241,6 +288,9 @@ function ChatIssueCreationPayload({
     typeof proposal.description === "string" && proposal.description.trim().length > 0
       ? proposal.description.trim()
       : null;
+  const labelIds = labelIdsFromProposal(proposal);
+  const agentProposed = typeof payload.proposedByAgentId === "string" && payload.proposedByAgentId.trim().length > 0;
+  const labelsRequired = agentProposed && (context?.labels?.length ?? 0) >= 5 && labelIds.length === 0;
 
   return (
     <div className="space-y-3 text-sm">
@@ -253,6 +303,7 @@ function ChatIssueCreationPayload({
       <PayloadField label="Priority" value={typeof proposal.priority === "string" ? formatPriorityLabel(proposal.priority) : proposal.priority} />
       <ProjectField projectId={proposal.projectId} projects={context?.projects} />
       <PayloadField label="Goal" value={proposal.goalId} />
+      <LabelsField labelIds={labelIds} labels={context?.labels} required={labelsRequired} />
       <AssigneeField
         agentId={proposal.assigneeAgentId}
         userId={proposal.assigneeUserId}

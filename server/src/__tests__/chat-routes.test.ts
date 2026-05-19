@@ -891,6 +891,7 @@ describe("chat routes", () => {
     expect(mockChatService.createProposalApproval).not.toHaveBeenCalled();
     expect(mockChatService.convertToIssue).toHaveBeenCalledWith("chat-1", {
       actorUserId: "user-1",
+      createdByAgentId: "agent-1",
       messageId: "message-proposal",
     });
     expect(mockChatService.addMessage).toHaveBeenNthCalledWith(

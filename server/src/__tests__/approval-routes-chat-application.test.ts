@@ -62,7 +62,7 @@ vi.mock("../langfuse.js", () => ({
   observeExecutionEvent: mockObserveExecutionEvent,
 }));
 
-function createApp() {
+function createApp(db: any = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -75,7 +75,7 @@ function createApp() {
     };
     next();
   });
-  app.use("/api", approvalRoutes({} as any));
+  app.use("/api", approvalRoutes(db));
   app.use(errorHandler);
   return app;
 }
@@ -259,6 +259,42 @@ describe("approval routes chat application", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("Missing permission: tasks:assign");
+    expect(mockApprovalService.approve).not.toHaveBeenCalled();
+    expect(mockChatService.applyApprovedApproval).not.toHaveBeenCalled();
+  });
+
+  it("requires labels before approving agent-proposed chat issues once the label taxonomy is mature", async () => {
+    mockApprovalService.getById.mockResolvedValue({
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "chat_issue_creation",
+      status: "pending",
+      payload: {
+        chatConversationId: "chat-1",
+        proposedByAgentId: "agent-1",
+        proposedIssue: {
+          title: "Needs label",
+          description: "Agent proposed this issue from chat.",
+        },
+      },
+    });
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(async () => [{ count: 5 }]),
+        })),
+      })),
+    };
+
+    const res = await request(createApp(db))
+      .post("/api/approvals/approval-1/approve")
+      .send({ decisionNote: "Looks good" });
+
+    expect(res.status).toBe(422);
+    expect(res.body.details).toMatchObject({
+      code: "agent_issue_label_required",
+      labelCount: 5,
+    });
     expect(mockApprovalService.approve).not.toHaveBeenCalled();
     expect(mockChatService.applyApprovedApproval).not.toHaveBeenCalled();
   });

@@ -9,6 +9,9 @@ import { NewIssueDialog } from "./NewIssueDialog";
 let capturedMentions: Array<Record<string, unknown>> = [];
 const dialogState = vi.hoisted(() => ({
   newIssueDefaults: { assigneeAgentId: "agent-1" } as NewIssueDefaults,
+  labels: [
+    { id: "label-1", orgId: "org-1", name: "backend", color: "#2563eb", createdAt: "", updatedAt: "" },
+  ],
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -89,9 +92,7 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "projects") return { data: [] };
     if (queryKey[0] === "issues" && queryKey[2] === "labels") {
       return {
-        data: [
-          { id: "label-1", orgId: "org-1", name: "backend", color: "#2563eb", createdAt: "", updatedAt: "" },
-        ],
+        data: dialogState.labels,
       };
     }
     if (queryKey[0] === "auth") return { data: { user: { id: "user-1" } } };
@@ -254,6 +255,9 @@ vi.mock("../api/assets", () => ({
 describe("NewIssueDialog", () => {
   beforeEach(() => {
     dialogState.newIssueDefaults = { assigneeAgentId: "agent-1" };
+    dialogState.labels = [
+      { id: "label-1", orgId: "org-1", name: "backend", color: "#2563eb", createdAt: "", updatedAt: "" },
+    ];
   });
 
   it("renders the label picker content in the new issue dialog", () => {
@@ -284,6 +288,23 @@ describe("NewIssueDialog", () => {
 
     expect(html).toContain('data-variant="field"');
     expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("promotes labels into the primary metadata fields when the organization has five labels", () => {
+    dialogState.labels = Array.from({ length: 5 }, (_, index) => ({
+      id: `label-${index + 1}`,
+      orgId: "org-1",
+      name: `label-${index + 1}`,
+      color: "#2563eb",
+      createdAt: "",
+      updatedAt: "",
+    }));
+
+    const html = renderToStaticMarkup(<NewIssueDialog />);
+
+    expect(html).toContain("sm:grid-cols-4");
+    expect(html).toContain(">Labels</div>");
+    expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(4);
   });
 
   it("renders agent selector titles as badges instead of parenthesized label text", () => {

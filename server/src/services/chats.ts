@@ -47,6 +47,7 @@ type ChatIssueProposalPayload = {
   assigneeUserId: string | null;
   reviewerAgentId: string | null;
   reviewerUserId: string | null;
+  labelIds?: string[];
 };
 
 function isIssueProposalPriority(value: unknown): value is ChatIssueProposalPriority {
@@ -161,6 +162,9 @@ function issueProposalFromPayload(payload: Record<string, unknown> | null | unde
     assigneeUserId: safeTrim(typeof proposal.assigneeUserId === "string" ? proposal.assigneeUserId : null),
     reviewerAgentId: safeTrim(typeof proposal.reviewerAgentId === "string" ? proposal.reviewerAgentId : null),
     reviewerUserId: safeTrim(typeof proposal.reviewerUserId === "string" ? proposal.reviewerUserId : null),
+    labelIds: Array.isArray(proposal.labelIds)
+      ? proposal.labelIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : undefined,
   };
 }
 
@@ -1359,10 +1363,11 @@ export function chatService(db: Db) {
       });
   }
 
-  async function convertToIssue(
+    async function convertToIssue(
       conversationId: string,
       input: {
         actorUserId: string | null;
+        createdByAgentId?: string | null;
         messageId?: string | null;
         proposal?: Record<string, unknown> | null;
       },
@@ -1374,17 +1379,20 @@ export function chatService(db: Db) {
         if (issue) return issue;
       }
 
-      let issueProposal = input.proposal ? issueProposalFromPayload(input.proposal) : null;
       let sourceMessage: MessageRow | null = null;
+      if (input.messageId) {
+        sourceMessage = await db
+          .select()
+          .from(chatMessages)
+          .where(and(eq(chatMessages.id, input.messageId), eq(chatMessages.conversationId, conversationId)))
+          .then((rows) => rows[0] ?? null);
+      }
+
+      let issueProposal = input.proposal ? issueProposalFromPayload(input.proposal) : null;
 
       if (!issueProposal) {
-        const message = input.messageId
-          ? await db
-            .select()
-            .from(chatMessages)
-            .where(and(eq(chatMessages.id, input.messageId), eq(chatMessages.conversationId, conversationId)))
-            .then((rows) => rows[0] ?? null)
-          : await db
+        const message = sourceMessage
+          ?? await db
             .select()
             .from(chatMessages)
             .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.kind, "issue_proposal")))
@@ -1401,6 +1409,7 @@ export function chatService(db: Db) {
 
       const issue = await issuesSvc.create(conversation.orgId, {
         ...issueProposal,
+        createdByAgentId: input.createdByAgentId ?? sourceMessage?.replyingAgentId ?? null,
         createdByUserId: input.actorUserId,
       });
       const planDocument = planDocumentFromPayload(
@@ -1650,6 +1659,7 @@ export function chatService(db: Db) {
             : null;
         const issue = await convertToIssue(conversationId, {
           actorUserId,
+          createdByAgentId: safeTrim(typeof payload.proposedByAgentId === "string" ? payload.proposedByAgentId : null),
           messageId,
           proposal: planDocument ? { issueProposal: proposedIssue, planDocument } : proposedIssue,
         });

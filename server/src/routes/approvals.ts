@@ -1,6 +1,7 @@
 import { Router, type Request } from "express";
 import type { LangfuseObservation } from "@langfuse/tracing";
-import type { Db } from "@rudderhq/db";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { issueLabels, issues, labels, type Db } from "@rudderhq/db";
 import {
   addApprovalCommentSchema,
   createApprovalSchema,
@@ -24,7 +25,7 @@ import {
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { redactEventPayload } from "../redaction.js";
-import { forbidden } from "../errors.js";
+import { forbidden, unprocessable } from "../errors.js";
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
   return {
@@ -160,6 +161,60 @@ export function approvalRoutes(db: Db) {
     if (!allowed) throw forbidden("Missing permission: tasks:assign");
   }
 
+  async function assertChatIssueProposalLabelsIfNeeded(approval: { orgId: string; payload: Record<string, unknown> }) {
+    const proposedByAgentId = typeof approval.payload.proposedByAgentId === "string"
+      ? approval.payload.proposedByAgentId.trim()
+      : "";
+    if (!proposedByAgentId) return;
+
+    const proposedIssue =
+      approval.payload?.proposedIssue
+      && typeof approval.payload.proposedIssue === "object"
+      && !Array.isArray(approval.payload.proposedIssue)
+        ? (approval.payload.proposedIssue as Record<string, unknown>)
+        : null;
+    const labelIds = Array.isArray(proposedIssue?.labelIds)
+      ? proposedIssue.labelIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    if (labelIds.length > 0) {
+      const uniqueLabelIds = [...new Set(labelIds)];
+      const existingLabels = await db
+        .select({ id: labels.id })
+        .from(labels)
+        .where(and(eq(labels.orgId, approval.orgId), inArray(labels.id, uniqueLabelIds)));
+      if (existingLabels.length !== uniqueLabelIds.length) {
+        throw unprocessable("One or more labels are invalid for this organization");
+      }
+      return;
+    }
+
+    const parentId = typeof proposedIssue?.parentId === "string" ? proposedIssue.parentId.trim() : "";
+    if (parentId) {
+      const parentLabelRows = await db
+        .select({ labelId: issueLabels.labelId })
+        .from(issueLabels)
+        .innerJoin(issues, eq(issueLabels.issueId, issues.id))
+        .where(and(eq(issues.id, parentId), eq(issues.orgId, approval.orgId), eq(issueLabels.orgId, approval.orgId)))
+        .limit(1);
+      if (parentLabelRows.length > 0) return;
+    }
+
+    const [labelCountRow] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(labels)
+      .where(eq(labels.orgId, approval.orgId));
+    const labelCount = Number(labelCountRow?.count ?? 0);
+    if (labelCount < 5) return;
+
+    throw unprocessable(
+      `当前组织有 ${labelCount} 个 labels，agent 创建 issue 需要选择至少一个 label`,
+      {
+        code: "agent_issue_label_required",
+        labelCount,
+      },
+    );
+  }
+
   router.get("/orgs/:orgId/approvals", async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
@@ -266,6 +321,7 @@ export function approvalRoutes(db: Db) {
     const pendingApproval = await svc.getById(id);
     if (pendingApproval?.type === "chat_issue_creation") {
       await assertCanApproveChatIssueConversion(req, pendingApproval);
+      await assertChatIssueProposalLabelsIfNeeded(pendingApproval);
     }
     const { approval, applied } = await svc.approve(
       id,

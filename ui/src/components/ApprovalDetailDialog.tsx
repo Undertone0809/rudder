@@ -6,6 +6,7 @@ import { accessApi } from "@/api/access";
 import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
 import { chatsApi } from "@/api/chats";
+import { issuesApi } from "@/api/issues";
 import { projectsApi } from "@/api/projects";
 import { Button } from "@/components/ui/button";
 import {
@@ -86,6 +87,12 @@ export function ApprovalDetailDialog({
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(resolvedOrgId ?? ""),
     queryFn: () => projectsApi.list(resolvedOrgId ?? ""),
+    enabled: Boolean(resolvedOrgId && open),
+  });
+
+  const { data: labels } = useQuery({
+    queryKey: queryKeys.issues.labels(resolvedOrgId ?? ""),
+    queryFn: () => issuesApi.listLabels(resolvedOrgId ?? ""),
     enabled: Boolean(resolvedOrgId && open),
   });
 
@@ -312,7 +319,7 @@ export function ApprovalDetailDialog({
                       <ApprovalPayloadRenderer
                         type={approval.type}
                         payload={payload}
-                        context={{ agents, projects, chatConversation, currentUserId: currentBoardUserId }}
+                        context={{ agents, projects, labels, chatConversation, currentUserId: currentBoardUserId }}
                       />
                     </ApprovalInset>
 

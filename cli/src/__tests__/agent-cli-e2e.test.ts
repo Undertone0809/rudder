@@ -17,6 +17,7 @@ import {
   issueAttachments,
   issueComments,
   issues,
+  labels,
   organizations,
 } from "@rudderhq/db";
 import type {
@@ -28,6 +29,7 @@ import type {
   Issue,
   IssueComment,
   IssueCommitReport,
+  IssueLabel,
   OrganizationSkillDetail,
   OrganizationSkillFileDetail,
   OrganizationSkillListItem,
@@ -753,6 +755,70 @@ describe("agent CLI e2e", () => {
     expect(boardIssue.createdByAgentId).toBeNull();
     expect(boardIssue.assigneeAgentId).toBeNull();
     expect(boardIssue.assigneeUserId).toBeNull();
+  });
+
+  it("lists issue labels and requires agent-created issues to choose one once the label taxonomy is mature", { timeout: 60_000 }, async () => {
+    const db = createDb(connectionString);
+    const labelRows = ["Operations", "Research", "Engineering", "Design", "Customer"].map((name) => ({
+      id: randomUUID(),
+      orgId,
+      name,
+      color: "#2563eb",
+    }));
+    await db.insert(labels).values(labelRows);
+
+    const env = {
+      RUDDER_API_KEY: agentKey,
+      RUDDER_ORG_ID: orgId,
+      RUDDER_AGENT_ID: agentId,
+      RUDDER_RUN_ID: runId,
+    };
+
+    const listed = await runCliJson<IssueLabel[]>(["issue", "labels", "list"], {
+      apiBase,
+      configPath,
+      env,
+    });
+    expect(listed.map((label) => label.name)).toEqual(expect.arrayContaining(labelRows.map((label) => label.name)));
+
+    await expect(
+      runCliJson<Issue>(["issue", "create", "--title", "Agent issue without label", "--status", "todo"], {
+        apiBase,
+        configPath,
+        env,
+      }),
+    ).rejects.toThrow("Choose at least one with --label-id <id> or --label <name>");
+
+    const byName = await runCliJson<Issue>(
+      ["issue", "create", "--title", "Agent issue with label name", "--status", "todo", "--label", "Operations"],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(byName.labelIds).toEqual([labelRows[0]!.id]);
+
+    const byId = await runCliJson<Issue>(
+      ["issue", "create", "--title", "Agent issue with label id", "--status", "todo", "--label-id", labelRows[1]!.id],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(byId.labelIds).toEqual([labelRows[1]!.id]);
+
+    const child = await runCliJson<Issue>(
+      ["issue", "create", "--title", "Agent sub-issue inherits parent label", "--status", "todo", "--parent-id", byId.id],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(child.parentId).toBe(byId.id);
+    expect(child.labelIds).toEqual([labelRows[1]!.id]);
   });
 
   it("uploads images into issue comments from the CLI", { timeout: 60_000 }, async () => {
