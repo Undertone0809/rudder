@@ -64,6 +64,7 @@ import {
   CheckCircle2,
   Tag,
   Calendar,
+  FileText,
   Loader2,
   Paperclip,
   X,
@@ -319,6 +320,22 @@ export function NewIssueDialog() {
     enabled: Boolean(effectiveCompanyId) && newIssueOpen,
   });
 
+  const [libraryFileMentionQuery, setLibraryFileMentionQuery] = useState<string | null>(null);
+  const normalizedLibraryFileMentionQuery = libraryFileMentionQuery?.trim() ?? "";
+  const { data: libraryMentionFiles } = useQuery({
+    queryKey: [
+      "organizations",
+      effectiveCompanyId ?? "__none__",
+      "workspace-mention-files",
+      normalizedLibraryFileMentionQuery,
+    ] as const,
+    queryFn: () => organizationsApi.listWorkspaceMentionFiles(effectiveCompanyId!, {
+      query: normalizedLibraryFileMentionQuery,
+      limit: normalizedLibraryFileMentionQuery ? 50 : 200,
+    }),
+    enabled: Boolean(effectiveCompanyId) && newIssueOpen,
+  });
+
   useEffect(() => {
     if (!newIssueOpen) {
       openContextLocationRef.current = null;
@@ -354,10 +371,19 @@ export function NewIssueDialog() {
       projects: orderedProjects,
       issues: allIssues,
       libraryDocuments,
+      libraryFiles: libraryMentionFiles?.entries,
       skillMentionOptions,
       currentUserId,
     }),
-    [agents, allIssues, currentUserId, libraryDocuments, orderedProjects, skillMentionOptions],
+    [
+      agents,
+      allIssues,
+      currentUserId,
+      libraryDocuments,
+      libraryMentionFiles?.entries,
+      orderedProjects,
+      skillMentionOptions,
+    ],
   );
 
   const { data: assigneeAgentRuntimeModels } = useQuery({
@@ -1473,6 +1499,7 @@ export function NewIssueDialog() {
               placeholder="Add description..."
               bordered={false}
               mentions={mentionOptions}
+              onMentionQueryChange={setLibraryFileMentionQuery}
               contentClassName="text-sm text-muted-foreground pb-12 min-h-[88px]"
               imageUploadHandler={async (file) => {
                 const asset = await uploadDescriptionImage.mutateAsync(file);
@@ -1482,6 +1509,42 @@ export function NewIssueDialog() {
           </div>
           {stagedFiles.length > 0 ? (
             <div className="mt-4 space-y-3 rounded-lg border border-border/70 p-3">
+              {stagedDocuments.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground">Documents</div>
+                  <div className="space-y-2">
+                    {stagedDocuments.map((file) => (
+                      <div key={file.id} className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                              {file.documentKey}
+                            </span>
+                            <span className="truncate text-sm">{file.file.name}</span>
+                          </div>
+                          <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                            <FileText className="h-3.5 w-3.5" />
+                            <span>{file.title || file.file.name}</span>
+                            <span>•</span>
+                            <span>{formatFileSize(file.file)}</span>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="shrink-0 text-muted-foreground"
+                          onClick={() => removeStagedFile(file.id)}
+                          disabled={isCreatingOrRedirecting}
+                          title="Remove document"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               {stagedAttachments.length > 0 ? (
                 <div className="space-y-2">
                   <div className="text-xs font-medium text-muted-foreground">Attachments</div>

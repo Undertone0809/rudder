@@ -27,8 +27,10 @@ import { Boxes, FileText } from "lucide-react";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
+import { parseMentionChipHref } from "../lib/mention-chips";
 import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
+import { parseSkillReference } from "../lib/skill-reference";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
 import type { MarkdownEditorProps, MarkdownEditorRef, MentionOption } from "./MarkdownEditor";
@@ -37,7 +39,7 @@ import {
   getMentionPanelPositionForViewport,
 } from "../lib/mention-menu-position";
 
-type MentionState = {
+export type MentionState = {
   trigger: "@" | "$";
   query: string;
   top: number;
@@ -48,6 +50,45 @@ type MentionState = {
   textNode: Text;
   atPos: number;
   endPos: number;
+};
+
+type ProseMirrorTextNode = {
+  isText?: boolean;
+  nodeSize: number;
+  text?: string;
+  marks?: Array<{
+    type?: { name?: string };
+    attrs?: { href?: string | null };
+  }>;
+};
+
+type ProseMirrorDoc = {
+  content: { size: number };
+  descendants: (callback: (node: ProseMirrorTextNode, pos: number) => boolean | void) => void;
+  textBetween?: (from: number, to: number, blockSeparator?: string, leafText?: string) => string;
+};
+
+type ProseMirrorTransaction = {
+  delete: (from: number, to: number) => ProseMirrorTransaction;
+  insertText: (text: string, from?: number, to?: number) => ProseMirrorTransaction;
+};
+
+type ProseMirrorState = {
+  doc: ProseMirrorDoc;
+  selection: { empty?: boolean; from: number; to: number };
+  tr: ProseMirrorTransaction;
+};
+
+type ProseMirrorView = {
+  state: ProseMirrorState;
+  dispatch: (transaction: ProseMirrorTransaction) => void;
+};
+
+type RudderTokenRange = {
+  from: number;
+  to: number;
+  href: string;
+  label: string;
 };
 
 function mentionTokenDetails(option: MentionOption): { href: string; label: string } | null {
@@ -79,6 +120,79 @@ export function mentionMarkdown(option: MentionOption): string {
   return token ? `[${token.label}](${token.href}) ` : "";
 }
 
+function canonicalMarkdownLink(label: string, href: string) {
+  return `[${label}](${href})`;
+}
+
+export function isRudderTokenHref(href: string, label: string) {
+  return Boolean(
+    parseMentionChipHref(href)
+    || parseSkillReference(href, label)
+    || (href.trim().startsWith("skill://") && label.trim().startsWith("$")),
+  );
+}
+
+function findRudderTokenRangeAt(doc: ProseMirrorDoc, targetPos: number): RudderTokenRange | null {
+  if (targetPos < 0 || targetPos >= doc.content.size) return null;
+  let match: RudderTokenRange | null = null;
+  doc.descendants((node, pos) => {
+    if (!node.isText || !node.text) return;
+    const linkMark = node.marks?.find((mark) => mark.type?.name === "link" && mark.attrs?.href);
+    const href = linkMark?.attrs?.href?.trim() ?? "";
+    if (!href) return;
+    const from = pos;
+    const to = pos + node.nodeSize;
+    if (targetPos < from || targetPos >= to) return;
+    if (!isRudderTokenHref(href, node.text)) return;
+    match = { from, to, href, label: node.text };
+    return false;
+  });
+  return match;
+}
+
+function findAdjacentRudderTokenRange(state: ProseMirrorState, direction: "backward" | "forward") {
+  if (!state.selection.empty) return null;
+  const { from } = state.selection;
+  const candidates = direction === "backward" ? [from - 1, from - 2] : [from, from + 1];
+  for (const candidate of candidates) {
+    const range = findRudderTokenRangeAt(state.doc, candidate);
+    if (range) return range;
+  }
+  return null;
+}
+
+function findContainingRudderTokenRange(state: ProseMirrorState) {
+  if (!state.selection.empty) return null;
+  const { from } = state.selection;
+  const candidates = [from, from - 1];
+  for (const candidate of candidates) {
+    const range = findRudderTokenRangeAt(state.doc, candidate);
+    if (range && from > range.from && from < range.to) return range;
+  }
+  return null;
+}
+
+function isPrintableInputKey(event: React.KeyboardEvent) {
+  return event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey;
+}
+
+export function readCanonicalFragmentMarkdown(fragment: DocumentFragment) {
+  const read = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+    if (node instanceof HTMLBRElement) return "\n";
+    if (node instanceof HTMLAnchorElement) {
+      const label = node.textContent ?? "";
+      const href = node.getAttribute("href") ?? "";
+      if (href && isRudderTokenHref(href, label)) {
+        return canonicalMarkdownLink(label, href);
+      }
+    }
+    return Array.from(node.childNodes).map(read).join("");
+  };
+
+  return Array.from(fragment.childNodes).map(read).join("");
+}
+
 function getAllSubstringIndexes(value: string, search: string): number[] {
   const indexes: number[] = [];
   let index = value.indexOf(search);
@@ -89,17 +203,72 @@ function getAllSubstringIndexes(value: string, search: string): number[] {
   return indexes;
 }
 
-function applyMention(markdown: string, state: MentionState, option: MentionOption): string {
+function countSubstringOccurrences(value: string, search: string): number {
+  return getAllSubstringIndexes(value, search).length;
+}
+
+function commonSuffixLength(a: string, b: string, maxLength: number): number {
+  const limit = Math.min(a.length, b.length, maxLength);
+  let length = 0;
+  while (length < limit && a[a.length - 1 - length] === b[b.length - 1 - length]) {
+    length += 1;
+  }
+  return length;
+}
+
+function commonPrefixLength(a: string, b: string, maxLength: number): number {
+  const limit = Math.min(a.length, b.length, maxLength);
+  let length = 0;
+  while (length < limit && a[length] === b[length]) {
+    length += 1;
+  }
+  return length;
+}
+
+function getVisibleMentionOrdinal(editable: HTMLElement | null, state: MentionState, search: string): number | null {
+  if (!editable || !editable.contains(state.textNode)) return null;
+  const range = document.createRange();
+  range.setStart(editable, 0);
+  range.setEnd(state.textNode, state.atPos);
+  return countSubstringOccurrences(range.toString(), search);
+}
+
+function findActiveMentionIndex(markdown: string, state: MentionState, editable: HTMLElement | null): number {
+  const search = `${state.trigger}${state.query}`;
+  const indexes = getAllSubstringIndexes(markdown, search);
+  if (indexes.length === 0) return -1;
+  if (indexes.length === 1) return indexes[0]!;
+
+  const ordinal = getVisibleMentionOrdinal(editable, state, search);
+  const ordinalIndex = typeof ordinal === "number" ? indexes[ordinal] ?? null : null;
+  const nodeText = state.textNode.textContent ?? "";
+  const beforeText = nodeText.slice(0, state.atPos);
+  const afterText = nodeText.slice(state.endPos);
+  const contextScores = indexes.map((idx) => ({
+    idx,
+    score: commonSuffixLength(markdown.slice(0, idx), beforeText, 80)
+      + commonPrefixLength(markdown.slice(idx + search.length), afterText, 80),
+  }));
+  const bestScore = Math.max(...contextScores.map((candidate) => candidate.score));
+  const bestIndexes = contextScores
+    .filter((candidate) => candidate.score === bestScore)
+    .map((candidate) => candidate.idx);
+
+  if (ordinalIndex !== null && bestIndexes.includes(ordinalIndex)) return ordinalIndex;
+  if (bestScore > 0) return bestIndexes[0]!;
+  return ordinalIndex ?? indexes[indexes.length - 1]!;
+}
+
+export function applyMention(markdown: string, state: MentionState, option: MentionOption, editable: HTMLElement | null): string {
   const search = `${state.trigger}${state.query}`;
   const replacement = mentionMarkdown(option);
   if (!replacement) return markdown;
-  const indexes = getAllSubstringIndexes(markdown, search);
-  if (indexes.length === 0) {
+  const index = findActiveMentionIndex(markdown, state, editable);
+  if (index === -1) {
     const text = state.textNode.textContent ?? "";
     if (!text) return markdown;
     return text.slice(0, state.atPos) + replacement + text.slice(state.endPos);
   }
-  const index = indexes[indexes.length - 1]!;
   const replacementEnd = index + search.length;
   const replaceLength = replacement.endsWith(" ") && markdown[replacementEnd] === " "
     ? search.length + 1
@@ -321,7 +490,13 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     if (!state) return;
     const replacement = mentionMarkdown(option);
     if (!replacement) return;
-    const next = applyMention(latestValueRef.current, state, option);
+    const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+    const next = applyMention(
+      latestValueRef.current,
+      state,
+      option,
+      editable instanceof HTMLElement ? editable : null,
+    );
     if (next !== latestValueRef.current) {
       latestValueRef.current = next;
       onChangeRef.current(next);
@@ -344,6 +519,26 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     mentionStateRef.current = null;
     setMentionState(null);
   }, [focus, get, getInstance, loading]);
+
+  const removeAdjacentRudderToken = useCallback((direction: "backward" | "forward") => {
+    const editor = loading ? get() : getInstance();
+    let removed = false;
+    editor?.action((ctx) => {
+      const view = ctx.get(editorViewCtx) as unknown as ProseMirrorView;
+      const range = findAdjacentRudderTokenRange(view.state, direction);
+      if (!range) return;
+      let deleteTo = range.to;
+      const followingText = view.state.doc.content.size > range.to
+        ? view.state.doc.textBetween?.(range.to, Math.min(range.to + 1, view.state.doc.content.size), "\n", "\n")
+        : "";
+      if (followingText === " ") {
+        deleteTo += 1;
+      }
+      view.dispatch(view.state.tr.delete(range.from, deleteTo));
+      removed = true;
+    });
+    return removed;
+  }, [get, getInstance, loading]);
 
   const uploadImage = useCallback(async (file: File) => {
     const handler = imageUploadHandlerRef.current;
@@ -388,6 +583,29 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
           return;
         }
 
+        if (event.key === "Backspace" || event.key === "Delete") {
+          const direction = event.key === "Backspace" ? "backward" : "forward";
+          if (removeAdjacentRudderToken(direction)) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+        }
+
+        if (isPrintableInputKey(event)) {
+          const editor = loading ? get() : getInstance();
+          let insideToken = false;
+          editor?.action((ctx) => {
+            const view = ctx.get(editorViewCtx) as unknown as ProseMirrorView;
+            insideToken = Boolean(findContainingRudderTokenRange(view.state));
+          });
+          if (insideToken) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+        }
+
         if (mentionState && filteredMentions.length > 0) {
           if (event.key === "ArrowDown") {
             event.preventDefault();
@@ -411,6 +629,32 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
           mentionStateRef.current = null;
           setMentionState(null);
         }
+      }}
+      onCopyCapture={(event) => {
+        const selection = window.getSelection();
+        const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+        if (
+          !selection
+          || selection.rangeCount === 0
+          || selection.isCollapsed
+          || !(editable instanceof HTMLElement)
+          || !editable.contains(selection.anchorNode)
+          || !editable.contains(selection.focusNode)
+        ) {
+          return;
+        }
+        const canonicalMarkdown = readCanonicalFragmentMarkdown(selection.getRangeAt(0).cloneContents());
+        if (!canonicalMarkdown.includes("](")) return;
+        event.preventDefault();
+        event.clipboardData.setData("text/plain", canonicalMarkdown);
+      }}
+      onClickCapture={(event) => {
+        const anchor = event.target instanceof HTMLElement ? event.target.closest("a") : null;
+        if (!(anchor instanceof HTMLAnchorElement)) return;
+        const label = anchor.textContent ?? "";
+        const href = anchor.getAttribute("href") ?? "";
+        if (!href || !isRudderTokenHref(href, label)) return;
+        event.preventDefault();
       }}
       onKeyUpCapture={checkMention}
       onMouseUpCapture={checkMention}
@@ -602,7 +846,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
                           ) : null}
                           {option.kind === "library_doc" || option.kind === "library_file" ? (
                             <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                              {option.libraryFilePath ?? option.libraryDocumentPath ?? "Library doc"}
+                              {option.libraryFilePath ?? option.libraryDocumentPath ?? "Doc"}
                             </div>
                           ) : null}
                         </div>

@@ -57,6 +57,7 @@ interface CommentThreadProps {
   draftKey?: string;
   liveRunSlot?: React.ReactNode;
   mentions?: MentionOption[];
+  onMentionQueryChange?: (query: string | null) => void;
   operatorDisplayName?: string | null;
   heading?: ReactNode;
   hideHeading?: boolean;
@@ -342,6 +343,7 @@ export function CommentThread({
   draftKey,
   liveRunSlot,
   mentions: providedMentions,
+  onMentionQueryChange,
   operatorDisplayName,
   heading,
   hideHeading = false,
@@ -565,6 +567,7 @@ export function CommentThread({
           onChange={setBody}
           placeholder="Leave a comment..."
           mentions={mentions}
+          onMentionQueryChange={onMentionQueryChange}
           mentionMenuAnchorRef={composerSurfaceRef}
           mentionMenuPlacement="container"
           onSubmit={handleSubmit}

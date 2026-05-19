@@ -1,25 +1,11 @@
 import { expect, test } from "@playwright/test";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
 
-function resolveOrganizationWorkspaceRoot(orgId: string) {
-  return path.join(
-    E2E_HOME,
-    "instances",
-    E2E_INSTANCE_ID,
-    "organizations",
-    orgId,
-    "workspaces",
-  );
-}
-
-test.describe("Issue detail Library docs UX", () => {
-  test("renders Library doc mentions and migrated issue docs without issue-owned document creation", async ({ page }) => {
+test.describe("Issue detail Docs UX", () => {
+  test("renders Doc mentions and migrated issue docs without issue-owned document creation", async ({ page }) => {
     await page.goto("/");
 
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Issue-Library-Docs-${Date.now()}` },
+      data: { name: `Issue-Docs-${Date.now()}` },
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json() as { id: string; issuePrefix: string };
@@ -28,18 +14,22 @@ test.describe("Issue detail Library docs UX", () => {
       data: {
         title: "Product brief",
         format: "markdown",
-        body: "# Product brief\n\nThe live Library doc body stays outside issue context.",
+        body: "# Product brief\n\nThe live Doc body stays outside issue context.",
       },
     });
     expect(libraryDocRes.ok()).toBe(true);
     const libraryDoc = await libraryDocRes.json() as { id: string };
-    const workspaceRoot = resolveOrganizationWorkspaceRoot(organization.id);
-    await fs.mkdir(path.join(workspaceRoot, "docs"), { recursive: true });
-    await fs.writeFile(path.join(workspaceRoot, "docs", "product-brief.md"), "# Product brief\n", "utf8");
+    const workspaceFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: "docs/product-brief.md",
+        content: "# Product brief\n",
+      },
+    });
+    expect(workspaceFileRes.ok()).toBe(true);
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
-        title: "Issue should link docs from Library",
+        title: "Issue should link docs from Docs",
         description: [
           `Use [@Product brief](library-doc://${libraryDoc.id}?t=Product%20brief) as the legacy source.`,
           "Use [@product-brief.md](library-file://file?p=docs%2Fproduct-brief.md&t=product-brief.md) as the live file source.",
@@ -70,35 +60,39 @@ test.describe("Issue detail Library docs UX", () => {
 
     const productBriefLinks = page.getByRole("link", { name: "Product brief" });
     await expect(productBriefLinks.first()).toHaveAttribute("href", new RegExp(`/library\\?doc=${libraryDoc.id}$`));
-    await expect(page.getByLabel("Linked Library docs")).toBeVisible();
-    await expect(page.getByLabel("Linked Library docs").getByText("Product brief")).toBeVisible();
-    await expect(page.getByLabel("Linked Library docs").getByText("product-brief.md")).toBeVisible();
-    await expect(page.getByLabel("Linked Library docs").getByText("Ops checklist")).toBeVisible();
+    await expect(page.getByLabel("Linked Docs")).toBeVisible();
+    await expect(page.getByLabel("Linked Docs").getByText("Product brief")).toBeVisible();
+    await expect(page.getByLabel("Linked Docs").getByRole("link", { name: "product-brief.md live Docs" })).toBeVisible();
+    await expect(page.getByLabel("Linked Docs").getByText("Ops checklist")).toBeVisible();
     await expect(page.getByRole("link", { name: "product-brief.md" }).first())
       .toHaveAttribute("href", new RegExp(`/library\\?path=docs%2Fproduct-brief\\.md$`));
 
     await productBriefLinks.first().click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?doc=${libraryDoc.id}$`));
+    await expect(page).toHaveURL(new RegExp(`/library\\?doc=${libraryDoc.id}$`));
     await expect(page.getByTestId("org-workspaces-files-card")).toBeVisible();
     await expect(page.getByTestId("org-library-resources-panel")).toHaveCount(0);
   });
 
-  test("attaches files from the Library file tree", async ({ page }) => {
+  test("attaches files from the Docs file tree", async ({ page }) => {
     await page.goto("/");
 
     const orgRes = await page.request.post("/api/orgs", {
-      data: { name: `Issue-Library-Attach-${Date.now()}` },
+      data: { name: `Issue-Docs-Attach-${Date.now()}` },
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json() as { id: string };
-    const workspaceRoot = resolveOrganizationWorkspaceRoot(organization.id);
-    await fs.mkdir(workspaceRoot, { recursive: true });
-    await fs.writeFile(path.join(workspaceRoot, "handoff-notes.md"), "# Handoff notes\n", "utf8");
+    const workspaceFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: "handoff-notes.md",
+        content: "# Handoff notes\n",
+      },
+    });
+    expect(workspaceFileRes.ok()).toBe(true);
 
     const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
       data: {
-        title: "Issue can attach Library files",
-        description: "Attachments come from the same Library file tree.",
+        title: "Issue can attach Docs files",
+        description: "Attachments come from the same Docs file tree.",
         status: "todo",
         priority: "medium",
       },
@@ -109,8 +103,8 @@ test.describe("Issue detail Library docs UX", () => {
     await page.goto(`/issues/${issue.identifier ?? issue.id}`);
 
     await page.getByRole("button", { name: "Attach", exact: true }).click();
-    await page.getByRole("menuitem", { name: "Attach from Library" }).click();
-    const libraryDialog = page.getByRole("dialog", { name: "Attach from Library" });
+    await page.getByRole("menuitem", { name: "Attach from Docs" }).click();
+    const libraryDialog = page.getByRole("dialog", { name: "Attach from Docs" });
     await expect(libraryDialog).toBeVisible();
     await libraryDialog.getByRole("button", { name: "handoff-notes.md" }).click();
     await libraryDialog.getByRole("button", { name: "Attach" }).click();

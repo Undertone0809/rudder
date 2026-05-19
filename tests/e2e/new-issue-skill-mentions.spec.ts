@@ -21,6 +21,13 @@ test.describe("New issue skill mentions", () => {
       id: string;
       issuePrefix: string;
     };
+    const workspaceFileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: "docs/handoff-notes.md",
+        content: "# Handoff notes\n",
+      },
+    });
+    expect(workspaceFileRes.ok()).toBe(true);
 
     const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
       data: {
@@ -81,6 +88,15 @@ test.describe("New issue skill mentions", () => {
     const atMentionMenu = page.getByTestId("markdown-mention-menu");
     await expect(atMentionMenu).toBeVisible({ timeout: 15_000 });
     await expect(atMentionMenu.locator('[data-testid^="markdown-mention-option-skill:"]').first()).toContainText("build-advisor");
+
+    await composer.press("ControlOrMeta+A");
+    await page.keyboard.type("Use @handoff");
+    const fileMentionMenu = page.getByTestId("markdown-mention-menu");
+    await expect(fileMentionMenu).toBeVisible({ timeout: 15_000 });
+    const fileOption = page.getByTestId("markdown-mention-option-library-file:docs/handoff-notes.md");
+    await expect(fileOption).toBeVisible();
+    await expect(fileOption.locator(".font-medium")).toHaveText("handoff-notes.md");
+    await expect(fileOption).toContainText("docs/handoff-notes.md");
 
     await composer.press("ControlOrMeta+A");
     await page.keyboard.type("Use $advisor");

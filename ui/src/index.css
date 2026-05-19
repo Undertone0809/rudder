@@ -1502,7 +1502,9 @@ button[draggable="false"] {
 .rudder-milkdown-content a[href^="issue://"],
 .rudder-milkdown-content a[href^="project://"],
 .rudder-milkdown-content a[href^="library-doc://"],
-.rudder-milkdown-content a[href^="library-file://"] {
+.rudder-milkdown-content a[href^="library-file://"],
+.rudder-milkdown-content a[href^="skill://"],
+.rudder-milkdown-content a[href$="/SKILL.md"] {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
@@ -1546,6 +1548,16 @@ button[draggable="false"] {
   height: 0.58rem;
   border-radius: 2px;
   border: 1px solid currentColor;
+}
+
+.rudder-milkdown-content a[href^="skill://"]::before,
+.rudder-milkdown-content a[href$="/SKILL.md"]::before {
+  content: "$";
+  flex: none;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  color: color-mix(in oklab, var(--primary) 75%, var(--foreground));
 }
 
 .rudder-milkdown-content pre {

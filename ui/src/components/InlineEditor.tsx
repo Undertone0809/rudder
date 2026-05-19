@@ -14,6 +14,7 @@ interface InlineEditorProps {
   imageUploadHandler?: (file: File) => Promise<string>;
   mentions?: MentionOption[];
   onMentionQueryChange?: (query: string | null) => void;
+  editorEngine?: "legacy" | "milkdown";
 }
 
 /** Shared padding so display and edit modes occupy the exact same box. */
@@ -37,6 +38,7 @@ export function InlineEditor({
   imageUploadHandler,
   mentions,
   onMentionQueryChange,
+  editorEngine,
 }: InlineEditorProps) {
   const [editing, setEditing] = useState(false);
   const [multilineFocused, setMultilineFocused] = useState(false);
@@ -175,6 +177,7 @@ export function InlineEditor({
       >
         <MarkdownEditor
           ref={markdownRef}
+          engine={editorEngine}
           value={draft}
           onChange={setDraft}
           placeholder={placeholder}

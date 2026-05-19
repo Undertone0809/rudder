@@ -1,4 +1,4 @@
-import type { Agent, Issue, LibraryDocumentSummary, Project } from "@rudderhq/shared";
+import type { Agent, Issue, LibraryDocumentSummary, OrganizationWorkspaceFileEntry, Project } from "@rudderhq/shared";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { formatChatAgentLabel } from "./agent-labels";
 import { formatAssigneeUserLabel } from "./assignees";
@@ -31,6 +31,7 @@ export function buildMarkdownMentionOptions(params: {
   projects?: MentionProject[] | null;
   issues?: MentionIssue[] | null;
   libraryDocuments?: LibraryDocumentSummary[] | null;
+  libraryFiles?: OrganizationWorkspaceFileEntry[] | null;
   skillMentionOptions?: MentionOption[] | null;
   excludeIssueId?: string | null;
   currentUserId?: string | null;
@@ -113,7 +114,18 @@ export function buildMarkdownMentionOptions(params: {
       libraryDocumentId: doc.id,
       libraryDocumentTitle: title,
       libraryDocumentUpdatedAt: doc.updatedAt,
-      libraryDocumentPath: issuePath ? `Migrated issue doc ${issuePath}` : "Library doc",
+      libraryDocumentPath: issuePath ? `Migrated issue doc ${issuePath}` : "Doc",
+    });
+  }
+
+  for (const file of params.libraryFiles ?? []) {
+    if (file.isDirectory) continue;
+    options.push({
+      id: `library-file:${file.path}`,
+      name: file.name,
+      kind: "library_file",
+      searchText: `${file.name} ${file.path}`,
+      libraryFilePath: file.path,
     });
   }
 

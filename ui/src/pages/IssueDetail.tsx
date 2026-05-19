@@ -365,7 +365,7 @@ function WorkspaceAttachDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle className="text-base">Attach from Library</DialogTitle>
+          <DialogTitle className="text-base">Attach from Docs</DialogTitle>
           <DialogDescription>
             Choose a file to copy into this issue's attachments.
           </DialogDescription>
@@ -374,7 +374,7 @@ function WorkspaceAttachDialog({
         <div className="space-y-3">
           <div className="flex min-h-8 items-center gap-2 rounded-md border border-border bg-muted/20 px-2 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">/</span>
-            <span className="truncate">{directoryPath || "Library files"}</span>
+            <span className="truncate">{directoryPath || "Docs files"}</span>
           </div>
 
           <div className="h-[320px] overflow-hidden rounded-md border border-border">
@@ -385,11 +385,11 @@ function WorkspaceAttachDialog({
               </div>
             ) : filesQuery.error ? (
               <div className="p-3 text-sm text-destructive">
-                {filesQuery.error instanceof Error ? filesQuery.error.message : "Could not load Library files"}
+                {filesQuery.error instanceof Error ? filesQuery.error.message : "Could not load Docs files"}
               </div>
             ) : entries.length === 0 && !canGoUp ? (
               <div className="p-3 text-sm text-muted-foreground">
-                No Library files available.
+                No Docs files available.
               </div>
             ) : (
               <ScrollArea className="h-full">
@@ -842,9 +842,9 @@ function LinkedLibraryDocsSection({
   if (docs.length === 0 && files.length === 0) return null;
 
   return (
-    <section className="space-y-3" aria-label="Linked Library docs">
+    <section className="space-y-3" aria-label="Linked Docs">
       <div className="flex items-center gap-2">
-        <h3 className="text-sm font-medium text-muted-foreground">Library docs</h3>
+        <h3 className="text-sm font-medium text-muted-foreground">Docs</h3>
         <span className="rounded-sm border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
           {docs.length + files.length}
         </span>
@@ -859,7 +859,7 @@ function LinkedLibraryDocsSection({
             <div className="min-w-0">
               <div className="truncate font-medium text-foreground">{file.name}</div>
               <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                live Library file / {file.path}
+                live Docs file / {file.path}
               </div>
             </div>
             <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
@@ -879,7 +879,7 @@ function LinkedLibraryDocsSection({
               <div className="min-w-0">
                 <div className="truncate font-medium text-foreground">{title}</div>
                 <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span>live Library link</span>
+                  <span>live Docs link</span>
                   {issueLink ? (
                     <>
                       <span aria-hidden="true">/</span>
@@ -1263,7 +1263,7 @@ export function IssueDetail() {
         libraryDocumentUpdatedAt: doc.updatedAt,
         libraryDocumentPath: issueLink
           ? `Migrated issue doc ${issueLink.issueIdentifier ?? issueLink.issueId.slice(0, 8)}:${issueLink.key}`
-          : "Library doc",
+          : "Doc",
       });
     }
     for (const file of libraryMentionFiles?.entries ?? []) {
@@ -1685,7 +1685,7 @@ export function IssueDetail() {
             }}
           >
             <Folder className="h-4 w-4" />
-            Attach from Library
+            Attach from Docs
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -1878,6 +1878,7 @@ export function IssueDetail() {
           className="text-[15px] leading-7 text-foreground"
           placeholder="Add a description..."
           multiline
+          editorEngine="milkdown"
           mentions={mentionOptions}
           onMentionQueryChange={setLibraryFileMentionQuery}
           imageUploadHandler={async (file) => {
@@ -2195,6 +2196,7 @@ export function IssueDetail() {
           agentMap={agentMap}
           draftKey={`rudder:issue-comment-draft:${issue.id}`}
           mentions={mentionOptions}
+          onMentionQueryChange={setLibraryFileMentionQuery}
           operatorDisplayName={operatorDisplayName}
           hideHeading
           emptyMessage="No activity yet."

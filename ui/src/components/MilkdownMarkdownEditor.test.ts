@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest";
 import {
   buildAgentMentionHref,
@@ -6,7 +8,7 @@ import {
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
 } from "@rudderhq/shared";
-import { mentionMarkdown } from "./MilkdownMarkdownEditor";
+import { applyMention, isRudderTokenHref, mentionMarkdown, readCanonicalFragmentMarkdown } from "./MilkdownMarkdownEditor";
 import type { MentionOption } from "./MarkdownEditor";
 
 describe("MilkdownMarkdownEditor mention serialization", () => {
@@ -76,5 +78,62 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     for (const { option, expected } of options) {
       expect(mentionMarkdown(option)).toBe(expected);
     }
+  });
+
+  it("recognizes Rudder mention and skill links as token links", () => {
+    expect(isRudderTokenHref("agent://agent-1", "Jade")).toBe(true);
+    expect(isRudderTokenHref("issue://issue-1?ref=R-1", "R-1")).toBe(true);
+    expect(isRudderTokenHref("project://project-1", "Project")).toBe(true);
+    expect(isRudderTokenHref("library-doc://doc-1?t=Spec", "Spec")).toBe(true);
+    expect(isRudderTokenHref("library-file://file?p=docs%2Fspec.md&t=spec.md", "spec.md")).toBe(true);
+    expect(isRudderTokenHref("skill://writer", "$writer")).toBe(true);
+    expect(isRudderTokenHref("/workspace/skills/build-advisor/SKILL.md", "$build-advisor")).toBe(true);
+    expect(isRudderTokenHref("https://example.com", "Example")).toBe(false);
+  });
+
+  it("replaces the active repeated mention query instead of the last matching text", () => {
+    const editable = document.createElement("div");
+    const textNode = document.createTextNode("first @dyl second @dyl");
+    editable.append(textNode);
+    document.body.append(editable);
+
+    const option: MentionOption = {
+      id: "agent:agent-1",
+      name: "Dylan",
+      kind: "agent",
+      agentId: "agent-1",
+    };
+    const markdown = applyMention(
+      "first @dyl second @dyl",
+      {
+        trigger: "@",
+        query: "dyl",
+        top: 0,
+        left: 0,
+        viewportTop: 0,
+        viewportBottom: 0,
+        viewportLeft: 0,
+        textNode,
+        atPos: 6,
+        endPos: 10,
+      },
+      option,
+      editable,
+    );
+
+    expect(markdown).toBe(`first [Dylan](${buildAgentMentionHref("agent-1", null)}) second @dyl`);
+    editable.remove();
+  });
+
+  it("copies selected Rudder token links as canonical Markdown", () => {
+    const fragment = document.createDocumentFragment();
+    fragment.append("Ask ");
+    const anchor = document.createElement("a");
+    anchor.setAttribute("href", "agent://agent-1");
+    anchor.textContent = "Jade";
+    fragment.append(anchor);
+    fragment.append(" today");
+
+    expect(readCanonicalFragmentMarkdown(fragment)).toBe("Ask [Jade](agent://agent-1) today");
   });
 });

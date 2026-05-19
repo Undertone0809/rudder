@@ -64,6 +64,11 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await page.setViewportSize({ width: 1440, height: 720 });
   await page.goto(`/${organization.issuePrefix}/issues/${primaryIssue.identifier ?? primaryIssue.id}`);
 
+  await page.getByText("The comment composer should handle @ mentions like new chat.").click();
+  const descriptionEditor = page.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').first();
+  await expect(descriptionEditor).toBeVisible({ timeout: 15_000 });
+  await page.keyboard.press("Escape");
+
   const composer = page.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').last();
   await expect(composer).toBeVisible({ timeout: 15_000 });
   await composer.evaluate((node) => {
@@ -113,6 +118,17 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await page.waitForTimeout(100);
   await expect(page.locator('[class*="_linkDialogPopoverContent_"]')).toHaveCount(0);
   await expect(page.getByText(new RegExp(`agent://${agent.id}`))).toHaveCount(0);
+
+  await agentChipLink.evaluate((anchor) => {
+    const range = document.createRange();
+    range.setStartAfter(anchor);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await page.keyboard.press("Backspace");
+  await expect(composer.locator(`a[href^="agent://${agent.id}"]`)).toHaveCount(0);
 
   const commentOnlyRes = await page.request.post(`/api/issues/${primaryIssue.id}/comments`, {
     data: { body: `[${agent.name}](agent://${agent.id}) can you advise?` },
