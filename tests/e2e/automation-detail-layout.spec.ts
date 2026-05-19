@@ -222,7 +222,10 @@ test.describe("Automation detail layout", () => {
 
     await expect(activityList).toBeVisible();
     await expect(firstRow).toBeVisible();
-    await expect(firstDetails).toContainText("kind: schedule");
+    await expect(firstSummary).toContainText("Trigger added");
+    await expect(firstDetails).toContainText("Schedule trigger");
+    await expect(firstDetails).not.toContainText("automationId");
+    await expect(firstDetails).not.toContainText("kind: schedule");
 
     const [rowBox, summaryBox, timestampBox] = await Promise.all([
       firstRow.boundingBox(),

@@ -132,8 +132,18 @@ vi.mock("@tanstack/react-query", () => ({
           {
             id: "evt-1",
             action: "automation.updated",
+            entityType: "automation",
+            entityId: "auto-1",
             createdAt: "2026-04-25T08:00:00.000Z",
             details: { title: "Daily automation review" },
+          },
+          {
+            id: "evt-2",
+            action: "automation.trigger_created",
+            entityType: "automation_trigger",
+            entityId: "trigger-1",
+            createdAt: "2026-04-24T09:00:00.000Z",
+            details: { automationId: "auto-1", kind: "schedule" },
           },
         ],
         isLoading: false,
@@ -404,6 +414,14 @@ describe("AutomationDetail", () => {
     expect(container.textContent).toContain("Schedule");
     expect(container.textContent).toContain("Project");
     expect(container.textContent).toContain("Run status");
+    expect(container.textContent).toContain("Run in progress");
+    expect(container.textContent).toContain("Manual run");
+    expect(container.textContent).toContain("AUT-7");
+    expect(container.textContent).toContain("Automation updated");
+    expect(container.textContent).toContain("Title: Daily automation review");
+    expect(container.textContent).toContain("Trigger added");
+    expect(container.textContent).toContain("Schedule trigger: Schedule 0 10 * * *");
+    expect(container.textContent).toContain("Live run widget");
     expect(container.textContent).toContain("Last ran");
     expect(container.textContent).toContain("In sync");
     expect(container.textContent).toContain("Action");
@@ -415,6 +433,9 @@ describe("AutomationDetail", () => {
     expect(container.textContent).not.toContain("Details");
     expect(container.textContent).not.toContain("Changes save automatically as you edit instructions, ownership, and delivery rules.");
     expect(container.textContent).not.toContain("Automatic triggers are live.");
+    expect(container.textContent).not.toContain("Previous runs");
+    expect(container.textContent).not.toContain("automation updated");
+    expect(container.textContent).not.toContain("kind: schedule");
     expect(container.textContent).not.toContain("Pause automation");
     expect(container.textContent).not.toContain("Run now");
     expect(container.querySelector('[role="switch"]')).toBeNull();

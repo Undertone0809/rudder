@@ -55,7 +55,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import type { AutomationTrigger } from "@rudderhq/shared";
+import type { ActivityEvent, AutomationRunSummary, AutomationTrigger } from "@rudderhq/shared";
 
 const concurrencyPolicies = ["coalesce_if_active", "always_enqueue", "skip_if_active"];
 const catchUpPolicies = ["skip_missed", "enqueue_missed_with_cap"];
@@ -104,6 +104,66 @@ function formatActivityDetailValue(value: unknown): string {
     return JSON.stringify(value);
   } catch {
     return "[unserializable]";
+  }
+}
+
+function getActivityDetailString(details: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = details?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function humanizeToken(value: string): string {
+  return value.replaceAll("_", " ");
+}
+
+function triggerKindLabel(kind: string | null | undefined): string {
+  if (kind === "schedule") return "Schedule trigger";
+  if (kind === "webhook") return "Webhook trigger";
+  return kind ? `${humanizeToken(kind)} trigger` : "Trigger";
+}
+
+function runSourceLabel(source: string): string {
+  if (source === "manual") return "Manual run";
+  if (source === "schedule") return "Scheduled run";
+  if (source === "webhook") return "Webhook run";
+  return humanizeToken(source);
+}
+
+function runStatusTitle(status: string): string {
+  switch (status) {
+    case "issue_created":
+      return "Run created an issue";
+    case "running":
+      return "Run in progress";
+    case "failed":
+      return "Run failed";
+    case "coalesced":
+      return "Run joined an existing issue";
+    case "skipped":
+      return "Run skipped";
+    case "completed":
+      return "Run completed";
+    default:
+      return `Run ${humanizeToken(status)}`;
+  }
+}
+
+function runStatusDetail(status: string): string | null {
+  switch (status) {
+    case "issue_created":
+      return "Execution issue was opened";
+    case "running":
+      return "Execution issue is active";
+    case "failed":
+      return "Execution failed";
+    case "coalesced":
+      return "A live execution already exists";
+    case "skipped":
+      return "Skipped because an execution is already active";
+    case "completed":
+      return "Execution issue completed";
+    default:
+      return null;
   }
 }
 
@@ -949,6 +1009,10 @@ export function AutomationDetail() {
   );
   const currentAssignee = editDraft.assigneeAgentId ? agentById.get(editDraft.assigneeAgentId) ?? null : null;
   const currentProject = editDraft.projectId ? projectById.get(editDraft.projectId) ?? null : null;
+  const triggerById = useMemo(
+    () => new Map((automation?.triggers ?? []).map((trigger) => [trigger.id, trigger])),
+    [automation?.triggers],
+  );
   const skillMentionOptions = useMemo(
     () => buildAgentSkillMentionOptions({
       agent: currentAssignee,
@@ -967,6 +1031,155 @@ export function AutomationDetail() {
     }),
     [agents, issues, projects, skillMentionOptions],
   );
+  const automationActivityItems = useMemo(() => {
+    const runIds = new Set((automationRuns ?? []).map((run) => run.id));
+    const items: Array<{
+      id: string;
+      title: string;
+      details: ReactNode[];
+      createdAt: Date | string;
+      sortAt: number;
+    }> = [];
+
+    const detailText = (text: string | null | undefined, key: string) =>
+      text ? <span key={key}>{text}</span> : null;
+
+    const describeAgent = (agentId: string | null) => {
+      if (!agentId) return null;
+      const agent = agentById.get(agentId);
+      if (agent) return formatChatAgentLabel(agent);
+      if (automation?.assignee?.id === agentId) return automation.assignee.name;
+      return "Selected agent";
+    };
+
+    const describeProject = (projectId: string | null) => {
+      if (!projectId) return null;
+      const project = projectById.get(projectId);
+      if (project) return project.name;
+      if (automation?.project?.id === projectId) return automation.project.name;
+      return "Selected project";
+    };
+
+    const describeTrigger = (
+      triggerId: string | null | undefined,
+      fallback: Pick<AutomationTrigger, "kind" | "cronExpression" | "label"> | null,
+    ) => {
+      const trigger = triggerId ? triggerById.get(triggerId) : null;
+      const source = trigger ?? fallback;
+      if (!source) return null;
+      const summary = summarizeTrigger(source);
+      const kind = triggerKindLabel(source.kind);
+      return summary && summary !== kind ? `${kind}: ${summary}` : kind;
+    };
+
+    const pushEventItem = (event: ActivityEvent) => {
+      const details = event.details ?? null;
+      const eventDetails: ReactNode[] = [];
+      let title = event.action.replaceAll(".", " ");
+
+      if (event.action === "automation.created") {
+        title = "Automation created";
+        const createdTitle = getActivityDetailString(details, "title");
+        eventDetails.push(detailText(createdTitle ? `"${createdTitle}"` : automation?.title, "title"));
+        eventDetails.push(detailText(`Assigned to ${describeAgent(getActivityDetailString(details, "assigneeAgentId")) ?? "agent"}`, "assignee"));
+      } else if (event.action === "automation.updated") {
+        title = "Automation updated";
+        const updatedTitle = getActivityDetailString(details, "title");
+        eventDetails.push(detailText(updatedTitle ? `Title: ${updatedTitle}` : "Settings changed", "updated"));
+      } else if (event.action === "automation.deleted") {
+        title = "Automation deleted";
+        eventDetails.push(detailText(getActivityDetailString(details, "title"), "title"));
+      } else if (event.action === "automation.trigger_created") {
+        title = "Trigger added";
+        const trigger = triggerById.get(event.entityId);
+        eventDetails.push(detailText(
+          describeTrigger(event.entityId, {
+            kind: getActivityDetailString(details, "kind") ?? "trigger",
+            cronExpression: trigger?.cronExpression ?? null,
+            label: trigger?.label ?? null,
+          }),
+          "trigger",
+        ));
+      } else if (event.action === "automation.trigger_updated") {
+        title = "Trigger updated";
+        eventDetails.push(detailText(
+          describeTrigger(event.entityId, {
+            kind: getActivityDetailString(details, "kind") ?? "trigger",
+            cronExpression: null,
+            label: null,
+          }),
+          "trigger",
+        ));
+      } else if (event.action === "automation.trigger_deleted") {
+        title = "Trigger removed";
+        eventDetails.push(detailText(triggerKindLabel(getActivityDetailString(details, "kind")), "trigger"));
+      } else if (event.action === "automation.trigger_secret_rotated") {
+        title = "Webhook secret rotated";
+      } else if (event.action === "automation.run_triggered") {
+        title = runStatusTitle(getActivityDetailString(details, "status") ?? "started");
+        eventDetails.push(detailText(runSourceLabel(getActivityDetailString(details, "source") ?? "run"), "source"));
+        eventDetails.push(detailText(runStatusDetail(getActivityDetailString(details, "status") ?? ""), "status"));
+      } else {
+        Object.entries(details ?? {})
+          .filter(([key]) => !["automationId", "triggerId", "assigneeAgentId", "projectId"].includes(key))
+          .slice(0, 2)
+          .forEach(([key, value]) => {
+            eventDetails.push(
+              <span key={key}>
+                <span className="text-muted-foreground/70">{key.replaceAll("_", " ")}:</span>{" "}
+                {formatActivityDetailValue(value)}
+              </span>,
+            );
+          });
+      }
+
+      const resolvedDetails = eventDetails.filter(Boolean);
+      items.push({
+        id: `event:${event.id}`,
+        title,
+        details: resolvedDetails.length > 0 ? resolvedDetails : [<span key="fallback">Activity recorded</span>],
+        createdAt: event.createdAt,
+        sortAt: new Date(event.createdAt).getTime(),
+      });
+    };
+
+    for (const run of (automationRuns ?? automation?.recentRuns ?? []) as AutomationRunSummary[]) {
+      const details: ReactNode[] = [];
+      details.push(<span key="source">{runSourceLabel(run.source)}</span>);
+      const statusDetail = runStatusDetail(run.status);
+      if (statusDetail) details.push(<span key="status">{statusDetail}</span>);
+      const triggerDescription = describeTrigger(
+        run.triggerId,
+        run.trigger ? { ...run.trigger, cronExpression: null } : null,
+      );
+      if (triggerDescription) details.push(<span key="trigger">{triggerDescription}</span>);
+      if (run.linkedIssue) {
+        details.push(
+          <Link key="issue" to={`/issues/${run.linkedIssue.identifier ?? run.linkedIssue.id}`} className="font-medium text-foreground hover:underline">
+            {run.linkedIssue.identifier ?? run.linkedIssue.title}
+          </Link>,
+        );
+      }
+      if (run.failureReason) details.push(<span key="failure">{run.failureReason}</span>);
+
+      items.push({
+        id: `run:${run.id}`,
+        title: runStatusTitle(run.status),
+        details,
+        createdAt: run.triggeredAt,
+        sortAt: new Date(run.triggeredAt).getTime(),
+      });
+    }
+
+    for (const event of activity ?? []) {
+      if (event.action === "automation.run_triggered" && event.entityType === "automation_run" && runIds.has(event.entityId)) {
+        continue;
+      }
+      pushEventItem(event);
+    }
+
+    return items.sort((a, b) => b.sortAt - a.sortAt).slice(0, 10);
+  }, [activity, agentById, automation, automationRuns, projectById, triggerById]);
 
   if (!selectedOrganizationId) {
     return <EmptyState icon={Repeat} message="Select an organization to view automations." />;
@@ -1466,33 +1679,6 @@ export function AutomationDetail() {
               </CollapsibleContent>
             </Collapsible>
 
-            <SidebarSection title="Previous runs">
-              {hasLiveRun && activeIssueId && automation ? (
-                <LiveRunWidget issueId={activeIssueId} orgId={automation.orgId} />
-              ) : null}
-              {(automationRuns ?? []).length === 0 ? (
-                <p className="text-sm text-muted-foreground">No runs yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {(automationRuns ?? []).slice(0, 5).map((run) => (
-                    <div key={run.id} className="space-y-1 rounded-md border border-border/70 px-3 py-2 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-foreground">{run.status.replaceAll("_", " ")}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(run.triggeredAt)}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>{run.source}</span>
-                        {run.linkedIssue ? (
-                          <Link to={`/issues/${run.linkedIssue.identifier ?? run.linkedIssue.id}`} className="truncate hover:underline">
-                            {run.linkedIssue.identifier ?? run.linkedIssue.id.slice(0, 8)}
-                          </Link>
-                        ) : null}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </SidebarSection>
           </div>
         </aside>
       </div>
@@ -1501,35 +1687,37 @@ export function AutomationDetail() {
         <main className="min-w-0 space-y-6">
           <section className="max-w-none space-y-3 border-t border-border/70 pt-4">
             <h2 className="text-sm font-medium">Activity</h2>
-            {(activity ?? []).length === 0 ? (
+            {hasLiveRun && activeIssueId && automation ? (
+              <LiveRunWidget issueId={activeIssueId} orgId={automation.orgId} />
+            ) : null}
+            {automationActivityItems.length === 0 ? (
               <p className="text-xs text-muted-foreground">No activity yet.</p>
             ) : (
               <div data-testid="automation-activity-list" className="divide-y divide-border/70 border-y border-border/70">
-                {(activity ?? []).slice(0, 8).map((event) => (
+                {automationActivityItems.map((item) => (
                   <div
-                    key={event.id}
+                    key={item.id}
                     data-testid="automation-activity-row"
                     className="flex flex-col gap-1.5 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-4"
                   >
                     <div data-testid="automation-activity-summary" className="min-w-0 space-y-1 sm:flex sm:items-center sm:gap-2 sm:space-y-0">
-                      <span className="shrink-0 font-medium text-foreground/90">{event.action.replaceAll(".", " ")}</span>
-                      {event.details && Object.keys(event.details).length > 0 && (
+                      <span className="shrink-0 font-medium text-foreground/90">{item.title}</span>
+                      {item.details.length > 0 && (
                         <span
                           data-testid="automation-activity-details"
                           className="block break-words leading-5 text-muted-foreground sm:truncate"
                         >
-                          {Object.entries(event.details).slice(0, 3).map(([key, value], i) => (
-                            <span key={key}>
+                          {item.details.map((detail, i) => (
+                            <span key={i}>
                               {i > 0 && <span className="mx-1 text-border">·</span>}
-                              <span className="text-muted-foreground/70">{key.replaceAll("_", " ")}:</span>{" "}
-                              {formatActivityDetailValue(value)}
+                              {detail}
                             </span>
                           ))}
                         </span>
                       )}
                     </div>
                     <span data-testid="automation-activity-time" className="shrink-0 text-muted-foreground/60">
-                      {timeAgo(event.createdAt)}
+                      {timeAgo(item.createdAt)}
                     </span>
                   </div>
                 ))}
