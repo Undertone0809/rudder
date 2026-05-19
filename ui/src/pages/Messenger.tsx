@@ -200,6 +200,14 @@ function failedRunIssueTitle(metadata: Record<string, unknown>) {
   return typeof issue.title === "string" && issue.title.trim().length > 0 ? issue.title.trim() : null;
 }
 
+function failedRunIssueStatus(metadata: Record<string, unknown>) {
+  if (!metadata.contextSnapshot || typeof metadata.contextSnapshot !== "object") return null;
+  const snapshot = metadata.contextSnapshot as Record<string, unknown>;
+  if (!snapshot.issue || typeof snapshot.issue !== "object") return null;
+  const issue = snapshot.issue as Record<string, unknown>;
+  return typeof issue.status === "string" && issue.status.trim().length > 0 ? issue.status.trim() : null;
+}
+
 function TimelineDivider({ date }: { date: Date }) {
   return (
     <div className="flex items-center gap-3 py-1">
@@ -855,6 +863,7 @@ function MessengerSystemCard({
       ? ((metadata.contextSnapshot as Record<string, unknown>).issueId as string)
       : null;
   const relatedIssueTitle = item.kind === "failed-runs" ? failedRunIssueTitle(metadata) : null;
+  const relatedIssueStatus = item.kind === "failed-runs" ? failedRunIssueStatus(metadata) : null;
 
   const actionMutation = useMutation({
     mutationFn: async (action: MessengerEvent["actions"][number]) => runSystemAction(action),
@@ -923,7 +932,7 @@ function MessengerSystemCard({
       >
         <div className="flex flex-col gap-2 text-xs">
           {relatedIssueTitle && relatedIssueId ? (
-            <div className="text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               Issue{" "}
               <Link
                 to={`/issues/${relatedIssueId}`}
@@ -932,6 +941,11 @@ function MessengerSystemCard({
               >
                 {relatedIssueTitle}
               </Link>
+              {relatedIssueStatus ? (
+                <span data-testid={`messenger-failed-run-issue-status-${item.id}`}>
+                  <StatusBadge status={relatedIssueStatus} />
+                </span>
+              ) : null}
             </div>
           ) : null}
           <div className="flex flex-wrap gap-2">
