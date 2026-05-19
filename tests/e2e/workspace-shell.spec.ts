@@ -738,6 +738,7 @@ test.describe("Workspace shell", () => {
       originalWorkspaceKey,
     );
     await fs.writeFile(path.join(resolveOrganizationWorkspaceRoot(organization.id), "notes.md"), "# Shared Notes\n", "utf8");
+    await fs.writeFile(path.join(resolveOrganizationWorkspaceRoot(organization.id), "draft.md"), "# Draft\n", "utf8");
     await fs.mkdir(path.join(agentWorkspaceRoot, ".cache"), { recursive: true });
     await fs.mkdir(path.join(agentWorkspaceRoot, ".npm"), { recursive: true });
     await fs.mkdir(path.join(agentWorkspaceRoot, ".nvm"), { recursive: true });
@@ -760,14 +761,14 @@ test.describe("Workspace shell", () => {
     await expect(page.getByTestId("workspace-context-card")).toHaveCount(0);
     await expect(page.getByTestId("workspace-sidebar")).toHaveCount(0);
     await expect(mainHeader.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
-    await expect(mainContent.getByRole("button", { name: "New Library doc" })).toBeVisible();
-    await expect(mainContent.getByRole("button", { name: "Add Library resource" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "New doc" })).toBeVisible();
     await expect(mainContent.getByRole("link", { name: "Browse workspaces" })).toHaveCount(0);
     await mainHeader.getByRole("button", { name: "About Library" }).hover();
     await expect(page.getByText(/shared Library for docs, codebases, references, outputs, and reusable context/i)).toBeVisible();
     await expect(page.getByTestId("org-workspaces-files-card")).toBeVisible();
     await expect(page.getByTestId("org-workspaces-editor-card")).toBeVisible();
-    await expect(page.getByTestId("org-library-context-panel")).toBeVisible();
+    await expect(page.getByTestId("org-library-context-panel")).toHaveCount(0);
+    await expect(page.getByTestId("org-library-resources-panel")).toHaveCount(0);
 
     await gotoOrganizationPath(page, organization, "/workspaces");
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library$`));
@@ -783,9 +784,37 @@ test.describe("Workspace shell", () => {
     await workspaceHelp.hover();
     await expect(page.getByText(/shared Library for docs, codebases, references, outputs, and reusable context/i)).toBeVisible();
     await expect(filesCard.getByRole("button", { name: "notes.md", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "New doc" }).click();
+    await expect(page.getByText("Library doc created")).toBeVisible();
+    await expect(page.getByText(/docs\/untitled-/)).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-editor-textarea")).toHaveValue("# Untitled document\n\n");
+
+    await page.getByTestId("org-workspaces-entry-more-draft.md").click();
+    await expect(page.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Rename" }).click();
+    const renameDialog = page.getByRole("dialog", { name: "Rename entry" });
+    await renameDialog.getByLabel("Name").fill("renamed-draft.md");
+    await renameDialog.getByRole("button", { name: "Rename" }).click();
+    await expect(page.getByText("Workspace entry renamed")).toBeVisible();
+    await expect(filesCard.getByRole("button", { name: "renamed-draft.md", exact: true })).toBeVisible();
+    await expect(filesCard.getByRole("button", { name: "draft.md", exact: true })).toHaveCount(0);
+    await page.getByTestId("org-workspaces-entry-more-renamed-draft.md").click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+    const deleteDialog = page.getByRole("dialog", { name: "Delete entry" });
+    await deleteDialog.getByRole("button", { name: "Delete" }).click();
+    await expect(page.getByText("Workspace entry deleted")).toBeVisible();
+    await expect(filesCard.getByRole("button", { name: "renamed-draft.md", exact: true })).toHaveCount(0);
+
     await mainContent.getByRole("button", { name: "agents", exact: true }).click();
     const jadeWorkspaceButton = mainContent.getByRole("button", { name: "Jade", exact: true });
     await expect(jadeWorkspaceButton).toBeVisible();
+    await page.getByTestId(`org-workspaces-entry-more-agents/${originalWorkspaceKey}`).click();
+    await expect(page.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
     await expect(mainContent.getByRole("button", { name: originalWorkspaceKey, exact: true })).toHaveCount(0);
     await expect(filesCard.getByText(originalWorkspaceKey, { exact: true })).toHaveCount(0);
     await expect(jadeWorkspaceButton.getByTestId("org-workspaces-agent-icon").locator("svg")).toBeVisible();

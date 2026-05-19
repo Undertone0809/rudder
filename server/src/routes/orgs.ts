@@ -10,9 +10,11 @@ import {
   restoreLibraryDocumentRevisionSchema,
   updateOrganizationResourceSchema,
   updateOrganizationBrandingSchema,
+  createOrganizationWorkspaceFileSchema,
   updateLibraryDocumentSchema,
   updateOrganizationSchema,
   updateOrganizationWorkspaceFileSchema,
+  renameOrganizationWorkspaceEntrySchema,
   createWorkspaceBackupSchema,
   restoreWorkspaceBackupSchema,
 } from "@rudderhq/shared";
@@ -407,6 +409,28 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     res.send(workspaceFile.buffer);
   });
 
+  router.post("/:orgId/workspace/file", validate(createOrganizationWorkspaceFileSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const result = await workspaceBrowser.createFile(orgId, req.body.filePath, req.body.content ?? "");
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_file.created",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        path: result.filePath,
+      },
+    });
+    res.status(201).json(result);
+  });
+
   router.patch("/:orgId/workspace/file", validate(updateOrganizationWorkspaceFileSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
@@ -426,6 +450,55 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       runId: actor.runId,
       details: {
         path: result.filePath,
+      },
+    });
+    res.json(result);
+  });
+
+  router.patch("/:orgId/workspace/entry", validate(renameOrganizationWorkspaceEntrySchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const entryPath = typeof req.query.path === "string" ? req.query.path : "";
+    const result = await workspaceBrowser.renameEntry(orgId, entryPath, req.body.name);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_entry.renamed",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        previousPath: result.previousPath,
+        path: result.path,
+        isDirectory: result.isDirectory,
+      },
+    });
+    res.json(result);
+  });
+
+  router.delete("/:orgId/workspace/entry", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const entryPath = typeof req.query.path === "string" ? req.query.path : "";
+    const result = await workspaceBrowser.deleteEntry(orgId, entryPath);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_entry.deleted",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        path: result.path,
+        isDirectory: result.isDirectory,
       },
     });
     res.json(result);

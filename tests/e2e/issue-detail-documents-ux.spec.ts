@@ -70,8 +70,8 @@ test.describe("Issue detail Library docs UX", () => {
 
     await productBriefLinks.first().click();
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library\\?doc=${libraryDoc.id}$`));
-    await expect(page.getByTestId("org-library-context-panel").getByDisplayValue("Product brief")).toBeVisible();
-    await expect(page.getByText("History", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-files-card")).toBeVisible();
+    await expect(page.getByTestId("org-library-resources-panel")).toHaveCount(0);
   });
 
   test("attaches files from the Library file tree", async ({ page }) => {

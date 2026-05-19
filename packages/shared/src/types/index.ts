@@ -5,7 +5,10 @@ export type {
   OrganizationWorkspaceFileEntry,
   OrganizationWorkspaceFileList,
   OrganizationWorkspaceFileDetail,
+  OrganizationWorkspaceFileCreateRequest,
   OrganizationWorkspaceFileUpdateRequest,
+  OrganizationWorkspaceEntryRenameRequest,
+  OrganizationWorkspaceEntryMutationResult,
 } from "./organization.js";
 export type {
   ChatConversation,

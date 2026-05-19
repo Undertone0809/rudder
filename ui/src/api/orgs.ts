@@ -6,6 +6,9 @@ import type {
   LibraryDocumentSummary,
   Organization,
   OrganizationResource,
+  OrganizationWorkspaceEntryMutationResult,
+  OrganizationWorkspaceEntryRenameRequest,
+  OrganizationWorkspaceFileCreateRequest,
   OrganizationWorkspaceFileDetail,
   OrganizationWorkspaceFileList,
   OrganizationWorkspaceFileUpdateRequest,
@@ -107,6 +110,8 @@ export const organizationsApi = {
       `/orgs/${orgId}/workspace/file${query ? `?${query}` : ""}`,
     );
   },
+  createWorkspaceFile: (orgId: string, data: OrganizationWorkspaceFileCreateRequest) =>
+    api.post<OrganizationWorkspaceFileDetail>(`/orgs/${orgId}/workspace/file`, data),
   updateWorkspaceFile: (orgId: string, filePath: string, data: OrganizationWorkspaceFileUpdateRequest) => {
     const search = new URLSearchParams();
     if (filePath) search.set("path", filePath);
@@ -114,6 +119,23 @@ export const organizationsApi = {
     return api.patch<OrganizationWorkspaceFileDetail>(
       `/orgs/${orgId}/workspace/file${query ? `?${query}` : ""}`,
       data,
+    );
+  },
+  renameWorkspaceEntry: (orgId: string, entryPath: string, data: OrganizationWorkspaceEntryRenameRequest) => {
+    const search = new URLSearchParams();
+    if (entryPath) search.set("path", entryPath);
+    const query = search.toString();
+    return api.patch<OrganizationWorkspaceEntryMutationResult>(
+      `/orgs/${orgId}/workspace/entry${query ? `?${query}` : ""}`,
+      data,
+    );
+  },
+  deleteWorkspaceEntry: (orgId: string, entryPath: string) => {
+    const search = new URLSearchParams();
+    if (entryPath) search.set("path", entryPath);
+    const query = search.toString();
+    return api.delete<OrganizationWorkspaceEntryMutationResult>(
+      `/orgs/${orgId}/workspace/entry${query ? `?${query}` : ""}`,
     );
   },
   listWorkspaceBackups: (orgId: string) =>

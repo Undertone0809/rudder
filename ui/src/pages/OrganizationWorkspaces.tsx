@@ -5,12 +5,23 @@ import { useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { organizationsApi } from "../api/orgs";
 import { AgentIcon } from "../components/AgentIconPicker";
@@ -25,17 +36,23 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import {
   ChevronDown,
   ChevronRight,
+  Bot,
   Code2,
+  Copy,
   ExternalLink,
   HardDrive,
   Folder,
   FolderOpen,
   FileCode2,
   Image as ImageIcon,
+  MoreHorizontal,
+  Pencil,
+  Plus,
   RefreshCw,
   Save,
   Loader2,
   Terminal,
+  Trash2,
 } from "lucide-react";
 
 const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
@@ -192,6 +209,24 @@ function displayWorkspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
   return entry.displayLabel?.trim() || entry.name;
 }
 
+function isProtectedAgentWorkspacePath(filePath: string) {
+  return filePath === "agents" || filePath.startsWith("agents/");
+}
+
+function joinWorkspacePath(rootPath: string | null, entryPath: string) {
+  if (!rootPath) return entryPath;
+  return `${rootPath.replace(/\/+$/, "")}/${entryPath}`;
+}
+
+function createUntitledDocumentPath() {
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z")
+    .toLowerCase();
+  return `docs/untitled-${stamp}.md`;
+}
+
 function displayWorkspaceFileFormat(filePath: string | null, detail: OrganizationWorkspaceFileDetail | undefined) {
   if (detail?.previewKind === "image" && detail.contentType) {
     const subtype = detail.contentType.split("/").at(-1) ?? "image";
@@ -222,6 +257,9 @@ function DirectoryChildren({
   directoryPath,
   selectedFilePath,
   onSelectFile,
+  onCopyPath,
+  onStartRename,
+  onStartDelete,
   expandedDirectories,
   depth,
 }: {
@@ -229,6 +267,9 @@ function DirectoryChildren({
   directoryPath: string;
   selectedFilePath: string | null;
   onSelectFile: (filePath: string) => void;
+  onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
+  onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
+  onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   expandedDirectories: Set<string>;
   depth: number;
 }) {
@@ -251,6 +292,9 @@ function DirectoryChildren({
           entry={entry}
           selectedFilePath={selectedFilePath}
           onSelectFile={onSelectFile}
+          onCopyPath={onCopyPath}
+          onStartRename={onStartRename}
+          onStartDelete={onStartDelete}
           expandedDirectories={expandedDirectories}
           depth={depth}
         />
@@ -264,6 +308,9 @@ function WorkspaceTreeNode({
   entry,
   selectedFilePath,
   onSelectFile,
+  onCopyPath,
+  onStartRename,
+  onStartDelete,
   expandedDirectories,
   depth = 0,
 }: {
@@ -271,12 +318,54 @@ function WorkspaceTreeNode({
   entry: OrganizationWorkspaceFileEntry;
   selectedFilePath: string | null;
   onSelectFile: (filePath: string) => void;
+  onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
+  onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
+  onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   expandedDirectories: Set<string>;
   depth?: number;
 }) {
   const [expanded, setExpanded] = useState(expandedDirectories.has(entry.path));
   const primaryLabel = displayWorkspaceEntryLabel(entry);
   const isAgentWorkspace = entry.entityType === "agent_workspace";
+  const isAgentsRoot = entry.path === "agents";
+  const isProtectedPath = isProtectedAgentWorkspacePath(entry.path);
+
+  const actionMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100 focus-visible:opacity-100"
+          aria-label={`More actions for ${primaryLabel}`}
+          data-testid={`org-workspaces-entry-more-${entry.path}`}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44" onClick={(event) => event.stopPropagation()}>
+        <DropdownMenuItem onSelect={() => onCopyPath(entry)}>
+          <Copy className="h-3.5 w-3.5" />
+          Copy file path
+        </DropdownMenuItem>
+        {!isProtectedPath ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => onStartRename(entry)}>
+              <Pencil className="h-3.5 w-3.5" />
+              Rename
+            </DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onSelect={() => onStartDelete(entry)}>
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   useEffect(() => {
     if (expandedDirectories.has(entry.path)) {
@@ -287,45 +376,55 @@ function WorkspaceTreeNode({
   if (entry.isDirectory) {
     return (
       <li>
-        <button
-          type="button"
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-accent/60"
+        <div
+          className="group flex w-full items-center rounded-md pr-1 text-sm text-foreground hover:bg-accent/60"
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
-          onClick={() => setExpanded((value) => !value)}
-          aria-expanded={expanded}
         >
-          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
-            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </span>
-          {isAgentWorkspace ? (
-            <span
-              data-testid="org-workspaces-agent-icon"
-              className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground"
-            >
-              <AgentIcon icon={entry.agentIcon} role={entry.agentRole} className="h-3.5 w-3.5 text-[12px]" />
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
+            onClick={() => setExpanded((value) => !value)}
+            aria-expanded={expanded}
+          >
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
+              {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </span>
-          ) : (
-            <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          )}
-          <div className="min-w-0 flex-1">
-            <div className="truncate font-medium">{primaryLabel}</div>
-          </div>
-          {isAgentWorkspace ? (
-            <span
-              aria-hidden="true"
-              data-testid="org-workspaces-agent-badge"
-              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground"
-            >
-              Agent
-            </span>
-          ) : null}
-        </button>
+            {isAgentWorkspace ? (
+              <span
+                data-testid="org-workspaces-agent-icon"
+                className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted-foreground"
+              >
+                <AgentIcon icon={entry.agentIcon} role={entry.agentRole} className="h-3.5 w-3.5 text-[12px]" />
+              </span>
+            ) : isAgentsRoot ? (
+              <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            ) : (
+              <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-medium">{primaryLabel}</div>
+            </div>
+            {isAgentWorkspace ? (
+              <span
+                aria-hidden="true"
+                data-testid="org-workspaces-agent-badge"
+                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground"
+              >
+                Agent
+              </span>
+            ) : null}
+          </button>
+          {actionMenu}
+        </div>
         {expanded ? (
           <DirectoryChildren
             orgId={orgId}
             directoryPath={entry.path}
             selectedFilePath={selectedFilePath}
             onSelectFile={onSelectFile}
+            onCopyPath={onCopyPath}
+            onStartRename={onStartRename}
+            onStartDelete={onStartDelete}
             expandedDirectories={expandedDirectories}
             depth={depth + 1}
           />
@@ -338,17 +437,22 @@ function WorkspaceTreeNode({
   const FileIcon = isWorkspaceImageFilePath(entry.path) ? ImageIcon : FileCode2;
   return (
     <li>
-      <button
-        type="button"
-        className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+      <div
+        className={`group flex w-full items-center rounded-md pr-1 text-sm transition-colors ${
           isSelected ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
         }`}
         style={{ paddingLeft: `${depth * 14 + 23}px` }}
-        onClick={() => onSelectFile(entry.path)}
       >
-        <FileIcon className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">{primaryLabel}</span>
-      </button>
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
+          onClick={() => onSelectFile(entry.path)}
+        >
+          <FileIcon className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{primaryLabel}</span>
+        </button>
+        {actionMenu}
+      </div>
     </li>
   );
 }
@@ -365,14 +469,12 @@ export function OrganizationWorkspaceBrowser({
       this workspace can be edited here.
     </>
   ),
-  rightPanel,
 }: {
   breadcrumbLabel?: string;
   emptyMessage?: string;
   filesTitle?: string;
   editorTitle?: string;
   noSelectionMessage?: ReactNode;
-  rightPanel?: ReactNode;
 }) {
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const { pushToast } = useToast();
@@ -392,6 +494,9 @@ export function OrganizationWorkspaceBrowser({
   const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<
     DesktopWorkspaceLaunchTarget["id"] | null
   >(null);
+  const [renameTarget, setRenameTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const filesScrollRef = useScrollbarActivityRef("org-workspaces:files");
   const editorScrollRef = useScrollbarActivityRef(
     selectedFilePath ? `org-workspaces:editor:${selectedFilePath}` : "org-workspaces:editor",
@@ -498,17 +603,117 @@ export function OrganizationWorkspaceBrowser({
     },
   });
 
+  const invalidateWorkspaceBrowser = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["organizations", viewedOrganizationId, "workspace-files"] }),
+      queryClient.invalidateQueries({ queryKey: ["organizations", viewedOrganizationId, "workspace-file"] }),
+    ]);
+  }, [queryClient, viewedOrganizationId]);
+
+  const renameWorkspaceEntry = useMutation({
+    mutationFn: (payload: { entry: OrganizationWorkspaceFileEntry; name: string }) =>
+      organizationsApi.renameWorkspaceEntry(viewedOrganizationId!, payload.entry.path, {
+        name: payload.name,
+      }),
+    onSuccess: (result) => {
+      if (!viewedOrganizationId) return;
+      void invalidateWorkspaceBrowser();
+      setRenameTarget(null);
+      setRenameDraft("");
+
+      const previousPath = result.previousPath;
+      if (previousPath && selectedFilePath) {
+        const nextSelectedPath = selectedFilePath === previousPath
+          ? result.path
+          : selectedFilePath.startsWith(`${previousPath}/`)
+            ? `${result.path}${selectedFilePath.slice(previousPath.length)}`
+            : selectedFilePath;
+        if (nextSelectedPath !== selectedFilePath) {
+          setSelectedFilePath(nextSelectedPath);
+          updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
+        }
+      }
+      pushToast({
+        title: "Workspace entry renamed",
+        body: result.previousPath ? `${result.previousPath} -> ${result.path}` : result.path,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to rename workspace entry",
+        tone: "error",
+      });
+    },
+  });
+
+  const createWorkspaceDocument = useMutation({
+    mutationFn: () => {
+      const filePath = createUntitledDocumentPath();
+      return organizationsApi.createWorkspaceFile(viewedOrganizationId!, {
+        filePath,
+        content: "# Untitled document\n\n",
+      });
+    },
+    onSuccess: (detail) => {
+      if (!viewedOrganizationId) return;
+      queryClient.setQueryData(
+        queryKeys.organizations.workspaceFile(viewedOrganizationId, detail.filePath),
+        detail,
+      );
+      void invalidateWorkspaceBrowser();
+      setSelectedFilePath(detail.filePath);
+      updateSelectedPath(searchParams, setSearchParams, detail.filePath);
+      setDraftContent(detail.content ?? "");
+      pushToast({
+        title: "Library doc created",
+        body: detail.filePath,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to create Library doc",
+        tone: "error",
+      });
+    },
+  });
+  const createWorkspaceDocumentMutate = createWorkspaceDocument.mutate;
+  const isCreatingWorkspaceDocument = createWorkspaceDocument.isPending;
+
+  const deleteWorkspaceEntry = useMutation({
+    mutationFn: (entry: OrganizationWorkspaceFileEntry) =>
+      organizationsApi.deleteWorkspaceEntry(viewedOrganizationId!, entry.path),
+    onSuccess: (result) => {
+      if (!viewedOrganizationId) return;
+      void invalidateWorkspaceBrowser();
+      setDeleteTarget(null);
+      if (selectedFilePath && (selectedFilePath === result.path || selectedFilePath.startsWith(`${result.path}/`))) {
+        setSelectedFilePath(null);
+        updateSelectedPath(searchParams, setSearchParams, null);
+      }
+      pushToast({
+        title: "Workspace entry deleted",
+        body: result.path,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to delete workspace entry",
+        tone: "error",
+      });
+    },
+  });
+
   const refreshWorkspace = useCallback(async () => {
     setRefreshingWorkspace(true);
     try {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["organizations", viewedOrganizationId, "workspace-files"] }),
-        queryClient.invalidateQueries({ queryKey: ["organizations", viewedOrganizationId, "workspace-file"] }),
-      ]);
+      await invalidateWorkspaceBrowser();
     } finally {
       setRefreshingWorkspace(false);
     }
-  }, [queryClient, viewedOrganizationId]);
+  }, [invalidateWorkspaceBrowser]);
 
   const workspaceRootPath = rootQuery.data?.rootExists ? rootQuery.data.rootPath : null;
   const selectedWorkspaceLaunchTarget = (
@@ -552,6 +757,21 @@ export function OrganizationWorkspaceBrowser({
   useEffect(() => {
     setHeaderActions(
       <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => createWorkspaceDocumentMutate()}
+          disabled={!workspaceRootPath || isCreatingWorkspaceDocument}
+          aria-label="New Library doc"
+        >
+          {isCreatingWorkspaceDocument ? (
+            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+          )}
+          New doc
+        </Button>
         {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
           <div
             className="inline-flex h-8 items-stretch overflow-hidden rounded-md border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
@@ -630,6 +850,8 @@ export function OrganizationWorkspaceBrowser({
   }, [
     handleOpenWorkspace,
     handleSelectWorkspaceLaunchTarget,
+    createWorkspaceDocumentMutate,
+    isCreatingWorkspaceDocument,
     openingWorkspaceTargetId,
     refreshWorkspace,
     refreshingWorkspace,
@@ -705,8 +927,45 @@ export function OrganizationWorkspaceBrowser({
     }
   }
 
+  async function handleCopyEntryPath(entry: OrganizationWorkspaceFileEntry) {
+    const copyValue = joinWorkspacePath(workspaceRootPath, entry.path);
+    const desktopShell = readDesktopShell();
+    try {
+      if (desktopShell?.copyText) {
+        await desktopShell.copyText(copyValue);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(copyValue);
+      } else {
+        throw new Error("Clipboard is not available in this environment.");
+      }
+      pushToast({
+        title: "File path copied",
+        body: copyValue,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Failed to copy file path",
+        body: error instanceof Error ? error.message : copyValue,
+        tone: "error",
+      });
+    }
+  }
+
+  function handleStartRename(entry: OrganizationWorkspaceFileEntry) {
+    if (isProtectedAgentWorkspacePath(entry.path)) return;
+    setRenameTarget(entry);
+    setRenameDraft(entry.name);
+  }
+
+  function handleStartDelete(entry: OrganizationWorkspaceFileEntry) {
+    if (isProtectedAgentWorkspacePath(entry.path)) return;
+    setDeleteTarget(entry);
+  }
+
   return (
-    <div className="flex min-h-full flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
+    <>
+      <div className="flex min-h-full flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
       {!workspace.rootExists ? (
         <EmptyState
           icon={HardDrive}
@@ -716,7 +975,7 @@ export function OrganizationWorkspaceBrowser({
         <div className="flex min-h-0 flex-1 flex-col gap-4 lg:h-full lg:overflow-hidden lg:flex-row">
           <section
             data-testid="org-workspaces-files-card"
-            className="flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card lg:min-h-0 lg:w-[300px] lg:flex-none"
+            className="flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card lg:min-h-0 lg:w-[320px] lg:flex-none"
           >
             <div className="border-b border-border px-4 py-3">
               <div className="text-sm font-medium">{filesTitle}</div>
@@ -727,26 +986,31 @@ export function OrganizationWorkspaceBrowser({
             <div
               ref={filesScrollRef}
               data-testid="org-workspaces-files-scroll"
-              className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto px-2 py-2"
+              className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto"
             >
-              {workspace.entries.length === 0 ? (
-                <div className="px-2 py-3 text-sm text-muted-foreground">
-                  {workspace.message ?? "This folder is empty."}
-                </div>
-              ) : (
-                <ul className="space-y-0.5">
-                  {workspace.entries.map((entry) => (
-                    <WorkspaceTreeNode
-                      key={entry.path}
-                      orgId={viewedOrganizationId}
-                      entry={entry}
-                      selectedFilePath={selectedFilePath}
-                      onSelectFile={handleSelectFile}
-                      expandedDirectories={expandedDirectories}
-                    />
-                  ))}
-                </ul>
-              )}
+              <div className="px-2 py-2">
+                {workspace.entries.length === 0 ? (
+                  <div className="px-2 py-3 text-sm text-muted-foreground">
+                    {workspace.message ?? "This folder is empty."}
+                  </div>
+                ) : (
+                  <ul className="space-y-0.5">
+                    {workspace.entries.map((entry) => (
+                      <WorkspaceTreeNode
+                        key={entry.path}
+                        orgId={viewedOrganizationId}
+                        entry={entry}
+                        selectedFilePath={selectedFilePath}
+                        onSelectFile={handleSelectFile}
+                        onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
+                        onStartRename={handleStartRename}
+                        onStartDelete={handleStartDelete}
+                        expandedDirectories={expandedDirectories}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           </section>
 
@@ -874,17 +1138,101 @@ export function OrganizationWorkspaceBrowser({
             </div>
           </section>
 
-          {rightPanel ? (
-            <aside
-              data-testid="org-library-context-panel"
-              className="flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card lg:min-h-0 lg:w-[320px] lg:flex-none"
-            >
-              {rightPanel}
-            </aside>
-          ) : null}
         </div>
       )}
-    </div>
+      </div>
+
+      <Dialog open={renameTarget !== null} onOpenChange={(open) => {
+        if (!open && !renameWorkspaceEntry.isPending) {
+          setRenameTarget(null);
+          setRenameDraft("");
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename entry</DialogTitle>
+            <DialogDescription>
+              Rename this workspace file or folder without changing its parent folder.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="space-y-1.5">
+            <span className="text-xs text-muted-foreground">Name</span>
+            <Input
+              value={renameDraft}
+              onChange={(event) => setRenameDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || !renameTarget) return;
+                event.preventDefault();
+                renameWorkspaceEntry.mutate({ entry: renameTarget, name: renameDraft });
+              }}
+              autoFocus
+            />
+          </label>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setRenameTarget(null);
+                setRenameDraft("");
+              }}
+              disabled={renameWorkspaceEntry.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!renameTarget) return;
+                renameWorkspaceEntry.mutate({ entry: renameTarget, name: renameDraft });
+              }}
+              disabled={
+                !renameTarget
+                || renameDraft.trim().length === 0
+                || renameDraft.trim() === renameTarget.name
+                || renameWorkspaceEntry.isPending
+              }
+            >
+              {renameWorkspaceEntry.isPending ? "Renaming..." : "Rename"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => {
+        if (!open && !deleteWorkspaceEntry.isPending) setDeleteTarget(null);
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete entry</DialogTitle>
+            <DialogDescription>
+              This will permanently delete {deleteTarget?.path ?? "this entry"} from the organization workspace.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleteWorkspaceEntry.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                if (!deleteTarget) return;
+                deleteWorkspaceEntry.mutate(deleteTarget);
+              }}
+              disabled={!deleteTarget || deleteWorkspaceEntry.isPending}
+            >
+              {deleteWorkspaceEntry.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

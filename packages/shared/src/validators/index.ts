@@ -37,11 +37,15 @@ export {
   createOrganizationSchema,
   updateOrganizationSchema,
   updateOrganizationBrandingSchema,
+  createOrganizationWorkspaceFileSchema,
   updateOrganizationWorkspaceFileSchema,
+  renameOrganizationWorkspaceEntrySchema,
   type CreateOrganization,
   type UpdateOrganization,
   type UpdateOrganizationBranding,
+  type CreateOrganizationWorkspaceFile,
   type UpdateOrganizationWorkspaceFile,
+  type RenameOrganizationWorkspaceEntry,
 } from "./organization.js";
 export {
   organizationResourceKindSchema,
