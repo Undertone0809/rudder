@@ -902,7 +902,7 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
       role: "engineer",
       title: "Launch Support Engineer",
       capabilities: "Cover launch-week support escalations, triage onboarding blockers, and keep the beta queue moving.",
-      desiredSkills: ["debug-run-transcript", "software-product-advisor"],
+      desiredSkills: ["debug-run-transcript-maintainer", "software-product-advisor"],
       agentRuntimeType: "codex_local",
     },
     issueIds: [hiringIssue.id],
