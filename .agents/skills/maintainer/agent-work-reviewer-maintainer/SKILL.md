@@ -1,6 +1,6 @@
 ---
 name: agent-work-reviewer-maintainer
-description: Review Rudder agent work. Use for review/第一性原理/PM review of Codex sessions, PRs, commits, UI, releases, regressions, or agent outcomes.
+description: Review Rudder agent work. Use for review/第一性原理/PM review of Codex sessions, PRs, commits, UI, releases, regressions, or agent outcomes. For functional or UI reviews, prefer running the real Rudder scenario with Browser or Computer Use when available instead of judging only from diffs.
 ---
 
 # Agent Work Reviewer Maintainer
@@ -63,6 +63,14 @@ implementation.
 If the user says "do not implement", "review only", or assigns a reviewer role,
 that instruction is binding for the whole reviewer pass. Use tools only to
 inspect evidence.
+
+Direct UI inspection with Browser, Desktop, or Computer Use is still reviewer
+work when it only observes or exercises low-risk local/dev flows. If a realistic
+scenario requires mutating Rudder data, prefer an isolated dev org, disposable
+test records, or an existing preview instance, and report what was created or
+changed. Do not delete data, publish, submit external communication, install
+software, change system settings, or perform other risky UI actions without the
+appropriate user confirmation.
 
 ## Evidence Packet
 
@@ -151,6 +159,30 @@ Record which evidence exists:
 Treat timed-out, skipped, or attempted checks as unverified. Do not convert
 "looked plausible in code" into product proof.
 
+### 4.1 Run The Real Scenario When It Matters
+
+For functional review, UI review, Desktop review, or workflow-regression review,
+prefer direct scenario verification over code-only inference:
+
+- Use Browser for local web targets such as `localhost`, `127.0.0.1`, or file
+  previews when the browser can exercise the path.
+- Use Computer Use for the packaged Rudder Desktop app, native dialogs, update
+  prompts, menus, resident shell behavior, drag/drop, or any flow that is only
+  visible in the local Mac UI.
+- Use API/log/database checks as supporting evidence, not a replacement for the
+  real operator path when the user's question is about behavior.
+- If the app is not running, start the appropriate local or packaged Rudder path
+  when that is safe and within the review scope. If startup would be expensive
+  or risky, say exactly why the review is limited.
+- When a real scenario is skipped, the verdict should usually be
+  `needs more evidence` or `conditional accept`, and the missing scenario must
+  be named.
+
+For user-visible work, do not accept "tests pass" as enough proof when Computer
+Use or Browser could cheaply verify the actual Rudder interaction. The minimum
+credible evidence is the observed workflow state plus any relevant logs, API
+responses, screenshots, or failure messages.
+
 ### 5. Assemble The Review Packet
 
 Before writing the verdict, make the review packet explicit. It should include
@@ -234,8 +266,11 @@ For user-visible work, inspect the important states:
 - mobile or constrained width when relevant
 - legacy links and previously shipped features
 
-For UI, ask whether the actual rendered state was seen. Code review alone is
-not enough for layout-sensitive work.
+For UI and functional reviews, ask whether the actual rendered or interactive
+state was seen. Code review alone is not enough for layout-sensitive work,
+native Desktop behavior, update flows, chat/issue workflows, or any path where
+the product claim depends on clicks, typing, selection, focus, async state, or
+cross-page navigation.
 
 ### 6. Trust And Validation
 
@@ -276,13 +311,29 @@ reviewers or a serial two-role fallback when that distinction affects trust.
 ### UI/UX And Design
 
 - Read `doc/DESIGN.md` before judging.
-- Verify rendered states with browser, screenshot, or Desktop shell evidence.
+- Verify rendered states with Browser, screenshot, Desktop shell evidence, or
+  Computer Use against the real packaged app when native behavior matters.
 - Treat visual hierarchy, density, interaction feedback, animation, native app
   affordances, and copy clarity as product quality, not nitpicks.
 - Check whether menus, hover actions, dialogs, keyboard behavior, and icons match
   expected Rudder patterns.
 - If no visual evidence exists, the verdict should usually be `needs more
   evidence` or `conditional accept`.
+
+### Functional Workflow Review
+
+- Reconstruct the user's real scenario as a short workflow, then run it when
+  the local app, preview, or packaged Desktop is available.
+- Prefer scenario steps such as "open Messenger, send a message, approve the
+  proposal, confirm the issue state" over isolated API calls when the behavior
+  is operator-facing.
+- Use API, logs, DB rows, and code paths to explain why the observed behavior
+  happened after the UI behavior is known.
+- If the scenario would mutate shared or production-like data, use a disposable
+  dev record or ask before the risky step. State any mutation in the review
+  packet.
+- A functional verdict should separate observed user behavior from inferred
+  internal correctness.
 
 ### Release And Desktop
 
@@ -389,11 +440,29 @@ Input:
 Expected behavior:
 The review starts from user intent and workflow semantics, then traces every
 downstream consumer of the relevant object or field, such as attention, filters,
-wakeups, UI state, and recovery paths. The verdict separates semantic behavior
-from schema/type correctness.
+wakeups, UI state, and recovery paths. When Rudder is available locally, it also
+uses Browser or Computer Use to exercise the real operator path or clearly names
+why live scenario testing was skipped. The verdict separates observed semantic
+behavior from schema/type correctness.
 
 Must not:
 Stop after checking schema, route validation, or the obvious happy-path test.
+
+### Case: Functional Review With Computer Use
+
+Input:
+"review 一下最新版 Desktop update 为什么失败，功能上是不是已经好了."
+
+Expected behavior:
+The review inspects release and code evidence, then uses Computer Use or an
+equivalent packaged Desktop run to exercise the actual update interaction when
+safe. It reports the observed app version, update channel, prompt/toast state,
+and any supporting health/API/log evidence before judging whether the function
+is proven.
+
+Must not:
+Call the update flow accepted from release assets or code inspection alone when
+the packaged Desktop scenario can be tested.
 
 ### Case: UI Review Without Rendered Evidence
 
