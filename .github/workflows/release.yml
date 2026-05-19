@@ -116,8 +116,6 @@ jobs:
 
       - name: Publish canary
         id: publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           version="$(./scripts/release.sh canary --print-version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -218,7 +216,6 @@ jobs:
       - name: Publish stable
         id: publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
           version="$(./scripts/release.sh stable --print-version)"
