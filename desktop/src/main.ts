@@ -26,6 +26,7 @@ import {
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
+import { readWorkspaceLaunchTargetIconDataUrl } from "./workspace-launch-icons.js";
 import { resolveDesktopSystemPermissions, type DesktopSystemPermissions } from "./system-permissions.js";
 import {
   applyThemePreferenceToNativeTheme,
@@ -267,15 +268,20 @@ function resolveDesktopCapabilities(): DesktopCapabilities {
   };
 }
 
-function toWorkspaceLaunchTargetPayload(
+async function toWorkspaceLaunchTargetPayload(
   target: DesktopWorkspaceLaunchTarget,
-): DesktopWorkspaceLaunchTargetPayload {
-  // Keep workspace launcher icons in the renderer fallback path. macOS native
-  // app icon extraction can crash Electron while entering the Workspaces page.
+): Promise<DesktopWorkspaceLaunchTargetPayload> {
+  const iconDataUrl = await readWorkspaceLaunchTargetIconDataUrl(target, {
+    platform: process.platform,
+    getFileIcon: app.getFileIcon.bind(app),
+    createImageFromPath: nativeImage.createFromPath,
+  });
+
   return {
     id: target.id,
     label: target.label,
     kind: target.kind,
+    ...(iconDataUrl ? { iconDataUrl } : {}),
   };
 }
 
@@ -2038,7 +2044,7 @@ function registerIpc(): void {
   });
   ipcMain.handle("desktop:list-workspace-launch-targets", async (): Promise<DesktopWorkspaceLaunchTargetPayload[]> => {
     const targets = await listWorkspaceLaunchTargets();
-    return targets.map(toWorkspaceLaunchTargetPayload);
+    return await Promise.all(targets.map(toWorkspaceLaunchTargetPayload));
   });
   ipcMain.handle(
     "desktop:open-workspace",
