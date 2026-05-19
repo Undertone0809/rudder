@@ -1051,7 +1051,6 @@ export function NewIssueDialog() {
   const parentIssueTitle = parentIssueSnapshot?.title?.trim() || null;
   const stagedDocuments = stagedFiles.filter((file) => file.kind === "document");
   const stagedAttachments = stagedFiles.filter((file) => file.kind === "attachment");
-  const labelTaxonomyRequiresLabels = (labels?.length ?? 0) >= 5;
   const labelPickerContent = (
     <>
       <input
@@ -1334,7 +1333,7 @@ export function NewIssueDialog() {
         </div>
 
         <div className="px-4 pb-3 shrink-0">
-          <div className={cn("grid grid-cols-1 gap-2", labelTaxonomyRequiresLabels ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div className="min-w-0 space-y-1">
               <div className="text-[11px] font-medium text-muted-foreground">Assignee</div>
               <InlineEntitySelector
@@ -1493,36 +1492,6 @@ export function NewIssueDialog() {
                 }}
               />
             </div>
-            {labelTaxonomyRequiresLabels ? (
-              <div className="min-w-0 space-y-1">
-                <div className="text-[11px] font-medium text-muted-foreground">Labels</div>
-                <Popover open={labelsOpen} onOpenChange={setLabelsOpen}>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      data-variant="field"
-                      className={cn(
-                        "inline-flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        selectedLabels.length === 0 && "text-muted-foreground",
-                      )}
-                      disabled={isCreatingOrRedirecting}
-                    >
-                      <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-                        {labelsTrigger}
-                      </span>
-                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    className="w-[var(--radix-popover-trigger-width)] min-w-56 p-1"
-                    align="start"
-                    disablePortal
-                  >
-                    {labelPickerContent}
-                  </PopoverContent>
-                </Popover>
-              </div>
-            ) : null}
           </div>
         </div>
 
@@ -1744,24 +1713,22 @@ export function NewIssueDialog() {
           </Popover>
 
           {/* Labels chip */}
-          {!labelTaxonomyRequiresLabels ? (
-            <Popover open={labelsOpen} onOpenChange={setLabelsOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors",
-                    selectedLabels.length > 0 ? "text-foreground" : "text-muted-foreground",
-                  )}
-                  disabled={isCreatingOrRedirecting}
-                >
-                  {labelsTrigger}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-56 p-1" align="start" disablePortal>
-                {labelPickerContent}
-              </PopoverContent>
-            </Popover>
-          ) : null}
+          <Popover open={labelsOpen} onOpenChange={setLabelsOpen}>
+            <PopoverTrigger asChild>
+              <button
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors",
+                  selectedLabels.length > 0 ? "text-foreground" : "text-muted-foreground",
+                )}
+                disabled={isCreatingOrRedirecting}
+              >
+                {labelsTrigger}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-56 p-1" align="start" disablePortal>
+              {labelPickerContent}
+            </PopoverContent>
+          </Popover>
 
           <input
             ref={stageFileInputRef}

@@ -290,7 +290,7 @@ describe("NewIssueDialog", () => {
     expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(3);
   });
 
-  it("promotes labels into the primary metadata fields when the organization has five labels", () => {
+  it("keeps labels in the property chip when the organization has five labels", () => {
     dialogState.labels = Array.from({ length: 5 }, (_, index) => ({
       id: `label-${index + 1}`,
       orgId: "org-1",
@@ -302,9 +302,11 @@ describe("NewIssueDialog", () => {
 
     const html = renderToStaticMarkup(<NewIssueDialog />);
 
-    expect(html).toContain("sm:grid-cols-4");
-    expect(html).toContain(">Labels</div>");
-    expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    expect(html).toContain("sm:grid-cols-3");
+    expect(html).not.toContain("sm:grid-cols-4");
+    expect(html).not.toContain(">Labels</div>");
+    expect((html.match(/data-variant="field"/g) ?? []).length).toBe(3);
+    expect(html).toContain("Search labels...");
   });
 
   it("renders agent selector titles as badges instead of parenthesized label text", () => {
