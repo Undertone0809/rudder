@@ -212,6 +212,9 @@ export {
   issueDocumentFormatSchema,
   issueDocumentKeySchema,
   upsertIssueDocumentSchema,
+  createLibraryDocumentSchema,
+  updateLibraryDocumentSchema,
+  restoreLibraryDocumentRevisionSchema,
   type CreateIssue,
   type CreateIssueLabel,
   type UpdateIssueLabel,
@@ -226,6 +229,9 @@ export {
   type CreateIssueWorkspaceAttachment,
   type IssueDocumentFormat,
   type UpsertIssueDocument,
+  type CreateLibraryDocument,
+  type UpdateLibraryDocument,
+  type RestoreLibraryDocumentRevision,
 } from "./issue.js";
 
 export {

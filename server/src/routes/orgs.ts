@@ -6,8 +6,11 @@ import {
   organizationPortabilityPreviewSchema,
   createOrganizationResourceSchema,
   createOrganizationSchema,
+  createLibraryDocumentSchema,
+  restoreLibraryDocumentRevisionSchema,
   updateOrganizationResourceSchema,
   updateOrganizationBrandingSchema,
+  updateLibraryDocumentSchema,
   updateOrganizationSchema,
   updateOrganizationWorkspaceFileSchema,
   createWorkspaceBackupSchema,
@@ -25,6 +28,7 @@ import {
   workspaceBackupService,
   organizationSkillService,
   organizationService,
+  documentService,
   logActivity,
 } from "../services/index.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
@@ -40,6 +44,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   const access = accessService(db);
   const budgets = budgetService(db);
   const resources = resourceCatalogService(db);
+  const documents = documentService(db);
   const workspaceBrowser = organizationWorkspaceBrowserService(db);
   const workspaceBackups = workspaceBackupService(db);
   const exportJobs = organizationExportJobService();
@@ -118,6 +123,157 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     }
     res.json(organization);
   });
+
+  router.get("/:orgId/library/documents", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    if (req.actor.type !== "agent") {
+      assertBoard(req);
+    }
+    const result = await documents.listLibraryDocuments(orgId);
+    res.json(result);
+  });
+
+  router.post("/:orgId/library/documents", validate(createLibraryDocumentSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const actor = getActorInfo(req);
+    const document = await documents.createLibraryDocument({
+      orgId,
+      title: req.body.title ?? null,
+      format: req.body.format,
+      body: req.body.body ?? "",
+      changeSummary: req.body.changeSummary ?? null,
+      createdByAgentId: actor.agentId ?? null,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+    });
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "library.document.created",
+      entityType: "document",
+      entityId: document.id,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        title: document.title,
+        revisionNumber: document.latestRevisionNumber,
+      },
+    });
+    res.status(201).json(document);
+  });
+
+  router.get("/:orgId/library/documents/:documentId", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const documentId = req.params.documentId as string;
+    assertCompanyAccess(req, orgId);
+    if (req.actor.type !== "agent") {
+      assertBoard(req);
+    }
+    const document = await documents.getLibraryDocumentById(orgId, documentId);
+    if (!document) {
+      res.status(404).json({ error: "Library document not found" });
+      return;
+    }
+    res.json(document);
+  });
+
+  router.patch("/:orgId/library/documents/:documentId", validate(updateLibraryDocumentSchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const documentId = req.params.documentId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const actor = getActorInfo(req);
+    const document = await documents.updateLibraryDocument({
+      orgId,
+      documentId,
+      title: req.body.title ?? null,
+      format: req.body.format,
+      body: req.body.body,
+      changeSummary: req.body.changeSummary ?? null,
+      baseRevisionId: req.body.baseRevisionId ?? null,
+      createdByAgentId: actor.agentId ?? null,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+    });
+    if (!document) {
+      res.status(404).json({ error: "Library document not found" });
+      return;
+    }
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "library.document.updated",
+      entityType: "document",
+      entityId: document.id,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        title: document.title,
+        revisionNumber: document.latestRevisionNumber,
+      },
+    });
+    res.json(document);
+  });
+
+  router.get("/:orgId/library/documents/:documentId/revisions", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const documentId = req.params.documentId as string;
+    assertCompanyAccess(req, orgId);
+    if (req.actor.type !== "agent") {
+      assertBoard(req);
+    }
+    const document = await documents.getLibraryDocumentById(orgId, documentId);
+    if (!document) {
+      res.status(404).json({ error: "Library document not found" });
+      return;
+    }
+    const revisions = await documents.listLibraryDocumentRevisions(orgId, documentId);
+    res.json(revisions);
+  });
+
+  router.post(
+    "/:orgId/library/documents/:documentId/revisions/:revisionId/restore",
+    validate(restoreLibraryDocumentRevisionSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      const documentId = req.params.documentId as string;
+      const revisionId = req.params.revisionId as string;
+      assertCompanyAccess(req, orgId);
+      assertBoard(req);
+      const actor = getActorInfo(req);
+      const document = await documents.restoreLibraryDocumentRevision({
+        orgId,
+        documentId,
+        revisionId,
+        changeSummary: req.body.changeSummary ?? null,
+        createdByAgentId: actor.agentId ?? null,
+        createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+      });
+      if (!document) {
+        res.status(404).json({ error: "Library document revision not found" });
+        return;
+      }
+      await logActivity(db, {
+        orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        action: "library.document.restored",
+        entityType: "document",
+        entityId: document.id,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        details: {
+          title: document.title,
+          revisionNumber: document.latestRevisionNumber,
+          restoredRevisionId: revisionId,
+        },
+      });
+      res.json(document);
+    },
+  );
 
   router.get("/:orgId/resources", async (req, res) => {
     const orgId = req.params.orgId as string;

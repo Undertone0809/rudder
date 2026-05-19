@@ -6,6 +6,7 @@ import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor 
 import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { issuesApi } from "../api/issues";
+import { organizationsApi } from "../api/orgs";
 import { projectsApi } from "../api/projects";
 import { agentsApi } from "../api/agents";
 import { organizationSkillsApi } from "../api/organizationSkills";
@@ -64,7 +65,6 @@ import {
   CheckCircle2,
   Tag,
   Calendar,
-  FileText,
   Loader2,
   Paperclip,
   X,
@@ -188,53 +188,6 @@ function buildAssigneeAdapterOverrides(input: {
     overrides.agentRuntimeConfig = agentRuntimeConfig;
   }
   return Object.keys(overrides).length > 0 ? overrides : null;
-}
-
-function isTextDocumentFile(file: File) {
-  const name = file.name.toLowerCase();
-  return (
-    name.endsWith(".md") ||
-    name.endsWith(".markdown") ||
-    name.endsWith(".txt") ||
-    file.type === "text/markdown" ||
-    file.type === "text/plain"
-  );
-}
-
-function fileBaseName(filename: string) {
-  return filename.replace(/\.[^.]+$/, "");
-}
-
-function slugifyDocumentKey(input: string) {
-  const slug = input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "document";
-}
-
-function titleizeFilename(input: string) {
-  return input
-    .split(/[-_ ]+/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function createUniqueDocumentKey(baseKey: string, stagedFiles: StagedIssueFile[]) {
-  const existingKeys = new Set(
-    stagedFiles
-      .filter((file) => file.kind === "document")
-      .map((file) => file.documentKey)
-      .filter((key): key is string => Boolean(key)),
-  );
-  if (!existingKeys.has(baseKey)) return baseKey;
-  let suffix = 2;
-  while (existingKeys.has(`${baseKey}-${suffix}`)) {
-    suffix += 1;
-  }
-  return `${baseKey}-${suffix}`;
 }
 
 function formatFileSize(file: File) {
@@ -379,6 +332,12 @@ export function NewIssueDialog() {
     enabled: Boolean(effectiveCompanyId) && newIssueOpen && Boolean(selectedAssigneeAgentId),
   });
 
+  const { data: libraryDocuments } = useQuery({
+    queryKey: queryKeys.organizations.libraryDocuments(effectiveCompanyId ?? "__none__"),
+    queryFn: () => organizationsApi.listLibraryDocuments(effectiveCompanyId!),
+    enabled: Boolean(effectiveCompanyId) && newIssueOpen,
+  });
+
   useEffect(() => {
     if (!newIssueOpen) {
       openContextLocationRef.current = null;
@@ -413,10 +372,11 @@ export function NewIssueDialog() {
       agents,
       projects: orderedProjects,
       issues: allIssues,
+      libraryDocuments,
       skillMentionOptions,
       currentUserId,
     }),
-    [agents, allIssues, currentUserId, orderedProjects, skillMentionOptions],
+    [agents, allIssues, currentUserId, libraryDocuments, orderedProjects, skillMentionOptions],
   );
 
   const { data: assigneeAgentRuntimeModels } = useQuery({
@@ -459,17 +419,7 @@ export function NewIssueDialog() {
 
       for (const stagedFile of pendingStagedFiles) {
         try {
-          if (stagedFile.kind === "document") {
-            const body = await stagedFile.file.text();
-            await issuesApi.upsertDocument(issue.id, stagedFile.documentKey ?? "document", {
-              title: stagedFile.documentKey === "plan" ? null : stagedFile.title ?? null,
-              format: "markdown",
-              body,
-              baseRevisionId: null,
-            });
-          } else {
-            await issuesApi.uploadAttachment(orgId, issue.id, stagedFile.file);
-          }
+          await issuesApi.uploadAttachment(orgId, issue.id, stagedFile.file);
         } catch {
           failures.push(stagedFile.file.name);
         }
@@ -856,18 +806,6 @@ export function NewIssueDialog() {
     setStagedFiles((current) => {
       const next = [...current];
       for (const file of files) {
-        if (isTextDocumentFile(file)) {
-          const baseName = fileBaseName(file.name);
-          const documentKey = createUniqueDocumentKey(slugifyDocumentKey(baseName), next);
-          next.push({
-            id: `${file.name}:${file.size}:${file.lastModified}:${documentKey}`,
-            file,
-            kind: "document",
-            documentKey,
-            title: titleizeFilename(baseName),
-          });
-          continue;
-        }
         next.push({
           id: `${file.name}:${file.size}:${file.lastModified}`,
           file,
@@ -1047,8 +985,7 @@ export function NewIssueDialog() {
     || newIssueDefaults.parentId?.slice(0, 8)
     || null;
   const parentIssueTitle = parentIssueSnapshot?.title?.trim() || null;
-  const stagedDocuments = stagedFiles.filter((file) => file.kind === "document");
-  const stagedAttachments = stagedFiles.filter((file) => file.kind === "attachment");
+  const stagedAttachments = stagedFiles;
 
   const handleProjectChange = useCallback((nextProjectId: string) => {
     setProjectId(nextProjectId);
@@ -1520,42 +1457,6 @@ export function NewIssueDialog() {
           </div>
           {stagedFiles.length > 0 ? (
             <div className="mt-4 space-y-3 rounded-lg border border-border/70 p-3">
-              {stagedDocuments.length > 0 ? (
-                <div className="space-y-2">
-                  <div className="text-xs font-medium text-muted-foreground">Documents</div>
-                  <div className="space-y-2">
-                    {stagedDocuments.map((file) => (
-                      <div key={file.id} className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                              {file.documentKey}
-                            </span>
-                            <span className="truncate text-sm">{file.file.name}</span>
-                          </div>
-                          <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                            <FileText className="h-3.5 w-3.5" />
-                            <span>{file.title || file.file.name}</span>
-                            <span>•</span>
-                            <span>{formatFileSize(file.file)}</span>
-                          </div>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          className="shrink-0 text-muted-foreground"
-                          onClick={() => removeStagedFile(file.id)}
-                          disabled={isCreatingOrRedirecting}
-                          title="Remove document"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
               {stagedAttachments.length > 0 ? (
                 <div className="space-y-2">
                   <div className="text-xs font-medium text-muted-foreground">Attachments</div>

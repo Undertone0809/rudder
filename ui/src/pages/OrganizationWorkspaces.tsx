@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useSearchParams } from "@/lib/router";
@@ -353,7 +353,27 @@ function WorkspaceTreeNode({
   );
 }
 
-export function OrganizationWorkspaces() {
+export function OrganizationWorkspaceBrowser({
+  breadcrumbLabel = "Workspaces",
+  emptyMessage = "Select an organization to browse its shared workspace.",
+  filesTitle = "Files",
+  editorTitle = "Editor",
+  noSelectionMessage = (
+    <>
+      Choose a file from the workspace tree to edit it. Agent and organization skill cards can jump here
+      directly into the target <span className="font-mono">SKILL.md</span>, and any shared file already in
+      this workspace can be edited here.
+    </>
+  ),
+  rightPanel,
+}: {
+  breadcrumbLabel?: string;
+  emptyMessage?: string;
+  filesTitle?: string;
+  editorTitle?: string;
+  noSelectionMessage?: ReactNode;
+  rightPanel?: ReactNode;
+}) {
   const { setBreadcrumbs, setHeaderActions } = useBreadcrumbs();
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
@@ -378,8 +398,8 @@ export function OrganizationWorkspaces() {
   );
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Workspaces" }]);
-  }, [setBreadcrumbs]);
+    setBreadcrumbs([{ label: breadcrumbLabel }]);
+  }, [breadcrumbLabel, setBreadcrumbs]);
 
   useEffect(() => {
     const desktopShell = readDesktopShell();
@@ -620,7 +640,7 @@ export function OrganizationWorkspaces() {
   ]);
 
   if (!viewedOrganizationId || !viewedOrganization) {
-    return <EmptyState icon={HardDrive} message="Select an organization to browse its shared workspace." />;
+    return <EmptyState icon={HardDrive} message={emptyMessage} />;
   }
 
   if (rootQuery.isLoading) {
@@ -699,7 +719,7 @@ export function OrganizationWorkspaces() {
             className="flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card lg:min-h-0 lg:w-[300px] lg:flex-none"
           >
             <div className="border-b border-border px-4 py-3">
-              <div className="text-sm font-medium">Files</div>
+              <div className="text-sm font-medium">{filesTitle}</div>
               <div className="text-xs text-muted-foreground">
                 {workspace.directoryPath ? workspace.directoryPath : "/"}
               </div>
@@ -736,7 +756,7 @@ export function OrganizationWorkspaces() {
           >
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
               <div>
-                <div className="text-sm font-medium">Editor</div>
+                <div className="text-sm font-medium">{editorTitle}</div>
                 <div className="text-xs text-muted-foreground">
                   {selectedFilePath ?? "Select a file to edit"}
                 </div>
@@ -791,9 +811,7 @@ export function OrganizationWorkspaces() {
             <div className="min-h-0 flex-1 overflow-hidden">
               {!selectedFilePath ? (
                 <div className="px-4 py-6 text-sm text-muted-foreground">
-                  Choose a file from the workspace tree to edit it. Agent and organization skill cards can jump here
-                  directly into the target <span className="font-mono">SKILL.md</span>, and any shared file already in
-                  this workspace can be edited here.
+                  {noSelectionMessage}
                 </div>
               ) : fileQuery.isLoading ? (
                 <div className="px-4 py-6 text-sm text-muted-foreground">Loading file…</div>
@@ -855,8 +873,21 @@ export function OrganizationWorkspaces() {
               )}
             </div>
           </section>
+
+          {rightPanel ? (
+            <aside
+              data-testid="org-library-context-panel"
+              className="flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card lg:min-h-0 lg:w-[320px] lg:flex-none"
+            >
+              {rightPanel}
+            </aside>
+          ) : null}
         </div>
       )}
     </div>
   );
+}
+
+export function OrganizationWorkspaces() {
+  return <OrganizationWorkspaceBrowser />;
 }

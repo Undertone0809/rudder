@@ -32,7 +32,6 @@ import { Activity } from "./pages/Activity";
 import { OrganizationSettings } from "./pages/OrganizationSettings";
 import { OrganizationHeartbeats } from "./pages/OrganizationHeartbeats";
 import { OrganizationResources } from "./pages/OrganizationResources";
-import { OrganizationWorkspaces } from "./pages/OrganizationWorkspaces";
 import { OrganizationWorkspaceBackups } from "./pages/OrganizationWorkspaceBackups";
 import { OrganizationSkills } from "./pages/OrganizationSkills";
 import { OrganizationExport } from "./pages/OrganizationExport";
@@ -193,7 +192,7 @@ function boardRoutes() {
       <Route path="library" element={<OrganizationResources />} />
       <Route path="resources" element={<LegacyResourcesRedirect />} />
       <Route path="heartbeats" element={<OrganizationHeartbeats />} />
-      <Route path="workspaces" element={<OrganizationWorkspaces />} />
+      <Route path="workspaces" element={<LegacyWorkspacesRedirect />} />
       <Route path="workspaces/backups" element={<OrganizationWorkspaceBackups />} />
       <Route path="organization/export/*" element={<OrganizationExport />} />
       <Route path="organization/import" element={<OrganizationImport />} />
@@ -317,6 +316,11 @@ function LegacyWorkspaceBackupsRedirect() {
 }
 
 function LegacyResourcesRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/library${location.search}${location.hash}`} replace />;
+}
+
+function LegacyWorkspacesRedirect() {
   const location = useLocation();
   return <Navigate to={`/library${location.search}${location.hash}`} replace />;
 }

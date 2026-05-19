@@ -27,11 +27,6 @@ import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread, type CommentThreadActivityItem } from "../components/CommentThread";
-import {
-  IssueDocumentFocusPage,
-  IssueDocumentsSection,
-  type IssueDocumentFocusTarget,
-} from "../components/IssueDocumentsSection";
 import { IssueDetailFind } from "../components/IssueDetailFind";
 import { IssueProperties } from "../components/IssueProperties";
 import { LiveRunWidget } from "../components/LiveRunWidget";
@@ -94,13 +89,8 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
-import type { Agent, Issue, IssueAttachment, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
-
-type DocumentFocusState = {
-  target: IssueDocumentFocusTarget;
-  phase: "open" | "closing";
-};
+import { extractLibraryDocMentionIds, summarizeTokenUsage, type ActivityEvent } from "@rudderhq/shared";
+import type { Agent, Issue, IssueAttachment, LibraryDocumentSummary, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 
 type IssueCostSummaryData = {
   input: number;
@@ -327,36 +317,6 @@ function isLinearIssueDetailSlot(slot: LinearIssueActivitySlot) {
   return slot.pluginKey === LINEAR_PLUGIN_KEY && slot.id === LINEAR_ISSUE_DETAIL_SLOT_ID;
 }
 
-function isMarkdownFile(file: File) {
-  const name = file.name.toLowerCase();
-  return (
-    name.endsWith(".md") ||
-    name.endsWith(".markdown") ||
-    file.type === "text/markdown"
-  );
-}
-
-function fileBaseName(filename: string) {
-  return filename.replace(/\.[^.]+$/, "");
-}
-
-function slugifyDocumentKey(input: string) {
-  const slug = input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "document";
-}
-
-function titleizeFilename(input: string) {
-  return input
-    .split(/[-_ ]+/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
 function workspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
   return entry.displayLabel?.trim() || entry.name;
 }
@@ -405,7 +365,7 @@ function WorkspaceAttachDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle className="text-base">Attach from Workspaces</DialogTitle>
+          <DialogTitle className="text-base">Attach from Library</DialogTitle>
           <DialogDescription>
             Choose a file to copy into this issue's attachments.
           </DialogDescription>
@@ -414,7 +374,7 @@ function WorkspaceAttachDialog({
         <div className="space-y-3">
           <div className="flex min-h-8 items-center gap-2 rounded-md border border-border bg-muted/20 px-2 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">/</span>
-            <span className="truncate">{directoryPath || "workspace"}</span>
+            <span className="truncate">{directoryPath || "Library files"}</span>
           </div>
 
           <div className="h-[320px] overflow-hidden rounded-md border border-border">
@@ -425,11 +385,11 @@ function WorkspaceAttachDialog({
               </div>
             ) : filesQuery.error ? (
               <div className="p-3 text-sm text-destructive">
-                {filesQuery.error instanceof Error ? filesQuery.error.message : "Could not load workspace files"}
+                {filesQuery.error instanceof Error ? filesQuery.error.message : "Could not load Library files"}
               </div>
             ) : entries.length === 0 && !canGoUp ? (
               <div className="p-3 text-sm text-muted-foreground">
-                No workspace files available.
+                No Library files available.
               </div>
             ) : (
               <ScrollArea className="h-full">
@@ -696,19 +656,6 @@ function shouldHandleIssueDetailEscape(event: KeyboardEvent) {
   return true;
 }
 
-function shouldHandleDocumentFocusEscape(event: KeyboardEvent) {
-  if (event.key !== "Escape") return false;
-  if (event.defaultPrevented) return false;
-  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
-
-  if (typeof document !== "undefined") {
-    if (document.querySelector("[role='dialog']")) return false;
-    if (document.querySelector("[data-radix-popper-content-wrapper]")) return false;
-  }
-
-  return true;
-}
-
 function hasBrowserBackStackEntry() {
   if (typeof window === "undefined") return false;
   const index = (window.history.state as { idx?: unknown } | null)?.idx;
@@ -829,6 +776,100 @@ function LinearIssueActivityCard({ data }: { data: Extract<LinearIssueLinkData, 
   );
 }
 
+function linkedLibraryDocumentTitle(doc: Pick<LibraryDocumentSummary, "id" | "title" | "issueLinks">) {
+  if (doc.title?.trim()) return doc.title.trim();
+  const issueLink = doc.issueLinks?.[0] ?? null;
+  if (issueLink) return `${issueLink.issueIdentifier ?? issueLink.issueId.slice(0, 8)} / ${issueLink.key}`;
+  return `Document ${doc.id.slice(0, 8)}`;
+}
+
+function LinkedLibraryDocsSection({
+  issue,
+  libraryDocuments,
+}: {
+  issue: Issue;
+  libraryDocuments?: LibraryDocumentSummary[] | null;
+}) {
+  const mentionedDocIds = new Set(extractLibraryDocMentionIds(issue.description ?? ""));
+  const docsById = new Map((libraryDocuments ?? []).map((doc) => [doc.id, doc]));
+  const linkedDocs = new Map<string, LibraryDocumentSummary>();
+
+  for (const docId of mentionedDocIds) {
+    const doc = docsById.get(docId);
+    if (doc) linkedDocs.set(doc.id, doc);
+  }
+  for (const doc of issue.documentSummaries ?? []) {
+    const libraryDoc = docsById.get(doc.id) ?? {
+      id: doc.id,
+      orgId: doc.orgId,
+      title: doc.title,
+      format: doc.format,
+      latestRevisionId: doc.latestRevisionId,
+      latestRevisionNumber: doc.latestRevisionNumber,
+      createdByAgentId: doc.createdByAgentId,
+      createdByUserId: doc.createdByUserId,
+      updatedByAgentId: doc.updatedByAgentId,
+      updatedByUserId: doc.updatedByUserId,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+      issueLinks: [{
+        issueId: issue.id,
+        issueIdentifier: issue.identifier,
+        issueTitle: issue.title,
+        key: doc.key,
+      }],
+    };
+    linkedDocs.set(libraryDoc.id, libraryDoc);
+  }
+
+  const docs = [...linkedDocs.values()].sort((left, right) =>
+    new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
+  );
+  if (docs.length === 0) return null;
+
+  return (
+    <section className="space-y-3" aria-label="Linked Library docs">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-medium text-muted-foreground">Library docs</h3>
+        <span className="rounded-sm border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          {docs.length}
+        </span>
+      </div>
+      <div className="grid gap-2">
+        {docs.map((doc) => {
+          const title = linkedLibraryDocumentTitle(doc);
+          const issueLink = doc.issueLinks?.[0] ?? null;
+          return (
+            <Link
+              key={doc.id}
+              to={`/library?doc=${encodeURIComponent(doc.id)}`}
+              className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm transition-colors hover:bg-accent/35"
+            >
+              <div className="min-w-0">
+                <div className="truncate font-medium text-foreground">{title}</div>
+                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span>live Library link</span>
+                  {issueLink ? (
+                    <>
+                      <span aria-hidden="true">/</span>
+                      <span className="truncate">
+                        migrated from {issueLink.issueIdentifier ?? issueLink.issueId.slice(0, 8)}:{issueLink.key}
+                      </span>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+              <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
+                r{doc.latestRevisionNumber}
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function IssueCostSummaryPanel({ summary }: { summary: IssueCostSummaryData }) {
   if (!summary.hasCost && !summary.hasTokens) return null;
 
@@ -892,10 +933,8 @@ export function IssueDetail() {
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [workspaceAttachOpen, setWorkspaceAttachOpen] = useState(false);
-  const [documentFocusState, setDocumentFocusState] = useState<DocumentFocusState | null>(null);
   const issueFindRootRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const documentFocusCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
 
   const { data: issue, isLoading, error } = useQuery({
@@ -904,44 +943,6 @@ export function IssueDetail() {
     enabled: !!issueId,
   });
   const resolvedCompanyId = issue?.orgId ?? selectedOrganizationId;
-
-  useEffect(() => {
-    setDocumentFocusState(null);
-    if (documentFocusCloseTimerRef.current) {
-      clearTimeout(documentFocusCloseTimerRef.current);
-      documentFocusCloseTimerRef.current = null;
-    }
-  }, [issueId]);
-
-  useEffect(() => {
-    return () => {
-      if (documentFocusCloseTimerRef.current) {
-        clearTimeout(documentFocusCloseTimerRef.current);
-      }
-    };
-  }, []);
-
-  const openDocumentFocus = useCallback((target: IssueDocumentFocusTarget) => {
-    if (documentFocusCloseTimerRef.current) {
-      clearTimeout(documentFocusCloseTimerRef.current);
-      documentFocusCloseTimerRef.current = null;
-    }
-    setDocumentFocusState({ target, phase: "open" });
-  }, []);
-
-  const closeDocumentFocus = useCallback(() => {
-    setDocumentFocusState((current) => {
-      if (!current || current.phase === "closing") return current;
-      return { ...current, phase: "closing" };
-    });
-    if (documentFocusCloseTimerRef.current) {
-      clearTimeout(documentFocusCloseTimerRef.current);
-    }
-    documentFocusCloseTimerRef.current = setTimeout(() => {
-      setDocumentFocusState(null);
-      documentFocusCloseTimerRef.current = null;
-    }, 200);
-  }, []);
 
   useEffect(() => {
     if (!issue?.orgId || !issue.id) return;
@@ -1016,6 +1017,12 @@ export function IssueDetail() {
   const { data: allIssues } = useQuery({
     queryKey: queryKeys.issues.list(resolvedCompanyId ?? "__none__"),
     queryFn: () => issuesApi.list(resolvedCompanyId!),
+    enabled: !!resolvedCompanyId,
+  });
+
+  const { data: libraryDocuments } = useQuery({
+    queryKey: queryKeys.organizations.libraryDocuments(resolvedCompanyId ?? "__none__"),
+    queryFn: () => organizationsApi.listLibraryDocuments(resolvedCompanyId!),
     enabled: !!resolvedCompanyId,
   });
 
@@ -1192,9 +1199,29 @@ export function IssueDetail() {
         issueAssigneeRole: relatedIssueAssignee?.role ?? null,
       });
     }
+    for (const doc of libraryDocuments ?? []) {
+      const issueLink = doc.issueLinks?.[0] ?? null;
+      const title = doc.title?.trim()
+        || (issueLink ? `${issueLink.issueIdentifier ?? issueLink.issueId.slice(0, 8)} / ${issueLink.key}` : doc.id.slice(0, 8));
+      options.push({
+        id: `library-doc:${doc.id}`,
+        name: title,
+        kind: "library_doc",
+        searchText: [
+          title,
+          ...(doc.issueLinks ?? []).flatMap((link) => [link.issueIdentifier, link.issueTitle, link.key]),
+        ].filter(Boolean).join(" "),
+        libraryDocumentId: doc.id,
+        libraryDocumentTitle: title,
+        libraryDocumentUpdatedAt: doc.updatedAt,
+        libraryDocumentPath: issueLink
+          ? `Migrated issue doc ${issueLink.issueIdentifier ?? issueLink.issueId.slice(0, 8)}:${issueLink.key}`
+          : "Library doc",
+      });
+    }
     options.push(...skillMentionOptions);
     return options;
-  }, [agentMap, agents, allIssues, currentUserId, issue?.id, orderedProjects, projectById, skillMentionOptions]);
+  }, [agentMap, agents, allIssues, currentUserId, issue?.id, libraryDocuments, orderedProjects, projectById, skillMentionOptions]);
 
   const orderedChildIssues = useMemo(
     () => [...childIssues].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
@@ -1433,30 +1460,6 @@ export function IssueDetail() {
     },
   });
 
-  const importMarkdownDocument = useMutation({
-    mutationFn: async (file: File) => {
-      const baseName = fileBaseName(file.name);
-      const key = slugifyDocumentKey(baseName);
-      const existing = (issue?.documentSummaries ?? []).find((doc) => doc.key === key) ?? null;
-      const body = await file.text();
-      const inferredTitle = titleizeFilename(baseName);
-      const nextTitle = existing?.title ?? inferredTitle ?? null;
-      return issuesApi.upsertDocument(issueId!, key, {
-        title: key === "plan" ? null : nextTitle,
-        format: "markdown",
-        body,
-        baseRevisionId: existing?.latestRevisionId ?? null,
-      });
-    },
-    onSuccess: () => {
-      setAttachmentError(null);
-      invalidateIssue();
-    },
-    onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : "Document import failed");
-    },
-  });
-
   const deleteAttachment = useMutation({
     mutationFn: (attachmentId: string) => issuesApi.deleteAttachment(attachmentId),
     onSuccess: () => {
@@ -1517,12 +1520,6 @@ export function IssueDetail() {
 
   useLayoutEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (documentFocusState) {
-        if (!shouldHandleDocumentFocusEscape(event)) return;
-        event.preventDefault();
-        closeDocumentFocus();
-        return;
-      }
       if (!shouldHandleIssueDetailEscape(event)) return;
       event.preventDefault();
       if (navigateBack?.()) return;
@@ -1535,7 +1532,7 @@ export function IssueDetail() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeDocumentFocus, documentFocusState, navigate, navigateBack, sourceBreadcrumb.href]);
+  }, [navigate, navigateBack, sourceBreadcrumb.href]);
 
   useEffect(() => {
     if (!issue?.id) return;
@@ -1566,11 +1563,7 @@ export function IssueDetail() {
     const files = evt.target.files;
     if (!files || files.length === 0) return;
     for (const file of Array.from(files)) {
-      if (isMarkdownFile(file)) {
-        await importMarkdownDocument.mutateAsync(file);
-      } else {
-        await uploadAttachment.mutateAsync({ file, usage: "issue" });
-      }
+      await uploadAttachment.mutateAsync({ file, usage: "issue" });
     }
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -1583,11 +1576,7 @@ export function IssueDetail() {
     const files = evt.dataTransfer.files;
     if (!files || files.length === 0) return;
     for (const file of Array.from(files)) {
-      if (isMarkdownFile(file)) {
-        await importMarkdownDocument.mutateAsync(file);
-      } else {
-        await uploadAttachment.mutateAsync({ file, usage: "issue" });
-      }
+      await uploadAttachment.mutateAsync({ file, usage: "issue" });
     }
   };
 
@@ -1595,8 +1584,7 @@ export function IssueDetail() {
   const attachmentList = attachments ?? [];
   const hasAttachments = attachmentList.length > 0;
   const subIssueCountLabel = `${orderedChildIssues.length}`;
-  const documentFocusTarget = documentFocusState?.target ?? null;
-  const attachmentBusy = uploadAttachment.isPending || importMarkdownDocument.isPending || attachWorkspaceFile.isPending;
+  const attachmentBusy = uploadAttachment.isPending || attachWorkspaceFile.isPending;
   const attachmentActions = (
     <>
       <input
@@ -1640,7 +1628,7 @@ export function IssueDetail() {
             }}
           >
             <Folder className="h-4 w-4" />
-            Attach from Workspaces
+            Attach from Library
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -1718,31 +1706,9 @@ export function IssueDetail() {
   return (
     <div
       ref={issueFindRootRef}
-      className={cn(
-        "mx-auto max-w-6xl",
-        !documentFocusTarget && "xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start xl:gap-6",
-      )}
+      className="mx-auto max-w-6xl xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start xl:gap-6"
     >
-      {!documentFocusTarget ? (
-        <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
-      ) : null}
-      {documentFocusTarget ? (
-        <IssueDocumentFocusPage
-          issue={issue}
-          target={documentFocusTarget}
-          motionState={documentFocusState?.phase ?? "open"}
-          mentions={mentionOptions}
-          imageUploadHandler={async (file) => {
-            const attachment = await uploadAttachment.mutateAsync({ file, usage: "document_inline" });
-            return attachment.contentPath;
-          }}
-          onClose={closeDocumentFocus}
-          onDocumentCreated={(key) => {
-            setDocumentFocusState((current) => current ? { ...current, target: { kind: "existing", key } } : current);
-          }}
-        />
-      ) : (
-        <>
+      <IssueDetailFind rootRef={issueFindRootRef} refreshKey={issueFindRefreshKey} />
       <div className="min-w-0 space-y-6">
         <nav aria-label="Issue navigation" data-testid="issue-detail-breadcrumb">
           <Breadcrumb>
@@ -2074,18 +2040,13 @@ export function IssueDetail() {
         )}
       </section>
 
-      <IssueDocumentsSection
-        issue={issue}
-        canDeleteDocuments={Boolean(session?.user?.id)}
-        mentions={mentionOptions}
-        imageUploadHandler={async (file) => {
-          const attachment = await uploadAttachment.mutateAsync({ file, usage: "document_inline" });
-          return attachment.contentPath;
-        }}
-        extraActions={!hasAttachments ? attachmentActions : undefined}
-        onFocusNewDocument={() => openDocumentFocus({ kind: "new" })}
-        onFocusDocument={(key) => openDocumentFocus({ kind: "existing", key })}
-      />
+      <LinkedLibraryDocsSection issue={issue} libraryDocuments={libraryDocuments} />
+
+      {!hasAttachments ? (
+        <div className="flex items-center justify-end gap-2 min-w-0">
+          {attachmentActions}
+        </div>
+      ) : null}
 
       {hasAttachments ? (
         <div
@@ -2256,8 +2217,6 @@ export function IssueDetail() {
           <IssueCostSummaryPanel summary={issueCostSummary} />
         </div>
       </aside>
-      </>
-      )}
       <WorkspaceAttachDialog
         orgId={issue.orgId ?? resolvedCompanyId ?? selectedOrganizationId}
         open={workspaceAttachOpen}

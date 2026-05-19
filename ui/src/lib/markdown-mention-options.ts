@@ -1,4 +1,4 @@
-import type { Agent, Issue, Project } from "@rudderhq/shared";
+import type { Agent, Issue, LibraryDocumentSummary, Project } from "@rudderhq/shared";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { formatChatAgentLabel } from "./agent-labels";
 import { formatAssigneeUserLabel } from "./assignees";
@@ -30,6 +30,7 @@ export function buildMarkdownMentionOptions(params: {
   agents?: MentionAgent[] | null;
   projects?: MentionProject[] | null;
   issues?: MentionIssue[] | null;
+  libraryDocuments?: LibraryDocumentSummary[] | null;
   skillMentionOptions?: MentionOption[] | null;
   excludeIssueId?: string | null;
   currentUserId?: string | null;
@@ -89,6 +90,30 @@ export function buildMarkdownMentionOptions(params: {
       issueAssigneeName: assigneeName,
       issueAssigneeIcon: assigneeAgent?.icon ?? null,
       issueAssigneeRole: assigneeAgent?.role ?? null,
+    });
+  }
+
+  for (const doc of params.libraryDocuments ?? []) {
+    const fallbackTitle = doc.issueLinks?.[0]
+      ? `${doc.issueLinks[0].issueIdentifier ?? doc.issueLinks[0].issueId.slice(0, 8)} / ${doc.issueLinks[0].key}`
+      : doc.id.slice(0, 8);
+    const title = doc.title?.trim() || fallbackTitle;
+    const issuePath = doc.issueLinks?.[0]
+      ? `${doc.issueLinks[0].issueIdentifier ?? doc.issueLinks[0].issueId.slice(0, 8)}:${doc.issueLinks[0].key}`
+      : null;
+    options.push({
+      id: `library-doc:${doc.id}`,
+      name: title,
+      kind: "library_doc",
+      searchText: [
+        title,
+        issuePath,
+        ...(doc.issueLinks ?? []).flatMap((link) => [link.issueIdentifier, link.issueTitle, link.key]),
+      ].filter(Boolean).join(" "),
+      libraryDocumentId: doc.id,
+      libraryDocumentTitle: title,
+      libraryDocumentUpdatedAt: doc.updatedAt,
+      libraryDocumentPath: issuePath ? `Migrated issue doc ${issuePath}` : "Library doc",
     });
   }
 

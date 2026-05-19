@@ -14,7 +14,6 @@ import {
   DollarSign,
   Eye,
   EyeOff,
-  FolderTree,
   History,
   MessageSquare,
   MoreHorizontal,
@@ -208,7 +207,7 @@ function resolveContextColumnHeader(relativePath: string): { title: string; desc
   if (/^\/calendar(?:\/|$)/.test(relativePath)) {
     return { title: "Calendar", description: "Sources and filters" };
   }
-  if (/^\/(?:org|projects|library|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
+  if (/^\/(?:org|projects|library|resources|workspaces|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
     return { title: "Org", description: "Organization surfaces" };
   }
   return { title: "Agents", description: "" };
@@ -944,9 +943,8 @@ export function ThreeColumnContextSidebar() {
   });
   const orgContextItems = [
     { key: "structure", to: "/org", icon: Network, label: "Structure", active: /^\/org(?:\/|$)/.test(relativePath) },
-    { key: "library", to: "/library", icon: Boxes, label: "Library", active: /^\/(?:library|resources)(?:\/|$)/.test(relativePath) },
+    { key: "library", to: "/library", icon: Boxes, label: "Library", active: /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath) },
     { key: "heartbeats", to: "/heartbeats", icon: Clock3, label: "Heartbeats", active: /^\/heartbeats(?:\/|$)/.test(relativePath) },
-    { key: "workspaces", to: "/workspaces", icon: FolderTree, label: "Workspaces", active: /^\/workspaces(?:\/|$)/.test(relativePath) },
     { key: "goals", to: "/goals", icon: Target, label: "Goals", active: /^\/goals(?:\/|$)/.test(relativePath) },
     { key: "skills", to: "/skills", icon: Boxes, label: "Skills", active: /^\/skills(?:\/|$)/.test(relativePath) },
     { key: "costs", to: "/costs", icon: DollarSign, label: "Costs", active: /^\/costs(?:\/|$)/.test(relativePath) },

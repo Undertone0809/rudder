@@ -4,6 +4,11 @@ export const queryKeys = {
     detail: (id: string) => ["organizations", id] as const,
     stats: ["organizations", "stats"] as const,
     resources: (orgId: string) => ["organizations", orgId, "resources"] as const,
+    libraryDocuments: (orgId: string) => ["organizations", orgId, "library-documents"] as const,
+    libraryDocument: (orgId: string, documentId: string) =>
+      ["organizations", orgId, "library-document", documentId] as const,
+    libraryDocumentRevisions: (orgId: string, documentId: string) =>
+      ["organizations", orgId, "library-document-revisions", documentId] as const,
     workspaceFiles: (orgId: string, directoryPath: string) =>
       ["organizations", orgId, "workspace-files", directoryPath] as const,
     workspaceFile: (orgId: string, filePath: string) =>

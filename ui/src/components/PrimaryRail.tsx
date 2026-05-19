@@ -165,7 +165,7 @@ export function PrimaryRail({
   const isDesktopShell = readDesktopShell() !== null;
   const previousInboxCountRef = useRef<number | null>(null);
   const requestedNotificationPermissionRef = useRef(false);
-  const orgGroupActive = /^\/(?:org|projects|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
+  const orgGroupActive = /^\/(?:org|projects|heartbeats|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
   const issueEntryPath = readRememberedIssueNavigationPath(selectedOrganizationId);
   const railItems: RailItem[] = [
     {
@@ -204,7 +204,7 @@ export function PrimaryRail({
       to: "/library",
       label: "Library",
       icon: BookOpenText,
-      active: /^\/(?:library|resources)(?:\/|$)/.test(relativePath),
+      active: /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath),
     },
     {
       key: "organization",

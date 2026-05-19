@@ -1,5 +1,9 @@
 import type {
+  CreateLibraryDocument,
   CreateOrganizationResourceRequest,
+  LibraryDocument,
+  LibraryDocumentRevision,
+  LibraryDocumentSummary,
   Organization,
   OrganizationResource,
   OrganizationWorkspaceFileDetail,
@@ -21,6 +25,8 @@ import type {
   WorkspaceBackupRestoreRequest,
   WorkspaceBackupRestoreResult,
   WorkspaceBackupSummary,
+  RestoreLibraryDocumentRevision,
+  UpdateLibraryDocument,
   UpdateOrganizationBranding,
   UpdateOrganizationResourceRequest,
 } from "@rudderhq/shared";
@@ -56,6 +62,28 @@ export const organizationsApi = {
   ) => api.patch<Organization>(`/orgs/${orgId}`, data),
   updateBranding: (orgId: string, data: UpdateOrganizationBranding) =>
     api.patch<Organization>(`/orgs/${orgId}/branding`, data),
+  listLibraryDocuments: (orgId: string) =>
+    api.get<LibraryDocumentSummary[]>(`/orgs/${orgId}/library/documents`),
+  createLibraryDocument: (orgId: string, data: CreateLibraryDocument) =>
+    api.post<LibraryDocument>(`/orgs/${orgId}/library/documents`, data),
+  getLibraryDocument: (orgId: string, documentId: string) =>
+    api.get<LibraryDocument>(`/orgs/${orgId}/library/documents/${encodeURIComponent(documentId)}`),
+  updateLibraryDocument: (orgId: string, documentId: string, data: UpdateLibraryDocument) =>
+    api.patch<LibraryDocument>(`/orgs/${orgId}/library/documents/${encodeURIComponent(documentId)}`, data),
+  listLibraryDocumentRevisions: (orgId: string, documentId: string) =>
+    api.get<LibraryDocumentRevision[]>(
+      `/orgs/${orgId}/library/documents/${encodeURIComponent(documentId)}/revisions`,
+    ),
+  restoreLibraryDocumentRevision: (
+    orgId: string,
+    documentId: string,
+    revisionId: string,
+    data: RestoreLibraryDocumentRevision = {},
+  ) =>
+    api.post<LibraryDocument>(
+      `/orgs/${orgId}/library/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/restore`,
+      data,
+    ),
   listResources: (orgId: string) => api.get<OrganizationResource[]>(`/orgs/${orgId}/resources`),
   createResource: (orgId: string, data: CreateOrganizationResourceRequest) =>
     api.post<OrganizationResource>(`/orgs/${orgId}/resources`, data),
