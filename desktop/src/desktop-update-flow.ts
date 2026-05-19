@@ -21,6 +21,7 @@ import {
 export const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
 export const DESKTOP_FEEDBACK_EMAIL = "zeeland4work@gmail.com";
+export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
 export const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
 
 type ActiveRunSummary = any;
@@ -75,67 +76,11 @@ export function createDesktopUpdateFlow(context: {
     | { status: "unavailable"; message: string }
     | { status: "failed"; message: string };
 
-  const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
-  const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
-  export const DESKTOP_FEEDBACK_EMAIL = "zeeland4work@gmail.com";
-    
-  const LOCAL_ENV_PROFILES: Record<LocalEnvProfile["name"], LocalEnvProfile> = {
-    dev: {
-      name: "dev",
-      instanceId: "dev",
-      port: "3100",
-      embeddedPostgresPort: "54329",
-    },
-    prod_local: {
-      name: "prod_local",
-      instanceId: "default",
-      port: "3200",
-      embeddedPostgresPort: "54339",
-    },
-    e2e: {
-      name: "e2e",
-      instanceId: "e2e",
-      port: "3300",
-      embeddedPostgresPort: "54349",
-    },
-  };
-
   function createFeedbackMailtoUrl(): string {
     const params = new URLSearchParams({
       subject: `Rudder feedback (${app.getVersion()})`,
     });
     return `mailto:${DESKTOP_FEEDBACK_EMAIL}?${params.toString()}`;
-  }
-
-  function resolveDesktopCapabilities(): DesktopCapabilities {
-    let notifications = false;
-    try {
-      notifications = Notification.isSupported();
-    } catch {
-      notifications = false;
-    }
-
-    return {
-      badgeCount: typeof app.setBadgeCount === "function",
-      notifications,
-    };
-  }
-
-  async function toWorkspaceLaunchTargetPayload(
-    target: DesktopWorkspaceLaunchTarget,
-  ): Promise<DesktopWorkspaceLaunchTargetPayload> {
-    const iconDataUrl = await readWorkspaceLaunchTargetIconDataUrl(target, {
-      platform: process.platform,
-      getFileIcon: app.getFileIcon.bind(app),
-      createImageFromPath: nativeImage.createFromPath,
-    });
-
-    return {
-      id: target.id,
-      label: target.label,
-      kind: target.kind,
-      ...(iconDataUrl ? { iconDataUrl } : {}),
-    };
   }
 
   async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
