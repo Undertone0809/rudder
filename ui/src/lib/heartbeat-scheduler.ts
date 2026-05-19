@@ -18,6 +18,7 @@ export function parseSchedulerHeartbeatPolicy(runtimeConfig: unknown) {
   return {
     enabled: readBoolean(heartbeat.enabled, false),
     intervalSec: Math.max(0, readNumber(heartbeat.intervalSec, 0)),
+    preflightEnabled: readBoolean(heartbeat.preflightEnabled ?? heartbeat.timerPreflightEnabled, true),
   };
 }
 
@@ -30,6 +31,7 @@ export function buildAgentSchedulerState(agent: Pick<Agent, "status" | "runtimeC
   return {
     heartbeatEnabled: policy.enabled,
     intervalSec: policy.intervalSec,
+    preflightEnabled: policy.preflightEnabled,
     schedulerActive: isSchedulerStatusEligible(agent.status) && policy.enabled && policy.intervalSec > 0,
   };
 }

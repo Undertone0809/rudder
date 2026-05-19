@@ -47,7 +47,7 @@ const agents = [
     capabilities: null,
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: {},
-    runtimeConfig: { heartbeat: { enabled: false, intervalSec: 0 } },
+    runtimeConfig: { heartbeat: { enabled: false, intervalSec: 0, preflightEnabled: false } },
     budgetMonthlyCents: 0,
     spentMonthlyCents: 0,
     pauseReason: null,
@@ -200,6 +200,9 @@ describe("OrganizationHeartbeats", () => {
       /Timer heartbeat state for Blake[\s\S]*?aria-pressed="false"[^>]*>On<\/button>[\s\S]*?aria-pressed="true"[^>]*>Off<\/button>/,
     );
     expect(html).toContain("Run now");
+    expect(html).toContain("Preflight");
+    expect(html).toMatch(/aria-checked="true"[^>]*aria-label="Timer preflight for Nia"/);
+    expect(html).toMatch(/aria-checked="false"[^>]*aria-label="Timer preflight for Rosalie"/);
     expect(html).toContain("Recent activity");
   });
 });

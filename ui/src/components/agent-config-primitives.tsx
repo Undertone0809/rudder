@@ -41,6 +41,7 @@ export const help: Record<string, string> = {
   payloadTemplateJson: "Optional JSON merged into remote runtime request payloads before Rudder adds its standard wake and workspace fields.",
   webhookUrl: "The URL that receives POST requests when the agent is invoked.",
   heartbeatInterval: "Run this agent automatically on a timer. Useful for periodic tasks like checking for new work.",
+  heartbeatPreflight: "Check the control plane for assigned or review work before launching the runtime on timer heartbeats.",
   intervalSec: "Seconds between automatic heartbeat invocations.",
   timeoutSec: "Maximum seconds a run can take before being terminated. 0 means no timeout.",
   graceSec: "Seconds to wait after sending interrupt before force-killing the process.",

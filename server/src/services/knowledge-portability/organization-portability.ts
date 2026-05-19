@@ -524,6 +524,7 @@ const RUNTIME_DEFAULT_RULES: Array<{ path: string[]; value: unknown }> = [
   { path: ["heartbeat", "wakeOnAssignment"], value: true },
   { path: ["heartbeat", "wakeOnAutomation"], value: true },
   { path: ["heartbeat", "wakeOnDemand"], value: true },
+  { path: ["heartbeat", "preflightEnabled"], value: true },
   { path: ["heartbeat", "maxConcurrentRuns"], value: 3 },
 ];
 

@@ -7,6 +7,7 @@ import { agentsApi } from "@/api/agents";
 import { heartbeatsApi, type LiveRunForIssue } from "@/api/heartbeats";
 import { HeartbeatEnabledButtons } from "@/components/HeartbeatEnabledButtons";
 import { Button } from "@/components/ui/button";
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { EmptyState } from "@/components/EmptyState";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
@@ -114,6 +115,20 @@ function buildHeartbeatPatch(agent: Agent, enabled: boolean) {
   };
 }
 
+function buildHeartbeatPreflightPatch(agent: Agent, preflightEnabled: boolean) {
+  const runtimeConfig = asRecord(agent.runtimeConfig) ?? {};
+  const heartbeat = asRecord(runtimeConfig.heartbeat) ?? {};
+  return {
+    runtimeConfig: {
+      ...runtimeConfig,
+      heartbeat: {
+        ...heartbeat,
+        preflightEnabled,
+      },
+    },
+  };
+}
+
 export function OrganizationHeartbeats() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
@@ -158,6 +173,25 @@ export function OrganizationHeartbeats() {
     onError: (error) => {
       pushToast({
         title: error instanceof Error ? error.message : "Failed to update heartbeat",
+        tone: "error",
+      });
+    },
+  });
+
+  const setHeartbeatPreflightMutation = useMutation({
+    mutationFn: async ({ agent, preflightEnabled }: { agent: Agent; preflightEnabled: boolean }) =>
+      agentsApi.update(agent.id, buildHeartbeatPreflightPatch(agent, preflightEnabled), agent.orgId),
+    onSuccess: async (_, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(variables.agent.orgId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(variables.agent.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(variables.agent.orgId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(variables.agent.orgId) }),
+      ]);
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to update heartbeat preflight",
         tone: "error",
       });
     },
@@ -279,6 +313,9 @@ export function OrganizationHeartbeats() {
                 const starting =
                   invokeHeartbeatMutation.isPending
                   && invokeHeartbeatMutation.variables?.id === row.agent.id;
+                const savingPreflight =
+                  setHeartbeatPreflightMutation.isPending
+                  && setHeartbeatPreflightMutation.variables?.agent.id === row.agent.id;
                 const toggleOn = isHeartbeatToggleOn(row);
                 const latestRunLink = row.liveRun
                   ? `/agents/${agentRouteRef(row.agent)}/runs/${row.liveRun.id}`
@@ -318,6 +355,20 @@ export function OrganizationHeartbeats() {
                         title={row.agent.lastHeartbeatAt ? formatDateTime(row.agent.lastHeartbeatAt) : undefined}
                       >
                         Last heartbeat {row.agent.lastHeartbeatAt ? relativeTime(row.agent.lastHeartbeatAt) : "never"}
+                      </div>
+                      <div className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>Preflight</span>
+                        <ToggleSwitch
+                          checked={row.preflightEnabled}
+                          size="sm"
+                          tone="success"
+                          disabled={savingPreflight}
+                          aria-label={`Timer preflight for ${row.agent.name}`}
+                          onClick={() => setHeartbeatPreflightMutation.mutate({
+                            agent: row.agent,
+                            preflightEnabled: !row.preflightEnabled,
+                          })}
+                        />
                       </div>
                     </div>
 

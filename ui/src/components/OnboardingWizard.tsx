@@ -787,6 +787,7 @@ export function OnboardingWizard() {
             intervalSec: 3600,
             wakeOnDemand: true,
             cooldownSec: 10,
+            preflightEnabled: true,
             maxConcurrentRuns: AGENT_RUN_CONCURRENCY_DEFAULT
           }
         }

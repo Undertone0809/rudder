@@ -617,6 +617,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
         heartbeat: {
           enabled: val!.heartbeatEnabled,
           intervalSec: val!.intervalSec,
+          preflightEnabled: val!.preflightEnabled,
           maxConcurrentRuns: val!.maxConcurrentRuns,
         },
       };
@@ -988,6 +989,12 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 className={inputClass}
               />
             </Field>
+            <ToggleField
+              label="Preflight before timer run"
+              hint={help.heartbeatPreflight}
+              checked={val!.preflightEnabled}
+              onChange={(v) => set!({ preflightEnabled: v })}
+            />
           </div>
         </div>
       ) : !isCreate ? (
@@ -1026,6 +1033,16 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   className={inputClass}
                 />
               </Field>
+              <ToggleField
+                label="Preflight before timer run"
+                hint={help.heartbeatPreflight}
+                checked={eff(
+                  "heartbeat",
+                  "preflightEnabled",
+                  heartbeat.preflightEnabled !== false && heartbeat.timerPreflightEnabled !== false,
+                )}
+                onChange={(v) => mark("heartbeat", "preflightEnabled", v)}
+              />
             </div>
             <CollapsibleSection
               title="Advanced Run Policy"
