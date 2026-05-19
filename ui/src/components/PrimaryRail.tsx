@@ -7,11 +7,11 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import {
   Bot,
-  BookOpenText,
   CalendarDays,
   MessageCirclePlus,
   FolderKanban,
   Inbox,
+  LibraryBig,
   LayoutDashboard,
   MessageSquare,
   Network,
@@ -203,7 +203,7 @@ export function PrimaryRail({
       key: "library",
       to: "/library",
       label: "Library",
-      icon: BookOpenText,
+      icon: LibraryBig,
       active: /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath),
     },
     {
