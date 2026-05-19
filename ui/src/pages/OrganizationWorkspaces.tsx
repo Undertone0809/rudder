@@ -196,23 +196,6 @@ function isWorkspaceImageFilePath(filePath: string | null) {
   return extension !== null && WORKSPACE_IMAGE_FILE_EXTENSIONS.has(extension);
 }
 
-function inferLanguageFromPath(filePath: string | null) {
-  if (!filePath) return "text";
-  const normalized = filePath.toLowerCase();
-  if (normalized.endsWith(".md")) return "markdown";
-  if (normalized.endsWith(".ts")) return "typescript";
-  if (normalized.endsWith(".tsx")) return "tsx";
-  if (normalized.endsWith(".js")) return "javascript";
-  if (normalized.endsWith(".jsx")) return "jsx";
-  if (normalized.endsWith(".json")) return "json";
-  if (normalized.endsWith(".yml") || normalized.endsWith(".yaml")) return "yaml";
-  if (normalized.endsWith(".sh")) return "bash";
-  if (normalized.endsWith(".py")) return "python";
-  if (normalized.endsWith(".html")) return "html";
-  if (normalized.endsWith(".css")) return "css";
-  return "text";
-}
-
 function displayWorkspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
   return entry.displayLabel?.trim() || entry.name;
 }
@@ -256,20 +239,6 @@ function createUntitledDocumentPath() {
     .replace(/\.\d{3}Z$/, "Z")
     .toLowerCase();
   return `docs/untitled-${stamp}.md`;
-}
-
-function displayWorkspaceFileFormat(filePath: string | null, detail: OrganizationWorkspaceFileDetail | undefined) {
-  if (detail?.previewKind === "image" && detail.contentType) {
-    const subtype = detail.contentType.split("/").at(-1) ?? "image";
-    if (subtype === "svg+xml") return "svg";
-    if (subtype === "x-icon") return "ico";
-    return subtype;
-  }
-
-  const extension = getWorkspaceFileExtension(filePath);
-  if (extension && WORKSPACE_IMAGE_FILE_EXTENSIONS.has(extension)) return extension.slice(1);
-  if (detail?.contentType === "application/pdf") return "pdf";
-  return inferLanguageFromPath(filePath);
 }
 
 function updateSelectedPath(
@@ -1299,7 +1268,6 @@ export function OrganizationWorkspaceBrowser({
     },
   });
   const saveWorkspaceFileMutate = saveWorkspaceFile.mutate;
-  const isSavingWorkspaceFile = saveWorkspaceFile.isPending;
   useEffect(() => {
     saveWorkspaceFileMutateRef.current = saveWorkspaceFileMutate;
   }, [saveWorkspaceFileMutate]);
@@ -1717,9 +1685,6 @@ export function OrganizationWorkspaceBrowser({
     && selectedFileDetail.content !== null
     && !selectedFileDetail.truncated,
   );
-  const hasUnsavedChanges = canEditSelectedFile && draftContent !== (selectedFileDetail?.content ?? "");
-  const autosaveLabel = isSavingWorkspaceFile ? "Saving..." : hasUnsavedChanges ? "Autosaving..." : "Saved";
-  const selectedFormatLabel = displayWorkspaceFileFormat(selectedFilePath, selectedFileDetail);
   const primaryIde = availableIdes[0] ?? null;
   const hasLoadedSelectedFile = Boolean(
     selectedFilePath
@@ -1903,13 +1868,8 @@ export function OrganizationWorkspaceBrowser({
                   <div className="flex items-center px-4 text-sm text-muted-foreground">No file open</div>
                 )}
               </div>
-              <div className="flex shrink-0 items-center gap-2 border-l border-border px-3 text-xs text-muted-foreground">
-                {selectedFilePath ? (
-                  <span className="rounded-full border border-border px-2 py-0.5 font-mono">
-                    {selectedFormatLabel}
-                  </span>
-                ) : null}
-                {canOpenInIde && primaryIde ? (
+              {canOpenInIde && primaryIde ? (
+                <div className="flex shrink-0 items-center gap-2 border-l border-border px-3 text-xs text-muted-foreground">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -1931,17 +1891,8 @@ export function OrganizationWorkspaceBrowser({
                     </TooltipTrigger>
                     <TooltipContent>{`Open in ${primaryIde.label}`}</TooltipContent>
                   </Tooltip>
-                ) : null}
-                {canEditSelectedFile ? (
-                  <span
-                    className="inline-flex h-8 items-center rounded-md border border-border px-2 text-xs text-muted-foreground"
-                    data-testid="org-workspaces-autosave-status"
-                  >
-                    {isSavingWorkspaceFile ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-                    {autosaveLabel}
-                  </span>
-                ) : null}
-              </div>
+                </div>
+              ) : null}
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">
               {!selectedFilePath ? (
