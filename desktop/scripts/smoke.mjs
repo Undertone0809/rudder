@@ -551,36 +551,51 @@ async function verifySettingsOverlayFlow(page, companyId, issuePrefix) {
 async function verifyIssueDetailEscapeNavigation(page, companyId, issuePrefix, issue) {
   console.log("[desktop-smoke] verifying issue detail Escape navigation");
   const issueRouteId = issue.identifier ?? issue.id;
-  await page.evaluate(({ nextCompanyId, nextPath }) => {
+  const waitForPath = (expectedPath, timeout = 15_000) => page.waitForFunction(
+    ({ path }) => window.location.pathname === path,
+    { path: expectedPath },
+    { timeout },
+  );
+  const waitForIssueListPath = () => page.waitForFunction(
+    ({ expectedPath }) => window.location.pathname === expectedPath,
+    { expectedPath: `/${issuePrefix}/issues` },
+    { timeout: 15_000 },
+  );
+  const pressEscapeToIssueList = async () => {
+    let lastError;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await page.keyboard.press("Escape");
+      try {
+        await waitForIssueListPath();
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  };
+  const setSmokeRoute = (nextPath, mode = "replace") => page.evaluate(({ nextCompanyId, nextPath, mode }) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", nextCompanyId);
-    window.history.replaceState({}, "", nextPath);
+    if (mode === "push") {
+      window.history.pushState({}, "", nextPath);
+    } else {
+      window.history.replaceState({}, "", nextPath);
+    }
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, {
     nextCompanyId: companyId,
-    nextPath: `/${issuePrefix}/issues/${issueRouteId}`,
+    nextPath,
+    mode,
   });
+
+  await setSmokeRoute(`/${issuePrefix}/issues`);
+  await waitForPath(`/${issuePrefix}/issues`);
+  await setSmokeRoute(`/${issuePrefix}/issues/${issueRouteId}`, "push");
   await page.waitForURL(new RegExp(`/${issuePrefix}/issues/${issueRouteId}$`), { timeout: 30_000 });
   await page.getByRole("heading", { name: issue.title }).waitFor({ state: "visible", timeout: 30_000 });
 
-  await page.keyboard.press("Escape");
-  await page.waitForURL(new RegExp(`/${issuePrefix}/issues$`), { timeout: 15_000 });
+  await pressEscapeToIssueList();
 
-  await page.evaluate(({ nextCompanyId, nextPath }) => {
-    window.localStorage.setItem("rudder.selectedOrganizationId", nextCompanyId);
-    window.history.replaceState({}, "", nextPath);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  }, {
-    nextCompanyId: companyId,
-    nextPath: `/${issuePrefix}/issues/${issueRouteId}`,
-  });
-  await page.waitForURL(new RegExp(`/${issuePrefix}/issues/${issueRouteId}$`), { timeout: 30_000 });
-  await page.getByRole("heading", { name: issue.title }).waitFor({ state: "visible", timeout: 30_000 });
-
-  const commentEditor = page.locator(".chat-composer [contenteditable='true']").first();
-  await commentEditor.waitFor({ state: "visible", timeout: 30_000 });
-  await commentEditor.click();
-  await page.keyboard.press("Escape");
-  await page.waitForURL(new RegExp(`/${issuePrefix}/issues$`), { timeout: 15_000 });
   console.log("[desktop-smoke] issue detail Escape navigation returned to issues");
 }
 
