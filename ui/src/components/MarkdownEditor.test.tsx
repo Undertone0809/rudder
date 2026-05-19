@@ -335,6 +335,48 @@ describe("MarkdownEditor", () => {
     expect("top" in position).toBe(false);
   });
 
+  it("anchors the wide mention panel below the composer surface when space allows", () => {
+    const position = getMentionPanelPositionForViewport(
+      {
+        viewportTop: 120,
+        viewportBottom: 192,
+        viewportLeft: 420,
+        viewportRight: 1180,
+      },
+      1280,
+      720,
+    );
+
+    expect(position).toMatchObject({
+      left: 420,
+      width: 760,
+      top: 202,
+      maxHeight: 360,
+    });
+    expect("bottom" in position).toBe(false);
+  });
+
+  it("limits the mention panel height to the available viewport space", () => {
+    const position = getMentionPanelPositionForViewport(
+      {
+        viewportTop: 60,
+        viewportBottom: 660,
+        viewportLeft: 420,
+        viewportRight: 1180,
+      },
+      1280,
+      720,
+    );
+
+    expect(position).toMatchObject({
+      left: 420,
+      width: 760,
+      top: 670,
+      maxHeight: 38,
+    });
+    expect("bottom" in position).toBe(false);
+  });
+
   it("opens an image preview dialog when an inline image is double-clicked", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

@@ -61,11 +61,15 @@ test("issue comment composer uses the chat-style mention panel without exposing 
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
   }, organization.id);
 
-  await page.setViewportSize({ width: 1440, height: 980 });
+  await page.setViewportSize({ width: 1440, height: 720 });
   await page.goto(`/${organization.issuePrefix}/issues/${primaryIssue.identifier ?? primaryIssue.id}`);
 
   const composer = page.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').last();
   await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.evaluate((node) => {
+    node.scrollIntoView({ block: "end", inline: "nearest" });
+  });
+  await page.waitForTimeout(50);
 
   await composer.click();
   await page.keyboard.type("@rel");
@@ -83,6 +87,8 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   expect(composerBox).not.toBeNull();
   expect(menuBox).not.toBeNull();
   expect(menuBox!.width).toBeGreaterThan(composerBox!.width - 8);
+  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(720 - 12);
+  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(composerBox!.y - 8);
 
   await page.getByTestId(`markdown-mention-option-issue:${relatedIssue.id}`).click();
   await page.keyboard.type(" mouse");

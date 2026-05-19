@@ -32,12 +32,19 @@ import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
 import type { MarkdownEditorProps, MarkdownEditorRef, MentionOption } from "./MarkdownEditor";
+import {
+  getMentionMenuPositionForViewport,
+  getMentionPanelPositionForViewport,
+} from "../lib/mention-menu-position";
 
 type MentionState = {
   trigger: "@" | "$";
   query: string;
   top: number;
   left: number;
+  viewportTop: number;
+  viewportBottom: number;
+  viewportLeft: number;
   textNode: Text;
   atPos: number;
   endPos: number;
@@ -137,6 +144,9 @@ function detectMention(container: HTMLElement): MentionState | null {
     query,
     top: rect.bottom + 4,
     left: rect.left,
+    viewportTop: rect.top,
+    viewportBottom: rect.bottom,
+    viewportLeft: rect.left,
     textNode: textNode as Text,
     atPos,
     endPos: offset,
@@ -252,20 +262,19 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       const anchor = mentionMenuAnchorRef?.current ?? containerRef.current;
       const rect = anchor?.getBoundingClientRect();
       if (rect) {
-        return {
-          position: "fixed" as const,
-          top: rect.bottom + 10,
-          left: rect.left,
-          width: Math.max(260, rect.width),
-        };
+        return getMentionPanelPositionForViewport(
+          {
+            viewportTop: rect.top,
+            viewportBottom: rect.bottom,
+            viewportLeft: rect.left,
+            viewportRight: rect.right,
+          },
+          window.innerWidth,
+          window.innerHeight,
+        );
       }
     }
-    return {
-      position: "fixed" as const,
-      top: mentionState.top,
-      left: mentionState.left,
-      width: 320,
-    };
+    return getMentionMenuPositionForViewport(mentionState, window.innerWidth, window.innerHeight);
   }, [mentionMenuAnchorRef, mentionMenuPlacement, mentionState]);
 
   const groupedMentionOptions = useMemo(() => {
