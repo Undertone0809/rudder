@@ -60,6 +60,7 @@ describe("index.css motion rules", () => {
 
     expect(glassPopover).toContain("background:");
     expect(glassPopover).toContain("!important");
+    expect(glassPopover).toContain("border-radius: var(--radius-md)");
     expect(glassPopover).toContain("backdrop-filter: blur(34px) saturate(150%)");
   });
 
@@ -68,6 +69,7 @@ describe("index.css motion rules", () => {
 
     expect(glassModal).toContain("background:");
     expect(glassModal).toContain("!important");
+    expect(glassModal).toContain("border-radius: var(--radius-md)");
     expect(glassModal).toContain("backdrop-filter: blur(34px) saturate(150%)");
   });
 

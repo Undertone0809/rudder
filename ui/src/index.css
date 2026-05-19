@@ -819,6 +819,7 @@
   }
 
   .glass-popover.glass-popover {
+    border-radius: var(--radius-md);
     background:
       linear-gradient(
         180deg,
@@ -848,6 +849,7 @@
   }
 
   .glass-modal.glass-modal {
+    border-radius: var(--radius-md);
     background:
       linear-gradient(
         180deg,

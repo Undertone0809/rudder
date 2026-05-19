@@ -1089,7 +1089,7 @@ export function AutomationDetail() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="automation-trigger-menu-trigger group w-full justify-center rounded-full bg-background/55 shadow-none"
+                    className="automation-trigger-menu-trigger group w-full justify-center rounded-md bg-background/55 shadow-none"
                     data-testid="automation-add-trigger-button"
                   >
                     Add trigger
@@ -1101,7 +1101,7 @@ export function AutomationDetail() {
                   align="end"
                   side="left"
                   sideOffset={8}
-                  className="automation-trigger-menu-content glass-popover w-[min(320px,calc(100vw-2rem))] space-y-3 rounded-xl p-3 text-foreground"
+                  className="automation-trigger-menu-content glass-popover w-[min(320px,calc(100vw-2rem))] space-y-3 rounded-md p-3 text-foreground"
                 >
                   <div className="px-1 text-sm font-medium text-muted-foreground">Schedule</div>
                   <ScheduleEditor
