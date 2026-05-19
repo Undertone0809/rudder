@@ -79,6 +79,7 @@ test.describe("Automation detail layout", () => {
     const projectControl = page.getByTestId("automation-detail-project-control");
     const addTriggerButton = page.getByTestId("automation-add-trigger-button");
     const triggersList = page.getByTestId("automation-triggers-list");
+    const triggerEditorBody = page.getByTestId("automation-trigger-editor-body");
     const statusButton = headerActions.getByRole("button", { name: "Pause automation" });
     const deleteButton = headerActions.getByRole("button", { name: "Delete automation" });
     const runButton = headerActions.getByRole("button", { name: "Run now" });
@@ -90,8 +91,9 @@ test.describe("Automation detail layout", () => {
     await expect(agentControl).toBeVisible();
     await expect(projectControl).toBeVisible();
     await expect(addTriggerButton).toBeVisible();
-    await expect(page.getByTestId("automation-add-trigger-card")).toBeHidden();
+    await expect(page.getByTestId("automation-add-trigger-card")).toHaveCount(0);
     await expect(triggersList).toBeVisible();
+    await expect(triggerEditorBody).toBeHidden();
     await expect(statusButton).toBeVisible();
     await expect(deleteButton).toBeVisible();
     await expect(runButton).toBeVisible();
@@ -112,6 +114,10 @@ test.describe("Automation detail layout", () => {
     const addTriggerCard = page.getByTestId("automation-add-trigger-card");
     await expect(addTriggerCard).toBeVisible();
     await expect(addTriggerCard.getByRole("button", { name: "Create trigger" })).toBeVisible();
+    const addTriggerBox = await addTriggerCard.boundingBox();
+    expect(addTriggerBox).not.toBeNull();
+    await triggersList.getByRole("button", { name: "Edit trigger" }).click();
+    await expect(triggerEditorBody).toBeVisible();
 
     const assigneeSelector = agentControl.getByRole("button", { name: /Automation Layout Agent/ });
     const projectSelector = projectControl.getByRole("button", { name: /Onboarding/ });
@@ -146,7 +152,7 @@ test.describe("Automation detail layout", () => {
     const runButtonBox = await runButton.boundingBox();
     const overviewBox = await overviewStrip.boundingBox();
     const configurationCardBox = await configurationCard.boundingBox();
-    const addTriggerBox = await addTriggerCard.boundingBox();
+    const addTriggerButtonBox = await addTriggerButton.boundingBox();
     const triggersListBox = await triggersList.boundingBox();
 
     expect(viewport).not.toBeNull();
@@ -157,7 +163,7 @@ test.describe("Automation detail layout", () => {
     expect(runButtonBox).not.toBeNull();
     expect(overviewBox).not.toBeNull();
     expect(configurationCardBox).not.toBeNull();
-    expect(addTriggerBox).not.toBeNull();
+    expect(addTriggerButtonBox).not.toBeNull();
     expect(triggersListBox).not.toBeNull();
 
     expect(statusButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
@@ -166,9 +172,10 @@ test.describe("Automation detail layout", () => {
     expect(runButtonBox!.x).toBeGreaterThan(deleteButtonBox!.x);
     expect(overviewBox!.y).toBeGreaterThan(shellBox!.y);
     expect(configurationCardBox!.x).toBeGreaterThan(overviewBox!.x + overviewBox!.width);
-    expect(overviewBox!.y + overviewBox!.height).toBeLessThan(addTriggerBox!.y + 8);
-    expect(addTriggerBox!.y + addTriggerBox!.height).toBeLessThan(triggersListBox!.y + 8);
-    expect(addTriggerBox!.x).toBeGreaterThanOrEqual(configurationCardBox!.x - 2);
+    expect(addTriggerButtonBox!.y).toBeLessThan(triggersListBox!.y + 8);
+    expect(addTriggerButtonBox!.x).toBeGreaterThanOrEqual(configurationCardBox!.x - 2);
+    expect(addTriggerBox!.x + addTriggerBox!.width).toBeLessThanOrEqual(configurationCardBox!.x + 16);
+    expect(addTriggerBox!.y).toBeLessThanOrEqual(addTriggerButtonBox!.y + addTriggerButtonBox!.height + 8);
 
     await page.screenshot({
       path: testInfo.outputPath("automation-detail-layout.png"),

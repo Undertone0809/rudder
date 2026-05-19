@@ -340,12 +340,15 @@ vi.mock("../components/ScheduleEditor", () => ({
   ScheduleEditor: ({
     value,
     onChange,
+    variant,
   }: {
     value: string;
     onChange: (value: string) => void;
+    variant?: "default" | "compact";
   }) => (
     <input
       data-testid="schedule-editor"
+      data-variant={variant ?? "default"}
       value={value}
       onChange={(event) => onChange(event.target.value)}
     />
@@ -442,10 +445,13 @@ describe("AutomationDetail", () => {
     expect(container.querySelector("aside")?.className).toContain("lg:sticky");
     const configurationCard = container.querySelector('[data-testid="automation-configuration-card"]');
     expect(configurationCard).toBeTruthy();
+    expect(configurationCard?.className).toContain("bg-card/85");
+    expect(configurationCard?.className).not.toContain("bg-[#fbfaf7]");
     expect(configurationCard?.textContent).toContain("Triggers");
     expect(configurationCard?.querySelector('[data-testid="automation-add-trigger-button"]')).toBeTruthy();
-    expect(configurationCard?.querySelector('[data-testid="automation-add-trigger-card"]')?.hasAttribute("hidden")).toBe(true);
+    expect(document.querySelector('[data-testid="automation-add-trigger-card"]')).toBeNull();
     expect(configurationCard?.querySelector('[data-testid="automation-triggers-list"]')).toBeTruthy();
+    expect(configurationCard?.querySelector('[data-testid="automation-trigger-editor-body"]')?.hasAttribute("hidden")).toBe(true);
     const overviewStrip = container.querySelector('[data-testid="automation-overview-strip"]');
     expect(overviewStrip?.textContent).toContain("Active");
     expect(overviewStrip?.textContent).not.toContain("Automation UX");
@@ -523,17 +529,17 @@ describe("AutomationDetail", () => {
     const addTriggerButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Add trigger"));
     expect(addTriggerButton).toBeTruthy();
     expect(addTriggerButton?.hasAttribute("disabled")).toBe(false);
-    expect(container.querySelector('[data-testid="automation-add-trigger-card"]')?.hasAttribute("hidden")).toBe(true);
+    expect(document.querySelector('[data-testid="automation-add-trigger-card"]')).toBeNull();
 
     await act(async () => {
       addTriggerButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
-    expect(container.querySelector('[data-testid="automation-add-trigger-card"]')?.hasAttribute("hidden")).toBe(false);
-    expect(container.textContent).toContain("New trigger");
-    expect(container.textContent).toContain("Autosaves after edits");
-    expect(container.textContent).toContain("Create trigger");
+    expect(document.querySelector('[data-testid="automation-add-trigger-card"]')).toBeTruthy();
+    expect(document.body.textContent).toContain("Schedule");
+    expect(document.body.textContent).toContain("Create trigger");
+    expect(document.querySelector('[data-testid="schedule-editor"]')?.getAttribute("data-variant")).toBe("compact");
   });
 
   it("shows per-trigger sync status and confirms before deleting a trigger", async () => {
@@ -545,6 +551,19 @@ describe("AutomationDetail", () => {
     });
 
     expect((container.textContent?.match(/In sync/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    const triggerEditorBody = container.querySelector('[data-testid="automation-trigger-editor-body"]');
+    expect(triggerEditorBody?.hasAttribute("hidden")).toBe(true);
+
+    const editTriggerButton = container.querySelector('button[aria-label="Edit trigger"]');
+    expect(editTriggerButton).toBeTruthy();
+
+    await act(async () => {
+      editTriggerButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(triggerEditorBody?.hasAttribute("hidden")).toBe(false);
+    expect(container.querySelector('button[aria-label="Collapse trigger editor"]')).toBeTruthy();
 
     const deleteTriggerButton = container.querySelector('button[aria-label="Delete trigger"]');
     expect(deleteTriggerButton).toBeTruthy();
