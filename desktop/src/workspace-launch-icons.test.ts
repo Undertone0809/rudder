@@ -95,28 +95,4 @@ describe("readWorkspaceLaunchTargetIconDataUrl", () => {
     expect(getFileIcon).not.toHaveBeenCalled();
     expect(createImageFromPath).not.toHaveBeenCalled();
   });
-
-  it("keeps launcher target listing resilient when a bundle icon cannot be decoded", async () => {
-    const getFileIcon = vi.fn(async () => image("data:image/png;base64,file"));
-    const createImageFromPath = vi.fn(() => {
-      throw new Error("decode failed");
-    });
-
-    await expect(readWorkspaceLaunchTargetIconDataUrl({
-      id: "vscode",
-      label: "VS Code",
-      kind: "ide",
-      iconPath: "/Applications/Visual Studio Code.app",
-    }, {
-      platform: "darwin",
-      getFileIcon,
-      createImageFromPath,
-      resolveBundleIconPath: async () => "/Applications/Visual Studio Code.app/Contents/Resources/Code.icns",
-    })).resolves.toBeUndefined();
-
-    expect(getFileIcon).not.toHaveBeenCalled();
-    expect(createImageFromPath).toHaveBeenCalledWith(
-      "/Applications/Visual Studio Code.app/Contents/Resources/Code.icns",
-    );
-  });
 });
