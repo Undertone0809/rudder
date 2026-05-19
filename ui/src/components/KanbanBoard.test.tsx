@@ -42,6 +42,7 @@ vi.mock("@/lib/router", () => ({
 let cleanupFn: (() => void) | null = null;
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanupFn?.();
   cleanupFn = null;
   document.body.innerHTML = "";
@@ -151,6 +152,9 @@ describe("KanbanBoard", () => {
   });
 
   it("separates primary assignee and secondary reviewer project label metadata on a board card", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 4, 19, 12, 0, 0));
+
     const container = render(
       <KanbanBoard
         issues={[{
@@ -169,9 +173,12 @@ describe("KanbanBoard", () => {
               updatedAt: new Date("2026-04-19T08:00:00.000Z"),
             },
           ],
+          createdAt: new Date(2026, 4, 17, 9, 30),
+          updatedAt: new Date(2026, 4, 18, 9, 30),
         }]}
         currentUserId="user-1"
         projects={[{ id: "project-1", name: "Rudder dev" }]}
+        displayProperties={["identifier", "priority", "assignee", "reviewer", "labels", "project", "updated", "created"]}
         onUpdateIssue={() => undefined}
       />,
     );
@@ -195,6 +202,8 @@ describe("KanbanBoard", () => {
         expect.stringContaining("ProjectRudder dev"),
         expect.stringContaining("ReviewerMe"),
         expect.stringContaining("LabelsUI"),
+        expect.stringContaining("UpdatedYesterday"),
+        expect.stringContaining("CreatedMay 17"),
       ]),
     );
     expect(assignee?.textContent).toContain("Me");
