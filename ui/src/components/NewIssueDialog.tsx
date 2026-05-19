@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type DragEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Agent } from "@rudderhq/shared";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { findIssueLabelExactMatch, normalizeIssueLabelName, pickIssueLabelColor } from "@/lib/issue-labels";
 import { useDialog } from "../context/DialogContext";
@@ -32,7 +31,6 @@ import {
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
-import { agentTitleBadgeLabel } from "../lib/agent-labels";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { useToast } from "../context/ToastContext";
@@ -78,8 +76,7 @@ import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption }
 import { resolveRuntimeModels } from "../lib/runtime-models";
 import { issueStatusText, issueStatusTextDefault } from "../lib/status-colors";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
-import { AgentIcon } from "./AgentIconPicker";
-import { AgentTitleBadge } from "./AssigneeLabel";
+import { AgentMenuLabel } from "./AssigneeLabel";
 import { IssueLabelChip } from "./IssueLabelChip";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { PriorityBarsIcon, PriorityPickerOption, priorityPickerContentClassName } from "./PriorityIcon";
@@ -101,24 +98,6 @@ const STAGED_FILE_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,app
 type ViewTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => { finished: Promise<void> };
 };
-
-function AgentSelectorLabel({
-  agent,
-  label,
-  className,
-}: {
-  agent: Pick<Agent, "name" | "role" | "title">;
-  label?: string;
-  className?: string;
-}) {
-  const badgeLabel = agentTitleBadgeLabel(agent);
-  return (
-    <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
-      <span className="truncate">{label ?? agent.name}</span>
-      {badgeLabel ? <AgentTitleBadge label={badgeLabel} className="max-w-none shrink-0" /> : null}
-    </span>
-  );
-}
 
 function buildCreatedIssueDetailHref(input: {
   issue: { id: string; identifier: string | null };
@@ -1346,7 +1325,7 @@ export function NewIssueDialog() {
                 searchPlaceholder="Search assignees..."
                 emptyMessage="No assignees found."
                 variant="field"
-                className="w-full"
+                className="h-auto min-h-12 w-full py-2"
                 onChange={(value) => {
                   const nextAssignee = parseAssigneeValue(value);
                   if (nextAssignee.assigneeAgentId) {
@@ -1364,10 +1343,7 @@ export function NewIssueDialog() {
                 renderTriggerValue={(option) =>
                   option ? (
                     currentAssignee ? (
-                      <>
-                        <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <AgentSelectorLabel agent={currentAssignee} label={option.label} className="flex-1" />
-                      </>
+                      <AgentMenuLabel agent={currentAssignee} />
                     ) : (
                       <span className="truncate">{option.label}</span>
                     )
@@ -1381,14 +1357,7 @@ export function NewIssueDialog() {
                     ? (agents ?? []).find((agent) => agent.id === parseAssigneeValue(option.id).assigneeAgentId)
                     : null;
                   return (
-                    <span className="flex min-w-0 flex-1 items-center gap-2">
-                      {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
-                      {assignee ? (
-                        <AgentSelectorLabel agent={assignee} label={option.label} className="flex-1" />
-                      ) : (
-                        <span className="truncate">{option.label}</span>
-                      )}
-                    </span>
+                    assignee ? <AgentMenuLabel agent={assignee} /> : <span className="truncate">{option.label}</span>
                   );
                 }}
               />
@@ -1449,7 +1418,7 @@ export function NewIssueDialog() {
                 searchPlaceholder="Search reviewers..."
                 emptyMessage="No reviewers found."
                 variant="field"
-                className="w-full"
+                className="h-auto min-h-12 w-full py-2"
                 onChange={(value) => {
                   const nextReviewer = parseAssigneeValue(value);
                   if (nextReviewer.assigneeAgentId) {
@@ -1463,10 +1432,7 @@ export function NewIssueDialog() {
                 renderTriggerValue={(option) =>
                   option ? (
                     currentReviewer ? (
-                      <>
-                        <AgentIcon icon={currentReviewer.icon} role={currentReviewer.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <AgentSelectorLabel agent={currentReviewer} label={option.label} className="flex-1" />
-                      </>
+                      <AgentMenuLabel agent={currentReviewer} />
                     ) : (
                       <span className="truncate">{option.label}</span>
                     )
@@ -1480,14 +1446,7 @@ export function NewIssueDialog() {
                     ? (agents ?? []).find((agent) => agent.id === parseAssigneeValue(option.id).assigneeAgentId)
                     : null;
                   return (
-                    <span className="flex min-w-0 flex-1 items-center gap-2">
-                      {reviewer ? <AgentIcon icon={reviewer.icon} role={reviewer.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
-                      {reviewer ? (
-                        <AgentSelectorLabel agent={reviewer} label={option.label} className="flex-1" />
-                      ) : (
-                        <span className="truncate">{option.label}</span>
-                      )}
-                    </span>
+                    reviewer ? <AgentMenuLabel agent={reviewer} /> : <span className="truncate">{option.label}</span>
                   );
                 }}
               />
