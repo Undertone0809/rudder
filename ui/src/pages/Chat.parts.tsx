@@ -612,7 +612,24 @@ export function isChatProjectSelectionLocked({
 }
 
 export function approvalNeedsAction(approval: Approval | null | undefined) {
-  return approval?.status === "pending" || approval?.status === "revision_requested";
+  return approval?.status === "pending";
+}
+
+export function buildChatProposalRevisionPrompt(input: {
+  proposalTitle?: string | null;
+  feedback: string;
+}) {
+  const title = input.proposalTitle?.trim();
+  return [
+    title
+      ? `Please revise the proposal "${title}" based on the feedback below.`
+      : "Please revise the current proposal based on the feedback below.",
+    "",
+    "Return a new proposal for review. Do not create the issue or apply the change yet.",
+    "",
+    "Requested changes:",
+    input.feedback.trim(),
+  ].join("\n");
 }
 
 export function issueProposalFromMessage(message: ChatMessage) {
@@ -701,6 +718,17 @@ export function operationProposalStatusFromMessage(message: ChatMessage): ChatOp
     return status;
   }
   return "pending";
+}
+
+export function operationProposalDecisionNoteFromMessage(message: ChatMessage) {
+  const rawState =
+    message.structuredPayload?.operationProposalState
+    && typeof message.structuredPayload.operationProposalState === "object"
+    && !Array.isArray(message.structuredPayload.operationProposalState)
+      ? (message.structuredPayload.operationProposalState as Record<string, unknown>)
+      : null;
+  const note = typeof rawState?.decisionNote === "string" ? rawState.decisionNote.trim() : "";
+  return note || null;
 }
 
 export function proposalReviewStatus(message: ChatMessage): "pending" | "approved" | "rejected" | "revision_requested" | null {
@@ -947,4 +975,3 @@ export function statusChipClassName(state: ChatStreamDraftState | ChatMessage["s
   if (state === "interrupted") return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
   return "chat-chip";
 }
-

@@ -11,6 +11,7 @@ import {
   ProposalCard,
   askUserAnswerFromMessage,
   assistantStateLabel,
+  buildChatProposalRevisionPrompt,
   buildDraftChatContextLinks,
   canContinueInterruptedChatMessage,
   canRetryFailedChatMessage,
@@ -121,14 +122,19 @@ function renderSystemMessageBody(message: ChatMessage) {
   );
 }
 
-function renderProposalCard(message: ChatMessage, chat: ChatConversation = conversation({}), agents?: Agent[]) {
+function renderProposalCard(
+  message: ChatMessage,
+  chat: ChatConversation = conversation({}),
+  agents?: Agent[],
+  decisionNote = "",
+) {
   return renderToStaticMarkup(
     <ThemeProvider>
       <ProposalCard
         conversation={chat}
         message={message}
         agents={agents}
-        decisionNote=""
+        decisionNote={decisionNote}
         onDecisionNoteChange={vi.fn()}
         onApprovalAction={vi.fn()}
         onResolveOperationProposal={vi.fn()}
@@ -324,6 +330,83 @@ describe("ProposalCard", () => {
     expect(html).not.toContain("border-border/70");
     expect(html).not.toContain("bg-muted/90");
     expect(html).not.toContain("shadow-sm");
+  });
+
+  it("shows revision-requested issue proposals as read-only requested changes", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Please review this proposal.",
+      structuredPayload: {
+        title: "Fix approval flow",
+        priority: "high",
+        description: "Create a better review loop.",
+      },
+      approvalId: "approval-1",
+      approval: {
+        id: "approval-1",
+        orgId: "org-1",
+        type: "chat_issue_creation",
+        requestedByAgentId: "agent-1",
+        requestedByUserId: null,
+        status: "revision_requested",
+        payload: {},
+        decisionNote: "Assign the issue to the creating agent.",
+        decidedByUserId: "board",
+        decidedAt: new Date("2026-05-07T00:01:00.000Z"),
+        createdAt: new Date("2026-05-07T00:00:00.000Z"),
+        updatedAt: new Date("2026-05-07T00:01:00.000Z"),
+      },
+    }));
+
+    expect(html).toContain("Requested changes");
+    expect(html).toContain("Assign the issue to the creating agent.");
+    expect(html).not.toContain("Feedback for agent");
+    expect(html).not.toContain(">Approve</button>");
+    expect(html).not.toContain(">Request changes</button>");
+    expect(html).not.toContain(">Reject</button>");
+  });
+
+  it("shows requested changes for lightweight operation proposals", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "operation_proposal",
+      body: "Please review this change.",
+      structuredPayload: {
+        operationProposal: {
+          targetType: "agent",
+          targetId: "agent-1",
+          summary: "Update agent title",
+          patch: { title: "Founding Engineer" },
+        },
+        operationProposalState: {
+          status: "revision_requested",
+          decisionNote: "Use a role-specific title.",
+          decidedByUserId: "board",
+          decidedAt: "2026-05-07T00:01:00.000Z",
+        },
+      },
+    }));
+
+    expect(html).toContain("Requested changes");
+    expect(html).toContain("Use a role-specific title.");
+    expect(html).not.toContain("Feedback for agent");
+    expect(html).not.toContain(">Approve</button>");
+    expect(html).not.toContain(">Request changes</button>");
+    expect(html).not.toContain(">Reject</button>");
+  });
+});
+
+describe("proposal revision prompts", () => {
+  it("builds an agent-facing revision prompt from operator feedback", () => {
+    expect(buildChatProposalRevisionPrompt({
+      proposalTitle: "Fix approval flow",
+      feedback: "Assign the issue to the creating agent.",
+    })).toContain("Please revise the proposal \"Fix approval flow\"");
+    expect(buildChatProposalRevisionPrompt({
+      proposalTitle: "Fix approval flow",
+      feedback: "Assign the issue to the creating agent.",
+    })).toContain("Return a new proposal for review. Do not create the issue or apply the change yet.");
   });
 });
 

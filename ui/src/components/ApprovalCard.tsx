@@ -48,7 +48,7 @@ export function ApprovalCard({
 }) {
   const Icon = typeIcon[approval.type] ?? defaultTypeIcon;
   const label = approvalLabel(approval.type, approval.payload as Record<string, unknown> | null);
-  const isActionable = approval.status === "pending" || approval.status === "revision_requested";
+  const isActionable = approval.status === "pending";
   const showResolutionButtons = (allowBudgetActions || approval.type !== "budget_override_required") && isActionable;
   const showRequestRevision = Boolean(onRequestRevision) && approval.status === "pending";
   const showActions = showResolutionButtons || showRequestRevision || Boolean(extraActions) || Boolean(detailLink || onOpen);
@@ -116,7 +116,7 @@ export function ApprovalCard({
               onClick={onRequestRevision}
               disabled={isPending}
             >
-              Request revision
+              Request changes
             </Button>
           ) : null}
           {extraActions}

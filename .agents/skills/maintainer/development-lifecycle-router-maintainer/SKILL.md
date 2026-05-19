@@ -224,6 +224,15 @@ report the blocker as requiring user judgment.
 Always inspect branch and dirty state before edits and before commit.
 
 - Stage only files from the current task.
+- For large refactors or `/goal` runs, split commits by coherent phase when
+  the phase can stand on its own: facade/boundary setup, internal extraction,
+  consumer rewiring, compatibility fix, test hardening, or docs update.
+- When the user says "分批 commit" or "不要一个很大的 commit", make a phase
+  checklist before the first commit and preserve a resumable checkpoint after
+  each phase: current phase, files touched, validation state, known blockers,
+  and next command or edit target.
+- Do not batch unrelated route, UI, runtime, migration, and docs cleanup into a
+  single commit just because they were discovered during one long run.
 - Do not amend unless HEAD is confirmed to be your own just-created commit and
   no parallel commits have appeared.
 - Prefer a normal follow-up commit over history rewrite in a shared workspace.

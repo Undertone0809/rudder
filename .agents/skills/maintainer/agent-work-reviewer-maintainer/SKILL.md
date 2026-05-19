@@ -183,6 +183,12 @@ Use or Browser could cheaply verify the actual Rudder interaction. The minimum
 credible evidence is the observed workflow state plus any relevant logs, API
 responses, screenshots, or failure messages.
 
+If the user explicitly says the reviewer can use Computer Use or Browser to
+test a real scenario, treat that as part of the review assignment. If direct
+scenario verification is skipped or blocked, the verdict should normally be
+`conditional accept` or `needs more evidence`, and the missing interaction must
+be named.
+
 ### 5. Assemble The Review Packet
 
 Before writing the verdict, make the review packet explicit. It should include

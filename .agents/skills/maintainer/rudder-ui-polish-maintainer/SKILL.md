@@ -7,6 +7,9 @@ description: >
   empty states, redundant pages, onboarding steps, or other small-to-medium UI
   behavior, especially with Chinese prompts like "这里有点丑", "对齐一下",
   "去掉这个页面", "改成这个 UI", "先说说/优化一下", or "弄个截图给我看".
+  Also use for narrow UI fixes even when the user mentions an advisor/reviewer
+  skill, unless they explicitly ask for reviewer agents, repeated review rounds,
+  or an acceptance gate.
   Prefer build-advisor for pure advice with no implementation request, and
   advisor-review-loop-maintainer for high-stakes proposal plus reviewer gates.
 ---
@@ -39,6 +42,12 @@ After the direction is accepted, continue here for implementation.
 
 Use `advisor-review-loop-maintainer` instead when the user asks for reviewer
 agents, two rounds, proposal review, or an acceptance gate before handoff.
+
+When the user invokes `advisor-review-loop-maintainer` for a small visible fix
+but only asks to "修一下", "优化一下", "去掉这个 button", "颜色不对", or similar,
+treat this skill as the implementation contract after a short advisor check.
+Say explicitly in the handoff that the work used a lightweight route rather
+than a full two-reviewer loop.
 
 ## Do Not Use When
 
@@ -123,6 +132,11 @@ shell, screenshot, or equivalent visual inspection. Prefer the available
 browser automation path for local routes. If browser verification is blocked,
 state the exact blocker and do not describe the layout as visually proven.
 
+For follow-up corrections from the user, such as "这颜色不对", "没修好", or
+"这里还是不对", inspect the rendered state again before editing further. Treat
+the user's screenshot as evidence that the previous proof was incomplete, not
+as a reason to keep patching blindly.
+
 Store temporary screenshots outside the repo, for example under `/tmp`.
 
 ### 6. Commit only this task
@@ -157,6 +171,8 @@ For advice-only tasks, hand off with:
 ## Common Failure Modes
 
 - Over-solving a small screenshot complaint with a broad redesign.
+- Routing every small screenshot complaint through a full advisor/reviewer loop
+  when a lightweight UI-polish pass is enough.
 - Treating a visual issue as pure CSS when the real problem is wrong data,
   wrong route, or redundant object modeling.
 - Claiming visual verification after browser automation timed out.

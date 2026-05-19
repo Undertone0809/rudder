@@ -64,7 +64,7 @@ import {
   canShowImageInFolder,
   copyImage as copyImageAction,
   isImageContentType,
-  showImageInFolder as showImageInFolderAction, } from "@/lib/image-actions"; import { resolveLocalFileTarget } from "@/lib/local-file-targets"; import { cn, relativeTime } from "@/lib/utils"; import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef"; import { useI18n } from "@/context/I18nContext"; import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName, ChatAssistantAttributionRow, ProposalCard, chatMessageHoverBarClass, ChatLongMessageBody, readStructuredPayloadString, issueCreatedSystemMessageParts, ChatSystemMessageBody, AskUserHistoryRecord, AskUserAnswerBubble, AskUserPanel, ChatMessageItem, OptimisticUserDraftItem, ChatMessagesLoadingState, StreamTranscriptItem, AssistantDraftItem } from "./Chat.parts";
+  showImageInFolder as showImageInFolderAction, } from "@/lib/image-actions"; import { resolveLocalFileTarget } from "@/lib/local-file-targets"; import { cn, relativeTime } from "@/lib/utils"; import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef"; import { useI18n } from "@/context/I18nContext"; import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, buildChatProposalRevisionPrompt, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName, ChatAssistantAttributionRow, ProposalCard, chatMessageHoverBarClass, ChatLongMessageBody, readStructuredPayloadString, issueCreatedSystemMessageParts, ChatSystemMessageBody, AskUserHistoryRecord, AskUserAnswerBubble, AskUserPanel, ChatMessageItem, OptimisticUserDraftItem, ChatMessagesLoadingState, StreamTranscriptItem, AssistantDraftItem } from "./Chat.parts";
 export * from "./Chat.parts";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
@@ -588,7 +588,83 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       try { await navigator.clipboard.writeText(text); pushToast({ title: "Copied to clipboard", tone: "success" });
       } catch {
         pushToast({ title: "Could not copy", tone: "error" }); } }, [pushToast], ); const beginEditUserMessage = useCallback((message: ChatMessage) => { setEditForkUserMessageId(message.id); setDraft(message.body); clearPendingFilesForCurrentScope();
-    requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, [clearPendingFilesForCurrentScope]); const retryFailedMessage = useCallback(
+    requestAnimationFrame(() => { composerEditorRef.current?.focus(); }); }, [clearPendingFilesForCurrentScope]); const handleProposalApprovalAction = (
+    approvalId: string,
+    action: ApprovalAction,
+    messageId: string,
+  ) => {
+    const feedback = decisionNotesByMessageId[messageId]?.trim() ?? "";
+    if (action === "requestRevision" && !feedback) {
+      pushToast({
+        title: "Feedback is required",
+        body: "Tell the agent what must change before requesting a new proposal.",
+        tone: "error",
+      });
+      return;
+    }
+    const sourceMessage = rawMessages.find((message) => message.id === messageId) ?? null;
+    const issueProposal = sourceMessage ? issueProposalFromMessage(sourceMessage) : null;
+    const operationProposal = sourceMessage ? operationProposalFromMessage(sourceMessage) : null;
+    const proposalTitle =
+      typeof issueProposal?.title === "string"
+        ? issueProposal.title
+        : typeof operationProposal?.summary === "string"
+          ? operationProposal.summary
+          : null;
+    approvalMutation.mutate(
+      { approvalId, action, messageId },
+      {
+        onSuccess: () => {
+          if (action !== "requestRevision" || !selectedConversation) return;
+          void sendMessage({
+            bodyOverride: buildChatProposalRevisionPrompt({
+              proposalTitle,
+              feedback,
+            }),
+            filesOverride: [],
+            conversationOverride: selectedConversation,
+          });
+        },
+      },
+    );
+  }; const handleOperationProposalDecision = (
+    messageId: string,
+    action: ChatOperationProposalDecisionAction,
+    decisionNote: string,
+  ) => {
+    const feedback = decisionNote.trim();
+    if (action === "requestRevision" && !feedback) {
+      pushToast({
+        title: "Feedback is required",
+        body: "Tell the agent what must change before requesting a new proposal.",
+        tone: "error",
+      });
+      return;
+    }
+    const sourceMessage = rawMessages.find((message) => message.id === messageId) ?? null;
+    const operationProposal = sourceMessage ? operationProposalFromMessage(sourceMessage) : null;
+    operationProposalMutation.mutate(
+      {
+        chatId: selectedConversation!.id,
+        messageId,
+        action,
+        decisionNote,
+      },
+      {
+        onSuccess: () => {
+          if (action !== "requestRevision" || !selectedConversation) return;
+          void sendMessage({
+            bodyOverride: buildChatProposalRevisionPrompt({
+              proposalTitle: typeof operationProposal?.summary === "string" ? operationProposal.summary : null,
+              feedback,
+            }),
+            filesOverride: [],
+            conversationOverride: selectedConversation,
+          });
+        },
+      },
+    );
+  }; const retryFailedMessage = useCallback(
     (message: ChatMessage) => { if (!selectedConversation) return; const sourceUserMessage = findRetrySourceUserMessage(rawMessages, message);
       if (!sourceUserMessage) {
         pushToast({
@@ -705,9 +781,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="outline" size="icon" className="h-9 w-9 shrink-0 rounded-full border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)]" aria-label="Add files and options" >
-                <Plus className="h-4 w-4" /> </Button> </DropdownMenuTrigger>
+            <DropdownMenuTrigger type="button" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-sm font-medium text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Add files and options" >
+              <Plus className="h-4 w-4" /> </DropdownMenuTrigger>
             <DropdownMenuContent align="start"
               sideOffset={8} className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1.5 text-foreground" >
               <DropdownMenuItem className="rounded-[var(--radius-md)] px-3 py-2.5" onSelect={(e) => { e.preventDefault(); setPlusMenuOpen(false); window.setTimeout(() => fileInputRef.current?.click(), 0);
@@ -818,10 +893,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 <div className="shrink-0 border-b panel-divider px-4 py-2 md:hidden">
                   <div className="mx-auto w-full max-w-4xl">
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button type="button" variant="outline" size="sm" className="h-9 w-full justify-between gap-2 rounded-full px-3 font-normal" >
-                          <span className="truncate text-left text-foreground">{conversationDisplayTitle(selectedConversation)}</span>
-                          <ChevronDown className="h-4 w-4 shrink-0 opacity-60" /> </Button> </DropdownMenuTrigger>
+                      <DropdownMenuTrigger type="button" className="inline-flex h-9 w-full items-center justify-between gap-2 rounded-full border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] px-3 text-sm font-normal text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" >
+                        <span className="truncate text-left text-foreground">{conversationDisplayTitle(selectedConversation)}</span>
+                        <ChevronDown className="h-4 w-4 shrink-0 opacity-60" /> </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="surface-overlay max-h-[min(60vh,320px)] w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto text-foreground" >
                         {conversations.map((c) => (
                           <DropdownMenuItem key={c.id} className={cn(c.id === selectedConversation.id && "bg-[color:var(--surface-active)]")} onClick={() => { void prefetchChatConversation(queryClient, c.id); navigate(chatConversationPath(c.id));
@@ -871,14 +945,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     approvalMutation.isPending
                                     || convertToIssueMutation.isPending
                                     || operationProposalMutation.isPending }
-                                  decisionNote={decisionNotesByMessageId[message.id] ?? ""} onDecisionNoteChange={(value) => setDecisionNoteForMessage(message.id, value)} onApprovalAction={(approvalId, action, messageId) =>
-                                    approvalMutation.mutate({ approvalId, action, messageId })} onResolveOperationProposal={(messageId, action, decisionNote) =>
-                                    operationProposalMutation.mutate({
-                                      chatId: selectedConversation.id,
-                                      messageId,
-                                      action,
-                                      decisionNote, })
-                                  } onConvertToIssue={(messageToConvert) =>
+                                  decisionNote={decisionNotesByMessageId[message.id] ?? ""} onDecisionNoteChange={(value) => setDecisionNoteForMessage(message.id, value)} onApprovalAction={handleProposalApprovalAction} onResolveOperationProposal={handleOperationProposalDecision} onConvertToIssue={(messageToConvert) =>
                                     convertToIssueMutation.mutate({
                                       chatId: selectedConversation.id,
                                       message: messageToConvert, })

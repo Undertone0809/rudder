@@ -26,6 +26,13 @@ guess from the screenshot. Most failures in this class are caused by one of:
 - UI rendering or state merge bug
 - stale seed/demo assumptions
 
+This skill also has an explanation mode. When the user asks "这个数据从哪来" or
+"现在的渲染逻辑是怎样的" and the data is no longer missing, explain the
+lineage from UI query to API route, service aggregation, derived records, and
+rendering states. In explanation mode, read-only source tracing may be enough;
+do not force database inspection when code and API contracts already answer the
+question.
+
 ## Use When
 
 Use this skill for questions like:
@@ -65,6 +72,16 @@ Start by pinning down:
 - runtime: dev, prod-local Desktop, worktree preview, or remote deployment
 - organization: org id, URL key, display name, or selected org
 - date window, filters, and selected project/agent when relevant
+
+Classify the mode before deep inspection:
+
+- `diagnosis`: expected data is missing, stale, sparse, or wrong.
+- `explanation`: the user wants the rendering or derivation logic after the
+  visible symptom is resolved.
+
+In explanation mode, keep the answer focused on the current code path and
+source hierarchy. Still name any assumptions about runtime, org, or date window
+when those affect the answer.
 
 Verify the live target before trusting assumptions:
 

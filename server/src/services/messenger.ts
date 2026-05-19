@@ -51,7 +51,7 @@ const ISSUE_ACTIVITY_ACTIONS = [
   "heartbeat.retried",
 ] as const;
 
-const ACTIONABLE_APPROVAL_STATUSES = new Set(["pending", "revision_requested"]);
+const ACTIONABLE_APPROVAL_STATUSES = new Set(["pending"]);
 const ISSUE_UPDATE_METADATA_KEYS = new Set([
   "identifier",
   "issueIdentifier",
@@ -433,7 +433,7 @@ function approvalActions(approval: ApprovalRow) {
   return [
     buildAction("Approve", `/approvals/${approval.id}/approve`, "POST"),
     buildAction("Reject", `/approvals/${approval.id}/reject`, "POST"),
-    buildAction("Request revision", `/approvals/${approval.id}/request-revision`, "POST"),
+    buildAction("Request changes", `/approvals/${approval.id}/request-revision`, "POST"),
     buildAction("Expand details", `/messenger/approvals/${approval.id}`, "GET"),
     buildAction("Open full approval", `/messenger/approvals/${approval.id}`, "GET"),
   ];
