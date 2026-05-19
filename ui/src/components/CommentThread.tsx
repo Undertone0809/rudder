@@ -183,7 +183,7 @@ const TimelineList = memo(function TimelineList({
           return (
             <div
               key={`run:${run.runId}`}
-              aria-label="Execution output, not an issue comment"
+              aria-label="Agent run output"
               className="overflow-hidden rounded-sm border border-dashed border-border bg-muted/35 p-3"
             >
               <div className="mb-3 flex items-start justify-between gap-3">
@@ -204,10 +204,7 @@ const TimelineList = memo(function TimelineList({
               <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
                 <span className="inline-flex items-center gap-1 font-medium text-muted-foreground">
                   <TerminalSquare className="h-3.5 w-3.5" />
-                  Execution output
-                </span>
-                <span className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground">
-                  Not an issue comment
+                  Run output
                 </span>
                 <Link
                   to={`/agents/${run.agentId}/runs/${run.runId}`}

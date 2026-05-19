@@ -187,7 +187,7 @@ describe("CommentThread", () => {
     expect(html.indexOf("Middle comment.")).toBeLessThan(html.indexOf("Last activity"));
   });
 
-  it("labels linked run transcript cards as execution output, not comments", () => {
+  it("labels linked run transcript cards as run output", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <CommentThread
@@ -206,8 +206,8 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain("Execution output");
-    expect(html).toContain("Not an issue comment");
-    expect(html).toContain('aria-label="Execution output, not an issue comment"');
+    expect(html).toContain("Run output");
+    expect(html).not.toContain("Not an issue comment");
+    expect(html).toContain('aria-label="Agent run output"');
   });
 });
