@@ -602,7 +602,7 @@ test.describe("Workspace shell", () => {
     await expect(mainHeader).toBeVisible();
     await expect(mainCard).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Structure" })).toBeVisible();
-    await expect(sidebar.getByRole("link", { name: "Library" })).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: "Library" })).toHaveCount(0);
     await expect(sidebar.getByRole("link", { name: "Heartbeats" })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Workspaces" })).toHaveCount(0);
     await expect(sidebar.getByRole("link", { name: "Goals" })).toBeVisible();
@@ -755,11 +755,10 @@ test.describe("Workspace shell", () => {
     await gotoOrganizationPath(page, organization, "/resources");
     await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/library$`));
 
-    const sidebar = page.getByTestId("workspace-sidebar");
     const mainContent = page.locator("#main-content");
     const mainHeader = page.getByTestId("workspace-main-header");
-    await expect(sidebar.getByRole("link", { name: "Library" })).toHaveClass(/font-medium/);
-    await expect(sidebar.getByRole("link", { name: "Workspaces" })).toHaveCount(0);
+    await expect(page.getByTestId("workspace-context-card")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-sidebar")).toHaveCount(0);
     await expect(mainHeader.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
     await expect(mainContent.getByRole("button", { name: "New Library doc" })).toBeVisible();
     await expect(mainContent.getByRole("button", { name: "Add Library resource" })).toBeVisible();
@@ -777,7 +776,7 @@ test.describe("Workspace shell", () => {
     const editorCard = page.getByTestId("org-workspaces-editor-card");
     const workspacesHeader = page.getByTestId("workspace-main-header");
     const workspaceHelp = workspacesHeader.getByRole("button", { name: "About Library" });
-    await expect(sidebar.getByRole("link", { name: "Library" })).toHaveClass(/font-medium/);
+    await expect(page.getByTestId("workspace-context-card")).toHaveCount(0);
     await expect(workspacesHeader.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible();
     await expect(filesCard.getByText("/", { exact: true })).toBeVisible();

@@ -462,7 +462,7 @@ export function Dashboard() {
       />
 
       {hasNoAgents && (
-        <div className="surface-proposal flex items-center justify-between gap-3 rounded-[var(--radius-lg)] px-4 py-3">
+        <div className="flex items-center justify-between gap-3 rounded-[var(--radius-lg)] border border-border bg-card px-4 py-3 shadow-[var(--shadow-sm)]">
           <div className="flex items-center gap-2.5">
             <Bot className="h-4 w-4 shrink-0 text-[color:var(--accent-strong)]" />
             <p className="text-sm text-foreground">

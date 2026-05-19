@@ -263,6 +263,10 @@ export function Layout() {
     () => /^\/workspaces\/backups(?:\/|$)/.test(relativeBoardPath),
     [relativeBoardPath],
   );
+  const isLibraryRoute = useMemo(
+    () => /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativeBoardPath) && !/^\/workspaces\/backups(?:\/|$)/.test(relativeBoardPath),
+    [relativeBoardPath],
+  );
   const isChatRoute = useMemo(() => /^\/chat(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
   const isProjectsRoute = useMemo(() => /^\/projects(?:\/|$)/.test(relativeBoardPath), [relativeBoardPath]);
   const hasActiveChatConversation = useMemo(
@@ -334,9 +338,10 @@ export function Layout() {
   });
   const showMiddleContextColumn = useMemo(() => {
     if (!useMiddleContextColumn) return false;
+    if (isLibraryRoute) return false;
     if (!isChatRoute) return true;
     return hasActiveChatConversation || (activeChats?.length ?? 0) > 0;
-  }, [activeChats?.length, hasActiveChatConversation, isChatRoute, useMiddleContextColumn]);
+  }, [activeChats?.length, hasActiveChatConversation, isChatRoute, isLibraryRoute, useMiddleContextColumn]);
   const effectiveShowMiddleContextColumn = useMemo(() => {
     if (!showMiddleContextColumn) return false;
     if (!isProjectsRoute) return true;
