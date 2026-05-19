@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Download, ExternalLink, Folder, X } from "lucide-react";
+import { Copy, Download, Folder, X } from "lucide-react";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/context/ToastContext";
 import {
@@ -12,7 +12,6 @@ import {
   canShowImageInFolder,
   copyImage,
   downloadImage,
-  openImage,
   showImageInFolder,
 } from "@/lib/image-actions";
 
@@ -146,15 +145,6 @@ export function ImagePreviewDialog({
               <span className="sr-only">Close image preview</span>
             </DialogClose>
             <div className="absolute left-2 top-2 z-10 flex items-center gap-1 rounded-sm bg-black/55 p-1 text-white shadow-[0_6px_18px_rgb(0_0_0/0.28)]">
-              <button
-                type="button"
-                className="rudder-image-preview-action"
-                title="Open Image"
-                onClick={() => runImageAction("Open Image failed", () => openImage(preview.src))}
-              >
-                <ExternalLink className="size-4" aria-hidden="true" />
-                <span className="sr-only">Open Image</span>
-              </button>
               <button
                 type="button"
                 className="rudder-image-preview-action"

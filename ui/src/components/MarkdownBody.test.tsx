@@ -164,7 +164,7 @@ describe("MarkdownBody", () => {
 
     const previewRoot = document.body.querySelector('[data-testid="markdown-body-image-preview-dialog"]');
     expect(previewRoot?.querySelector("img")?.getAttribute("alt")).toBe("Build screenshot");
-    expect(previewRoot?.textContent).toContain("Open Image");
+    expect(previewRoot?.textContent).not.toContain("Open Image");
     expect(previewRoot?.textContent).toContain("Copy Image");
   });
 
