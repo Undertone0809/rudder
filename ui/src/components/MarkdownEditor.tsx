@@ -76,6 +76,7 @@ import {
 import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { cn } from "../lib/utils";
+import { MilkdownMarkdownEditor } from "./MilkdownMarkdownEditor";
 
 /* ---- Mention types ---- */
 
@@ -113,7 +114,7 @@ export interface MentionOption {
 
 /* ---- Editor props ---- */
 
-interface MarkdownEditorProps {
+export interface MarkdownEditorProps {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
@@ -133,6 +134,8 @@ interface MarkdownEditorProps {
   submitShortcut?: "mod-enter" | "enter";
   /** Composer mode that preserves normal Markdown syntax as literal text. */
   plainText?: boolean;
+  /** Experimental editor engine for true Markdown surfaces. */
+  engine?: "legacy" | "milkdown";
 }
 
 export interface MarkdownEditorRef {
@@ -980,7 +983,7 @@ function rootEditorCapturePlugin(onEditor: (editor: LexicalEditor | null) => voi
 
 /* ---- Component ---- */
 
-export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(function MarkdownEditor({
+const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(function LegacyMarkdownEditor({
   value,
   onChange,
   placeholder,
@@ -2029,4 +2032,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       />
     </div>
   );
+});
+
+export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(function MarkdownEditor(props, forwardedRef) {
+  if (props.engine === "milkdown" && !props.plainText) {
+    return <MilkdownMarkdownEditor {...props} ref={forwardedRef} />;
+  }
+  return <LegacyMarkdownEditor {...props} ref={forwardedRef} />;
 });

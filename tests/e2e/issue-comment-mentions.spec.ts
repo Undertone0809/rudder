@@ -64,7 +64,7 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await page.setViewportSize({ width: 1440, height: 980 });
   await page.goto(`/${organization.issuePrefix}/issues/${primaryIssue.identifier ?? primaryIssue.id}`);
 
-  const composer = page.locator('.rudder-mdxeditor-content[contenteditable="true"]').last();
+  const composer = page.locator('.rudder-milkdown-scope .ProseMirror[contenteditable="true"]').last();
   await expect(composer).toBeVisible({ timeout: 15_000 });
 
   await composer.click();
@@ -86,7 +86,7 @@ test("issue comment composer uses the chat-style mention panel without exposing 
 
   await page.getByTestId(`markdown-mention-option-issue:${relatedIssue.id}`).click();
   await page.keyboard.type(" mouse");
-  await expect(composer.locator("[data-mention-kind='issue']").first()).toContainText("Related mention target");
+  await expect(composer.locator(`a[href^="issue://${relatedIssue.id}"]`).first()).toContainText("Related mention target");
   await expect(composer).toContainText("Related mention target mouse");
 
   await composer.press("ControlOrMeta+A");
@@ -98,12 +98,12 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await page.getByTestId(`markdown-mention-option-agent:${agent.id}`).click();
   await page.keyboard.type("next ");
 
-  const agentChip = composer.locator("[data-mention-kind='agent']").first();
-  await expect(agentChip).toBeVisible();
-  await expect(agentChip).toContainText("Dylan");
-  await expect(composer).toContainText(/before Dylan.*next after/);
+  const agentChipLink = composer.locator(`a[href^="agent://${agent.id}"]`).first();
+  await expect(agentChipLink).toBeVisible();
+  await expect(agentChipLink).toContainText("Dylan");
+  await expect(composer).toContainText(/before Dylan.*next\s+after/);
 
-  await agentChip.click();
+  await agentChipLink.click();
   await page.waitForTimeout(100);
   await expect(page.locator('[class*="_linkDialogPopoverContent_"]')).toHaveCount(0);
   await expect(page.getByText(new RegExp(`agent://${agent.id}`))).toHaveCount(0);

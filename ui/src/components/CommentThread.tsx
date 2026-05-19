@@ -560,6 +560,7 @@ export function CommentThread({
       >
         <MarkdownEditor
           ref={editorRef}
+          engine="milkdown"
           value={body}
           onChange={setBody}
           placeholder="Leave a comment..."

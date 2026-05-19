@@ -1537,6 +1537,7 @@ export function NewIssueDialog() {
           >
             <MarkdownEditor
               ref={descriptionEditorRef}
+              engine="milkdown"
               value={description}
               onChange={setDescription}
               placeholder="Add description..."
