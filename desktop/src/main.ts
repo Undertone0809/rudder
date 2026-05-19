@@ -39,6 +39,12 @@ import {
   writeDesktopUpdateChannel,
 } from "./update-channel-preference.js";
 import {
+  clearPostUpdateReloadMarker,
+  consumePostUpdateReloadMarker,
+  resolvePostUpdateReloadDelayMs,
+  writePostUpdateReloadMarker,
+} from "./post-update-reload.js";
+import {
   checkForRudderDesktopUpdates,
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
@@ -320,6 +326,22 @@ function updateDesktopUpdateProgress(
     ...patch,
     at: patch.at ?? new Date().toISOString(),
   });
+}
+
+function writePendingPostUpdateReloadMarker(updateId: string, targetVersion: string): void {
+  try {
+    writePostUpdateReloadMarker(app.getPath("userData"), { updateId, targetVersion });
+  } catch (error) {
+    console.warn("[rudder-desktop] failed to write post-update reload marker", error);
+  }
+}
+
+function clearPendingPostUpdateReloadMarker(): void {
+  try {
+    clearPostUpdateReloadMarker(app.getPath("userData"));
+  } catch (error) {
+    console.warn("[rudder-desktop] failed to clear post-update reload marker", error);
+  }
 }
 
 function normalizeProgressPercent(value: unknown): number | undefined {
@@ -653,6 +675,7 @@ async function applyUpdate(updateId: string | null | undefined): Promise<Desktop
   }
 
   try {
+    writePendingPostUpdateReloadMarker(normalizedUpdateId, session.version);
     await new Promise<void>((resolve, reject) => {
       session.stdin.write("apply\n", (error?: Error | null) => {
         if (error) {
@@ -672,6 +695,7 @@ async function applyUpdate(updateId: string | null | undefined): Promise<Desktop
       version: session.version,
     };
   } catch (error) {
+    clearPendingPostUpdateReloadMarker();
     const message = error instanceof Error ? error.message : String(error);
     updateDesktopUpdateProgress(normalizedUpdateId, session.version, {
       phase: "failed",
@@ -1250,6 +1274,24 @@ async function openAppWindow(loadUrl: string): Promise<void> {
   await replaceMainWindow(await createDesktopWindow(loadUrl));
 }
 
+function schedulePostUpdateRendererReloadIfNeeded(): void {
+  const marker = consumePostUpdateReloadMarker(app.getPath("userData"));
+  if (!marker) return;
+
+  const delayMs = resolvePostUpdateReloadDelayMs();
+  setTimeout(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const currentUrl = mainWindow.webContents.getURL();
+    if (!currentUrl.startsWith("http")) return;
+    console.info("[rudder-desktop] reloading renderer after Desktop update", {
+      updateId: marker.updateId,
+      targetVersion: marker.targetVersion,
+      delayMs,
+    });
+    mainWindow.webContents.reloadIgnoringCache();
+  }, delayMs);
+}
+
 function normalizeDesktopNavigationPath(targetPath: string): string {
   const trimmed = targetPath.trim();
   return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
@@ -1594,6 +1636,7 @@ async function startLocalRudder(): Promise<void> {
         });
       }
       await openAppWindow(loadUrl);
+      schedulePostUpdateRendererReloadIfNeeded();
       await captureDesktopWindowIfRequested();
     } catch (error) {
       updateBootState({
