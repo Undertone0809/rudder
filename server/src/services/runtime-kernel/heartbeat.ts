@@ -5119,6 +5119,31 @@ export function heartbeatService(db: Db) {
       });
     };
 
+    if (agent.status === "terminated" || agent.status === "pending_approval") {
+      throw conflict("Agent is not invokable in its current state", { status: agent.status });
+    }
+
+    let projectId = readNonEmptyString(enrichedContextSnapshot.projectId);
+    if (!projectId && issueId) {
+      projectId = await db
+        .select({ projectId: issues.projectId })
+        .from(issues)
+        .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
+        .then((rows) => rows[0]?.projectId ?? null);
+    }
+
+    const budgetBlock = await budgets.getInvocationBlock(agent.orgId, agentId, {
+      issueId,
+      projectId,
+    });
+    if (budgetBlock) {
+      await writeSkippedRequest("budget.blocked");
+      throw conflict(budgetBlock.reason, {
+        scopeType: budgetBlock.scopeType,
+        scopeId: budgetBlock.scopeId,
+      });
+    }
+
     if (agent.status === "paused") {
       const deferredPayload = buildDeferredWakePayload(payload, enrichedContextSnapshot, issueId);
       if (existingWakeupRequestId) {
@@ -5190,10 +5215,6 @@ export function heartbeatService(db: Db) {
       return null;
     }
 
-    if (agent.status === "terminated" || agent.status === "pending_approval") {
-      throw conflict("Agent is not invokable in its current state", { status: agent.status });
-    }
-
     const policy = parseHeartbeatPolicy(agent);
 
     if (source === "timer" && !policy.enabled) {
@@ -5211,27 +5232,6 @@ export function heartbeatService(db: Db) {
         await markAgentHeartbeatChecked(agent, "skipped");
         return null;
       }
-    }
-
-    let projectId = readNonEmptyString(enrichedContextSnapshot.projectId);
-    if (!projectId && issueId) {
-      projectId = await db
-        .select({ projectId: issues.projectId })
-        .from(issues)
-        .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
-        .then((rows) => rows[0]?.projectId ?? null);
-    }
-
-    const budgetBlock = await budgets.getInvocationBlock(agent.orgId, agentId, {
-      issueId,
-      projectId,
-    });
-    if (budgetBlock) {
-      await writeSkippedRequest("budget.blocked");
-      throw conflict(budgetBlock.reason, {
-        scopeType: budgetBlock.scopeType,
-        scopeId: budgetBlock.scopeId,
-      });
     }
 
     const bypassIssueExecutionLock =
