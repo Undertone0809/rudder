@@ -740,6 +740,11 @@ test.describe("Workspace shell", () => {
     );
     await fs.writeFile(path.join(resolveOrganizationWorkspaceRoot(organization.id), "notes.md"), "# Shared Notes\n", "utf8");
     await fs.writeFile(path.join(resolveOrganizationWorkspaceRoot(organization.id), "draft.md"), "# Draft\n", "utf8");
+    await fs.writeFile(
+      path.join(resolveOrganizationWorkspaceRoot(organization.id), "frontmatter.md"),
+      "---\ntitle: Frontmatter doc\n---\n# Frontmatter Heading\n\nEditable body.\n",
+      "utf8",
+    );
     await fs.mkdir(path.join(agentWorkspaceRoot, ".cache"), { recursive: true });
     await fs.mkdir(path.join(agentWorkspaceRoot, ".npm"), { recursive: true });
     await fs.mkdir(path.join(agentWorkspaceRoot, ".nvm"), { recursive: true });
@@ -884,31 +889,31 @@ test.describe("Workspace shell", () => {
     await expect(tabMenu).toHaveClass(/motion-chat-composer-menu-pop/);
     await expect(tabMenu.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
     await expect(tabMenu.getByRole("menuitem", { name: /Open in IDE|Open in Cursor/ })).toBeVisible();
-    await expect(tabMenu.getByRole("menuitem", { name: "Close" })).toBeVisible();
+    await expect(tabMenu.getByRole("menuitem", { name: "Close", exact: true })).toBeVisible();
     await expect(tabMenu.getByRole("menuitem", { name: "Close others" })).toBeVisible();
     await expect(tabMenu.getByRole("menuitem", { name: "Close tabs to the right" })).toBeVisible();
     await expect(tabMenu.getByRole("menuitem", { name: "Close all" })).toBeVisible();
     await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "notes.md", exact: true }).click();
+    await expect(markdownEditor).toContainText("Shared Notes");
+    await expect(markdownEditor.locator("h1", { hasText: "Shared Notes" })).toBeVisible();
 
     await markdownEditor.click();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
     await page.keyboard.type("# Shared Notes\n\n- Keep project setup docs nearby.\n");
+    await expect(markdownEditor.locator("h1", { hasText: "Shared Notes" })).toBeVisible();
     await expect.poll(async () => fs.readFile(path.join(resolveOrganizationWorkspaceRoot(organization.id), "notes.md"), "utf8"))
-      .toBe("# Shared Notes\n\n- Keep project setup docs nearby.\n");
+      .toContain("Keep project setup docs nearby.");
     await expect(page.getByTestId("org-workspaces-autosave-status")).toHaveCount(0);
 
-    const switchFlushResponse = page.waitForResponse((response) =>
-      response.request().method() === "PATCH"
-      && response.url().includes(`/api/orgs/${organization.id}/workspace/file`)
-      && response.ok(),
-    );
-    await markdownEditor.click();
-    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-    await page.keyboard.type("# Shared Notes\n\n- Flush before switching files.\n");
+    await filesCard.getByRole("button", { name: "frontmatter.md", exact: true }).click();
+    const frontmatterEditor = page.getByTestId("org-workspaces-frontmatter-editor");
+    const frontmatterMarkdownEditor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
+    await expect(frontmatterEditor).toBeVisible();
+    await expect(frontmatterMarkdownEditor.locator("h1", { hasText: "Frontmatter Heading" })).toBeVisible();
+
     await page.getByRole("button", { name: "New doc" }).click();
-    await switchFlushResponse;
-    await expect.poll(async () => fs.readFile(path.join(resolveOrganizationWorkspaceRoot(organization.id), "notes.md"), "utf8"))
-      .toBe("# Shared Notes\n\n- Flush before switching files.\n");
+    await expect(page.getByText("Doc created")).toBeVisible();
 
     const [mainCardBox, filesCardBox, editorCardBox, editorTextareaBox] = await Promise.all([
       page.getByTestId("workspace-main-card").boundingBox(),

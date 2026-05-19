@@ -1498,6 +1498,128 @@ button[draggable="false"] {
   margin-top: 1.1em;
 }
 
+.rudder-milkdown-content :where(h1, h2, h3, h4, h5, h6) {
+  color: var(--foreground);
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+
+.rudder-milkdown-content h1 {
+  margin: 1.4em 0 0.55em;
+  font-size: 1.85em;
+}
+
+.rudder-milkdown-content h2 {
+  margin: 1.35em 0 0.5em;
+  font-size: 1.45em;
+}
+
+.rudder-milkdown-content h3 {
+  margin: 1.25em 0 0.45em;
+  font-size: 1.18em;
+}
+
+.rudder-milkdown-content h4 {
+  margin: 1.15em 0 0.4em;
+  font-size: 1.05em;
+}
+
+.rudder-milkdown-content :where(h5, h6) {
+  margin: 1em 0 0.35em;
+  font-size: 0.95em;
+  color: color-mix(in oklab, var(--foreground) 82%, var(--muted-foreground));
+}
+
+.rudder-milkdown-content :where(ul, ol) {
+  margin: 0.75em 0;
+  padding-left: 1.45em;
+}
+
+.rudder-milkdown-content li {
+  margin: 0.18em 0;
+  padding-left: 0.15em;
+}
+
+.rudder-milkdown-content li::marker {
+  color: var(--muted-foreground);
+}
+
+.rudder-milkdown-content blockquote {
+  margin: 1em 0;
+  border-left: 3px solid color-mix(in oklab, var(--foreground) 18%, transparent);
+  padding-left: 1em;
+  color: color-mix(in oklab, var(--foreground) 74%, var(--muted-foreground));
+}
+
+.rudder-milkdown-content hr {
+  margin: 1.4em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.rudder-milkdown-content table {
+  margin: 1em 0;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.94em;
+}
+
+.rudder-milkdown-content th,
+.rudder-milkdown-content td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.55rem;
+  vertical-align: top;
+}
+
+.rudder-milkdown-content th {
+  background-color: color-mix(in oklab, var(--accent) 42%, transparent);
+  font-weight: 600;
+}
+
+.rudder-library-document-editor {
+  --doc-muted-line: color-mix(in oklab, var(--border) 72%, transparent);
+  font-size: 0.9375rem;
+  line-height: 1.75;
+}
+
+.rudder-library-document-editor .ProseMirror {
+  caret-color: var(--foreground);
+}
+
+.rudder-library-document-editor .ProseMirror:focus-visible {
+  outline: none;
+}
+
+.rudder-library-document-editor .ProseMirror > :first-child:is(h1, h2) {
+  margin-top: 0;
+}
+
+.rudder-library-document-editor h1 {
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--doc-muted-line);
+  font-size: 2rem;
+}
+
+.rudder-library-document-editor h2 {
+  font-size: 1.5rem;
+}
+
+.rudder-library-document-editor h3 {
+  font-size: 1.18rem;
+}
+
+.rudder-library-document-editor p {
+  min-height: 1.75em;
+}
+
+.rudder-library-document-editor pre {
+  margin: 0.9em 0;
+  background-color: var(--code-surface);
+  color: var(--code-foreground);
+  border-color: var(--code-border);
+}
+
 .rudder-milkdown-content a[href^="agent://"],
 .rudder-milkdown-content a[href^="issue://"],
 .rudder-milkdown-content a[href^="project://"],

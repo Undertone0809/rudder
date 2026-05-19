@@ -214,8 +214,29 @@ function isWorkspaceMarkdownFilePath(filePath: string | null) {
   return extension !== null && WORKSPACE_MARKDOWN_FILE_EXTENSIONS.has(extension);
 }
 
-function hasYamlFrontmatter(content: string) {
-  return /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.test(content);
+function splitYamlFrontmatter(content: string) {
+  const match = content.match(/^(---\r?\n[\s\S]*?\r?\n---)(\r?\n|$)/);
+  if (!match) {
+    return {
+      frontmatter: null,
+      frontmatterSeparator: "",
+      body: content,
+    };
+  }
+
+  return {
+    frontmatter: match[1] ?? "",
+    frontmatterSeparator: match[2] ?? "\n",
+    body: content.slice(match[0].length),
+  };
+}
+
+function joinYamlFrontmatter(
+  frontmatter: string | null,
+  frontmatterSeparator: string,
+  body: string,
+) {
+  return frontmatter === null ? body : `${frontmatter}${frontmatterSeparator || "\n"}${body}`;
 }
 
 function displayWorkspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
@@ -1128,6 +1149,7 @@ export function OrganizationWorkspaceBrowser({
   } | null>(null);
   const [draftContent, setDraftContent] = useState("");
   const [draftFilePath, setDraftFilePath] = useState<string | null>(null);
+  const selectedFilePathRef = useRef<string | null>(selectedFilePath);
   const [availableIdes, setAvailableIdes] = useState<DesktopIdeTarget[]>([]);
   const [openingInIde, setOpeningInIde] = useState(false);
   const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
@@ -1158,6 +1180,7 @@ export function OrganizationWorkspaceBrowser({
   const editorScrollRef = useScrollbarActivityRef(
     selectedFilePath ? `org-workspaces:editor:${selectedFilePath}` : "org-workspaces:editor",
   );
+  selectedFilePathRef.current = selectedFilePath;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1759,8 +1782,11 @@ export function OrganizationWorkspaceBrowser({
   }
 
   const selectedFileDetail = fileQuery.data;
-  const selectedFileUsesMarkdownEditor = isWorkspaceMarkdownFilePath(selectedFilePath)
-    && !hasYamlFrontmatter(draftContent);
+  const selectedEditorContent = draftFilePath === selectedFilePath
+    ? draftContent
+    : selectedFileDetail?.content ?? "";
+  const selectedMarkdownParts = splitYamlFrontmatter(selectedEditorContent);
+  const selectedFileUsesMarkdownEditor = isWorkspaceMarkdownFilePath(selectedFilePath);
   const canEditSelectedFile = Boolean(
     selectedFilePath
     && selectedFileDetail
@@ -1851,6 +1877,36 @@ export function OrganizationWorkspaceBrowser({
       filePath,
       ...clampWorkspaceTabContextMenuPosition(event.clientX, event.clientY),
     });
+  }
+
+  function handleMarkdownDraftChange(filePath: string | null, nextContent: string) {
+    if (!filePath || selectedFilePathRef.current !== filePath) return;
+    setDraftFilePath(filePath);
+    setDraftContent(nextContent);
+  }
+
+  function handleMarkdownBodyDraftChange(filePath: string | null, nextBody: string) {
+    if (!filePath || selectedFilePathRef.current !== filePath) return;
+    handleMarkdownDraftChange(
+      filePath,
+      joinYamlFrontmatter(
+        selectedMarkdownParts.frontmatter,
+        selectedMarkdownParts.frontmatterSeparator,
+        nextBody,
+      ),
+    );
+  }
+
+  function handleFrontmatterDraftChange(filePath: string | null, nextFrontmatter: string) {
+    if (!filePath || selectedFilePathRef.current !== filePath) return;
+    handleMarkdownDraftChange(
+      filePath,
+      joinYamlFrontmatter(
+        nextFrontmatter,
+        selectedMarkdownParts.frontmatterSeparator,
+        selectedMarkdownParts.body,
+      ),
+    );
   }
 
   function handleStartRename(entry: OrganizationWorkspaceFileEntry) {
@@ -2034,22 +2090,43 @@ export function OrganizationWorkspaceBrowser({
                     <div
                       ref={editorScrollRef}
                       data-testid="org-workspaces-markdown-editor"
-                      className="scrollbar-auto-hide min-h-[280px] flex-1 overflow-auto px-4 py-4"
+                      className="scrollbar-auto-hide min-h-[280px] flex-1 overflow-auto bg-[color:var(--surface-elevated)]"
                     >
-                      <MarkdownEditor
-                        engine="milkdown"
-                        value={draftContent}
-                        onChange={setDraftContent}
-                        bordered={false}
-                        placeholder="Write in Markdown..."
-                        contentClassName="min-h-[240px] text-sm leading-6 text-foreground"
-                      />
+                      <div className="mx-auto min-h-full w-full max-w-[880px] px-8 py-8">
+                        {selectedMarkdownParts.frontmatter !== null ? (
+                          <details
+                            className="group mb-6 rounded-md border border-[color:var(--border-soft)] bg-[color:var(--surface-page)]"
+                            data-testid="org-workspaces-frontmatter-editor"
+                          >
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+                              <span>Frontmatter</span>
+                              <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+                            </summary>
+                            <textarea
+                              value={selectedMarkdownParts.frontmatter}
+                              onChange={(event) => handleFrontmatterDraftChange(selectedFilePath, event.target.value)}
+                              spellCheck={false}
+                              className="block min-h-28 w-full resize-y border-t border-[color:var(--border-soft)] bg-transparent px-3 py-2 font-mono text-xs leading-5 text-foreground outline-none"
+                              aria-label="Frontmatter"
+                            />
+                          </details>
+                        ) : null}
+                        <MarkdownEditor
+                          key={selectedFilePath}
+                          engine="milkdown"
+                          value={selectedMarkdownParts.body}
+                          onChange={(nextContent) => handleMarkdownBodyDraftChange(selectedFilePath, nextContent)}
+                          bordered={false}
+                          placeholder="Write in Markdown..."
+                          contentClassName="rudder-library-document-editor min-h-[420px] text-[15px] leading-7 text-foreground"
+                        />
+                      </div>
                     </div>
                   ) : (
                     <textarea
                       data-testid="org-workspaces-editor-textarea"
-                      value={draftContent}
-                      onChange={(event) => setDraftContent(event.target.value)}
+                      value={selectedEditorContent}
+                      onChange={(event) => handleMarkdownDraftChange(selectedFilePath, event.target.value)}
                       spellCheck={false}
                       ref={editorScrollRef}
                       className="scrollbar-auto-hide block min-h-[280px] flex-1 overflow-auto border-0 bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none"
