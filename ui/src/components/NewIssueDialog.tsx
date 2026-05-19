@@ -81,174 +81,7 @@ import { IssueLabelChip } from "./IssueLabelChip";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { PriorityBarsIcon, PriorityPickerOption, priorityPickerContentClassName } from "./PriorityIcon";
 import { priorityOptions } from "../lib/priorities";
-
-const DEBOUNCE_MS = 800;
-
-type StagedIssueFile = {
-  id: string;
-  file: File;
-  kind: "document" | "attachment";
-  documentKey?: string;
-  title?: string | null;
-};
-
-const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
-const STAGED_FILE_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
-const ISSUE_METADATA_SELECTOR_CLASSNAME = "h-auto min-h-12 w-full py-2";
-
-type ViewTransitionDocument = Document & {
-  startViewTransition?: (callback: () => void) => { finished: Promise<void> };
-};
-
-function buildCreatedIssueDetailHref(input: {
-  issue: { id: string; identifier: string | null };
-  orgId: string;
-  organizations: Array<{ id: string; issuePrefix?: string | null }>;
-}): string {
-  const issueRef = input.issue.identifier ?? input.issue.id;
-  const organizationPrefix = input.organizations
-    .find((organization) => organization.id === input.orgId)
-    ?.issuePrefix
-    ?.trim();
-  return organizationPrefix ? `/${organizationPrefix}/issues/${issueRef}` : `/issues/${issueRef}`;
-}
-
-function buildIssueDetailSourceHref(openContextLocation: { pathname: string; search: string } | null): string {
-  if (!openContextLocation) return "/issues";
-  return `${openContextLocation.pathname}${openContextLocation.search}`;
-}
-
-const ISSUE_THINKING_EFFORT_OPTIONS = {
-  claude_local: [
-    { value: "", label: "Default" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-  ],
-  codex_local: withDefaultThinkingEffortOption("Default", CODEX_LOCAL_REASONING_EFFORT_OPTIONS),
-  opencode_local: [
-    { value: "", label: "Default" },
-    { value: "minimal", label: "Minimal" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-    { value: "max", label: "Max" },
-  ],
-} as const;
-
-function buildAssigneeAdapterOverrides(input: {
-  agentRuntimeType: string | null | undefined;
-  modelOverride: string;
-  thinkingEffortOverride: string;
-  chrome: boolean;
-}): Record<string, unknown> | null {
-  const agentRuntimeType = input.agentRuntimeType ?? null;
-  if (!agentRuntimeType || !ISSUE_OVERRIDE_ADAPTER_TYPES.has(agentRuntimeType)) {
-    return null;
-  }
-
-  const agentRuntimeConfig: Record<string, unknown> = {};
-  if (input.modelOverride) agentRuntimeConfig.model = input.modelOverride;
-  if (input.thinkingEffortOverride) {
-    if (agentRuntimeType === "codex_local") {
-      agentRuntimeConfig.modelReasoningEffort = input.thinkingEffortOverride;
-    } else if (agentRuntimeType === "opencode_local") {
-      agentRuntimeConfig.variant = input.thinkingEffortOverride;
-    } else if (agentRuntimeType === "claude_local") {
-      agentRuntimeConfig.effort = input.thinkingEffortOverride;
-    } else if (agentRuntimeType === "opencode_local") {
-      agentRuntimeConfig.variant = input.thinkingEffortOverride;
-    }
-  }
-  if (agentRuntimeType === "claude_local" && input.chrome) {
-    agentRuntimeConfig.chrome = true;
-  }
-
-  const overrides: Record<string, unknown> = {};
-  if (Object.keys(agentRuntimeConfig).length > 0) {
-    overrides.agentRuntimeConfig = agentRuntimeConfig;
-  }
-  return Object.keys(overrides).length > 0 ? overrides : null;
-}
-
-function isTextDocumentFile(file: File) {
-  const name = file.name.toLowerCase();
-  return (
-    name.endsWith(".md") ||
-    name.endsWith(".markdown") ||
-    name.endsWith(".txt") ||
-    file.type === "text/markdown" ||
-    file.type === "text/plain"
-  );
-}
-
-function fileBaseName(filename: string) {
-  return filename.replace(/\.[^.]+$/, "");
-}
-
-function slugifyDocumentKey(input: string) {
-  const slug = input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "document";
-}
-
-function titleizeFilename(input: string) {
-  return input
-    .split(/[-_ ]+/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function createUniqueDocumentKey(baseKey: string, stagedFiles: StagedIssueFile[]) {
-  const existingKeys = new Set(
-    stagedFiles
-      .filter((file) => file.kind === "document")
-      .map((file) => file.documentKey)
-      .filter((key): key is string => Boolean(key)),
-  );
-  if (!existingKeys.has(baseKey)) return baseKey;
-  let suffix = 2;
-  while (existingKeys.has(`${baseKey}-${suffix}`)) {
-    suffix += 1;
-  }
-  return `${baseKey}-${suffix}`;
-}
-
-function formatFileSize(file: File) {
-  if (file.size < 1024) return `${file.size} B`;
-  if (file.size < 1024 * 1024) return `${(file.size / 1024).toFixed(1)} KB`;
-  return `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-const statuses = [
-  { value: "backlog", label: "Backlog", color: issueStatusText.backlog ?? issueStatusTextDefault },
-  { value: "todo", label: "Todo", color: issueStatusText.todo ?? issueStatusTextDefault },
-  { value: "in_progress", label: "In Progress", color: issueStatusText.in_progress ?? issueStatusTextDefault },
-  { value: "in_review", label: "In Review", color: issueStatusText.in_review ?? issueStatusTextDefault },
-  { value: "done", label: "Done", color: issueStatusText.done ?? issueStatusTextDefault },
-];
-
-const priorities = priorityOptions;
-
-function defaultProjectWorkspaceIdForProject(project: {
-  workspaces?: Array<{ id: string; isPrimary: boolean }>;
-  executionWorkspacePolicy?: { defaultProjectWorkspaceId?: string | null } | null;
-  codebase?: { scope?: string | null } | null;
-} | null | undefined) {
-  if (!project) return "";
-  if (project.codebase?.scope === "organization" || project.codebase?.scope === "none") {
-    return project.executionWorkspacePolicy?.defaultProjectWorkspaceId ?? "";
-  }
-  return project.executionWorkspacePolicy?.defaultProjectWorkspaceId
-    ?? project.workspaces?.find((workspace) => workspace.isPrimary)?.id
-    ?? project.workspaces?.[0]?.id
-    ?? "";
-}
-
+import { DEBOUNCE_MS, StagedIssueFile, ISSUE_OVERRIDE_ADAPTER_TYPES, STAGED_FILE_ACCEPT, ISSUE_METADATA_SELECTOR_CLASSNAME, ViewTransitionDocument, buildCreatedIssueDetailHref, buildIssueDetailSourceHref, ISSUE_THINKING_EFFORT_OPTIONS, buildAssigneeAdapterOverrides, isTextDocumentFile, fileBaseName, slugifyDocumentKey, titleizeFilename, createUniqueDocumentKey, formatFileSize, statuses, priorities, defaultProjectWorkspaceIdForProject } from "./NewIssueDialog.parts";
 export function NewIssueDialog() {
   const { newIssueOpen, newIssueDefaults, closeNewIssue } = useDialog();
   const { organizations, selectedOrganizationId, selectedOrganization } = useOrganization();
@@ -279,11 +112,9 @@ export function NewIssueDialog() {
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingDraftSaveRef = useRef<{ draft: IssueDraft; savedDraftId: string | null } | null>(null);
   const openContextLocationRef = useRef<{ pathname: string; search: string } | null>(null);
-
   const effectiveCompanyId = dialogCompanyId ?? selectedOrganizationId;
   const dialogCompany = organizations.find((c) => c.id === effectiveCompanyId) ?? selectedOrganization;
   const requestedSavedIssueDraftId = newIssueDefaults.draftId ?? null;
-
   // Popover states
   const [statusOpen, setStatusOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
@@ -294,13 +125,11 @@ export function NewIssueDialog() {
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
-
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(effectiveCompanyId!),
     queryFn: () => agentsApi.list(effectiveCompanyId!),
     enabled: !!effectiveCompanyId && newIssueOpen,
   });
-
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(effectiveCompanyId!),
     queryFn: () => projectsApi.list(effectiveCompanyId!),
@@ -342,24 +171,20 @@ export function NewIssueDialog() {
   const currentReviewer = selectedReviewerAgentId
     ? (agents ?? []).find((agent) => agent.id === selectedReviewerAgentId) ?? null
     : null;
-
   const assigneeAdapterType = currentAssignee?.agentRuntimeType ?? null;
   const supportsAssigneeOverrides = Boolean(
     assigneeAdapterType && ISSUE_OVERRIDE_ADAPTER_TYPES.has(assigneeAdapterType),
   );
-
   const { data: assigneeOrganizationSkills } = useQuery({
     queryKey: queryKeys.organizationSkills.list(effectiveCompanyId ?? "__none__"),
     queryFn: () => organizationSkillsApi.list(effectiveCompanyId!),
     enabled: Boolean(effectiveCompanyId) && newIssueOpen && Boolean(selectedAssigneeAgentId),
   });
-
   const { data: assigneeSkillSnapshot } = useQuery({
     queryKey: queryKeys.agents.skills(selectedAssigneeAgentId ?? "__none__"),
     queryFn: () => agentsApi.skills(selectedAssigneeAgentId!, effectiveCompanyId!),
     enabled: Boolean(effectiveCompanyId) && newIssueOpen && Boolean(selectedAssigneeAgentId),
   });
-
   useEffect(() => {
     if (!newIssueOpen) {
       openContextLocationRef.current = null;
@@ -372,7 +197,6 @@ export function NewIssueDialog() {
       };
     }
   }, [location.pathname, location.search, newIssueOpen]);
-
   const skillMentionOptions = useMemo(
     () => buildAgentSkillMentionOptions({
       agent: currentAssignee,
@@ -388,7 +212,6 @@ export function NewIssueDialog() {
       selectedOrganization?.urlKey,
     ],
   );
-
   const mentionOptions = useMemo<MentionOption[]>(
     () => buildMarkdownMentionOptions({
       agents,
@@ -399,7 +222,6 @@ export function NewIssueDialog() {
     }),
     [agents, allIssues, currentUserId, orderedProjects, skillMentionOptions],
   );
-
   const { data: assigneeAgentRuntimeModels } = useQuery({
     queryKey:
       effectiveCompanyId && assigneeAdapterType
@@ -408,27 +230,23 @@ export function NewIssueDialog() {
     queryFn: () => agentsApi.adapterModels(effectiveCompanyId!, assigneeAdapterType!),
     enabled: Boolean(effectiveCompanyId) && newIssueOpen && supportsAssigneeOverrides,
   });
-
   const clearPendingDraftSave = useCallback(() => {
     if (draftTimer.current) clearTimeout(draftTimer.current);
     draftTimer.current = null;
     pendingDraftSaveRef.current = null;
   }, []);
-
   const flushPendingDraftSave = useCallback(() => {
     if (draftTimer.current) clearTimeout(draftTimer.current);
     draftTimer.current = null;
     const pendingSave = pendingDraftSaveRef.current;
     pendingDraftSaveRef.current = null;
     if (!pendingSave) return;
-
     if (pendingSave.savedDraftId) {
       updateIssueDraft(pendingSave.savedDraftId, pendingSave.draft);
       return;
     }
     saveIssueAutosave(pendingSave.draft);
   }, []);
-
   const createIssue = useMutation({
     mutationFn: async ({
       orgId,
@@ -437,7 +255,6 @@ export function NewIssueDialog() {
     }: { orgId: string; stagedFiles: StagedIssueFile[] } & Record<string, unknown>) => {
       const issue = await issuesApi.create(orgId, data);
       const failures: string[] = [];
-
       for (const stagedFile of pendingStagedFiles) {
         try {
           if (stagedFile.kind === "document") {
@@ -455,7 +272,6 @@ export function NewIssueDialog() {
           failures.push(stagedFile.file.name);
         }
       }
-
       return { issue, orgId, failures };
     },
     onSuccess: async ({ issue, orgId, failures }) => {
@@ -511,14 +327,12 @@ export function NewIssueDialog() {
       setLabelSearch("");
     },
   });
-
   const uploadDescriptionImage = useMutation({
     mutationFn: async (file: File) => {
       if (!effectiveCompanyId) throw new Error("No organization selected");
       return assetsApi.uploadImage(effectiveCompanyId, file, "issues/drafts");
     },
   });
-
   // Debounced draft saving
   const scheduleSave = useCallback(
     (draft: IssueDraft, savedDraftId: string | null = null) => {
@@ -528,7 +342,6 @@ export function NewIssueDialog() {
     },
     [flushPendingDraftSave],
   );
-
   // Save draft on meaningful changes
   useEffect(() => {
     if (!newIssueOpen) return;
@@ -581,7 +394,6 @@ export function NewIssueDialog() {
     activeSavedIssueDraftId,
     scheduleSave,
   ]);
-
   // Restore draft or apply defaults when dialog opens
   useEffect(() => {
     if (!newIssueOpen) return;
@@ -609,7 +421,6 @@ export function NewIssueDialog() {
     });
     const preferredAssigneeValue = explicitAssigneeValue || rememberedPreferences?.assigneeValue || "";
     const preferredReviewerValue = explicitReviewerValue || rememberedPreferences?.reviewerValue || "";
-
     const savedDraft = readSavedIssueDraft(requestedSavedIssueDraftId, selectedOrganizationId);
     const draft = savedDraft ?? (requestedSavedIssueDraftId ? null : readIssueAutosave(selectedOrganizationId));
     if (savedDraft) {
@@ -695,7 +506,6 @@ export function NewIssueDialog() {
       setAssigneeChrome(false);
     }
   }, [newIssueOpen, newIssueDefaults, orderedProjects, requestedSavedIssueDraftId, selectedOrganizationId]);
-
   useEffect(() => {
     if (!supportsAssigneeOverrides) {
       setAssigneeOptionsOpen(false);
@@ -704,7 +514,6 @@ export function NewIssueDialog() {
       setAssigneeChrome(false);
       return;
     }
-
     const validThinkingValues =
       assigneeAdapterType === "codex_local"
         ? ISSUE_THINKING_EFFORT_OPTIONS.codex_local
@@ -715,14 +524,12 @@ export function NewIssueDialog() {
       setAssigneeThinkingEffort("");
     }
   }, [supportsAssigneeOverrides, assigneeAdapterType, assigneeThinkingEffort]);
-
   // Cleanup timer on unmount
   useEffect(() => {
     return () => {
       flushPendingDraftSave();
     };
   }, [flushPendingDraftSave]);
-
   function reset() {
     setTitle("");
     setDescription("");
@@ -746,12 +553,10 @@ export function NewIssueDialog() {
     setActiveSavedIssueDraftId(null);
     setRedirectingIssueRef(null);
   }
-
   function handleCloseNewIssue() {
     flushPendingDraftSave();
     closeNewIssue();
   }
-
   function handleCompanyChange(orgId: string) {
     if (orgId === effectiveCompanyId) return;
     setDialogCompanyId(orgId);
@@ -765,7 +570,6 @@ export function NewIssueDialog() {
     setAssigneeThinkingEffort("");
     setAssigneeChrome(false);
   }
-
   function saveDraftIssue() {
     const savedDraft = createIssueDraft({
       orgId: effectiveCompanyId,
@@ -794,7 +598,6 @@ export function NewIssueDialog() {
     reset();
     closeNewIssue();
   }
-
   function handleSubmit() {
     if (!effectiveCompanyId || !title.trim() || createIssue.isPending || redirectingIssueRef) return;
     setRedirectingIssueRef(null);
@@ -824,14 +627,12 @@ export function NewIssueDialog() {
       }),
     });
   }
-
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       handleSubmit();
     }
   }
-
   function stageFiles(files: File[]) {
     if (files.length === 0) return;
     setStagedFiles((current) => {
@@ -858,43 +659,36 @@ export function NewIssueDialog() {
       return next;
     });
   }
-
   function handleStageFilesPicked(evt: ChangeEvent<HTMLInputElement>) {
     stageFiles(Array.from(evt.target.files ?? []));
     if (stageFileInputRef.current) {
       stageFileInputRef.current.value = "";
     }
   }
-
   function handleFileDragEnter(evt: DragEvent<HTMLDivElement>) {
     if (!evt.dataTransfer.types.includes("Files")) return;
     evt.preventDefault();
     setIsFileDragOver(true);
   }
-
   function handleFileDragOver(evt: DragEvent<HTMLDivElement>) {
     if (!evt.dataTransfer.types.includes("Files")) return;
     evt.preventDefault();
     evt.dataTransfer.dropEffect = "copy";
     setIsFileDragOver(true);
   }
-
   function handleFileDragLeave(evt: DragEvent<HTMLDivElement>) {
     if (evt.currentTarget.contains(evt.relatedTarget as Node | null)) return;
     setIsFileDragOver(false);
   }
-
   function handleFileDrop(evt: DragEvent<HTMLDivElement>) {
     if (!evt.dataTransfer.files.length) return;
     evt.preventDefault();
     setIsFileDragOver(false);
     stageFiles(Array.from(evt.dataTransfer.files));
   }
-
   function removeStagedFile(id: string) {
     setStagedFiles((current) => current.filter((file) => file.id !== id));
   }
-
   const currentStatus = statuses.find((s) => s.value === status) ?? statuses[1]!;
   const currentPriority = priorities.find((p) => p.value === priority);
   const selectedLabels = useMemo(
@@ -1033,12 +827,7 @@ export function NewIssueDialog() {
   const stagedAttachments = stagedFiles.filter((file) => file.kind === "attachment");
   const labelPickerContent = (
     <>
-      <input
-        className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
-        placeholder="Search labels..."
-        value={labelSearch}
-        onChange={(event) => setLabelSearch(event.target.value)}
-        onKeyDown={(event) => {
+      <input className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50" placeholder="Search labels..." value={labelSearch} onChange={(event) => setLabelSearch(event.target.value)} onKeyDown={(event) => {
           if (event.key !== "Enter" || !shouldShowCreateLabelOption) return;
           event.preventDefault();
           createLabelFromSearch();
@@ -1049,13 +838,10 @@ export function NewIssueDialog() {
         {visibleLabels.map((label) => {
           const selected = selectedLabelIds.includes(label.id);
           return (
-            <button
-              key={label.id}
-              className={cn(
+            <button key={label.id} className={cn(
                 "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-left",
                 selected && "bg-accent",
-              )}
-              onClick={() =>
+              )} onClick={() =>
                 setSelectedLabelIds((current) =>
                   current.includes(label.id)
                     ? current.filter((id) => id !== label.id)
@@ -1070,10 +856,7 @@ export function NewIssueDialog() {
         {shouldShowCreateLabelOption ? (
           <>
             {visibleLabels.length > 0 ? <div className="my-1 border-t border-border" /> : null}
-            <button
-              className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-left"
-              disabled={createLabel.isPending}
-              onClick={createLabelFromSearch}
+            <button className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-left" disabled={createLabel.isPending} onClick={createLabelFromSearch}
             >
               <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-border/70 text-muted-foreground">
                 <Plus className="h-2.5 w-2.5" />
@@ -1081,10 +864,7 @@ export function NewIssueDialog() {
               <span className="truncate">
                 {createLabel.isPending ? "Creating..." : `Create label "${normalizedLabelQuery}"`}
               </span>
-              <span
-                className="ml-auto h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ backgroundColor: createLabelColor }}
-                aria-hidden="true"
+              <span className="ml-auto h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: createLabelColor }} aria-hidden="true"
               />
             </button>
           </>
@@ -1092,7 +872,6 @@ export function NewIssueDialog() {
       </div>
     </>
   );
-
   const handleProjectChange = useCallback((nextProjectId: string) => {
     setProjectId(nextProjectId);
     const nextProject = orderedProjects.find((project) => project.id === nextProjectId);
@@ -1120,32 +899,24 @@ export function NewIssueDialog() {
     },
     [assigneeAdapterType, assigneeAgentRuntimeModels],
   );
-
   return (
     <Dialog
-      open={newIssueOpen}
-      onOpenChange={(open) => {
+      open={newIssueOpen} onOpenChange={(open) => {
         if (!open && !isCreatingOrRedirecting) handleCloseNewIssue();
       }}
     >
       <DialogContent
-        showCloseButton={false}
-        aria-describedby={undefined}
-        className={cn(
+        showCloseButton={false} aria-describedby={undefined} className={cn(
           "motion-new-issue-dialog p-0 gap-0 flex flex-col max-h-[calc(100dvh-2rem)]",
           expanded
             ? "sm:max-w-[1040px]"
             : "sm:max-w-[920px]",
           redirectingIssueRef && "motion-new-issue-dialog--created",
-        )}
-        data-redirecting={redirectingIssueRef ? "true" : undefined}
-        onKeyDown={handleKeyDown}
-        onEscapeKeyDown={(event) => {
+        )} data-redirecting={redirectingIssueRef ? "true" : undefined} onKeyDown={handleKeyDown} onEscapeKeyDown={(event) => {
           if (isCreatingOrRedirecting) {
             event.preventDefault();
           }
-        }}
-        onPointerDownOutside={(event) => {
+        }} onPointerDownOutside={(event) => {
           if (isCreatingOrRedirecting) {
             event.preventDefault();
             return;
@@ -1163,27 +934,20 @@ export function NewIssueDialog() {
         }}
       >
         {redirectingIssueRef ? (
-          <div
-            className="motion-new-issue-created-banner absolute left-1/2 top-4 z-10 inline-flex -translate-x-1/2 items-center gap-2 rounded-md border border-[color:color-mix(in_oklab,var(--accent-base)_42%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_82%,var(--surface-elevated))] px-3 py-1.5 text-xs font-medium text-foreground shadow-[var(--shadow-sm)]"
-            role="status"
-            aria-live="polite"
+          <div className="motion-new-issue-created-banner absolute left-1/2 top-4 z-10 inline-flex -translate-x-1/2 items-center gap-2 rounded-md border border-[color:color-mix(in_oklab,var(--accent-base)_42%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_82%,var(--surface-elevated))] px-3 py-1.5 text-xs font-medium text-foreground shadow-[var(--shadow-sm)]" role="status" aria-live="polite"
           >
             <CheckCircle2 className="h-3.5 w-3.5 text-[color:var(--accent-base)]" />
             <span>Created {redirectingIssueRef}. Opening issue...</span>
           </div>
         ) : null}
-
-        {/* Header bar */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Popover open={companyOpen} onOpenChange={setCompanyOpen}>
               <PopoverTrigger asChild>
-                <button
-                  className={cn(
+                <button className={cn(
                     "px-1.5 py-0.5 rounded text-xs font-semibold cursor-pointer hover:opacity-80 transition-opacity",
                     !dialogCompany?.brandColor && "bg-muted",
-                  )}
-                  style={
+                  )} style={
                     dialogCompany?.brandColor
                       ? {
                           backgroundColor: dialogCompany.brandColor,
@@ -1197,23 +961,18 @@ export function NewIssueDialog() {
               </PopoverTrigger>
               <PopoverContent className="w-48 p-1" align="start">
                 {organizations.filter((c) => c.status !== "archived").map((c) => (
-                  <button
-                    key={c.id}
-                    className={cn(
+                  <button key={c.id} className={cn(
                       "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
                       c.id === effectiveCompanyId && "bg-accent",
-                    )}
-                    onClick={() => {
+                    )} onClick={() => {
                       handleCompanyChange(c.id);
                       setCompanyOpen(false);
                     }}
                   >
-                    <span
-                      className={cn(
+                    <span className={cn(
                         "px-1 py-0.5 rounded text-[10px] font-semibold leading-none",
                         !c.brandColor && "bg-muted",
-                      )}
-                      style={
+                      )} style={
                         c.brandColor
                           ? {
                               backgroundColor: c.brandColor,
@@ -1233,27 +992,16 @@ export function NewIssueDialog() {
             <span>{isSubIssueDraft ? "New sub-issue" : "New issue"}</span>
           </div>
           <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground"
-              onClick={() => setExpanded(!expanded)}
-              disabled={isCreatingOrRedirecting}
+            <Button variant="ghost" size="icon-xs" className="text-muted-foreground" onClick={() => setExpanded(!expanded)} disabled={isCreatingOrRedirecting}
             >
               {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
             </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground"
-              onClick={handleCloseNewIssue}
-              disabled={isCreatingOrRedirecting}
+            <Button variant="ghost" size="icon-xs" className="text-muted-foreground" onClick={handleCloseNewIssue} disabled={isCreatingOrRedirecting}
             >
               <span className="text-lg leading-none">&times;</span>
             </Button>
           </div>
         </div>
-
         {isSubIssueDraft ? (
           <div data-slot="new-issue-parent-context" className="border-b border-border/60 px-4 py-2.5 shrink-0">
             <div className="flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted-foreground">
@@ -1270,21 +1018,13 @@ export function NewIssueDialog() {
             </div>
           </div>
         ) : null}
-
-        {/* Title */}
         <div className="px-4 pt-4 pb-2 shrink-0">
-          <textarea
-            className="w-full text-lg font-semibold bg-transparent outline-none resize-none overflow-hidden placeholder:text-muted-foreground/50"
-            placeholder="Issue title"
-            rows={1}
-            value={title}
-            onChange={(e) => {
+          <textarea className="w-full text-lg font-semibold bg-transparent outline-none resize-none overflow-hidden placeholder:text-muted-foreground/50" placeholder="Issue title" rows={1} value={title} onChange={(e) => {
               setTitle(e.target.value);
               e.target.style.height = "auto";
               e.target.style.height = `${e.target.scrollHeight}px`;
             }}
-            readOnly={isCreatingOrRedirecting}
-            onKeyDown={(e) => {
+            readOnly={isCreatingOrRedirecting} onKeyDown={(e) => {
               if (
                 e.key === "Enter" &&
                 !e.metaKey &&
@@ -1311,30 +1051,22 @@ export function NewIssueDialog() {
             autoFocus
           />
         </div>
-
         <div className="px-4 pb-3 shrink-0">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div className="min-w-0 space-y-1">
               <div className="text-[11px] font-medium text-muted-foreground">Assignee</div>
-              <InlineEntitySelector
-                ref={assigneeSelectorRef}
-                value={assigneeValue}
-                options={assigneeOptions}
-                placeholder="Assignee"
+              <InlineEntitySelector ref={assigneeSelectorRef} value={assigneeValue}
+                options={assigneeOptions} placeholder="Assignee"
                 disablePortal
                 noneLabel="No assignee"
                 searchPlaceholder="Search assignees..."
-                emptyMessage="No assignees found."
-                variant="field"
-                className={ISSUE_METADATA_SELECTOR_CLASSNAME}
-                onChange={(value) => {
+                emptyMessage="No assignees found." variant="field" className={ISSUE_METADATA_SELECTOR_CLASSNAME} onChange={(value) => {
                   const nextAssignee = parseAssigneeValue(value);
                   if (nextAssignee.assigneeAgentId) {
                     trackRecentAssignee(nextAssignee.assigneeAgentId);
                   }
                   setAssigneeValue(value);
-                }}
-                onConfirm={() => {
+                }} onConfirm={() => {
                   if (projectId) {
                     descriptionEditorRef.current?.focus();
                   } else {
@@ -1365,27 +1097,18 @@ export function NewIssueDialog() {
             </div>
             <div className="min-w-0 space-y-1">
               <div className="text-[11px] font-medium text-muted-foreground">Project</div>
-              <InlineEntitySelector
-                ref={projectSelectorRef}
-                value={projectId}
-                options={projectOptions}
-                placeholder="Project"
+              <InlineEntitySelector ref={projectSelectorRef} value={projectId}
+                options={projectOptions} placeholder="Project"
                 disablePortal
                 noneLabel="No project"
                 searchPlaceholder="Search projects..."
-                emptyMessage="No projects found."
-                variant="field"
-                className={ISSUE_METADATA_SELECTOR_CLASSNAME}
-                onChange={handleProjectChange}
-                onConfirm={() => {
+                emptyMessage="No projects found." variant="field" className={ISSUE_METADATA_SELECTOR_CLASSNAME} onChange={handleProjectChange} onConfirm={() => {
                   descriptionEditorRef.current?.focus();
                 }}
                 renderTriggerValue={(option) =>
                   option && currentProject ? (
                     <>
-                      <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={projectColorBackgroundStyle(currentProject.color)}
+                      <span className="h-3.5 w-3.5 shrink-0 rounded-sm" style={projectColorBackgroundStyle(currentProject.color)}
                       />
                       <span className="truncate">{option.label}</span>
                     </>
@@ -1398,9 +1121,7 @@ export function NewIssueDialog() {
                   const project = orderedProjects.find((item) => item.id === option.id);
                   return (
                     <>
-                      <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                        style={projectColorBackgroundStyle(project?.color)}
+                      <span className="h-3.5 w-3.5 shrink-0 rounded-sm" style={projectColorBackgroundStyle(project?.color)}
                       />
                       <span className="truncate">{option.label}</span>
                     </>
@@ -1410,24 +1131,18 @@ export function NewIssueDialog() {
             </div>
             <div className="min-w-0 space-y-1">
               <div className="text-[11px] font-medium text-muted-foreground">Reviewer</div>
-              <InlineEntitySelector
-                value={reviewerValue}
-                options={reviewerOptions}
-                placeholder="Reviewer"
+              <InlineEntitySelector value={reviewerValue}
+                options={reviewerOptions} placeholder="Reviewer"
                 disablePortal
                 noneLabel="No reviewer"
                 searchPlaceholder="Search reviewers..."
-                emptyMessage="No reviewers found."
-                variant="field"
-                className={ISSUE_METADATA_SELECTOR_CLASSNAME}
-                onChange={(value) => {
+                emptyMessage="No reviewers found." variant="field" className={ISSUE_METADATA_SELECTOR_CLASSNAME} onChange={(value) => {
                   const nextReviewer = parseAssigneeValue(value);
                   if (nextReviewer.assigneeAgentId) {
                     trackRecentAssignee(nextReviewer.assigneeAgentId);
                   }
                   setReviewerValue(value);
-                }}
-                onConfirm={() => {
+                }} onConfirm={() => {
                   descriptionEditorRef.current?.focus();
                 }}
                 renderTriggerValue={(option) =>
@@ -1454,12 +1169,9 @@ export function NewIssueDialog() {
             </div>
           </div>
         </div>
-
         {supportsAssigneeOverrides && (
           <div className="px-4 pb-2 shrink-0">
-            <button
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => setAssigneeOptionsOpen((open) => !open)}
+            <button className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors" onClick={() => setAssigneeOptionsOpen((open) => !open)}
             >
               {assigneeOptionsOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
               {assigneeOptionsTitle}
@@ -1468,28 +1180,22 @@ export function NewIssueDialog() {
               <div className="mt-2 rounded-md border border-border p-3 bg-muted/20 space-y-3">
                 <div className="space-y-1.5">
                   <div className="text-xs text-muted-foreground">Model</div>
-                  <InlineEntitySelector
-                    value={assigneeModelOverride}
-                    options={modelOverrideOptions}
-                    placeholder="Default model"
+                  <InlineEntitySelector value={assigneeModelOverride}
+                    options={modelOverrideOptions} placeholder="Default model"
                     disablePortal
                     noneLabel="Default model"
                     searchPlaceholder="Search models..."
-                    emptyMessage="No models found."
-                    onChange={setAssigneeModelOverride}
+                    emptyMessage="No models found." onChange={setAssigneeModelOverride}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <div className="text-xs text-muted-foreground">Thinking effort</div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {thinkingEffortOptions.map((option) => (
-                      <button
-                        key={option.value || "default"}
-                        className={cn(
+                      <button key={option.value || "default"} className={cn(
                           "px-2 py-1 rounded-md text-xs border border-border hover:bg-accent/50 transition-colors",
                           assigneeThinkingEffort === option.value && "bg-accent"
-                        )}
-                        onClick={() => setAssigneeThinkingEffort(option.value)}
+                        )} onClick={() => setAssigneeThinkingEffort(option.value)}
                       >
                         {option.label}
                       </button>
@@ -1499,12 +1205,8 @@ export function NewIssueDialog() {
                 {assigneeAdapterType === "claude_local" && (
                   <div className="flex items-center justify-between rounded-md border border-border px-2 py-1.5">
                     <div className="text-xs text-muted-foreground">Enable Chrome (--chrome)</div>
-                    <ToggleSwitch
-                      checked={assigneeChrome}
-                      size="sm"
-                      tone="success"
-                      aria-label="Enable Chrome"
-                      onClick={() => setAssigneeChrome((value) => !value)}
+                    <ToggleSwitch checked={assigneeChrome} size="sm"
+                      tone="success" aria-label="Enable Chrome" onClick={() => setAssigneeChrome((value) => !value)}
                     />
                   </div>
                 )}
@@ -1512,26 +1214,14 @@ export function NewIssueDialog() {
             )}
           </div>
         )}
-
-        {/* Description */}
-        <div
-          className="px-4 pb-2 overflow-y-auto min-h-0 border-t border-border/60 pt-3"
-          onDragEnter={handleFileDragEnter}
-          onDragOver={handleFileDragOver}
-          onDragLeave={handleFileDragLeave}
-          onDrop={handleFileDrop}
+        <div className="px-4 pb-2 overflow-y-auto min-h-0 border-t border-border/60 pt-3" onDragEnter={handleFileDragEnter} onDragOver={handleFileDragOver} onDragLeave={handleFileDragLeave} onDrop={handleFileDrop}
         >
-          <div
-            className={cn(
+          <div className={cn(
               "rounded-md transition-colors",
               isFileDragOver && "bg-accent/20",
             )}
           >
-            <MarkdownEditor
-              ref={descriptionEditorRef}
-              value={description}
-              onChange={setDescription}
-              placeholder="Add description..."
+            <MarkdownEditor ref={descriptionEditorRef} value={description} onChange={setDescription} placeholder="Add description..."
               bordered={false}
               mentions={mentionOptions}
               contentClassName="text-sm text-muted-foreground pb-12 min-h-[88px]"
@@ -1563,13 +1253,7 @@ export function NewIssueDialog() {
                             <span>{formatFileSize(file.file)}</span>
                           </div>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          className="shrink-0 text-muted-foreground"
-                          onClick={() => removeStagedFile(file.id)}
-                          disabled={isCreatingOrRedirecting}
-                          title="Remove document"
+                        <Button variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground" onClick={() => removeStagedFile(file.id)} disabled={isCreatingOrRedirecting} title="Remove document"
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
@@ -1578,7 +1262,6 @@ export function NewIssueDialog() {
                   </div>
                 </div>
               ) : null}
-
               {stagedAttachments.length > 0 ? (
                 <div className="space-y-2">
                   <div className="text-xs font-medium text-muted-foreground">Attachments</div>
@@ -1594,13 +1277,7 @@ export function NewIssueDialog() {
                             {file.file.type || "application/octet-stream"} • {formatFileSize(file.file)}
                           </div>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          className="shrink-0 text-muted-foreground"
-                          onClick={() => removeStagedFile(file.id)}
-                          disabled={isCreatingOrRedirecting}
-                          title="Remove attachment"
+                        <Button variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground" onClick={() => removeStagedFile(file.id)} disabled={isCreatingOrRedirecting} title="Remove attachment"
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
@@ -1612,10 +1289,7 @@ export function NewIssueDialog() {
             </div>
           ) : null}
         </div>
-
-        {/* Property chips bar */}
         <div className="flex items-center gap-1.5 px-4 py-2 border-t border-border flex-wrap shrink-0">
-          {/* Status chip */}
           <Popover open={statusOpen} onOpenChange={setStatusOpen}>
             <PopoverTrigger asChild>
               <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors">
@@ -1625,13 +1299,10 @@ export function NewIssueDialog() {
             </PopoverTrigger>
             <PopoverContent className="w-36 p-1" align="start">
               {statuses.map((s) => (
-                <button
-                  key={s.value}
-                  className={cn(
+                <button key={s.value} className={cn(
                     "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50",
                     s.value === status && "bg-accent"
-                  )}
-                  onClick={() => { setStatus(s.value); setStatusOpen(false); }}
+                  )} onClick={() => { setStatus(s.value); setStatusOpen(false); }}
                 >
                   <CircleDot className={cn("h-3 w-3", s.color)} />
                   {s.label}
@@ -1639,8 +1310,6 @@ export function NewIssueDialog() {
               ))}
             </PopoverContent>
           </Popover>
-
-          {/* Priority chip */}
           <Popover open={priorityOpen} onOpenChange={setPriorityOpen}>
             <PopoverTrigger asChild>
               <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors">
@@ -1659,11 +1328,9 @@ export function NewIssueDialog() {
             </PopoverTrigger>
             <PopoverContent className={priorityPickerContentClassName} align="start" role="menu" aria-label="Issue priority">
               {priorities.map((p) => (
-                <PriorityPickerOption
-                  key={p.value}
+                <PriorityPickerOption key={p.value}
                   priority={p.value}
-                  selected={p.value === priority}
-                  onSelect={(nextPriority) => {
+                  selected={p.value === priority} onSelect={(nextPriority) => {
                     setPriority(nextPriority);
                     setPriorityOpen(false);
                   }}
@@ -1671,16 +1338,12 @@ export function NewIssueDialog() {
               ))}
             </PopoverContent>
           </Popover>
-
-          {/* Labels chip */}
           <Popover open={labelsOpen} onOpenChange={setLabelsOpen}>
             <PopoverTrigger asChild>
-              <button
-                className={cn(
+              <button className={cn(
                   "inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors",
                   selectedLabels.length > 0 ? "text-foreground" : "text-muted-foreground",
-                )}
-                disabled={isCreatingOrRedirecting}
+                )} disabled={isCreatingOrRedirecting}
               >
                 {labelsTrigger}
               </button>
@@ -1689,25 +1352,14 @@ export function NewIssueDialog() {
               {labelPickerContent}
             </PopoverContent>
           </Popover>
-
-          <input
-            ref={stageFileInputRef}
-            type="file"
-            accept={STAGED_FILE_ACCEPT}
-            className="hidden"
-            onChange={handleStageFilesPicked}
+          <input ref={stageFileInputRef} type="file" accept={STAGED_FILE_ACCEPT} className="hidden" onChange={handleStageFilesPicked}
             multiple
           />
-          <button
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors text-muted-foreground"
-            onClick={() => stageFileInputRef.current?.click()}
-            disabled={isCreatingOrRedirecting}
+          <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors text-muted-foreground" onClick={() => stageFileInputRef.current?.click()} disabled={isCreatingOrRedirecting}
           >
             <Paperclip className="h-3 w-3" />
             Upload
           </button>
-
-          {/* More (dates) */}
           <Popover open={moreOpen} onOpenChange={setMoreOpen}>
             <PopoverTrigger asChild>
               <button className="inline-flex items-center justify-center rounded-md border border-border p-1 text-xs hover:bg-accent/50 transition-colors text-muted-foreground">
@@ -1726,8 +1378,6 @@ export function NewIssueDialog() {
             </PopoverContent>
           </Popover>
         </div>
-
-        {/* Footer */}
         <div className="flex items-center justify-between px-4 py-2.5 border-t border-border shrink-0">
           {activeSavedIssueDraftId ? (
             <div className="inline-flex min-h-8 items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -1735,15 +1385,10 @@ export function NewIssueDialog() {
               Saved to Draft Issues
             </div>
           ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn(
+            <Button variant="ghost" size="sm" className={cn(
                 "text-muted-foreground disabled:opacity-100",
                 !canSaveDraft && "disabled:border-border/40 disabled:bg-muted/20 disabled:text-muted-foreground/70",
-              )}
-              onClick={saveDraftIssue}
-              disabled={isCreatingOrRedirecting || !canSaveDraft}
+              )} onClick={saveDraftIssue} disabled={isCreatingOrRedirecting || !canSaveDraft}
             >
               Save Draft
             </Button>
@@ -1764,12 +1409,7 @@ export function NewIssueDialog() {
                 <span className="text-xs text-destructive">{createIssueErrorMessage}</span>
               ) : null}
             </div>
-            <Button
-              size="sm"
-              className="min-w-[8.5rem] disabled:opacity-100"
-              disabled={!title.trim() || isCreatingOrRedirecting}
-              onClick={handleSubmit}
-              aria-busy={isCreatingOrRedirecting}
+            <Button size="sm" className="min-w-[8.5rem] disabled:opacity-100" disabled={!title.trim() || isCreatingOrRedirecting} onClick={handleSubmit} aria-busy={isCreatingOrRedirecting}
             >
               <span className="inline-flex items-center justify-center gap-1.5">
                 {redirectingIssueRef ? (

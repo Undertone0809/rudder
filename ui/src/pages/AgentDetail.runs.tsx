@@ -1,0 +1,778 @@
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
+import { useParams, useNavigate, Link, Navigate, useBeforeUnload } from "@/lib/router";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  agentsApi,
+  type AgentKey,
+  type ClaudeLoginResult,
+  type AgentPermissionUpdate,
+} from "../api/agents";
+import { organizationSkillsApi } from "../api/organizationSkills";
+import { budgetsApi } from "../api/budgets";
+import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
+import { instanceSettingsApi } from "../api/instanceSettings";
+import { ApiError } from "../api/client";
+import {
+  ChartCard,
+  RunActivityChart,
+  PriorityChart,
+  IssueStatusChart,
+  SuccessRateChart,
+  SkillsUsageChart,
+} from "../components/ActivityCharts";
+import { activityApi } from "../api/activity";
+import { issuesApi } from "../api/issues";
+import { usePanel } from "../context/PanelContext";
+import { useSidebar } from "../context/SidebarContext";
+import { useOrganization } from "../context/OrganizationContext";
+import { useToast } from "../context/ToastContext";
+import { useDialog } from "../context/DialogContext";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { retryHeartbeatRun } from "../lib/heartbeat-retry";
+import { queryKeys } from "../lib/queryKeys";
+import { findOrganizationByPrefix } from "../lib/organization-routes";
+import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
+import { getRunFailureDisplay, getRunStderrExcerptDisplayText, shouldShowRunStderrExcerpt } from "../lib/run-detail-display";
+import { AgentConfigForm } from "../components/AgentConfigForm";
+import { DashboardDateRangeControl, type DashboardDatePreset } from "../components/DashboardDateRangeControl";
+import { PageTabBar } from "../components/PageTabBar";
+import { roleLabels, help } from "../components/agent-config-primitives";
+import { MarkdownEditor } from "../components/MarkdownEditor";
+import { assetsApi } from "../api/assets";
+import { getUIAdapter, buildTranscript } from "../agent-runtimes";
+import { StatusBadge } from "../components/StatusBadge";
+import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
+import { MarkdownBody } from "../components/MarkdownBody";
+import { CopyText } from "../components/CopyText";
+import { EntityRow } from "../components/EntityRow";
+import { Identity } from "../components/Identity";
+import { PageSkeleton } from "../components/PageSkeleton";
+import { RunButton, PauseResumeButton } from "../components/AgentActionButtons";
+import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
+import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
+import { ScrollToBottom } from "../components/ScrollToBottom";
+import { formatCents, formatDate, formatDateTime, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
+import { cn } from "../lib/utils";
+import { formatRunDurationLabel, formatRunTimingTitle } from "../lib/run-duration-label";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs } from "@/components/ui/tabs";
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  MoreHorizontal,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Timer,
+  Loader2,
+  Slash,
+  RotateCcw,
+  Trash2,
+  Plus,
+  Key,
+  Eye,
+  EyeOff,
+  Copy,
+  ChevronRight,
+  ChevronDown,
+  ArrowLeft,
+  HelpCircle,
+  FolderOpen,
+  Search,
+  MessageSquare,
+  Maximize2,
+} from "lucide-react";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  semanticBadgeToneClasses,
+  semanticNoticeToneClasses,
+} from "@/components/ui/semanticTones";
+import { AgentIcon, AgentIconPicker, getAgentAvatarImageSrc } from "../components/AgentIconPicker";
+import { RunTranscriptView, type TranscriptMode } from "../components/transcript/RunTranscriptView";
+import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
+import {
+  getBundledRudderSkillSlug,
+  isUuidLike,
+  summarizeTokenUsage,
+  tokenUsageCacheRatio,
+  type Agent,
+  type AgentSkillAnalytics,
+  type AgentSkillEntry,
+  type AgentSkillSnapshot,
+  type AgentDetail as AgentDetailRecord,
+  type BudgetPolicySummary,
+  type HeartbeatRun,
+  type HeartbeatRunEvent,
+  type AgentRuntimeState,
+  type LiveEvent,
+  type OrganizationSkillCreateRequest,
+  type WorkspaceOperation,
+} from "@rudderhq/shared";
+import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@rudderhq/agent-runtime-utils";
+import { agentRouteRef } from "../lib/utils";
+import { heartbeatRunEventText, heartbeatRunEventToTranscriptEntry, mergeTranscriptEntries } from "../lib/run-detail-events";
+import { shouldPollLiveRunBackfill } from "../lib/live-run-backfill";
+import {
+  arraysEqual,
+  canManageSkillEntry,
+  isExternalSkillEntry,
+  sortSkillRowsByPinnedSelectionKey,
+  sortUnique,
+  toggleSkillSelection,
+} from "../lib/agent-skills-state";
+import { runStatusIcons, REDACTED_ENV_VALUE, SECRET_ENV_KEY_RE, JWT_VALUE_RE, formatDateInputValue, parseDateInputValue, getRecentDayKeys, getDayKeysBetween, formatRangeLabel, isWithinRange, compactSkillText, resolveSkillSummaryText, isGenericSkillRuntimeDetail, isGenericSkillLocationLabel, SkillSwitch, CreateAgentSkillDialog, shouldHideExternalSkillEntry, redactPathText, redactPathValue, formatInvocationValueForDisplay, shouldRedactSecretValue, redactEnvValue, isMarkdown, formatEnvForDisplay, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, ScrollContainer, isWindowContainer, isElementScrollContainer, findScrollContainer, readScrollMetrics, scrollToContainerBottom, AgentDetailView, parseAgentDetailView, usageNumber, usageString, setsEqual, runMetrics, formatExactTokens, formatExactTokenLabel, formatCompactTokenLabel, formatCacheRatio, formatRunCostUsd, shouldShowInlineTokenLabel, RunLogChunk, utf8ByteLength, runLogChunkDedupeKey, asRecord, asNonEmptyString, readInvocationSkillList, InvocationSkillEvidence, parseStoredLogContent, RunEventsList, workspaceOperationPhaseLabel, workspaceOperationStatusTone, WorkspaceOperationStatusBadge, WorkspaceOperationLogViewer, WorkspaceOperationsSection, SummaryRow, useRunDurationNow } from "./AgentDetail.helpers";
+import { runDateToIso, LogViewer } from "./AgentDetail.run-log";
+
+export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelected: boolean; agentId: string }) {
+  const navigate = useNavigate();
+  const { pushToast } = useToast();
+  const statusInfo = runStatusIcons[run.status] ?? { icon: Clock, color: "text-neutral-400" };
+  const StatusIcon = statusInfo.icon;
+  const metrics = runMetrics(run);
+  const summary = run.resultJson
+    ? String((run.resultJson as Record<string, unknown>).summary ?? (run.resultJson as Record<string, unknown>).result ?? "")
+    : run.error ?? "";
+  const runLabel = run.id.slice(0, 8);
+  const runReason = describeRunReason(run);
+  const destination = isSelected ? `/agents/${agentId}/runs` : `/agents/${agentId}/runs/${run.id}`;
+  const isActive = run.status === "running" || run.status === "queued";
+  const now = useRunDurationNow(isActive);
+  const durationLabel = formatRunDurationLabel(run, now) ?? relativeTime(run.createdAt);
+  const timingTitle = formatRunTimingTitle(run);
+
+  const openRun = () => {
+    navigate(destination);
+  };
+
+  const handleRowKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    openRun();
+  };
+
+  const handleCopyRunId = async (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(run.id);
+      pushToast({
+        title: "Run ID copied",
+        body: "The full agent run ID is now in your clipboard.",
+        tone: "success",
+      });
+    } catch (error) {
+      pushToast({
+        title: "Could not copy run ID",
+        body: error instanceof Error ? error.message : "Clipboard access was denied.",
+        tone: "error",
+      });
+    }
+  };
+
+  return (
+    <div
+      role="link"
+      tabIndex={0}
+      aria-label={`Open run ${runLabel}`}
+      className={cn(
+        "flex flex-col gap-1 w-full px-3 py-2.5 text-left border-b border-border last:border-b-0 transition-colors no-underline text-inherit",
+        isSelected ? "bg-accent/40" : "hover:bg-accent/20",
+      )}
+      onClick={openRun}
+      onKeyDown={handleRowKeyDown}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", statusInfo.color, run.status === "running" && "animate-spin")} />
+        <button
+          type="button"
+          className="min-w-0 truncate font-mono text-xs text-muted-foreground hover:text-foreground transition-colors cursor-copy"
+          aria-label={`Copy run ID ${runLabel}`}
+          title="Copy run ID"
+          onClick={handleCopyRunId}
+        >
+          {runLabel}
+        </button>
+        <span className={cn(
+          "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium shrink-0",
+          runReasonBadgeClassName(runReason.tone)
+        )} title={runReason.description}>
+          {runReason.label}
+        </span>
+        <span className="ml-auto shrink-0 text-[11px] font-medium tabular-nums text-foreground" title={timingTitle || undefined}>
+          {durationLabel}
+        </span>
+      </div>
+      {summary && (
+        <span className="text-xs text-muted-foreground truncate pl-5.5">
+          {summary.slice(0, 60)}
+        </span>
+      )}
+      {(metrics.totalTokens > 0 || metrics.cost > 0) && (
+        <div className="flex items-center gap-2 pl-5.5 text-[11px] text-muted-foreground tabular-nums">
+          {metrics.totalTokens > 0 && <span>{formatCompactTokenLabel(metrics.totalTokens)}</span>}
+          {metrics.cost > 0 && <span>${metrics.cost.toFixed(3)}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function RunsTab({
+  runs,
+  orgId,
+  agentId,
+  agentRouteId,
+  selectedRunId,
+  agentRuntimeType,
+}: {
+  runs: HeartbeatRun[];
+  orgId: string;
+  agentId: string;
+  agentRouteId: string;
+  selectedRunId: string | null;
+  agentRuntimeType: string;
+}) {
+  const { isMobile } = useSidebar();
+
+  if (runs.length === 0) {
+    return <p className="text-sm text-muted-foreground">No runs yet.</p>;
+  }
+
+  // Sort by created descending
+  const sorted = [...runs].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+
+  // On mobile, don't auto-select so the list shows first; on desktop, auto-select latest
+  const effectiveRunId = isMobile ? selectedRunId : (selectedRunId ?? sorted[0]?.id ?? null);
+  const selectedRun = sorted.find((r) => r.id === effectiveRunId) ?? null;
+
+  // Mobile: show either run list OR run detail with back button
+  if (isMobile) {
+    if (selectedRun) {
+      return (
+        <div className="space-y-3 min-w-0 overflow-x-hidden">
+          <Link
+            to={`/agents/${agentRouteId}/runs`}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors no-underline"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Back to runs
+          </Link>
+          <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} />
+        </div>
+      );
+    }
+    return (
+      <div className="border border-border rounded-lg overflow-x-hidden">
+        {sorted.map((run) => (
+          <RunListItem key={run.id} run={run} isSelected={false} agentId={agentRouteId} />
+        ))}
+      </div>
+    );
+  }
+
+  if (!selectedRun) {
+    return (
+      <div className="border border-border rounded-lg overflow-x-hidden">
+        {sorted.map((run) => (
+          <RunListItem key={run.id} run={run} isSelected={false} agentId={agentRouteId} />
+        ))}
+      </div>
+    );
+  }
+
+  // Desktop: detail pane first, compact navigation rail on the right.
+  return (
+    <div className="flex min-w-0 items-start gap-4">
+      <div className="min-w-0 flex-1 basis-0" data-testid="agent-runs-detail-pane">
+        <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} agentRuntimeType={agentRuntimeType} />
+      </div>
+
+      <div
+        className="w-[14rem] shrink-0 border border-border rounded-lg xl:w-[14.5rem] 2xl:w-[15rem]"
+        data-testid="agent-runs-list-pane"
+      >
+        <div className="sticky top-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 2rem)" }}>
+          {sorted.map((run) => (
+            <RunListItem key={run.id} run={run} isSelected={run.id === effectiveRunId} agentId={agentRouteId} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---- Run Detail (expanded) ---- */
+
+export function RunDetail({ run: initialRun, agentRouteId, agentRuntimeType }: { run: HeartbeatRun; agentRouteId: string; agentRuntimeType: string }) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { confirm } = useDialog();
+  const { data: hydratedRun } = useQuery({
+    queryKey: queryKeys.runDetail(initialRun.id),
+    queryFn: () => heartbeatsApi.get(initialRun.id),
+    enabled: Boolean(initialRun.id),
+  });
+  const run = hydratedRun ?? initialRun;
+  const metrics = runMetrics(run);
+  const [sessionOpen, setSessionOpen] = useState(false);
+  const [claudeLoginResult, setClaudeLoginResult] = useState<ClaudeLoginResult | null>(null);
+
+  useEffect(() => {
+    setClaudeLoginResult(null);
+  }, [run.id]);
+
+  const cancelRun = useMutation({
+    mutationFn: () => heartbeatsApi.cancel(run.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.orgId, run.agentId) });
+    },
+  });
+  const canResumeLostRun = run.errorCode === "process_lost" && run.status === "failed";
+  const canRetryRun = run.status === "failed" || run.status === "timed_out" || run.status === "cancelled";
+  const recoverRun = useMutation({
+    mutationFn: async () => retryHeartbeatRun(run),
+    onSuccess: (newRun) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(run.orgId, run.agentId) });
+      navigate(`/agents/${agentRouteId}/runs/${newRun.id}`);
+    },
+  });
+
+  const { data: touchedIssues } = useQuery({
+    queryKey: queryKeys.runIssues(run.id),
+    queryFn: () => activityApi.issuesForRun(run.id),
+  });
+  const touchedIssueIds = useMemo(
+    () => Array.from(new Set((touchedIssues ?? []).map((issue) => issue.issueId))),
+    [touchedIssues],
+  );
+  const stderrExcerptDisplayText = getRunStderrExcerptDisplayText(run);
+  const failureDisplay = getRunFailureDisplay(run);
+
+  const clearSessionsForTouchedIssues = useMutation({
+    mutationFn: async () => {
+      if (touchedIssueIds.length === 0) return 0;
+      await Promise.all(touchedIssueIds.map((issueId) => agentsApi.resetSession(run.agentId, issueId, run.orgId)));
+      return touchedIssueIds.length;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.runtimeState(run.agentId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.taskSessions(run.agentId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.runIssues(run.id) });
+    },
+  });
+
+  const runClaudeLogin = useMutation({
+    mutationFn: () => agentsApi.loginWithClaude(run.agentId, run.orgId),
+    onSuccess: (data) => {
+      setClaudeLoginResult(data);
+    },
+  });
+
+  const isRunActive = run.status === "queued" || (run.status === "running" && !run.finishedAt);
+  const durationNow = useRunDurationNow(isRunActive);
+  const durationLabel = formatRunDurationLabel(run, durationNow);
+  const timingTitle = formatRunTimingTitle(run);
+  const timeFormat: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" };
+  const startTime = run.startedAt ? new Date(run.startedAt).toLocaleTimeString("en-US", timeFormat) : null;
+  const endTime = run.finishedAt ? new Date(run.finishedAt).toLocaleTimeString("en-US", timeFormat) : null;
+  const hasMetrics = metrics.input > 0 || metrics.output > 0 || metrics.cached > 0 || metrics.cost > 0;
+  const hasSession = !!(run.sessionIdBefore || run.sessionIdAfter);
+  const sessionChanged = run.sessionIdBefore && run.sessionIdAfter && run.sessionIdBefore !== run.sessionIdAfter;
+  const hasNonZeroExit = run.exitCode !== null && run.exitCode !== 0;
+  const recoveryContext = asRecord(asRecord(run.contextSnapshot)?.recovery);
+  const recoveryOriginalRunId =
+    asNonEmptyString(recoveryContext?.originalRunId) ?? run.retryOfRunId;
+  const recoveryFailureKind = asNonEmptyString(recoveryContext?.failureKind);
+  const recoveryFailureSummary = asNonEmptyString(recoveryContext?.failureSummary);
+  const recoveryTrigger = asNonEmptyString(recoveryContext?.recoveryTrigger);
+  const recoveryMode = asNonEmptyString(recoveryContext?.recoveryMode);
+  const passiveFollowupContext = asRecord(asRecord(run.contextSnapshot)?.passiveFollowup);
+  const passiveFollowupOriginRunId = asNonEmptyString(passiveFollowupContext?.originRunId);
+  const passiveFollowupPreviousRunId = asNonEmptyString(passiveFollowupContext?.previousRunId);
+  const passiveFollowupReason = asNonEmptyString(passiveFollowupContext?.reason);
+  const passiveFollowupAttempt = typeof passiveFollowupContext?.attempt === "number" ? passiveFollowupContext.attempt : null;
+  const passiveFollowupMaxAttempts =
+    typeof passiveFollowupContext?.maxAttempts === "number" ? passiveFollowupContext.maxAttempts : null;
+  const runActionButton = (() => {
+    if (run.status === "running" || run.status === "queued") {
+      return (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 px-3 text-xs text-destructive hover:text-destructive"
+          onClick={() => cancelRun.mutate()}
+          disabled={cancelRun.isPending}
+        >
+          {cancelRun.isPending ? "Cancelling..." : "Cancel"}
+        </Button>
+      );
+    }
+    if (canResumeLostRun) {
+      return (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 px-3 text-xs"
+          onClick={() => recoverRun.mutate()}
+          disabled={recoverRun.isPending}
+          data-testid="run-detail-retry"
+        >
+          <RotateCcw className="h-3.5 w-3.5 mr-1" />
+          {recoverRun.isPending ? "Resuming..." : "Resume"}
+        </Button>
+      );
+    }
+    if (canRetryRun) {
+      return (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 px-3 text-xs"
+          onClick={() => recoverRun.mutate()}
+          disabled={recoverRun.isPending}
+          data-testid="run-detail-retry"
+        >
+          <RotateCcw className="h-3.5 w-3.5 mr-1" />
+          {recoverRun.isPending ? "Retrying..." : "Retry"}
+        </Button>
+      );
+    }
+    return null;
+  })();
+
+  return (
+    <div className="space-y-4 min-w-0">
+      {/* Run summary card */}
+      <div className="border border-border rounded-lg overflow-hidden" data-testid="run-summary-card">
+        <div className="flex flex-col sm:flex-row">
+          {/* Left column: status + timing */}
+          <div className="min-w-0 flex-1 p-4 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <StatusBadge status={run.status} />
+              </div>
+              {runActionButton && (
+                <div className="shrink-0">
+                  {runActionButton}
+                </div>
+              )}
+            </div>
+            {recoverRun.isError && (
+              <div className="text-xs text-destructive">
+                {recoverRun.error instanceof Error ? recoverRun.error.message : "Failed to recover run"}
+              </div>
+            )}
+            {(durationLabel || startTime) && (
+              <div className="space-y-0.5">
+                {durationLabel && (
+                  <div className="text-sm font-medium tabular-nums">
+                    {durationLabel}
+                  </div>
+                )}
+                {startTime && (
+                  <div className="text-[11px] text-muted-foreground" title={timingTitle || undefined}>
+                    <span className="font-mono">{startTime}</span>
+                    {endTime && (
+                      <>
+                        <span> &rarr; </span>
+                        <span className="font-mono">{endTime}</span>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            {failureDisplay && (
+              <div className="text-xs">
+                <div className="font-medium text-red-600 dark:text-red-400">{failureDisplay.title}</div>
+                <span className="text-red-600 dark:text-red-400">{failureDisplay.body}</span>
+                {failureDisplay.code && <span className="text-muted-foreground ml-1">({failureDisplay.code})</span>}
+                {failureDisplay.actionPath && failureDisplay.actionLabel && (
+                  <div className="mt-1">
+                    <Link to={failureDisplay.actionPath} className="text-xs font-medium text-red-700 underline dark:text-red-300">
+                      {failureDisplay.actionLabel}
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
+            {run.errorCode === "claude_auth_required" && agentRuntimeType === "claude_local" && (
+              <div className="space-y-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => runClaudeLogin.mutate()}
+                  disabled={runClaudeLogin.isPending}
+                >
+                  {runClaudeLogin.isPending ? "Running claude login..." : "Login to Claude Code"}
+                </Button>
+                {runClaudeLogin.isError && (
+                  <p className="text-xs text-destructive">
+                    {runClaudeLogin.error instanceof Error
+                      ? runClaudeLogin.error.message
+                      : "Failed to run Claude login"}
+                  </p>
+                )}
+                {claudeLoginResult?.loginUrl && (
+                  <p className="text-xs">
+                    Login URL:
+                    <a
+                      href={claudeLoginResult.loginUrl}
+                      className="text-blue-600 underline underline-offset-2 ml-1 break-all dark:text-blue-400"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {claudeLoginResult.loginUrl}
+                    </a>
+                  </p>
+                )}
+                {claudeLoginResult && (
+                  <>
+                    {!!claudeLoginResult.stdout && (
+                      <pre className="min-w-0 max-w-full bg-neutral-100 dark:bg-neutral-950 rounded-md p-3 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap break-words">
+                        {claudeLoginResult.stdout}
+                      </pre>
+                    )}
+                    {!!claudeLoginResult.stderr && (
+                      <pre className="min-w-0 max-w-full bg-neutral-100 dark:bg-neutral-950 rounded-md p-3 text-xs font-mono text-red-700 dark:text-red-300 overflow-x-auto whitespace-pre-wrap break-words">
+                        {claudeLoginResult.stderr}
+                      </pre>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+            {hasNonZeroExit && (
+              <div className="text-xs text-red-600 dark:text-red-400">
+                Exit code {run.exitCode}
+                {run.signal && <span className="text-muted-foreground ml-1">(signal: {run.signal})</span>}
+              </div>
+            )}
+            {recoveryOriginalRunId && (
+              <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs space-y-1">
+                <div className="font-medium text-foreground">Recovery</div>
+                <div className="text-muted-foreground">
+                  From run{" "}
+                  <Link className="underline underline-offset-2" to={`/agents/${run.agentId}/runs/${recoveryOriginalRunId}`}>
+                    {recoveryOriginalRunId}
+                  </Link>
+                </div>
+                {(recoveryTrigger || recoveryMode) && (
+                  <div className="text-muted-foreground">
+                    {[recoveryTrigger, recoveryMode].filter(Boolean).join(" · ")}
+                  </div>
+                )}
+                {(recoveryFailureKind || recoveryFailureSummary) && (
+                  <div className="text-muted-foreground">
+                    {[recoveryFailureKind, recoveryFailureSummary].filter(Boolean).join(": ")}
+                  </div>
+                )}
+              </div>
+            )}
+            {passiveFollowupOriginRunId && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs space-y-1">
+                <div className="font-medium text-foreground">Passive follow-up</div>
+                <div className="text-muted-foreground">
+                  Origin run{" "}
+                  <Link className="underline underline-offset-2" to={`/agents/${run.agentId}/runs/${passiveFollowupOriginRunId}`}>
+                    {passiveFollowupOriginRunId}
+                  </Link>
+                </div>
+                {passiveFollowupPreviousRunId && (
+                  <div className="text-muted-foreground">
+                    Previous run{" "}
+                    <Link className="underline underline-offset-2" to={`/agents/${run.agentId}/runs/${passiveFollowupPreviousRunId}`}>
+                      {passiveFollowupPreviousRunId}
+                    </Link>
+                  </div>
+                )}
+                {(passiveFollowupAttempt || passiveFollowupReason) && (
+                  <div className="text-muted-foreground">
+                    {[
+                      passiveFollowupAttempt && passiveFollowupMaxAttempts
+                        ? `attempt ${passiveFollowupAttempt}/${passiveFollowupMaxAttempts}`
+                        : null,
+                      passiveFollowupReason,
+                    ].filter(Boolean).join(" · ")}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Right column: metrics */}
+          {hasMetrics && (
+            <div className="border-t sm:border-t-0 sm:border-l border-border p-4 grid grid-cols-2 gap-x-4 sm:gap-x-8 gap-y-3 content-center tabular-nums">
+              <div>
+                <div className="text-xs text-muted-foreground">Prompt input</div>
+                <div className="text-sm font-medium font-mono">{formatTokens(metrics.promptTokens)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Output</div>
+                <div className="text-sm font-medium font-mono">{formatTokens(metrics.output)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Cached input</div>
+                <div className="text-sm font-medium font-mono">{formatTokens(metrics.cached)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Cost</div>
+                <div className="text-sm font-medium font-mono">{metrics.cost > 0 ? `$${metrics.cost.toFixed(4)}` : "-"}</div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Collapsible session row */}
+        {hasSession && (
+          <div className="border-t border-border">
+            <button
+              className="flex items-center gap-1.5 w-full px-4 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setSessionOpen((v) => !v)}
+            >
+              <ChevronRight className={cn("h-3 w-3 transition-transform", sessionOpen && "rotate-90")} />
+              Session
+              {sessionChanged && <span className="text-yellow-400 ml-1">(changed)</span>}
+            </button>
+            {sessionOpen && (
+              <div className="px-4 pb-3 space-y-1 text-xs">
+                <div className="flex items-start gap-2">
+                  <span className="text-muted-foreground w-12 shrink-0">Run ID</span>
+                  <CopyText
+                    text={run.id}
+                    ariaLabel={`Copy run ID ${run.id.slice(0, 8)}`}
+                    title="Copy run ID"
+                    containerClassName="min-w-0 max-w-full"
+                    className="block min-w-0 break-all text-left font-mono"
+                  />
+                </div>
+                {run.sessionIdBefore && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground w-12">{sessionChanged ? "Before" : "ID"}</span>
+                    <CopyText text={run.sessionIdBefore} className="font-mono" />
+                  </div>
+                )}
+                {sessionChanged && run.sessionIdAfter && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground w-12">After</span>
+                    <CopyText text={run.sessionIdAfter} className="font-mono" />
+                  </div>
+                )}
+                {touchedIssueIds.length > 0 && (
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-60"
+                      disabled={clearSessionsForTouchedIssues.isPending}
+                      onClick={async () => {
+                        const issueCount = touchedIssueIds.length;
+                        const confirmed = await confirm({
+                          title: `Clear session for ${issueCount} issue${issueCount === 1 ? "" : "s"} touched by this run?`,
+                          confirmLabel: "Clear session",
+                          tone: "destructive",
+                        });
+                        if (!confirmed) return;
+                        clearSessionsForTouchedIssues.mutate();
+                      }}
+                    >
+                      {clearSessionsForTouchedIssues.isPending
+                        ? "clearing session..."
+                        : "clear session for these issues"}
+                    </button>
+                    {clearSessionsForTouchedIssues.isError && (
+                      <p className="text-[11px] text-destructive mt-1">
+                        {clearSessionsForTouchedIssues.error instanceof Error
+                          ? clearSessionsForTouchedIssues.error.message
+                          : "Failed to clear sessions"}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Issues touched by this run */}
+      {touchedIssues && touchedIssues.length > 0 && (
+        <div className="space-y-2">
+          <span className="text-xs font-medium text-muted-foreground">Issues Touched ({touchedIssues.length})</span>
+          <div className="border border-border rounded-lg divide-y divide-border">
+            {touchedIssues.map((issue) => (
+              <Link
+                key={issue.issueId}
+                to={`/issues/${issue.identifier ?? issue.issueId}`}
+                className="flex items-center justify-between w-full px-3 py-2 text-xs hover:bg-accent/20 transition-colors text-left no-underline text-inherit"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <StatusBadge status={issue.status} />
+                  <span className="truncate">{issue.title}</span>
+                </div>
+                <span className="font-mono text-muted-foreground shrink-0 ml-2">{issue.identifier ?? issue.issueId.slice(0, 8)}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* stderr excerpt for failed runs */}
+      {shouldShowRunStderrExcerpt(run) && (
+        <div className="space-y-1">
+          <span className="text-xs font-medium text-red-600 dark:text-red-400">stderr</span>
+          <pre data-testid="run-stderr-excerpt" className="min-w-0 max-w-full bg-neutral-100 dark:bg-neutral-950 rounded-md p-3 text-xs font-mono text-red-700 dark:text-red-300 overflow-x-auto whitespace-pre-wrap break-words">{stderrExcerptDisplayText}</pre>
+        </div>
+      )}
+
+      {/* stdout excerpt when no log is available */}
+      {run.stdoutExcerpt && !run.logRef && (
+        <div className="space-y-1">
+          <span className="text-xs font-medium text-muted-foreground">stdout</span>
+          <pre data-testid="run-stdout-excerpt" className="min-w-0 max-w-full bg-neutral-100 dark:bg-neutral-950 rounded-md p-3 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap break-words">{run.stdoutExcerpt}</pre>
+        </div>
+      )}
+
+      {/* Log viewer */}
+      <LogViewer run={run} agentRuntimeType={agentRuntimeType} />
+      <ScrollToBottom />
+    </div>
+  );
+}
+
+/* ---- Log Viewer ---- */
