@@ -37,11 +37,17 @@ export function formatIssueCardDate(date: Date | string, now: Date = new Date())
     ? {
         month: "numeric",
         day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
         ...(value.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
       }
     : {
         month: "short",
         day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
         ...(value.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
       }).format(value);
 }

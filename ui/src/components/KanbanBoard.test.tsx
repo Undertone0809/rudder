@@ -203,7 +203,7 @@ describe("KanbanBoard", () => {
         expect.stringContaining("ReviewerMe"),
         expect.stringContaining("LabelsUI"),
         expect.stringContaining("UpdatedYesterday"),
-        expect.stringContaining("CreatedMay 17"),
+        expect.stringContaining("CreatedMay 17, 09:30"),
       ]),
     );
     expect(assignee?.textContent).toContain("Me");
