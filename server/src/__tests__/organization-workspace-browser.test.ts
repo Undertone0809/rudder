@@ -304,4 +304,91 @@ describe("organization workspace browser", () => {
     expect(searchEntries.map((entry) => entry.path)).toEqual(["docs/z-special-product-brief.md"]);
   });
 
+  it("allows normal entry actions below agent workspaces while protecting agent workspace handles", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const workspaceKey = buildAgentWorkspaceKey("Ivy", agentId);
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Mutations Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Mutations Org"),
+      issuePrefix: "WBM",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Ivy",
+      workspaceKey,
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const root = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(path.join(root, "artifacts"), { recursive: true });
+    await fs.mkdir(path.join(root, "agents", workspaceKey, "instructions"), { recursive: true });
+    await fs.writeFile(path.join(root, "agents", workspaceKey, "instructions", "MEMORY.md"), "# Memory\n", "utf8");
+
+    await expect(workspaceBrowser.createDirectory(orgId, "artifacts/new-folder")).resolves.toEqual({
+      path: "artifacts/new-folder",
+      isDirectory: true,
+    });
+    await expect(workspaceBrowser.createFile(orgId, "artifacts/new-file.md", "# New\n")).resolves.toEqual(
+      expect.objectContaining({
+        filePath: "artifacts/new-file.md",
+        content: "# New\n",
+      }),
+    );
+
+    await expect(workspaceBrowser.createFile(orgId, "agents/new-agent-root-file.md", "# Blocked\n")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.createDirectory(orgId, `agents/${workspaceKey}/new-folder`)).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.renameEntry(orgId, "agents", "renamed-agents")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}`)).rejects.toMatchObject({
+      status: 422,
+    });
+
+    await expect(
+      workspaceBrowser.createFile(orgId, `agents/${workspaceKey}/instructions/NOTES.md`, "# Notes\n"),
+    ).resolves.toEqual(expect.objectContaining({
+      filePath: `agents/${workspaceKey}/instructions/NOTES.md`,
+      content: "# Notes\n",
+    }));
+    await expect(
+      workspaceBrowser.createDirectory(orgId, `agents/${workspaceKey}/instructions/scratch`),
+    ).resolves.toEqual({
+      path: `agents/${workspaceKey}/instructions/scratch`,
+      isDirectory: true,
+    });
+    await expect(
+      workspaceBrowser.renameEntry(orgId, `agents/${workspaceKey}/instructions/NOTES.md`, "renamed-notes.md"),
+    ).resolves.toEqual({
+      previousPath: `agents/${workspaceKey}/instructions/NOTES.md`,
+      path: `agents/${workspaceKey}/instructions/renamed-notes.md`,
+      isDirectory: false,
+    });
+    await expect(
+      workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}/instructions/renamed-notes.md`),
+    ).resolves.toEqual({
+      path: `agents/${workspaceKey}/instructions/renamed-notes.md`,
+      isDirectory: false,
+    });
+  });
+
 });

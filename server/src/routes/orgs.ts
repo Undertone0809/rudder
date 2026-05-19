@@ -7,6 +7,7 @@ import {
   createOrganizationResourceSchema,
   createOrganizationSchema,
   createLibraryDocumentSchema,
+  createOrganizationWorkspaceDirectorySchema,
   restoreLibraryDocumentRevisionSchema,
   updateOrganizationResourceSchema,
   updateOrganizationBrandingSchema,
@@ -439,6 +440,28 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       runId: actor.runId,
       details: {
         path: result.filePath,
+      },
+    });
+    res.status(201).json(result);
+  });
+
+  router.post("/:orgId/workspace/directory", validate(createOrganizationWorkspaceDirectorySchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const result = await workspaceBrowser.createDirectory(orgId, req.body.directoryPath);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_directory.created",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        path: result.path,
       },
     });
     res.status(201).json(result);

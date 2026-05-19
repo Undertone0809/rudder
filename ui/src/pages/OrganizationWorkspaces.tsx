@@ -41,8 +41,10 @@ import {
   Copy,
   ExternalLink,
   HardDrive,
+  FilePlus2,
   Folder,
   FolderOpen,
+  FolderPlus,
   FileCode2,
   Image as ImageIcon,
   MoreHorizontal,
@@ -207,8 +209,27 @@ function displayWorkspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
   return entry.displayLabel?.trim() || entry.name;
 }
 
-function isProtectedAgentWorkspacePath(filePath: string) {
-  return filePath === "agents" || filePath.startsWith("agents/");
+function isProtectedAgentWorkspaceContainerPath(filePath: string) {
+  if (filePath === "agents") return true;
+  const segments = filePath.split("/").filter(Boolean);
+  return segments.length === 2 && segments[0] === "agents";
+}
+
+function canCreateInsideWorkspaceDirectory(directoryPath: string) {
+  return !isProtectedAgentWorkspaceContainerPath(directoryPath);
+}
+
+function isValidWorkspaceEntryName(name: string) {
+  const trimmed = name.trim();
+  return Boolean(trimmed)
+    && trimmed !== "."
+    && trimmed !== ".."
+    && !trimmed.includes("/")
+    && !trimmed.includes("\\");
+}
+
+function joinWorkspaceEntryPath(parentPath: string, name: string) {
+  return parentPath ? `${parentPath}/${name}` : name;
 }
 
 function joinWorkspacePath(rootPath: string | null, entryPath: string) {
@@ -256,6 +277,7 @@ function DirectoryChildren({
   selectedFilePath,
   onSelectFile,
   onCopyPath,
+  onStartCreateEntry,
   onStartRename,
   onStartDelete,
   expandedDirectories,
@@ -266,6 +288,7 @@ function DirectoryChildren({
   selectedFilePath: string | null;
   onSelectFile: (filePath: string) => void;
   onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
+  onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   expandedDirectories: Set<string>;
@@ -291,6 +314,7 @@ function DirectoryChildren({
           selectedFilePath={selectedFilePath}
           onSelectFile={onSelectFile}
           onCopyPath={onCopyPath}
+          onStartCreateEntry={onStartCreateEntry}
           onStartRename={onStartRename}
           onStartDelete={onStartDelete}
           expandedDirectories={expandedDirectories}
@@ -307,6 +331,7 @@ function WorkspaceTreeNode({
   selectedFilePath,
   onSelectFile,
   onCopyPath,
+  onStartCreateEntry,
   onStartRename,
   onStartDelete,
   expandedDirectories,
@@ -317,6 +342,7 @@ function WorkspaceTreeNode({
   selectedFilePath: string | null;
   onSelectFile: (filePath: string) => void;
   onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
+  onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
   expandedDirectories: Set<string>;
@@ -326,7 +352,8 @@ function WorkspaceTreeNode({
   const primaryLabel = displayWorkspaceEntryLabel(entry);
   const isAgentWorkspace = entry.entityType === "agent_workspace";
   const isAgentsRoot = entry.path === "agents";
-  const isProtectedPath = isProtectedAgentWorkspacePath(entry.path);
+  const isProtectedContainer = isProtectedAgentWorkspaceContainerPath(entry.path);
+  const canCreateInsideDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
 
   const actionMenu = (
     <DropdownMenu>
@@ -353,9 +380,22 @@ function WorkspaceTreeNode({
           <Copy className="h-3.5 w-3.5" />
           Copy file path
         </DropdownMenuItem>
-        {!isProtectedPath ? (
+        {!isProtectedContainer ? (
           <>
             <DropdownMenuSeparator />
+            {canCreateInsideDirectory ? (
+              <>
+                <DropdownMenuItem onSelect={() => onStartCreateEntry(entry, "file")}>
+                  <FilePlus2 className="h-3.5 w-3.5" />
+                  New file
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onStartCreateEntry(entry, "folder")}>
+                  <FolderPlus className="h-3.5 w-3.5" />
+                  New folder
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
             <DropdownMenuItem onSelect={() => onStartRename(entry)}>
               <Pencil className="h-3.5 w-3.5" />
               Rename
@@ -426,6 +466,7 @@ function WorkspaceTreeNode({
             selectedFilePath={selectedFilePath}
             onSelectFile={onSelectFile}
             onCopyPath={onCopyPath}
+            onStartCreateEntry={onStartCreateEntry}
             onStartRename={onStartRename}
             onStartDelete={onStartDelete}
             expandedDirectories={expandedDirectories}
@@ -500,6 +541,11 @@ export function OrganizationWorkspaceBrowser({
   const [renameTarget, setRenameTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
+  const [createTarget, setCreateTarget] = useState<{
+    parent: OrganizationWorkspaceFileEntry;
+    kind: "file" | "folder";
+  } | null>(null);
+  const [createDraft, setCreateDraft] = useState("");
   const draftStateRef = useRef<{
     draftContent: string;
     draftFilePath: string | null;
@@ -740,6 +786,60 @@ export function OrganizationWorkspaceBrowser({
   });
   const createWorkspaceDocumentMutate = createWorkspaceDocument.mutate;
   const isCreatingWorkspaceDocument = createWorkspaceDocument.isPending;
+
+  const createWorkspaceEntry = useMutation({
+    mutationFn: async (payload: {
+      parent: OrganizationWorkspaceFileEntry;
+      kind: "file" | "folder";
+      name: string;
+    }) => {
+      const entryPath = joinWorkspaceEntryPath(payload.parent.path, payload.name.trim());
+      if (payload.kind === "folder") {
+        return {
+          kind: payload.kind,
+          result: await organizationsApi.createWorkspaceDirectory(viewedOrganizationId!, {
+            directoryPath: entryPath,
+          }),
+        };
+      }
+      return {
+        kind: payload.kind,
+        result: await organizationsApi.createWorkspaceFile(viewedOrganizationId!, {
+          filePath: entryPath,
+          content: "",
+        }),
+      };
+    },
+    onSuccess: ({ kind, result }) => {
+      if (!viewedOrganizationId) return;
+      void invalidateWorkspaceBrowser();
+      setCreateTarget(null);
+      setCreateDraft("");
+      if (kind === "file" && "filePath" in result) {
+        queryClient.setQueryData(
+          queryKeys.organizations.workspaceFile(viewedOrganizationId, result.filePath),
+          result,
+        );
+        setSelectedFilePath(result.filePath);
+        setDraftFilePath(result.filePath);
+        syncedFileRef.current = { filePath: result.filePath, content: result.content ?? "" };
+        updateSelectedPath(searchParams, setSearchParams, result.filePath);
+        setDraftContent(result.content ?? "");
+      }
+      const createdPath = "filePath" in result ? result.filePath : result.path;
+      pushToast({
+        title: kind === "file" ? "File created" : "Folder created",
+        body: createdPath,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to create workspace entry",
+        tone: "error",
+      });
+    },
+  });
 
   const deleteWorkspaceEntry = useMutation({
     mutationFn: (entry: OrganizationWorkspaceFileEntry) =>
@@ -1021,14 +1121,20 @@ export function OrganizationWorkspaceBrowser({
   }
 
   function handleStartRename(entry: OrganizationWorkspaceFileEntry) {
-    if (isProtectedAgentWorkspacePath(entry.path)) return;
+    if (isProtectedAgentWorkspaceContainerPath(entry.path)) return;
     setRenameTarget(entry);
     setRenameDraft(entry.name);
   }
 
   function handleStartDelete(entry: OrganizationWorkspaceFileEntry) {
-    if (isProtectedAgentWorkspacePath(entry.path)) return;
+    if (isProtectedAgentWorkspaceContainerPath(entry.path)) return;
     setDeleteTarget(entry);
+  }
+
+  function handleStartCreateEntry(entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") {
+    if (!entry.isDirectory || !canCreateInsideWorkspaceDirectory(entry.path)) return;
+    setCreateTarget({ parent: entry, kind });
+    setCreateDraft(kind === "file" ? "untitled.md" : "new-folder");
   }
 
   return (
@@ -1071,6 +1177,7 @@ export function OrganizationWorkspaceBrowser({
                         selectedFilePath={selectedFilePath}
                         onSelectFile={handleSelectFile}
                         onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
+                        onStartCreateEntry={handleStartCreateEntry}
                         onStartRename={handleStartRename}
                         onStartDelete={handleStartDelete}
                         expandedDirectories={expandedDirectories}
@@ -1202,6 +1309,70 @@ export function OrganizationWorkspaceBrowser({
         </div>
       )}
       </div>
+
+      <Dialog open={createTarget !== null} onOpenChange={(open) => {
+        if (!open && !createWorkspaceEntry.isPending) {
+          setCreateTarget(null);
+          setCreateDraft("");
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{createTarget?.kind === "folder" ? "New folder" : "New file"}</DialogTitle>
+            <DialogDescription>
+              Create inside {createTarget?.parent.path ?? "this folder"}.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="space-y-1.5">
+            <span className="text-xs text-muted-foreground">Name</span>
+            <Input
+              value={createDraft}
+              onChange={(event) => setCreateDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || !createTarget || !isValidWorkspaceEntryName(createDraft)) return;
+                event.preventDefault();
+                createWorkspaceEntry.mutate({
+                  parent: createTarget.parent,
+                  kind: createTarget.kind,
+                  name: createDraft,
+                });
+              }}
+              autoFocus
+            />
+          </label>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCreateTarget(null);
+                setCreateDraft("");
+              }}
+              disabled={createWorkspaceEntry.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!createTarget) return;
+                createWorkspaceEntry.mutate({
+                  parent: createTarget.parent,
+                  kind: createTarget.kind,
+                  name: createDraft,
+                });
+              }}
+              disabled={!createTarget || !isValidWorkspaceEntryName(createDraft) || createWorkspaceEntry.isPending}
+            >
+              {createWorkspaceEntry.isPending
+                ? "Creating..."
+                : createTarget?.kind === "folder"
+                  ? "Create folder"
+                  : "Create file"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={renameTarget !== null} onOpenChange={(open) => {
         if (!open && !renameWorkspaceEntry.isPending) {

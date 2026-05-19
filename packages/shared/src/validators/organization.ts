@@ -59,6 +59,12 @@ export const createOrganizationWorkspaceFileSchema = z.object({
 
 export type CreateOrganizationWorkspaceFile = z.infer<typeof createOrganizationWorkspaceFileSchema>;
 
+export const createOrganizationWorkspaceDirectorySchema = z.object({
+  directoryPath: z.string().trim().min(1).max(1000),
+});
+
+export type CreateOrganizationWorkspaceDirectory = z.infer<typeof createOrganizationWorkspaceDirectorySchema>;
+
 export const renameOrganizationWorkspaceEntrySchema = z.object({
   name: z.string().trim().min(1).max(255),
 });

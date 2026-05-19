@@ -6,6 +6,7 @@ import type {
   LibraryDocumentSummary,
   Organization,
   OrganizationResource,
+  OrganizationWorkspaceDirectoryCreateRequest,
   OrganizationWorkspaceEntryMutationResult,
   OrganizationWorkspaceEntryRenameRequest,
   OrganizationWorkspaceFileCreateRequest,
@@ -123,6 +124,8 @@ export const organizationsApi = {
   },
   createWorkspaceFile: (orgId: string, data: OrganizationWorkspaceFileCreateRequest) =>
     api.post<OrganizationWorkspaceFileDetail>(`/orgs/${orgId}/workspace/file`, data),
+  createWorkspaceDirectory: (orgId: string, data: OrganizationWorkspaceDirectoryCreateRequest) =>
+    api.post<OrganizationWorkspaceEntryMutationResult>(`/orgs/${orgId}/workspace/directory`, data),
   updateWorkspaceFile: (orgId: string, filePath: string, data: OrganizationWorkspaceFileUpdateRequest) => {
     const search = new URLSearchParams();
     if (filePath) search.set("path", filePath);

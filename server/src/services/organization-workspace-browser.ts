@@ -72,16 +72,25 @@ function resolveWithinRoot(rootPath: string, requestedPath: string) {
   };
 }
 
-function isProtectedAgentWorkspacePath(normalizedPath: string) {
-  return normalizedPath === "agents" || normalizedPath.startsWith("agents/");
+function isProtectedAgentWorkspaceContainerPath(normalizedPath: string) {
+  if (normalizedPath === "agents") return true;
+  const segments = normalizedPath.split("/").filter(Boolean);
+  return segments.length === 2 && segments[0] === "agents";
 }
 
 function assertMutableWorkspaceEntry(normalizedPath: string) {
   if (!normalizedPath) {
     throw unprocessable("The organization workspace root cannot be renamed or deleted");
   }
-  if (isProtectedAgentWorkspacePath(normalizedPath)) {
+  if (isProtectedAgentWorkspaceContainerPath(normalizedPath)) {
     throw unprocessable("Agent workspace entries can only be copied by path");
+  }
+}
+
+function assertCanCreateWorkspaceEntry(normalizedPath: string) {
+  const parentPath = toPortableRelativePath(path.dirname(normalizedPath));
+  if (isProtectedAgentWorkspaceContainerPath(parentPath === "." ? "" : parentPath)) {
+    throw unprocessable("Agent workspace root folders can only be copied by path");
   }
 }
 
@@ -473,9 +482,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
       if (!normalizedPath) {
         throw unprocessable("File path is required");
       }
-      if (isProtectedAgentWorkspacePath(normalizedPath)) {
-        throw unprocessable("Agent workspace entries can only be copied by path");
-      }
+      assertCanCreateWorkspaceEntry(normalizedPath);
       if (await statWorkspaceEntry(resolvedTarget)) {
         throw conflict("A file or folder already exists at that path");
       }
@@ -495,6 +502,31 @@ export function organizationWorkspaceBrowserService(db: Db) {
         contentPath: null,
         message: null,
         truncated: false,
+      };
+    },
+
+    async createDirectory(
+      orgId: string,
+      directoryPath: string,
+    ): Promise<OrganizationWorkspaceEntryMutationResult> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, directoryPath);
+      const rootExists = await pathExistsAsDirectory(resolvedRoot);
+      if (!rootExists) {
+        throw notFound("The workspace root is not available on this machine yet.");
+      }
+      if (!normalizedPath) {
+        throw unprocessable("Directory path is required");
+      }
+      assertCanCreateWorkspaceEntry(normalizedPath);
+      if (await statWorkspaceEntry(resolvedTarget)) {
+        throw conflict("A file or folder already exists at that path");
+      }
+
+      await fs.mkdir(resolvedTarget, { recursive: false });
+      return {
+        path: normalizedPath,
+        isDirectory: true,
       };
     },
 
@@ -523,7 +555,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
         throw unprocessable("Entry path must stay inside the organization workspace root");
       }
       const nextPath = toPortableRelativePath(relative);
-      if (isProtectedAgentWorkspacePath(nextPath)) {
+      if (isProtectedAgentWorkspaceContainerPath(nextPath)) {
         throw unprocessable("Entries cannot be moved into the protected agent workspace area");
       }
       if (normalizedPath === nextPath) {

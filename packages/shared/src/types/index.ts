@@ -5,6 +5,7 @@ export type {
   OrganizationWorkspaceFileEntry,
   OrganizationWorkspaceFileList,
   OrganizationWorkspaceFileDetail,
+  OrganizationWorkspaceDirectoryCreateRequest,
   OrganizationWorkspaceFileCreateRequest,
   OrganizationWorkspaceFileUpdateRequest,
   OrganizationWorkspaceEntryRenameRequest,

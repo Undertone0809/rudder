@@ -59,6 +59,10 @@ export interface OrganizationWorkspaceFileCreateRequest {
   content?: string;
 }
 
+export interface OrganizationWorkspaceDirectoryCreateRequest {
+  directoryPath: string;
+}
+
 export interface OrganizationWorkspaceEntryRenameRequest {
   name: string;
 }
