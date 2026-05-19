@@ -795,6 +795,19 @@ function forceQuitDesktopProcesses(target: DesktopAssetTarget): void {
   spawnSync(command.command, command.args, { stdio: "ignore" });
 }
 
+function forceQuitDesktopProcess(pid: number, target: DesktopAssetTarget): void {
+  if (target.platform === "windows") {
+    spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // The process may already have exited between the wait timeout and kill.
+  }
+}
+
 function isRunningInsideDesktopExecutable(): boolean {
   return path.basename(process.execPath).toLowerCase().startsWith(DESKTOP_APP_NAME.toLowerCase());
 }
@@ -881,10 +894,14 @@ export async function prepareForDesktopReplace(
     activeRunPollIntervalMs?: number;
     legacyUpdateQuitGraceMs?: number;
     updateQuitForceDelayMs?: number;
+    forceQuitDesktopProcess?: (pid: number, target: DesktopAssetTarget) => void;
     forceQuitDesktopProcesses?: (target: DesktopAssetTarget) => void;
+    waitForDesktopProcessExit?: (pid: number) => Promise<boolean>;
   } = {},
 ): Promise<void> {
   const forceQuit = options.forceQuitDesktopProcesses ?? forceQuitDesktopProcesses;
+  const forceQuitPid = options.forceQuitDesktopProcess ?? forceQuitDesktopProcess;
+  const waitForExit = options.waitForDesktopProcessExit ?? waitForProcessExit;
   const hasManagedExecutable = await pathExists(paths.executablePath);
   if (hasManagedExecutable) {
     let quitResponse = await requestDesktopQuit(paths.executablePath, target);
@@ -903,9 +920,9 @@ export async function prepareForDesktopReplace(
     const quitPid = readUpdateQuitPid(quitResponse);
     if (quitPid) {
       p.log.info(`Waiting for existing Rudder Desktop process ${quitPid} to exit before replacing it.`);
-      if (!(await waitForProcessExit(quitPid))) {
+      if (!(await waitForExit(quitPid))) {
         p.log.warn(`Rudder Desktop process ${quitPid} did not exit in time; attempting force-quit fallback.`);
-        forceQuit(target);
+        forceQuitPid(quitPid, target);
         await delay(options.updateQuitForceDelayMs ?? UPDATE_QUIT_FORCE_DELAY_MS);
       }
     } else if (isLegacyUnconfirmedUpdateQuit(quitResponse)) {
