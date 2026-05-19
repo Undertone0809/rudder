@@ -81,6 +81,30 @@ Use `build-advisor` when the user is blocked on judgment, articulation, or decid
 
 Follow this sequence unless the user explicitly narrows the task.
 
+### 0. Mode Gate
+
+Before doing a full advisor pass, classify the user's immediate intent:
+
+- `quick_take`: the user asks for a fast sanity check or says not to write a
+  long plan. Keep the answer short and name the main risk plus next move.
+- `understanding_check`: the user asks "你懂吗" / "先说说". Do a small evidence
+  pass, then reframe the need. Do not implement or write a full proposal yet.
+- `proposal`: the user asks for a proposal, options, plan, or first-principles
+  analysis. Stay in advisor mode and produce the requested decision artifact.
+- `visual_options`: the user is reacting to screenshots or asks for UI schemes.
+  Produce concrete visual alternatives such as ASCII wireframes, low-fidelity
+  HTML, or screenshot-backed inspection criteria before recommending code.
+- `implementation_handoff`: the user approves an option with phrases like
+  "可以，开始推进", "按方案 A 改", or "follow 你的思路，优化一下". Switch out of
+  advisor-only mode and execute normally with repository validation rules.
+- `reviewer_loop`: the user asks for reviewer rounds, acceptance gates, or
+  independent review. Route to the reviewer-loop workflow instead of acting as
+  a single advisor.
+
+State the mode only when it clarifies the response. The purpose of the gate is
+to prevent two failures: writing a long proposal when the user wants a quick
+decision, and starting implementation when the user asked only for judgment.
+
 ### Plan Template Reference
 
 When this skill writes or prepares a plan document, read
@@ -114,6 +138,26 @@ by default.
 
 If enough context is not yet available, say so directly and list the exact
 evidence needed. Do not fill the gap with confident interpretation.
+
+#### UI Evidence Mode
+
+When the input includes screenshots, browser state, visible UI, or visual
+complaints, treat visual evidence as part of the diagnosis, not as an optional
+polish step.
+
+Use the smallest concrete artifact that makes the choice inspectable:
+
+- ASCII wireframe for layout and hierarchy questions.
+- Single-file low-fidelity HTML when comparing multiple UI directions.
+- Browser/Desktop screenshot when judging an existing rendered state or after
+  implementation.
+- A compact state checklist when the surface depends on dark/light theme,
+  narrow width, long text, hover/menu/dialog behavior, loading, empty, or error
+  states.
+
+Do not jump from a screenshot complaint straight to CSS or component edits
+unless the user has already approved the direction or the request is clearly a
+minor implementation handoff.
 
 ### 2. Reframe The Ask
 
@@ -227,6 +271,24 @@ If a scenario is unlikely or out of scope, say so and explain why.
 
 Do not claim "100% coverage" literally. Instead, say what has been covered,
 what assumptions bound the analysis, and what evidence would change the answer.
+
+#### Depth Budget
+
+Match the analysis depth to the task:
+
+- Small UI copy/layout tweaks: use a narrow evidence pass, concrete criteria,
+  and one recommended next move. Do not force plan taxonomy or full scenario
+  mapping.
+- Screenshot-driven UI redesign: inspect the surface and produce visual options
+  or a rendered comparison before code.
+- Workflow, object-model, runtime, schema, release, or architecture questions:
+  use the full first-principles/scenario pass and explicitly cover state,
+  ownership, failure, compatibility, and validation.
+- Existing implementation with user dissatisfaction: first decide `accept
+  as-is`, `accept with gaps`, or `redesign`; then explain the gap.
+
+If the user changes mode mid-thread, obey the latest mode. A common sequence is
+advisor diagnosis, visual options, user approval, then implementation handoff.
 
 ### 6. Build An Evaluation Frame
 
@@ -571,6 +633,50 @@ Must not:
 Jump directly to one UI checkbox, one route handler, or one follow-up rule as
 the whole answer. Must not claim literal perfect coverage; it should state the
 coverage boundary and remaining assumptions.
+
+### Case: Screenshot-Driven Visual Options
+
+Input:
+"这个 UI 感觉不对，先给我几个差异明显的方案做成一个 HTML 对比。" plus
+screenshots of the current surface.
+
+Expected behavior:
+The response inspects the screenshot and relevant design/component context, then
+creates a concrete comparison artifact such as a single HTML file or clear
+wireframes. Each option states its hierarchy, density, tone, and tradeoff.
+
+Must not:
+Skip directly to editing the component, or return only abstract advice like
+"make it cleaner" without an inspectable visual artifact.
+
+### Case: Approved Implementation Handoff
+
+Input:
+"可以，就按照你的方案 A 来改好了."
+
+Expected behavior:
+The skill stops producing advisor-only analysis and switches to normal
+implementation mode. It edits the relevant files, verifies the user-visible
+surface when applicable, and reports validation results.
+
+Must not:
+Write another long proposal, ask for confirmation again, or keep the work in
+analysis-only mode.
+
+### Case: Small UI Fix With Explicit Scope
+
+Input:
+"这里 title 和 description 颜色不对，优化一下." plus a screenshot.
+
+Expected behavior:
+The response performs a narrow evidence check, identifies the exact visual state
+and likely component, then either makes the small fix or asks for only the
+missing evidence needed to make it. It keeps the validation bar focused on the
+affected state.
+
+Must not:
+Run the full scenario map, create a plan document, or broaden the work into an
+unrequested redesign.
 
 ## Completion Standard
 
