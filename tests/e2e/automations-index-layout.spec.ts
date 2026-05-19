@@ -72,7 +72,8 @@ test.describe("Automations index layout", () => {
     await expect(page.getByRole("button", { name: /Bug triage/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Daily standup/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Weekly progress report/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Create custom automation/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Advisor review loop/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Create custom automation/ })).toHaveCount(0);
     await expect(page.getByText("Start from scratch")).toHaveCount(0);
 
     const headerActionsBox = await headerActions.boundingBox();
@@ -88,13 +89,46 @@ test.describe("Automations index layout", () => {
     expect(createButtonBox!.y + createButtonBox!.height).toBeLessThan(emptyStateBox!.y);
 
     await createButton.click();
-    await expect(page.getByPlaceholder("Automation name")).toBeVisible();
+    await expect(page.getByPlaceholder("Automation title")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Use template" })).toBeVisible();
     await expect(page.getByText("Run output")).toBeVisible();
     await expect(page.getByText("Every day at 09:00")).toBeVisible();
     await expect(page.getByTestId("automation-composer-shell")).toBeVisible();
 
     await page.screenshot({
       path: testInfo.outputPath("automations-index-layout.png"),
+      fullPage: true,
+    });
+  });
+
+  test("applies the advisor review loop template from the composer header", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: {
+        name: `Automations-Advisor-Template-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
+
+    await page.getByTestId("workspace-main-header-actions").getByRole("button", { name: "Create automation" }).click();
+    await page.getByRole("button", { name: "Use template" }).click();
+
+    const templatePicker = page.getByTestId("automation-template-picker");
+    await expect(templatePicker).toBeVisible();
+    await templatePicker.getByRole("button", { name: /Advisor review loop/ }).click();
+
+    await expect(page.getByPlaceholder("Automation title")).toHaveValue("Advisor review loop");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("advisor-review-loop-maintainer");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("two independent reviewer roles");
+    await expect(page.getByText("Every Mon at 11:00")).toBeVisible();
+
+    await page.screenshot({
+      path: testInfo.outputPath("automations-advisor-template-composer.png"),
       fullPage: true,
     });
   });
