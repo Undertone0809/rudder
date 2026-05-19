@@ -148,9 +148,51 @@ opaque generated IDs.
 - For testing, include deterministic setup and reset strategy.
 - For workflow explanation, include persona, motivation, conflict, decision
   point, and outcome.
+- For live `prod_local` or Desktop demo org seeds, target selection is part of
+  the data task. Verify the active runtime and database before writing; stale
+  config defaults are not enough.
+- Whole-org demo seeds should prefer API creation for the organization, then
+  scoped database insertion for richer downstream evidence if the API surface is
+  incomplete.
 - If the user asks for actual landing screenshots, use
   `landing-proof-shots-maintainer` after the mock data has been selected or
   seeded.
+
+## Live Rudder Instance Seed Rules
+
+When seeding data into a running Rudder instance, verify the target before any
+write.
+
+1. Confirm the live API target with `/api/health`.
+   - For prod Desktop or local production data, require `localEnv=prod_local`
+     and `instanceId=default`.
+   - For dev data, require `localEnv=dev` and `instanceId=dev`.
+2. Do not trust stale config files alone. Prefer live runtime descriptors,
+   `/api/health`, and active process or database connections.
+3. If API creation is available, use it for top-level organization creation so
+   normal service-side defaults, memberships, labels, activity, and policies are
+   applied.
+4. Use direct database writes only for seed entities that do not have complete
+   public API coverage, and keep them scoped to the verified organization id.
+5. If a temporary probe write is needed, name it clearly, record its id, delete
+   it immediately, and verify deletion before continuing.
+6. For destructive reseed, require explicit user authority or create a pending
+   approval record that makes the destructive operation visible in the seeded
+   organization.
+7. Never modify repo source files just to seed live data unless the user
+   explicitly asks for a reusable seed script or fixture.
+
+Required readback for whole-organization Rudder demo seeds:
+
+- organization appears in `/api/orgs`
+- expected agents exist
+- expected goals, projects, and issues exist
+- pending approvals exist when requested
+- chat conversation exists when requested
+- activity log contains representative events
+- heartbeat runs and cost summary exist when requested
+- primary UI route returns 200
+- report organization id, URL key, counts, and verification evidence
 
 ## Quality Bar
 
@@ -204,6 +246,46 @@ screenshot skill that can capture Desktop shell; browser screenshots are only
 supporting evidence for narrow route checks.
 
 Must not: present browser-only proof as sufficient for a Desktop product claim.
+
+### Case: Prod Desktop demo org seed
+
+Input: user asks to create a new organization in prod using a source document as
+initialization data.
+
+Expected behavior: verify `/api/health` reports `localEnv=prod_local` and
+`instanceId=default`; create the organization through the API when possible;
+seed scoped relational data for agents, goals, projects, issues, approvals,
+chats, activity, runs, costs, and calendar evidence as requested; validate API
+readback and the primary UI route; report the organization id, URL key, counts,
+and verification evidence.
+
+Must not: write to the dev database, rely only on stale config ports, leave
+temporary probe records behind, or claim success from database counts without
+API readback.
+
+### Case: Existing demo org collision
+
+Input: user asks to reseed an organization that may already exist.
+
+Expected behavior: detect existing organizations by name, URL key, and issue
+prefix; classify the operation as additive or destructive; require explicit
+authority or create a pending approval record before replacing existing seeded
+records; keep all changes scoped to the verified target organization.
+
+Must not: silently duplicate organizations, overwrite existing data without a
+visible approval or explicit instruction, or use a matching issue prefix in the
+wrong runtime.
+
+### Case: Static fixture only
+
+Input: user asks for a JSON, SQL, CSV, or Markdown fixture and says not to write
+to local Rudder.
+
+Expected behavior: produce the requested static artifact and include usage or
+reset notes when relevant.
+
+Must not: call the Rudder API, connect to a database, create probe records, or
+mutate prod or dev state.
 
 ### Case: Screenshot capture validation
 
