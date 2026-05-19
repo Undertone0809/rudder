@@ -136,8 +136,9 @@ That means:
 - no long-lived `NPM_TOKEN` in repository secrets
 - GitHub Actions obtains short-lived publish credentials
 - trusted publisher rules are configured per workflow file
-- publish jobs use npm CLI for the final `npm publish` step while pnpm remains
-  the workspace build and install tool
+- publish jobs use `pnpm publish` so that `publishConfig` overrides (including
+  `exports`) are applied correctly; pnpm remains the workspace build and install
+  tool
 
 See [doc/RELEASE-AUTOMATION-SETUP.md](RELEASE-AUTOMATION-SETUP.md) for the GitHub/npm setup steps.
 
