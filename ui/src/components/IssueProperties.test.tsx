@@ -154,6 +154,8 @@ describe("IssueProperties", () => {
     expect(label?.getAttribute("data-layout")).toBe("stacked");
     expect(label?.classList.contains("min-w-0")).toBe(true);
     expect(label?.classList.contains("w-full")).toBe(true);
+    expect(label?.classList.contains("items-center")).toBe(true);
+    expect(label?.classList.contains("items-start")).toBe(false);
     expect(label?.querySelector('[data-slot="agent-title-badge"]')).toBeTruthy();
     expect(label?.querySelector('[data-slot="agent-title-badge"]')?.classList.contains("max-w-full")).toBe(true);
     expect(label?.querySelector('[data-slot="agent-title-badge"] span')?.classList.contains("truncate")).toBe(true);

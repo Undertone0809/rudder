@@ -59,7 +59,7 @@ export function AssigneeLabel({
       data-slot="assignee-label"
       data-kind={kind}
       data-layout={layout}
-      className={cn("inline-flex min-w-0 items-center gap-1.5", stacked && "w-full items-start", className)}
+      className={cn("inline-flex min-w-0 items-center gap-1.5", stacked && "w-full", className)}
     >
       {kind === "agent" ? (
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
