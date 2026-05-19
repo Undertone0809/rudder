@@ -177,6 +177,7 @@ vi.mock("./InlineEntitySelector", () => ({
     renderTriggerValue,
     renderOption,
     variant,
+    className,
   }: {
     value?: string;
     options?: Array<{ id: string; label: string }>;
@@ -184,10 +185,11 @@ vi.mock("./InlineEntitySelector", () => ({
     renderTriggerValue?: (option: { id: string; label: string } | null) => ReactNode;
     renderOption?: (option: { id: string; label: string }, isSelected: boolean) => ReactNode;
     variant?: string;
+    className?: string;
   }) => {
     const selectedOption = options?.find((option) => option.id === value) ?? null;
     return (
-      <div data-selector-placeholder={placeholder} data-variant={variant}>
+      <div data-selector-placeholder={placeholder} data-variant={variant} className={className}>
         <button type="button">
           {renderTriggerValue ? renderTriggerValue(selectedOption) : (selectedOption?.label ?? placeholder ?? "selector")}
         </button>
@@ -288,6 +290,7 @@ describe("NewIssueDialog", () => {
 
     expect(html).toContain('data-variant="field"');
     expect((html.match(/data-variant="field"/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect((html.match(/h-auto min-h-12 w-full py-2/g) ?? []).length).toBe(3);
   });
 
   it("keeps labels in the property chip when the organization has five labels", () => {

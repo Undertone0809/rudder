@@ -94,6 +94,7 @@ type StagedIssueFile = {
 
 const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
 const STAGED_FILE_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
+const ISSUE_METADATA_SELECTOR_CLASSNAME = "h-auto min-h-12 w-full py-2";
 
 type ViewTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => { finished: Promise<void> };
@@ -1325,7 +1326,7 @@ export function NewIssueDialog() {
                 searchPlaceholder="Search assignees..."
                 emptyMessage="No assignees found."
                 variant="field"
-                className="h-auto min-h-12 w-full py-2"
+                className={ISSUE_METADATA_SELECTOR_CLASSNAME}
                 onChange={(value) => {
                   const nextAssignee = parseAssigneeValue(value);
                   if (nextAssignee.assigneeAgentId) {
@@ -1374,7 +1375,7 @@ export function NewIssueDialog() {
                 searchPlaceholder="Search projects..."
                 emptyMessage="No projects found."
                 variant="field"
-                className="w-full"
+                className={ISSUE_METADATA_SELECTOR_CLASSNAME}
                 onChange={handleProjectChange}
                 onConfirm={() => {
                   descriptionEditorRef.current?.focus();
@@ -1418,7 +1419,7 @@ export function NewIssueDialog() {
                 searchPlaceholder="Search reviewers..."
                 emptyMessage="No reviewers found."
                 variant="field"
-                className="h-auto min-h-12 w-full py-2"
+                className={ISSUE_METADATA_SELECTOR_CLASSNAME}
                 onChange={(value) => {
                   const nextReviewer = parseAssigneeValue(value);
                   if (nextReviewer.assigneeAgentId) {
