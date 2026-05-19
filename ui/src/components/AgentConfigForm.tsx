@@ -967,17 +967,16 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
           <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
             <ToggleWithNumber
               label="Heartbeat on interval"
-              hint={help.heartbeatInterval}
+              description={help.heartbeatInterval}
               checked={val!.heartbeatEnabled}
               onCheckedChange={(v) => set!({ heartbeatEnabled: v })}
               number={val!.intervalSec}
               onNumberChange={(v) => set!({ intervalSec: v })}
               numberLabel="sec"
               numberPrefix="Run heartbeat every"
-              numberHint={help.intervalSec}
               showNumber={val!.heartbeatEnabled}
             />
-            <Field label="Agent run concurrency" hint={help.maxConcurrentRuns}>
+            <Field label="Agent run concurrency" description={help.maxConcurrentRuns}>
               <DraftNumberInput
                 value={val!.maxConcurrentRuns}
                 onCommit={(v) => set!({ maxConcurrentRuns: v })}
@@ -991,7 +990,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             </Field>
             <ToggleField
               label="Preflight before timer run"
-              hint={help.heartbeatPreflight}
+              description={help.heartbeatPreflight}
               checked={val!.preflightEnabled}
               onChange={(v) => set!({ preflightEnabled: v })}
             />
@@ -1007,17 +1006,16 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             <div className={cn(cards ? "p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
               <ToggleWithNumber
                 label="Heartbeat on interval"
-                hint={help.heartbeatInterval}
+                description={help.heartbeatInterval}
                 checked={eff("heartbeat", "enabled", heartbeat.enabled !== false)}
                 onCheckedChange={(v) => mark("heartbeat", "enabled", v)}
                 number={eff("heartbeat", "intervalSec", Number(heartbeat.intervalSec ?? 300))}
                 onNumberChange={(v) => mark("heartbeat", "intervalSec", v)}
                 numberLabel="sec"
                 numberPrefix="Run heartbeat every"
-                numberHint={help.intervalSec}
                 showNumber={eff("heartbeat", "enabled", heartbeat.enabled !== false)}
               />
-              <Field label="Agent run concurrency" hint={help.maxConcurrentRuns}>
+              <Field label="Agent run concurrency" description={help.maxConcurrentRuns}>
                 <DraftNumberInput
                   value={eff(
                     "heartbeat",
@@ -1035,7 +1033,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               </Field>
               <ToggleField
                 label="Preflight before timer run"
-                hint={help.heartbeatPreflight}
+                description={help.heartbeatPreflight}
                 checked={eff(
                   "heartbeat",
                   "preflightEnabled",
@@ -1053,7 +1051,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             <div className="space-y-3">
               <ToggleField
                 label="Wake on demand"
-                hint={help.wakeOnDemand}
+                description={help.wakeOnDemand}
                 checked={eff(
                   "heartbeat",
                   "wakeOnDemand",
@@ -1061,7 +1059,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 )}
                 onChange={(v) => mark("heartbeat", "wakeOnDemand", v)}
               />
-              <Field label="Cooldown (sec)" hint={help.cooldownSec}>
+              <Field label="Cooldown (sec)" description={help.cooldownSec}>
                 <DraftNumberInput
                   value={eff(
                     "heartbeat",
