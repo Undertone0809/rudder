@@ -20,6 +20,8 @@ import {
   automationRuns,
   automations,
   automationTriggers,
+  chatConversations,
+  chatMessages,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { issueService } from "../services/issues.ts";
@@ -118,6 +120,8 @@ describe("automation service live-execution coalescing", () => {
     await db.delete(automationRuns);
     await db.delete(automationTriggers);
     await db.delete(automations);
+    await db.delete(chatMessages);
+    await db.delete(chatConversations);
     await db.delete(organizationSecretVersions);
     await db.delete(organizationSecrets);
     await db.delete(heartbeatRuns);
@@ -233,6 +237,8 @@ describe("automation service live-execution coalescing", () => {
         title: "ascii frog",
         description: "Run the frog automation",
         assigneeAgentId: agentId,
+        outputMode: "track_issue",
+        chatConversationId: null,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -322,6 +328,118 @@ describe("automation service live-execution coalescing", () => {
     ]);
   });
 
+  it("posts chat output events while preserving issue-backed execution", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture();
+    const [chat] = await db
+      .insert(chatConversations)
+      .values({
+        orgId,
+        title: "Daily standup",
+        preferredAgentId: agentId,
+        status: "active",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      })
+      .returning();
+    expect(chat).toBeTruthy();
+
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Daily standup",
+        description: "Summarize active work.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: chat!.id,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(run.status).toBe("issue_created");
+    expect(run.linkedIssueId).toBeTruthy();
+    expect(run.linkedChatConversationId).toBe(chat!.id);
+    expect(run.startedChatMessageId).toBeTruthy();
+    expect(run.lastChatMessageId).toBe(run.startedChatMessageId);
+
+    const startedMessage = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, run.startedChatMessageId!))
+      .then((rows) => rows[0] ?? null);
+    expect(startedMessage?.kind).toBe("system_event");
+    expect(startedMessage?.structuredPayload).toMatchObject({
+      eventType: "automation_run_started",
+      automationId: automation.id,
+      runId: run.id,
+      issueId: run.linkedIssueId,
+      status: "issue_created",
+    });
+
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, run.linkedIssueId!));
+    const completed = await svc.syncRunStatusForIssue(run.linkedIssueId!);
+
+    expect(completed?.status).toBe("completed");
+    expect(completed?.terminalChatMessageId).toBeTruthy();
+    expect(completed?.lastChatMessageId).toBe(completed?.terminalChatMessageId);
+    const terminalMessage = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, completed!.terminalChatMessageId!))
+      .then((rows) => rows[0] ?? null);
+    expect(terminalMessage?.structuredPayload).toMatchObject({
+      eventType: "automation_run_completed",
+      automationId: automation.id,
+      runId: run.id,
+      issueId: run.linkedIssueId,
+      status: "completed",
+    });
+  });
+
+  it("rejects inactive chat output destinations", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture();
+    const [chat] = await db
+      .insert(chatConversations)
+      .values({
+        orgId,
+        title: "Archived digest",
+        preferredAgentId: agentId,
+        status: "archived",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      })
+      .returning();
+
+    await expect(
+      svc.create(
+        orgId,
+        {
+          projectId,
+          goalId: null,
+          parentIssueId: null,
+          title: "Digest",
+          description: "Post a digest.",
+          assigneeAgentId: agentId,
+          outputMode: "chat_output",
+          chatConversationId: chat!.id,
+          priority: "medium",
+          status: "active",
+          concurrencyPolicy: "coalesce_if_active",
+          catchUpPolicy: "skip_missed",
+        },
+        {},
+      ),
+    ).rejects.toThrow("Chat output requires an active conversation");
+  });
+
   it("creates and runs automations without a project", async () => {
     const { agentId, orgId, svc } = await seedFixture();
     const automation = await svc.create(
@@ -333,6 +451,8 @@ describe("automation service live-execution coalescing", () => {
         title: "Inbox sweep",
         description: "Review projectless intake.",
         assigneeAgentId: agentId,
+        outputMode: "track_issue",
+        chatConversationId: null,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",

@@ -15,6 +15,8 @@ import { organizationSecrets } from "./organization_secrets.js";
 import { issues } from "./issues.js";
 import { projects } from "./projects.js";
 import { goals } from "./goals.js";
+import { chatConversations } from "./chat_conversations.js";
+import { chatMessages } from "./chat_messages.js";
 
 export const automations = pgTable(
   "automations",
@@ -27,6 +29,8 @@ export const automations = pgTable(
     title: text("title").notNull(),
     description: text("description"),
     assigneeAgentId: uuid("assignee_agent_id").notNull().references(() => agents.id),
+    outputMode: text("output_mode").notNull().default("track_issue"),
+    chatConversationId: uuid("chat_conversation_id").references(() => chatConversations.id, { onDelete: "set null" }),
     priority: text("priority").notNull().default("medium"),
     status: text("status").notNull().default("active"),
     concurrencyPolicy: text("concurrency_policy").notNull().default("coalesce_if_active"),
@@ -95,6 +99,10 @@ export const automationRuns = pgTable(
     idempotencyKey: text("idempotency_key"),
     triggerPayload: jsonb("trigger_payload").$type<Record<string, unknown>>(),
     linkedIssueId: uuid("linked_issue_id").references(() => issues.id, { onDelete: "set null" }),
+    linkedChatConversationId: uuid("linked_chat_conversation_id").references(() => chatConversations.id, { onDelete: "set null" }),
+    startedChatMessageId: uuid("started_chat_message_id").references(() => chatMessages.id, { onDelete: "set null" }),
+    terminalChatMessageId: uuid("terminal_chat_message_id").references(() => chatMessages.id, { onDelete: "set null" }),
+    lastChatMessageId: uuid("last_chat_message_id").references(() => chatMessages.id, { onDelete: "set null" }),
     coalescedIntoRunId: uuid("coalesced_into_run_id"),
     failureReason: text("failure_reason"),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -105,6 +113,7 @@ export const automationRuns = pgTable(
     companyAutomationIdx: index("automation_runs_company_automation_idx").on(table.orgId, table.automationId, table.createdAt),
     triggerIdx: index("automation_runs_trigger_idx").on(table.triggerId, table.createdAt),
     linkedIssueIdx: index("automation_runs_linked_issue_idx").on(table.linkedIssueId),
+    linkedChatConversationIdx: index("automation_runs_linked_chat_conversation_idx").on(table.linkedChatConversationId),
     idempotencyIdx: index("automation_runs_trigger_idempotency_idx").on(table.triggerId, table.idempotencyKey),
   }),
 );

@@ -30,5 +30,26 @@
       "Does not edit files before user approval",
       "Explains the implementation shape clearly enough for a follow-up edit"
     ]
+  },
+  {
+    "name": "advisor_invoked_for_small_ui_fix",
+    "prompt": "左上角这个 button 点击了有问题，直接去掉这个 button 好了 [$advisor-review-loop-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/advisor-review-loop-maintainer/SKILL.md)",
+    "assertions": [
+      "Recognizes this as a narrow UI-polish implementation task, not a full two-reviewer loop",
+      "Uses a short advisor check only to confirm scope and non-goals",
+      "Implements through rudder-ui-polish-maintainer discipline",
+      "Reports explicitly that no full reviewer loop was run because no acceptance gate was requested",
+      "Updates focused tests and visual proof or clearly names the blocked visual verification"
+    ]
+  },
+  {
+    "name": "followup_visual_correction",
+    "prompt": "你这 title 和 description 颜色不对啊，截图里 description 看起来像 disabled label。",
+    "assertions": [
+      "Treats the screenshot as evidence that prior visual proof was incomplete",
+      "Re-inspects the rendered state or computed styles before making another patch",
+      "Fixes the smallest visible styling issue without redesigning the surrounding surface",
+      "Includes a screenshot or concrete rendered-state evidence in the handoff"
+    ]
   }
 ]

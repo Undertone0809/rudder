@@ -59,6 +59,31 @@
         "The result stops at verdicts, blocking gaps, and smallest changes needed.",
         "The result requires explicit user approval before switching from review to rework or implementation."
       ]
+    },
+    {
+      "id": 5,
+      "prompt": "左上角这个 button 点击有问题，直接去掉这个 button 好了 [$advisor-review-loop-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/advisor-review-loop-maintainer/SKILL.md)",
+      "expected_output": "Recognizes the explicit skill invocation but uses the lightweight route because this is a narrow UI fix without reviewer agents, repeated rounds, or an acceptance gate.",
+      "files": [
+        ".agents/skills/maintainer/rudder-ui-polish-maintainer/SKILL.md"
+      ],
+      "expectations": [
+        "The result does not run or claim a full two-reviewer loop for a small button removal.",
+        "The result performs a short advisor scope check and then follows UI-polish implementation discipline.",
+        "The result explicitly says the lightweight route was used and why.",
+        "The result still requires focused tests and rendered proof or a named blocker."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "<turn_aborted>previous turn interrupted</turn_aborted> /goal 一口气都做完 [$advisor-review-loop-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/advisor-review-loop-maintainer/SKILL.md)",
+      "expected_output": "Rebuilds state before continuing a long-running loop, including branch/dirty state, partial commits, merge or conflict state, running validation, remaining task list, and missing proof.",
+      "files": [],
+      "expectations": [
+        "The result does not assume the interrupted previous turn finished cleanly.",
+        "The result inspects current state before editing or claiming progress.",
+        "The result produces a resumable checklist and validation boundary before continuing implementation."
+      ]
     }
   ]
 }

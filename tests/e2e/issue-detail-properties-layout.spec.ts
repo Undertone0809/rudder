@@ -25,7 +25,7 @@ test.describe("Issue detail properties layout", () => {
       data: {
         name: "Tobias",
         role: "ceo",
-        title: "CEO",
+        title: "Work Lead / Issue Owner",
       },
     });
     expect(reviewerRes.ok()).toBe(true);
@@ -50,7 +50,7 @@ test.describe("Issue detail properties layout", () => {
     await expect(propertiesPanel.getByText("Ulysses", { exact: true })).toBeVisible();
     await expect(propertiesPanel.getByText("Chief Operating Officer", { exact: true })).toBeVisible();
     await expect(propertiesPanel.getByText("Tobias", { exact: true })).toBeVisible();
-    await expect(propertiesPanel.getByText("CEO", { exact: true })).toBeVisible();
+    await expect(propertiesPanel.getByText("Work Lead / Issue Owner", { exact: true })).toBeVisible();
 
     const principalRows = await propertiesPanel.locator('[data-slot="assignee-label"][data-kind="agent"]').evaluateAll((nodes) =>
       nodes.map((node) => {

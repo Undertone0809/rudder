@@ -176,7 +176,7 @@ test.describe("Automations index layout", () => {
 
     const createButton = page.getByTestId("workspace-main-header-actions").getByRole("button", { name: "Create automation" });
     await createButton.click();
-    await page.getByPlaceholder("Automation name").fill("Composer selector interaction");
+    await page.getByPlaceholder("Automation title").fill("Composer selector interaction");
 
     const assigneePill = page.getByTestId("automation-composer-assignee-pill");
     const projectPill = page.getByTestId("automation-composer-project-pill");
@@ -217,7 +217,7 @@ test.describe("Automations index layout", () => {
 
     await page.getByRole("button", { name: /Bug triage/ }).click();
 
-    await expect(page.getByPlaceholder("Automation name")).toHaveValue("Bug triage");
+    await expect(page.getByPlaceholder("Automation title")).toHaveValue("Bug triage");
     await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("List all open issues labeled bug");
     await expect(page.getByText("Weekdays at 09:00")).toBeVisible();
     await expect(page.getByRole("button", { name: /Track as issue/ })).toBeVisible();
@@ -230,6 +230,68 @@ test.describe("Automations index layout", () => {
       path: testInfo.outputPath("automations-template-composer.png"),
       fullPage: true,
     });
+  });
+
+  test("posts automation run output into Messenger chat", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: {
+        name: `Automations-Chat-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = (await orgRes.json()) as { id: string; issuePrefix: string };
+
+    const agentRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Digest Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          command: E2E_CODEX_STUB,
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = (await agentRes.json()) as { id: string };
+
+    const chatRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Daily digest",
+        preferredAgentId: agent.id,
+        issueCreationMode: "manual_approval",
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = (await chatRes.json()) as { id: string };
+
+    const automationRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`, {
+      data: {
+        title: "Daily digest",
+        description: "Summarize the latest organization updates.",
+        assigneeAgentId: agent.id,
+        priority: "medium",
+        outputMode: "chat_output",
+        chatConversationId: chat.id,
+      },
+    });
+    expect(automationRes.ok()).toBe(true);
+    const automation = (await automationRes.json()) as { id: string };
+
+    const runRes = await page.request.post(`${E2E_BASE_URL}/api/automations/${automation.id}/run`, {
+      data: { source: "manual" },
+    });
+    expect(runRes.ok()).toBe(true);
+    const run = (await runRes.json()) as { linkedIssueId: string | null; linkedChatConversationId: string | null };
+    expect(run.linkedIssueId).toBeTruthy();
+    expect(run.linkedChatConversationId).toBe(chat.id);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    await expect(page.getByText("Daily digest started.")).toBeVisible();
   });
 
   test("deletes an automation from the row menu without exposing archive lifecycle actions", async ({ page }) => {
@@ -289,7 +351,7 @@ test.describe("Automations index layout", () => {
     await expect(page.getByRole("button", { name: /Bug 分诊/ })).toBeVisible();
     await page.getByRole("button", { name: /日会/ }).click();
 
-    await expect(page.getByPlaceholder("Automation name")).toHaveValue("日会");
+    await expect(page.getByPlaceholder("Automation title")).toHaveValue("日会");
     await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("上一个工作日以来更新的进行中任务");
     await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("发送到相关 Rudder chat");
     await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
@@ -348,7 +410,7 @@ test.describe("Automations index layout", () => {
     await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/automations`);
 
     await page.getByTestId("workspace-main-header-actions").getByRole("button", { name: "Create automation" }).click();
-    await page.getByPlaceholder("Automation name").fill("Composer mention menu interaction");
+    await page.getByPlaceholder("Automation title").fill("Composer mention menu interaction");
 
     const assigneePill = page.getByTestId("automation-composer-assignee-pill");
     await assigneePill.locator(":scope > button").click();

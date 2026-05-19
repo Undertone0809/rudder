@@ -84,6 +84,18 @@
         "The result prefers spawned reviewers when authorized, or explicitly reports serial fallback.",
         "The result keeps the route narrow and avoids a broad advisor loop unless the bug exposes unclear product requirements."
       ]
+    },
+    {
+      "id": 7,
+      "prompt": "organization-portability 这个文件太大了，一口气做完架构优化，但可以分批 commit，不要一下子来一个很大的 commit。",
+      "expected_output": "Routes the long refactor through phased implementation, creates a visible phase checklist, commits coherent phases separately when safe, and keeps checkpoint evidence after each phase.",
+      "files": [],
+      "expectations": [
+        "The result does not collapse the whole refactor into one mixed commit.",
+        "The result defines commit-sized phases before the first commit.",
+        "The result keeps validation state and remaining blockers visible after each phase.",
+        "The result preserves unrelated dirty worktree changes and avoids unsafe history rewriting."
+      ]
     }
   ]
 }

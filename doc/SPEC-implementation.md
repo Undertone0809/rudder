@@ -646,6 +646,8 @@ Chat behavior requirements:
 - a conversation can exist without any issue
 - a conversation can convert into at most one primary issue
 - chat-driven issue creation and lightweight operations reuse the approval system
+- automation runs may post status/result events into an explicit Messenger chat,
+  but durable automation execution remains issue-backed
 - board users can optionally store a personal chat profile with `nickname` and `more_about_you`
 - the selected chat agent may use that per-user profile as prompt context only when at least one profile field is non-empty
 - assistant turns require an explicit `preferred_agent_id`; the UI defaults editable conversations to the last selected available agent or first available agent, while conversations with no selected chat agent remain discussable/editable but cannot invoke a runtime until one is chosen

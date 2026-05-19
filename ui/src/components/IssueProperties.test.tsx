@@ -158,7 +158,9 @@ describe("IssueProperties", () => {
     expect(label?.classList.contains("items-start")).toBe(false);
     expect(label?.querySelector('[data-slot="agent-title-badge"]')).toBeTruthy();
     expect(label?.querySelector('[data-slot="agent-title-badge"]')?.classList.contains("max-w-full")).toBe(true);
-    expect(label?.querySelector('[data-slot="agent-title-badge"] span')?.classList.contains("truncate")).toBe(true);
+    expect(label?.querySelector('[data-slot="agent-title-badge"]')?.classList.contains("w-full")).toBe(true);
+    expect(label?.querySelector('[data-slot="agent-title-badge"] span')?.classList.contains("truncate")).toBe(false);
+    expect(label?.querySelector('[data-slot="agent-title-badge"] span')?.classList.contains("break-words")).toBe(true);
   });
 
   it("does not render a workspace property row", () => {

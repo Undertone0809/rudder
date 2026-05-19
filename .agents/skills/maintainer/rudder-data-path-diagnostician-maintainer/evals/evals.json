@@ -29,5 +29,15 @@
       "Explains whether the missing message is a derived-gap, contract-gap, or render-gap",
       "Suggests a fix path with tests only after evidence is collected"
     ]
+  },
+  {
+    "name": "calendar_rendering_explanation_after_refresh",
+    "prompt": "Calendar 我刷新之后确实出来了。我现在想知道 Calendar 的渲染逻辑是怎样的，这些 run/event 是从哪里来的？",
+    "assertions": [
+      "Uses explanation mode rather than treating the task as a missing-data repair",
+      "Traces UI request, API route, service aggregation, derived heartbeat runs, persisted calendar events, and projection toggles",
+      "Names assumptions about runtime, org, date window, and filters when they affect the answer",
+      "Does not force a database write or seed operation for a rendering-logic explanation"
+    ]
   }
 ]

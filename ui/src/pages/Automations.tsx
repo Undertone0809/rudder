@@ -4,10 +4,12 @@ import { useNavigate } from "@/lib/router";
 import {
   ArrowRight,
   Bot,
+  BookOpen,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
   FolderOpen,
+  Info,
   MessageSquare,
   MoreHorizontal,
   Plus,
@@ -17,6 +19,7 @@ import {
 } from "lucide-react";
 import { automationsApi } from "../api/automations";
 import { agentsApi } from "../api/agents";
+import { chatsApi } from "../api/chats";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { projectsApi } from "../api/projects";
@@ -70,7 +73,7 @@ const catchUpPolicyDescriptions: Record<string, string> = {
   enqueue_missed_with_cap: "Catch up missed schedule windows in capped batches after recovery.",
 };
 
-type AutomationOutputMode = "create_issue" | "send_to_chat";
+type AutomationOutputMode = "track_issue" | "chat_output";
 
 type LocalizedText = {
   en: string;
@@ -88,11 +91,41 @@ type AutomationTemplate = {
 
 const automationTemplates: AutomationTemplate[] = [
   {
+    id: "advisor-review-loop",
+    title: { en: "Advisor review loop", "zh-CN": "Advisor review loop" },
+    summary: {
+      en: "Run Build Advisor plus two reviewer passes before handoff.",
+      "zh-CN": "先跑 Build Advisor，再做两轮 reviewer 验收。",
+    },
+    scheduleCron: "0 11 * * 1",
+    outputMode: "track_issue",
+    description: {
+      en: [
+        "Use [advisor-review-loop-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/advisor-review-loop-maintainer/SKILL.md) as the operating workflow.",
+        "",
+        "1. Identify the proposal, implementation, UI state, release, workflow, or agent outcome that needs acceptance review.",
+        "2. Build a focused evidence packet from the relevant repo files, docs, screenshots, logs, traces, commits, PRs, or eval output.",
+        "3. Run the advisor pass first: scenario analysis, requirement classes, non-goals, corner cases, realistic options, and a concrete evaluation rubric.",
+        "4. Run two independent reviewer roles: one for scenario and demand correctness, one for implementation, workflow, validation, and handoff trust.",
+        "5. Rework any blocking gaps, run a second review round when the work is high-stakes or still uncertain, and report the final verdict with validation and residual risk.",
+      ].join("\n"),
+      "zh-CN": [
+        "使用 [advisor-review-loop-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/advisor-review-loop-maintainer/SKILL.md) 作为执行 workflow。",
+        "",
+        "1. 明确需要验收的 proposal、implementation、UI state、release、workflow 或 agent outcome。",
+        "2. 从相关 repo 文件、docs、截图、日志、trace、commit、PR 或 eval 输出中构建最小 evidence packet。",
+        "3. 先跑 advisor pass：场景分析、需求类、非目标、corner cases、可行选项和具体 evaluation rubric。",
+        "4. 跑两个独立 reviewer 角色：一个负责场景和需求正确性，一个负责实现、workflow、validation 和 handoff 可信度。",
+        "5. 对 blocking gaps 返工；高风险或不确定工作要跑第二轮 review，并在最终结论里报告 validation 和剩余风险。",
+      ].join("\n"),
+    },
+  },
+  {
     id: "bug-triage",
     title: { en: "Bug triage", "zh-CN": "Bug 分诊" },
     summary: { en: "Assess and prioritize new bug reports.", "zh-CN": "评估并排序新提交的缺陷。" },
     scheduleCron: "0 9 * * 1-5",
-    outputMode: "create_issue",
+    outputMode: "track_issue",
     description: {
       en: [
         "1. List all open issues labeled bug, triage, or backlog that have not been prioritized.",
@@ -115,7 +148,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "PR review reminder", "zh-CN": "PR review 提醒" },
     summary: { en: "Flag stale pull requests that need review.", "zh-CN": "找出等待 review 过久的 PR。" },
     scheduleCron: "0 10 * * 1-5",
-    outputMode: "create_issue",
+    outputMode: "track_issue",
     description: {
       en: [
         "1. Find pull requests waiting for review for more than one business day.",
@@ -136,7 +169,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Weekly progress report", "zh-CN": "周进展报告" },
     summary: { en: "Compile a concise summary of team progress.", "zh-CN": "整理团队本周进展和风险。" },
     scheduleCron: "0 17 * * 1",
-    outputMode: "create_issue",
+    outputMode: "track_issue",
     description: {
       en: [
         "1. Gather issues completed in the past 7 days.",
@@ -159,7 +192,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Dependency audit", "zh-CN": "依赖审计" },
     summary: { en: "Scan for security and maintenance risks.", "zh-CN": "检查依赖安全和维护风险。" },
     scheduleCron: "0 11 * * 2",
-    outputMode: "create_issue",
+    outputMode: "track_issue",
     description: {
       en: [
         "1. Inspect dependency and lockfile changes since the last audit.",
@@ -180,7 +213,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Documentation check", "zh-CN": "文档检查" },
     summary: { en: "Review recent changes for documentation gaps.", "zh-CN": "检查近期变更对应的文档缺口。" },
     scheduleCron: "0 14 * * 3",
-    outputMode: "create_issue",
+    outputMode: "track_issue",
     description: {
       en: [
         "1. Review merged product or engineering changes from the past week.",
@@ -201,7 +234,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Daily news digest", "zh-CN": "每日信息简报" },
     summary: { en: "Search and summarize relevant updates for the team.", "zh-CN": "检索并总结团队需要知道的外部变化。" },
     scheduleCron: "0 8 * * 1-5",
-    outputMode: "send_to_chat",
+    outputMode: "chat_output",
     description: {
       en: [
         "1. Search for important market, customer, or platform updates relevant to the organization.",
@@ -222,7 +255,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Daily standup", "zh-CN": "日会" },
     summary: { en: "Collect blockers, priorities, and handoffs for today.", "zh-CN": "汇总今天的阻塞、重点和交接事项。" },
     scheduleCron: "30 9 * * 1-5",
-    outputMode: "send_to_chat",
+    outputMode: "chat_output",
     description: {
       en: [
         "1. Review active issues, latest comments, and runs updated since the previous workday.",
@@ -245,31 +278,11 @@ const blankAutomationTemplate: AutomationTemplate = {
   title: { en: "", "zh-CN": "" },
   summary: { en: "Create a custom recurring workflow.", "zh-CN": "创建自定义循环工作流。" },
   description: {
-    en: [
-      "# Goal",
-      "What should the agent accomplish?",
-      "",
-      "# Context",
-      "Who is this for? Any constraints?",
-      "",
-      "# Steps",
-      "1. ...",
-      "2. ...",
-    ].join("\n"),
-    "zh-CN": [
-      "# 目标",
-      "智能体需要完成什么？",
-      "",
-      "# 背景",
-      "服务谁？有哪些约束？",
-      "",
-      "# 步骤",
-      "1. ...",
-      "2. ...",
-    ].join("\n"),
+    en: "",
+    "zh-CN": "",
   },
   scheduleCron: "0 9 * * *",
-  outputMode: "create_issue",
+  outputMode: "track_issue",
 };
 
 function localizeText(text: LocalizedText, locale = getUiLocale()) {
@@ -277,7 +290,7 @@ function localizeText(text: LocalizedText, locale = getUiLocale()) {
 }
 
 function outputInstruction(mode: AutomationOutputMode, locale = getUiLocale()) {
-  if (mode === "send_to_chat") {
+  if (mode === "chat_output") {
     return locale === "zh-CN"
       ? "输出：将结果发送到相关 Rudder chat 对话；只有出现明确阻塞或后续动作时才创建任务。"
       : "Output: send the result to the relevant Rudder chat conversation; create tracked work only for concrete blockers or follow-up actions.";
@@ -288,6 +301,7 @@ function outputInstruction(mode: AutomationOutputMode, locale = getUiLocale()) {
 }
 
 function withOutputInstruction(description: string, mode: AutomationOutputMode, locale = getUiLocale()) {
+  if (!description.trim()) return "";
   const instruction = outputInstruction(mode, locale);
   return `${description.trim()}\n\n${instruction}`;
 }
@@ -337,9 +351,11 @@ export function Automations() {
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
   const composerBodyScrollRef = useScrollbarActivityRef("rudder:automation-composer-body");
   const composerMainScrollRef = useScrollbarActivityRef("rudder:automation-composer-main");
+  const templatePickerScrollRef = useScrollbarActivityRef("rudder:automation-template-picker");
   const [runningAutomationId, setRunningAutomationId] = useState<string | null>(null);
   const [statusMutationAutomationId, setStatusMutationAutomationId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [draft, setDraft] = useState({
     title: "",
@@ -350,7 +366,9 @@ export function Automations() {
     concurrencyPolicy: "coalesce_if_active",
     catchUpPolicy: "skip_missed",
     scheduleCron: "0 9 * * *",
-    outputMode: "create_issue" as AutomationOutputMode,
+    outputMode: "track_issue" as AutomationOutputMode,
+    chatConversationId: "",
+    allowAssigneeChatMismatch: false,
   });
 
   const resetDraft = useCallback(() => {
@@ -363,11 +381,13 @@ export function Automations() {
       concurrencyPolicy: "coalesce_if_active",
       catchUpPolicy: "skip_missed",
       scheduleCron: "0 9 * * *",
-      outputMode: "create_issue",
+      outputMode: "track_issue",
+      chatConversationId: "",
+      allowAssigneeChatMismatch: false,
     });
   }, []);
 
-  const openComposer = useCallback((template: AutomationTemplate = blankAutomationTemplate) => {
+  const applyTemplate = useCallback((template: AutomationTemplate) => {
     const locale = getUiLocale();
     setDraft((current) => ({
       ...current,
@@ -376,9 +396,14 @@ export function Automations() {
       scheduleCron: template.scheduleCron,
       outputMode: template.outputMode,
     }));
+    setTemplatePickerOpen(false);
+  }, []);
+
+  const openComposer = useCallback((template: AutomationTemplate = blankAutomationTemplate) => {
+    applyTemplate(template);
     setAdvancedOpen(false);
     setComposerOpen(true);
-  }, []);
+  }, [applyTemplate]);
 
   const selectOutputMode = useCallback((outputMode: AutomationOutputMode) => {
     setDraft((current) => ({
@@ -423,6 +448,11 @@ export function Automations() {
     queryFn: () => projectsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
+  const { data: chats } = useQuery({
+    queryKey: queryKeys.chats.list(selectedOrganizationId!, "active"),
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
+    enabled: !!selectedOrganizationId && composerOpen && draft.outputMode === "chat_output",
+  });
   const { data: issues } = useQuery({
     queryKey: queryKeys.issues.list(selectedOrganizationId!),
     queryFn: () => issuesApi.list(selectedOrganizationId!),
@@ -453,6 +483,9 @@ export function Automations() {
         priority: draft.priority,
         concurrencyPolicy: draft.concurrencyPolicy,
         catchUpPolicy: draft.catchUpPolicy,
+        outputMode: draft.outputMode,
+        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId : null,
+        allowAssigneeChatMismatch: draft.allowAssigneeChatMismatch,
       });
 
       if (draft.scheduleCron.trim()) {
@@ -528,11 +561,14 @@ export function Automations() {
     onMutate: (id) => {
       setRunningAutomationId(id);
     },
-    onSuccess: async (_, id) => {
+    onSuccess: async (run, id) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.detail(id) }),
       ]);
+      if (run.linkedChatConversationId && run.lastChatMessageId) {
+        navigate(`/messenger/chat/${run.linkedChatConversationId}`);
+      }
     },
     onSettled: () => {
       setRunningAutomationId(null);
@@ -568,6 +604,15 @@ export function Automations() {
       })),
     [projects],
   );
+  const chatOptions = useMemo<InlineEntityOption[]>(
+    () =>
+      (chats ?? []).map((chat) => ({
+        id: chat.id,
+        label: chat.title,
+        searchText: chat.summary ?? chat.latestReplyPreview ?? "",
+      })),
+    [chats],
+  );
   const agentById = useMemo(
     () => new Map((agents ?? []).map((agent) => [agent.id, agent])),
     [agents],
@@ -578,6 +623,9 @@ export function Automations() {
   );
   const currentAssignee = draft.assigneeAgentId ? agentById.get(draft.assigneeAgentId) ?? null : null;
   const currentProject = draft.projectId ? projectById.get(draft.projectId) ?? null : null;
+  const currentChat = draft.chatConversationId
+    ? (chats ?? []).find((chat) => chat.id === draft.chatConversationId) ?? null
+    : null;
   const skillMentionOptions = useMemo(
     () => buildAgentSkillMentionOptions({
       agent: currentAssignee,
@@ -596,7 +644,8 @@ export function Automations() {
     }),
     [agents, issues, projects, skillMentionOptions],
   );
-  const isDraftReady = Boolean(draft.title.trim() && draft.assigneeAgentId);
+  const chatOutputReady = draft.outputMode !== "chat_output" || Boolean(draft.chatConversationId);
+  const isDraftReady = Boolean(draft.title.trim() && draft.assigneeAgentId && chatOutputReady);
 
   if (!selectedOrganizationId) {
     return <EmptyState icon={Repeat} message="Select an organization to view automations." />;
@@ -613,6 +662,7 @@ export function Automations() {
         onOpenChange={(open) => {
           if (!createAutomation.isPending) {
             setComposerOpen(open);
+            if (!open) setTemplatePickerOpen(false);
           }
         }}
       >
@@ -637,20 +687,96 @@ export function Automations() {
                 ) : null}
                 <span className="font-medium text-foreground">New automation</span>
               </div>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                type="button"
-                className="shrink-0 text-muted-foreground"
-                onClick={() => {
-                  setComposerOpen(false);
-                  setAdvancedOpen(false);
-                }}
-                disabled={createAutomation.isPending}
-                aria-label="Close automation composer"
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  type="button"
+                  className="hidden text-muted-foreground sm:inline-flex"
+                  aria-label="Automation help"
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </Button>
+                <Popover open={templatePickerOpen} onOpenChange={setTemplatePickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      className="h-8 rounded-md px-3"
+                      disabled={createAutomation.isPending}
+                    >
+                      <BookOpen className="h-3.5 w-3.5" />
+                      Use template
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="end"
+                    side="bottom"
+                    sideOffset={10}
+                    disablePortal
+                    className="w-[min(760px,calc(100vw-2rem))] overflow-hidden rounded-lg border-border/70 p-0 shadow-[0_18px_50px_rgba(0,0,0,0.22)]"
+                  >
+                    <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
+                      <p className="text-sm font-medium text-foreground">Automation templates</p>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        className="h-8 px-3"
+                        onClick={() => applyTemplate(blankAutomationTemplate)}
+                      >
+                        Create new
+                      </Button>
+                    </div>
+                    <div
+                      ref={templatePickerScrollRef}
+                      className="scrollbar-auto-hide max-h-[min(460px,calc(100dvh-13rem))] overflow-y-auto p-4"
+                      data-testid="automation-template-picker"
+                    >
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {automationTemplates.map((template) => {
+                          const title = localizeText(template.title);
+                          const summary = localizeText(template.summary);
+                          return (
+                            <button
+                              key={template.id}
+                              type="button"
+                              className="group min-h-[92px] rounded-md border border-border/70 bg-background/50 p-4 text-left transition-colors hover:border-border hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              onClick={() => applyTemplate(template)}
+                            >
+                              <span className="flex items-start gap-3">
+                                <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/60 text-muted-foreground">
+                                  <BookOpen className="h-4 w-4" />
+                                </span>
+                                <span className="min-w-0">
+                                  <span className="block text-sm font-medium text-foreground">{title}</span>
+                                  <span className="mt-1 block text-sm leading-5 text-muted-foreground">{summary}</span>
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  type="button"
+                  className="text-muted-foreground"
+                  onClick={() => {
+                    setComposerOpen(false);
+                    setTemplatePickerOpen(false);
+                    setAdvancedOpen(false);
+                  }}
+                  disabled={createAutomation.isPending}
+                  aria-label="Close automation composer"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
 
             <div
@@ -687,7 +813,7 @@ export function Automations() {
                   value={draft.description}
                   onChange={(description) => setDraft((current) => ({ ...current, description }))}
                   mentions={mentionOptions}
-                  placeholder="Add prompt e.g. look for crashes in Sentry"
+                  placeholder="Add instructions..."
                   bordered={false}
                   contentClassName="min-h-[320px] text-[15px] leading-7 text-foreground/90 placeholder:text-muted-foreground/55 md:min-h-[440px]"
                   onSubmit={() => {
@@ -821,12 +947,12 @@ export function Automations() {
                     type="button"
                     className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border border-border bg-transparent px-2 text-sm font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    {draft.outputMode === "create_issue" ? (
+                    {draft.outputMode === "track_issue" ? (
                       <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     ) : (
                       <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     )}
-                    <span>{draft.outputMode === "create_issue" ? "Track as issue" : "Send to chat"}</span>
+                    <span>{draft.outputMode === "track_issue" ? "Track as issue" : "Send to chat"}</span>
                     <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
                   </button>
                 </PopoverTrigger>
@@ -834,13 +960,13 @@ export function Automations() {
                   <p className="px-1 pt-1 text-xs font-medium text-muted-foreground">Run output</p>
                   {([
                     {
-                      value: "create_issue" as const,
+                      value: "track_issue" as const,
                       icon: CheckCircle2,
                       title: "Track as issue",
                       summary: "Each run opens board-tracked work",
                     },
                     {
-                      value: "send_to_chat" as const,
+                      value: "chat_output" as const,
                       icon: MessageSquare,
                       title: "Send to chat",
                       summary: "Post summary to a chat conversation",
@@ -870,6 +996,39 @@ export function Automations() {
                   })}
                 </PopoverContent>
               </Popover>
+
+              {draft.outputMode === "chat_output" ? (
+                <InlineEntitySelector
+                  value={draft.chatConversationId}
+                  options={chatOptions}
+                  placeholder="Select chat"
+                  noneLabel="Select chat"
+                  searchPlaceholder="Search chats..."
+                  emptyMessage="No active chats found."
+                  className="h-8 max-w-[240px] bg-transparent px-2 text-sm"
+                  disablePortal
+                  side="top"
+                  sideOffset={8}
+                  onChange={(chatConversationId) => setDraft((current) => ({
+                    ...current,
+                    chatConversationId,
+                    allowAssigneeChatMismatch: false,
+                  }))}
+                  renderTriggerValue={(option) =>
+                    option && currentChat ? (
+                      <>
+                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    ) : (
+                      <>
+                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate text-muted-foreground">Select chat</span>
+                      </>
+                    )
+                  }
+                />
+              ) : null}
 
               <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
                 <PopoverTrigger asChild>
@@ -932,6 +1091,7 @@ export function Automations() {
                   type="button"
                   onClick={() => {
                     setComposerOpen(false);
+                    setTemplatePickerOpen(false);
                     setAdvancedOpen(false);
                   }}
                   disabled={createAutomation.isPending}
