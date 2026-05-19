@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "pnpm --filter @rudderhq/server prepare:ui-dist && rm -rf dist && tsc -p tsconfig.json && electron dist/main.js",
     "build": "node scripts/build.mjs",
-    "dist": "pnpm run build && node scripts/prune-packaging-node-modules.mjs && node scripts/dist.mjs",
+    "dist": "pnpm run build && node scripts/prune-packaging-node-modules.mjs && node scripts/dist.mjs && node scripts/verify-server-package.mjs",
     "prune:packaging-node-modules": "node scripts/prune-packaging-node-modules.mjs",
     "stage:server": "node scripts/stage-server.mjs",
     "stage:cli": "node scripts/stage-cli.mjs",
