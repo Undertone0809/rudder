@@ -103,7 +103,7 @@ export function MobileWorkspaceDrawer() {
 
         <SidebarSection label="Work">
           <SidebarNavItem to="/issues" label="Issues" icon={CircleDot} />
-          <SidebarNavItem to="/automations" label="Automations" icon={Repeat} textBadge="Beta" textBadgeTone="amber" />
+          <SidebarNavItem to="/automations" label="Automations" icon={Repeat} textBadgeTone="amber" />
         </SidebarSection>
 
         <SidebarProjects />
