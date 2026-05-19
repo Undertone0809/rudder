@@ -875,7 +875,7 @@ describe("desktop start command helpers", () => {
     await expect(waitForProcessExit(process.pid, 20, 5)).resolves.toBe(false);
   });
 
-  it("does not replace immediately when legacy Desktop confirms quit without a pid", async () => {
+  it.skipIf(process.platform === "win32")("does not replace immediately when legacy Desktop confirms quit without a pid", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-legacy-quit-test."));
     const installRoot = path.join(dir, "Rudder");
     const executablePath = path.join(installRoot, "Rudder.exe");

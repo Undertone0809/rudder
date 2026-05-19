@@ -140,6 +140,7 @@ describe("IssueProperties", () => {
 
     const label = container.querySelector('[data-slot="assignee-label"][data-kind="agent"]');
     const trigger = label?.closest("button");
+    const row = label?.closest('[data-slot="issue-property-row"]');
 
     expect(label?.textContent).toContain("Ella");
     expect(label?.textContent).toContain("Chief Technology Officer");
@@ -148,6 +149,8 @@ describe("IssueProperties", () => {
     expect(trigger?.classList.contains("w-full")).toBe(true);
     expect(trigger?.classList.contains("max-w-full")).toBe(true);
     expect(trigger?.classList.contains("justify-start")).toBe(true);
+    expect(row?.getAttribute("data-align")).toBe("start");
+    expect(row?.classList.contains("items-start")).toBe(true);
     expect(label?.getAttribute("data-layout")).toBe("stacked");
     expect(label?.classList.contains("min-w-0")).toBe(true);
     expect(label?.classList.contains("w-full")).toBe(true);

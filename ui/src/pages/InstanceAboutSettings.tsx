@@ -258,6 +258,7 @@ export function InstanceAboutSettings() {
   const runtimeMode = desktopBootState?.runtime?.mode ?? null;
   const ownerKind = desktopBootState?.runtime?.ownerKind ?? healthQuery.data?.runtimeOwnerKind ?? null;
   const instanceRoot = desktopBootState?.paths?.instanceRoot ?? null;
+  const updateActionInProgress = updateProgress !== null && updateProgress.phase !== "failed";
 
   async function openExternal(target: string) {
     const desktopShell = readDesktopShell();
@@ -509,7 +510,7 @@ export function InstanceAboutSettings() {
                   variant="default"
                   size="sm"
                   onClick={() => void handleInstallUpdate()}
-                  disabled={installUpdatePending}
+                  disabled={installUpdatePending || updateActionInProgress}
                 >
                   {installUpdatePending ? t("about.updates.installing") : t("about.updates.install")}
                 </Button>
@@ -518,7 +519,7 @@ export function InstanceAboutSettings() {
                 variant="outline"
                 size="sm"
                 onClick={() => void handleCheckForUpdates()}
-                disabled={checkUpdatesPending || installUpdatePending}
+                disabled={checkUpdatesPending || installUpdatePending || updateActionInProgress}
               >
                 <RefreshCw className={`mr-2 h-4 w-4 ${checkUpdatesPending ? "animate-spin" : ""}`} />
                 {t("about.updates.check")}

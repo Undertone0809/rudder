@@ -647,6 +647,30 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("Main codebase: ~/projects/rudder");
   });
 
+  it("includes available issue labels and labelIds schema guidance for issue proposals", async () => {
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      issueLabels: [
+        { id: "11111111-1111-4111-8111-111111111111", orgId: "organization-1", name: "Engineering", color: "#0f766e", createdAt: new Date(), updatedAt: new Date() },
+        { id: "22222222-2222-4222-8222-222222222222", orgId: "organization-1", name: "Operations", color: "#2563eb", createdAt: new Date(), updatedAt: new Date() },
+        { id: "33333333-3333-4333-8333-333333333333", orgId: "organization-1", name: "Design", color: "#4338ca", createdAt: new Date(), updatedAt: new Date() },
+        { id: "44444444-4444-4444-8444-444444444444", orgId: "organization-1", name: "Growth", color: "#c2410c", createdAt: new Date(), updatedAt: new Date() },
+        { id: "55555555-5555-4555-8555-555555555555", orgId: "organization-1", name: "Support", color: "#a21caf", createdAt: new Date(), updatedAt: new Date() },
+      ],
+      operatorProfile: null,
+    });
+
+    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    expect(prompt).toContain("Organization issue labels:");
+    expect(prompt).toContain("- Engineering (11111111-1111-4111-8111-111111111111)");
+    expect(prompt).toContain("include labelIds with at least one best-fit label id");
+    expect(prompt).toContain('"labelIds": [');
+  });
+
   it("injects selected project context and project resources into chat prompts", async () => {
     const projectContextLink = makeProjectContextLink();
     mockRunContextService.buildSceneContext.mockResolvedValueOnce(makeSceneContext({
@@ -677,6 +701,31 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("- Description: Coordinate the launch workflow.");
     expect(prompt).toContain("## Project Resources");
     expect(prompt).toContain("[primary] Launch playbook");
+  });
+
+  it("injects issue label choices and schema guidance for mature label taxonomies", async () => {
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      issueLabels: Array.from({ length: 5 }, (_, index) => ({
+        id: `label-${index + 1}`,
+        orgId: "organization-1",
+        name: index === 0 ? "Engineering" : `Label ${index + 1}`,
+        color: "#2563eb",
+        createdAt: new Date("2026-03-29T08:00:00.000Z"),
+        updatedAt: new Date("2026-03-29T08:00:00.000Z"),
+      })),
+      operatorProfile: null,
+    });
+
+    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    expect(prompt).toContain("Organization issue labels:");
+    expect(prompt).toContain("- Engineering (label-1)");
+    expect(prompt).toContain("include labelIds with at least one best-fit label id from this list");
+    expect(prompt).toContain('"labelIds": [');
   });
 
   it("injects selected issue context into chat prompts and runtime context", async () => {

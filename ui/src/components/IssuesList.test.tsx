@@ -452,16 +452,15 @@ describe("IssuesList", () => {
     });
 
     const card = container.querySelector('[data-testid="kanban-card-RUD-1"]');
-    const metadata = card?.querySelector('[data-slot="kanban-card-metadata"]');
-    const assignee = Array.from(metadata?.children ?? []).find((child) =>
-      child.textContent?.includes("Ella"),
-    );
+    const primaryAssignee = card?.querySelector('[data-slot="kanban-card-primary-assignee"]');
+    const assignee = primaryAssignee?.querySelector('[data-slot="kanban-card-assignee"]');
 
     expect(card?.classList.contains("overflow-hidden")).toBe(true);
-    expect(metadata?.classList.contains("min-w-0")).toBe(true);
-    expect(metadata?.classList.contains("overflow-hidden")).toBe(true);
+    expect(primaryAssignee?.classList.contains("min-w-0")).toBe(true);
+    expect(primaryAssignee?.classList.contains("overflow-hidden")).toBe(true);
+    expect(assignee?.textContent).toContain("Ella");
     expect(assignee?.classList.contains("min-w-0")).toBe(true);
-    expect(assignee?.classList.contains("flex-1")).toBe(true);
+    expect(assignee?.classList.contains("overflow-hidden")).toBe(true);
   });
 
   it("opens the new issue dialog from an empty board lane with scoped project and status defaults", () => {

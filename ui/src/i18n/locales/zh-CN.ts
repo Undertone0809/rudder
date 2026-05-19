@@ -511,7 +511,7 @@ export const zhCN: Messages = {
     "Issue 页面展示哪些工作在等待、执行、阻塞或完成。这里会把 agent work 从聊天内容变成可跟踪的状态。",
   "productTour.step.inspect.title": "先检查工作，再审批或继续推进",
   "productTour.step.inspect.body":
-    "主工作区会展示当前页面、详情、transcript、产出和审批入口。Rudder 应该让你清楚看到发生了什么，以及哪里需要你介入。",
+    "Dashboard 会展示当前页面、详情、transcript、产出和审批入口。Rudder 应该让你清楚看到发生了什么，以及哪里需要你介入。",
   "productTour.step.settings.title": "你可以从 Settings 重新播放教程",
   "productTour.step.settings.body":
     "第一次导览结束后，Rudder 会保持安静。以后想重新查看时，打开系统设置，再进入个人资料即可再次运行。",

@@ -210,10 +210,16 @@ rudder issue update "<issue-id-or-identifier>" ... --json
 **Step 9 — Delegate if needed.** Create subtasks with the generic create surface only when the workflow really needs a new task:
 
 ```bash
-rudder issue create --org-id "$RUDDER_ORG_ID" ... --json
+rudder issue create --org-id "$RUDDER_ORG_ID" ... [--label-id "<label-id>"] [--label "<label-name>"] --json
 ```
 
 When you create an issue as an authenticated agent without an assignee, Rudder assigns it to you by default. Pass an explicit assignee only when the new issue should belong to someone else.
+
+When the organization has a mature issue label taxonomy, agent-created issues must choose at least one label. List the available labels first when you are not sure which one applies:
+
+```bash
+rudder issue labels list --org-id "$RUDDER_ORG_ID" --json
+```
 
 Always set `parentId`. Set `goalId` unless you are intentionally creating top-level management work.
 

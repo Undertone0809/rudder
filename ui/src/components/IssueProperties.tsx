@@ -51,9 +51,21 @@ interface IssuePropertiesProps {
   childIssues?: Issue[];
 }
 
-function PropertyRow({ label, children }: { label: string; children: React.ReactNode }) {
+function PropertyRow({
+  label,
+  children,
+  align = "center",
+}: {
+  label: string;
+  children: React.ReactNode;
+  align?: "center" | "start";
+}) {
   return (
-    <div className="flex items-center gap-3 py-1.5">
+    <div
+      data-slot="issue-property-row"
+      data-align={align}
+      className={cn("flex gap-3 py-1.5", align === "start" ? "items-start" : "items-center")}
+    >
       <span className="text-xs text-muted-foreground shrink-0 w-20">{label}</span>
       <div className="flex items-center gap-1.5 min-w-0 flex-1">{children}</div>
     </div>
@@ -90,6 +102,7 @@ function PropertyPicker({
   triggerClassName,
   popoverClassName,
   popoverAlign = "end",
+  rowAlign = "center",
   extra,
   children,
 }: {
@@ -101,6 +114,7 @@ function PropertyPicker({
   triggerClassName?: string;
   popoverClassName?: string;
   popoverAlign?: "start" | "center" | "end";
+  rowAlign?: "center" | "start";
   extra?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -112,7 +126,7 @@ function PropertyPicker({
   if (inline) {
     return (
       <div>
-        <PropertyRow label={label}>
+        <PropertyRow label={label} align={rowAlign}>
           <button className={btnCn} onClick={() => onOpenChange(!open)}>
             {triggerContent}
           </button>
@@ -128,7 +142,7 @@ function PropertyPicker({
   }
 
   return (
-    <PropertyRow label={label}>
+    <PropertyRow label={label} align={rowAlign}>
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger asChild>
           <button className={btnCn}>{triggerContent}</button>
@@ -644,6 +658,7 @@ export function IssueProperties({
           triggerClassName="min-w-0 w-full max-w-full justify-start"
           popoverClassName="w-[19rem]"
           popoverAlign="start"
+          rowAlign="start"
         >
           {assigneeContent}
         </PropertyPicker>
@@ -657,6 +672,7 @@ export function IssueProperties({
           triggerClassName="min-w-0 w-full max-w-full justify-start"
           popoverClassName="w-[19rem]"
           popoverAlign="start"
+          rowAlign="start"
           extra={reviewerMatchesAssignee ? (
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <AlertTriangle className="h-3 w-3" />

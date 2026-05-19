@@ -76,6 +76,55 @@ test.describe("New issue project context", () => {
     await expect(dialog.getByRole("button", { name: project.name })).toBeVisible();
   });
 
+  test("shows labels as a primary field when the organization has five labels", async ({ page }) => {
+    const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
+      data: {
+        name: `New-Issue-Labels-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    for (const name of ["Operations", "Research", "Engineering", "Design", "Customer"]) {
+      const labelRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/labels`, {
+        data: { name, color: "#2563eb" },
+      });
+      expect(labelRes.ok()).toBe(true);
+    }
+
+    await page.goto(E2E_BASE_URL);
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/issues`);
+    await page.getByTestId("workspace-main-header").getByRole("button", { name: "Create Issue" }).click();
+
+    const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator("div", { hasText: /^Labels$/ })).toBeVisible();
+    await dialog.getByRole("button", { name: "Labels" }).click();
+    await expect(page.getByPlaceholder("Search labels...")).toBeVisible();
+    await page.getByRole("button", { name: "Operations", exact: true }).click();
+
+    const title = `Labeled issue ${Date.now()}`;
+    await dialog.getByPlaceholder("Issue title").fill(title);
+    const createResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().endsWith(`/api/orgs/${organization.id}/issues`)
+      && response.ok(),
+    );
+    await dialog.getByRole("button", { name: "Create Issue" }).click();
+    const createdIssue = await (await createResponse).json() as {
+      id: string;
+      labelIds?: string[];
+      labels?: Array<{ name: string }>;
+    };
+
+    expect(createdIssue.labelIds?.length).toBe(1);
+    expect(createdIssue.labels?.map((label) => label.name)).toContain("Operations");
+  });
+
   test("remembers new issue assignee, project, and reviewer while project context wins", async ({ page }) => {
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
       data: {

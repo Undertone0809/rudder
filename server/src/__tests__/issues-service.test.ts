@@ -15,7 +15,9 @@ import {
   ensurePostgresDatabase,
   heartbeatRuns,
   issueComments,
+  issueLabels,
   issues,
+  labels,
   organizationMemberships,
   projects,
 } from "@rudderhq/db";
@@ -107,6 +109,7 @@ describe("issueService.list participantAgentId", () => {
     await db.delete(organizationMemberships);
     await db.delete(activityLog);
     await db.delete(issues);
+    await db.delete(labels);
     await db.delete(assets);
     await db.delete(heartbeatRuns);
     await db.delete(projects);
@@ -675,6 +678,129 @@ describe("issueService.list participantAgentId", () => {
     const cleared = await svc.update(created.id, { reviewerAgentId: null });
     expect(cleared?.reviewerAgentId).toBeNull();
     expect(cleared?.reviewerUserId).toBeNull();
+  });
+
+  it("requires agent-created issues to select labels once an organization has five labels", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const labelIds = Array.from({ length: 5 }, () => randomUUID());
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Agent Label Required Org",
+      urlKey: deriveOrganizationUrlKey("Agent Label Required Org"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Issue Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(labels).values(
+      labelIds.map((id, index) => ({
+        id,
+        orgId,
+        name: `Label ${index + 1}`,
+        color: "#2563eb",
+      })),
+    );
+
+    await expect(svc.create(orgId, {
+      title: "Unlabeled agent issue",
+      status: "todo",
+      priority: "medium",
+      createdByAgentId: agentId,
+    })).rejects.toMatchObject({
+      status: 422,
+      details: expect.objectContaining({
+        code: "agent_issue_label_required",
+        labelCount: 5,
+      }),
+    });
+
+    const created = await svc.create(orgId, {
+      title: "Labeled agent issue",
+      status: "todo",
+      priority: "medium",
+      createdByAgentId: agentId,
+      labelIds: [labelIds[0]!],
+    });
+
+    expect(created.labelIds).toEqual([labelIds[0]]);
+  });
+
+  it("allows unlabeled agent-created issues below five labels and inherits parent labels for sub-issues", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const labelIds = Array.from({ length: 5 }, () => randomUUID());
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Agent Label Inherit Org",
+      urlKey: deriveOrganizationUrlKey("Agent Label Inherit Org"),
+      issuePrefix: `I${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Issue Agent",
+      role: "engineer",
+      status: "active",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(labels).values(
+      labelIds.slice(0, 4).map((id, index) => ({
+        id,
+        orgId,
+        name: `Label ${index + 1}`,
+        color: "#2563eb",
+      })),
+    );
+
+    const beforeThreshold = await svc.create(orgId, {
+      title: "Allowed unlabeled agent issue",
+      status: "todo",
+      priority: "medium",
+      createdByAgentId: agentId,
+    });
+    expect(beforeThreshold.labelIds).toEqual([]);
+
+    await db.insert(labels).values({
+      id: labelIds[4]!,
+      orgId,
+      name: "Label 5",
+      color: "#2563eb",
+    });
+    const parent = await svc.create(orgId, {
+      title: "Parent issue",
+      status: "todo",
+      priority: "medium",
+      labelIds: [labelIds[1]!],
+    });
+
+    const child = await svc.create(orgId, {
+      title: "Child issue",
+      status: "todo",
+      priority: "medium",
+      parentId: parent.id,
+      createdByAgentId: agentId,
+    });
+
+    expect(child.labelIds).toEqual([labelIds[1]]);
+    await expect(
+      db.select().from(issueLabels).where(eq(issueLabels.issueId, child.id)),
+    ).resolves.toHaveLength(1);
   });
 
   it("rejects reviewers outside the organization or inactive membership", async () => {

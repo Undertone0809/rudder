@@ -73,7 +73,7 @@ import {
 import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CALENDAR_EVENT_STATUS_OPTIONS, useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
-import type { CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
+import type { Agent, CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
 
 const RECENT_ISSUES_COLLAPSED_LIMIT = 5;
 const LINEAR_PLUGIN_KEY = "rudder.linear";
@@ -364,12 +364,14 @@ function VisibilityLayerRow({
   onToggle,
   icon: Icon,
   colorClass,
+  agent,
 }: {
   label: string;
   visible: boolean;
   onToggle: () => void;
   icon?: typeof UserRound;
   colorClass?: string;
+  agent?: Pick<Agent, "id" | "icon" | "role" | "name">;
 }) {
   const EyeIcon = visible ? Eye : EyeOff;
   return (
@@ -384,7 +386,18 @@ function VisibilityLayerRow({
         !visible && "text-muted-foreground",
       )}
     >
-      {colorClass ? (
+      {agent ? (
+        <span
+          data-testid={`calendar-agent-avatar-${agent.id}`}
+          className={cn(
+            "inline-flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted ring-1 ring-border/80",
+            !visible && "opacity-40 grayscale",
+          )}
+          title={agent.name}
+        >
+          <AgentIcon icon={agent.icon} role={agent.role} className="h-full w-full" />
+        </span>
+      ) : colorClass ? (
         <span className={cn("h-2.5 w-2.5 shrink-0 rounded-sm border", colorClass, !visible && "opacity-35 grayscale")} />
       ) : Icon ? (
         <Icon className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground", !visible && "opacity-45")} />
@@ -1220,6 +1233,7 @@ export function ThreeColumnContextSidebar() {
                 visible={!hiddenAgentIds.has(agent.id)}
                 onToggle={() => setStringSetValue(setHiddenAgentIds, agent.id, hiddenAgentIds.has(agent.id))}
                 colorClass={CALENDAR_LAYER_COLORS[index % CALENDAR_LAYER_COLORS.length]}
+                agent={agent}
               />
             ))}
           </div>

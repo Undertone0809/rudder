@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   chatAskUserRequestFromStructuredPayload,
   chatAskUserRequestSchema,
+  convertChatToIssueSchema,
   chatRichReferencesFromStructuredPayload,
   sanitizeChatStructuredPayload,
 } from "./chat.js";
@@ -166,6 +167,27 @@ describe("chat rich references", () => {
         { type: "issue", identifier: "ZST-4", display: "card" },
         { type: "issue", identifier: "ZST-5", display: "card" },
       ],
+    });
+  });
+});
+
+describe("chat issue proposals", () => {
+  it("accepts label ids when converting chat proposals into issues", () => {
+    const labelId = "11111111-1111-4111-8111-111111111111";
+
+    expect(convertChatToIssueSchema.safeParse({
+      proposal: {
+        title: "Classify agent-created issue",
+        description: "The issue proposal already selected the best-fit label.",
+        labelIds: [labelId],
+      },
+    })).toMatchObject({
+      success: true,
+      data: {
+        proposal: expect.objectContaining({
+          labelIds: [labelId],
+        }),
+      },
     });
   });
 });

@@ -18,6 +18,7 @@ import type {
   MessengerApprovalThreadItem,
   MessengerEvent,
   MessengerIssueThreadItem,
+  IssueLabel,
   Project,
 } from "@rudderhq/shared";
 import { accessApi } from "@/api/access";
@@ -29,7 +30,13 @@ import { issuesApi } from "@/api/issues";
 import { projectsApi } from "@/api/projects";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { ApprovalDetailDialog } from "@/components/ApprovalDetailDialog";
-import { chatConversationIdFromApprovalPayload } from "@/components/ApprovalPayload";
+import {
+  ChatIssueApprovalLabelPicker,
+  approvalPayloadWithChatIssueLabelIds,
+  chatConversationIdFromApprovalPayload,
+  chatIssueApprovalLabelIds,
+  chatIssueApprovalNeedsLabelSelection,
+} from "@/components/ApprovalPayload";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { formatPriorityLabel } from "@/lib/priorities";
 import { Button } from "@/components/ui/button";
@@ -601,6 +608,7 @@ function MessengerApprovalCard({
   orgId,
   agents,
   projects,
+  labels,
   chatConversations,
   currentUserId,
 }: {
@@ -608,13 +616,25 @@ function MessengerApprovalCard({
   orgId: string;
   agents?: Agent[] | null;
   projects?: Project[] | null;
+  labels?: IssueLabel[] | null;
   chatConversations?: Pick<ChatConversation, "id" | "title">[] | null;
   currentUserId?: string | null;
 }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const pending = item.approval.status === "pending" || item.approval.status === "revision_requested";
-  const chatConversationId = chatConversationIdFromApprovalPayload(item.approval.payload as Record<string, unknown> | null);
+  const approvalPayload = item.approval.payload as Record<string, unknown>;
+  const initialChatIssueLabelIds = chatIssueApprovalLabelIds(approvalPayload);
+  const initialChatIssueLabelKey = initialChatIssueLabelIds.join("\u0000");
+  const [selectedChatIssueLabelIds, setSelectedChatIssueLabelIds] = useState<string[]>(initialChatIssueLabelIds);
+  useEffect(() => {
+    setSelectedChatIssueLabelIds(initialChatIssueLabelIds);
+  }, [item.approval.id, initialChatIssueLabelKey]);
+  const chatIssueLabelsRequired =
+    item.approval.type === "chat_issue_creation"
+    && chatIssueApprovalNeedsLabelSelection(approvalPayload, labels, selectedChatIssueLabelIds);
+  const chatIssueLabelOptionsLoading = item.approval.type === "chat_issue_creation" && labels === undefined;
+  const chatConversationId = chatConversationIdFromApprovalPayload(approvalPayload);
   const chatConversation = chatConversationId
     ? chatConversations?.find((conversation) => conversation.id === chatConversationId) ?? null
     : null;
@@ -629,7 +649,13 @@ function MessengerApprovalCard({
 
   const decisionMutation = useMutation({
     mutationFn: async (decision: "approve" | "reject" | "requestRevision") => {
-      if (decision === "approve") return approvalsApi.approve(item.approval.id);
+      if (decision === "approve") {
+        const nextPayload =
+          item.approval.type === "chat_issue_creation"
+            ? approvalPayloadWithChatIssueLabelIds(approvalPayload, selectedChatIssueLabelIds)
+            : undefined;
+        return approvalsApi.approve(item.approval.id, undefined, nextPayload);
+      }
       if (decision === "reject") return approvalsApi.reject(item.approval.id);
       return approvalsApi.requestRevision(item.approval.id);
     },
@@ -660,8 +686,29 @@ function MessengerApprovalCard({
           detailLink={`/messenger/approvals/${item.approval.id}`}
           detailLabel="Open full approval"
           supportingText={item.subtitle ?? "Approval update"}
-          payloadContext={{ agents, projects, chatConversation, currentUserId }}
+          payloadContext={{
+            agents,
+            projects,
+            labels,
+            selectedLabelIds: selectedChatIssueLabelIds,
+            chatConversation,
+            currentUserId,
+          }}
+          extraActions={
+            item.approval.type === "chat_issue_creation" && pending ? (
+              <div className="basis-full">
+                <ChatIssueApprovalLabelPicker
+                  labels={labels}
+                  selectedLabelIds={selectedChatIssueLabelIds}
+                  onChange={setSelectedChatIssueLabelIds}
+                  required={Boolean(chatIssueLabelsRequired)}
+                  disabled={decisionMutation.isPending || chatIssueLabelOptionsLoading}
+                />
+              </div>
+            ) : null
+          }
           allowBudgetActions
+          approveDisabled={Boolean(chatIssueLabelsRequired) || chatIssueLabelOptionsLoading}
           isPending={decisionMutation.isPending}
         />
       </div>
@@ -681,6 +728,11 @@ export function MessengerApprovalsView() {
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(selectedOrganizationId ?? ""),
     queryFn: () => projectsApi.list(selectedOrganizationId ?? ""),
+    enabled: Boolean(selectedOrganizationId),
+  });
+  const { data: labels } = useQuery({
+    queryKey: queryKeys.issues.labels(selectedOrganizationId ?? ""),
+    queryFn: () => issuesApi.listLabels(selectedOrganizationId ?? ""),
     enabled: Boolean(selectedOrganizationId),
   });
   const { data: chatConversations } = useQuery({
@@ -706,6 +758,7 @@ export function MessengerApprovalsView() {
             orgId={selectedOrganizationId}
             agents={agents}
             projects={projects}
+            labels={labels}
             chatConversations={chatConversations}
             currentUserId={currentUserId}
           />

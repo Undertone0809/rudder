@@ -119,6 +119,7 @@ test.describe("Calendar V1", () => {
       },
     });
     expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json();
 
     await selectOrganization(page, organization.id);
     await page.goto("/calendar");
@@ -131,11 +132,13 @@ test.describe("Calendar V1", () => {
     await expect(page.getByTestId("calendar-google-row")).toBeVisible();
     await expect(page.getByTestId("calendar-google-row").getByText("Connected")).toHaveCount(0);
     await expect(page.getByLabel("Import Google Calendar")).toBeVisible();
+    await expect(page.getByTestId(`calendar-agent-avatar-${agent.id}`)).toBeVisible();
     await expect(page.getByText("Imported event titles are visible in Rudder when enabled")).toHaveCount(0);
 
     await expect(page.getByText("Engineer · Projected heartbeat")).toHaveCount(0);
-    await page.getByLabel("Show projected events").click();
+    await page.getByLabel("Show Projected heartbeats events").click();
     await expect(page.getByText("Engineer · Projected heartbeat").first()).toBeVisible();
+    await expect(page.getByTestId(`calendar-agent-marker-${agent.id}`).first()).toBeVisible();
 
     await page.getByTestId("calendar-google-row").click();
     const modal = page.getByRole("dialog", { name: "Google Calendar" });
@@ -223,7 +226,7 @@ test.describe("Calendar V1", () => {
     await expect(page.getByRole("button", { name: /^week$/i })).toBeVisible();
     await expect(page.locator('[data-testid^="calendar-cluster-"]')).toHaveCount(0);
 
-    await page.getByLabel("Show projected events").click();
+    await page.getByLabel("Show Projected heartbeats events").click();
     const cluster = page.locator('[data-testid^="calendar-cluster-"]').filter({ hasText: /Cluster Bot · \d+ projected/ }).first();
     await expect(cluster).toBeVisible();
     await expect(cluster).not.toContainText("Projected heartbeat");

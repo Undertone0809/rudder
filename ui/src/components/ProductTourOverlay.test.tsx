@@ -53,7 +53,7 @@ vi.mock("@/context/I18nContext", () => ({
         "productTour.step.issues.title": "Issues are the executable units of work",
         "productTour.step.issues.body": "The Issue surface shows work state.",
         "productTour.step.inspect.title": "Inspect the work before you approve or continue",
-        "productTour.step.inspect.body": "The main workspace shows details and outputs.",
+        "productTour.step.inspect.body": "The Dashboard shows details and outputs.",
         "productTour.step.settings.title": "You can replay this tour from Settings",
         "productTour.step.settings.body": "Open System settings, then Profile.",
         "productTour.back": "Back",
@@ -180,6 +180,22 @@ describe("ProductTourOverlay", () => {
     expect(checklist?.style.left).toBe("");
     expect(callout?.style.left).toBe("104px");
     expect(callout?.style.top).toBe("48px");
+  });
+
+  it("keeps the web checklist from covering the first tour callout", async () => {
+    setViewport(1920, 1257);
+    const container = renderOverlay({ left: 0, top: 76, width: 88, height: 1170, right: 88, bottom: 1246 });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const checklist = container.querySelector("[data-testid='product-tour-checklist']") as HTMLElement | null;
+    const callout = container.querySelector("[data-testid='product-tour-callout']") as HTMLElement | null;
+
+    expect(checklist?.style.left).toBe("1684px");
+    expect(checklist?.style.top).toBe("20px");
+    expect(callout?.style.left).toBe("124px");
   });
 
   it("uses a narrower spotlight for compact rail navigation targets", async () => {

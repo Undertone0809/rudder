@@ -189,6 +189,7 @@ describe("KanbanBoard", () => {
     expect(primary?.textContent).toContain("RUD-1");
     expect(primaryAssignee?.contains(assignee!)).toBe(true);
     expect(metadata?.contains(reviewer!)).toBe(true);
+    expect(rows.every((row) => row.className.includes("items-center"))).toBe(true);
     expect(rows.map((row) => row.textContent)).toEqual(
       expect.arrayContaining([
         expect.stringContaining("ProjectRudder dev"),

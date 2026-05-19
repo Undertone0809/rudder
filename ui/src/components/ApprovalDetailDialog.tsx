@@ -6,6 +6,7 @@ import { accessApi } from "@/api/access";
 import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
 import { chatsApi } from "@/api/chats";
+import { issuesApi } from "@/api/issues";
 import { projectsApi } from "@/api/projects";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,7 +29,11 @@ import { AgentIdentity } from "./AgentAvatar";
 import { MarkdownBody } from "./MarkdownBody";
 import {
   ApprovalPayloadRenderer,
+  ChatIssueApprovalLabelPicker,
+  approvalPayloadWithChatIssueLabelIds,
   approvalLabel,
+  chatIssueApprovalLabelIds,
+  chatIssueApprovalNeedsLabelSelection,
   chatConversationIdFromApprovalPayload,
   defaultTypeIcon,
   typeIcon,
@@ -56,6 +61,7 @@ export function ApprovalDetailDialog({
   const [commentBody, setCommentBody] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showRawPayload, setShowRawPayload] = useState(false);
+  const [selectedChatIssueLabelIds, setSelectedChatIssueLabelIds] = useState<string[]>([]);
   const operatorDisplayName = useOperatorDisplayName();
 
   const { data: approval, isLoading } = useQuery({
@@ -89,7 +95,18 @@ export function ApprovalDetailDialog({
     enabled: Boolean(resolvedOrgId && open),
   });
 
-  const payload = (approval?.payload ?? {}) as Record<string, unknown>;
+  const { data: labels } = useQuery({
+    queryKey: queryKeys.issues.labels(resolvedOrgId ?? ""),
+    queryFn: () => issuesApi.listLabels(resolvedOrgId ?? ""),
+    enabled: Boolean(resolvedOrgId && open),
+  });
+
+  const payload = useMemo(
+    () => (approval?.payload ?? {}) as Record<string, unknown>,
+    [approval?.payload],
+  );
+  const initialChatIssueLabelIds = useMemo(() => chatIssueApprovalLabelIds(payload), [payload]);
+  const initialChatIssueLabelKey = initialChatIssueLabelIds.join("\u0000");
   const chatConversationId = chatConversationIdFromApprovalPayload(payload);
   const { data: chatConversation } = useQuery({
     queryKey: queryKeys.chats.detail(chatConversationId ?? "__none__"),
@@ -109,7 +126,12 @@ export function ApprovalDetailDialog({
     setCommentBody("");
     setError(null);
     setShowRawPayload(false);
+    setSelectedChatIssueLabelIds([]);
   }, [approvalId]);
+
+  useEffect(() => {
+    setSelectedChatIssueLabelIds(initialChatIssueLabelIds);
+  }, [approvalId, initialChatIssueLabelKey]);
 
   useEffect(() => {
     if (!approval?.orgId || approval.orgId === selectedOrganizationId) return;
@@ -139,7 +161,13 @@ export function ApprovalDetailDialog({
   };
 
   const approveMutation = useMutation({
-    mutationFn: () => approvalsApi.approve(approvalId!, decisionNote.trim() || undefined),
+    mutationFn: () => {
+      const nextPayload =
+        approval?.type === "chat_issue_creation"
+          ? approvalPayloadWithChatIssueLabelIds(payload, selectedChatIssueLabelIds)
+          : undefined;
+      return approvalsApi.approve(approvalId!, decisionNote.trim() || undefined, nextPayload);
+    },
     onSuccess: () => {
       setDecisionNote("");
       setError(null);
@@ -201,6 +229,10 @@ export function ApprovalDetailDialog({
   const linkedAgentId = typeof payload.agentId === "string" ? payload.agentId : null;
   const isActionable = approval?.status === "pending" || approval?.status === "revision_requested";
   const isBudgetApproval = approval?.type === "budget_override_required";
+  const chatIssueLabelsRequired =
+    approval?.type === "chat_issue_creation"
+    && chatIssueApprovalNeedsLabelSelection(payload, labels, selectedChatIssueLabelIds);
+  const chatIssueLabelOptionsLoading = approval?.type === "chat_issue_creation" && labels === undefined;
   const TypeIcon = approval ? (typeIcon[approval.type] ?? defaultTypeIcon) : defaultTypeIcon;
   const showApprovedBanner = searchParams.get("resolved") === "approved" && approval?.status === "approved";
   const primaryLinkedIssue = linkedIssues?.[0] ?? null;
@@ -312,9 +344,26 @@ export function ApprovalDetailDialog({
                       <ApprovalPayloadRenderer
                         type={approval.type}
                         payload={payload}
-                        context={{ agents, projects, chatConversation, currentUserId: currentBoardUserId }}
+                        context={{
+                          agents,
+                          projects,
+                          labels,
+                          selectedLabelIds: selectedChatIssueLabelIds,
+                          chatConversation,
+                          currentUserId: currentBoardUserId,
+                        }}
                       />
                     </ApprovalInset>
+
+                    {approval.type === "chat_issue_creation" && isActionable ? (
+                      <ChatIssueApprovalLabelPicker
+                        labels={labels}
+                        selectedLabelIds={selectedChatIssueLabelIds}
+                        onChange={setSelectedChatIssueLabelIds}
+                        required={Boolean(chatIssueLabelsRequired)}
+                        disabled={approveMutation.isPending || chatIssueLabelOptionsLoading}
+                      />
+                    ) : null}
 
                     {approval.decisionNote ? (
                       <ApprovalInset className="px-3 py-3">
@@ -388,7 +437,7 @@ export function ApprovalDetailDialog({
                           size="sm"
                           className="bg-green-700 text-white hover:bg-green-600"
                           onClick={() => approveMutation.mutate()}
-                          disabled={approveMutation.isPending}
+                          disabled={approveMutation.isPending || Boolean(chatIssueLabelsRequired) || chatIssueLabelOptionsLoading}
                         >
                           Approve
                         </Button>

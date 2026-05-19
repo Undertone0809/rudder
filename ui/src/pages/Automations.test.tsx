@@ -330,7 +330,7 @@ describe("Automations", () => {
     expect(container.textContent).toContain("Bug triage");
     expect(container.textContent).toContain("Daily standup");
     expect(container.textContent).toContain("Weekly progress report");
-    expect(container.textContent).toContain("Create custom automation");
+    expect(container.textContent).not.toContain("Create custom automation");
     expect(container.textContent).not.toContain("Start from scratch");
     expect(container.querySelector('[data-testid="automation-template-grid"]')).toBeTruthy();
 
@@ -341,12 +341,28 @@ describe("Automations", () => {
       await Promise.resolve();
     });
 
-    const titleInput = document.querySelector('textarea[placeholder="Automation name"]') as HTMLTextAreaElement | null;
+    const titleInput = document.querySelector('textarea[placeholder="Automation title"]') as HTMLTextAreaElement | null;
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
-    const scheduleInput = document.querySelector('input[aria-label="Schedule"]') as HTMLInputElement | null;
     expect(titleInput?.value).toBe("Bug triage");
     expect(runbookInput?.value).toContain("List all open issues labeled bug");
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Schedule 0 9 * * 1-5"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const scheduleInput = document.querySelector('input[aria-label="Schedule"]') as HTMLInputElement | null;
     expect(scheduleInput?.value).toBe("0 9 * * 1-5");
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Track as issue"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
     expect(document.body.textContent).toContain("Run output");
     expect(document.body.textContent).toContain("Send to chat");
     expect(document.body.textContent).toContain("Create automation");
@@ -381,7 +397,7 @@ describe("Automations", () => {
       await Promise.resolve();
     });
 
-    const titleInput = document.querySelector('textarea[placeholder="Automation name"]') as HTMLTextAreaElement | null;
+    const titleInput = document.querySelector('textarea[placeholder="Automation title"]') as HTMLTextAreaElement | null;
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
     expect(titleInput?.value).toBe("日会");
     expect(runbookInput?.value).toContain("上一个工作日以来更新的进行中任务");
@@ -454,7 +470,7 @@ describe("Automations", () => {
       headerContainer.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    const titleInput = document.querySelector('textarea[placeholder="Automation name"]') as HTMLTextAreaElement | null;
+    const titleInput = document.querySelector('textarea[placeholder="Automation title"]') as HTMLTextAreaElement | null;
     expect(titleInput).toBeTruthy();
 
     await act(async () => {

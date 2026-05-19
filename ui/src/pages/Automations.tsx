@@ -6,12 +6,14 @@ import {
   Bot,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
   FolderOpen,
   MessageSquare,
   MoreHorizontal,
   Plus,
   Repeat,
   Trash2,
+  X,
 } from "lucide-react";
 import { automationsApi } from "../api/automations";
 import { agentsApi } from "../api/agents";
@@ -28,7 +30,7 @@ import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { queryKeys } from "../lib/queryKeys";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
-import { formatDateTimeSeconds, getUiLocale } from "../lib/utils";
+import { cn, formatDateTimeSeconds, getUiLocale } from "../lib/utils";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -616,36 +618,50 @@ export function Automations() {
       >
         <DialogContent
           showCloseButton={false}
-          className="h-[calc(100dvh-1.5rem)] gap-0 overflow-hidden rounded-lg border-border/70 p-0 shadow-[0_18px_60px_rgba(0,0,0,0.16)] md:h-[88vh] md:max-h-[760px] sm:max-w-[min(1040px,calc(100vw-2rem))]"
+          className="h-[calc(100dvh-1.5rem)] gap-0 overflow-hidden rounded-lg border-border/70 p-0 shadow-[0_18px_60px_rgba(0,0,0,0.16)] sm:max-w-[min(1160px,calc(100vw-2rem))] md:h-[min(720px,calc(100dvh-3rem))]"
         >
           <div className="flex h-full min-h-0 flex-col" data-testid="automation-composer-shell">
             <DialogTitle className="sr-only">New automation</DialogTitle>
             <DialogDescription className="sr-only">
               Create a recurring automation by writing a runbook and choosing an agent and schedule.
             </DialogDescription>
-            <div className="border-b border-border/60 px-4 py-3 sm:px-5">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 px-4 py-3 sm:px-5">
               <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
-                <span>Automations</span>
-                <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
-                <span className="font-medium text-foreground">New automation</span>
                 {selectedOrganization?.name ? (
                   <>
-                    <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
-                    <span className="truncate">{selectedOrganization.name}</span>
+                    <span className="rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-foreground">
+                      {selectedOrganization.name}
+                    </span>
+                    <span className="text-muted-foreground/60">&rsaquo;</span>
                   </>
                 ) : null}
+                <span className="font-medium text-foreground">New automation</span>
               </div>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                type="button"
+                className="shrink-0 text-muted-foreground"
+                onClick={() => {
+                  setComposerOpen(false);
+                  setAdvancedOpen(false);
+                }}
+                disabled={createAutomation.isPending}
+                aria-label="Close automation composer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
             </div>
 
             <div
               ref={composerBodyScrollRef}
-              className="scrollbar-auto-hide flex min-h-0 flex-1 flex-col overflow-y-auto xl:grid xl:grid-cols-[minmax(0,1fr)_280px] xl:gap-6 xl:overflow-hidden"
+              className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto"
             >
-              <main ref={composerMainScrollRef} className="scrollbar-auto-hide min-w-0 space-y-4 px-4 py-5 sm:px-5 xl:min-h-0 xl:overflow-y-auto xl:px-6">
+              <main ref={composerMainScrollRef} className="min-w-0 space-y-4 px-4 py-5 sm:px-5">
                 <textarea
                   ref={titleInputRef}
-                  className="min-h-[34px] w-full resize-none overflow-hidden bg-transparent text-xl font-bold leading-snug outline-none placeholder:text-muted-foreground/55"
-                  placeholder="Automation name"
+                  className="min-h-[38px] w-full resize-none overflow-hidden bg-transparent text-xl font-semibold leading-snug outline-none placeholder:text-muted-foreground/55 sm:text-2xl"
+                  placeholder="Automation title"
                   rows={1}
                   value={draft.title}
                   onChange={(event) => {
@@ -666,240 +682,248 @@ export function Automations() {
                   autoFocus
                 />
 
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="font-medium text-foreground">Runbook</span>
-                    <span className="text-muted-foreground">Agent instructions for each run</span>
-                  </div>
-                  <MarkdownEditor
-                    ref={descriptionEditorRef}
-                    value={draft.description}
-                    onChange={(description) => setDraft((current) => ({ ...current, description }))}
-                    mentions={mentionOptions}
-                    placeholder="# Goal&#10;What should the agent accomplish?&#10;&#10;# Steps&#10;1. ..."
-                    bordered
-                    className="bg-background/40"
-                    contentClassName="min-h-[300px] text-[15px] leading-7 text-foreground/90 md:min-h-[400px]"
-                    onSubmit={() => {
-                      if (!createAutomation.isPending && isDraftReady) {
-                        createAutomation.mutate();
-                      }
-                    }}
-                  />
-                </div>
+                <MarkdownEditor
+                  ref={descriptionEditorRef}
+                  value={draft.description}
+                  onChange={(description) => setDraft((current) => ({ ...current, description }))}
+                  mentions={mentionOptions}
+                  placeholder="Add prompt e.g. look for crashes in Sentry"
+                  bordered={false}
+                  contentClassName="min-h-[320px] text-[15px] leading-7 text-foreground/90 placeholder:text-muted-foreground/55 md:min-h-[440px]"
+                  onSubmit={() => {
+                    if (!createAutomation.isPending && isDraftReady) {
+                      createAutomation.mutate();
+                    }
+                  }}
+                />
               </main>
-
-              <aside className="min-w-0 border-t border-border/60 px-4 py-5 sm:px-5 xl:border-l xl:border-t-0 xl:px-0 xl:py-5 xl:pr-5">
-                <div className="space-y-5 rounded-lg border border-border bg-background/80 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium text-muted-foreground">Properties</p>
-                  </div>
-                  <section className="space-y-2.5">
-                    <h2 className="text-xs font-medium text-muted-foreground">Agent</h2>
-                    <div
-                      data-testid="automation-composer-assignee-pill"
-                      className="rounded-md border border-border/80 bg-background/50"
-                    >
-                      <InlineEntitySelector
-                        ref={assigneeSelectorRef}
-                        value={draft.assigneeAgentId}
-                        options={assigneeOptions}
-                        placeholder="Select agent"
-                        noneLabel="No agent"
-                        searchPlaceholder="Search agents..."
-                        emptyMessage="No agents found."
-                        className="min-h-10 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
-                        disablePortal
-                        side="bottom"
-                        sideOffset={8}
-                        onChange={(assigneeAgentId) => {
-                          if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
-                          setDraft((current) => ({ ...current, assigneeAgentId }));
-                        }}
-                        onConfirm={() => projectSelectorRef.current?.focus()}
-                        renderTriggerValue={(option) =>
-                          option ? (
-                            currentAssignee ? (
-                              <span className="flex min-w-0 items-center gap-2">
-                                <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                <span className="truncate">{option.label}</span>
-                              </span>
-                            ) : (
-                              <span className="truncate">{option.label}</span>
-                            )
-                          ) : (
-                            <span className="flex items-center gap-2 text-muted-foreground">
-                              <Bot className="h-4 w-4" />
-                              Select agent
-                            </span>
-                          )
-                        }
-                        renderOption={(option) => {
-                          if (!option.id) return <span className="truncate">{option.label}</span>;
-                          const assignee = agentById.get(option.id);
-                          return (
-                            <>
-                              {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
-                              <span className="truncate">{option.label}</span>
-                            </>
-                          );
-                        }}
-                      />
-                    </div>
-                  </section>
-
-                  <section className="space-y-2.5">
-                    <h2 className="text-xs font-medium text-muted-foreground">Run output</h2>
-                    <div className="grid gap-2">
-                      <button
-                        type="button"
-                        className={`flex min-h-12 items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors ${
-                          draft.outputMode === "create_issue"
-                            ? "border-foreground/70 bg-accent/60 text-foreground"
-                            : "border-border/70 bg-background/40 text-muted-foreground hover:bg-accent/40"
-                        }`}
-                        onClick={() => selectOutputMode("create_issue")}
-                      >
-                        <CheckCircle2 className="h-4 w-4 shrink-0" />
-                        <span className="min-w-0">
-                          <span className="block text-sm font-medium">Track as issue</span>
-                          <span className="block truncate text-xs text-muted-foreground">Each run opens board-tracked work</span>
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        className={`flex min-h-12 items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors ${
-                          draft.outputMode === "send_to_chat"
-                            ? "border-foreground/70 bg-accent/60 text-foreground"
-                            : "border-border/70 bg-background/40 text-muted-foreground hover:bg-accent/40"
-                        }`}
-                        onClick={() => selectOutputMode("send_to_chat")}
-                      >
-                        <MessageSquare className="h-4 w-4 shrink-0" />
-                        <span className="min-w-0">
-                          <span className="block text-sm font-medium">Send to chat</span>
-                          <span className="block truncate text-xs text-muted-foreground">Post summary to a chat conversation</span>
-                        </span>
-                      </button>
-                    </div>
-                  </section>
-
-                  <section className="space-y-2.5">
-                    <h2 className="text-xs font-medium text-muted-foreground">Schedule</h2>
-                    <ScheduleEditor
-                      value={draft.scheduleCron}
-                      onChange={(scheduleCron) => setDraft((current) => ({ ...current, scheduleCron }))}
-                    />
-                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <CalendarClock className="h-3.5 w-3.5" />
-                      {draft.scheduleCron.trim() ? describeSchedule(draft.scheduleCron) : "No schedule set"}
-                    </p>
-                  </section>
-
-                  <section className="space-y-2.5">
-                    <h2 className="text-xs font-medium text-muted-foreground">Project</h2>
-                    <div
-                      data-testid="automation-composer-project-pill"
-                      className="rounded-md border border-border/80 bg-background/50"
-                    >
-                      <InlineEntitySelector
-                        ref={projectSelectorRef}
-                        value={draft.projectId}
-                        options={projectOptions}
-                        placeholder="No project"
-                        noneLabel="No project"
-                        searchPlaceholder="Search projects..."
-                        emptyMessage="No projects found."
-                        className="min-h-10 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
-                        disablePortal
-                        side="bottom"
-                        sideOffset={8}
-                        onChange={(projectId) => setDraft((current) => ({ ...current, projectId }))}
-                        onConfirm={() => descriptionEditorRef.current?.focus()}
-                        renderTriggerValue={(option) =>
-                          option && currentProject ? (
-                            <span className="flex min-w-0 items-center gap-2">
-                              <span
-                                className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                                style={projectColorBackgroundStyle(currentProject.color)}
-                              />
-                              <span className="truncate">{option.label}</span>
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-2 text-muted-foreground">
-                              <FolderOpen className="h-4 w-4" />
-                              No project
-                            </span>
-                          )
-                        }
-                        renderOption={(option) => {
-                          if (!option.id) return <span className="truncate">{option.label}</span>;
-                          const project = projectById.get(option.id);
-                          return (
-                            <>
-                              <span
-                                className="h-3.5 w-3.5 shrink-0 rounded-sm"
-                                style={projectColorBackgroundStyle(project?.color)}
-                              />
-                              <span className="truncate">{option.label}</span>
-                            </>
-                          );
-                        }}
-                      />
-                    </div>
-                  </section>
-
-                  <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" size="sm" type="button" className="w-full justify-between">
-                        Delivery rules
-                        <MoreHorizontal className="h-3.5 w-3.5" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent align="end" side="top" sideOffset={10} className="w-[320px] space-y-4 p-4">
-                      <div className="space-y-2">
-                        <p className="text-xs font-medium text-muted-foreground">Concurrency</p>
-                        <Select
-                          value={draft.concurrencyPolicy}
-                          onValueChange={(concurrencyPolicy) => setDraft((current) => ({ ...current, concurrencyPolicy }))}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {concurrencyPolicies.map((value) => (
-                              <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs leading-5 text-muted-foreground">{concurrencyPolicyDescriptions[draft.concurrencyPolicy]}</p>
-                      </div>
-
-                      <div className="space-y-2">
-                        <p className="text-xs font-medium text-muted-foreground">Catch-up</p>
-                        <Select
-                          value={draft.catchUpPolicy}
-                          onValueChange={(catchUpPolicy) => setDraft((current) => ({ ...current, catchUpPolicy }))}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {catchUpPolicies.map((value) => (
-                              <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs leading-5 text-muted-foreground">{catchUpPolicyDescriptions[draft.catchUpPolicy]}</p>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-              </aside>
             </div>
-            <div className="flex flex-col gap-3 border-t border-border/60 px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border/60 px-4 py-2 sm:px-5">
+              <InlineEntitySelector
+                ref={assigneeSelectorRef}
+                value={draft.assigneeAgentId}
+                options={assigneeOptions}
+                placeholder="Select agent"
+                noneLabel="No agent"
+                searchPlaceholder="Search agents..."
+                emptyMessage="No agents found."
+                className="h-8 max-w-[220px] bg-transparent px-2 text-sm"
+                disablePortal
+                side="top"
+                sideOffset={8}
+                onChange={(assigneeAgentId) => {
+                  if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
+                  setDraft((current) => ({ ...current, assigneeAgentId }));
+                }}
+                onConfirm={() => projectSelectorRef.current?.focus()}
+                renderTriggerValue={(option) =>
+                  option ? (
+                    currentAssignee ? (
+                      <>
+                        <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    ) : (
+                      <span className="truncate">{option.label}</span>
+                    )
+                  ) : (
+                    <>
+                      <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate text-muted-foreground">Select agent</span>
+                    </>
+                  )
+                }
+                renderOption={(option) => {
+                  if (!option.id) return <span className="truncate">{option.label}</span>;
+                  const assignee = agentById.get(option.id);
+                  return (
+                    <>
+                      {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  );
+                }}
+              />
+
+              <InlineEntitySelector
+                ref={projectSelectorRef}
+                value={draft.projectId}
+                options={projectOptions}
+                placeholder="No project"
+                noneLabel="No project"
+                searchPlaceholder="Search projects..."
+                emptyMessage="No projects found."
+                className="h-8 max-w-[220px] bg-transparent px-2 text-sm"
+                disablePortal
+                side="top"
+                sideOffset={8}
+                onChange={(projectId) => setDraft((current) => ({ ...current, projectId }))}
+                onConfirm={() => descriptionEditorRef.current?.focus()}
+                renderTriggerValue={(option) =>
+                  option && currentProject ? (
+                    <>
+                      <span
+                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                        style={projectColorBackgroundStyle(currentProject.color)}
+                      />
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  ) : (
+                    <>
+                      <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate text-muted-foreground">No project</span>
+                    </>
+                  )
+                }
+                renderOption={(option) => {
+                  if (!option.id) return <span className="truncate">{option.label}</span>;
+                  const project = projectById.get(option.id);
+                  return (
+                    <>
+                      <span
+                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                        style={projectColorBackgroundStyle(project?.color)}
+                      />
+                      <span className="truncate">{option.label}</span>
+                    </>
+                  );
+                }}
+              />
+
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border border-border bg-transparent px-2 text-sm font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <CalendarClock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{draft.scheduleCron.trim() ? describeSchedule(draft.scheduleCron) : "No schedule set"}</span>
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" side="top" sideOffset={8} disablePortal className="w-[min(340px,calc(100vw-2rem))] space-y-3 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Schedule</p>
+                  <ScheduleEditor
+                    value={draft.scheduleCron}
+                    onChange={(scheduleCron) => setDraft((current) => ({ ...current, scheduleCron }))}
+                  />
+                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <CalendarClock className="h-3.5 w-3.5" />
+                    {draft.scheduleCron.trim() ? describeSchedule(draft.scheduleCron) : "No schedule set"}
+                  </p>
+                </PopoverContent>
+              </Popover>
+
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border border-border bg-transparent px-2 text-sm font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {draft.outputMode === "create_issue" ? (
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    )}
+                    <span>{draft.outputMode === "create_issue" ? "Track as issue" : "Send to chat"}</span>
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" side="top" sideOffset={8} disablePortal className="w-[min(320px,calc(100vw-2rem))] space-y-2 p-2">
+                  <p className="px-1 pt-1 text-xs font-medium text-muted-foreground">Run output</p>
+                  {([
+                    {
+                      value: "create_issue" as const,
+                      icon: CheckCircle2,
+                      title: "Track as issue",
+                      summary: "Each run opens board-tracked work",
+                    },
+                    {
+                      value: "send_to_chat" as const,
+                      icon: MessageSquare,
+                      title: "Send to chat",
+                      summary: "Post summary to a chat conversation",
+                    },
+                  ]).map((option) => {
+                    const Icon = option.icon;
+                    const selected = draft.outputMode === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={cn(
+                          "flex w-full min-w-0 items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors",
+                          selected
+                            ? "border-foreground/70 bg-accent/60 text-foreground"
+                            : "border-border/70 bg-background/40 text-muted-foreground hover:bg-accent/40",
+                        )}
+                        onClick={() => selectOutputMode(option.value)}
+                      >
+                        <Icon className="h-4 w-4 shrink-0" />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium">{option.title}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{option.summary}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </PopoverContent>
+              </Popover>
+
+              <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-transparent px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <MoreHorizontal className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Delivery rules</span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" side="top" sideOffset={8} disablePortal className="w-[min(320px,calc(100vw-2rem))] space-y-4 p-4">
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Concurrency</p>
+                    <Select
+                      value={draft.concurrencyPolicy}
+                      onValueChange={(concurrencyPolicy) => setDraft((current) => ({ ...current, concurrencyPolicy }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {concurrencyPolicies.map((value) => (
+                          <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs leading-5 text-muted-foreground">{concurrencyPolicyDescriptions[draft.concurrencyPolicy]}</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Catch-up</p>
+                    <Select
+                      value={draft.catchUpPolicy}
+                      onValueChange={(catchUpPolicy) => setDraft((current) => ({ ...current, catchUpPolicy }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {catchUpPolicies.map((value) => (
+                          <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs leading-5 text-muted-foreground">{catchUpPolicyDescriptions[draft.catchUpPolicy]}</p>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            <div className="flex shrink-0 flex-col gap-3 border-t border-border/60 px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
               <p className="min-w-0 truncate text-xs text-muted-foreground">
-                Once saved, runs automatically until paused.
+                Runs automatically until paused.
               </p>
               <div className="flex items-center justify-end gap-3">
                 <Button
@@ -968,15 +992,6 @@ export function Automations() {
                 );
               })}
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="mt-5"
-              onClick={() => openComposer()}
-            >
-              <Plus className="h-4 w-4" />
-              Create custom automation
-            </Button>
           </div>
         ) : (
           <div className="overflow-x-auto">

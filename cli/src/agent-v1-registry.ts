@@ -405,7 +405,7 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "issue.create",
-    command: "rudder issue create --org-id <id> ...",
+    command: "rudder issue create --org-id <id> ... [--label-id <id> ...] [--label <name> ...]",
     category: "issue",
     description: "Create a new issue or subtask with the generic issue surface; agent-created issues default to the creating agent when no assignee is supplied.",
     mutating: true,
@@ -414,6 +414,18 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     requiresAgentId: false,
     requiresRunId: false,
     attachesRunIdWhenAvailable: true,
+  },
+  {
+    id: "issue.labels.list",
+    command: "rudder issue labels list --org-id <id>",
+    category: "issue",
+    description: "List organization issue labels available for issue creation.",
+    mutating: false,
+    contract: "compat",
+    requiresOrgId: true,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: false,
   },
   {
     id: "approval.get",

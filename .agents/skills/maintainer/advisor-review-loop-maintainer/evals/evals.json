@@ -1,0 +1,64 @@
+{
+  "skill_name": "advisor-review-loop-maintainer",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "把 Build Advisor 和 Agent Work Reviewer Maintainer 连起来用，先从用户场景和需求出发设计一个 Rudder UI 工作流方案，然后 spawn 两个 reviewer agent 审，没通过就返工，至少两轮后给我最终方案。",
+      "expected_output": "Runs an advisor-first workflow, creates a scenario and requirement map before solution details, sends the artifact to two distinct reviewer roles, revises based on blockers, and reports two review rounds before final handoff.",
+      "files": [],
+      "expectations": [
+        "The result uses Build Advisor-style scenario and requirement analysis before judging or implementing.",
+        "The result defines two independent reviewer roles rather than a single self-review, and states whether actual reviewers were spawned or a serial fallback was used.",
+        "The result includes at least two review rounds or clearly explains why a blocker prevents completing the loop.",
+        "The result states coverage boundaries and avoids claiming literal 100% certainty."
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "这个 agent skill draft：.agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md 我不确定够不够稳。用 advisor-review-loop-maintainer 帮我做第一性原理 review：场景、触发条件、eval、subagent review 协议、corner cases 都要看，两轮不过就继续改。",
+      "expected_output": "Reviews the named skill draft as a reusable workflow artifact, checking trigger description, workflow contract, evalability, reviewer protocol, edge cases, and whether findings from the first round are resolved in a second round.",
+      "files": [
+        ".agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md"
+      ],
+      "expectations": [
+        "The result treats the skill as a reusable operating procedure, not just prose.",
+        "The result checks trigger description, eval prompts or evalability, and the subagent review protocol.",
+        "The result blocks final acceptance when first-round reviewer findings remain unresolved.",
+        "The result does not review an absent artifact; it uses the named file or asks for the missing draft if it cannot be read."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "我只想写 proposal，不要实现。先用 build-advisor 出方案，再用两个 reviewer 从产品场景和工程可执行性上审两轮。最后直接输出 proposal 和 review 结果。",
+      "expected_output": "Keeps the task proposal-only, does not implement, uses two reviewer perspectives for two iterations, and returns a decision-ready proposal plus evidence of review and remaining risks.",
+      "files": [],
+      "expectations": [
+        "The result respects proposal-only scope and does not start implementation.",
+        "The result separates product scenario review from engineering execution review.",
+        "The result finalizes with a proposal, review verdicts, and residual decisions rather than a code-change handoff."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Round 1 reviewer 说 proposal 还没覆盖权限和失败恢复，但作者只改了文案，没有补场景。继续用 advisor-review-loop-maintainer 跑第二轮，不通过就别交付。",
+      "expected_output": "Treats unresolved round-one blockers as still blocking, checks whether the second-round artifact actually resolves permissions and failure recovery, and refuses final acceptance if the changes are only cosmetic.",
+      "files": [],
+      "expectations": [
+        "The result verifies that round-one blockers were actually resolved before accepting.",
+        "The result distinguishes cosmetic edits from scenario or requirement fixes.",
+        "The result continues targeted rework or reports a blocker instead of stopping merely because two rounds happened."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "review-only：帮我审一下这个 proposal 的场景覆盖和 reviewer 协议，但先不要改文件，也不要返工实现。只要 verdict、blocking gaps、smallest changes needed。",
+      "expected_output": "Runs the advisor and reviewer framing in review-only mode, gives verdicts and smallest changes needed, and explicitly avoids editing files, rewriting the artifact, or continuing into implementation/rework without user approval.",
+      "files": [],
+      "expectations": [
+        "The result recognizes review-only mode and does not edit or rewrite the target artifact.",
+        "The result stops at verdicts, blocking gaps, and smallest changes needed.",
+        "The result requires explicit user approval before switching from review to rework or implementation."
+      ]
+    }
+  ]
+}

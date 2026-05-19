@@ -25,7 +25,11 @@ function renderHarness(initialProgress: DesktopUpdateProgressEvent | null) {
     },
   });
   let listener: ((event: DesktopUpdateProgressEvent) => void) | null = null;
-  const applyUpdate = vi.fn();
+  const applyUpdate = vi.fn().mockResolvedValue({
+    status: "started",
+    updateId: initialProgress?.updateId ?? "update-test",
+    version: initialProgress?.version ?? "0.0.0",
+  });
 
   Object.defineProperty(window, "desktopShell", {
     configurable: true,
@@ -155,10 +159,38 @@ describe("DesktopUpdateStatusCard", () => {
       .find((button) => button.textContent === "Quit and update");
     expect(action).toBeTruthy();
 
-    act(() => {
+    await act(async () => {
       action?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(harness.applyUpdate).toHaveBeenCalledWith("update-3");
+  });
+
+  it("shows an apply error when the update session is no longer available", async () => {
+    const harness = renderHarness({
+      updateId: "update-expired",
+      version: "0.2.3",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+      at: new Date().toISOString(),
+    });
+    harness.applyUpdate.mockResolvedValueOnce({
+      status: "unavailable",
+      message: "The update session is no longer waiting to apply. Start the update again.",
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const action = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent === "Quit and update");
+
+    await act(async () => {
+      action?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(document.body.textContent).toContain("The update session is no longer waiting to apply. Start the update again.");
   });
 });

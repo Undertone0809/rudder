@@ -267,7 +267,7 @@ function KanbanMetadataRow({
   children: ReactNode;
 }) {
   return (
-    <div data-slot="kanban-card-metadata-row" className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)] items-start gap-2 text-xs">
+    <div data-slot="kanban-card-metadata-row" className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 text-xs">
       <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground/75">
         <span className="shrink-0 text-muted-foreground/70">{icon}</span>
         <span className="truncate">{label}</span>

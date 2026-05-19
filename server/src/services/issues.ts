@@ -529,6 +529,44 @@ export function issueService(db: Db) {
     );
   }
 
+  async function resolveCreateLabelIds(
+    orgId: string,
+    data: Pick<typeof issues.$inferInsert, "createdByAgentId" | "parentId">,
+    inputLabelIds: string[] | undefined,
+    dbOrTx: any,
+  ) {
+    if (inputLabelIds && inputLabelIds.length > 0) return inputLabelIds;
+
+    if (data.parentId) {
+      const parentLabelRows = await dbOrTx
+        .select({ labelId: issueLabels.labelId })
+        .from(issueLabels)
+        .innerJoin(issues, eq(issueLabels.issueId, issues.id))
+        .where(and(eq(issues.id, data.parentId), eq(issues.orgId, orgId), eq(issueLabels.orgId, orgId)))
+        .orderBy(asc(issueLabels.labelId));
+      if (parentLabelRows.length > 0) {
+        return parentLabelRows.map((row: { labelId: string }) => row.labelId);
+      }
+    }
+
+    if (!data.createdByAgentId) return inputLabelIds;
+
+    const [labelCountRow] = await dbOrTx
+      .select({ count: sql<number>`count(*)` })
+      .from(labels)
+      .where(eq(labels.orgId, orgId));
+    const labelCount = Number(labelCountRow?.count ?? 0);
+    if (labelCount < 5) return inputLabelIds;
+
+    throw unprocessable(
+      `当前组织有 ${labelCount} 个 labels，agent 创建 issue 需要选择至少一个 label`,
+      {
+        code: "agent_issue_label_required",
+        labelCount,
+      },
+    );
+  }
+
   async function isTerminalOrMissingHeartbeatRun(runId: string) {
     const run = await db
       .select({ status: heartbeatRuns.status })
@@ -1078,9 +1116,10 @@ export function issueService(db: Db) {
           values.boardOrder = currentMax + BOARD_ORDER_STEP;
         }
 
+        const resolvedLabelIds = await resolveCreateLabelIds(orgId, issueData, inputLabelIds, tx);
         const [issue] = await tx.insert(issues).values(values).returning();
-        if (inputLabelIds) {
-          await syncIssueLabels(issue.id, orgId, inputLabelIds, tx);
+        if (resolvedLabelIds) {
+          await syncIssueLabels(issue.id, orgId, resolvedLabelIds, tx);
         }
         const [enriched] = await withIssueLabels(tx, [issue]);
         return enriched;

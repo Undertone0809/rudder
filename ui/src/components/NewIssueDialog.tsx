@@ -31,6 +31,7 @@ import {
   updateIssueDraft,
 } from "../lib/new-issue-dialog";
 import { useProjectOrder } from "../hooks/useProjectOrder";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { buildAgentSkillMentionOptions } from "../lib/agent-skill-mentions";
 import { agentTitleBadgeLabel } from "../lib/agent-labels";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
@@ -977,6 +978,7 @@ export function NewIssueDialog() {
   const createIssueErrorMessage =
     createIssue.error instanceof Error ? createIssue.error.message : "Failed to create issue. Try again.";
   const isCreatingOrRedirecting = createIssue.isPending || Boolean(redirectingIssueRef);
+  const labelPickerScrollRef = useScrollbarActivityRef();
   const isSubIssueDraft = Boolean(newIssueDefaults.parentId);
   const parentIssueSnapshot = newIssueDefaults.parentIssue;
   const parentIssueRef =
@@ -986,6 +988,68 @@ export function NewIssueDialog() {
     || null;
   const parentIssueTitle = parentIssueSnapshot?.title?.trim() || null;
   const stagedAttachments = stagedFiles;
+  const labelTaxonomyRequiresLabels = (labels?.length ?? 0) >= 5;
+  const labelPickerContent = (
+    <>
+      <input
+        className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
+        placeholder="Search labels..."
+        value={labelSearch}
+        onChange={(event) => setLabelSearch(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || !shouldShowCreateLabelOption) return;
+          event.preventDefault();
+          createLabelFromSearch();
+        }}
+        autoFocus
+      />
+      <div ref={labelPickerScrollRef} className="scrollbar-auto-hide max-h-44 overflow-y-auto overscroll-contain space-y-0.5">
+        {visibleLabels.map((label) => {
+          const selected = selectedLabelIds.includes(label.id);
+          return (
+            <button
+              key={label.id}
+              className={cn(
+                "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-left",
+                selected && "bg-accent",
+              )}
+              onClick={() =>
+                setSelectedLabelIds((current) =>
+                  current.includes(label.id)
+                    ? current.filter((id) => id !== label.id)
+                    : [...current, label.id],
+                )}
+            >
+              <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: label.color }} />
+              <span className="truncate">{label.name}</span>
+            </button>
+          );
+        })}
+        {shouldShowCreateLabelOption ? (
+          <>
+            {visibleLabels.length > 0 ? <div className="my-1 border-t border-border" /> : null}
+            <button
+              className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-left"
+              disabled={createLabel.isPending}
+              onClick={createLabelFromSearch}
+            >
+              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-border/70 text-muted-foreground">
+                <Plus className="h-2.5 w-2.5" />
+              </span>
+              <span className="truncate">
+                {createLabel.isPending ? "Creating..." : `Create label "${normalizedLabelQuery}"`}
+              </span>
+              <span
+                className="ml-auto h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: createLabelColor }}
+                aria-hidden="true"
+              />
+            </button>
+          </>
+        ) : null}
+      </div>
+    </>
+  );
 
   const handleProjectChange = useCallback((nextProjectId: string) => {
     setProjectId(nextProjectId);
@@ -1207,7 +1271,7 @@ export function NewIssueDialog() {
         </div>
 
         <div className="px-4 pb-3 shrink-0">
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <div className={cn("grid grid-cols-1 gap-2", labelTaxonomyRequiresLabels ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
             <div className="min-w-0 space-y-1">
               <div className="text-[11px] font-medium text-muted-foreground">Assignee</div>
               <InlineEntitySelector
@@ -1366,6 +1430,36 @@ export function NewIssueDialog() {
                 }}
               />
             </div>
+            {labelTaxonomyRequiresLabels ? (
+              <div className="min-w-0 space-y-1">
+                <div className="text-[11px] font-medium text-muted-foreground">Labels</div>
+                <Popover open={labelsOpen} onOpenChange={setLabelsOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      data-variant="field"
+                      className={cn(
+                        "inline-flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        selectedLabels.length === 0 && "text-muted-foreground",
+                      )}
+                      disabled={isCreatingOrRedirecting}
+                    >
+                      <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+                        {labelsTrigger}
+                      </span>
+                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-[var(--radix-popover-trigger-width)] min-w-56 p-1"
+                    align="start"
+                    disablePortal
+                  >
+                    {labelPickerContent}
+                  </PopoverContent>
+                </Popover>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -1551,78 +1645,24 @@ export function NewIssueDialog() {
           </Popover>
 
           {/* Labels chip */}
-          <Popover open={labelsOpen} onOpenChange={setLabelsOpen}>
-            <PopoverTrigger asChild>
-              <button
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors",
-                  selectedLabels.length > 0 ? "text-foreground" : "text-muted-foreground",
-                )}
-                disabled={isCreatingOrRedirecting}
-              >
-                {labelsTrigger}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-56 p-1" align="start" disablePortal>
-              <input
-                className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
-                placeholder="Search labels..."
-                value={labelSearch}
-                onChange={(event) => setLabelSearch(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" || !shouldShowCreateLabelOption) return;
-                  event.preventDefault();
-                  createLabelFromSearch();
-                }}
-                autoFocus
-              />
-              <div className="max-h-44 overflow-y-auto overscroll-contain space-y-0.5">
-                {visibleLabels.map((label) => {
-                  const selected = selectedLabelIds.includes(label.id);
-                  return (
-                    <button
-                      key={label.id}
-                      className={cn(
-                        "flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-left",
-                        selected && "bg-accent",
-                      )}
-                      onClick={() =>
-                        setSelectedLabelIds((current) =>
-                          current.includes(label.id)
-                            ? current.filter((id) => id !== label.id)
-                            : [...current, label.id],
-                        )}
-                    >
-                      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: label.color }} />
-                      <span className="truncate">{label.name}</span>
-                    </button>
-                  );
-                })}
-                {shouldShowCreateLabelOption ? (
-                  <>
-                    {visibleLabels.length > 0 ? <div className="my-1 border-t border-border" /> : null}
-                    <button
-                      className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-left"
-                      disabled={createLabel.isPending}
-                      onClick={createLabelFromSearch}
-                    >
-                      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-border/70 text-muted-foreground">
-                        <Plus className="h-2.5 w-2.5" />
-                      </span>
-                      <span className="truncate">
-                        {createLabel.isPending ? "Creating..." : `Create label "${normalizedLabelQuery}"`}
-                      </span>
-                      <span
-                        className="ml-auto h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: createLabelColor }}
-                        aria-hidden="true"
-                      />
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            </PopoverContent>
-          </Popover>
+          {!labelTaxonomyRequiresLabels ? (
+            <Popover open={labelsOpen} onOpenChange={setLabelsOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors",
+                    selectedLabels.length > 0 ? "text-foreground" : "text-muted-foreground",
+                  )}
+                  disabled={isCreatingOrRedirecting}
+                >
+                  {labelsTrigger}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-56 p-1" align="start" disablePortal>
+                {labelPickerContent}
+              </PopoverContent>
+            </Popover>
+          ) : null}
 
           <input
             ref={stageFileInputRef}
