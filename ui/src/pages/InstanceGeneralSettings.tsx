@@ -281,7 +281,7 @@ export function InstanceGeneralSettings() {
           <SettingsRow
             title={t("general.productTour.title")}
             description={t("general.productTour.description")}
-            className="px-3"
+            className="px-3 py-4"
             action={
               <Button
                 type="button"
@@ -306,23 +306,21 @@ export function InstanceGeneralSettings() {
           <SettingsDivider />
 
           <SettingsSection title={t("general.updates.title")}>
-            <div className="overflow-hidden rounded-[calc(var(--radius-md)-1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_58%,transparent)]">
-              <SettingsRow
-                title={t("general.updates.canary.title")}
-                description={updateChannel === "canary"
-                  ? t("general.updates.canary.enabledDescription")
-                  : t("general.updates.canary.disabledDescription")}
-                className="px-3"
-                action={
-                  <SettingsToggle
-                    checked={updateChannel === "canary"}
-                    aria-label="Toggle canary desktop updates"
-                    disabled={updateChannelPending}
-                    onClick={() => void handleUpdateChannelToggle()}
-                  />
-                }
-              />
-            </div>
+            <SettingsRow
+              title={t("general.updates.canary.title")}
+              description={updateChannel === "canary"
+                ? t("general.updates.canary.enabledDescription")
+                : t("general.updates.canary.disabledDescription")}
+              className="border-t-0 pt-0"
+              action={
+                <SettingsToggle
+                  checked={updateChannel === "canary"}
+                  aria-label="Toggle canary desktop updates"
+                  disabled={updateChannelPending}
+                  onClick={() => void handleUpdateChannelToggle()}
+                />
+              }
+            />
           </SettingsSection>
         </>
       ) : null}
@@ -330,35 +328,32 @@ export function InstanceGeneralSettings() {
       <SettingsDivider />
 
       <SettingsSection title={t("general.developer.title")}>
-        <div className="overflow-hidden rounded-[calc(var(--radius-md)-1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_86%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_58%,transparent)]">
-          <SettingsRow
-            title={t("general.logs.censor.title")}
-            description={t("general.logs.censor.description")}
-            className="px-3"
-            action={
-              <SettingsToggle
-                checked={censorUsernameInLogs}
-                aria-label="Toggle username log censoring"
-                disabled={toggleMutation.isPending}
-                onClick={() => toggleMutation.mutate({ censorUsernameInLogs: !censorUsernameInLogs })}
-              />
-            }
-          />
+        <SettingsRow
+          title={t("general.logs.censor.title")}
+          description={t("general.logs.censor.description")}
+          className="border-t-0 pt-0"
+          action={
+            <SettingsToggle
+              checked={censorUsernameInLogs}
+              aria-label="Toggle username log censoring"
+              disabled={toggleMutation.isPending}
+              onClick={() => toggleMutation.mutate({ censorUsernameInLogs: !censorUsernameInLogs })}
+            />
+          }
+        />
 
-          <SettingsRow
-            title={t("general.diagnostics.developer.title")}
-            description={t("general.diagnostics.developer.description")}
-            className="px-3"
-            action={
-              <SettingsToggle
-                checked={showDeveloperDiagnostics}
-                aria-label="Toggle developer diagnostics"
-                disabled={toggleMutation.isPending}
-                onClick={() => toggleMutation.mutate({ showDeveloperDiagnostics: !showDeveloperDiagnostics })}
-              />
-            }
-          />
-        </div>
+        <SettingsRow
+          title={t("general.diagnostics.developer.title")}
+          description={t("general.diagnostics.developer.description")}
+          action={
+            <SettingsToggle
+              checked={showDeveloperDiagnostics}
+              aria-label="Toggle developer diagnostics"
+              disabled={toggleMutation.isPending}
+              onClick={() => toggleMutation.mutate({ showDeveloperDiagnostics: !showDeveloperDiagnostics })}
+            />
+          }
+        />
       </SettingsSection>
     </div>
   );
