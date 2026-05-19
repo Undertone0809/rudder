@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useSearchParams } from "@/lib/router";
@@ -29,6 +30,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
+import { MarkdownEditor } from "../components/MarkdownEditor";
 import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
 import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
@@ -72,6 +74,9 @@ const WORKSPACE_LAUNCH_TARGET_IDS = [
   "finder",
 ] as const satisfies readonly DesktopWorkspaceLaunchTarget["id"][];
 const WORKSPACE_IMAGE_FILE_EXTENSIONS = new Set([".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
+const WORKSPACE_TAB_CONTEXT_MENU_WIDTH = 220;
+const WORKSPACE_TAB_CONTEXT_MENU_MAX_HEIGHT = 256;
+const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
 const WORKSPACE_LAUNCH_TARGET_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
   label: string;
   className: string;
@@ -98,6 +103,14 @@ function readStoredWorkspaceLaunchTargetId() {
 function writeStoredWorkspaceLaunchTargetId(targetId: DesktopWorkspaceLaunchTarget["id"]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY, targetId);
+}
+
+function clampWorkspaceTabContextMenuPosition(left: number, top: number) {
+  if (typeof window === "undefined") return { left, top };
+  return {
+    left: Math.min(left, Math.max(8, window.innerWidth - WORKSPACE_TAB_CONTEXT_MENU_WIDTH - 8)),
+    top: Math.min(top, Math.max(8, window.innerHeight - WORKSPACE_TAB_CONTEXT_MENU_MAX_HEIGHT - 8)),
+  };
 }
 
 function requestWorkspaceDraftFlush() {
@@ -194,6 +207,15 @@ function getWorkspaceFileExtension(filePath: string | null) {
 function isWorkspaceImageFilePath(filePath: string | null) {
   const extension = getWorkspaceFileExtension(filePath);
   return extension !== null && WORKSPACE_IMAGE_FILE_EXTENSIONS.has(extension);
+}
+
+function isWorkspaceMarkdownFilePath(filePath: string | null) {
+  const extension = getWorkspaceFileExtension(filePath);
+  return extension !== null && WORKSPACE_MARKDOWN_FILE_EXTENSIONS.has(extension);
+}
+
+function hasYamlFrontmatter(content: string) {
+  return /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.test(content);
 }
 
 function displayWorkspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
@@ -567,14 +589,14 @@ export function OrganizationWorkspaceFilesSidebar() {
       void invalidateWorkspaceBrowser();
       updateSelectedPath(searchParams, setSearchParams, detail.filePath);
       pushToast({
-        title: "Library doc created",
+        title: "Doc created",
         body: detail.filePath,
         tone: "success",
       });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to create Library doc",
+        title: error instanceof Error ? error.message : "Failed to create doc",
         tone: "error",
       });
     },
@@ -769,7 +791,7 @@ export function OrganizationWorkspaceFilesSidebar() {
           className="workspace-card-header workspace-context-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4 py-3"
         >
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">Library</h2>
+            <h2 className="truncate text-sm font-semibold">Docs</h2>
             <p className="truncate text-xs text-muted-foreground">File tree</p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -785,7 +807,7 @@ export function OrganizationWorkspaceFilesSidebar() {
                     createWorkspaceDocument.mutate();
                   }}
                   disabled={!workspaceRootPath || createWorkspaceDocument.isPending}
-                  aria-label="New Library doc"
+                  aria-label="New doc"
                 >
                   {createWorkspaceDocument.isPending ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -795,7 +817,7 @@ export function OrganizationWorkspaceFilesSidebar() {
                   <span className="ml-1.5">New doc</span>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>New Library doc</TooltipContent>
+              <TooltipContent>New doc</TooltipContent>
             </Tooltip>
             {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
               <div
@@ -1099,6 +1121,11 @@ export function OrganizationWorkspaceBrowser({
   const requestedFilePath = normalizeRequestedPath(searchParams.get("path"));
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(requestedFilePath);
   const [openFilePaths, setOpenFilePaths] = useState<string[]>(() => requestedFilePath ? [requestedFilePath] : []);
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    filePath: string;
+    left: number;
+    top: number;
+  } | null>(null);
   const [draftContent, setDraftContent] = useState("");
   const [draftFilePath, setDraftFilePath] = useState<string | null>(null);
   const [availableIdes, setAvailableIdes] = useState<DesktopIdeTarget[]>([]);
@@ -1277,6 +1304,26 @@ export function OrganizationWorkspaceBrowser({
   }, [flushCurrentDraft]);
 
   useEffect(() => {
+    if (!tabContextMenu) return;
+
+    const closeMenu = () => setTabContextMenu(null);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMenu();
+    };
+
+    window.addEventListener("pointerdown", closeMenu);
+    window.addEventListener("resize", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", closeMenu);
+      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [tabContextMenu]);
+
+  useEffect(() => {
     window.addEventListener(WORKSPACE_FLUSH_DRAFT_EVENT, flushCurrentDraft);
     return () => window.removeEventListener(WORKSPACE_FLUSH_DRAFT_EVENT, flushCurrentDraft);
   }, [flushCurrentDraft]);
@@ -1375,14 +1422,14 @@ export function OrganizationWorkspaceBrowser({
       updateSelectedPath(searchParams, setSearchParams, detail.filePath);
       setDraftContent(detail.content ?? "");
       pushToast({
-        title: "Library doc created",
+        title: "Doc created",
         body: detail.filePath,
         tone: "success",
       });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to create Library doc",
+        title: error instanceof Error ? error.message : "Failed to create doc",
         tone: "error",
       });
     },
@@ -1553,7 +1600,7 @@ export function OrganizationWorkspaceBrowser({
             createWorkspaceDocumentMutate();
           }}
           disabled={!workspaceRootPath || isCreatingWorkspaceDocument}
-          aria-label="New Library doc"
+          aria-label="New doc"
         >
           {isCreatingWorkspaceDocument ? (
             <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -1657,6 +1704,7 @@ export function OrganizationWorkspaceBrowser({
   if (!workspace) return null;
 
   const handleSelectFile = (filePath: string) => {
+    setTabContextMenu(null);
     flushCurrentDraft();
     openWorkspaceFileTab(filePath);
     setSelectedFilePath(filePath);
@@ -1678,7 +1726,41 @@ export function OrganizationWorkspaceBrowser({
     });
   }
 
+  function handleCloseOtherFileTabs(filePath: string) {
+    flushCurrentDraft();
+    setOpenFilePaths([filePath]);
+    setSelectedFilePath(filePath);
+    updateSelectedPath(searchParams, setSearchParams, filePath);
+    setTabContextMenu(null);
+  }
+
+  function handleCloseTabsToRight(filePath: string) {
+    flushCurrentDraft();
+    setOpenFilePaths((current) => {
+      const tabIndex = current.indexOf(filePath);
+      if (tabIndex === -1) return current;
+      const next = current.slice(0, tabIndex + 1);
+      if (selectedFilePath && !next.includes(selectedFilePath)) {
+        setSelectedFilePath(filePath);
+        updateSelectedPath(searchParams, setSearchParams, filePath);
+      }
+      return next;
+    });
+    setTabContextMenu(null);
+  }
+
+  function handleCloseAllFileTabs() {
+    flushCurrentDraft();
+    setOpenFilePaths([]);
+    setSelectedFilePath(null);
+    setDraftFilePath(null);
+    updateSelectedPath(searchParams, setSearchParams, null);
+    setTabContextMenu(null);
+  }
+
   const selectedFileDetail = fileQuery.data;
+  const selectedFileUsesMarkdownEditor = isWorkspaceMarkdownFilePath(selectedFilePath)
+    && !hasYamlFrontmatter(draftContent);
   const canEditSelectedFile = Boolean(
     selectedFilePath
     && selectedFileDetail
@@ -1696,19 +1778,22 @@ export function OrganizationWorkspaceBrowser({
     && workspaceRootPath
     && hasLoadedSelectedFile,
   );
+  const tabContextMenuIndex = tabContextMenu ? openFilePaths.indexOf(tabContextMenu.filePath) : -1;
+  const canCloseOtherTabs = Boolean(tabContextMenu && openFilePaths.length > 1);
+  const canCloseTabsToRight = tabContextMenuIndex >= 0 && tabContextMenuIndex < openFilePaths.length - 1;
 
-  async function handleOpenInIde() {
-    if (!primaryIde || !selectedFilePath || !workspaceRootPath || !hasLoadedSelectedFile) return;
+  async function handleOpenFileInIde(filePath: string) {
+    if (!primaryIde || !workspaceRootPath) return;
     const desktopShell = readDesktopShell();
     if (!desktopShell) return;
     if (typeof desktopShell.openWorkspaceFileInIde !== "function") return;
 
     setOpeningInIde(true);
     try {
-      await desktopShell.openWorkspaceFileInIde(workspaceRootPath, selectedFilePath, primaryIde.id);
+      await desktopShell.openWorkspaceFileInIde(workspaceRootPath, filePath, primaryIde.id);
       pushToast({
         title: "Opened in IDE",
-        body: `Opened ${selectedFilePath} in ${primaryIde.label}.`,
+        body: `Opened ${filePath} in ${primaryIde.label}.`,
         tone: "info",
       });
     } catch (error) {
@@ -1722,8 +1807,13 @@ export function OrganizationWorkspaceBrowser({
     }
   }
 
-  async function handleCopyEntryPath(entry: OrganizationWorkspaceFileEntry) {
-    const copyValue = joinWorkspacePath(workspaceRootPath, entry.path);
+  async function handleOpenInIde() {
+    if (!selectedFilePath || !hasLoadedSelectedFile) return;
+    await handleOpenFileInIde(selectedFilePath);
+  }
+
+  async function handleCopyWorkspacePath(entryPath: string) {
+    const copyValue = joinWorkspacePath(workspaceRootPath, entryPath);
     const desktopShell = readDesktopShell();
     try {
       if (desktopShell?.copyText) {
@@ -1745,6 +1835,22 @@ export function OrganizationWorkspaceBrowser({
         tone: "error",
       });
     }
+  }
+
+  async function handleCopyEntryPath(entry: OrganizationWorkspaceFileEntry) {
+    await handleCopyWorkspacePath(entry.path);
+  }
+
+  function handleOpenTabContextMenu(event: MouseEvent<HTMLElement>, filePath: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (selectedFilePath !== filePath) {
+      handleSelectFile(filePath);
+    }
+    setTabContextMenu({
+      filePath,
+      ...clampWorkspaceTabContextMenuPosition(event.clientX, event.clientY),
+    });
   }
 
   function handleStartRename(entry: OrganizationWorkspaceFileEntry) {
@@ -1826,6 +1932,8 @@ export function OrganizationWorkspaceBrowser({
           >
             <div
               data-testid="org-workspaces-editor-tabs"
+              role="tablist"
+              aria-label="Open files"
               className="flex h-10 shrink-0 items-stretch justify-between border-b border-border bg-[color:var(--surface-page)]"
             >
               <div className="scrollbar-auto-hide flex min-w-0 flex-1 overflow-x-auto">
@@ -1835,6 +1943,8 @@ export function OrganizationWorkspaceBrowser({
                     return (
                       <div
                         key={filePath}
+                        data-testid={`org-workspaces-editor-tab-${filePath}`}
+                        onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
                         className={cn(
                           "group flex min-w-0 max-w-[240px] items-center border-r border-border",
                           active
@@ -1844,9 +1954,12 @@ export function OrganizationWorkspaceBrowser({
                       >
                         <button
                           type="button"
+                          role="tab"
+                          aria-selected={active}
                           className="min-w-0 flex-1 truncate px-3 text-left text-sm"
                           title={filePath}
                           onClick={() => handleSelectFile(filePath)}
+                          onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
                         >
                           {displayWorkspaceFileTabLabel(filePath)}
                         </button>
@@ -1917,14 +2030,31 @@ export function OrganizationWorkspaceBrowser({
                         : "Failed to save workspace file."}
                     </div>
                   ) : null}
-                  <textarea
-                    data-testid="org-workspaces-editor-textarea"
-                    value={draftContent}
-                    onChange={(event) => setDraftContent(event.target.value)}
-                    spellCheck={false}
-                    ref={editorScrollRef}
-                    className="scrollbar-auto-hide block min-h-[280px] flex-1 overflow-auto border-0 bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none"
-                  />
+                  {selectedFileUsesMarkdownEditor ? (
+                    <div
+                      ref={editorScrollRef}
+                      data-testid="org-workspaces-markdown-editor"
+                      className="scrollbar-auto-hide min-h-[280px] flex-1 overflow-auto px-4 py-4"
+                    >
+                      <MarkdownEditor
+                        engine="milkdown"
+                        value={draftContent}
+                        onChange={setDraftContent}
+                        bordered={false}
+                        placeholder="Write in Markdown..."
+                        contentClassName="min-h-[240px] text-sm leading-6 text-foreground"
+                      />
+                    </div>
+                  ) : (
+                    <textarea
+                      data-testid="org-workspaces-editor-textarea"
+                      value={draftContent}
+                      onChange={(event) => setDraftContent(event.target.value)}
+                      spellCheck={false}
+                      ref={editorScrollRef}
+                      className="scrollbar-auto-hide block min-h-[280px] flex-1 overflow-auto border-0 bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none"
+                    />
+                  )}
                 </div>
               ) : selectedFileDetail?.previewKind === "image" && selectedFileDetail.contentPath ? (
                 <div
@@ -1963,6 +2093,89 @@ export function OrganizationWorkspaceBrowser({
         </div>
       )}
       </div>
+
+      {tabContextMenu && typeof document !== "undefined" ? createPortal(
+        <div
+          role="menu"
+          data-testid="org-workspaces-tab-context-menu"
+          className="motion-chat-composer-menu-pop surface-overlay fixed z-50 w-[220px] overflow-hidden rounded-md border border-border p-1 text-sm text-foreground shadow-lg"
+          style={{ left: tabContextMenu.left, top: tabContextMenu.top }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            data-chat-composer-menu-item
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
+            onClick={() => {
+              void handleCopyWorkspacePath(tabContextMenu.filePath);
+              setTabContextMenu(null);
+            }}
+          >
+            <Copy className="h-4 w-4 text-muted-foreground" />
+            Copy file path
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-chat-composer-menu-item
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+            disabled={!primaryIde || !workspaceRootPath}
+            onClick={() => {
+              void handleOpenFileInIde(tabContextMenu.filePath);
+              setTabContextMenu(null);
+            }}
+          >
+            <ExternalLink className="h-4 w-4 text-muted-foreground" />
+            Open in {primaryIde?.label ?? "IDE"}
+          </button>
+          <div className="-mx-1 my-1 h-px bg-border" />
+          <button
+            type="button"
+            role="menuitem"
+            data-chat-composer-menu-item
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
+            onClick={() => {
+              handleCloseFileTab(tabContextMenu.filePath);
+              setTabContextMenu(null);
+            }}
+          >
+            <X className="h-4 w-4 text-muted-foreground" />
+            Close
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-chat-composer-menu-item
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+            disabled={!canCloseOtherTabs}
+            onClick={() => handleCloseOtherFileTabs(tabContextMenu.filePath)}
+          >
+            Close others
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-chat-composer-menu-item
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+            disabled={!canCloseTabsToRight}
+            onClick={() => handleCloseTabsToRight(tabContextMenu.filePath)}
+          >
+            Close tabs to the right
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-chat-composer-menu-item
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
+            onClick={handleCloseAllFileTabs}
+          >
+            Close all
+          </button>
+        </div>,
+        document.body,
+      ) : null}
 
       <Dialog open={createTarget !== null} onOpenChange={(open) => {
         if (!open && !createWorkspaceEntry.isPending) {

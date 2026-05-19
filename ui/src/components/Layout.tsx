@@ -574,7 +574,9 @@ export function Layout() {
   const showIntegratedCardHeaders = showDesktopWorkspaceShell;
   const showDesktopSettingsModal = !isMobile && isSettingsRoute;
   const shellMainPaddingClass = showDesktopWorkspaceShell
-    ? "px-2 py-1.5 md:px-3.5 md:py-2.5 lg:px-5 lg:py-3"
+    ? isLibraryRoute
+      ? "p-0"
+      : "px-2 py-1.5 md:px-3.5 md:py-2.5 lg:px-5 lg:py-3"
     : "px-2.5 py-1.5 md:px-3 md:py-2 lg:px-4 lg:py-2.5";
 
   const warmSettingsEntry = useCallback(() => {
@@ -887,9 +889,11 @@ export function Layout() {
                         "workspace-main-card rounded-[5px]",
                       )}
                     >
-                      <div data-testid="workspace-main-header" className="shrink-0">
-                        <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
-                      </div>
+                      {!isLibraryRoute ? (
+                        <div data-testid="workspace-main-header" className="shrink-0">
+                          <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
+                        </div>
+                      ) : null}
                       <main
                         id="main-content"
                         tabIndex={-1}
@@ -899,7 +903,9 @@ export function Layout() {
                           shellMainPaddingClass,
                           isMobile
                             ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]"
-                            : "overflow-auto",
+                            : isLibraryRoute
+                              ? "overflow-hidden"
+                              : "overflow-auto",
                         )}
                       >
                         {hasUnknownOrganizationPrefix ? (
