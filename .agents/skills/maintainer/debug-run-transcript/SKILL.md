@@ -1,5 +1,5 @@
 ---
-name: debug-run-transcript-maintainer
+name: debug-run-transcript
 description: |
   Debug and analyze Rudder agent run transcripts, run logs, and execution traces. Use this skill whenever the user mentions:
   - "debug run", "分析 run", "查看 run"
