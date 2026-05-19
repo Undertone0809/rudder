@@ -310,6 +310,50 @@ function pendingAskUser(overrides: Partial<ChatMessage> = {}): ChatMessage {
   });
 }
 
+function pendingMultiAskUser(overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return pendingAskUser({
+    id: "ask-user-multi-1",
+    body: "I need a few decisions before continuing.",
+    structuredPayload: {
+      requestUserInput: {
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Which scope should the agent implement?",
+            options: [
+              { id: "narrow", label: "Narrow path", recommended: true },
+              { id: "broad", label: "Broad path" },
+            ],
+            allowFreeform: true,
+          },
+          {
+            id: "risk",
+            header: "Risk",
+            question: "Which risk should be handled first?",
+            options: [
+              { id: "tests", label: "Missing tests" },
+              { id: "copy", label: "Copy clarity" },
+            ],
+            allowFreeform: true,
+          },
+          {
+            id: "handoff",
+            header: "Handoff",
+            question: "What should the handoff include?",
+            options: [
+              { id: "summary", label: "Short summary" },
+              { id: "full", label: "Full report" },
+            ],
+            allowFreeform: true,
+          },
+        ],
+      },
+    },
+    ...overrides,
+  });
+}
+
 function imageMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return message({
     id: "image-message-1",
@@ -574,6 +618,63 @@ describe("Chat ask_user panel", () => {
     expect(answer?.textContent).toContain("- keep API extensible");
     expect(answer?.textContent).toContain("- defer broad UI");
     expect(container.textContent).not.toContain("Answering the requested input:");
+  });
+
+  it("steps through multi-question input instead of expanding every question", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingMultiAskUser(),
+      ],
+    };
+
+    const { container } = renderChat();
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+    expect(panel?.textContent).toContain("Question 1 of 3");
+    expect(panel?.textContent).toContain("Scope");
+    expect(panel?.textContent).toContain("Narrow path");
+    expect(panel?.textContent).not.toContain("Missing tests");
+    expect(panel?.textContent).not.toContain("Short summary");
+
+    const clickButton = (label: string) => {
+      const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
+        candidate.textContent?.includes(label)
+      );
+      expect(button).not.toBeUndefined();
+      act(() => {
+        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    };
+
+    clickButton("Narrow path");
+    expect(panel?.textContent).toContain("Question 2 of 3");
+    expect(panel?.textContent).toContain("Missing tests");
+    expect(panel?.textContent).not.toContain("Short summary");
+
+    clickButton("Back");
+    expect(panel?.textContent).toContain("Question 1 of 3");
+    expect(panel?.textContent).toContain("Broad path");
+
+    clickButton("Broad path");
+    clickButton("Missing tests");
+    expect(panel?.textContent).toContain("Question 3 of 3");
+    clickButton("Other");
+
+    const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+    act(() => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "Include screenshot evidence");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    clickButton("Review answers");
+    expect(panel?.textContent).toContain("Review answers");
+    expect(panel?.textContent).toContain("Broad path");
+    expect(panel?.textContent).toContain("Missing tests");
+    expect(panel?.textContent).toContain("Include screenshot evidence");
+    expect(panel?.textContent).not.toContain("Question 3 of 3");
   });
 });
 

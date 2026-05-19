@@ -1698,10 +1698,14 @@ function AskUserPanel({
 }) {
   const [selectedByQuestionId, setSelectedByQuestionId] = useState<Record<string, string>>({});
   const [freeformByQuestionId, setFreeformByQuestionId] = useState<Record<string, string>>({});
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [reviewingAnswers, setReviewingAnswers] = useState(false);
 
   useEffect(() => {
     setSelectedByQuestionId({});
     setFreeformByQuestionId({});
+    setCurrentQuestionIndex(0);
+    setReviewingAnswers(false);
   }, [message.id]);
 
   const answers = useMemo(() => {
@@ -1721,122 +1725,204 @@ function AskUserPanel({
     return next;
   }, [freeformByQuestionId, request.questions, selectedByQuestionId]);
 
+  const questionCount = request.questions.length;
+  const hasMultipleQuestions = questionCount > 1;
+  const boundedQuestionIndex = Math.min(currentQuestionIndex, Math.max(questionCount - 1, 0));
+  const currentQuestion = request.questions[boundedQuestionIndex] ?? null;
+  const currentAnswer = currentQuestion ? answers[currentQuestion.id] : null;
   const canSubmit = request.questions.every((question) => Boolean(answers[question.id]));
+
+  const moveToNextQuestion = (fromIndex: number) => {
+    if (!hasMultipleQuestions) return;
+    if (fromIndex < questionCount - 1) {
+      setCurrentQuestionIndex(fromIndex + 1);
+      setReviewingAnswers(false);
+      return;
+    }
+    setReviewingAnswers(true);
+  };
+
+  const selectOption = (question: ChatAskUserQuestion, index: number, optionId: string) => {
+    setSelectedByQuestionId((current) => ({ ...current, [question.id]: optionId }));
+    if (optionId !== "__other") {
+      moveToNextQuestion(index);
+    }
+  };
 
   return (
     <div
       data-testid="chat-ask-user-panel"
       className="rounded-[var(--radius-lg)] border border-[color:color-mix(in_oklab,var(--accent-base)_35%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_28%,var(--surface-elevated))] p-3 shadow-[var(--shadow-sm)]"
     >
-      <div className="space-y-3">
-        {request.questions.map((question, index) => {
-          const selected = selectedByQuestionId[question.id] ?? "";
-          const allowFreeform = question.allowFreeform !== false;
-          return (
-            <section
-              key={question.id}
-              className="rounded-[var(--radius-md)] border border-border bg-card/85 p-3"
-            >
-              <div className="text-sm font-medium text-foreground">
-                {request.questions.length > 1 ? `${index + 1}. ` : ""}
-                {askUserQuestionTitle(question)}
-              </div>
-              {question.header && question.header !== question.question ? (
-                <div className="mt-1 text-xs text-muted-foreground">{question.question}</div>
-              ) : null}
-              <div className="mt-2 grid gap-1.5">
-                {question.options.map((option) => {
-                  const active = selected === option.id;
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={cn(
-                        "flex w-full items-start gap-2 rounded-[var(--radius-md)] border px-3 py-2 text-left text-sm transition-colors",
-                        active
-                          ? "border-[color:var(--accent-base)] bg-[color:color-mix(in_oklab,var(--accent-soft)_62%,transparent)] text-foreground"
-                          : "border-border bg-background/70 text-foreground hover:bg-[color:var(--surface-active)]",
-                      )}
-                      aria-pressed={active}
-                      onClick={() => setSelectedByQuestionId((current) => ({ ...current, [question.id]: option.id }))}
-                    >
-                      <span
-                        className={cn(
-                          "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
-                          active ? "border-[color:var(--accent-base)] bg-[color:var(--accent-base)] text-primary-foreground" : "border-border",
-                        )}
-                        aria-hidden
-                      >
-                        {active ? <CheckCircle2 className="h-3 w-3" /> : null}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                          <span className="font-medium">{option.label}</span>
-                          {option.recommended ? (
-                            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                              Recommended
-                            </span>
-                          ) : null}
-                        </span>
-                        {option.description ? (
-                          <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                            {option.description}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  );
-                })}
-                {allowFreeform ? (
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-[var(--radius-md)] border px-3 py-2 text-left text-sm transition-colors",
-                      selected === "__other"
-                        ? "border-[color:var(--accent-base)] bg-[color:color-mix(in_oklab,var(--accent-soft)_62%,transparent)]"
-                        : "border-border bg-background/70 hover:bg-[color:var(--surface-active)]",
-                    )}
-                    aria-pressed={selected === "__other"}
-                    onClick={() => setSelectedByQuestionId((current) => ({ ...current, [question.id]: "__other" }))}
-                  >
-                    <span
-                      className={cn(
-                        "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
-                        selected === "__other" ? "border-[color:var(--accent-base)] bg-[color:var(--accent-base)] text-primary-foreground" : "border-border",
-                      )}
-                      aria-hidden
-                    >
-                      {selected === "__other" ? <CheckCircle2 className="h-3 w-3" /> : null}
-                    </span>
-                    <span className="font-medium text-foreground">Other</span>
-                  </button>
-                ) : null}
-              </div>
-              {selected === "__other" ? (
-                <Textarea
-                  value={freeformByQuestionId[question.id] ?? ""}
-                  onChange={(event) => setFreeformByQuestionId((current) => ({
-                    ...current,
-                    [question.id]: event.target.value,
-                  }))}
-                  placeholder="Type your answer..."
-                  className="mt-2 min-h-20 resize-y rounded-[var(--radius-md)] bg-background text-sm"
-                />
-              ) : null}
-            </section>
-          );
-        })}
-      </div>
+      {hasMultipleQuestions ? (
+        <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span>{reviewingAnswers ? "Review answers" : `Question ${boundedQuestionIndex + 1} of ${questionCount}`}</span>
+          <span>{Object.keys(answers).length}/{questionCount} answered</span>
+        </div>
+      ) : null}
 
-      <div className="mt-3 flex justify-end">
-        <Button
-          type="button"
-          size="sm"
-          disabled={disabled || !canSubmit}
-          onClick={() => onSubmit(formatAskUserAnswerMessage(request, answers))}
+      {reviewingAnswers ? (
+        <section className="rounded-[var(--radius-md)] border border-border bg-card/85 p-3">
+          <div className="text-sm font-medium text-foreground">Review answers</div>
+          <div className="mt-2 space-y-2">
+            {request.questions.map((question, index) => {
+              const answer = answers[question.id];
+              return (
+                <button
+                  key={question.id}
+                  type="button"
+                  className="flex w-full min-w-0 items-start justify-between gap-3 rounded-[var(--radius-md)] px-2 py-1.5 text-left text-sm hover:bg-[color:var(--surface-active)]"
+                  onClick={() => {
+                    setCurrentQuestionIndex(index);
+                    setReviewingAnswers(false);
+                  }}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium text-foreground">{askUserQuestionTitle(question)}</span>
+                    <span className="mt-0.5 block whitespace-pre-wrap break-words text-muted-foreground">
+                      {answer?.kind === "freeform" ? answer.text : answer?.label ?? "Not answered"}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">Edit</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : currentQuestion ? (
+        <section
+          key={currentQuestion.id}
+          className="rounded-[var(--radius-md)] border border-border bg-card/85 p-3"
         >
-          Submit answer
-        </Button>
+          <div className="text-sm font-medium text-foreground">
+            {askUserQuestionTitle(currentQuestion)}
+          </div>
+          {currentQuestion.header && currentQuestion.header !== currentQuestion.question ? (
+            <div className="mt-1 text-xs text-muted-foreground">{currentQuestion.question}</div>
+          ) : null}
+          <div className="mt-2 grid gap-1.5">
+            {currentQuestion.options.map((option) => {
+              const selected = selectedByQuestionId[currentQuestion.id] ?? "";
+              const active = selected === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={cn(
+                    "flex w-full items-start gap-2 rounded-[var(--radius-md)] border px-3 py-2 text-left text-sm transition-colors",
+                    active
+                      ? "border-[color:var(--accent-base)] bg-[color:color-mix(in_oklab,var(--accent-soft)_62%,transparent)] text-foreground"
+                      : "border-border bg-background/70 text-foreground hover:bg-[color:var(--surface-active)]",
+                  )}
+                  aria-pressed={active}
+                  onClick={() => selectOption(currentQuestion, boundedQuestionIndex, option.id)}
+                >
+                  <span
+                    className={cn(
+                      "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
+                      active ? "border-[color:var(--accent-base)] bg-[color:var(--accent-base)] text-primary-foreground" : "border-border",
+                    )}
+                    aria-hidden
+                  >
+                    {active ? <CheckCircle2 className="h-3 w-3" /> : null}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className="font-medium">{option.label}</span>
+                      {option.recommended ? (
+                        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          Recommended
+                        </span>
+                      ) : null}
+                    </span>
+                    {option.description ? (
+                      <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                        {option.description}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              );
+            })}
+            {currentQuestion.allowFreeform !== false ? (
+              <button
+                type="button"
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-[var(--radius-md)] border px-3 py-2 text-left text-sm transition-colors",
+                  selectedByQuestionId[currentQuestion.id] === "__other"
+                    ? "border-[color:var(--accent-base)] bg-[color:color-mix(in_oklab,var(--accent-soft)_62%,transparent)]"
+                    : "border-border bg-background/70 hover:bg-[color:var(--surface-active)]",
+                )}
+                aria-pressed={selectedByQuestionId[currentQuestion.id] === "__other"}
+                onClick={() => selectOption(currentQuestion, boundedQuestionIndex, "__other")}
+              >
+                <span
+                  className={cn(
+                    "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
+                    selectedByQuestionId[currentQuestion.id] === "__other" ? "border-[color:var(--accent-base)] bg-[color:var(--accent-base)] text-primary-foreground" : "border-border",
+                  )}
+                  aria-hidden
+                >
+                  {selectedByQuestionId[currentQuestion.id] === "__other" ? <CheckCircle2 className="h-3 w-3" /> : null}
+                </span>
+                <span className="font-medium text-foreground">Other</span>
+              </button>
+            ) : null}
+          </div>
+          {selectedByQuestionId[currentQuestion.id] === "__other" ? (
+            <Textarea
+              value={freeformByQuestionId[currentQuestion.id] ?? ""}
+              onChange={(event) => setFreeformByQuestionId((current) => ({
+                ...current,
+                [currentQuestion.id]: event.target.value,
+              }))}
+              placeholder="Type your answer..."
+              className="mt-2 min-h-20 resize-y rounded-[var(--radius-md)] bg-background text-sm"
+            />
+          ) : null}
+        </section>
+      ) : null}
+
+      <div className="mt-3 flex items-center justify-between gap-2">
+        {hasMultipleQuestions ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={disabled || (!reviewingAnswers && boundedQuestionIndex === 0)}
+            onClick={() => {
+              if (reviewingAnswers) {
+                setCurrentQuestionIndex(questionCount - 1);
+                setReviewingAnswers(false);
+                return;
+              }
+              setCurrentQuestionIndex((index) => Math.max(index - 1, 0));
+            }}
+          >
+            Back
+          </Button>
+        ) : (
+          <span aria-hidden />
+        )}
+        {hasMultipleQuestions && !reviewingAnswers ? (
+          <Button
+            type="button"
+            size="sm"
+            disabled={disabled || !currentAnswer}
+            onClick={() => moveToNextQuestion(boundedQuestionIndex)}
+          >
+            {boundedQuestionIndex === questionCount - 1 ? "Review answers" : "Next"}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            disabled={disabled || !canSubmit}
+            onClick={() => onSubmit(formatAskUserAnswerMessage(request, answers))}
+          >
+            Submit answer
+          </Button>
+        )}
       </div>
     </div>
   );
