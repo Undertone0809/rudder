@@ -11,6 +11,7 @@ import type {
   AgentRuntimeType,
   ChatConversation,
   ChatContextLink,
+  IssueLabel,
   ChatMessage,
   ChatRuntimeDescriptor,
   OperatorProfileSettings,
@@ -62,6 +63,7 @@ export interface GenerateChatAssistantReplyInput {
   conversation: ChatConversation;
   messages: ChatMessage[];
   contextLinks: ChatContextLink[];
+  issueLabels?: IssueLabel[] | null;
   operatorProfile?: OperatorProfileSettings | null;
 }
 
@@ -318,6 +320,20 @@ function buildSelectedIssuePromptSection(
   return lines.join("\n");
 }
 
+function buildIssueLabelsPromptSection(labels: IssueLabel[] | null | undefined) {
+  if (!labels || labels.length === 0) return null;
+  const lines = [
+    "Organization issue labels:",
+    ...labels.map((label) => `- ${label.name} (${label.id})`),
+  ];
+  if (labels.length >= 5) {
+    lines.push(
+      "This organization has a mature label taxonomy. When emitting an issueProposal for agent-created work, include labelIds with at least one best-fit label id from this list.",
+    );
+  }
+  return lines.join("\n");
+}
+
 function buildChatSpeakerPromptSection(runtimeSource: ResolvedChatRuntimeSource) {
   const name = runtimeSource.descriptor.sourceLabel;
   if (runtimeSource.descriptor.sourceType === "agent") {
@@ -391,6 +407,7 @@ function buildResponseSchemaPromptSection(planMode: boolean) {
             assigneeUserId: "optional user id",
             reviewerAgentId: "optional uuid",
             reviewerUserId: "optional user id",
+            labelIds: ["optional label uuid"],
             projectId: "optional uuid",
             goalId: "optional uuid",
             parentId: "optional uuid",
@@ -685,6 +702,7 @@ function buildConversationPrompt(
   const operatorProfileSection = buildOperatorProfilePromptSection(input.operatorProfile);
   const selectedProjectSection = buildSelectedProjectPromptSection(input.contextLinks);
   const selectedIssueSection = buildSelectedIssuePromptSection(input.conversation, input.contextLinks);
+  const issueLabelsSection = buildIssueLabelsPromptSection(input.issueLabels);
   const currentUserAttachmentSection = buildCurrentUserAttachmentPromptSection(input.messages.slice(-12), attachmentReferences);
   /**
    * Chat prompt assembly stays compositional on purpose.
@@ -702,6 +720,7 @@ function buildConversationPrompt(
     systemPrompt(runtimeSource, input.conversation, resultSentinel),
     ...(selectedIssueSection ? [selectedIssueSection] : []),
     ...(selectedProjectSection ? [selectedProjectSection] : []),
+    ...(issueLabelsSection ? [issueLabelsSection] : []),
     ...(orgResourcesPrompt ? [orgResourcesPrompt] : []),
     ...(operatorProfileSection ? [operatorProfileSection] : []),
     ...(currentUserAttachmentSection ? [currentUserAttachmentSection] : []),

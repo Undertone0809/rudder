@@ -52,6 +52,7 @@ const mockCompanyService = vi.hoisted(() => ({
 
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
+  listLabels: vi.fn(),
 }));
 
 const mockProjectService = vi.hoisted(() => ({
@@ -236,6 +237,7 @@ describe("chat routes", () => {
     mockLogActivity.mockResolvedValue(undefined);
     mockAccessService.canUser.mockResolvedValue(true);
     mockAccessService.hasPermission.mockResolvedValue(true);
+    mockIssueService.listLabels.mockResolvedValue([]);
     mockOperatorProfileService.get.mockResolvedValue({
       nickname: "Zee",
       moreAboutYou: "Prefers concise answers",

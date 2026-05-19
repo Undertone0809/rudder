@@ -319,14 +319,25 @@ export function approvalRoutes(db: Db) {
     assertBoard(req);
     const id = req.params.id as string;
     const pendingApproval = await svc.getById(id);
-    if (pendingApproval?.type === "chat_issue_creation") {
-      await assertCanApproveChatIssueConversion(req, pendingApproval);
-      await assertChatIssueProposalLabelsIfNeeded(pendingApproval);
+    const payloadOverride =
+      pendingApproval?.type === "chat_issue_creation"
+      && req.body.payload
+      && typeof req.body.payload === "object"
+      && !Array.isArray(req.body.payload)
+        ? (req.body.payload as Record<string, unknown>)
+        : undefined;
+    const approvalForValidation = pendingApproval && payloadOverride
+      ? { ...pendingApproval, payload: payloadOverride }
+      : pendingApproval;
+    if (approvalForValidation?.type === "chat_issue_creation") {
+      await assertCanApproveChatIssueConversion(req, approvalForValidation);
+      await assertChatIssueProposalLabelsIfNeeded(approvalForValidation);
     }
     const { approval, applied } = await svc.approve(
       id,
       req.body.decidedByUserId ?? "board",
       req.body.decisionNote,
+      payloadOverride,
     );
 
     if (applied) {

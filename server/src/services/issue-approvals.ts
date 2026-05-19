@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { approvals, issueApprovals, issues } from "@rudderhq/db";
+import { approvals, issueApprovals, issues, issueLabels, labels } from "@rudderhq/db";
 import { notFound, unprocessable } from "../errors.js";
 import { redactEventPayload } from "../redaction.js";
 
@@ -38,6 +38,26 @@ export function issueApprovalService(db: Db) {
     }
 
     return { issue, approval };
+  }
+
+  async function labelsByIssueId(issueIds: string[]) {
+    const result = new Map<string, Array<typeof labels.$inferSelect>>();
+    if (issueIds.length === 0) return result;
+    const labelRows = await db
+      .select({
+        issueId: issueLabels.issueId,
+        label: labels,
+      })
+      .from(issueLabels)
+      .innerJoin(labels, eq(issueLabels.labelId, labels.id))
+      .where(inArray(issueLabels.issueId, issueIds))
+      .orderBy(asc(labels.name), asc(labels.id));
+    for (const row of labelRows) {
+      const existing = result.get(row.issueId) ?? [];
+      existing.push(row.label);
+      result.set(row.issueId, existing);
+    }
+    return result;
   }
 
   return {
@@ -96,7 +116,7 @@ export function issueApprovalService(db: Db) {
       const approval = await getApproval(approvalId);
       if (!approval) throw notFound("Approval not found");
 
-      return db
+      const result = await db
         .select({
           id: issues.id,
           orgId: issues.orgId,
@@ -125,6 +145,15 @@ export function issueApprovalService(db: Db) {
         .innerJoin(issues, eq(issueApprovals.issueId, issues.id))
         .where(eq(issueApprovals.approvalId, approvalId))
         .orderBy(desc(issueApprovals.createdAt));
+      const labelsForIssues = await labelsByIssueId(result.map((issue) => issue.id));
+      return result.map((issue) => {
+        const issueLabels = labelsForIssues.get(issue.id) ?? [];
+        return {
+          ...issue,
+          labels: issueLabels,
+          labelIds: issueLabels.map((label) => label.id),
+        };
+      });
     },
 
     link: async (issueId: string, approvalId: string, actor?: LinkActor) => {

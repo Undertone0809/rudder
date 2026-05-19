@@ -39,6 +39,7 @@ export function approvalService(db: Db) {
     targetStatus: "approved" | "rejected",
     decidedByUserId: string,
     decisionNote: string | null | undefined,
+    payloadOverride?: Record<string, unknown>,
   ): Promise<ResolutionResult> {
     const existing = await getExistingApproval(id);
     if (!canResolveStatuses.has(existing.status)) {
@@ -55,6 +56,7 @@ export function approvalService(db: Db) {
       .update(approvals)
       .set({
         status: targetStatus,
+        ...(payloadOverride ? { payload: payloadOverride } : {}),
         decidedByUserId,
         decisionNote: decisionNote ?? null,
         decidedAt: now,
@@ -99,12 +101,18 @@ export function approvalService(db: Db) {
         .returning()
         .then((rows) => rows[0]),
 
-    approve: async (id: string, decidedByUserId: string, decisionNote?: string | null) => {
+    approve: async (
+      id: string,
+      decidedByUserId: string,
+      decisionNote?: string | null,
+      payloadOverride?: Record<string, unknown>,
+    ) => {
       const { approval: updated, applied } = await resolveApproval(
         id,
         "approved",
         decidedByUserId,
         decisionNote,
+        payloadOverride,
       );
 
       let hireApprovedAgentId: string | null = null;

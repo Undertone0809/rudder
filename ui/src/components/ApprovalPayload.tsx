@@ -1,10 +1,11 @@
-import { UserPlus, Lightbulb, MessageSquare, Settings2, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Check, Tag, UserPlus, Lightbulb, MessageSquare, Settings2, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { Agent, ChatConversation, IssueLabel, Project } from "@rudderhq/shared";
 import { formatAssigneeUserLabel } from "../lib/assignees";
-import { formatCents } from "../lib/utils";
+import { cn, formatCents } from "../lib/utils";
 import { AgentIdentity } from "./AgentAvatar";
 import { MarkdownBody } from "./MarkdownBody";
 import { formatPriorityLabel } from "../lib/priorities";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { Link } from "@/lib/router";
 import {
   ApprovalCodeBlock,
@@ -17,6 +18,7 @@ export interface ApprovalPayloadContext {
   agents?: Agent[] | null;
   projects?: Project[] | null;
   labels?: IssueLabel[] | null;
+  selectedLabelIds?: string[] | null;
   chatConversation?: Pick<ChatConversation, "id" | "title"> | null;
   currentUserId?: string | null;
 }
@@ -71,6 +73,98 @@ function labelIdsFromProposal(proposal: Record<string, unknown>) {
   return Array.isArray(proposal.labelIds)
     ? proposal.labelIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
+}
+
+function proposedIssueFromApprovalPayload(payload: Record<string, unknown> | null | undefined) {
+  if (!payload) return null;
+  return payload.proposedIssue && typeof payload.proposedIssue === "object" && !Array.isArray(payload.proposedIssue)
+    ? (payload.proposedIssue as Record<string, unknown>)
+    : payload;
+}
+
+export function chatIssueApprovalLabelIds(payload: Record<string, unknown> | null | undefined) {
+  const proposal = proposedIssueFromApprovalPayload(payload);
+  return proposal ? labelIdsFromProposal(proposal) : [];
+}
+
+export function chatIssueApprovalNeedsLabelSelection(
+  payload: Record<string, unknown> | null | undefined,
+  labels: IssueLabel[] | null | undefined,
+  selectedLabelIds = chatIssueApprovalLabelIds(payload),
+) {
+  const proposedByAgentId = typeof payload?.proposedByAgentId === "string" ? payload.proposedByAgentId.trim() : "";
+  return proposedByAgentId.length > 0 && (labels?.length ?? 0) >= 5 && selectedLabelIds.length === 0;
+}
+
+export function approvalPayloadWithChatIssueLabelIds(
+  payload: Record<string, unknown>,
+  labelIds: string[],
+) {
+  const uniqueLabelIds = [...new Set(labelIds.filter((id) => id.trim().length > 0))];
+  const proposedIssue =
+    payload.proposedIssue && typeof payload.proposedIssue === "object" && !Array.isArray(payload.proposedIssue)
+      ? { ...(payload.proposedIssue as Record<string, unknown>), labelIds: uniqueLabelIds }
+      : { ...payload, labelIds: uniqueLabelIds };
+  return { ...payload, proposedIssue };
+}
+
+export function ChatIssueApprovalLabelPicker({
+  labels,
+  selectedLabelIds,
+  onChange,
+  required,
+  disabled,
+}: {
+  labels?: IssueLabel[] | null;
+  selectedLabelIds: string[];
+  onChange: (labelIds: string[]) => void;
+  required: boolean;
+  disabled?: boolean;
+}) {
+  const labelListScrollRef = useScrollbarActivityRef();
+  if (!labels || labels.length === 0) return null;
+  const selected = new Set(selectedLabelIds);
+  return (
+    <div className="space-y-2 rounded-[calc(var(--radius-sm)-1px)] border border-border/70 bg-background/70 p-3" data-testid="chat-issue-approval-label-picker">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-muted-foreground">
+          <Tag className="h-3.5 w-3.5 shrink-0" />
+          <span>Labels</span>
+        </div>
+        {required ? (
+          <span className="shrink-0 text-xs font-medium text-destructive">Required before approval</span>
+        ) : null}
+      </div>
+      <div ref={labelListScrollRef} className="scrollbar-auto-hide max-h-36 space-y-1 overflow-y-auto overscroll-contain pr-1">
+        {labels.map((label) => {
+          const isSelected = selected.has(label.id);
+          return (
+            <button
+              key={label.id}
+              type="button"
+              aria-pressed={isSelected}
+              disabled={disabled}
+              className={cn(
+                "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent/50 disabled:cursor-not-allowed disabled:opacity-60",
+                isSelected && "bg-accent text-accent-foreground",
+              )}
+              onClick={() => {
+                onChange(
+                  isSelected
+                    ? selectedLabelIds.filter((id) => id !== label.id)
+                    : [...selectedLabelIds, label.id],
+                );
+              }}
+            >
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: label.color }} />
+              <span className="min-w-0 flex-1 truncate">{label.name}</span>
+              {isSelected ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function LabelsField({
@@ -280,17 +374,13 @@ function ChatIssueCreationPayload({
   payload: Record<string, unknown>;
   context?: ApprovalPayloadContext;
 }) {
-  const proposal =
-    payload.proposedIssue && typeof payload.proposedIssue === "object" && !Array.isArray(payload.proposedIssue)
-      ? (payload.proposedIssue as Record<string, unknown>)
-      : payload;
+  const proposal = proposedIssueFromApprovalPayload(payload) ?? payload;
   const description =
     typeof proposal.description === "string" && proposal.description.trim().length > 0
       ? proposal.description.trim()
       : null;
-  const labelIds = labelIdsFromProposal(proposal);
-  const agentProposed = typeof payload.proposedByAgentId === "string" && payload.proposedByAgentId.trim().length > 0;
-  const labelsRequired = agentProposed && (context?.labels?.length ?? 0) >= 5 && labelIds.length === 0;
+  const labelIds = context?.selectedLabelIds ?? labelIdsFromProposal(proposal);
+  const labelsRequired = chatIssueApprovalNeedsLabelSelection(payload, context?.labels, labelIds);
 
   return (
     <div className="space-y-3 text-sm">

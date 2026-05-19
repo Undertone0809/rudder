@@ -552,6 +552,78 @@ test.describe("Messenger unified threads contract", () => {
     });
   });
 
+  test("lets operators label agent-proposed chat issue approvals before approval", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Approval-Labels-${Date.now()}`);
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Labeling Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json();
+
+    const labels = [];
+    for (const name of ["Engineering", "Design", "Support", "Docs", "Ops"]) {
+      const labelRes = await page.request.post(`/api/orgs/${organization.id}/labels`, {
+        data: { name, color: "#2563eb" },
+      });
+      expect(labelRes.ok()).toBe(true);
+      labels.push(await labelRes.json());
+    }
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Label approval intake",
+        issueCreationMode: "manual_approval",
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+
+    const approvalRes = await page.request.post(`/api/orgs/${organization.id}/approvals`, {
+      data: {
+        type: "chat_issue_creation",
+        payload: {
+          chatConversationId: chat.id,
+          proposedByAgentId: agent.id,
+          proposedIssue: {
+            title: "Classify proposed work",
+            description: "This agent-created issue needs an operator-selected label.",
+            priority: "medium",
+          },
+        },
+      },
+    });
+    expect(approvalRes.ok()).toBe(true);
+    const approval = await approvalRes.json();
+
+    await page.goto(`/${organization.issuePrefix}/messenger/approvals`, { waitUntil: "commit" });
+    const approvalCard = page.getByTestId(`messenger-approval-card-${approval.id}`);
+    await expect(approvalCard).toContainText("Classify proposed work");
+    await expect(approvalCard).toContainText("Required before approval");
+    await expect(approvalCard.getByRole("button", { name: "Approve" })).toBeDisabled();
+
+    await approvalCard.getByRole("button", { name: "Engineering" }).click();
+    await expect(approvalCard).toContainText("Engineering");
+    await expect(approvalCard.getByRole("button", { name: "Approve" })).toBeEnabled();
+    await approvalCard.getByRole("button", { name: "Approve" }).click();
+
+    await expect.poll(async () => {
+      const approvalStateRes = await page.request.get(`/api/approvals/${approval.id}`);
+      const approvalState = await approvalStateRes.json();
+      return approvalState.status;
+    }).toBe("approved");
+
+    await expect.poll(async () => {
+      const linkedRes = await page.request.get(`/api/approvals/${approval.id}/issues`);
+      const linkedIssues = await linkedRes.json();
+      return linkedIssues[0]?.labelIds ?? [];
+    }).toContain(labels[0].id);
+  });
+
   test("keeps approval decision note in the modal review flow and scrolls long approval threads", async ({ page }, testInfo) => {
     const organization = await createOrganization(page, `Messenger-Approval-Modal-${Date.now()}`);
 

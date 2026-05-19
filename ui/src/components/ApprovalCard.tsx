@@ -29,6 +29,7 @@ export function ApprovalCard({
   extraActions,
   allowBudgetActions = false,
   isPending,
+  approveDisabled = false,
 }: {
   approval: Approval;
   requesterAgent: Agent | null;
@@ -43,6 +44,7 @@ export function ApprovalCard({
   extraActions?: ReactNode;
   allowBudgetActions?: boolean;
   isPending: boolean;
+  approveDisabled?: boolean;
 }) {
   const Icon = typeIcon[approval.type] ?? defaultTypeIcon;
   const label = approvalLabel(approval.type, approval.payload as Record<string, unknown> | null);
@@ -93,7 +95,7 @@ export function ApprovalCard({
                 size="sm"
                 className="bg-green-700 hover:bg-green-600 text-white"
                 onClick={onApprove}
-                disabled={isPending}
+                disabled={isPending || approveDisabled}
               >
                 Approve
               </Button>

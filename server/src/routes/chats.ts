@@ -476,11 +476,13 @@ export function chatRoutes(db: Db, storage: StorageService) {
       actor.actorType === "user"
         ? await operatorProfiles.get(actor.actorId)
         : null;
+    const issueLabels = await issuesSvc.listLabels(conversation.orgId);
 
     return {
       conversation: hydratedConversation,
       messages: freshMessages as ChatMessage[],
       contextLinks: (hydratedConversation.contextLinks ?? conversation.contextLinks) as ChatContextLink[],
+      issueLabels,
       operatorProfile,
     };
   }
@@ -538,6 +540,20 @@ export function chatRoutes(db: Db, storage: StorageService) {
     if (proposalAssignsOrReviewsIssue(proposal)) {
       await assertCanAssignTasks(req, conversation.orgId);
     }
+  }
+
+  async function chatIssueProposalNeedsOperatorLabelSelection(
+    orgId: string,
+    proposedByAgentId: string | null | undefined,
+    proposal: Record<string, unknown> | null | undefined,
+  ) {
+    if (!proposedByAgentId) return false;
+    const labelIds = Array.isArray(proposal?.labelIds)
+      ? proposal.labelIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    if (labelIds.length > 0) return false;
+    const labels = await issuesSvc.listLabels(orgId);
+    return labels.length >= 5;
   }
 
   function proposedPlanDocumentPayload(structuredPayload: Record<string, unknown> | null | undefined) {
@@ -637,7 +653,16 @@ export function chatRoutes(db: Db, storage: StorageService) {
 
     if (assistantReply.kind === "issue_proposal") {
       const issueProposalStructuredPayload = assistantReply.structuredPayload ?? null;
-      const shouldAutoCreateIssue = !conversation.planMode && conversation.issueCreationMode === "auto_create";
+      const proposalPayload = proposedIssuePayload(issueProposalStructuredPayload);
+      const needsOperatorLabelSelection = await chatIssueProposalNeedsOperatorLabelSelection(
+        conversation.orgId,
+        replyingAgentId,
+        proposalPayload,
+      );
+      const shouldAutoCreateIssue =
+        !needsOperatorLabelSelection
+        && !conversation.planMode
+        && conversation.issueCreationMode === "auto_create";
       if (shouldAutoCreateIssue) {
         const proposalMessage = await saveAssistantMessage({
           kind: "issue_proposal",
@@ -691,7 +716,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
         payload: {
           chatConversationId: conversation.id,
           proposedByAgentId: replyingAgentId,
-          proposedIssue: proposedIssuePayload(issueProposalStructuredPayload),
+          proposedIssue: proposalPayload,
           ...(planDocument ? { planDocument } : {}),
         },
       });

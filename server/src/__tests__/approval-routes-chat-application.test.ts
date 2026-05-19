@@ -299,6 +299,66 @@ describe("approval routes chat application", () => {
     expect(mockChatService.applyApprovedApproval).not.toHaveBeenCalled();
   });
 
+  it("approves agent-proposed chat issues with operator-selected labels from the approve request", async () => {
+    const payload = {
+      chatConversationId: "chat-1",
+      proposedByAgentId: "agent-1",
+      proposedIssue: {
+        title: "Needs label",
+        description: "Agent proposed this issue from chat.",
+        labelIds: ["label-1"],
+      },
+    };
+    mockApprovalService.getById.mockResolvedValue({
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "chat_issue_creation",
+      status: "pending",
+      payload: {
+        chatConversationId: "chat-1",
+        proposedByAgentId: "agent-1",
+        proposedIssue: {
+          title: "Needs label",
+          description: "Agent proposed this issue from chat.",
+        },
+      },
+    });
+    mockApprovalService.approve.mockResolvedValue({
+      approval: {
+        id: "approval-1",
+        orgId: "organization-1",
+        type: "chat_issue_creation",
+        status: "approved",
+        payload,
+        requestedByAgentId: null,
+      },
+      applied: true,
+    });
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(async () => [{ id: "label-1" }]),
+        })),
+      })),
+    };
+
+    const res = await request(createApp(db))
+      .post("/api/approvals/approval-1/approve")
+      .send({ payload });
+
+    expect(res.status).toBe(200);
+    expect(mockApprovalService.approve).toHaveBeenCalledWith(
+      "approval-1",
+      "board",
+      undefined,
+      payload,
+    );
+    expect(mockChatService.applyApprovedApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ payload }),
+      "user-1",
+    );
+  });
+
   it("wakes the requester agent with linked issue context after approval is applied", async () => {
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }, { id: "issue-2" }]);
