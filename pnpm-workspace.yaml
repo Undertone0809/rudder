@@ -3,7 +3,6 @@ packages:
   - packages/agent-runtimes/*
   - packages/plugins/*
   - packages/plugins/examples/*
-  - services/*
   - server
   - ui
   - cli
