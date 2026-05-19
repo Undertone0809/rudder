@@ -574,9 +574,7 @@ export function Layout() {
   const showIntegratedCardHeaders = showDesktopWorkspaceShell;
   const showDesktopSettingsModal = !isMobile && isSettingsRoute;
   const shellMainPaddingClass = showDesktopWorkspaceShell
-    ? isLibraryRoute
-      ? "p-0"
-      : "px-2 py-1.5 md:px-3.5 md:py-2.5 lg:px-5 lg:py-3"
+    ? "px-2 py-1.5 md:px-3.5 md:py-2.5 lg:px-5 lg:py-3"
     : "px-2.5 py-1.5 md:px-3 md:py-2 lg:px-4 lg:py-2.5";
 
   const warmSettingsEntry = useCallback(() => {
@@ -839,7 +837,7 @@ export function Layout() {
                   <div
                     className={cn(
                       "flex min-h-0 min-w-0 flex-1",
-                      isLibraryRoute ? "p-0" : "px-[3px] pb-[3px] pt-[1px] md:px-1 md:pb-1 md:pt-0.5",
+                      "px-[3px] pb-[3px] pt-[1px] md:px-1 md:pb-1 md:pt-0.5",
                     )}
                   >
                     {showIntegratedShellSidebar ? (
@@ -850,9 +848,7 @@ export function Layout() {
                           inert={sidebarOpen ? undefined : true}
                           className={cn(
                             "flex min-h-0 shrink-0 overflow-hidden",
-                            isLibraryRoute
-                              ? "bg-card"
-                              : "workspace-context-card rounded-[5px]",
+                            "workspace-context-card rounded-[5px]",
                             !resizingColumn && "transition-[width,opacity,border-color] duration-200 ease-out motion-reduce:transition-none",
                             sidebarOpen ? "opacity-100" : "pointer-events-none border-transparent opacity-0",
                           )}
@@ -888,14 +884,12 @@ export function Layout() {
                       data-tour-target="workspace-main"
                       className={cn(
                         "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-                        isLibraryRoute ? "bg-card" : "workspace-main-card rounded-[5px]",
+                        "workspace-main-card rounded-[5px]",
                       )}
                     >
-                      {!isLibraryRoute ? (
-                        <div data-testid="workspace-main-header" className="shrink-0">
-                          <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
-                        </div>
-                      ) : null}
+                      <div data-testid="workspace-main-header" className="shrink-0">
+                        <BreadcrumbBar desktopChrome={macDesktopShell} variant="card" />
+                      </div>
                       <main
                         id="main-content"
                         tabIndex={-1}
@@ -905,9 +899,7 @@ export function Layout() {
                           shellMainPaddingClass,
                           isMobile
                             ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]"
-                            : isLibraryRoute
-                              ? "overflow-hidden"
-                              : "overflow-auto",
+                            : "overflow-auto",
                         )}
                       >
                         {hasUnknownOrganizationPrefix ? (
