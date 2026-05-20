@@ -38,6 +38,7 @@ describe("readWorkspaceLaunchTargetIconDataUrl", () => {
   it("uses bundle resources for macOS app icons without calling the native file icon API", async () => {
     const getFileIcon = vi.fn(async () => image("data:image/png;base64,file"));
     const createImageFromPath = vi.fn(() => image("data:image/png;base64,bundle"));
+    const convertIcnsToPngDataUrl = vi.fn(async () => "data:image/png;base64,converted");
 
     await expect(readWorkspaceLaunchTargetIconDataUrl({
       id: "vscode",
@@ -48,13 +49,15 @@ describe("readWorkspaceLaunchTargetIconDataUrl", () => {
       platform: "darwin",
       getFileIcon,
       createImageFromPath,
+      convertIcnsToPngDataUrl,
       resolveBundleIconPath: async () => "/Applications/Visual Studio Code.app/Contents/Resources/Code.icns",
-    })).resolves.toBe("data:image/png;base64,bundle");
+    })).resolves.toBe("data:image/png;base64,converted");
 
     expect(getFileIcon).not.toHaveBeenCalled();
-    expect(createImageFromPath).toHaveBeenCalledWith(
+    expect(convertIcnsToPngDataUrl).toHaveBeenCalledWith(
       "/Applications/Visual Studio Code.app/Contents/Resources/Code.icns",
     );
+    expect(createImageFromPath).not.toHaveBeenCalled();
   });
 
   it("falls back to the native file icon API for non-app targets", async () => {
@@ -98,6 +101,7 @@ describe("readWorkspaceLaunchTargetIconDataUrl", () => {
 
   it("keeps launcher target listing resilient when a bundle icon cannot be decoded", async () => {
     const getFileIcon = vi.fn(async () => image("data:image/png;base64,file"));
+    const convertIcnsToPngDataUrl = vi.fn(async () => undefined);
     const createImageFromPath = vi.fn(() => {
       throw new Error("decode failed");
     });
@@ -111,10 +115,14 @@ describe("readWorkspaceLaunchTargetIconDataUrl", () => {
       platform: "darwin",
       getFileIcon,
       createImageFromPath,
+      convertIcnsToPngDataUrl,
       resolveBundleIconPath: async () => "/Applications/Visual Studio Code.app/Contents/Resources/Code.icns",
     })).resolves.toBeUndefined();
 
     expect(getFileIcon).not.toHaveBeenCalled();
+    expect(convertIcnsToPngDataUrl).toHaveBeenCalledWith(
+      "/Applications/Visual Studio Code.app/Contents/Resources/Code.icns",
+    );
     expect(createImageFromPath).toHaveBeenCalledWith(
       "/Applications/Visual Studio Code.app/Contents/Resources/Code.icns",
     );

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { DesktopWorkspaceLaunchTarget } from "./ide-opener.js";
 
@@ -17,6 +18,7 @@ type WorkspaceLaunchIconDependencies = {
   platform?: NodeJS.Platform;
   getFileIcon(targetPath: string, options: WorkspaceLaunchIconFileOptions): Promise<WorkspaceLaunchNativeImage>;
   createImageFromPath(targetPath: string): WorkspaceLaunchNativeImage;
+  convertIcnsToPngDataUrl?: (targetPath: string) => Promise<string | undefined>;
   resolveBundleIconPath?: (appPath: string) => Promise<string | null>;
 };
 
@@ -54,10 +56,48 @@ function iconDataUrl(image: WorkspaceLaunchNativeImage): string | undefined {
   return image.resize({ width: WORKSPACE_LAUNCH_ICON_SIZE, height: WORKSPACE_LAUNCH_ICON_SIZE }).toDataURL();
 }
 
-function readImagePathDataUrl(
+async function convertIcnsToPngDataUrl(targetPath: string): Promise<string | undefined> {
+  let tmpDir: string | null = null;
+  try {
+    tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rudder-launch-icon-"));
+    const outputPath = path.join(tmpDir, "icon.png");
+    await execFileText("/usr/bin/sips", [
+      "-z",
+      String(WORKSPACE_LAUNCH_ICON_SIZE),
+      String(WORKSPACE_LAUNCH_ICON_SIZE),
+      "-s",
+      "format",
+      "png",
+      targetPath,
+      "--out",
+      outputPath,
+    ]);
+    const imageBuffer = await fs.promises.readFile(outputPath);
+    return `data:image/png;base64,${imageBuffer.toString("base64")}`;
+  } catch {
+    return undefined;
+  } finally {
+    if (tmpDir) {
+      await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+}
+
+async function readImagePathDataUrl(
   targetPath: string,
-  deps: Pick<WorkspaceLaunchIconDependencies, "createImageFromPath">,
-): string | undefined {
+  deps: Pick<WorkspaceLaunchIconDependencies, "platform" | "createImageFromPath" | "convertIcnsToPngDataUrl">,
+): Promise<string | undefined> {
+  if ((deps.platform ?? process.platform) === "darwin" && path.extname(targetPath).toLowerCase() === ".icns") {
+    try {
+      const convertedIcon = deps.convertIcnsToPngDataUrl
+        ? await deps.convertIcnsToPngDataUrl(targetPath)
+        : await convertIcnsToPngDataUrl(targetPath);
+      if (convertedIcon) return convertedIcon;
+    } catch {
+      return undefined;
+    }
+  }
+
   try {
     const image = deps.createImageFromPath(targetPath);
     return iconDataUrl(image);
@@ -116,7 +156,7 @@ export async function readWorkspaceLaunchTargetIconDataUrl(
       : await resolveDarwinAppBundleIconPath(target.iconPath, { platform });
     if (!bundleIconPath) return undefined;
 
-    return readImagePathDataUrl(bundleIconPath, deps);
+    return await readImagePathDataUrl(bundleIconPath, deps);
   }
 
   const nativeIconDataUrl = await readNativeFileIconDataUrl(target.iconPath, deps);
@@ -127,5 +167,5 @@ export async function readWorkspaceLaunchTargetIconDataUrl(
     : await resolveDarwinAppBundleIconPath(target.iconPath, { platform });
   if (!bundleIconPath) return undefined;
 
-  return readImagePathDataUrl(bundleIconPath, deps);
+  return await readImagePathDataUrl(bundleIconPath, deps);
 }
