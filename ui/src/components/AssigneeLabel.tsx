@@ -32,7 +32,7 @@ export function AgentTitleBadge({
       data-slot="agent-title-badge"
       className={cn(
         "inline-flex min-w-0 shrink items-center rounded-sm border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium leading-3 text-muted-foreground",
-        constrain ? "max-w-[9rem]" : "w-full max-w-full whitespace-normal",
+        constrain ? "max-w-[9rem]" : "max-w-full whitespace-normal",
         className,
       )}
       title={label}
