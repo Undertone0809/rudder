@@ -139,7 +139,7 @@ export function chatService(db: Db) {
           eq(chatMessages.orgId, orgId),
           inArray(chatMessages.conversationId, conversationIds),
           isNull(chatMessages.supersededAt),
-          inArray(approvals.status, ["pending", "revision_requested"]),
+          eq(approvals.status, "pending"),
         ),
       )
       .groupBy(chatMessages.conversationId);
