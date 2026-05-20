@@ -28,9 +28,30 @@ import { organizationService } from "./orgs.js";
 
 const ARTIFACT_VERSION = 1;
 const MAX_PREVIEW_BYTES = 200_000;
-const SKIPPED_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm", "node_modules"]);
+const SKIPPED_ENTRY_NAMES = new Set([
+  ".DS_Store",
+  ".cache",
+  ".codex",
+  ".config",
+  ".git",
+  ".gstack",
+  ".local",
+  ".mintlify",
+  ".npm",
+  ".nvm",
+  ".pnpm-store",
+  ".rudder",
+  ".turbo",
+  ".vite",
+  "Library",
+  "node_modules",
+]);
 const ACTIVE_RUN_STATUSES = ["queued", "running"] as const;
 const WORKSPACE_BACKUP_DEFAULT_INTERVAL_MS = WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS * 60 * 60 * 1000;
+const WORKSPACE_BACKUP_RUNNING_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+const MAX_BACKUP_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_BACKUP_TOTAL_BYTES = 100 * 1024 * 1024;
+const MAX_WARNING_COUNT = 200;
 
 type WorkspaceBackupArtifactEntry = {
   path: string;
@@ -54,6 +75,10 @@ type WorkspaceBackupArtifact = {
 
 type WorkspaceBackupRow = typeof workspaceBackups.$inferSelect;
 
+type WorkspaceBackupWalkState = {
+  byteSize: number;
+};
+
 function timestamp(date = new Date()) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
@@ -66,6 +91,16 @@ function addDays(date: Date, days: number) {
 
 function sha256Buffer(buffer: Buffer | string) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+function addWarning(warnings: string[], warning: string) {
+  if (warnings.length < MAX_WARNING_COUNT) {
+    warnings.push(warning);
+    return;
+  }
+  if (warnings.length === MAX_WARNING_COUNT) {
+    warnings.push("Additional backup warnings omitted.");
+  }
 }
 
 function toPortableRelativePath(relativePath: string) {
@@ -197,14 +232,19 @@ async function fileExists(filePath: string) {
   }
 }
 
-async function walkWorkspace(rootPath: string, currentPath: string, warnings: string[]): Promise<WorkspaceBackupArtifactEntry[]> {
-  const entries: WorkspaceBackupArtifactEntry[] = [];
+async function walkWorkspace(
+  rootPath: string,
+  currentPath: string,
+  warnings: string[],
+  entries: WorkspaceBackupArtifactEntry[] = [],
+  state: WorkspaceBackupWalkState = { byteSize: 0 },
+): Promise<WorkspaceBackupArtifactEntry[]> {
   const dirents = await fs.readdir(currentPath, { withFileTypes: true });
 
   for (const dirent of dirents) {
     if (SKIPPED_ENTRY_NAMES.has(dirent.name)) {
       const skippedPath = toPortableRelativePath(path.relative(rootPath, path.join(currentPath, dirent.name)));
-      warnings.push(`Skipped ${skippedPath}`);
+      addWarning(warnings, `Skipped ${skippedPath}`);
       continue;
     }
 
@@ -213,7 +253,7 @@ async function walkWorkspace(rootPath: string, currentPath: string, warnings: st
     const stat = await fs.lstat(absolutePath);
 
     if (stat.isSymbolicLink()) {
-      warnings.push(`Skipped symlink ${relativePath}`);
+      addWarning(warnings, `Skipped symlink ${relativePath}`);
       continue;
     }
 
@@ -226,12 +266,21 @@ async function walkWorkspace(rootPath: string, currentPath: string, warnings: st
         mode: stat.mode,
         sha256: null,
       });
-      entries.push(...await walkWorkspace(rootPath, absolutePath, warnings));
+      await walkWorkspace(rootPath, absolutePath, warnings, entries, state);
       continue;
     }
 
     if (stat.isFile()) {
+      if (stat.size > MAX_BACKUP_FILE_BYTES) {
+        addWarning(warnings, `Skipped oversized file ${relativePath}`);
+        continue;
+      }
+      if (state.byteSize + stat.size > MAX_BACKUP_TOTAL_BYTES) {
+        addWarning(warnings, `Skipped ${relativePath} because the backup size limit was reached`);
+        continue;
+      }
       const data = await fs.readFile(absolutePath);
+      state.byteSize += data.byteLength;
       entries.push({
         path: relativePath,
         kind: "file",
@@ -244,7 +293,7 @@ async function walkWorkspace(rootPath: string, currentPath: string, warnings: st
       continue;
     }
 
-    warnings.push(`Skipped unsupported file ${relativePath}`);
+    addWarning(warnings, `Skipped unsupported file ${relativePath}`);
   }
 
   return entries;
@@ -284,7 +333,17 @@ export function workspaceBackupService(db: Db) {
     return row;
   }
 
+  function assertReadableBackup(row: WorkspaceBackupRow) {
+    if (row.status === "running") {
+      throw conflict("Workspace backup is still running and cannot be browsed yet");
+    }
+    if (row.status === "failed") {
+      throw unprocessable(row.error ? `Workspace backup failed: ${row.error}` : "Workspace backup failed");
+    }
+  }
+
   async function readArtifact(row: WorkspaceBackupRow): Promise<WorkspaceBackupArtifact> {
+    assertReadableBackup(row);
     if (!(await fileExists(row.artifactRef))) {
       throw notFound("Workspace backup artifact not found");
     }
@@ -308,6 +367,28 @@ export function workspaceBackupService(db: Db) {
       .from(heartbeatRuns)
       .where(and(eq(heartbeatRuns.orgId, orgId), inArray(heartbeatRuns.status, [...ACTIVE_RUN_STATUSES])));
     return row?.count ?? 0;
+  }
+
+  async function failStaleRunningBackups(now: Date) {
+    const cutoff = new Date(now.getTime() - WORKSPACE_BACKUP_RUNNING_TIMEOUT_MS);
+    const finishedAt = now;
+    const rows = await db
+      .update(workspaceBackups)
+      .set({
+        status: "failed",
+        error: "Workspace backup timed out before writing an artifact",
+        finishedAt,
+        updatedAt: finishedAt,
+      })
+      .where(and(
+        eq(workspaceBackups.status, "running"),
+        or(
+          lte(workspaceBackups.startedAt, cutoff),
+          and(isNull(workspaceBackups.startedAt), lte(workspaceBackups.createdAt, cutoff)),
+        ),
+      ))
+      .returning();
+    return rows.map(mapBackupRow);
   }
 
   const service = {
@@ -520,9 +601,10 @@ export function workspaceBackupService(db: Db) {
       const intervalMs = Math.max(60_000, Math.trunc(input?.intervalMs ?? WORKSPACE_BACKUP_DEFAULT_INTERVAL_MS));
       const dueBefore = new Date(now.getTime() - intervalMs);
       const deleted = await service.pruneExpired(now);
+      const staleFailed = await failStaleRunningBackups(now);
       const organizations = (await orgs.list()).filter((organization) => organization.status === "active");
       const created: WorkspaceBackupSummary[] = [];
-      const failed: WorkspaceBackupSummary[] = [];
+      const failed: WorkspaceBackupSummary[] = [...staleFailed];
       const errors: Array<{ orgId: string; message: string }> = [];
       let skipped = 0;
 

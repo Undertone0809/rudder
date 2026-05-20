@@ -162,6 +162,31 @@ describe("workspace backup service", () => {
     expect(file.content).toBe("# Roadmap\n");
   });
 
+  it("skips runtime and cache directories when creating workspace backups", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(path.join(workspaceRoot, "plans"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "plans", "roadmap.md"), "# Roadmap\n", "utf8");
+    await fs.mkdir(path.join(workspaceRoot, "agents", "vera--12345678", "Library", "Caches"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "agents", "vera--12345678", "Library", "Caches", "cache.bin"), "cache\n", "utf8");
+    await fs.mkdir(path.join(workspaceRoot, "agents", "vera--12345678", ".rudder", "instances"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "agents", "vera--12345678", ".rudder", "instances", "state.json"), "{}\n", "utf8");
+
+    const backup = await service.create({ orgId });
+
+    expect(backup.status).toBe("succeeded");
+    expect(backup.fileCount).toBe(1);
+    expect(backup.warnings).toEqual(expect.arrayContaining([
+      "Skipped agents/vera--12345678/.rudder",
+      "Skipped agents/vera--12345678/Library",
+    ]));
+
+    const plans = await service.listFiles(orgId, backup.id, "plans");
+    expect(plans.entries).toEqual([
+      expect.objectContaining({ name: "roadmap.md", path: "plans/roadmap.md", isDirectory: false }),
+    ]);
+  });
+
   it("restores a backup after live files change", async () => {
     const orgId = await createOrganization();
     const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
@@ -212,5 +237,45 @@ describe("workspace backup service", () => {
 
     expect(deleted).toHaveLength(1);
     await expect(service.list(orgId)).resolves.toEqual([]);
+  });
+
+  it("marks stale running backups as failed before creating the next scheduled backup", async () => {
+    const orgId = await createOrganization();
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "daily.md"), "snapshot\n", "utf8");
+
+    const staleBackupId = randomUUID();
+    const now = new Date("2026-05-20T12:00:00.000Z");
+    const staleStartedAt = new Date(now.getTime() - 25 * 60 * 60 * 1000);
+    await db.insert(workspaceBackups).values({
+      id: staleBackupId,
+      orgId,
+      status: "running",
+      triggerSource: "scheduled",
+      artifactProvider: "local_file",
+      artifactRef: path.join(rudderHome, "missing-workspace-backup.json"),
+      startedAt: staleStartedAt,
+      createdAt: staleStartedAt,
+      updatedAt: staleStartedAt,
+    });
+
+    const scheduled = await service.runScheduledBackups({ now });
+
+    expect(scheduled.failed).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: staleBackupId,
+        status: "failed",
+        error: "Workspace backup timed out before writing an artifact",
+      }),
+    ]));
+    expect(scheduled.created).toHaveLength(1);
+    expect(scheduled.created[0]?.status).toBe("succeeded");
+
+    const [staleRow] = await db
+      .select()
+      .from(workspaceBackups)
+      .where(eq(workspaceBackups.id, staleBackupId));
+    expect(staleRow?.status).toBe("failed");
   });
 });

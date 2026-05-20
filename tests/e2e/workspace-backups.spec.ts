@@ -1,9 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
+import { createDb, workspaceBackups } from "../../packages/db/src/index.ts";
+import { E2E_DATABASE_URL, E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
 
 test.use({ serviceWorkers: "block" });
+
+const e2eDb = createDb(E2E_DATABASE_URL);
 
 function resolveOrganizationWorkspaceRoot(orgId: string) {
   return path.join(
@@ -74,5 +78,39 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
   });
   await page.getByRole("button", { name: "Delete" }).click();
   await expect(page.getByText("1 backup")).toBeVisible();
-  await expect(page.getByText("pre restore")).toBeVisible();
+  await expect(page.getByTestId("workspace-main-card").getByText("pre restore").first()).toBeVisible();
+});
+
+test("shows failed workspace backups without requesting missing artifacts", async ({ page }) => {
+  const orgRes = await page.request.post("/api/orgs", {
+    data: {
+      name: `Workspace-Backups-Failed-${Date.now()}`,
+    },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json();
+
+  const failedBackupId = randomUUID();
+  await e2eDb.insert(workspaceBackups).values({
+    id: failedBackupId,
+    orgId: organization.id,
+    status: "failed",
+    triggerSource: "scheduled",
+    artifactProvider: "local_file",
+    artifactRef: path.join(resolveOrganizationWorkspaceRoot(organization.id), "missing-backup.json"),
+    error: "Maximum call stack size exceeded",
+    startedAt: new Date(),
+    finishedAt: new Date(),
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  await selectOrganization(page, organization.id);
+  await page.goto(`/${organization.issuePrefix}/workspaces/backups`);
+
+  await expect(page.getByRole("heading", { name: "Workspace backups" })).toBeVisible();
+  await expect(page.getByTestId("workspace-sidebar").getByText("Backup failed: Maximum call stack size exceeded")).toBeVisible();
+  await expect(page.getByTestId("workspace-main-card").getByText("This backup failed: Maximum call stack size exceeded")).toBeVisible();
+  await expect(page.getByText("Workspace backup artifact not found")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Restore" })).toBeDisabled();
 });

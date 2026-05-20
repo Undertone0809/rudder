@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import type { OrganizationWorkspaceFileEntry, WorkspaceBackupSummary } from "@rudderhq/shared";
 import {
   ChevronDown,
   ChevronRight,
@@ -37,6 +37,16 @@ function formatBackupTime(value: string | null) {
 
 function formatFileCount(value: number) {
   return `${value} ${value === 1 ? "file" : "files"}`;
+}
+
+function canBrowseBackup(backup: WorkspaceBackupSummary | null) {
+  return backup?.status === "succeeded" || backup?.status === "restored";
+}
+
+function backupUnavailableMessage(backup: WorkspaceBackupSummary) {
+  if (backup.status === "running") return "Backup still running.";
+  if (backup.status === "failed") return backup.error ? `Backup failed: ${backup.error}` : "Backup failed before writing files.";
+  return "Backup files are not available.";
 }
 
 function selectFilePath(searchParams: URLSearchParams, setSearchParams: ReturnType<typeof useSearchParams>[1], filePath: string) {
@@ -180,7 +190,8 @@ export function WorkspaceBackupFilesSidebar() {
   });
 
   const backups = backupsQuery.data?.backups ?? [];
-  const selectedBackup = backups.find((backup) => backup.id === requestedBackupId) ?? backups[0] ?? null;
+  const selectedBackup = backups.find((backup) => backup.id === requestedBackupId) ?? backups.find(canBrowseBackup) ?? backups[0] ?? null;
+  const selectedBackupCanBrowse = canBrowseBackup(selectedBackup);
   const rootQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceBackupFiles(
       viewedOrganizationId ?? "__none__",
@@ -188,7 +199,7 @@ export function WorkspaceBackupFilesSidebar() {
       "",
     ),
     queryFn: () => organizationsApi.listWorkspaceBackupFiles(viewedOrganizationId!, selectedBackup!.id, ""),
-    enabled: !!viewedOrganizationId && !!selectedBackup,
+    enabled: !!viewedOrganizationId && !!selectedBackup && selectedBackupCanBrowse,
     refetchOnWindowFocus: false,
   });
   const expandedDirectories = useMemo(
@@ -233,6 +244,8 @@ export function WorkspaceBackupFilesSidebar() {
           <div className="px-2 py-3 text-sm text-destructive">{backupsQuery.error.message}</div>
         ) : !selectedBackup ? (
           <div className="px-2 py-3 text-sm text-muted-foreground">No workspace backups yet.</div>
+        ) : !selectedBackupCanBrowse ? (
+          <div className="px-2 py-3 text-sm text-muted-foreground">{backupUnavailableMessage(selectedBackup)}</div>
         ) : rootQuery.isLoading ? (
           <div className="px-2 py-3 text-sm text-muted-foreground">Loading files...</div>
         ) : rootQuery.error ? (
