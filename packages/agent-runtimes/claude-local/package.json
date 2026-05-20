@@ -1,6 +1,6 @@
 {
   "name": "@rudderhq/agent-runtime-claude-local",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/Undertone0809/rudder",
   "bugs": {
