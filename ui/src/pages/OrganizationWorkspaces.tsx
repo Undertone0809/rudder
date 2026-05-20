@@ -373,14 +373,20 @@ function WorkspaceTreeNode({
   depth?: number;
 }) {
   const [expanded, setExpanded] = useState(expandedDirectories.has(entry.path));
+  const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const primaryLabel = displayWorkspaceEntryLabel(entry);
   const isAgentWorkspace = entry.entityType === "agent_workspace";
   const isAgentsRoot = entry.path === "agents";
   const isProtectedContainer = isProtectedAgentWorkspaceContainerPath(entry.path);
   const canCreateInsideDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
+  const handleOpenActionMenu = (event: MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActionMenuOpen(true);
+  };
 
   const actionMenu = (
-    <DropdownMenu>
+    <DropdownMenu open={actionMenuOpen} onOpenChange={setActionMenuOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -399,6 +405,10 @@ function WorkspaceTreeNode({
         sideOffset={6}
         className="w-44 will-change-[opacity,transform] data-[state=open]:duration-150 data-[state=open]:ease-out data-[state=closed]:duration-100 data-[state=closed]:ease-in"
         onClick={(event) => event.stopPropagation()}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
       >
         <DropdownMenuItem onSelect={() => onCopyPath(entry)}>
           <Copy className="h-3.5 w-3.5" />
@@ -446,6 +456,7 @@ function WorkspaceTreeNode({
         <div
           className="group flex w-full items-center rounded-md pr-1 text-sm text-foreground hover:bg-accent/60"
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
+          onContextMenu={handleOpenActionMenu}
         >
           <button
             type="button"
@@ -510,6 +521,7 @@ function WorkspaceTreeNode({
           isSelected ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
         }`}
         style={{ paddingLeft: `${depth * 14 + 23}px` }}
+        onContextMenu={handleOpenActionMenu}
       >
         <button
           type="button"

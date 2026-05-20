@@ -798,6 +798,14 @@ test.describe("Workspace shell", () => {
     const markdownEditor = page.getByTestId("org-workspaces-markdown-editor").locator(".ProseMirror");
     await expect(markdownEditor).toContainText("Untitled document");
 
+    await filesCard.getByRole("button", { name: "docs", exact: true }).click({ button: "right" });
+    await expect(page.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "New file" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "New folder" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+    await page.keyboard.press("Escape");
+
     await page.getByTestId("org-workspaces-entry-more-draft.md").click();
     await expect(page.locator('[data-slot="dropdown-menu-content"]')).toHaveClass(/will-change/);
     await expect(page.getByRole("menuitem", { name: "Copy file path" })).toBeVisible();
