@@ -70,6 +70,8 @@ describe("index.css motion rules", () => {
     expect(glassModal).toContain("background:");
     expect(glassModal).toContain("!important");
     expect(glassModal).toContain("border-radius: var(--radius-md)");
+    expect(glassModal).toContain("var(--surface-overlay) 78%");
+    expect(glassModal).toContain("var(--surface-overlay) 68%");
     expect(glassModal).toContain("backdrop-filter: blur(34px) saturate(150%)");
   });
 

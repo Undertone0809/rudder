@@ -853,10 +853,10 @@
     background:
       linear-gradient(
         180deg,
-        color-mix(in oklab, var(--surface-overlay) 46%, transparent) 0%,
-        color-mix(in oklab, var(--surface-overlay) 34%, transparent) 100%
+        color-mix(in oklab, var(--surface-overlay) 78%, transparent) 0%,
+        color-mix(in oklab, var(--surface-overlay) 68%, transparent) 100%
       ) !important;
-    border-color: color-mix(in oklab, var(--border-base) 66%, transparent);
+    border-color: color-mix(in oklab, var(--border-base) 74%, transparent);
     box-shadow:
       0 36px 96px -46px rgb(0 0 0 / 0.5),
       inset 0 1px 0 rgb(255 255 255 / 0.24),
