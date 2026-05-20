@@ -573,11 +573,19 @@ export function AskUserPanel({
   message,
   request,
   disabled,
+  pendingFiles,
+  onAddAttachment,
+  onRemovePendingFile,
+  onOpenAttachmentPreview,
   onSubmit,
 }: {
   message: ChatMessage;
   request: ChatAskUserRequest;
   disabled: boolean;
+  pendingFiles: File[];
+  onAddAttachment: () => void;
+  onRemovePendingFile: (fileKey: string) => void;
+  onOpenAttachmentPreview: (preview: AttachmentPreviewState) => void;
   onSubmit: (body: string) => void;
 }) {
   const [selectedByQuestionId, setSelectedByQuestionId] = useState<Record<string, string>>({});
@@ -613,8 +621,21 @@ export function AskUserPanel({
   const hasMultipleQuestions = questionCount > 1;
   const boundedQuestionIndex = Math.min(currentQuestionIndex, Math.max(questionCount - 1, 0));
   const currentQuestion = request.questions[boundedQuestionIndex] ?? null;
-  const currentAnswer = currentQuestion ? answers[currentQuestion.id] : null;
-  const canSubmit = request.questions.every((question) => Boolean(answers[question.id]));
+  const hasPendingAttachments = pendingFiles.length > 0;
+  const answerAttachmentsText = pendingFiles.length === 1 ? "See attached file." : "See attached files.";
+  const answersWithAttachmentFallback = useMemo(() => {
+    if (!hasPendingAttachments) return answers;
+    const next = { ...answers };
+    for (const question of request.questions) {
+      if (next[question.id]) continue;
+      if (selectedByQuestionId[question.id] === "__other") {
+        next[question.id] = { kind: "freeform", text: answerAttachmentsText };
+      }
+    }
+    return next;
+  }, [answerAttachmentsText, answers, hasPendingAttachments, request.questions, selectedByQuestionId]);
+  const currentAnswer = currentQuestion ? answersWithAttachmentFallback[currentQuestion.id] : null;
+  const canSubmit = request.questions.every((question) => Boolean(answersWithAttachmentFallback[question.id]));
 
   const moveToNextQuestion = (fromIndex: number) => {
     if (!hasMultipleQuestions) return;
@@ -641,7 +662,7 @@ export function AskUserPanel({
       {hasMultipleQuestions ? (
         <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span>{reviewingAnswers ? "Review answers" : `Question ${boundedQuestionIndex + 1} of ${questionCount}`}</span>
-          <span>{Object.keys(answers).length}/{questionCount} answered</span>
+          <span>{Object.keys(answersWithAttachmentFallback).length}/{questionCount} answered</span>
         </div>
       ) : null}
 
@@ -650,7 +671,7 @@ export function AskUserPanel({
           <div className="text-sm font-medium text-foreground">Review answers</div>
           <div className="mt-2 space-y-2">
             {request.questions.map((question, index) => {
-              const answer = answers[question.id];
+              const answer = answersWithAttachmentFallback[question.id];
               return (
                 <button
                   key={question.id}
@@ -754,17 +775,65 @@ export function AskUserPanel({
             ) : null}
           </div>
           {selectedByQuestionId[currentQuestion.id] === "__other" ? (
-            <Textarea
-              value={freeformByQuestionId[currentQuestion.id] ?? ""}
-              onChange={(event) => setFreeformByQuestionId((current) => ({
-                ...current,
-                [currentQuestion.id]: event.target.value,
-              }))}
-              placeholder="Type your answer..."
-              className="mt-2 min-h-20 resize-y rounded-[var(--radius-md)] bg-background text-sm"
-            />
+            <div className="mt-2 space-y-2">
+              <Textarea
+                value={freeformByQuestionId[currentQuestion.id] ?? ""}
+                onChange={(event) => setFreeformByQuestionId((current) => ({
+                  ...current,
+                  [currentQuestion.id]: event.target.value,
+                }))}
+                placeholder="Type your answer..."
+                className="min-h-20 resize-y rounded-[var(--radius-md)] bg-background text-sm"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={disabled}
+                  onClick={onAddAttachment}
+                  className="h-8 gap-1.5 px-2.5 text-xs"
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                  Attach
+                </Button>
+                {hasPendingAttachments ? (
+                  <div data-testid="chat-ask-user-pending-attachments" className="flex min-w-0 flex-wrap gap-2">
+                    {pendingFiles.map((file) => {
+                      const fileKey = pendingAttachmentKey(file);
+                      return (
+                        <div key={fileKey} data-testid="chat-ask-user-pending-attachment" className="max-w-full">
+                          <PendingAttachmentPreview
+                            file={file}
+                            onOpenImage={onOpenAttachmentPreview}
+                            onRemove={() => onRemovePendingFile(fileKey)}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            </div>
           ) : null}
         </section>
+      ) : null}
+
+      {selectedByQuestionId[currentQuestion?.id ?? ""] !== "__other" && hasPendingAttachments ? (
+        <div data-testid="chat-ask-user-pending-attachments" className="mt-3 flex min-w-0 flex-wrap gap-2">
+          {pendingFiles.map((file) => {
+            const fileKey = pendingAttachmentKey(file);
+            return (
+              <div key={fileKey} data-testid="chat-ask-user-pending-attachment" className="max-w-full">
+                <PendingAttachmentPreview
+                  file={file}
+                  onOpenImage={onOpenAttachmentPreview}
+                  onRemove={() => onRemovePendingFile(fileKey)}
+                />
+              </div>
+            );
+          })}
+        </div>
       ) : null}
 
       <div className="mt-3 flex items-center justify-between gap-2">
@@ -802,7 +871,7 @@ export function AskUserPanel({
             type="button"
             size="sm"
             disabled={disabled || !canSubmit}
-            onClick={() => onSubmit(formatAskUserAnswerMessage(request, answers))}
+            onClick={() => onSubmit(formatAskUserAnswerMessage(request, answersWithAttachmentFallback))}
           >
             Submit answer
           </Button>

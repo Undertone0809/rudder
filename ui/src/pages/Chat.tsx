@@ -345,7 +345,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         title: "Failed to stop streaming",
         body: error instanceof Error ? error.message : "Try again.", tone: "error", }); }); abortChatStream(chatId); setStreamDraftForChat(chatId, (current) => (current ? { ...current, state: "stopped" } : current)); }, [abortChatStream, pushToast, setStreamDraftForChat]); const sendMessage = async (
     options?: { bodyOverride?: string; filesOverride?: File[]; conversationOverride?: ChatConversation;
-      editUserMessageIdOverride?: string | null; },
+      editUserMessageIdOverride?: string | null; clearPendingFilesOnSuccess?: boolean; },
   ) => {
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
       return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined; const body = (options?.bodyOverride ?? draft).trim();
@@ -411,7 +411,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           if (event.type === "transcript_entry") {
             setStreamDraftForChat(chatId, (current) => { if (!current) return current; const transcript = [...current.transcript]; appendTranscriptEntry(transcript, event.entry); return { ...current, transcript }; });
             return; }
-          if (event.type === "final") { keepProcessOpenForMessages(event.messages); upsertMessages(chatId, event.messages); setStreamDraftForChat(chatId, null); } }, }); await refreshChat(chatId); setStreamDraftForChat(chatId, null);
+          if (event.type === "final") { keepProcessOpenForMessages(event.messages); upsertMessages(chatId, event.messages); setStreamDraftForChat(chatId, null); } }, });
+      if (options?.clearPendingFilesOnSuccess) { clearPendingFilesForCurrentScope(); }
+      await refreshChat(chatId); setStreamDraftForChat(chatId, null);
     } catch (error) {
       const isAbort = error instanceof DOMException ? error.name === "AbortError" : error instanceof Error && error.name === "AbortError";
       if (conversation && (isAbort || stopRequestedChatIdsRef.current.has(conversation.id))) {
@@ -775,9 +777,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           {composerUnavailableMessage}{" "}
           <Link to="/agents" className="underline underline-offset-4 hover:text-foreground">
             Open agents </Link> </div> ) : null}
-      <input ref={fileInputRef} type="file" className="hidden"
-        multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); void appendPendingFiles(files); event.currentTarget.value = "";
-        }} />
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
@@ -881,6 +880,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     <div className="chat-shell flex min-h-[calc(100dvh-8rem)] flex-col overflow-hidden text-foreground md:-mx-3.5 md:h-full md:min-h-0 md:px-0 lg:-mx-5">
       <ChatAttachmentPreviewDialog
         preview={attachmentPreview} onOpenChange={(open) => { if (!open) setAttachmentPreview(null);
+        }} />
+      <input ref={fileInputRef} type="file" className="hidden"
+        multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); void appendPendingFiles(files); event.currentTarget.value = "";
         }} />
       {loadErrorMessage ? (
         <div className="mx-6 mt-6 rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -987,10 +989,16 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     {pendingAskUserMessage && pendingAskUserRequest ? (
                       <AskUserPanel
                         message={pendingAskUserMessage}
-                        request={pendingAskUserRequest} disabled={controlsDisabled || composerUnavailable} onSubmit={(body) => { if (!selectedConversation) return;
+                        request={pendingAskUserRequest} disabled={controlsDisabled || composerUnavailable}
+                        pendingFiles={pendingFiles}
+                        onAddAttachment={() => fileInputRef.current?.click()}
+                        onRemovePendingFile={removePendingFile}
+                        onOpenAttachmentPreview={setAttachmentPreview}
+                        onSubmit={(body) => { if (!selectedConversation) return;
                           void sendMessage({
                             bodyOverride: body,
-                            filesOverride: [], conversationOverride: selectedConversation, });
+                            filesOverride: [...pendingFiles], conversationOverride: selectedConversation,
+                            clearPendingFilesOnSuccess: true, });
                         }} /> ) : (
                       renderComposer(false)
                     )} </div>
