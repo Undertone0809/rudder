@@ -245,6 +245,9 @@ export type AutomationConcurrencyPolicy = (typeof AUTOMATION_CONCURRENCY_POLICIE
 export const AUTOMATION_CATCH_UP_POLICIES = ["skip_missed", "enqueue_missed_with_cap"] as const;
 export type AutomationCatchUpPolicy = (typeof AUTOMATION_CATCH_UP_POLICIES)[number];
 
+export const AUTOMATION_OUTPUT_MODES = ["track_issue", "chat_output"] as const;
+export type AutomationOutputMode = (typeof AUTOMATION_OUTPUT_MODES)[number];
+
 export const AUTOMATION_TRIGGER_KINDS = ["schedule", "webhook", "api"] as const;
 export type AutomationTriggerKind = (typeof AUTOMATION_TRIGGER_KINDS)[number];
 

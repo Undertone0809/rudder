@@ -1,0 +1,299 @@
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AGENT_RUNTIME_TYPES,
+  AGENT_RUN_CONCURRENCY_DEFAULT,
+  AGENT_RUN_CONCURRENCY_MAX,
+  AGENT_RUN_CONCURRENCY_MIN,
+} from "@rudderhq/shared";
+import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
+import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
+import type {
+  Agent,
+  AgentRuntimeEnvironmentTestResult,
+  OrganizationSecret,
+  EnvBinding,
+} from "@rudderhq/shared";
+import type { AgentRuntimeModel } from "../api/agents";
+import { agentsApi } from "../api/agents";
+import { secretsApi } from "../api/secrets";
+import { assetsApi } from "../api/assets";
+import {
+  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
+  DEFAULT_CODEX_LOCAL_MODEL,
+  DEFAULT_CODEX_LOCAL_SEARCH,
+} from "@rudderhq/agent-runtime-codex-local";
+import { models as CLAUDE_LOCAL_MODELS } from "@rudderhq/agent-runtime-claude-local";
+import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
+import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
+import {
+  semanticBadgeToneClasses,
+} from "@/components/ui/semanticTones";
+import { Heart, ChevronDown, Plus, Trash2, X } from "lucide-react";
+import { cn, formatTime } from "../lib/utils";
+import { extractModelName, extractProviderId } from "../lib/model-utils";
+import { CODEX_LOCAL_REASONING_EFFORT_OPTIONS, withDefaultThinkingEffortOption } from "../lib/runtime-thinking-effort";
+import { resolveRuntimeModels } from "../lib/runtime-models";
+import { queryKeys } from "../lib/queryKeys";
+import { useOrganization } from "../context/OrganizationContext";
+import { useDialog } from "../context/DialogContext";
+import {
+  Field,
+  ToggleField,
+  ToggleWithNumber,
+  CollapsibleSection,
+  DraftInput,
+  DraftNumberInput,
+  help,
+  adapterLabels,
+} from "./agent-config-primitives";
+import { defaultCreateValues } from "./agent-config-defaults";
+import { getUIAdapter } from "../agent-runtimes";
+import type { AgentRuntimeConfigFieldsProps } from "../agent-runtimes/types";
+import { ClaudeLocalAdvancedFields } from "../agent-runtimes/claude-local/config-fields";
+import { MarkdownEditor } from "./MarkdownEditor";
+import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
+import { ReportsToPicker } from "./ReportsToPicker";
+
+/* ---- Create mode values ---- */
+
+// Canonical type lives in @rudderhq/agent-runtime-utils; re-exported here
+// so existing imports from this file keep working.
+export type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
+import type { CreateConfigValues } from "@rudderhq/agent-runtime-utils";
+import { AgentConfigFormProps, Overlay, emptyOverlay, EMPTY_ENV, isOverlayDirty, inputClass, parseCommaArgs, formatArgList, codexThinkingEffortOptions, openCodeThinkingEffortOptions, cursorModeOptions, claudeThinkingEffortOptions, LOCAL_MODEL_RUNTIME_TYPES, defaultModelForRuntime, defaultCommandForRuntime, createValuesForRuntime, defaultConfigForRuntime, defaultFallbackRuntime, defaultFallbackItem, thinkingEffortKeyForRuntime, thinkingEffortOptionsForRuntime, shouldShowThinkingEffort, hasClearedConfigValue, omitClearedConfigValues, primaryModelFallbackKey, normalizeModelFallbacksForEditor, runtimeProviderRailClassName, runtimeProviderItemClassName, RuntimeEnvironmentTestTarget, RuntimeEnvironmentTestItemResult, RuntimeEnvironmentStatus, RuntimeEnvironmentDisplayStatus, formatRuntimeEnvironmentLabel, normalizeRuntimeEnvironmentDisplayStatus, filterRuntimeEnvironmentDisplayChecks } from "./AgentConfigForm.helpers";
+
+export function ModelDropdown({
+  label,
+  hint,
+  models,
+  value,
+  onChange,
+  open,
+  onOpenChange,
+  allowDefault,
+  allowClear = false,
+  allowCustom = false,
+  required,
+  groupByProvider,
+  emptyLabel,
+  triggerTestId,
+}: {
+  label: string;
+  hint?: string;
+  models: AgentRuntimeModel[];
+  value: string;
+  onChange: (id: string) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  allowDefault: boolean;
+  allowClear?: boolean;
+  allowCustom?: boolean;
+  required: boolean;
+  groupByProvider: boolean;
+  emptyLabel: string;
+  triggerTestId?: string;
+}) {
+  const [modelSearch, setModelSearch] = useState("");
+  const selected = models.find((m) => m.id === value);
+  const customModel = modelSearch.trim();
+  const filteredModels = useMemo(() => {
+    return models.filter((m) => {
+      if (!modelSearch.trim()) return true;
+      const q = modelSearch.toLowerCase();
+      const provider = extractProviderId(m.id) ?? "";
+      return (
+        m.id.toLowerCase().includes(q) ||
+        m.label.toLowerCase().includes(q) ||
+        provider.toLowerCase().includes(q)
+      );
+    });
+  }, [models, modelSearch]);
+  const canUseCustomModel = allowCustom
+    && customModel.length > 0
+    && !models.some((m) => m.id === customModel);
+  const groupedModels = useMemo(() => {
+    if (!groupByProvider) {
+      return [
+        {
+          provider: "models",
+          entries: [...filteredModels].sort((a, b) => a.id.localeCompare(b.id)),
+        },
+      ];
+    }
+    const map = new Map<string, AgentRuntimeModel[]>();
+    for (const model of filteredModels) {
+      const provider = extractProviderId(model.id) ?? "other";
+      const group = map.get(provider) ?? [];
+      group.push(model);
+      map.set(provider, group);
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([provider, entries]) => ({
+        provider,
+        entries: [...entries].sort((a, b) => a.id.localeCompare(b.id)),
+      }));
+  }, [filteredModels, groupByProvider]);
+
+  return (
+    <Field label={label} hint={hint}>
+      <Popover
+        open={open}
+        onOpenChange={(nextOpen) => {
+          onOpenChange(nextOpen);
+          if (!nextOpen) setModelSearch("");
+        }}
+      >
+        <PopoverTrigger asChild>
+          <button
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between min-w-0"
+            data-testid={triggerTestId}
+          >
+            <span className={cn("truncate text-left", !value && "text-muted-foreground")}>
+              {selected
+                ? selected.label
+                : value || emptyLabel || (required ? "Select model (required)" : "Select model")}
+            </span>
+            <ChevronDown className="h-3 w-3 text-muted-foreground" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
+          <input
+            className="w-full px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border mb-1 placeholder:text-muted-foreground/50"
+            placeholder="Search models..."
+            value={modelSearch}
+            onChange={(e) => setModelSearch(e.target.value)}
+            autoFocus
+          />
+          <div className="max-h-[240px] overflow-y-auto">
+            {allowDefault && (
+              <button
+                className={cn(
+                  "flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
+                  !value && "bg-accent",
+                )}
+                onClick={() => {
+                  onChange("");
+                  onOpenChange(false);
+                }}
+              >
+                Default
+              </button>
+            )}
+            {allowClear && (
+              <button
+                className={cn(
+                  "flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
+                  !value && "bg-accent",
+                )}
+                onClick={() => {
+                  onChange("");
+                  onOpenChange(false);
+                }}
+              >
+                No fallback model
+              </button>
+            )}
+            {canUseCustomModel && (
+              <button
+                className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50"
+                onClick={() => {
+                  onChange(customModel);
+                  onOpenChange(false);
+                }}
+              >
+                <span className="block w-full text-left truncate" title={customModel}>
+                  Use "{customModel}"
+                </span>
+              </button>
+            )}
+            {groupedModels.map((group) => (
+              <div key={group.provider} className="mb-1 last:mb-0">
+                {groupByProvider && (
+                  <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    {group.provider} ({group.entries.length})
+                  </div>
+                )}
+                {group.entries.map((m) => (
+                  <button
+                    key={m.id}
+                    className={cn(
+                      "flex items-center w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
+                      m.id === value && "bg-accent",
+                    )}
+                    onClick={() => {
+                      onChange(m.id);
+                      onOpenChange(false);
+                    }}
+                  >
+                    <span className="block w-full text-left truncate" title={m.id}>
+                      {groupByProvider ? extractModelName(m.id) : m.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ))}
+            {filteredModels.length === 0 && !canUseCustomModel && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">No models found.</p>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </Field>
+  );
+}
+
+export function ThinkingEffortDropdown({
+  value,
+  options,
+  onChange,
+  open,
+  onOpenChange,
+}: {
+  value: string;
+  options: ReadonlyArray<{ id: string; label: string }>;
+  onChange: (id: string) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const selected = options.find((option) => option.id === value) ?? options[0];
+
+  return (
+    <Field label="Thinking effort" hint={help.thinkingEffort}>
+      <Popover open={open} onOpenChange={onOpenChange}>
+        <PopoverTrigger asChild>
+          <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between">
+            <span className={cn(!value && "text-muted-foreground")}>{selected?.label ?? "Auto"}</span>
+            <ChevronDown className="h-3 w-3 text-muted-foreground" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
+          {options.map((option) => (
+            <button
+              key={option.id || "auto"}
+              className={cn(
+                "flex items-center justify-between w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
+                option.id === value && "bg-accent",
+              )}
+              onClick={() => {
+                onChange(option.id);
+                onOpenChange(false);
+              }}
+            >
+              <span>{option.label}</span>
+              {option.id ? <span className="text-xs text-muted-foreground font-mono">{option.id}</span> : null}
+            </button>
+          ))}
+        </PopoverContent>
+      </Popover>
+    </Field>
+  );
+}
+

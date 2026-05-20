@@ -72,6 +72,18 @@ jobs:
           version="${version#v}"
           node scripts/release-package-map.mjs set-version "${version}"
 
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            node - <<'NODE'
+          const fs = require("node:fs");
+          const packageJsonPath = "desktop/package.json";
+          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+          packageJson.build ??= {};
+          packageJson.build.win ??= {};
+          packageJson.build.win.signAndEditExecutable = false;
+          fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
+          NODE
+          fi
+
           if [ "$(uname -s)" = "Darwin" ]; then
             ulimit -n 65536 || ulimit -n 10240 || true
             echo "macOS open file limit: $(ulimit -n)"

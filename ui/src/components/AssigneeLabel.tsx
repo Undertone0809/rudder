@@ -32,12 +32,12 @@ export function AgentTitleBadge({
       data-slot="agent-title-badge"
       className={cn(
         "inline-flex min-w-0 shrink items-center rounded-sm border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium leading-3 text-muted-foreground",
-        constrain ? "max-w-[9rem]" : "max-w-full",
+        constrain ? "max-w-[9rem]" : "max-w-full whitespace-normal",
         className,
       )}
       title={label}
     >
-      <span className="truncate">{label}</span>
+      <span className={cn("min-w-0", constrain ? "truncate" : "whitespace-normal break-words text-left")}>{label}</span>
     </span>
   );
 }
@@ -78,7 +78,7 @@ export function AssigneeLabel({
       )}
       <span className={cn(
         "inline-flex min-w-0 max-w-full items-center gap-1.5",
-        stacked && "flex-1 flex-col items-start gap-1",
+        stacked && "w-full flex-1 flex-col items-start gap-1",
       )}>
         <span className={cn("truncate text-xs", muted && "text-muted-foreground")}>{label}</span>
         {badgeLabel ? <AgentTitleBadge label={badgeLabel} constrain={!stacked} /> : null}

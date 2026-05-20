@@ -24,6 +24,8 @@ const automation = {
   title: "flomo memo export",
   description: "Export recent memos.",
   assigneeAgentId: "agent-1",
+  outputMode: "track_issue",
+  chatConversationId: null,
   priority: "medium",
   status: "active",
   concurrencyPolicy: "coalesce_if_active",
@@ -47,11 +49,18 @@ const automation = {
     idempotencyKey: null,
     triggerPayload: null,
     linkedIssueId: "issue-1",
+    linkedChatConversationId: null,
+    startedChatMessageId: null,
+    terminalChatMessageId: null,
+    lastChatMessageId: null,
     coalescedIntoRunId: null,
     failureReason: null,
     completedAt: "2026-05-11T12:35:20",
     createdAt: "2026-05-11T12:35:18",
     updatedAt: "2026-05-11T12:35:20",
+    linkedIssue: null,
+    linkedChatConversation: null,
+    trigger: null,
   },
 };
 
@@ -327,6 +336,7 @@ describe("Automations", () => {
     });
 
     expect(container.textContent).toContain("No automations yet");
+    expect(container.textContent).toContain("Advisor review loop");
     expect(container.textContent).toContain("Bug triage");
     expect(container.textContent).toContain("Daily standup");
     expect(container.textContent).toContain("Weekly progress report");
@@ -375,6 +385,46 @@ describe("Automations", () => {
     });
 
     expect(runbookInput?.value).toContain("relevant Rudder chat conversation");
+  });
+
+  it("opens templates from the composer header and applies the advisor review loop template", async () => {
+    renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const headerContainer = renderHeaderActions();
+    await act(async () => {
+      headerContainer.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("Use template");
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Use template"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("Automation templates");
+    expect(document.body.textContent).toContain("Run Build Advisor plus two reviewer passes");
+
+    await act(async () => {
+      Array.from(document.body.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Advisor review loop"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const titleInput = document.querySelector('textarea[placeholder="Automation title"]') as HTMLTextAreaElement | null;
+    const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
+    expect(titleInput?.value).toBe("Advisor review loop");
+    expect(runbookInput?.value).toContain("advisor-review-loop-maintainer");
+    expect(runbookInput?.value).toContain("two independent reviewer roles");
+    expect(document.body.textContent).not.toContain("Automation templates");
   });
 
   it("renders localized use-case templates for Chinese UI", async () => {
@@ -471,7 +521,10 @@ describe("Automations", () => {
     });
 
     const titleInput = document.querySelector('textarea[placeholder="Automation title"]') as HTMLTextAreaElement | null;
+    const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
     expect(titleInput).toBeTruthy();
+    expect(runbookInput?.value).toBe("");
+    expect(runbookInput?.placeholder).toBe("Add instructions...");
 
     await act(async () => {
       setTextareaValue(titleInput!, "帮我 flomo 打 tag");

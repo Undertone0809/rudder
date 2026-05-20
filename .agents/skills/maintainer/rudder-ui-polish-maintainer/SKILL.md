@@ -7,6 +7,9 @@ description: >
   empty states, redundant pages, onboarding steps, or other small-to-medium UI
   behavior, especially with Chinese prompts like "这里有点丑", "对齐一下",
   "去掉这个页面", "改成这个 UI", "先说说/优化一下", or "弄个截图给我看".
+  Also use for narrow UI fixes even when the user mentions an advisor/reviewer
+  skill, unless they explicitly ask for reviewer agents, repeated review rounds,
+  or an acceptance gate.
   Prefer build-advisor for pure advice with no implementation request, and
   advisor-review-loop-maintainer for high-stakes proposal plus reviewer gates.
 ---
@@ -32,6 +35,9 @@ Use this skill for Rudder UI tasks such as:
 - changing an empty state, onboarding step, tutorial jump, or small workflow
   surface
 - producing a quick screenshot of the current UI after a local change
+- explaining why a visible surface looks wrong when the user asks "为什么"
+  and the likely answer is current CSS/layout/data layering rather than an
+  approved implementation request
 
 Use `build-advisor` first when the user explicitly asks "你懂我要怎么改吗",
 "先说说", or otherwise wants the product/design direction before edits.
@@ -39,6 +45,12 @@ After the direction is accepted, continue here for implementation.
 
 Use `advisor-review-loop-maintainer` instead when the user asks for reviewer
 agents, two rounds, proposal review, or an acceptance gate before handoff.
+
+When the user invokes `advisor-review-loop-maintainer` for a small visible fix
+but only asks to "修一下", "优化一下", "去掉这个 button", "颜色不对", or similar,
+treat this skill as the implementation contract after a short advisor check.
+Say explicitly in the handoff that the work used a lightweight route rather
+than a full two-reviewer loop.
 
 ## Do Not Use When
 
@@ -59,13 +71,17 @@ Do not use this skill for:
 Classify the prompt before editing:
 
 - `advice-only`: user asks to discuss, judge, or generate options.
+- `explain-only`: user asks why a visual state looks the way it does, without
+  asking to change it yet.
 - `implement`: user asks to fix, optimize, remove, add, or "改一下".
 - `screenshot`: user wants the current rendered UI captured.
 - `review-gated`: user invokes reviewers or says the result must pass review.
 
 In `advice-only`, produce the smallest useful UI direction and stop. In
-`implement`, make the code change. If the user gives screenshots plus vague
-language, infer the concrete pain from the image and surrounding product state.
+`explain-only`, trace the rendered reason from screenshot to component/CSS/data
+source and stop with the likely fix direction, not a patch. In `implement`,
+make the code change. If the user gives screenshots plus vague language, infer
+the concrete pain from the image and surrounding product state.
 
 ### 2. Build a small evidence packet
 
@@ -123,6 +139,11 @@ shell, screenshot, or equivalent visual inspection. Prefer the available
 browser automation path for local routes. If browser verification is blocked,
 state the exact blocker and do not describe the layout as visually proven.
 
+For follow-up corrections from the user, such as "这颜色不对", "没修好", or
+"这里还是不对", inspect the rendered state again before editing further. Treat
+the user's screenshot as evidence that the previous proof was incomplete, not
+as a reason to keep patching blindly.
+
 Store temporary screenshots outside the repo, for example under `/tmp`.
 
 ### 6. Commit only this task
@@ -157,6 +178,8 @@ For advice-only tasks, hand off with:
 ## Common Failure Modes
 
 - Over-solving a small screenshot complaint with a broad redesign.
+- Routing every small screenshot complaint through a full advisor/reviewer loop
+  when a lightweight UI-polish pass is enough.
 - Treating a visual issue as pure CSS when the real problem is wrong data,
   wrong route, or redundant object modeling.
 - Claiming visual verification after browser automation timed out.

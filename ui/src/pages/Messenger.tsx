@@ -630,7 +630,7 @@ function MessengerApprovalCard({
 }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
-  const pending = item.approval.status === "pending" || item.approval.status === "revision_requested";
+  const pending = item.approval.status === "pending";
   const approvalPayload = item.approval.payload as Record<string, unknown>;
   const initialChatIssueLabelIds = chatIssueApprovalLabelIds(approvalPayload);
   const initialChatIssueLabelKey = initialChatIssueLabelIds.join("\u0000");

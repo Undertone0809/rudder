@@ -45,6 +45,18 @@ Do not use this skill for a narrow bug fix, simple command, ordinary code
 review, direct release execution, or a generic first-principles advisory task
 where the correct specialized skill can execute directly.
 
+If the user explicitly names this skill for a narrow screenshot-driven UI fix
+but does not ask for reviewer agents, repeated rounds, "no pass then rework",
+or an acceptance gate, use the lightweight route:
+
+1. Do a short advisor check to confirm the UI problem and non-goals.
+2. Hand the implementation to `rudder-ui-polish-maintainer` discipline.
+3. Report that this was a lightweight advisor route, not a full reviewer loop.
+
+Do not spend a full two-reviewer loop on small color, spacing, label, icon,
+badge, menu-position, or redundant-wrapper fixes unless the user explicitly
+asks for that review bar.
+
 ## Inputs
 
 Resolve these before starting:
@@ -64,6 +76,16 @@ Respect `review-only` strictly. In review-only mode, produce the advisor frame,
 review findings, verdicts, and smallest changes needed, but do not edit files,
 rewrite the artifact, or continue into implementation unless the user
 explicitly asks for rework after seeing the findings.
+
+When the conversation resumes after a `turn_aborted`, `/goal`, or a long-running
+implementation checkpoint, rebuild the current state before continuing:
+
+- inspect branch and dirty state
+- identify partial commits, merge/conflict state, and running verification
+- restate the remaining task list and proof still missing
+
+Do not assume the previous turn finished cleanly just because the next user
+message says to continue.
 
 ## Default Workflow
 
@@ -228,6 +250,9 @@ Treat the result as not ready when any of these are true:
 - User asked for implementation: write the plan only when repo rules require
   it, implement after the advisor pass, then review the actual diff and
   validation evidence.
+- Narrow UI fix with this skill explicitly invoked: use the lightweight route,
+  then follow `rudder-ui-polish-maintainer` for implementation, visual proof,
+  tests, commit, and handoff.
 - Skill creation: create the skill in the correct global or project-local
   location, add realistic eval prompts when useful, and review trigger
   description, workflow, references, and evalability.

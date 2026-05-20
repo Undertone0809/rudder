@@ -24,6 +24,8 @@ const automation = {
   title: "Daily automation review",
   description: "Check the automation detail layout and interaction affordances.",
   assigneeAgentId: "agent-1",
+  outputMode: "track_issue",
+  chatConversationId: null,
   priority: "medium",
   status: "active",
   concurrencyPolicy: "coalesce_if_active",
@@ -50,6 +52,7 @@ const automation = {
     title: "Automation UX Agent",
   },
   parentIssue: null,
+  chatConversation: null,
   triggers: [
     {
       id: "trigger-1",
@@ -88,6 +91,10 @@ const automation = {
       idempotencyKey: null,
       triggerPayload: null,
       linkedIssueId: "issue-1",
+      linkedChatConversationId: null,
+      startedChatMessageId: null,
+      terminalChatMessageId: null,
+      lastChatMessageId: null,
       coalescedIntoRunId: null,
       failureReason: null,
       completedAt: null,
@@ -101,6 +108,7 @@ const automation = {
         priority: "medium",
         updatedAt: "2026-04-25T08:00:00.000Z",
       },
+      linkedChatConversation: null,
       trigger: {
         id: "trigger-1",
         kind: "schedule",

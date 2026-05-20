@@ -44,6 +44,30 @@
         "The result inspects historical evidence such as git history, plan docs, or previous implementation paths.",
         "The result requires current UI or behavior evidence before declaring the capability restored or missing."
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "你自己能用 Computer Use 手动测试 Rudder 的真实功能场景吗？以后功能 review 的时候你可以直接测真实场景。[$agent-work-reviewer-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md) review 一下这个 UI workflow 是不是可以过。",
+      "expected_output": "Treats Browser or Computer Use scenario verification as part of the reviewer evidence when available, and limits the verdict if the real interaction is skipped or blocked.",
+      "files": [],
+      "expectations": [
+        "The result attempts direct Browser or Computer Use verification for the relevant local Rudder scenario when safe.",
+        "The result reports the observed workflow state, logs, API response, screenshot, or exact blocker.",
+        "The result does not give an unconditional accept when real scenario verification was available but not performed.",
+        "The result preserves reviewer read-only boundaries and avoids destructive UI actions without confirmation."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "review 一下这个 app logo 修复是不是合格。commit 里好像还混了 debug-run-transcript skill rename。",
+      "expected_output": "Reviews both product correctness and commit hygiene, classifies the skill rename as unrelated unless justified by the task, and returns conditional accept or reject if the unrelated change is mixed into the product fix.",
+      "files": [],
+      "expectations": [
+        "The result compares the changed-file set against the stated app-logo task.",
+        "The result distinguishes required files, tests/docs evidence, unrelated dirty work, and unrelated committed changes.",
+        "The result treats unrelated skill rename or broad maintenance churn inside a narrow product fix as a review finding.",
+        "The result recommends splitting or justifying the scope before calling the work cleanly accepted."
+      ]
     }
   ]
 }

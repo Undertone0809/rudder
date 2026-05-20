@@ -11,6 +11,8 @@ import {
   automationRuns,
   automations,
   automationTriggers,
+  chatConversations,
+  chatMessages,
 } from "@rudderhq/db";
 import type {
   CreateAutomation,
@@ -29,113 +31,29 @@ import { conflict, forbidden, notFound, unauthorized, unprocessable } from "../e
 import { logger } from "../middleware/logger.js";
 import { issueService } from "./issues.js";
 import { secretService } from "./secrets.js";
-import { parseCron, validateCron } from "./cron.js";
+import { validateCron } from "./cron.js";
 import { heartbeatService } from "./heartbeat.js";
 import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "./issue-assignment-wakeup.js";
 import { logActivity } from "./activity-log.js";
-
-const OPEN_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked"];
-const LIVE_HEARTBEAT_RUN_STATUSES = ["queued", "running"];
-const TERMINAL_ISSUE_STATUSES = new Set(["done", "cancelled"]);
-const MAX_CATCH_UP_RUNS = 25;
-const WEEKDAY_INDEX: Record<string, number> = {
-  Sun: 0,
-  Mon: 1,
-  Tue: 2,
-  Wed: 3,
-  Thu: 4,
-  Fri: 5,
-  Sat: 6,
-};
+import {
+  assertTimeZone,
+  LIVE_HEARTBEAT_RUN_STATUSES,
+  MAX_CATCH_UP_RUNS,
+  nextCronTickInTimeZone,
+  nextResultText,
+  normalizeWebhookTimestampMs,
+  OPEN_ISSUE_STATUSES,
+  TERMINAL_ISSUE_STATUSES,
+} from "./automations.scheduler.js";
 
 type Actor = { agentId?: string | null; userId?: string | null };
+type AutomationRow = typeof automations.$inferSelect;
 
-function assertTimeZone(timeZone: string) {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date());
-  } catch {
-    throw unprocessable(`Invalid timezone: ${timeZone}`);
-  }
-}
-
-function floorToMinute(date: Date) {
-  const copy = new Date(date.getTime());
-  copy.setUTCSeconds(0, 0);
-  return copy;
-}
-
-function getZonedMinuteParts(date: Date, timeZone: string) {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-    weekday: "short",
-  });
-  const parts = formatter.formatToParts(date);
-  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  const weekday = WEEKDAY_INDEX[map.weekday ?? ""];
-  if (weekday == null) {
-    throw new Error(`Unable to resolve weekday for timezone ${timeZone}`);
-  }
+function toAutomation(row: AutomationRow): Automation {
   return {
-    year: Number(map.year),
-    month: Number(map.month),
-    day: Number(map.day),
-    hour: Number(map.hour),
-    minute: Number(map.minute),
-    weekday,
+    ...row,
+    outputMode: row.outputMode as Automation["outputMode"],
   };
-}
-
-function matchesCronMinute(expression: string, timeZone: string, date: Date) {
-  const cron = parseCron(expression);
-  const parts = getZonedMinuteParts(date, timeZone);
-  return (
-    cron.minutes.includes(parts.minute) &&
-    cron.hours.includes(parts.hour) &&
-    cron.daysOfMonth.includes(parts.day) &&
-    cron.months.includes(parts.month) &&
-    cron.daysOfWeek.includes(parts.weekday)
-  );
-}
-
-function nextCronTickInTimeZone(expression: string, timeZone: string, after: Date) {
-  const trimmed = expression.trim();
-  assertTimeZone(timeZone);
-  const error = validateCron(trimmed);
-  if (error) {
-    throw unprocessable(error);
-  }
-
-  const cursor = floorToMinute(after);
-  cursor.setUTCMinutes(cursor.getUTCMinutes() + 1);
-  const limit = 366 * 24 * 60 * 5;
-  for (let i = 0; i < limit; i += 1) {
-    if (matchesCronMinute(trimmed, timeZone, cursor)) {
-      return new Date(cursor.getTime());
-    }
-    cursor.setUTCMinutes(cursor.getUTCMinutes() + 1);
-  }
-  return null;
-}
-
-function nextResultText(status: string, issueId?: string | null) {
-  if (status === "issue_created" && issueId) return `Created execution issue ${issueId}`;
-  if (status === "coalesced") return "Coalesced into an existing live execution issue";
-  if (status === "skipped") return "Skipped because a live execution issue already exists";
-  if (status === "completed") return "Execution issue completed";
-  if (status === "failed") return "Execution failed";
-  return status;
-}
-
-function normalizeWebhookTimestampMs(rawTimestamp: string) {
-  const parsed = Number(rawTimestamp);
-  if (!Number.isFinite(parsed)) return null;
-  return parsed > 1e12 ? parsed : parsed * 1000;
 }
 
 export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWakeupDeps } = {}) {
@@ -208,6 +126,38 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     if (parentIssue.orgId !== orgId) throw unprocessable("Parent issue must belong to same organization");
   }
 
+  async function assertChatOutputDestination(input: {
+    orgId: string;
+    outputMode: string;
+    chatConversationId: string | null | undefined;
+    assigneeAgentId: string;
+    allowAssigneeChatMismatch?: boolean;
+  }) {
+    if (input.outputMode !== "chat_output") return null;
+    if (!input.chatConversationId) throw unprocessable("Chat output requires a destination conversation");
+    const conversation = await db
+      .select({
+        id: chatConversations.id,
+        orgId: chatConversations.orgId,
+        status: chatConversations.status,
+        preferredAgentId: chatConversations.preferredAgentId,
+      })
+      .from(chatConversations)
+      .where(eq(chatConversations.id, input.chatConversationId))
+      .then((rows) => rows[0] ?? null);
+    if (!conversation) throw notFound("Chat conversation not found");
+    if (conversation.orgId !== input.orgId) throw unprocessable("Chat conversation must belong to same organization");
+    if (conversation.status !== "active") throw unprocessable("Chat output requires an active conversation");
+    if (
+      conversation.preferredAgentId &&
+      conversation.preferredAgentId !== input.assigneeAgentId &&
+      !input.allowAssigneeChatMismatch
+    ) {
+      throw unprocessable("Chat conversation preferred agent must match the automation assignee");
+    }
+    return conversation;
+  }
+
   async function listTriggersForAutomationIds(orgId: string, automationIds: string[]) {
     if (automationIds.length === 0) return new Map<string, AutomationTrigger[]>();
     const rows = await db
@@ -224,6 +174,24 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     return map;
   }
 
+  function linkedChatConversationFromRow(row: {
+    linkedChatConversationId: string | null;
+    chatTitle: string | null;
+    chatStatus: string | null;
+    chatPreferredAgentId: string | null;
+    chatLastMessageAt: Date | null;
+  }) {
+    return row.linkedChatConversationId
+      ? {
+        id: row.linkedChatConversationId,
+        title: row.chatTitle ?? "Chat",
+        status: row.chatStatus ?? "active",
+        preferredAgentId: row.chatPreferredAgentId,
+        lastMessageAt: row.chatLastMessageAt,
+      }
+      : null;
+  }
+
   async function listLatestRunByAutomationIds(orgId: string, automationIds: string[]) {
     if (automationIds.length === 0) return new Map<string, AutomationRunSummary>();
     const rows = await db
@@ -238,6 +206,10 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         idempotencyKey: automationRuns.idempotencyKey,
         triggerPayload: automationRuns.triggerPayload,
         linkedIssueId: automationRuns.linkedIssueId,
+        linkedChatConversationId: automationRuns.linkedChatConversationId,
+        startedChatMessageId: automationRuns.startedChatMessageId,
+        terminalChatMessageId: automationRuns.terminalChatMessageId,
+        lastChatMessageId: automationRuns.lastChatMessageId,
         coalescedIntoRunId: automationRuns.coalescedIntoRunId,
         failureReason: automationRuns.failureReason,
         completedAt: automationRuns.completedAt,
@@ -250,10 +222,15 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         issueStatus: issues.status,
         issuePriority: issues.priority,
         issueUpdatedAt: issues.updatedAt,
+        chatTitle: chatConversations.title,
+        chatStatus: chatConversations.status,
+        chatPreferredAgentId: chatConversations.preferredAgentId,
+        chatLastMessageAt: chatConversations.lastMessageAt,
       })
       .from(automationRuns)
       .leftJoin(automationTriggers, eq(automationRuns.triggerId, automationTriggers.id))
       .leftJoin(issues, eq(automationRuns.linkedIssueId, issues.id))
+      .leftJoin(chatConversations, eq(automationRuns.linkedChatConversationId, chatConversations.id))
       .where(and(eq(automationRuns.orgId, orgId), inArray(automationRuns.automationId, automationIds)))
       .orderBy(automationRuns.automationId, desc(automationRuns.createdAt), desc(automationRuns.id));
 
@@ -270,6 +247,10 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         idempotencyKey: row.idempotencyKey,
         triggerPayload: row.triggerPayload as Record<string, unknown> | null,
         linkedIssueId: row.linkedIssueId,
+        linkedChatConversationId: row.linkedChatConversationId,
+        startedChatMessageId: row.startedChatMessageId,
+        terminalChatMessageId: row.terminalChatMessageId,
+        lastChatMessageId: row.lastChatMessageId,
         coalescedIntoRunId: row.coalescedIntoRunId,
         failureReason: row.failureReason,
         completedAt: row.completedAt,
@@ -285,6 +266,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
             updatedAt: row.issueUpdatedAt ?? row.updatedAt,
           }
           : null,
+        linkedChatConversation: linkedChatConversationFromRow(row),
         trigger: row.triggerId
           ? {
             id: row.triggerId,
@@ -479,6 +461,100 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       .then((rows) => rows[0] ?? null);
   }
 
+  async function getAutomationRunById(runId: string, executor: Db = db) {
+    return executor
+      .select()
+      .from(automationRuns)
+      .where(eq(automationRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+  }
+
+  function automationRunEventBody(input: {
+    title: string;
+    status: string;
+    issueId?: string | null;
+    failureReason?: string | null;
+  }) {
+    if (input.status === "issue_created") return `${input.title} started.`;
+    if (input.status === "completed") return `${input.title} completed.`;
+    if (input.status === "coalesced") return `${input.title} coalesced into an active automation run.`;
+    if (input.status === "skipped") return `${input.title} skipped because an active automation run already exists.`;
+    if (input.status === "failed") {
+      return input.failureReason ? `${input.title} failed: ${input.failureReason}` : `${input.title} failed.`;
+    }
+    return `${input.title} updated: ${input.status}.`;
+  }
+
+  async function postAutomationRunChatEvent(input: {
+    automation: typeof automations.$inferSelect;
+    runId: string;
+    status: string;
+    source: string;
+    triggerId?: string | null;
+    issueId?: string | null;
+    failureReason?: string | null;
+    terminal?: boolean;
+    executor?: Db;
+  }) {
+    if (input.automation.outputMode !== "chat_output" || !input.automation.chatConversationId) return null;
+    const executor = input.executor ?? db;
+    const now = new Date();
+    const eventType =
+      input.status === "issue_created" ? "automation_run_started"
+      : input.status === "completed" ? "automation_run_completed"
+      : input.status === "failed" ? "automation_run_failed"
+      : input.status === "skipped" ? "automation_run_skipped"
+      : input.status === "coalesced" ? "automation_run_coalesced"
+      : "automation_run_updated";
+    const [message] = await executor
+      .insert(chatMessages)
+      .values({
+        orgId: input.automation.orgId,
+        conversationId: input.automation.chatConversationId,
+        role: "system",
+        kind: "system_event",
+        status: "completed",
+        body: automationRunEventBody({
+          title: input.automation.title,
+          status: input.status,
+          issueId: input.issueId,
+          failureReason: input.failureReason,
+        }),
+        structuredPayload: {
+          eventType,
+          automationId: input.automation.id,
+          runId: input.runId,
+          issueId: input.issueId ?? null,
+          triggerId: input.triggerId ?? null,
+          source: input.source,
+          status: input.status,
+          failureReason: input.failureReason ?? null,
+          occurredAt: now.toISOString(),
+          links: {
+            automation: `/automations/${input.automation.id}`,
+            issue: input.issueId ? `/issues/${input.issueId}` : null,
+          },
+        },
+      })
+      .returning();
+    if (!message) return null;
+    await executor
+      .update(chatConversations)
+      .set({ lastMessageAt: message.createdAt, updatedAt: message.createdAt })
+      .where(eq(chatConversations.id, input.automation.chatConversationId));
+    await executor
+      .update(automationRuns)
+      .set({
+        linkedChatConversationId: input.automation.chatConversationId,
+        startedChatMessageId: input.status === "issue_created" ? message.id : undefined,
+        terminalChatMessageId: input.terminal ? message.id : undefined,
+        lastChatMessageId: message.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(automationRuns.id, input.runId));
+    return message;
+  }
+
   async function createWebhookSecret(
     orgId: string,
     automationId: string,
@@ -554,6 +630,9 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           triggeredAt,
           idempotencyKey: input.idempotencyKey ?? null,
           triggerPayload: input.payload ?? null,
+          linkedChatConversationId: input.automation.outputMode === "chat_output"
+            ? input.automation.chatConversationId
+            : null,
         })
         .returning();
 
@@ -580,7 +659,17 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
             issueId: activeIssue.id,
             nextRunAt,
           }, txDb);
-          return updated ?? createdRun;
+          await postAutomationRunChatEvent({
+            automation: input.automation,
+            runId: createdRun.id,
+            status,
+            source: input.source,
+            triggerId: input.trigger?.id ?? null,
+            issueId: activeIssue.id,
+            terminal: true,
+            executor: txDb,
+          });
+          return await getAutomationRunById(createdRun.id, txDb) ?? updated ?? createdRun;
         }
 
         try {
@@ -626,7 +715,17 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
             issueId: existingIssue.id,
             nextRunAt,
           }, txDb);
-          return updated ?? createdRun;
+          await postAutomationRunChatEvent({
+            automation: input.automation,
+            runId: createdRun.id,
+            status,
+            source: input.source,
+            triggerId: input.trigger?.id ?? null,
+            issueId: existingIssue.id,
+            terminal: true,
+            executor: txDb,
+          });
+          return await getAutomationRunById(createdRun.id, txDb) ?? updated ?? createdRun;
         }
 
         // Keep the dispatch lock until the issue is linked to a queued heartbeat run.
@@ -651,7 +750,16 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           issueId: createdIssue.id,
           nextRunAt,
         }, txDb);
-        return updated ?? createdRun;
+        await postAutomationRunChatEvent({
+          automation: input.automation,
+          runId: createdRun.id,
+          status: "issue_created",
+          source: input.source,
+          triggerId: input.trigger?.id ?? null,
+          issueId: createdIssue.id,
+          executor: txDb,
+        });
+        return await getAutomationRunById(createdRun.id, txDb) ?? updated ?? createdRun;
       } catch (error) {
         if (createdIssue) {
           await txDb.delete(issues).where(eq(issues.id, createdIssue.id));
@@ -669,7 +777,17 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           status: "failed",
           nextRunAt,
         }, txDb);
-        return failed ?? createdRun;
+        await postAutomationRunChatEvent({
+          automation: input.automation,
+          runId: createdRun.id,
+          status: "failed",
+          source: input.source,
+          triggerId: input.trigger?.id ?? null,
+          failureReason,
+          terminal: true,
+          executor: txDb,
+        });
+        return await getAutomationRunById(createdRun.id, txDb) ?? failed ?? createdRun;
       }
     });
 
@@ -715,7 +833,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         listLiveIssueByAutomationIds(orgId, automationIds),
       ]);
       return rows.map((row) => ({
-        ...row,
+        ...toAutomation(row),
         triggers: (triggersByAutomation.get(row.id) ?? []).map((trigger) => ({
           id: trigger.id,
           kind: trigger.kind as AutomationListItem["triggers"][number]["kind"],
@@ -734,10 +852,23 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       const row = await getAutomationById(id);
       if (!row) return null;
       if (row.status === "archived") return null;
-      const [project, assignee, parentIssue, triggers, recentRuns, activeIssue] = await Promise.all([
+      const [project, assignee, parentIssue, chatConversation, triggers, recentRuns, activeIssue] = await Promise.all([
         row.projectId ? db.select().from(projects).where(eq(projects.id, row.projectId)).then((rows) => rows[0] ?? null) : null,
         db.select().from(agents).where(eq(agents.id, row.assigneeAgentId)).then((rows) => rows[0] ?? null),
         row.parentIssueId ? issueSvc.getById(row.parentIssueId) : null,
+        row.chatConversationId
+          ? db
+            .select({
+              id: chatConversations.id,
+              title: chatConversations.title,
+              status: chatConversations.status,
+              preferredAgentId: chatConversations.preferredAgentId,
+              lastMessageAt: chatConversations.lastMessageAt,
+            })
+            .from(chatConversations)
+            .where(eq(chatConversations.id, row.chatConversationId))
+            .then((rows) => rows[0] ?? null)
+          : null,
         db.select().from(automationTriggers).where(eq(automationTriggers.automationId, row.id)).orderBy(asc(automationTriggers.createdAt)),
         db
           .select({
@@ -751,6 +882,10 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
             idempotencyKey: automationRuns.idempotencyKey,
             triggerPayload: automationRuns.triggerPayload,
             linkedIssueId: automationRuns.linkedIssueId,
+            linkedChatConversationId: automationRuns.linkedChatConversationId,
+            startedChatMessageId: automationRuns.startedChatMessageId,
+            terminalChatMessageId: automationRuns.terminalChatMessageId,
+            lastChatMessageId: automationRuns.lastChatMessageId,
             coalescedIntoRunId: automationRuns.coalescedIntoRunId,
             failureReason: automationRuns.failureReason,
             completedAt: automationRuns.completedAt,
@@ -763,10 +898,15 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
             issueStatus: issues.status,
             issuePriority: issues.priority,
             issueUpdatedAt: issues.updatedAt,
+            chatTitle: chatConversations.title,
+            chatStatus: chatConversations.status,
+            chatPreferredAgentId: chatConversations.preferredAgentId,
+            chatLastMessageAt: chatConversations.lastMessageAt,
           })
           .from(automationRuns)
           .leftJoin(automationTriggers, eq(automationRuns.triggerId, automationTriggers.id))
           .leftJoin(issues, eq(automationRuns.linkedIssueId, issues.id))
+          .leftJoin(chatConversations, eq(automationRuns.linkedChatConversationId, chatConversations.id))
           .where(eq(automationRuns.automationId, row.id))
           .orderBy(desc(automationRuns.createdAt))
           .limit(25)
@@ -782,6 +922,10 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
               idempotencyKey: run.idempotencyKey,
               triggerPayload: run.triggerPayload as Record<string, unknown> | null,
               linkedIssueId: run.linkedIssueId,
+              linkedChatConversationId: run.linkedChatConversationId,
+              startedChatMessageId: run.startedChatMessageId,
+              terminalChatMessageId: run.terminalChatMessageId,
+              lastChatMessageId: run.lastChatMessageId,
               coalescedIntoRunId: run.coalescedIntoRunId,
               failureReason: run.failureReason,
               completedAt: run.completedAt,
@@ -797,6 +941,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
                   updatedAt: run.issueUpdatedAt ?? run.updatedAt,
                 }
                 : null,
+              linkedChatConversation: linkedChatConversationFromRow(run),
               trigger: run.triggerId
                 ? {
                   id: run.triggerId,
@@ -810,10 +955,11 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       ]);
 
       return {
-        ...row,
+        ...toAutomation(row),
         project,
         assignee,
         parentIssue,
+        chatConversation,
         triggers: triggers as AutomationTrigger[],
         recentRuns,
         activeIssue,
@@ -825,6 +971,13 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       await assertAssignableAgent(orgId, input.assigneeAgentId);
       if (input.goalId) await assertGoal(orgId, input.goalId);
       if (input.parentIssueId) await assertParentIssue(orgId, input.parentIssueId);
+      await assertChatOutputDestination({
+        orgId,
+        outputMode: input.outputMode,
+        chatConversationId: input.chatConversationId,
+        assigneeAgentId: input.assigneeAgentId,
+        allowAssigneeChatMismatch: input.allowAssigneeChatMismatch,
+      });
       const [created] = await db
         .insert(automations)
         .values({
@@ -835,6 +988,8 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           title: input.title,
           description: input.description ?? null,
           assigneeAgentId: input.assigneeAgentId,
+          outputMode: input.outputMode,
+          chatConversationId: input.chatConversationId ?? null,
           priority: input.priority,
           status: input.status,
           concurrencyPolicy: input.concurrencyPolicy,
@@ -845,7 +1000,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           updatedByUserId: actor.userId ?? null,
         })
         .returning();
-      return created;
+      return toAutomation(created);
     },
 
     update: async (id: string, patch: UpdateAutomation, actor: Actor): Promise<Automation | null> => {
@@ -853,10 +1008,19 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       if (!existing) return null;
       const nextProjectId = patch.projectId === undefined ? existing.projectId : patch.projectId;
       const nextAssigneeAgentId = patch.assigneeAgentId ?? existing.assigneeAgentId;
+      const nextOutputMode = patch.outputMode ?? existing.outputMode;
+      const nextChatConversationId = patch.chatConversationId === undefined ? existing.chatConversationId : patch.chatConversationId;
       if (nextProjectId) await assertProject(existing.orgId, nextProjectId);
       if (patch.assigneeAgentId) await assertAssignableAgent(existing.orgId, nextAssigneeAgentId);
       if (patch.goalId) await assertGoal(existing.orgId, patch.goalId);
       if (patch.parentIssueId) await assertParentIssue(existing.orgId, patch.parentIssueId);
+      await assertChatOutputDestination({
+        orgId: existing.orgId,
+        outputMode: nextOutputMode,
+        chatConversationId: nextChatConversationId,
+        assigneeAgentId: nextAssigneeAgentId,
+        allowAssigneeChatMismatch: patch.allowAssigneeChatMismatch,
+      });
       const [updated] = await db
         .update(automations)
         .set({
@@ -866,6 +1030,8 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           title: patch.title ?? existing.title,
           description: patch.description === undefined ? existing.description : patch.description,
           assigneeAgentId: nextAssigneeAgentId,
+          outputMode: nextOutputMode,
+          chatConversationId: nextOutputMode === "chat_output" ? nextChatConversationId : null,
           priority: patch.priority ?? existing.priority,
           status: patch.status ?? existing.status,
           concurrencyPolicy: patch.concurrencyPolicy ?? existing.concurrencyPolicy,
@@ -876,7 +1042,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         })
         .where(eq(automations.id, id))
         .returning();
-      return updated ?? null;
+      return updated ? toAutomation(updated) : null;
     },
 
     delete: async (id: string): Promise<Automation | null> => {
@@ -896,7 +1062,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         await tx.delete(automations).where(eq(automations.id, id));
       });
 
-      return existing;
+      return toAutomation(existing);
     },
 
     createTrigger: async (
@@ -1136,6 +1302,10 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           idempotencyKey: automationRuns.idempotencyKey,
           triggerPayload: automationRuns.triggerPayload,
           linkedIssueId: automationRuns.linkedIssueId,
+          linkedChatConversationId: automationRuns.linkedChatConversationId,
+          startedChatMessageId: automationRuns.startedChatMessageId,
+          terminalChatMessageId: automationRuns.terminalChatMessageId,
+          lastChatMessageId: automationRuns.lastChatMessageId,
           coalescedIntoRunId: automationRuns.coalescedIntoRunId,
           failureReason: automationRuns.failureReason,
           completedAt: automationRuns.completedAt,
@@ -1148,10 +1318,15 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           issueStatus: issues.status,
           issuePriority: issues.priority,
           issueUpdatedAt: issues.updatedAt,
+          chatTitle: chatConversations.title,
+          chatStatus: chatConversations.status,
+          chatPreferredAgentId: chatConversations.preferredAgentId,
+          chatLastMessageAt: chatConversations.lastMessageAt,
         })
         .from(automationRuns)
         .leftJoin(automationTriggers, eq(automationRuns.triggerId, automationTriggers.id))
         .leftJoin(issues, eq(automationRuns.linkedIssueId, issues.id))
+        .leftJoin(chatConversations, eq(automationRuns.linkedChatConversationId, chatConversations.id))
         .where(eq(automationRuns.automationId, automationId))
         .orderBy(desc(automationRuns.createdAt))
         .limit(cappedLimit);
@@ -1167,6 +1342,10 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         idempotencyKey: row.idempotencyKey,
         triggerPayload: row.triggerPayload as Record<string, unknown> | null,
         linkedIssueId: row.linkedIssueId,
+        linkedChatConversationId: row.linkedChatConversationId,
+        startedChatMessageId: row.startedChatMessageId,
+        terminalChatMessageId: row.terminalChatMessageId,
+        lastChatMessageId: row.lastChatMessageId,
         coalescedIntoRunId: row.coalescedIntoRunId,
         failureReason: row.failureReason,
         completedAt: row.completedAt,
@@ -1182,6 +1361,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
             updatedAt: row.issueUpdatedAt ?? row.updatedAt,
           }
           : null,
+        linkedChatConversation: linkedChatConversationFromRow(row),
         trigger: row.triggerId
           ? {
             id: row.triggerId,
@@ -1264,24 +1444,54 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           id: issues.id,
           status: issues.status,
           originKind: issues.originKind,
+          originId: issues.originId,
           originRunId: issues.originRunId,
         })
         .from(issues)
         .where(eq(issues.id, issueId))
         .then((rows) => rows[0] ?? null);
       if (!issue || issue.originKind !== "automation_execution" || !issue.originRunId) return null;
+      const automation = issue.originId ? await getAutomationById(issue.originId) : null;
       if (issue.status === "done") {
-        return finalizeRun(issue.originRunId, {
+        const run = await finalizeRun(issue.originRunId, {
           status: "completed",
           completedAt: new Date(),
         });
+        if (automation) {
+          await postAutomationRunChatEvent({
+            automation,
+            runId: issue.originRunId,
+            status: "completed",
+            source: run?.source ?? "manual",
+            triggerId: run?.triggerId ?? null,
+            issueId: issue.id,
+            terminal: true,
+          });
+          return getAutomationRunById(issue.originRunId);
+        }
+        return run;
       }
       if (issue.status === "blocked" || issue.status === "cancelled") {
-        return finalizeRun(issue.originRunId, {
+        const failureReason = `Execution issue moved to ${issue.status}`;
+        const run = await finalizeRun(issue.originRunId, {
           status: "failed",
-          failureReason: `Execution issue moved to ${issue.status}`,
+          failureReason,
           completedAt: new Date(),
         });
+        if (automation) {
+          await postAutomationRunChatEvent({
+            automation,
+            runId: issue.originRunId,
+            status: "failed",
+            source: run?.source ?? "manual",
+            triggerId: run?.triggerId ?? null,
+            issueId: issue.id,
+            failureReason,
+            terminal: true,
+          });
+          return getAutomationRunById(issue.originRunId);
+        }
+        return run;
       }
       return null;
     },

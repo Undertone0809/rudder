@@ -35,6 +35,31 @@ describe("langfuse helpers", () => {
     });
   });
 
+  it("does not redact whole prompt strings for non-secret text that resembles key names", () => {
+    const prompt = [
+      "Use Workspaces for disk-backed shared files.",
+      "Document examples may mention api_key without containing a secret.",
+    ].join("\n");
+
+    expect(redactLangfuseValue(prompt)).toBe(prompt);
+  });
+
+  it("redacts only secret-like substrings in plain prompt strings", () => {
+    expect(
+      redactLangfuseValue(
+        "Use key sk-proj-abcdefghijklmnopqrstuvwxyz0123456789 for the request.",
+      ),
+    ).toBe("Use key ***REDACTED*** for the request.");
+
+    expect(redactLangfuseValue("api_key=abcdefghijklmnopqrstuvwxyz")).toBe(
+      "api_key=***REDACTED***",
+    );
+
+    expect(redactLangfuseValue("Authorization: Bearer abcdefghijklmnopqrstuvwxyz")).toBe(
+      "Authorization: Bearer ***REDACTED***",
+    );
+  });
+
   it("normalizes boolean and string scores into Langfuse-compatible values", () => {
     expect(normalizeLangfuseScoreValue(true)).toEqual({ value: 1, dataType: "BOOLEAN" });
     expect(normalizeLangfuseScoreValue(0.42)).toEqual({ value: 0.42, dataType: "NUMERIC" });

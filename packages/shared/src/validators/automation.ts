@@ -3,11 +3,12 @@ import {
   ISSUE_PRIORITIES,
   AUTOMATION_CATCH_UP_POLICIES,
   AUTOMATION_CONCURRENCY_POLICIES,
+  AUTOMATION_OUTPUT_MODES,
   AUTOMATION_STATUSES,
   AUTOMATION_TRIGGER_SIGNING_MODES,
 } from "../constants.js";
 
-export const createAutomationSchema = z.object({
+const automationBodySchema = z.object({
   projectId: z.string().uuid().optional().nullable().default(null),
   goalId: z.string().uuid().optional().nullable(),
   parentIssueId: z.string().uuid().optional().nullable(),
@@ -18,11 +19,33 @@ export const createAutomationSchema = z.object({
   status: z.enum(AUTOMATION_STATUSES).optional().default("active"),
   concurrencyPolicy: z.enum(AUTOMATION_CONCURRENCY_POLICIES).optional().default("coalesce_if_active"),
   catchUpPolicy: z.enum(AUTOMATION_CATCH_UP_POLICIES).optional().default("skip_missed"),
+  outputMode: z.enum(AUTOMATION_OUTPUT_MODES).optional().default("track_issue"),
+  chatConversationId: z.string().uuid().optional().nullable().default(null),
+  allowAssigneeChatMismatch: z.boolean().optional().default(false),
 });
+
+const requireChatConversationForChatOutput = (
+  value: { outputMode?: string; chatConversationId?: string | null },
+  ctx: z.RefinementCtx,
+) => {
+  if (value.outputMode === "chat_output" && !value.chatConversationId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "chatConversationId is required when outputMode is chat_output",
+      path: ["chatConversationId"],
+    });
+  }
+};
+
+export const createAutomationSchema = automationBodySchema.superRefine(
+  requireChatConversationForChatOutput,
+);
 
 export type CreateAutomation = z.infer<typeof createAutomationSchema>;
 
-export const updateAutomationSchema = createAutomationSchema.partial();
+export const updateAutomationSchema = automationBodySchema.partial().superRefine(
+  requireChatConversationForChatOutput,
+);
 export type UpdateAutomation = z.infer<typeof updateAutomationSchema>;
 
 const baseTriggerSchema = z.object({

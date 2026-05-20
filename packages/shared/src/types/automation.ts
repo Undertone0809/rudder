@@ -25,6 +25,14 @@ export interface AutomationIssueSummary {
   updatedAt: Date;
 }
 
+export interface AutomationChatConversationSummary {
+  id: string;
+  title: string;
+  status: string;
+  preferredAgentId: string | null;
+  lastMessageAt: Date | null;
+}
+
 export interface Automation {
   id: string;
   orgId: string;
@@ -34,6 +42,8 @@ export interface Automation {
   title: string;
   description: string | null;
   assigneeAgentId: string;
+  outputMode: "track_issue" | "chat_output";
+  chatConversationId: string | null;
   priority: string;
   status: string;
   concurrencyPolicy: string;
@@ -84,6 +94,10 @@ export interface AutomationRun {
   idempotencyKey: string | null;
   triggerPayload: Record<string, unknown> | null;
   linkedIssueId: string | null;
+  linkedChatConversationId: string | null;
+  startedChatMessageId: string | null;
+  terminalChatMessageId: string | null;
+  lastChatMessageId: string | null;
   coalescedIntoRunId: string | null;
   failureReason: string | null;
   completedAt: Date | null;
@@ -100,6 +114,7 @@ export interface AutomationDetail extends Automation {
   project: AutomationProjectSummary | null;
   assignee: AutomationAgentSummary | null;
   parentIssue: AutomationIssueSummary | null;
+  chatConversation: AutomationChatConversationSummary | null;
   triggers: AutomationTrigger[];
   recentRuns: AutomationRunSummary[];
   activeIssue: AutomationIssueSummary | null;
@@ -107,6 +122,7 @@ export interface AutomationDetail extends Automation {
 
 export interface AutomationRunSummary extends AutomationRun {
   linkedIssue: AutomationIssueSummary | null;
+  linkedChatConversation: AutomationChatConversationSummary | null;
   trigger: Pick<AutomationTrigger, "id" | "kind" | "label"> | null;
 }
 

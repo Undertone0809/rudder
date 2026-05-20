@@ -505,6 +505,13 @@
       "when": 1778820186149,
       "tag": "0071_regular_lorna_dane",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1779207406019,
+      "tag": "0072_overjoyed_red_hulk",
+      "breakpoints": true
     }
   ]
 }

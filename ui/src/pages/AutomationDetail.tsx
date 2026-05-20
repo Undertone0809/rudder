@@ -8,6 +8,7 @@ import {
   CirclePause,
   Clock3,
   Copy,
+  MessageSquare,
   Play,
   RefreshCw,
   Repeat,
@@ -20,6 +21,7 @@ import { automationsApi, type AutomationTriggerResponse, type RotateAutomationTr
 import { heartbeatsApi } from "../api/heartbeats";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import { agentsApi } from "../api/agents";
+import { chatsApi } from "../api/chats";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { projectsApi } from "../api/projects";
@@ -97,6 +99,8 @@ export function AutomationDetail() {
     priority: "medium",
     concurrencyPolicy: "coalesce_if_active",
     catchUpPolicy: "skip_missed",
+    outputMode: "track_issue",
+    chatConversationId: "",
   });
 
   const { data: automation, isLoading, error } = useQuery({
@@ -144,6 +148,11 @@ export function AutomationDetail() {
     queryFn: () => projectsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
+  const { data: chats } = useQuery({
+    queryKey: queryKeys.chats.list(selectedOrganizationId!, "active"),
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
+    enabled: !!selectedOrganizationId,
+  });
   const { data: issues } = useQuery({
     queryKey: queryKeys.issues.list(selectedOrganizationId!),
     queryFn: () => issuesApi.list(selectedOrganizationId!),
@@ -171,6 +180,8 @@ export function AutomationDetail() {
             priority: automation.priority,
             concurrencyPolicy: automation.concurrencyPolicy,
             catchUpPolicy: automation.catchUpPolicy,
+            outputMode: automation.outputMode,
+            chatConversationId: automation.chatConversationId ?? "",
           }
         : null,
     [automation],
@@ -184,12 +195,15 @@ export function AutomationDetail() {
       editDraft.assigneeAgentId !== automationDefaults.assigneeAgentId ||
       editDraft.priority !== automationDefaults.priority ||
       editDraft.concurrencyPolicy !== automationDefaults.concurrencyPolicy ||
-      editDraft.catchUpPolicy !== automationDefaults.catchUpPolicy
+      editDraft.catchUpPolicy !== automationDefaults.catchUpPolicy ||
+      editDraft.outputMode !== automationDefaults.outputMode ||
+      editDraft.chatConversationId !== automationDefaults.chatConversationId
     );
   }, [editDraft, automationDefaults]);
   const canAutoSaveAutomation = Boolean(
     editDraft.title.trim() &&
-    editDraft.assigneeAgentId,
+    editDraft.assigneeAgentId &&
+    (editDraft.outputMode !== "chat_output" || editDraft.chatConversationId),
   );
   const editDraftKey = useMemo(
     () => JSON.stringify({
@@ -200,6 +214,8 @@ export function AutomationDetail() {
       priority: editDraft.priority,
       concurrencyPolicy: editDraft.concurrencyPolicy,
       catchUpPolicy: editDraft.catchUpPolicy,
+      outputMode: editDraft.outputMode,
+      chatConversationId: editDraft.outputMode === "chat_output" ? editDraft.chatConversationId : null,
     }),
     [editDraft],
   );
@@ -253,6 +269,7 @@ export function AutomationDetail() {
         ...draft,
         projectId: draft.projectId || null,
         description: draft.description.trim() || null,
+        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId : null,
       });
     },
     onSuccess: async () => {
@@ -294,7 +311,7 @@ export function AutomationDetail() {
 
   const runAutomation = useMutation({
     mutationFn: () => automationsApi.run(automationId!),
-    onSuccess: async () => {
+    onSuccess: async (run) => {
       pushToast({ title: "Automation run started", tone: "success" });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.detail(automationId!) }),
@@ -302,6 +319,9 @@ export function AutomationDetail() {
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.list(selectedOrganizationId!) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.automations.activity(selectedOrganizationId!, automationId!) }),
       ]);
+      if (run.linkedChatConversationId && run.lastChatMessageId) {
+        navigate(`/messenger/chat/${run.linkedChatConversationId}`);
+      }
     },
     onError: (error) => {
       pushToast({
@@ -587,8 +607,20 @@ export function AutomationDetail() {
       })),
     [projects],
   );
+  const chatOptions = useMemo<InlineEntityOption[]>(
+    () =>
+      (chats ?? []).map((chat) => ({
+        id: chat.id,
+        label: chat.title,
+        searchText: chat.summary ?? chat.latestReplyPreview ?? "",
+      })),
+    [chats],
+  );
   const currentAssignee = editDraft.assigneeAgentId ? agentById.get(editDraft.assigneeAgentId) ?? null : null;
   const currentProject = editDraft.projectId ? projectById.get(editDraft.projectId) ?? null : null;
+  const currentChat = editDraft.chatConversationId
+    ? (chats ?? []).find((chat) => chat.id === editDraft.chatConversationId) ?? automation?.chatConversation ?? null
+    : null;
   const triggerById = useMemo(
     () => new Map((automation?.triggers ?? []).map((trigger) => [trigger.id, trigger])),
     [automation?.triggers],
@@ -737,6 +769,13 @@ export function AutomationDetail() {
         details.push(
           <Link key="issue" to={`/issues/${run.linkedIssue.identifier ?? run.linkedIssue.id}`} className="font-medium text-foreground hover:underline">
             {run.linkedIssue.identifier ?? run.linkedIssue.title}
+          </Link>,
+        );
+      }
+      if (run.linkedChatConversation) {
+        details.push(
+          <Link key="chat" to={`/messenger/chat/${run.linkedChatConversation.id}`} className="font-medium text-foreground hover:underline">
+            {run.linkedChatConversation.title}
           </Link>,
         );
       }
@@ -1013,13 +1052,61 @@ export function AutomationDetail() {
 
               <div className="space-y-2.5">
                 <Label className="text-xs">Run output</Label>
-                <div className="flex min-h-12 items-center gap-3 rounded-md border border-foreground/60 bg-accent/50 px-3 py-2 text-sm">
-                  <Check className="h-4 w-4 shrink-0" />
+                <Select
+                  value={editDraft.outputMode}
+                  onValueChange={(outputMode) => setEditDraft((current) => ({
+                    ...current,
+                    outputMode,
+                    chatConversationId: outputMode === "chat_output" ? current.chatConversationId : "",
+                  }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="track_issue">Track as issue</SelectItem>
+                    <SelectItem value="chat_output">Send to chat</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex min-h-12 items-center gap-3 rounded-md border border-border/80 bg-background/50 px-3 py-2 text-sm">
+                  {editDraft.outputMode === "chat_output" ? (
+                    <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <Check className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  )}
                   <div className="min-w-0">
-                    <div className="font-medium">Track as issue</div>
-                    <div className="truncate text-xs text-muted-foreground">Each run opens board-tracked work</div>
+                    <div className="font-medium">{editDraft.outputMode === "chat_output" ? "Send to chat" : "Track as issue"}</div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {editDraft.outputMode === "chat_output"
+                        ? (currentChat ? currentChat.title : "Select a chat destination")
+                        : "Each run opens board-tracked work"}
+                    </div>
                   </div>
                 </div>
+                {editDraft.outputMode === "chat_output" ? (
+                  <InlineEntitySelector
+                    value={editDraft.chatConversationId}
+                    options={chatOptions}
+                    placeholder="Select chat"
+                    noneLabel="Select chat"
+                    searchPlaceholder="Search chats..."
+                    emptyMessage="No active chats found."
+                    className="min-h-10 w-full justify-between bg-transparent px-3 py-2 text-sm font-medium"
+                    onChange={(chatConversationId) => setEditDraft((current) => ({ ...current, chatConversationId }))}
+                    renderTriggerValue={(option) =>
+                      option && currentChat ? (
+                        <SidebarSelectValue>
+                          <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate">{option.label}</span>
+                        </SidebarSelectValue>
+                      ) : (
+                        <SidebarSelectValue>
+                          <span className="text-muted-foreground">Select chat</span>
+                        </SidebarSelectValue>
+                      )
+                    }
+                  />
+                ) : null}
               </div>
 
               <div className="space-y-2.5">

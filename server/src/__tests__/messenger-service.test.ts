@@ -457,7 +457,7 @@ describe("messengerService and issue follows", () => {
     expect(afterVisibleContent?.needsAttention).toBe(true);
     expect(afterVisibleContent?.latestReplyPreview).toBe("First visible assistant token");
 
-    await chatSvc.markRead(conversationId, orgId, userId, new Date());
+    await chatSvc.markRead(conversationId, orgId, userId, new Date("2999-01-01T00:00:00.000Z"));
     await chatSvc.updateMessage(conversationId, placeholder.id, { status: "completed" });
 
     const [afterStatusOnlyUpdate] = await chatSvc.list(orgId, { status: "active" }, userId);
@@ -505,6 +505,99 @@ describe("messengerService and issue follows", () => {
     expect(afterUnread?.unreadCount).toBe(1);
     expect(afterUnread?.isUnread).toBe(true);
     expect(afterUnread?.needsAttention).toBe(true);
+  });
+
+  it("clears chat attention after the current issue proposal approval is resolved", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-chat-resolved-proposal-attention";
+    const revisionApprovalId = randomUUID();
+    const currentApprovalId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Resolved Proposal Attention Org",
+      urlKey: deriveOrganizationUrlKey("Chat Resolved Proposal Attention Org"),
+      issuePrefix: `CP${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const conversation = await chatSvc.create(orgId, {
+      title: "Resolve proposal attention",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+
+    await db.insert(approvals).values([
+      {
+        id: revisionApprovalId,
+        orgId,
+        type: "chat_issue_creation",
+        status: "revision_requested",
+        requestedByUserId: userId,
+        decisionNote: "Add architecture details.",
+        payload: {
+          chatConversationId: conversation!.id,
+          proposedIssue: {
+            title: "Initial proposal",
+            description: "Needs more detail.",
+            priority: "medium",
+          },
+        },
+      },
+      {
+        id: currentApprovalId,
+        orgId,
+        type: "chat_issue_creation",
+        status: "pending",
+        requestedByUserId: userId,
+        payload: {
+          chatConversationId: conversation!.id,
+          proposedIssue: {
+            title: "Detailed proposal",
+            description: "Includes architecture and rollout details.",
+            priority: "medium",
+          },
+        },
+      },
+    ]);
+    await db.insert(chatMessages).values([
+      {
+        orgId,
+        conversationId: conversation!.id,
+        role: "assistant",
+        kind: "issue_proposal",
+        body: "Initial proposal",
+        approvalId: revisionApprovalId,
+      },
+      {
+        orgId,
+        conversationId: conversation!.id,
+        role: "assistant",
+        kind: "issue_proposal",
+        body: "Detailed proposal",
+        approvalId: currentApprovalId,
+      },
+    ]);
+    await chatSvc.markRead(conversation!.id, orgId, userId, new Date("2999-01-01T00:00:00.000Z"));
+
+    const [withPendingApproval] = await chatSvc.list(orgId, { status: "active" }, userId);
+    expect(withPendingApproval?.unreadCount).toBe(0);
+    expect(withPendingApproval?.needsAttention).toBe(true);
+
+    await db
+      .update(approvals)
+      .set({
+        status: "approved",
+        decidedByUserId: userId,
+        decidedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(approvals.id, currentApprovalId));
+
+    const [afterCurrentApprovalResolved] = await chatSvc.list(orgId, { status: "active" }, userId);
+    expect(afterCurrentApprovalResolved?.unreadCount).toBe(0);
+    expect(afterCurrentApprovalResolved?.needsAttention).toBe(false);
   });
 
   it("searches chat conversations by title, summary, and message body without leaking organizations", async () => {

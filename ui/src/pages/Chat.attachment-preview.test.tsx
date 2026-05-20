@@ -8,6 +8,11 @@ import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { Chat } from "./Chat";
+import {
+  resetChatPendingAttachmentsForTests,
+  resolveChatPendingAttachmentScopeKey,
+  updateChatPendingAttachmentsForScope,
+} from "@/lib/chat-pending-attachments";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -26,6 +31,7 @@ const mockState = vi.hoisted(() => ({
   mutations: [] as unknown[],
   navigate: vi.fn(),
   pushToast: vi.fn(),
+  sendMessageStream: vi.fn(),
   setBreadcrumbs: vi.fn(),
   streamDrafts: {} as Record<string, ChatStreamDraft>,
 }));
@@ -123,6 +129,19 @@ vi.mock("@/context/ChatGenerationContext", () => ({
     setStreamDraftForChat: vi.fn(),
     streamDrafts: mockState.streamDrafts,
   }),
+}));
+
+vi.mock("@/api/chats", () => ({
+  chatsApi: {
+    create: vi.fn(),
+    get: vi.fn(),
+    update: vi.fn(async (_chatId: string, patch: Partial<ChatConversation>) => ({
+      ...mockState.conversations[0],
+      ...patch,
+    })),
+    stopMessageStream: vi.fn(async () => undefined),
+    sendMessageStream: mockState.sendMessageStream,
+  },
 }));
 
 vi.mock("@/components/MarkdownEditor", async () => {
@@ -428,6 +447,7 @@ function renderChat() {
 
 beforeEach(() => {
   installLocalStorageMock();
+  resetChatPendingAttachmentsForTests();
   mockState.conversationId = "chat-1";
   mockState.conversations = [
     chat({ id: "chat-1", title: "Pending proposal chat" }),
@@ -451,6 +471,31 @@ beforeEach(() => {
   mockState.mutations = [];
   mockState.navigate.mockReset();
   mockState.pushToast.mockReset();
+  mockState.sendMessageStream.mockReset();
+  mockState.sendMessageStream.mockImplementation(async (chatId: string, body: string, options: {
+    onEvent: (event: unknown) => void | Promise<void>;
+  }) => {
+    await options.onEvent({
+      type: "ack",
+      userMessage: message({
+        id: "sent-user-message",
+        conversationId: chatId,
+        body,
+        createdAt: new Date("2026-05-12T09:04:00.000Z"),
+      }),
+    });
+    await options.onEvent({
+      type: "final",
+      messages: [
+        message({
+          id: "sent-user-message",
+          conversationId: chatId,
+          body,
+          createdAt: new Date("2026-05-12T09:04:00.000Z"),
+        }),
+      ],
+    });
+  });
   mockState.setBreadcrumbs.mockReset();
   mockState.streamDrafts = {};
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -562,6 +607,58 @@ describe("Chat ask_user panel", () => {
     expect(container.textContent).toContain("Answered");
     expect(container.textContent).not.toContain("Answering the requested input:");
     expect(container.querySelector("[data-testid='chat-composer-toolbar']")).not.toBeNull();
+  });
+
+  it("lets Other answers include pending attachments", async () => {
+    const attachment = new File(["log output"], "failure-log.txt", { type: "text/plain" });
+    updateChatPendingAttachmentsForScope(
+      resolveChatPendingAttachmentScopeKey("org-1", "chat-1"),
+      () => [attachment],
+    );
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingAskUser(),
+      ],
+    };
+
+    const { container } = renderChat();
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+
+    const clickButton = (label: string) => {
+      const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
+        candidate.textContent?.includes(label)
+      );
+      expect(button).not.toBeUndefined();
+      act(() => {
+        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    };
+
+    clickButton("Other");
+    expect(panel?.textContent).toContain("Attach");
+    expect(panel?.textContent).toContain("failure-log.txt");
+    expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).not.toBeNull();
+
+    const textarea = panel?.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+    act(() => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "This needs the attached log.");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      clickButton("Submit answer");
+      await Promise.resolve();
+    });
+
+    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(mockState.sendMessageStream.mock.calls[0]?.[2]).toMatchObject({
+      files: [attachment],
+    });
+    expect(container.querySelector("[data-testid='chat-ask-user-pending-attachment']")).toBeNull();
   });
 
   it("renders persisted multiline Other answers without dropping bullet lines", () => {

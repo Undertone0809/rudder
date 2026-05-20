@@ -912,6 +912,23 @@ function approvalNeedsAction(approval: Approval | null | undefined) {
   return approval?.status === "pending" || approval?.status === "revision_requested";
 }
 
+export function buildChatProposalRevisionPrompt(input: {
+  proposalTitle?: string | null;
+  feedback: string;
+}) {
+  const title = input.proposalTitle?.trim();
+  return [
+    title
+      ? `Please revise the proposal "${title}" based on the feedback below.`
+      : "Please revise the current proposal based on the feedback below.",
+    "",
+    "Return a new proposal for review. Do not create the issue or apply the change yet.",
+    "",
+    "Requested changes:",
+    input.feedback.trim(),
+  ].join("\n");
+}
+
 function issueProposalFromMessage(message: ChatMessage) {
   const payload = message.structuredPayload;
   if (!payload) return null;

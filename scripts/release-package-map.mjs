@@ -103,6 +103,44 @@ function rewriteInternalDeps(deps, internalPackageNames, value) {
   return next;
 }
 
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function addDefaultExportCondition(exportsObj) {
+  if (typeof exportsObj !== "object" || exportsObj === null || Array.isArray(exportsObj)) {
+    return;
+  }
+
+  for (const key of Object.keys(exportsObj)) {
+    const entry = exportsObj[key];
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      if (entry.import && !entry.default) {
+        entry.default = entry.import;
+      }
+      addDefaultExportCondition(entry);
+    }
+  }
+}
+
+function applyPublishConfigFields(pkg) {
+  if (!pkg.publishConfig) return pkg;
+
+  const next = { ...pkg };
+  if (pkg.publishConfig.exports) {
+    next.exports = cloneJson(pkg.publishConfig.exports);
+    addDefaultExportCondition(next.exports);
+  }
+  if (pkg.publishConfig.main) {
+    next.main = pkg.publishConfig.main;
+  }
+  if (pkg.publishConfig.types) {
+    next.types = pkg.publishConfig.types;
+  }
+
+  return next;
+}
+
 function setPackageManifestVersion(packagePath, version) {
   if (!existsSync(packagePath)) return;
   const pkg = readJson(packagePath);
@@ -127,7 +165,7 @@ function setVersion(version, { publish = false } = {}) {
       devDependencies: rewriteInternalDeps(pkg.pkg.devDependencies, internalPackageNames, internalDependencyValue),
     };
 
-    writeJson(pkg.pkgPath, nextPkg);
+    writeJson(pkg.pkgPath, publish ? applyPublishConfigFields(nextPkg) : nextPkg);
   }
 
   setPackageManifestVersion(join(repoRoot, "desktop", "package.json"), version);

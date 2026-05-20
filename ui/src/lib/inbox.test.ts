@@ -283,7 +283,7 @@ describe("inbox helpers", () => {
     expect(issues).toHaveLength(2);
   });
 
-  it("shows recent approvals in updated order and unread approvals as actionable only", () => {
+  it("shows recent approvals in updated order and treats only pending approvals as actionable", () => {
     const approvals = [
       makeApprovalWithTimestamps("approval-approved", "approved", "2026-03-11T02:00:00.000Z"),
       makeApprovalWithTimestamps("approval-pending", "pending", "2026-03-11T01:00:00.000Z"),
@@ -300,10 +300,10 @@ describe("inbox helpers", () => {
       "approval-pending",
     ]);
     expect(getApprovalsForTab(approvals, "unread", "all").map((approval) => approval.id)).toEqual([
-      "approval-revision",
       "approval-pending",
     ]);
     expect(getApprovalsForTab(approvals, "all", "resolved").map((approval) => approval.id)).toEqual([
+      "approval-revision",
       "approval-approved",
     ]);
   });

@@ -227,8 +227,9 @@ export function ApprovalDetailDialog({
   });
 
   const linkedAgentId = typeof payload.agentId === "string" ? payload.agentId : null;
-  const isActionable = approval?.status === "pending" || approval?.status === "revision_requested";
+  const isActionable = approval?.status === "pending";
   const isBudgetApproval = approval?.type === "budget_override_required";
+  const isChatReviewApproval = approval?.type === "chat_issue_creation" || approval?.type === "chat_operation";
   const chatIssueLabelsRequired =
     approval?.type === "chat_issue_creation"
     && chatIssueApprovalNeedsLabelSelection(payload, labels, selectedChatIssueLabelIds);
@@ -466,11 +467,17 @@ export function ApprovalDetailDialog({
                         onClick={() => revisionMutation.mutate()}
                         disabled={revisionMutation.isPending}
                       >
-                        Request revision
-                      </Button>
+                          Request changes
+                        </Button>
+                      ) : null}
+
+                    {approval.status === "revision_requested" && isChatReviewApproval ? (
+                      <p className="text-sm text-muted-foreground">
+                        Waiting for the agent to submit a revised proposal in the source chat.
+                      </p>
                     ) : null}
 
-                    {approval.status === "revision_requested" ? (
+                    {approval.status === "revision_requested" && !isChatReviewApproval ? (
                       <Button
                         size="sm"
                         variant="outline"

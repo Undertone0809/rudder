@@ -6,9 +6,10 @@ description: |
   - "为什么这个 agent 执行失败", "run 出错了"
   - "transcript 怎么看", "run 的日志"
   - a run ID or run ID prefix
+  - "最近 30 个 run", "recent runs", "run 质量", "分析这个 org 最近运行"
   - agent execution, tool calls, stdout/stderr 调试
 
-  Prefer this skill whenever the user wants to understand what happened during a run, even if they only have a partial run ID or only know the agent/runtime. Do not default to raw SQL first; use Rudder's run-intelligence path first, then fall back only if needed.
+  Prefer this skill whenever the user wants to understand what happened during one run or a recent batch of runs, even if they only have a partial run ID, org name, agent/runtime, or timeframe. Do not default to raw SQL first; use Rudder's run-intelligence path first, then fall back only if needed.
 ---
 
 # Debug Run Transcript
@@ -62,12 +63,52 @@ node cli/node_modules/tsx/dist/cli.mjs ...
 If the user gives:
 - a full run ID: use it directly
 - a short prefix like `7d28669d`: treat it as a prefix
+- a recent-run batch request like "prod Z Studio 最近 30 个 run": treat it as
+  batch mode and identify the org/runtime/time window before deep-diving
 - only an agent or timeframe: first help locate likely runs before deeper analysis
 
 If the user provides no identifying info at all, ask for at least one of:
 - run ID or prefix
 - agent name
 - approximate time window
+
+### 1.1 Batch mode for recent runs
+
+Use batch mode when the user asks for recent N runs, org-level run quality,
+efficiency, repeated failures, automation output quality, or "有什么可以优化".
+
+Batch mode is not the same as a Codex session benchmark. Stay on Rudder agent
+run evidence: `heartbeat_runs`, run-intelligence metadata, run logs,
+`result_json`, `usage_json`, stderr/stdout excerpts, and transcript outlines.
+
+Workflow:
+
+1. Resolve the active Rudder instance and org. Prefer explicit org names from
+   the prompt, then live API/org listings, then local instance files.
+2. Build the cohort with a stable ordering, usually most recent finished runs
+   for the selected org and optional agent/runtime filter.
+3. For each run, capture status, duration, runtime, cost/tokens when present,
+   result shape, stderr/error excerpt, and whether raw log/transcript evidence
+   exists.
+4. Classify reusable failure classes: no-op heartbeat, missing context, shallow
+   final answer, repeated tool/runtime failure, excessive cost, blocked
+   environment, stale session continuity, or missing handoff artifact.
+5. Deep-dive only the representative runs needed to prove each failure class.
+   Do not parse every full log when metadata already shows the distribution.
+6. Output optimization proposals tied to evidence, not a generic agent-quality
+   essay.
+
+If localhost, API, or Postgres access is blocked by sandbox or runtime policy,
+do not stop. Pivot to filesystem-side evidence:
+
+- `~/.rudder/instances/*/data/run-logs`
+- local run-intelligence artifacts or log stores
+- workspace artifacts referenced by recent runs
+- database directory or config files that identify the likely instance
+- available JSON summaries, excerpts, and session ids
+
+State which sources were unavailable and label any conclusions that are based
+on fallback evidence rather than live API/DB reads.
 
 ### 2. Preferred path: run-intelligence CLI helpers
 
