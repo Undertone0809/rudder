@@ -69,6 +69,10 @@ const catchUpPolicyDescriptions: Record<string, string> = {
   skip_missed: "Ignore windows that were missed while the scheduler or automation was paused.",
   enqueue_missed_with_cap: "Catch up missed schedule windows in capped batches after recovery.",
 };
+const automationComposerChipClass =
+  "h-7 rounded-[5px] px-2 text-xs font-medium";
+const automationComposerChipIconClass =
+  "h-3 w-3 shrink-0 text-muted-foreground";
 
 type AutomationOutputMode = "create_issue" | "send_to_chat";
 
@@ -699,7 +703,7 @@ export function Automations() {
               </main>
             </div>
 
-            <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border/60 px-4 py-2 sm:px-5">
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-border/60 px-4 py-2 sm:px-5">
               <InlineEntitySelector
                 ref={assigneeSelectorRef}
                 value={draft.assigneeAgentId}
@@ -708,7 +712,7 @@ export function Automations() {
                 noneLabel="No assignee"
                 searchPlaceholder="Search assignees..."
                 emptyMessage="No assignees found."
-                className="h-8 max-w-[220px] bg-transparent px-2 text-sm"
+                className={cn(automationComposerChipClass, "max-w-[210px] bg-transparent")}
                 disablePortal
                 side="top"
                 sideOffset={8}
@@ -721,7 +725,7 @@ export function Automations() {
                   option ? (
                     currentAssignee ? (
                       <>
-                        <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <AgentIcon icon={currentAssignee.icon} role={currentAssignee.role} className={automationComposerChipIconClass} />
                         <span className="truncate">{option.label}</span>
                       </>
                     ) : (
@@ -729,7 +733,7 @@ export function Automations() {
                     )
                   ) : (
                     <>
-                      <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <Bot className={automationComposerChipIconClass} />
                       <span className="truncate text-muted-foreground">Assignee</span>
                     </>
                   )
@@ -739,7 +743,7 @@ export function Automations() {
                   const assignee = agentById.get(option.id);
                   return (
                     <>
-                      {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                      {assignee ? <AgentIcon icon={assignee.icon} role={assignee.role} className={automationComposerChipIconClass} /> : null}
                       <span className="truncate">{option.label}</span>
                     </>
                   );
@@ -754,7 +758,7 @@ export function Automations() {
                 noneLabel="No project"
                 searchPlaceholder="Search projects..."
                 emptyMessage="No projects found."
-                className="h-8 max-w-[220px] bg-transparent px-2 text-sm"
+                className={cn(automationComposerChipClass, "max-w-[210px] bg-transparent")}
                 disablePortal
                 side="top"
                 sideOffset={8}
@@ -764,14 +768,14 @@ export function Automations() {
                   option && currentProject ? (
                     <>
                       <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                        className="h-3 w-3 shrink-0 rounded-[3px]"
                         style={projectColorBackgroundStyle(currentProject.color)}
                       />
                       <span className="truncate">{option.label}</span>
                     </>
                   ) : (
                     <>
-                      <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <FolderOpen className={automationComposerChipIconClass} />
                       <span className="truncate text-muted-foreground">No project</span>
                     </>
                   )
@@ -782,7 +786,7 @@ export function Automations() {
                   return (
                     <>
                       <span
-                        className="h-3.5 w-3.5 shrink-0 rounded-sm"
+                        className="h-3 w-3 shrink-0 rounded-[3px]"
                         style={projectColorBackgroundStyle(project?.color)}
                       />
                       <span className="truncate">{option.label}</span>
@@ -795,11 +799,14 @@ export function Automations() {
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border border-border bg-transparent px-2 text-sm font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={cn(
+                      "inline-flex max-w-full items-center gap-1.5 border border-border bg-transparent text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      automationComposerChipClass,
+                    )}
                   >
-                    <CalendarClock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <CalendarClock className={automationComposerChipIconClass} />
                     <span className="truncate">{draft.scheduleCron.trim() ? describeSchedule(draft.scheduleCron) : "No schedule set"}</span>
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+                    <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/80" />
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="start" side="top" sideOffset={8} disablePortal className="w-[min(340px,calc(100vw-2rem))] space-y-3 p-3">
@@ -819,15 +826,18 @@ export function Automations() {
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border border-border bg-transparent px-2 text-sm font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={cn(
+                      "inline-flex max-w-full items-center gap-1.5 border border-border bg-transparent text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      automationComposerChipClass,
+                    )}
                   >
                     {draft.outputMode === "create_issue" ? (
-                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <CheckCircle2 className={automationComposerChipIconClass} />
                     ) : (
-                      <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <MessageSquare className={automationComposerChipIconClass} />
                     )}
                     <span>{draft.outputMode === "create_issue" ? "Track as issue" : "Send to chat"}</span>
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+                    <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/80" />
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="start" side="top" sideOffset={8} disablePortal className="w-[min(320px,calc(100vw-2rem))] space-y-2 p-2">
@@ -875,9 +885,12 @@ export function Automations() {
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-transparent px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={cn(
+                      "inline-flex items-center gap-1.5 border border-border bg-transparent text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      automationComposerChipClass,
+                    )}
                   >
-                    <MoreHorizontal className="h-3.5 w-3.5" />
+                    <MoreHorizontal className="h-3 w-3" />
                     <span className="hidden sm:inline">Delivery rules</span>
                   </button>
                 </PopoverTrigger>
@@ -921,15 +934,16 @@ export function Automations() {
               </Popover>
             </div>
 
-            <div className="flex shrink-0 flex-col gap-3 border-t border-border/60 px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex shrink-0 flex-col gap-2.5 border-t border-border/60 px-4 py-2.5 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
               <p className="min-w-0 truncate text-xs text-muted-foreground">
                 Runs automatically until paused.
               </p>
-              <div className="flex items-center justify-end gap-3">
+              <div className="flex items-center justify-end gap-2.5">
                 <Button
                   variant="ghost"
                   size="sm"
                   type="button"
+                  className="h-8 px-3 text-xs"
                   onClick={() => {
                     setComposerOpen(false);
                     setAdvancedOpen(false);
@@ -939,9 +953,9 @@ export function Automations() {
                   Cancel
                 </Button>
                 <div className="flex flex-col items-end gap-2">
-                  <Button size="sm" onClick={() => createAutomation.mutate()} disabled={createAutomation.isPending || !isDraftReady}>
+                  <Button className="h-8 px-3 text-xs" size="sm" onClick={() => createAutomation.mutate()} disabled={createAutomation.isPending || !isDraftReady}>
                     {createAutomation.isPending ? "Creating..." : "Create automation"}
-                    <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                    <ArrowRight className="ml-1 h-3 w-3" />
                   </Button>
                   {createAutomation.isError ? (
                     <p className="text-sm text-destructive">
