@@ -11,6 +11,7 @@ import { IssueProperties } from "./IssueProperties";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const openNewIssue = vi.hoisted(() => vi.fn());
+const mockIssues = vi.hoisted(() => ({ current: [] as Issue[] }));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
@@ -33,6 +34,13 @@ vi.mock("@tanstack/react-query", () => ({
             status: "active",
           },
         ],
+        isLoading: false,
+        error: null,
+      };
+    }
+    if (queryKey[0] === "issues" && queryKey.length === 2) {
+      return {
+        data: mockIssues.current,
         isLoading: false,
         error: null,
       };
@@ -64,6 +72,12 @@ vi.mock("../context/DialogContext", () => ({
   }),
 }));
 
+vi.mock("../context/ToastContext", () => ({
+  useToast: () => ({
+    pushToast: vi.fn(),
+  }),
+}));
+
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: import("react").ReactNode }) => (
     <a href={to} {...props}>{children}</a>
@@ -75,6 +89,7 @@ let cleanupFn: (() => void) | null = null;
 beforeEach(() => {
   document.body.innerHTML = "";
   openNewIssue.mockReset();
+  mockIssues.current = [];
 });
 
 afterEach(() => {
@@ -181,6 +196,53 @@ describe("IssueProperties", () => {
 
     expect(container.textContent).not.toContain("Workspace");
     expect(container.textContent).not.toContain("Execution workspace");
+  });
+
+  it("renders parent issue as an editable property when no parent is set", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onUpdate = vi.fn();
+    mockIssues.current = [
+      baseIssue,
+      {
+        ...baseIssue,
+        id: "candidate-parent",
+        identifier: "RUD-9",
+        issueNumber: 9,
+        title: "Candidate parent issue",
+      },
+    ];
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(<IssueProperties issue={baseIssue} onUpdate={onUpdate} inline />);
+    });
+
+    expect(container.textContent).toContain("Parent issue");
+    expect(container.textContent).toContain("No parent");
+
+    act(() => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.includes("No parent"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("Candidate parent issue");
+
+    act(() => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.includes("Candidate parent issue"))
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith({ parentId: "candidate-parent" });
   });
 
   it("renders assignee picker agents as two-line menu rows", () => {
@@ -333,8 +395,22 @@ describe("IssueProperties", () => {
 
     act(() => {
       container
-        .querySelector<HTMLButtonElement>('button[aria-label="Create sub-issue"]')
-        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        .querySelectorAll<HTMLButtonElement>("button")
+        .forEach((button) => {
+          if (button.textContent?.trim() === "Add") {
+            button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          }
+        });
+    });
+
+    act(() => {
+      document.body
+        .querySelectorAll<HTMLButtonElement>("button")
+        .forEach((button) => {
+          if (button.textContent?.trim() === "Create new sub-issue") {
+            button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          }
+        });
     });
 
     expect(openNewIssue).toHaveBeenCalledWith({

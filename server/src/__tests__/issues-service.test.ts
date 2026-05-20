@@ -803,6 +803,67 @@ describe("issueService.list participantAgentId", () => {
     ).resolves.toHaveLength(1);
   });
 
+  it("rejects parent issue relationships outside the organization or through descendants", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Parent Boundary Org",
+        urlKey: deriveOrganizationUrlKey("Parent Boundary Org"),
+        issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Parent Org",
+        urlKey: deriveOrganizationUrlKey("Other Parent Org"),
+        issuePrefix: `Q${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+
+    const parent = await svc.create(orgId, {
+      title: "Parent",
+      status: "todo",
+      priority: "medium",
+    });
+    const child = await svc.create(orgId, {
+      title: "Child",
+      status: "todo",
+      priority: "medium",
+      parentId: parent.id,
+    });
+    const otherOrgIssue = await svc.create(otherOrgId, {
+      title: "Other org issue",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await expect(
+      svc.create(orgId, {
+        title: "Cross-org child",
+        status: "todo",
+        priority: "medium",
+        parentId: otherOrgIssue.id,
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      message: "Parent issue must belong to the same organization",
+    });
+
+    await expect(svc.update(parent.id, { parentId: child.id })).rejects.toMatchObject({
+      status: 422,
+      message: "Issue parent cannot be one of its descendants",
+    });
+
+    await expect(svc.update(child.id, { parentId: child.id })).rejects.toMatchObject({
+      status: 422,
+      message: "Issue cannot be its own parent",
+    });
+  });
+
   it("rejects reviewers outside the organization or inactive membership", async () => {
     const orgId = randomUUID();
     const otherOrgId = randomUUID();

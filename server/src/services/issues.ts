@@ -243,6 +243,49 @@ export function issueService(db: Db) {
     );
   }
 
+  async function assertValidParentIssue(
+    orgId: string,
+    issueId: string | null,
+    parentId: string | null | undefined,
+    dbOrTx: any = db,
+  ) {
+    if (!parentId) return;
+    if (issueId && parentId === issueId) {
+      throw unprocessable("Issue cannot be its own parent");
+    }
+
+    const parent = await dbOrTx
+      .select({ id: issues.id, orgId: issues.orgId, parentId: issues.parentId })
+      .from(issues)
+      .where(eq(issues.id, parentId))
+      .then((rows: Array<{ id: string; orgId: string; parentId: string | null }>) => rows[0] ?? null);
+
+    if (!parent || parent.orgId !== orgId) {
+      throw unprocessable("Parent issue must belong to the same organization");
+    }
+
+    if (!issueId) return;
+
+    const visited = new Set<string>();
+    let currentParentId: string | null = parent.parentId ?? null;
+    while (currentParentId) {
+      if (currentParentId === issueId) {
+        throw unprocessable("Issue parent cannot be one of its descendants");
+      }
+      if (visited.has(currentParentId)) {
+        throw unprocessable("Issue parent chain contains a cycle");
+      }
+      visited.add(currentParentId);
+
+      const next = await dbOrTx
+        .select({ parentId: issues.parentId })
+        .from(issues)
+        .where(and(eq(issues.id, currentParentId), eq(issues.orgId, orgId)))
+        .then((rows: Array<{ parentId: string | null }>) => rows[0] ?? null);
+      currentParentId = next?.parentId ?? null;
+    }
+  }
+
   async function isTerminalOrMissingHeartbeatRun(runId: string) {
     const run = await db
       .select({ status: heartbeatRuns.status })
@@ -715,6 +758,7 @@ export function issueService(db: Db) {
       if (data.status === "in_progress" && !data.assigneeAgentId && !data.assigneeUserId) {
         throw unprocessable("in_progress issues require an assignee");
       }
+      await assertValidParentIssue(orgId, null, data.parentId);
       return db.transaction(async (tx) => {
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, orgId);
         let executionWorkspaceSettings =
@@ -861,6 +905,9 @@ export function issueService(db: Db) {
       }
       if (nextExecutionWorkspaceId) {
         await assertValidExecutionWorkspace(existing.orgId, nextProjectId, nextExecutionWorkspaceId);
+      }
+      if (issueData.parentId !== undefined) {
+        await assertValidParentIssue(existing.orgId, existing.id, issueData.parentId);
       }
 
       applyStatusSideEffects(issueData.status, patch);
