@@ -169,11 +169,11 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       invalidateProjectResourceQueries();
       setNewResourceDraft(createNewResourceDraft());
       setCreateDialogOpen(false);
-      pushToast({ title: "Library item created and attached", tone: "success" });
+      pushToast({ title: "Resource created and attached", tone: "success" });
     },
     onError: (error) => {
       pushToast({
-        title: error instanceof Error ? error.message : "Failed to create and attach Library item",
+        title: error instanceof Error ? error.message : "Failed to create and attach resource",
         tone: "error",
       });
     },
@@ -189,8 +189,8 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
             </div>
             <div className="text-base font-semibold text-foreground">Project Context</div>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Choose the repos, docs, URLs, and connector objects agents should actually use on this project. Library
-              stays canonical; this tab decides what matters here.
+              Choose the repos, docs, URLs, and connector objects agents should actually use on this project. Shared resources
+              stay canonical; this tab decides what matters here.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -207,14 +207,14 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
               </PopoverTrigger>
               <PopoverContent align="end" className="w-[22rem] p-2">
                 <div className="px-2 pb-2 pt-1">
-                  <div className="text-sm font-medium text-foreground">Attach from Library</div>
+                  <div className="text-sm font-medium text-foreground">Attach resource</div>
                   <div className="text-xs text-muted-foreground">
-                    Pick an existing Library item, then add project-specific role and note below.
+                    Pick an existing resource, then add project-specific role and note below.
                   </div>
                 </div>
                 {availableResources.length === 0 ? (
                   <div className="px-2 py-3 text-sm text-muted-foreground">
-                    All Library items are already attached to this project.
+                    All resources are already attached to this project.
                   </div>
                 ) : (
                   <div className="space-y-1">
@@ -261,13 +261,13 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
 
             <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
               <FolderPlus className="mr-1.5 h-3.5 w-3.5" />
-              Add Library item
+              Add resource
             </Button>
 
             <Button asChild variant="outline" size="sm">
               <Link to={organizationResourcesPath}>
                 <Settings2 className="mr-1.5 h-3.5 w-3.5" />
-                Library
+                Docs
               </Link>
             </Button>
           </div>
@@ -277,7 +277,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
           <div className="rounded-[var(--radius-md)] border border-border/70 bg-background/45 px-4 py-3">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Attached</div>
             <div className="mt-1 text-2xl font-semibold text-foreground">{attachedResources.length}</div>
-            <div className="mt-1 text-xs text-muted-foreground">Library context visible from this project.</div>
+            <div className="mt-1 text-xs text-muted-foreground">Shared context visible from this project.</div>
           </div>
           <div className="rounded-[var(--radius-md)] border border-border/70 bg-background/45 px-4 py-3">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Working Set</div>
@@ -297,7 +297,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
           <div>
             <div className="text-sm font-medium text-foreground">Attached context</div>
             <div className="text-xs text-muted-foreground">
-              Roles and notes here are project-local. They do not change the shared Library item.
+              Roles and notes here are project-local. They do not change the shared resource.
             </div>
           </div>
         </div>
@@ -305,7 +305,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
         <div className="space-y-3 px-5 py-4">
           {attachedResources.length === 0 ? (
             <div className="rounded-[var(--radius-md)] border border-dashed border-border/80 bg-background/35 px-4 py-5 text-sm text-muted-foreground">
-              No context attached yet. Start with the repo, spec, tracking system, or any Library reference agents
+              No context attached yet. Start with the repo, spec, tracking system, or any shared reference agents
               should not miss when working on this project.
             </div>
           ) : (
@@ -398,9 +398,9 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Add Library item</DialogTitle>
+            <DialogTitle>Add resource</DialogTitle>
             <DialogDescription>
-              Create a new Library item and attach it to this project in one step. Keep the description concrete so
+              Create a new resource and attach it to this project in one step. Keep the description concrete so
               agents know when this item matters.
             </DialogDescription>
           </DialogHeader>
@@ -449,7 +449,7 @@ export function ProjectResourcesPanel({ project }: { project: Project }) {
               <Textarea
                 value={newResourceDraft.description}
                 onChange={(event) => setNewResourceDraft((current) => ({ ...current, description: event.target.value }))}
-                placeholder="What this Library item contains and when agents should use it."
+                placeholder="What this resource contains and when agents should use it."
               />
             </label>
             <label className="space-y-1.5">

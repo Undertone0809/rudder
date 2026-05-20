@@ -3501,8 +3501,8 @@ function AgentSkillsTab({
   const saveStatusLabel = syncSkills.isPending ? "Saving..." : null;
 
   const controlsHelperText = "Rudder always loads the bundled Rudder skills. Agent, organization, global, and adapter skills load only when enabled on this page.";
-  const agentSectionHelperText = "Agent-private skills belong to this agent only. Edit them in Library, then enable them here when you want Rudder to load them.";
-  const organizationSectionHelperText = "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Library.";
+  const agentSectionHelperText = "Agent-private skills belong to this agent only. Edit them in Docs, then enable them here when you want Rudder to load them.";
+  const organizationSectionHelperText = "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Docs.";
   const externalSectionHelperText = "Global and adapter skills are discovered from ~/.agents/skills and the current runtime adapter home. Discovery does not enable them; only the selections on this page determine runtime loading.";
 
   const updateSkillDraft = useCallback((updater: (current: string[]) => string[]) => {
@@ -3659,7 +3659,7 @@ function AgentSkillsTab({
                 <Button asChild variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-xs">
                   <Link to={workspaceEditHref}>
                     <FolderOpen className="h-3.5 w-3.5" />
-                    <span>Edit in Library</span>
+                    <span>Edit in Docs</span>
                   </Link>
                 </Button>
               </div>
@@ -3757,7 +3757,7 @@ function AgentSkillsTab({
           {organizationSkillRows.length === 0 && agentSkillRows.length === 0 && externalSkillRows.length === 0 ? (
             <section className="rounded-xl border border-border bg-[color:var(--surface-elevated)]">
               <div className="px-4 py-6 text-sm text-muted-foreground">
-                Import or scan skills into the organization library first, then enable them here.
+                Import or scan skills into Docs first, then enable them here.
               </div>
             </section>
           ) : (

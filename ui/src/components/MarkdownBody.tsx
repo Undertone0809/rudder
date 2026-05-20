@@ -1,4 +1,4 @@
-import { isValidElement, useEffect, useId, useState, type MouseEvent, type ReactNode } from "react";
+import { isValidElement, useEffect, useId, useState, type ClipboardEvent, type MouseEvent, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../lib/utils";
@@ -17,6 +17,7 @@ interface MarkdownBodyProps {
   onLinkClick?: MarkdownLinkClickHandler;
   skillReferences?: MarkdownSkillReferencePreview[];
   enableImagePreview?: boolean;
+  copyMarkdownOnCopy?: boolean;
 }
 
 export type MarkdownLinkClickHandler = (input: {
@@ -84,6 +85,66 @@ function getMarkdownImagePreviewName(image: HTMLImageElement) {
   } catch {
     return "Image preview";
   }
+}
+
+function markdownSourceAttributes(node: unknown) {
+  const position = (node as {
+    position?: {
+      start?: { offset?: number };
+      end?: { offset?: number };
+    };
+  } | null)?.position;
+  const start = position?.start?.offset;
+  const end = position?.end?.offset;
+  if (typeof start !== "number" || typeof end !== "number") return {};
+  return {
+    "data-markdown-source-start": String(start),
+    "data-markdown-source-end": String(end),
+  };
+}
+
+function closestMarkdownSourceElement(node: Node | null): HTMLElement | null {
+  const element = node instanceof HTMLElement ? node : node?.parentElement ?? null;
+  return element?.closest<HTMLElement>("[data-markdown-source-start][data-markdown-source-end]") ?? null;
+}
+
+function markdownSourceSliceFromElement(source: string, element: HTMLElement) {
+  const start = Number(element.dataset.markdownSourceStart);
+  const end = Number(element.dataset.markdownSourceEnd);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return source.slice(start, end);
+}
+
+function markdownSourceForSelection(root: HTMLElement, selection: Selection, source: string) {
+  const startElement = closestMarkdownSourceElement(selection.anchorNode);
+  const endElement = closestMarkdownSourceElement(selection.focusNode);
+  if (startElement && startElement === endElement) {
+    return markdownSourceSliceFromElement(source, startElement);
+  }
+
+  const range = selection.getRangeAt(0);
+  const intersectingElements = Array.from(
+    root.querySelectorAll<HTMLElement>("[data-markdown-source-start][data-markdown-source-end]"),
+  ).filter((element) => {
+    try {
+      return range.intersectsNode(element);
+    } catch {
+      return false;
+    }
+  });
+  const topLevelElements = intersectingElements.filter(
+    (element) => !intersectingElements.some((candidate) => candidate !== element && candidate.contains(element)),
+  );
+  const sourceRanges = topLevelElements
+    .map((element) => ({
+      start: Number(element.dataset.markdownSourceStart),
+      end: Number(element.dataset.markdownSourceEnd),
+    }))
+    .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start);
+  if (sourceRanges.length === 0) return null;
+  const start = Math.min(...sourceRanges.map((item) => item.start));
+  const end = Math.max(...sourceRanges.map((item) => item.end));
+  return source.slice(start, end);
 }
 
 export function normalizeEscapedMarkdownNewlines(source: string) {
@@ -167,6 +228,7 @@ export function MarkdownBody({
   onLinkClick,
   skillReferences,
   enableImagePreview = true,
+  copyMarkdownOnCopy = false,
 }: MarkdownBodyProps) {
   const { resolvedTheme } = useTheme();
   const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
@@ -181,6 +243,16 @@ export function MarkdownBody({
       .filter(([key]) => key.length > 0),
   );
   const normalizedChildren = normalizeEscapedMarkdownNewlines(children);
+  const handleCopy = (event: ClipboardEvent<HTMLDivElement>) => {
+    if (!copyMarkdownOnCopy) return;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+    if (!event.currentTarget.contains(selection.anchorNode) || !event.currentTarget.contains(selection.focusNode)) return;
+    const markdownSource = markdownSourceForSelection(event.currentTarget, selection, normalizedChildren)
+      ?? normalizedChildren;
+    event.clipboardData.setData("text/plain", markdownSource);
+    event.preventDefault();
+  };
   const handleImageInspect = (image: HTMLImageElement) => {
     if (!enableImagePreview) return;
     const src = image.currentSrc || image.src;
@@ -196,14 +268,38 @@ export function MarkdownBody({
     });
   };
   const components: Components = {
-    pre: ({ node: _node, children: preChildren, ...preProps }) => {
+    p: ({ node, children: paragraphChildren, ...paragraphProps }) => (
+      <p {...paragraphProps} {...markdownSourceAttributes(node)}>{paragraphChildren}</p>
+    ),
+    h1: ({ node, children: headingChildren, ...headingProps }) => (
+      <h1 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h1>
+    ),
+    h2: ({ node, children: headingChildren, ...headingProps }) => (
+      <h2 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h2>
+    ),
+    h3: ({ node, children: headingChildren, ...headingProps }) => (
+      <h3 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h3>
+    ),
+    h4: ({ node, children: headingChildren, ...headingProps }) => (
+      <h4 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h4>
+    ),
+    h5: ({ node, children: headingChildren, ...headingProps }) => (
+      <h5 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h5>
+    ),
+    h6: ({ node, children: headingChildren, ...headingProps }) => (
+      <h6 {...headingProps} {...markdownSourceAttributes(node)}>{headingChildren}</h6>
+    ),
+    li: ({ node, children: itemChildren, ...itemProps }) => (
+      <li {...itemProps} {...markdownSourceAttributes(node)}>{itemChildren}</li>
+    ),
+    pre: ({ node, children: preChildren, ...preProps }) => {
       const mermaidSource = extractMermaidSource(preChildren);
       if (mermaidSource) {
         return <MermaidDiagramBlock source={mermaidSource} darkMode={resolvedTheme === "dark"} />;
       }
-      return <pre {...preProps}>{preChildren}</pre>;
+      return <pre {...preProps} {...markdownSourceAttributes(node)}>{preChildren}</pre>;
     },
-    a: ({ href, children: linkChildren }) => {
+    a: ({ node, href, children: linkChildren }) => {
       const parsed = href ? parseMentionChipHref(href) : null;
       if (parsed) {
         const mentionLabel = stripMentionChipLabelPrefix(flattenText(linkChildren));
@@ -228,6 +324,7 @@ export function MarkdownBody({
             )}
             data-mention-kind={parsed.kind}
             style={mentionChipInlineStyle(parsed)}
+            {...markdownSourceAttributes(node)}
           >
             {mentionLabel}
           </a>
@@ -252,6 +349,7 @@ export function MarkdownBody({
           target={isExternal ? "_blank" : undefined}
           rel={isExternal ? "noreferrer noopener" : "noreferrer"}
           title={isBareUrlLink ? href : undefined}
+          {...markdownSourceAttributes(node)}
           onClick={(event) => {
             if (!href || !onLinkClick) return;
             onLinkClick({ event, href, label: linkLabel });
@@ -293,6 +391,8 @@ export function MarkdownBody({
           resolvedTheme === "dark" && "prose-invert",
           className,
         )}
+        onCopyCapture={handleCopy}
+        data-copy-markdown-source={copyMarkdownOnCopy ? "true" : undefined}
       >
         <Markdown remarkPlugins={[remarkGfm]} components={components} urlTransform={(url) => url}>
           {normalizedChildren}

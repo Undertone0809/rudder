@@ -336,7 +336,7 @@ export function NewProjectDialog() {
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top" sideOffset={8} className="max-w-[260px] px-3 py-2 text-xs leading-5">
-                  Attach the codebases, Library docs, URLs, and external systems agents should use for this project.
+                  Attach the codebases, Docs, URLs, and external systems agents should use for this project.
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -351,13 +351,13 @@ export function NewProjectDialog() {
                     disabled={!selectedOrganizationId || (organizationResources ?? []).length === 0 || availableResources.length === 0}
                   >
                     <Link2 className="mr-1.5 h-3 w-3" />
-                    Attach Library item
+                    Attach resource
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-72 p-1" align="end">
                   {availableResources.length === 0 ? (
                     <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                      No unattached Library items available.
+                      No unattached resources available.
                     </div>
                   ) : (
                     availableResources.map((resource) => (
@@ -385,7 +385,7 @@ export function NewProjectDialog() {
                 onClick={() => setResourceDrafts((current) => [...current, createInlineResourceDraft()])}
               >
                 <Plus className="mr-1.5 h-3 w-3" />
-                New Library item
+                New resource
               </Button>
             </div>
           </div>
@@ -409,12 +409,12 @@ export function NewProjectDialog() {
                           {resource.kind === "existing" ? (
                             <>
                               <Link2 className="h-3.5 w-3.5 text-muted-foreground" />
-                              <span className="truncate">{existingResource?.name ?? "Missing Library item"}</span>
+                              <span className="truncate">{existingResource?.name ?? "Missing resource"}</span>
                             </>
                           ) : (
                             <>
                               <Folder className="h-3.5 w-3.5 text-muted-foreground" />
-                              <span>{resource.name.trim() || "New Library item"}</span>
+                              <span>{resource.name.trim() || "New resource"}</span>
                             </>
                           )}
                         </div>
@@ -422,8 +422,8 @@ export function NewProjectDialog() {
                           {resource.kind === "existing"
                             ? existingResource
                               ? `${organizationResourceKindLabel(existingResource.kind)} · ${existingResource.locator}`
-                              : "This Library item is no longer available."
-                            : "Created in Library and attached to this project on submit."}
+                              : "This resource is no longer available."
+                            : "Created as a resource and attached to this project on submit."}
                         </div>
                       </div>
                       <Button
@@ -496,7 +496,7 @@ export function NewProjectDialog() {
                               description: event.target.value,
                             }))}
                             className={cn(resourceControlClass, "min-h-[72px] resize-y py-2")}
-                            placeholder="What this Library item contains and when agents should use it."
+                            placeholder="What this resource contains and when agents should use it."
                           />
                         </label>
                       </div>
@@ -534,7 +534,7 @@ export function NewProjectDialog() {
 
                     {resource.kind === "new" && (!resource.name.trim() || !resource.locator.trim()) ? (
                       <p className="text-[11px] text-amber-600 dark:text-amber-300">
-                        New Library items need both a name and a locator before you can create the project.
+                        New resources need both a name and a locator before you can create the project.
                       </p>
                     ) : null}
                   </div>

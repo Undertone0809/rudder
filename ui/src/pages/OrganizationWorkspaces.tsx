@@ -51,7 +51,6 @@ import {
   Image as ImageIcon,
   MoreHorizontal,
   Pencil,
-  Plus,
   Loader2,
   Terminal,
   Trash2,
@@ -275,13 +274,23 @@ function displayWorkspaceFileTabLabel(filePath: string) {
   return filePath.split("/").filter(Boolean).at(-1) ?? filePath;
 }
 
-function createUntitledDocumentPath() {
-  const stamp = new Date()
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}Z$/, "Z")
-    .toLowerCase();
-  return `docs/untitled-${stamp}.md`;
+function workspacePathBreadcrumb(filePath: string) {
+  const segments = filePath.split("/").filter(Boolean);
+  return segments.map((segment, index) => ({
+    label: segment,
+    path: segments.slice(0, index + 1).join("/"),
+    isFile: index === segments.length - 1,
+  }));
+}
+
+function focusWorkspaceTreeEntry(entryPath: string | null) {
+  if (typeof document === "undefined") return;
+  const entry = Array.from(document.querySelectorAll<HTMLElement>("[data-workspace-entry-path]"))
+    .find((node) => node.dataset.workspaceEntryPath === entryPath);
+  if (!entry) return;
+  entry.scrollIntoView({ block: "center" });
+  const button = entry.querySelector<HTMLButtonElement>("button");
+  button?.focus({ preventScroll: true });
 }
 
 function updateSelectedPath(
@@ -456,6 +465,7 @@ function WorkspaceTreeNode({
         <div
           className="group flex w-full items-center rounded-md pr-1 text-sm text-foreground hover:bg-accent/60"
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
+          data-workspace-entry-path={entry.path}
           onContextMenu={handleOpenActionMenu}
         >
           <button
@@ -521,6 +531,7 @@ function WorkspaceTreeNode({
           isSelected ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
         }`}
         style={{ paddingLeft: `${depth * 14 + 23}px` }}
+        data-workspace-entry-path={entry.path}
         onContextMenu={handleOpenActionMenu}
       >
         <button
@@ -571,6 +582,10 @@ export function OrganizationWorkspaceFilesSidebar() {
       ? workspaceLaunchTargets.find((target) => target.id === lastWorkspaceLaunchTargetId)
       : null
   ) ?? workspaceLaunchTargets[0] ?? null;
+  const workspaceRootEntry = useMemo<OrganizationWorkspaceFileEntry>(
+    () => ({ name: "", path: "", isDirectory: true, displayLabel: "Docs" }),
+    [],
+  );
   const expandedDirectories = useMemo(
     () => (selectedFilePath ? parentDirectories(selectedFilePath) : new Set<string>()),
     [selectedFilePath],
@@ -604,36 +619,6 @@ export function OrganizationWorkspaceFilesSidebar() {
       cancelled = true;
     };
   }, []);
-
-  const createWorkspaceDocument = useMutation({
-    mutationFn: () => {
-      const filePath = createUntitledDocumentPath();
-      return organizationsApi.createWorkspaceFile(viewedOrganizationId!, {
-        filePath,
-        content: "# Untitled document\n\n",
-      });
-    },
-    onSuccess: (detail) => {
-      if (!viewedOrganizationId) return;
-      queryClient.setQueryData(
-        queryKeys.organizations.workspaceFile(viewedOrganizationId, detail.filePath),
-        detail,
-      );
-      void invalidateWorkspaceBrowser();
-      updateSelectedPath(searchParams, setSearchParams, detail.filePath);
-      pushToast({
-        title: "Doc created",
-        body: detail.filePath,
-        tone: "success",
-      });
-    },
-    onError: (error) => {
-      pushToast({
-        title: error instanceof Error ? error.message : "Failed to create doc",
-        tone: "error",
-      });
-    },
-  });
 
   const createWorkspaceEntry = useMutation({
     mutationFn: async (payload: {
@@ -802,6 +787,10 @@ export function OrganizationWorkspaceFilesSidebar() {
     setCreateDraft(kind === "file" ? "untitled.md" : "new-folder");
   }
 
+  function handleStartCreateRootEntry(kind: "file" | "folder") {
+    handleStartCreateEntry(workspaceRootEntry, kind);
+  }
+
   function handleStartRename(entry: OrganizationWorkspaceFileEntry) {
     if (isProtectedAgentWorkspaceContainerPath(entry.path)) return;
     setRenameTarget(entry);
@@ -825,32 +814,41 @@ export function OrganizationWorkspaceFilesSidebar() {
         >
           <div className="min-w-0">
             <h2 className="truncate text-sm font-semibold">Docs</h2>
-            <p className="truncate text-xs text-muted-foreground">File tree</p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 px-2"
-                  onClick={() => {
-                    requestWorkspaceDraftFlush();
-                    createWorkspaceDocument.mutate();
-                  }}
-                  disabled={!workspaceRootPath || createWorkspaceDocument.isPending}
-                  aria-label="New doc"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => handleStartCreateRootEntry("file")}
+                  disabled={!workspaceRootPath}
+                  aria-label="New file"
+                  data-testid="org-workspaces-new-file-button"
                 >
-                  {createWorkspaceDocument.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Plus className="h-3.5 w-3.5" />
-                  )}
-                  <span className="ml-1.5">New doc</span>
+                  <FilePlus2 className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>New doc</TooltipContent>
+              <TooltipContent>New file</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => handleStartCreateRootEntry("folder")}
+                  disabled={!workspaceRootPath}
+                  aria-label="New folder"
+                  data-testid="org-workspaces-new-folder-button"
+                >
+                  <FolderPlus className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>New folder</TooltipContent>
             </Tooltip>
             {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
               <div
@@ -1126,7 +1124,6 @@ export function OrganizationWorkspaceFilesSidebar() {
 export function OrganizationWorkspaceBrowser({
   breadcrumbLabel = "Workspaces",
   emptyMessage = "Select an organization to browse its shared workspace.",
-  filesTitle = "Files",
   editorTitle = "Editor",
   noSelectionMessage = (
     <>
@@ -1138,7 +1135,6 @@ export function OrganizationWorkspaceBrowser({
 }: {
   breadcrumbLabel?: string;
   emptyMessage?: string;
-  filesTitle?: string;
   editorTitle?: string;
   noSelectionMessage?: ReactNode;
 }) {
@@ -1431,43 +1427,6 @@ export function OrganizationWorkspaceBrowser({
     },
   });
 
-  const createWorkspaceDocument = useMutation({
-    mutationFn: () => {
-      const filePath = createUntitledDocumentPath();
-      return organizationsApi.createWorkspaceFile(viewedOrganizationId!, {
-        filePath,
-        content: "# Untitled document\n\n",
-      });
-    },
-    onSuccess: (detail) => {
-      if (!viewedOrganizationId) return;
-      queryClient.setQueryData(
-        queryKeys.organizations.workspaceFile(viewedOrganizationId, detail.filePath),
-        detail,
-      );
-      void invalidateWorkspaceBrowser();
-      setSelectedFilePath(detail.filePath);
-      openWorkspaceFileTab(detail.filePath);
-      setDraftFilePath(detail.filePath);
-      syncedFileRef.current = { filePath: detail.filePath, content: detail.content ?? "" };
-      updateSelectedPath(searchParams, setSearchParams, detail.filePath);
-      setDraftContent(detail.content ?? "");
-      pushToast({
-        title: "Doc created",
-        body: detail.filePath,
-        tone: "success",
-      });
-    },
-    onError: (error) => {
-      pushToast({
-        title: error instanceof Error ? error.message : "Failed to create doc",
-        tone: "error",
-      });
-    },
-  });
-  const createWorkspaceDocumentMutate = createWorkspaceDocument.mutate;
-  const isCreatingWorkspaceDocument = createWorkspaceDocument.isPending;
-
   const createWorkspaceEntry = useMutation({
     mutationFn: async (payload: {
       parent: OrganizationWorkspaceFileEntry;
@@ -1581,6 +1540,15 @@ export function OrganizationWorkspaceBrowser({
       ? workspaceLaunchTargets.find((target) => target.id === lastWorkspaceLaunchTargetId)
       : null
   ) ?? workspaceLaunchTargets[0] ?? null;
+  const workspaceRootEntry = useMemo<OrganizationWorkspaceFileEntry>(
+    () => ({ name: "", path: "", isDirectory: true, displayLabel: "Docs" }),
+    [],
+  );
+  const handleStartCreateRootEntry = useCallback((kind: "file" | "folder") => {
+    flushCurrentDraft();
+    setCreateTarget({ parent: workspaceRootEntry, kind });
+    setCreateDraft(kind === "file" ? "untitled.md" : "new-folder");
+  }, [flushCurrentDraft, workspaceRootEntry]);
 
   const handleOpenWorkspace = useCallback(async (
     target: DesktopWorkspaceLaunchTarget,
@@ -1624,21 +1592,27 @@ export function OrganizationWorkspaceBrowser({
       <div className="flex items-center gap-2">
         <Button
           type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            flushCurrentDraft();
-            createWorkspaceDocumentMutate();
-          }}
-          disabled={!workspaceRootPath || isCreatingWorkspaceDocument}
-          aria-label="New doc"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => handleStartCreateRootEntry("file")}
+          disabled={!workspaceRootPath}
+          aria-label="New file"
+          data-testid="org-workspaces-new-file-button"
         >
-          {isCreatingWorkspaceDocument ? (
-            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-          )}
-          New doc
+          <FilePlus2 className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => handleStartCreateRootEntry("folder")}
+          disabled={!workspaceRootPath}
+          aria-label="New folder"
+          data-testid="org-workspaces-new-folder-button"
+        >
+          <FolderPlus className="h-3.5 w-3.5" />
         </Button>
         {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
           <div
@@ -1708,9 +1682,7 @@ export function OrganizationWorkspaceBrowser({
   }, [
     handleOpenWorkspace,
     handleSelectWorkspaceLaunchTarget,
-    flushCurrentDraft,
-    createWorkspaceDocumentMutate,
-    isCreatingWorkspaceDocument,
+    handleStartCreateRootEntry,
     isMobileViewport,
     openingWorkspaceTargetId,
     selectedWorkspaceLaunchTarget,
@@ -1878,9 +1850,7 @@ export function OrganizationWorkspaceBrowser({
   function handleOpenTabContextMenu(event: MouseEvent<HTMLElement>, filePath: string) {
     event.preventDefault();
     event.stopPropagation();
-    if (selectedFilePath !== filePath) {
-      handleSelectFile(filePath);
-    }
+    handleSelectFile(filePath);
     setTabContextMenu({
       filePath,
       ...clampWorkspaceTabContextMenuPosition(event.clientX, event.clientY),
@@ -1951,10 +1921,45 @@ export function OrganizationWorkspaceBrowser({
               data-testid="org-workspaces-files-card"
               className="flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card lg:min-h-0 lg:w-[320px] lg:flex-none"
             >
-              <div className="border-b border-border px-4 py-3">
-                <div className="text-sm font-medium">{filesTitle}</div>
-                <div className="text-xs text-muted-foreground">
-                  {workspace.directoryPath ? workspace.directoryPath : "/"}
+              <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">Docs</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => handleStartCreateRootEntry("file")}
+                        disabled={!workspaceRootPath}
+                        aria-label="New file"
+                        data-testid="org-workspaces-inline-new-file-button"
+                      >
+                        <FilePlus2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>New file</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => handleStartCreateRootEntry("folder")}
+                        disabled={!workspaceRootPath}
+                        aria-label="New folder"
+                        data-testid="org-workspaces-inline-new-folder-button"
+                      >
+                        <FolderPlus className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>New folder</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
               <div
@@ -1998,9 +2003,9 @@ export function OrganizationWorkspaceBrowser({
               data-testid="org-workspaces-editor-tabs"
               role="tablist"
               aria-label="Open files"
-              className="flex h-10 shrink-0 items-stretch justify-between border-b border-border bg-[color:var(--surface-page)]"
+              className="flex h-11 shrink-0 items-stretch justify-between border-b border-border bg-[color:var(--surface-page)]"
             >
-              <div className="scrollbar-auto-hide flex min-w-0 flex-1 overflow-x-auto">
+              <div className="scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto px-2 pt-1">
                 {openFilePaths.length > 0 ? (
                   openFilePaths.map((filePath) => {
                     const active = selectedFilePath === filePath;
@@ -2010,17 +2015,17 @@ export function OrganizationWorkspaceBrowser({
                         data-testid={`org-workspaces-editor-tab-${filePath}`}
                         onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
                         className={cn(
-                          "group flex min-w-0 max-w-[240px] items-center border-r border-border",
+                          "group mb-[-1px] flex h-10 min-w-[132px] max-w-[248px] items-center overflow-hidden border px-1 transition-colors",
                           active
-                            ? "bg-card text-foreground"
-                            : "bg-[color:var(--surface-page)] text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                            ? "rounded-t-[16px] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
+                            : "rounded-t-[14px] border-transparent text-muted-foreground hover:border-[color:var(--border-soft)] hover:bg-[color:var(--surface-active)] hover:text-foreground",
                         )}
                       >
                         <button
                           type="button"
                           role="tab"
                           aria-selected={active}
-                          className="min-w-0 flex-1 truncate px-3 text-left text-sm"
+                          className="min-w-0 flex-1 truncate rounded-[10px] px-2 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                           title={filePath}
                           onClick={() => handleSelectFile(filePath)}
                           onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
@@ -2029,7 +2034,10 @@ export function OrganizationWorkspaceBrowser({
                         </button>
                         <button
                           type="button"
-                          className="mr-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-muted-foreground opacity-70 hover:bg-[color:var(--surface-active)] hover:text-foreground group-hover:opacity-100"
+                          className={cn(
+                            "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                            active ? "opacity-100" : "opacity-60 group-hover:opacity-100",
+                          )}
                           aria-label={`Close ${filePath}`}
                           onClick={(event) => {
                             event.stopPropagation();
@@ -2042,8 +2050,23 @@ export function OrganizationWorkspaceBrowser({
                     );
                   })
                 ) : (
-                  <div className="flex items-center px-4 text-sm text-muted-foreground">No file open</div>
+                  <div className="mb-1 flex h-9 items-center px-2 text-sm text-muted-foreground">No file open</div>
                 )}
+                {workspaceRootPath ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="mb-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="New file"
+                        onClick={() => handleStartCreateRootEntry("file")}
+                      >
+                        <FilePlus2 className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>New file</TooltipContent>
+                  </Tooltip>
+                ) : null}
               </div>
               {canOpenInIde && primaryIde ? (
                 <div className="flex shrink-0 items-center gap-2 border-l border-border px-3 text-xs text-muted-foreground">
@@ -2071,6 +2094,44 @@ export function OrganizationWorkspaceBrowser({
                 </div>
               ) : null}
             </div>
+            {selectedFilePath ? (
+              <div
+                data-testid="org-workspaces-path-breadcrumb"
+                className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-[color:var(--surface-elevated)] px-3 text-xs text-muted-foreground"
+                aria-label="File path"
+              >
+                {workspacePathBreadcrumb(selectedFilePath).map((part, index, parts) => {
+                  const isLast = index === parts.length - 1;
+                  return (
+                    <div key={part.path} className="flex min-w-0 items-center gap-1">
+                      {index > 0 ? <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/70" /> : null}
+                      <button
+                        type="button"
+                        className={cn(
+                          "inline-flex min-w-0 items-center gap-1 rounded-[4px] px-1.5 py-1 text-left transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                          isLast && "font-medium text-foreground",
+                        )}
+                        title={part.path}
+                        onClick={() => {
+                          if (part.isFile) {
+                            handleSelectFile(part.path);
+                          } else {
+                            focusWorkspaceTreeEntry(part.path);
+                          }
+                        }}
+                      >
+                        {part.isFile ? (
+                          <FileCode2 className="h-3.5 w-3.5 shrink-0" />
+                        ) : (
+                          <Folder className="h-3.5 w-3.5 shrink-0" />
+                        )}
+                        <span className="truncate">{part.label}</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
             <div className="min-h-0 flex-1 overflow-hidden">
               {!selectedFilePath ? (
                 <div className="px-4 py-6 text-sm text-muted-foreground">

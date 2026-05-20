@@ -86,7 +86,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain('<img src="/api/attachments/test/content" alt=""/>');
   });
 
-  it("renders library document mentions as live Library links", () => {
+  it("renders library document mentions as live Docs links", () => {
     const href = buildLibraryDocMentionHref("doc-123", "Product principles");
     const html = renderToStaticMarkup(
       <ThemeProvider>
@@ -99,7 +99,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain("Product principles");
   });
 
-  it("renders library file mentions as live Library path links", () => {
+  it("renders library file mentions as live Docs path links", () => {
     const href = buildLibraryFileMentionHref("docs/product-brief.md", "product-brief.md");
     const html = renderToStaticMarkup(
       <ThemeProvider>
@@ -110,6 +110,34 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/library?path=docs%2Fproduct-brief.md"');
     expect(html).toContain('data-mention-kind="library_file"');
     expect(html).toContain("product-brief.md");
+  });
+
+  it("can copy rendered markdown as its source markdown", () => {
+    const href = buildLibraryFileMentionHref("docs/product-brief.md", "product-brief.md");
+    const source = `# Brief\n\n- Keep **syntax**\n- [@product-brief.md](${href})`;
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody copyMarkdownOnCopy>{source}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    const body = container.querySelector("[data-copy-markdown-source='true']");
+    expect(body).toBeTruthy();
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(body!);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const copyData = { setData: vi.fn() };
+    const copyEvent = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copyEvent, "clipboardData", {
+      value: copyData,
+    });
+    body!.dispatchEvent(copyEvent);
+
+    expect(copyData.setData).toHaveBeenCalledWith("text/plain", source);
+    expect(copyEvent.defaultPrevented).toBe(true);
   });
 
   it("renders chat mentions as live Messenger links", () => {
@@ -322,7 +350,7 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain("<ol>");
-    expect(html).toContain("<li>Confirm positioning</li>");
+    expect(html).toContain(">Confirm positioning</li>");
     expect(html).not.toContain("\\n");
   });
 

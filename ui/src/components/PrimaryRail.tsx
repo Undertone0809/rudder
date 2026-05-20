@@ -202,7 +202,7 @@ export function PrimaryRail({
     {
       key: "library",
       to: "/library",
-      label: "Library",
+      label: "Docs",
       icon: LibraryBig,
       active: /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath),
     },

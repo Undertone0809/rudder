@@ -168,7 +168,7 @@ export function BreadcrumbBar({
   const hideAgentDetailMainHeader = variant === "card" && isAgentDetailRoute;
   const workspacesHeaderTooltip = useMemo(() => {
     if (/^\/(?:library|resources)(?:\/|$)/.test(relativePath)) {
-      return "Shared Library for docs, codebases, references, outputs, and reusable context that humans and agents can both work with.";
+      return "Shared Docs for markdown notes, codebases, references, outputs, and reusable context that humans and agents can both work with.";
     }
     if (/^\/workspaces(?:\/|$)/.test(relativePath)) {
       return "Shared workspace files, plans, and skill packages for this organization. Use this page for disk-backed context and editable files.";
@@ -176,7 +176,7 @@ export function BreadcrumbBar({
     return null;
   }, [relativePath]);
   const workspacesHeaderTooltipLabel = useMemo(() => {
-    if (/^\/(?:library|resources)(?:\/|$)/.test(relativePath)) return "About Library";
+    if (/^\/(?:library|resources)(?:\/|$)/.test(relativePath)) return "About Docs";
     if (/^\/workspaces(?:\/|$)/.test(relativePath)) return "About organization workspaces";
     return null;
   }, [relativePath]);
