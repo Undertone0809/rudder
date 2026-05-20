@@ -1671,6 +1671,9 @@ describe("codex execute", () => {
         config: {
           command: commandPath,
           cwd: workspace,
+          env: {
+            RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          },
           promptTemplate: "Follow the rudder heartbeat.",
         },
         context: {},
@@ -1714,6 +1717,9 @@ describe("codex execute", () => {
         config: {
           command: commandPath,
           cwd: workspace,
+          env: {
+            RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          },
           promptTemplate: "Follow the rudder heartbeat.",
         },
         context: {},
@@ -1761,6 +1767,9 @@ describe("codex execute", () => {
         config: {
           command: commandPath,
           cwd: workspace,
+          env: {
+            RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          },
           promptTemplate: "Follow the rudder heartbeat.",
         },
         context: {},
@@ -1808,6 +1817,9 @@ describe("codex execute", () => {
         config: {
           command: commandPath,
           cwd: workspace,
+          env: {
+            RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          },
           promptTemplate: "Follow the rudder heartbeat.",
         },
         context: {},
@@ -1859,6 +1871,9 @@ describe("codex execute", () => {
         config: {
           command: commandPath,
           cwd: workspace,
+          env: {
+            RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+          },
           promptTemplate: "Follow the rudder heartbeat.",
         },
         context: {},

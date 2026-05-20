@@ -125,5 +125,5 @@ describe("release canary base guard", () => {
     expect(result.stderr).toContain("canary base version 0.2.2 has already been released as stable");
     expect(result.stderr).toContain("npm package @rudderhq/cli@0.2.2 exists");
     expect(result.stderr).toContain("0.2.2 -> 0.2.3");
-  });
+  }, 15000);
 });

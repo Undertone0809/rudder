@@ -353,10 +353,10 @@ describe("rudder org import/export e2e", () => {
     await stopServerProcess(serverProcess);
     await dbInstance?.stop();
     if (dbDataDir) {
-      rmSync(dbDataDir, { recursive: true, force: true });
+      rmSync(dbDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
     if (tempRoot) {
-      rmSync(tempRoot, { recursive: true, force: true });
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   }, 60_000);
 

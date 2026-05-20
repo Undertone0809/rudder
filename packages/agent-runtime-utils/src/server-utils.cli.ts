@@ -11,6 +11,8 @@ import { RunProcessResult, RunningProcess, SpawnTarget, ChildProcessWithEvents, 
 import { DEFAULT_AGENT_PROMPT_TEMPLATE, ISSUE_ASSIGN_PROMPT_TEMPLATE, COMMENT_MENTION_PROMPT_TEMPLATE, ISSUE_COMMENTED_PROMPT_TEMPLATE, ISSUE_CHANGES_REQUESTED_PROMPT_TEMPLATE, ISSUE_RECOVERY_PROMPT_TEMPLATE, RECOVERY_PROMPT_TEMPLATE, ISSUE_PASSIVE_FOLLOWUP_PROMPT_TEMPLATE, selectPromptTemplate, joinPromptSections, RUDDER_AGENT_OPERATING_CONTRACT } from "./server-utils.prompts.js";
 import { LoadedAgentInstructionsPrefix, toPromptPath, isInsidePath, displayInstructionPath, displayInstructionDir, loadAgentInstructionsPrefix, redactEnvForLogs, buildRudderEnv, defaultPathForPlatform, windowsPathExts, pathExists, fileExists, resolveCommandPath, quoteForCmd, resolveSpawnTarget } from "./server-utils.instructions.js";
 
+const LOCAL_CLI_CREDENTIAL_AUTH_CHECK_TIMEOUT_MS = 3000;
+
 export function ensurePathInEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (typeof env.PATH === "string" && env.PATH.length > 0) return env;
   if (typeof env.Path === "string" && env.Path.length > 0) return env;
@@ -619,7 +621,7 @@ export async function runCredentialShimAuthCheck(input: {
     const timeout = setTimeout(() => {
       child.kill("SIGTERM");
       resolve(false);
-    }, 1000);
+    }, LOCAL_CLI_CREDENTIAL_AUTH_CHECK_TIMEOUT_MS);
     child.on("error", () => {
       clearTimeout(timeout);
       resolve(false);
@@ -984,4 +986,3 @@ export async function runChildProcess(
       .catch(reject);
   });
 }
-
