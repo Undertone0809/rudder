@@ -98,12 +98,18 @@ Use the smallest matching workflow:
 - Review-only of a session, PR, commit, proposal, UI state, release, or agent
   outcome: `agent-work-reviewer-maintainer` or
   `codex-session-product-reviewer-maintainer` for local Codex session ids.
+- Codex session benchmarking against recent local session history, efficiency,
+  follow-up rate, token/cost hints, or problem-resolution proxy metrics:
+  `codex-session-benchmark-maintainer`.
 - Screenshot-driven visible UI polish or small UI interaction fix:
   `rudder-ui-polish-maintainer`.
 - Wrong, missing, stale, or sparse data on a Rudder surface:
   `rudder-data-path-diagnostician-maintainer`.
 - Rudder agent run failure, transcript, logs, stdout/stderr, or run id:
   `debug-run-transcript`.
+- Local Rudder Desktop dev startup, Electron shell, embedded Postgres,
+  prod-local instance confusion, or update/install failure before release:
+  `rudder-desktop-dev-recovery-maintainer`.
 - Release, canary/stable publish, npm dist-tag, Desktop release asset, or
   release workflow failure: `release-maintainer`.
 - Local branch preview for user testing: `rudder-worktree-preview-maintainer`.

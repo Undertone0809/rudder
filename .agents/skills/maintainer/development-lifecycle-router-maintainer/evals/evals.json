@@ -96,6 +96,30 @@
         "The result keeps validation state and remaining blockers visible after each phase.",
         "The result preserves unrelated dirty worktree changes and avoids unsafe history rewriting."
       ]
+    },
+    {
+      "id": 8,
+      "prompt": "看看 codex session id 019e3f7c-d54b-71b3-ba08-2ee20ce6be27，和 rudder-oss 最近 100 条运行记录横向对比一下效率和问题处理率如何。",
+      "expected_output": "Routes to codex-session-benchmark-maintainer, builds a deduped local Codex-session cohort, reports proxy metrics with caveats, and does not treat the task as a single-session product review or run-transcript debug.",
+      "files": [],
+      "expectations": [
+        "The result chooses codex-session-benchmark-maintainer as the primary route.",
+        "The result dedupes by session_meta id and excludes the current active session.",
+        "The result separates direct metrics from proxy outcome claims.",
+        "The result names any downstream skill optimization only after identifying a reusable failure class."
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "pnpm dev 好像桌面端跑不起来了，修完之后再发版 0.2.5。",
+      "expected_output": "Routes the startup failure to rudder-desktop-dev-recovery-maintainer first, validates local Desktop health, then routes the release phase to release-maintainer instead of mixing the two workflows.",
+      "files": [],
+      "expectations": [
+        "The result treats local Desktop recovery as the blocking first stage.",
+        "The result distinguishes API server, Electron shell, embedded Postgres, and update/install layers.",
+        "The result does not start npm/GitHub release operations before local Desktop validation is clear.",
+        "The result preserves unrelated dirty worktree files during recovery and release handoff."
+      ]
     }
   ]
 }

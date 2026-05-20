@@ -1,0 +1,29 @@
+{
+  "skill_name": "rudder-desktop-dev-recovery-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "pnpm dev 好像桌面端跑不起来了。你自己试试，别只看 API。",
+      "expected_output": "Classifies whether the failure is API, Electron shell, embedded Postgres, or port/process state; reruns the relevant command safely; checks health and Desktop launch evidence; repairs narrowly without touching unrelated dirty files.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "桌面端问题修完之后，发版 0.2.5。",
+      "expected_output": "Treats Desktop dev recovery as the blocking first phase, validates the local Desktop path, then explicitly routes the release portion to release-maintainer with the local validation evidence attached.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "debug 一下 update 最新版失败，是不是 release 又坏了？",
+      "expected_output": "Separates local update/download/install evidence from remote release state, checks the strongest safe non-dry-run path when the issue is install behavior, and escalates to release-maintainer only if npm/GitHub/tag/assets are actually implicated.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "我本地 Desktop 好像指到错的 Rudder instance 了，页面数据不对。",
+      "expected_output": "Verifies the active Desktop base URL, API health, org list, and instance/profile path before diagnosing data, avoids deleting ~/.rudder, and routes to rudder-data-path-diagnostician-maintainer only after the runtime target is pinned down.",
+      "files": []
+    }
+  ]
+}
