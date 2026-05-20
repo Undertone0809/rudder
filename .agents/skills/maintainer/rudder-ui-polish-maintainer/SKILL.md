@@ -35,6 +35,9 @@ Use this skill for Rudder UI tasks such as:
 - changing an empty state, onboarding step, tutorial jump, or small workflow
   surface
 - producing a quick screenshot of the current UI after a local change
+- explaining why a visible surface looks wrong when the user asks "为什么"
+  and the likely answer is current CSS/layout/data layering rather than an
+  approved implementation request
 
 Use `build-advisor` first when the user explicitly asks "你懂我要怎么改吗",
 "先说说", or otherwise wants the product/design direction before edits.
@@ -68,13 +71,17 @@ Do not use this skill for:
 Classify the prompt before editing:
 
 - `advice-only`: user asks to discuss, judge, or generate options.
+- `explain-only`: user asks why a visual state looks the way it does, without
+  asking to change it yet.
 - `implement`: user asks to fix, optimize, remove, add, or "改一下".
 - `screenshot`: user wants the current rendered UI captured.
 - `review-gated`: user invokes reviewers or says the result must pass review.
 
 In `advice-only`, produce the smallest useful UI direction and stop. In
-`implement`, make the code change. If the user gives screenshots plus vague
-language, infer the concrete pain from the image and surrounding product state.
+`explain-only`, trace the rendered reason from screenshot to component/CSS/data
+source and stop with the likely fix direction, not a patch. In `implement`,
+make the code change. If the user gives screenshots plus vague language, infer
+the concrete pain from the image and surrounding product state.
 
 ### 2. Build a small evidence packet
 

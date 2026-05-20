@@ -113,6 +113,19 @@ git show --stat <commit>
 git show <commit>
 ```
 
+For commit or session reviews, also compare the changed-file set against the
+stated task. Classify every surprising file as one of:
+
+- required for the requested behavior
+- test, docs, or contract evidence for the requested behavior
+- pre-existing unrelated dirty work
+- unrelated change mixed into the reviewed commit or handoff
+
+Unrelated changes mixed into a product fix are review findings, not cleanup
+details. If they change skills, release state, generated files, dependencies,
+or broad runtime behavior outside the task, usually treat that as at least a
+`conditional accept` blocker until the scope is split or justified.
+
 For PRs, read the PR description, changed files, review comments, and CI status
 when available.
 
@@ -355,6 +368,13 @@ reviewers or a serial two-role fallback when that distinction affects trust.
 - Confirm where the change landed and whether it was pushed.
 - If the user expected `main`, verify `main` contains the commit.
 - Distinguish the user's unrelated dirty work from the reviewed changes.
+- Check commit hygiene: the changed files should match the requested product
+  object, tests/docs for that object, and necessary contracts. Flag mixed
+  unrelated edits, accidental skill renames, version bumps, generated artifacts,
+  or broad dependency churn inside narrow fixes.
+- When reviewing a Codex session, do not rely only on the final summary saying
+  "committed and pushed"; verify the commit or diff when the local repo is
+  available.
 - For PR preview work, check whether the app was started in an isolated worktree
   and whether the user received a URL plus screenshots when UI changed.
 

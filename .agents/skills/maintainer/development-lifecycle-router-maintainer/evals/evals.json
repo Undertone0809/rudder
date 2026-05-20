@@ -120,6 +120,18 @@
         "The result does not start npm/GitHub release operations before local Desktop validation is clear.",
         "The result preserves unrelated dirty worktree files during recovery and release handoff."
       ]
+    },
+    {
+      "id": 10,
+      "prompt": "<turn_aborted> previous work was interrupted. 我不知道刚才怎么跑出 stash 了，你结合刚才几个 codex session 处理一下，别把功能弄没了。",
+      "expected_output": "Runs continuation recovery before editing: identifies the latest user request, inspects branch/status/stash/recent commits and named sessions, separates task changes from unrelated dirty files, and only then resumes or hands off with a current-state checkpoint.",
+      "files": [],
+      "expectations": [
+        "The result does not continue a stale pre-interruption task without checking the newest user request.",
+        "The result classifies stashes before applying, popping, or dropping them.",
+        "The result reconstructs current phase, files touched, validation state, blockers, and next safe action.",
+        "The final handoff verifies that commit and push state correspond to the recovered task rather than an older ghost task."
+      ]
     }
   ]
 }

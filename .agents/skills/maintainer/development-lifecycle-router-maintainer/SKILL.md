@@ -38,6 +38,9 @@ Use this skill when the user asks for any of:
   phase"
 - repair of a previous agent run where the failure was weak routing, skipped
   review, wrong stage, or premature implementation
+- continuation after `turn_aborted`, rollback, stash/worktree confusion, or a
+  long `/goal` run where the agent must recover the real current state before
+  resuming
 - creating or improving a reusable workflow for development tasks
 
 Do not use this skill as a substitute for a clearly matched narrow skill. If
@@ -167,6 +170,28 @@ concrete artifact:
 
 Do not move to the next stage when the current stage has a blocker that changes
 the route.
+
+### 3.1 Recover continuation state before resuming work
+
+When the thread resumes after `turn_aborted`, rollback, compaction, a long
+`/goal` run, unexpected stash creation, or work that spans multiple Codex
+sessions, rebuild state before editing or handing off:
+
+- Read the newest user request and compare it with the original task. Do not
+  continue an older ghost task if the user redirected the work.
+- Check `git status --short --branch`, recent commits, stashes, and touched
+  files relevant to the task. Treat unrelated dirty files as user work unless
+  evidence shows they belong to this task.
+- Inspect prior session evidence when the user names sessions or says "刚才",
+  "之前", "正在处理", or "别把功能弄没了".
+- Reconstruct the current phase, files changed, validation already run,
+  blockers, and next safe command before continuing.
+- Before final handoff, verify that the final answer, commit, and push state
+  correspond to the latest user request, not a stale pre-interruption stage.
+
+If a stash exists, classify it before applying or dropping it: source session,
+files included, overlap with current task, and whether applying it would
+overwrite unrelated work. Do not drop or pop a stash just to clean up state.
 
 ### 4. Run default review gates
 

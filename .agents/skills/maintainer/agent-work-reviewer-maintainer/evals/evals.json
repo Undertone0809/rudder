@@ -56,6 +56,18 @@
         "The result does not give an unconditional accept when real scenario verification was available but not performed.",
         "The result preserves reviewer read-only boundaries and avoids destructive UI actions without confirmation."
       ]
+    },
+    {
+      "id": 5,
+      "prompt": "review 一下这个 app logo 修复是不是合格。commit 里好像还混了 debug-run-transcript skill rename。",
+      "expected_output": "Reviews both product correctness and commit hygiene, classifies the skill rename as unrelated unless justified by the task, and returns conditional accept or reject if the unrelated change is mixed into the product fix.",
+      "files": [],
+      "expectations": [
+        "The result compares the changed-file set against the stated app-logo task.",
+        "The result distinguishes required files, tests/docs evidence, unrelated dirty work, and unrelated committed changes.",
+        "The result treats unrelated skill rename or broad maintenance churn inside a narrow product fix as a review finding.",
+        "The result recommends splitting or justifying the scope before calling the work cleanly accepted."
+      ]
     }
   ]
 }

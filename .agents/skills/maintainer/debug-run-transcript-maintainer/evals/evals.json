@@ -33,6 +33,18 @@
         "The result explicitly explains that the parsed trace outline is empty or zero-turn.",
         "The result points to alternate evidence that still validates the run, such as `stdout_excerpt`, `result_json`, or run events."
       ]
+    },
+    {
+      "id": 3,
+      "prompt": "分析一下 prod Z Studio 这个 org 最近运行的 30 个 run，看看有什么可以优化的问题，直接给我 proposal。",
+      "expected_output": "Uses batch run-analysis mode: resolves the org/runtime window, builds a recent-run cohort from run-intelligence/API or fallback filesystem evidence, classifies repeated failure classes, deep-dives representative runs, and labels any sandbox-limited conclusions.",
+      "files": [],
+      "expectations": [
+        "The result treats this as a Rudder run batch audit rather than a Codex session benchmark.",
+        "The result captures status, duration, runtime, cost/tokens when available, result shape, stderr/error excerpts, and raw-log availability for the cohort.",
+        "The result pivots to filesystem-side run logs or artifacts when API/Postgres access is blocked instead of stopping.",
+        "The proposal ties each optimization to observed run evidence and names confidence limits from unavailable sources."
+      ]
     }
   ]
 }
