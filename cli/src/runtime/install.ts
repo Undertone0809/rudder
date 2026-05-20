@@ -181,6 +181,47 @@ export async function ensureRuntimeInstalled(
   const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
   const result = runNpmRuntimeInstall(spawnSyncImpl, cacheDir, packageSpec);
   const output = collectSpawnOutput(result);
+
+  if (result.status !== 0 && packageVersion !== "latest" && isVersionNotFoundError(output)) {
+    const fallbackVersion = "latest";
+    const fallbackCacheDir = resolveRuntimeCacheDir(fallbackVersion, options.homeDir);
+    const fallbackSpec = resolveRuntimePackageSpec(fallbackVersion, packageName);
+
+    if (await isRuntimeCacheHit({ cacheDir: fallbackCacheDir, version: fallbackVersion, packageName })) {
+      await touchRuntimeInstallMetadata(fallbackCacheDir);
+      return {
+        status: "hit",
+        cacheDir: fallbackCacheDir,
+        packageSpec: fallbackSpec,
+        command: `npm install --prefix ${fallbackCacheDir} --omit=dev --no-audit --no-fund ${fallbackSpec}`,
+        output: "",
+      };
+    }
+
+    await mkdir(fallbackCacheDir, { recursive: true });
+    await writeFile(path.join(fallbackCacheDir, "package.json"), `${JSON.stringify({ private: true, type: "module" }, null, 2)}\n`, "utf8");
+
+    const fallbackResult = runNpmRuntimeInstall(spawnSyncImpl, fallbackCacheDir, fallbackSpec);
+    const fallbackOutput = collectSpawnOutput(fallbackResult);
+    if (fallbackResult.status === 0) {
+      const fallbackMetadata: RuntimeInstallMetadata = {
+        version: 1,
+        packageName,
+        packageVersion: fallbackVersion,
+        installedAt: new Date().toISOString(),
+        lastUsedAt: new Date().toISOString(),
+      };
+      await writeRuntimeInstallMetadata(fallbackCacheDir, fallbackMetadata);
+      return {
+        status: "installed",
+        cacheDir: fallbackCacheDir,
+        packageSpec: fallbackSpec,
+        command: `npm install --prefix ${fallbackCacheDir} --omit=dev --no-audit --no-fund ${fallbackSpec}`,
+        output: fallbackOutput,
+      };
+    }
+  }
+
   if (result.status !== 0) {
     throw new RuntimeInstallError(
       `Rudder runtime installation failed. Re-run manually: ${command}`,
@@ -236,6 +277,15 @@ function collectSpawnOutput(result: SpawnSyncResultLike): string {
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .join("\n")
     .trim();
+}
+
+function isVersionNotFoundError(output: string): boolean {
+  const normalized = output.toLowerCase();
+  return (
+    normalized.includes("enoent") ||
+    normalized.includes("etarget") ||
+    normalized.includes("no matching version found")
+  );
 }
 
 interface RuntimeCacheEntry {
