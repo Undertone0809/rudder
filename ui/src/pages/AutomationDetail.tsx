@@ -59,7 +59,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import type { ActivityEvent, AutomationRunSummary, AutomationTrigger } from "@rudderhq/shared";
-import { concurrencyPolicies, catchUpPolicies, signingModes, concurrencyPolicyDescriptions, catchUpPolicyDescriptions, SecretMessage, addUniqueId, removeId, autoResizeTextarea, formatActivityDetailValue, getActivityDetailString, humanizeToken, triggerKindLabel, runSourceLabel, runStatusTitle, runStatusDetail, getLocalTimezone, formatAutomationTimestamp, summarizeTrigger, automationRiskLabel, automationNextActionLabel, SidebarSection, SidebarRow, SidebarSelectValue, OverviewMetaPill, TriggerEditor } from "./AutomationDetail.parts";
+import { concurrencyPolicies, catchUpPolicies, signingModes, concurrencyPolicyDescriptions, catchUpPolicyDescriptions, SecretMessage, addUniqueId, removeId, autoResizeTextarea, formatActivityDetailValue, getActivityDetailString, humanizeToken, triggerKindLabel, runSourceLabel, getLocalTimezone, formatAutomationTimestamp, summarizeTrigger, automationRiskLabel, automationNextActionLabel, SidebarSection, SidebarRow, SidebarSelectValue, OverviewMetaPill, TriggerEditor } from "./AutomationDetail.parts";
 
 export function AutomationDetail() {
   const { automationId } = useParams<{ automationId: string }>();
@@ -684,54 +684,91 @@ export function AutomationDetail() {
       return summary && summary !== kind ? `${kind}: ${summary}` : kind;
     };
 
+    const formatRunActivityTitle = (source: string, status: string) => {
+      const sourceLabel = runSourceLabel(source);
+      switch (status) {
+        case "issue_created":
+          return `${sourceLabel} opened an execution issue`;
+        case "running":
+          return `${sourceLabel} is in progress`;
+        case "failed":
+          return `${sourceLabel} failed`;
+        case "coalesced":
+          return `${sourceLabel} joined an active execution`;
+        case "skipped":
+          return `${sourceLabel} skipped`;
+        case "completed":
+          return `${sourceLabel} completed`;
+        default:
+          return `${sourceLabel} ${humanizeToken(status)}`;
+      }
+    };
+
+    const formatTriggerContext = (triggerDescription: string | null) => {
+      if (!triggerDescription) return null;
+      return triggerDescription.startsWith("Schedule trigger: ")
+        ? `for ${triggerDescription.replace("Schedule trigger: ", "")}`
+        : triggerDescription;
+    };
+
     const pushEventItem = (event: ActivityEvent) => {
       const details = event.details ?? null;
       const eventDetails: ReactNode[] = [];
       let title = event.action.replaceAll(".", " ");
+      let useFallbackDetail = false;
 
       if (event.action === "automation.created") {
-        title = "Automation created";
         const createdTitle = getActivityDetailString(details, "title");
-        eventDetails.push(detailText(createdTitle ? `"${createdTitle}"` : automation?.title, "title"));
+        title = createdTitle
+          ? `Created "${createdTitle}"`
+          : "Created automation";
         eventDetails.push(detailText(`Assigned to ${describeAgent(getActivityDetailString(details, "assigneeAgentId")) ?? "agent"}`, "assignee"));
       } else if (event.action === "automation.updated") {
-        title = "Automation updated";
         const updatedTitle = getActivityDetailString(details, "title");
-        eventDetails.push(detailText(updatedTitle ? `Title: ${updatedTitle}` : "Settings changed", "updated"));
+        title = updatedTitle
+          ? `Updated automation settings for "${updatedTitle}"`
+          : "Updated automation settings";
       } else if (event.action === "automation.deleted") {
-        title = "Automation deleted";
-        eventDetails.push(detailText(getActivityDetailString(details, "title"), "title"));
+        const deletedTitle = getActivityDetailString(details, "title");
+        title = deletedTitle
+          ? `Deleted "${deletedTitle}"`
+          : "Deleted automation";
       } else if (event.action === "automation.trigger_created") {
-        title = "Trigger added";
         const trigger = triggerById.get(event.entityId);
+        const triggerKind = trigger?.kind ?? getActivityDetailString(details, "kind");
+        title = `Added ${triggerKindLabel(triggerKind).toLowerCase()}`;
         eventDetails.push(detailText(
-          describeTrigger(event.entityId, {
+          formatTriggerContext(describeTrigger(event.entityId, {
             kind: getActivityDetailString(details, "kind") ?? "trigger",
             cronExpression: trigger?.cronExpression ?? null,
             label: trigger?.label ?? null,
-          }),
+          })),
           "trigger",
         ));
       } else if (event.action === "automation.trigger_updated") {
-        title = "Trigger updated";
+        const trigger = triggerById.get(event.entityId);
+        const triggerKind = trigger?.kind ?? getActivityDetailString(details, "kind");
+        title = `Updated ${triggerKindLabel(triggerKind).toLowerCase()}`;
         eventDetails.push(detailText(
-          describeTrigger(event.entityId, {
+          formatTriggerContext(describeTrigger(event.entityId, {
             kind: getActivityDetailString(details, "kind") ?? "trigger",
             cronExpression: null,
             label: null,
-          }),
+          })),
           "trigger",
         ));
       } else if (event.action === "automation.trigger_deleted") {
-        title = "Trigger removed";
-        eventDetails.push(detailText(triggerKindLabel(getActivityDetailString(details, "kind")), "trigger"));
+        title = `Removed ${triggerKindLabel(getActivityDetailString(details, "kind")).toLowerCase()}`;
       } else if (event.action === "automation.trigger_secret_rotated") {
         title = "Webhook secret rotated";
       } else if (event.action === "automation.run_triggered") {
-        title = runStatusTitle(getActivityDetailString(details, "status") ?? "started");
-        eventDetails.push(detailText(runSourceLabel(getActivityDetailString(details, "source") ?? "run"), "source"));
-        eventDetails.push(detailText(runStatusDetail(getActivityDetailString(details, "status") ?? ""), "status"));
+        const source = getActivityDetailString(details, "source") ?? "run";
+        const status = getActivityDetailString(details, "status") ?? "started";
+        title = formatRunActivityTitle(source, status);
+        const triggerDescription = describeTrigger(getActivityDetailString(details, "triggerId"), null);
+        eventDetails.push(detailText(formatTriggerContext(triggerDescription), "trigger"));
       } else {
+        useFallbackDetail = true;
         Object.entries(details ?? {})
           .filter(([key]) => !["automationId", "triggerId", "assigneeAgentId", "projectId"].includes(key))
           .slice(0, 2)
@@ -749,7 +786,9 @@ export function AutomationDetail() {
       items.push({
         id: `event:${event.id}`,
         title,
-        details: resolvedDetails.length > 0 ? resolvedDetails : [<span key="fallback">Activity recorded</span>],
+        details: resolvedDetails.length > 0 || !useFallbackDetail
+          ? resolvedDetails
+          : [<span key="fallback">Activity recorded</span>],
         createdAt: event.createdAt,
         sortAt: new Date(event.createdAt).getTime(),
       });
@@ -757,14 +796,12 @@ export function AutomationDetail() {
 
     for (const run of (automationRuns ?? automation?.recentRuns ?? []) as AutomationRunSummary[]) {
       const details: ReactNode[] = [];
-      details.push(<span key="source">{runSourceLabel(run.source)}</span>);
-      const statusDetail = runStatusDetail(run.status);
-      if (statusDetail) details.push(<span key="status">{statusDetail}</span>);
       const triggerDescription = describeTrigger(
         run.triggerId,
         run.trigger ? { ...run.trigger, cronExpression: null } : null,
       );
-      if (triggerDescription) details.push(<span key="trigger">{triggerDescription}</span>);
+      const triggerContext = formatTriggerContext(triggerDescription);
+      if (triggerContext) details.push(<span key="trigger">{triggerContext}</span>);
       if (run.linkedIssue) {
         details.push(
           <Link key="issue" to={`/issues/${run.linkedIssue.identifier ?? run.linkedIssue.id}`} className="font-medium text-foreground hover:underline">
@@ -783,7 +820,7 @@ export function AutomationDetail() {
 
       items.push({
         id: `run:${run.id}`,
-        title: runStatusTitle(run.status),
+        title: formatRunActivityTitle(run.source, run.status),
         details,
         createdAt: run.triggeredAt,
         sortAt: new Date(run.triggeredAt).getTime(),
@@ -1332,7 +1369,7 @@ export function AutomationDetail() {
                         >
                           {item.details.map((detail, i) => (
                             <span key={i}>
-                              {i > 0 && <span className="mx-1 text-border">·</span>}
+                              {i > 0 && <span className="mx-1 text-border"> · </span>}
                               {detail}
                             </span>
                           ))}

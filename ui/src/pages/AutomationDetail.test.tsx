@@ -425,13 +425,11 @@ describe("AutomationDetail", () => {
     expect(container.textContent).toContain("Schedule");
     expect(container.textContent).toContain("Project");
     expect(container.textContent).toContain("Run status");
-    expect(container.textContent).toContain("Run in progress");
-    expect(container.textContent).toContain("Manual run");
+    expect(container.textContent).toContain("Manual run is in progress");
     expect(container.textContent).toContain("AUT-7");
-    expect(container.textContent).toContain("Automation updated");
-    expect(container.textContent).toContain("Title: Daily automation review");
-    expect(container.textContent).toContain("Trigger added");
-    expect(container.textContent).toContain("Schedule trigger: Schedule 0 10 * * *");
+    expect(container.textContent).toContain('Updated automation settings for "Daily automation review"');
+    expect(container.textContent).toContain("Added schedule trigger");
+    expect(container.textContent).toContain("for Schedule 0 10 * * *");
     expect(container.textContent).toContain("Live run widget");
     expect(container.textContent).toContain("Last ran");
     expect(container.textContent).toContain("In sync");
@@ -446,6 +444,10 @@ describe("AutomationDetail", () => {
     expect(container.textContent).not.toContain("Automatic triggers are live.");
     expect(container.textContent).not.toContain("Previous runs");
     expect(container.textContent).not.toContain("automation updated");
+    expect(container.textContent).not.toContain("Automation updated");
+    expect(container.textContent).not.toContain("Title: Daily automation review");
+    expect(container.textContent).not.toContain("Execution issue is active");
+    expect(container.textContent).not.toContain("Activity recorded");
     expect(container.textContent).not.toContain("kind: schedule");
     expect(container.textContent).not.toContain("Pause automation");
     expect(container.textContent).not.toContain("Run now");
