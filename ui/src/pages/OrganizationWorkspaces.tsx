@@ -922,10 +922,6 @@ export function OrganizationWorkspaceFilesSidebar() {
           data-testid="org-workspaces-files-card"
           className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border"
         >
-          <div className="border-b border-border px-4 py-2">
-            <div className="text-sm font-medium">File tree</div>
-            <div className="text-xs text-muted-foreground">/</div>
-          </div>
           <div
             ref={filesScrollRef}
             data-testid="org-workspaces-files-scroll"

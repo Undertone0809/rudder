@@ -789,7 +789,7 @@ test.describe("Workspace shell", () => {
     await expect(page.getByTestId("workspace-main-header")).toHaveCount(0);
     await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Docs", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
-    await expect(filesCard.getByText("/", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("org-workspaces-files-scroll")).toBeVisible();
     await expect(filesCard.getByRole("button", { name: "notes.md", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "New doc" }).click();
     await expect(page.getByText("Doc created")).toBeVisible();
