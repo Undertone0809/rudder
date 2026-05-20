@@ -280,7 +280,7 @@ else
     release_info "  Publishing $pkg_name@$pkg_version"
     cd "$REPO_ROOT/$pkg_dir"
     npm_publish_args=(publish --tag "$DIST_TAG" --access public --no-git-checks)
-    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+    if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ -z "${NODE_AUTH_TOKEN:-${NPM_TOKEN:-}}" ]; then
       npm_publish_args+=(--provenance)
     fi
     npm "${npm_publish_args[@]}"
