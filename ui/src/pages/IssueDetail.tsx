@@ -897,13 +897,13 @@ export function IssueDetail() {
     <div
       className={cn(
         "flex items-center gap-1 shrink-0",
-        grouped && "rounded-lg border border-border bg-background/80 p-1",
+        grouped && "rounded-full border border-border bg-background/80 p-1",
       )}
     >
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 px-2 text-xs"
+        className={cn("h-7 px-2 text-xs", grouped && "rounded-full")}
         onClick={copyIssueIdToClipboard}
         title={`Copy ${issueDisplayId}`}
       >
@@ -913,7 +913,7 @@ export function IssueDetail() {
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 px-2 text-xs"
+        className={cn("h-7 px-2 text-xs", grouped && "rounded-full")}
         onClick={openInChat}
       >
         <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
@@ -921,7 +921,12 @@ export function IssueDetail() {
       </Button>
       <Popover open={moreOpen} onOpenChange={onMoreOpenChange}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-7 w-7 px-0 shrink-0" aria-label="More issue actions">
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn("h-7 w-7 px-0 shrink-0", grouped && "rounded-full")}
+            aria-label="More issue actions"
+          >
             <MoreHorizontal className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
