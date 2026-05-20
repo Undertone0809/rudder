@@ -1621,6 +1621,7 @@ button[draggable="false"] {
 }
 
 .rudder-milkdown-content a[href^="agent://"],
+.rudder-milkdown-content a[href^="chat://"],
 .rudder-milkdown-content a[href^="issue://"],
 .rudder-milkdown-content a[href^="project://"],
 .rudder-milkdown-content a[href^="library-doc://"],
@@ -1660,6 +1661,15 @@ button[draggable="false"] {
   height: 0.45rem;
   border-radius: 999px;
   background: currentColor;
+}
+
+.rudder-milkdown-content a[href^="chat://"]::before {
+  content: "";
+  flex: none;
+  width: 0.55rem;
+  height: 0.42rem;
+  border: 1px solid currentColor;
+  border-radius: 0.16rem;
 }
 
 .rudder-milkdown-content a[href^="library-doc://"]::before,
@@ -1821,6 +1831,15 @@ a.rudder-mention-chip[data-mention-kind="library_file"]::before {
   border-radius: 0.14rem;
   box-shadow: inset 0 -0.22rem 0 -0.17rem currentColor;
   opacity: 0.82;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="chat"]::before,
+a.rudder-mention-chip[data-mention-kind="chat"]::before {
+  content: "";
+  width: 0.55rem;
+  height: 0.42rem;
+  border: 1px solid currentColor;
+  border-radius: 0.16rem;
 }
 
 .rudder-mdxeditor-content ul,

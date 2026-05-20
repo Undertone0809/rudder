@@ -33,8 +33,8 @@ import {
   addImportVisitor$,
   createRootEditorSubscription$,
 } from "@mdxeditor/editor";
-import { Boxes, FileText } from "lucide-react";
-import { buildAgentMentionHref, buildIssueMentionHref, buildLibraryDocMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
+import { Boxes, FileText, MessageSquare } from "lucide-react";
+import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDocMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
@@ -75,6 +75,7 @@ import {
 } from "../lib/inline-token-dom";
 import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
+import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { cn } from "../lib/utils";
 import { MilkdownMarkdownEditor } from "./MilkdownMarkdownEditor";
 import {
@@ -94,7 +95,7 @@ export {
 export interface MentionOption {
   id: string;
   name: string;
-  kind?: "agent" | "project" | "issue" | "library_doc" | "library_file" | "skill";
+  kind?: "agent" | "project" | "issue" | "chat" | "library_doc" | "library_file" | "skill";
   searchText?: string;
   agentId?: string;
   agentIcon?: string | null;
@@ -109,6 +110,11 @@ export interface MentionOption {
   issueAssigneeName?: string | null;
   issueAssigneeIcon?: string | null;
   issueAssigneeRole?: AgentRole | null;
+  chatConversationId?: string;
+  chatTitle?: string | null;
+  chatStatus?: string | null;
+  chatSummary?: string | null;
+  chatUpdatedAt?: Date | string | null;
   libraryDocumentId?: string;
   libraryDocumentTitle?: string | null;
   libraryDocumentUpdatedAt?: Date | string | null;
@@ -720,6 +726,13 @@ function mentionTokenDetails(option: MentionOption): { href: string; isSkill: bo
       label: option.name,
     };
   }
+  if (option.kind === "chat" && option.chatConversationId) {
+    return {
+      href: buildChatMentionHref(option.chatConversationId, option.chatTitle ?? option.name),
+      isSkill: false,
+      label: option.name,
+    };
+  }
   if (option.kind === "library_doc" && option.libraryDocumentId) {
     return {
       href: buildLibraryDocMentionHref(option.libraryDocumentId, option.libraryDocumentTitle ?? option.name),
@@ -886,6 +899,15 @@ function rootEditorCapturePlugin(onEditor: (editor: LexicalEditor | null) => voi
   })();
 }
 
+function mergeMentionOptions(globalMentions: MentionOption[], localMentions: MentionOption[] | undefined) {
+  if (!localMentions || localMentions.length === 0) return globalMentions;
+  if (globalMentions.length === 0) return localMentions;
+  const merged = new Map<string, MentionOption>();
+  for (const mention of globalMentions) merged.set(mention.id, mention);
+  for (const mention of localMentions) merged.set(mention.id, mention);
+  return Array.from(merged.values());
+}
+
 /* ---- Component ---- */
 
 const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(function LegacyMarkdownEditor({
@@ -945,6 +967,9 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       if (mention.kind === "issue" && mention.issueId) {
         map.set(`issue:${mention.issueId}`, mention);
       }
+      if (mention.kind === "chat" && mention.chatConversationId) {
+        map.set(`chat:${mention.chatConversationId}`, mention);
+      }
       if (mention.kind === "project" && mention.projectId) {
         map.set(`project:${mention.projectId}`, mention);
       }
@@ -990,6 +1015,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
       if (kind === "skill") return "Skills";
       if (kind === "project") return "Projects";
       if (kind === "issue") return "Issues";
+      if (kind === "chat") return "Chats";
       if (kind === "library_doc" || kind === "library_file") return "Docs";
       return "Agents";
     };
@@ -1285,6 +1311,11 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
           continue;
         }
 
+        if (parsed.kind === "chat") {
+          applyMentionChipDecoration(link, parsed);
+          continue;
+        }
+
         if (parsed.kind === "library_doc" || parsed.kind === "library_file") {
           applyMentionChipDecoration(link, parsed);
           continue;
@@ -1459,14 +1490,16 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                   ? buildProjectMentionHref(option.projectId, option.projectColor ?? null)
                   : option.kind === "issue" && option.issueId
                     ? buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null)
-                    : option.kind === "library_doc" && option.libraryDocumentId
-                      ? buildLibraryDocMentionHref(option.libraryDocumentId, option.libraryDocumentTitle ?? option.name)
-                      : option.kind === "library_file" && option.libraryFilePath
-                        ? buildLibraryFileMentionHref(option.libraryFilePath, option.name)
-                      : buildAgentMentionHref(
-                          option.agentId ?? option.id.replace(/^agent:/, ""),
-                          option.agentIcon ?? null,
-                        );
+                    : option.kind === "chat" && option.chatConversationId
+                      ? buildChatMentionHref(option.chatConversationId, option.chatTitle ?? option.name)
+                      : option.kind === "library_doc" && option.libraryDocumentId
+                        ? buildLibraryDocMentionHref(option.libraryDocumentId, option.libraryDocumentTitle ?? option.name)
+                        : option.kind === "library_file" && option.libraryFilePath
+                          ? buildLibraryFileMentionHref(option.libraryFilePath, option.name)
+                          : buildAgentMentionHref(
+                              option.agentId ?? option.id.replace(/^agent:/, ""),
+                              option.agentIcon ?? null,
+                            );
                 return Array.from(editableRoot.querySelectorAll("a, [data-mention-href]"))
                   .filter((node): node is HTMLElement => node instanceof HTMLElement)
                   .filter((link) => {
@@ -1859,6 +1892,8 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                                 <span className="absolute inset-0 m-auto h-2 w-2 rounded-full bg-current" />
                               ) : null}
                             </span>
+                          ) : option.kind === "chat" ? (
+                            <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
                           ) : option.kind === "library_file" ? (
                             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                           ) : option.kind === "library_doc" ? (
@@ -1910,6 +1945,11 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                                   </span>
                                 </div>
                               ) : null}
+                              {option.kind === "chat" ? (
+                                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                  {option.chatSummary ?? option.chatStatus ?? "Chat"}
+                                </div>
+                              ) : null}
                               {option.kind === "library_doc" || option.kind === "library_file" ? (
                                 <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
                                   {option.libraryFilePath ?? option.libraryDocumentPath ?? "Doc"}
@@ -1925,6 +1965,11 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
                           {option.kind === "project" && option.projectId && (
                             <span className="ml-auto text-[11px] text-muted-foreground">
                               Project
+                            </span>
+                          )}
+                          {option.kind === "chat" && option.chatConversationId && (
+                            <span className="ml-auto text-[11px] text-muted-foreground">
+                              Chat
                             </span>
                           )}
                           {((option.kind === "library_doc" && option.libraryDocumentId) || (option.kind === "library_file" && option.libraryFilePath)) && (
@@ -1975,8 +2020,22 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
 });
 
 export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(function MarkdownEditor(props, forwardedRef) {
+  const globalMentions = useMarkdownMentions();
+  const mergedMentions = useMemo(
+    () => mergeMentionOptions(globalMentions.mentions, props.mentions),
+    [globalMentions.mentions, props.mentions],
+  );
+  const handleMentionQueryChange = useCallback((query: string | null) => {
+    globalMentions.onMentionQueryChange(query);
+    props.onMentionQueryChange?.(query);
+  }, [globalMentions, props.onMentionQueryChange]);
+  const editorProps = {
+    ...props,
+    mentions: mergedMentions,
+    onMentionQueryChange: handleMentionQueryChange,
+  };
   if (props.engine === "milkdown" && !props.plainText) {
-    return <MilkdownMarkdownEditor {...props} ref={forwardedRef} />;
+    return <MilkdownMarkdownEditor {...editorProps} ref={forwardedRef} />;
   }
-  return <LegacyMarkdownEditor {...props} ref={forwardedRef} />;
+  return <LegacyMarkdownEditor {...editorProps} ref={forwardedRef} />;
 });

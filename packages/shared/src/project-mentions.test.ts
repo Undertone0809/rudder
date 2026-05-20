@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAgentMentionHref,
+  buildChatMentionHref,
   buildIssueMentionHref,
   buildLibraryDocMentionHref,
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
   extractAgentMentionIds,
+  extractChatMentionIds,
   extractIssueMentionIds,
   extractLibraryDocMentionIds,
   extractLibraryFileMentionPaths,
   extractProjectMentionIds,
   parseAgentMentionHref,
+  parseChatMentionHref,
   parseIssueMentionHref,
   parseLibraryDocMentionHref,
   parseLibraryFileMentionHref,
@@ -55,6 +58,15 @@ describe("project-mentions", () => {
     expect(extractIssueMentionIds(`[@PAP-123](${href})`)).toEqual(["issue-123"]);
   });
 
+  it("round-trips chat mentions with title metadata", () => {
+    const href = buildChatMentionHref("chat-123", "Launch planning");
+    expect(parseChatMentionHref(href)).toEqual({
+      conversationId: "chat-123",
+      title: "Launch planning",
+    });
+    expect(extractChatMentionIds(`[@Launch planning](${href})`)).toEqual(["chat-123"]);
+  });
+
   it("round-trips library doc mentions with title metadata", () => {
     const href = buildLibraryDocMentionHref("doc-123", "Product principles");
     expect(parseLibraryDocMentionHref(href)).toEqual({
@@ -80,6 +92,8 @@ describe("project-mentions", () => {
       .toEqual(["agent-123"]);
     expect(extractIssueMentionIds("`[@PAP-1](issue://id?r=PAP-1)` [@PAP-2](issue://issue-123?r=PAP-2)"))
       .toEqual(["issue-123"]);
+    expect(extractChatMentionIds("`[@Chat](chat://chat-1)` [@Real](chat://chat-2)"))
+      .toEqual(["chat-2"]);
     expect(extractLibraryDocMentionIds("`[@Doc](library-doc://doc-1)` [@Real](library-doc://doc-2)"))
       .toEqual(["doc-2"]);
     expect(extractLibraryFileMentionPaths(

@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAgentMentionHref,
+  buildChatMentionHref,
   buildIssueMentionHref,
   buildLibraryDocMentionHref,
   buildLibraryFileMentionHref,
@@ -46,6 +47,16 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
       },
       {
         option: {
+          id: "chat:chat-1",
+          name: "Launch planning",
+          kind: "chat",
+          chatConversationId: "chat-1",
+          chatTitle: "Launch planning",
+        },
+        expected: `[Launch planning](${buildChatMentionHref("chat-1", "Launch planning")}) `,
+      },
+      {
+        option: {
           id: "library-doc:doc-1",
           name: "Milkdown proposal",
           kind: "library_doc",
@@ -83,6 +94,7 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
   it("recognizes Rudder mention and skill links as token links", () => {
     expect(isRudderTokenHref("agent://agent-1", "Jade")).toBe(true);
     expect(isRudderTokenHref("issue://issue-1?ref=R-1", "R-1")).toBe(true);
+    expect(isRudderTokenHref("chat://chat-1?t=Launch", "Launch")).toBe(true);
     expect(isRudderTokenHref("project://project-1", "Project")).toBe(true);
     expect(isRudderTokenHref("library-doc://doc-1?t=Spec", "Spec")).toBe(true);
     expect(isRudderTokenHref("library-file://file?p=docs%2Fspec.md&t=spec.md", "spec.md")).toBe(true);

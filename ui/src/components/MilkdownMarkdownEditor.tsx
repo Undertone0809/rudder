@@ -18,12 +18,13 @@ import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
 import { insert, replaceAll } from "@milkdown/kit/utils";
 import {
   buildAgentMentionHref,
+  buildChatMentionHref,
   buildIssueMentionHref,
   buildLibraryDocMentionHref,
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
 } from "@rudderhq/shared";
-import { Boxes, FileText } from "lucide-react";
+import { Boxes, FileText, MessageSquare } from "lucide-react";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
@@ -98,6 +99,9 @@ function mentionTokenDetails(option: MentionOption): { href: string; label: stri
   }
   if (option.kind === "issue" && option.issueId) {
     return { href: buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null), label: option.name };
+  }
+  if (option.kind === "chat" && option.chatConversationId) {
+    return { href: buildChatMentionHref(option.chatConversationId, option.chatTitle ?? option.name), label: option.name };
   }
   if (option.kind === "library_doc" && option.libraryDocumentId) {
     return {
@@ -451,6 +455,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       if (kind === "skill") return "Skills";
       if (kind === "project") return "Projects";
       if (kind === "issue") return "Issues";
+      if (kind === "chat") return "Chats";
       if (kind === "library_doc" || kind === "library_file") return "Docs";
       return "Agents";
     };
@@ -793,6 +798,8 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
                             <span className="absolute inset-0 m-auto h-2 w-2 rounded-full bg-current" />
                           ) : null}
                         </span>
+                      ) : option.kind === "chat" ? (
+                        <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
                       ) : option.kind === "library_file" ? (
                         <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                       ) : option.kind === "library_doc" ? (
@@ -844,6 +851,11 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
                               </span>
                             </div>
                           ) : null}
+                          {option.kind === "chat" ? (
+                            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                              {option.chatSummary ?? option.chatStatus ?? "Chat"}
+                            </div>
+                          ) : null}
                           {option.kind === "library_doc" || option.kind === "library_file" ? (
                             <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
                               {option.libraryFilePath ?? option.libraryDocumentPath ?? "Doc"}
@@ -856,6 +868,9 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
                       ) : null}
                       {option.kind === "project" && option.projectId ? (
                         <span className="ml-auto text-[11px] text-muted-foreground">Project</span>
+                      ) : null}
+                      {option.kind === "chat" && option.chatConversationId ? (
+                        <span className="ml-auto text-[11px] text-muted-foreground">Chat</span>
                       ) : null}
                       {((option.kind === "library_doc" && option.libraryDocumentId)
                         || (option.kind === "library_file" && option.libraryFilePath)) ? (

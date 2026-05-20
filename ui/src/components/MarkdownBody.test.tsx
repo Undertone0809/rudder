@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildAgentMentionHref, buildIssueMentionHref, buildLibraryDocMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDocMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { ThemeProvider } from "../context/ThemeContext";
 import { MarkdownBody } from "./MarkdownBody";
 
@@ -110,6 +110,19 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/library?path=docs%2Fproduct-brief.md"');
     expect(html).toContain('data-mention-kind="library_file"');
     expect(html).toContain("product-brief.md");
+  });
+
+  it("renders chat mentions as live Messenger links", () => {
+    const href = buildChatMentionHref("chat-123", "Launch planning");
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{`[@Launch planning](${href})`}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/messenger/chat/chat-123"');
+    expect(html).toContain('data-mention-kind="chat"');
+    expect(html).toContain("Launch planning");
   });
 
   it("resolves relative image paths when a resolver is provided", () => {

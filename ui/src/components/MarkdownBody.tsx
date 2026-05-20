@@ -211,11 +211,13 @@ export function MarkdownBody({
           ? `/projects/${parsed.projectId}`
           : parsed.kind === "issue"
             ? `/issues/${parsed.ref ?? parsed.issueId}`
-            : parsed.kind === "library_doc"
-              ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
-              : parsed.kind === "library_file"
-                ? `/library?path=${encodeURIComponent(parsed.filePath)}`
-                : `/agents/${parsed.agentId}`;
+            : parsed.kind === "chat"
+              ? `/messenger/chat/${parsed.conversationId}`
+              : parsed.kind === "library_doc"
+                ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
+                : parsed.kind === "library_file"
+                  ? `/library?path=${encodeURIComponent(parsed.filePath)}`
+                  : `/agents/${parsed.agentId}`;
         return (
           <a
             href={targetHref}

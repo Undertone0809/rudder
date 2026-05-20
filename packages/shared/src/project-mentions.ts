@@ -3,6 +3,7 @@ import { PROJECT_COLORS } from "./constants.js";
 export const PROJECT_MENTION_SCHEME = "project://";
 export const AGENT_MENTION_SCHEME = "agent://";
 export const ISSUE_MENTION_SCHEME = "issue://";
+export const CHAT_MENTION_SCHEME = "chat://";
 export const LIBRARY_DOC_MENTION_SCHEME = "library-doc://";
 export const LIBRARY_FILE_MENTION_SCHEME = "library-file://";
 
@@ -13,6 +14,7 @@ const HEX_COLOR_SHORT_WITH_HASH_RE = /^#[0-9a-f]{3}$/i;
 const PROJECT_MENTION_LINK_RE = /\[[^\]]*]\((project:\/\/[^)\s]+)\)/gi;
 const AGENT_MENTION_LINK_RE = /\[[^\]]*]\((agent:\/\/[^)\s]+)\)/gi;
 const ISSUE_MENTION_LINK_RE = /\[[^\]]*]\((issue:\/\/[^)\s]+)\)/gi;
+const CHAT_MENTION_LINK_RE = /\[[^\]]*]\((chat:\/\/[^)\s]+)\)/gi;
 const LIBRARY_DOC_MENTION_LINK_RE = /\[[^\]]*]\((library-doc:\/\/[^)\s]+)\)/gi;
 const LIBRARY_FILE_MENTION_LINK_RE = /\[[^\]]*]\((library-file:\/\/[^)\s]+)\)/gi;
 const AGENT_ICON_NAME_RE = /^[a-z0-9-]+$/i;
@@ -31,6 +33,11 @@ export interface ParsedAgentMention {
 export interface ParsedIssueMention {
   issueId: string;
   ref: string | null;
+}
+
+export interface ParsedChatMention {
+  conversationId: string;
+  title: string | null;
 }
 
 export interface ParsedLibraryDocMention {
@@ -176,6 +183,36 @@ export function parseIssueMentionHref(href: string): ParsedIssueMention | null {
   };
 }
 
+export function buildChatMentionHref(conversationId: string, title?: string | null): string {
+  const trimmedConversationId = conversationId.trim();
+  const trimmedTitle = title?.trim();
+  if (!trimmedTitle) return `${CHAT_MENTION_SCHEME}${trimmedConversationId}`;
+  return `${CHAT_MENTION_SCHEME}${trimmedConversationId}?t=${encodeMentionParam(trimmedTitle)}`;
+}
+
+export function parseChatMentionHref(href: string): ParsedChatMention | null {
+  if (!href.startsWith(CHAT_MENTION_SCHEME)) return null;
+
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "chat:") return null;
+
+  const conversationId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
+  if (!conversationId) return null;
+
+  const title = (url.searchParams.get("t") ?? url.searchParams.get("title") ?? "").trim() || null;
+
+  return {
+    conversationId,
+    title,
+  };
+}
+
 export function buildLibraryDocMentionHref(documentId: string, title?: string | null): string {
   const trimmedDocumentId = documentId.trim();
   const trimmedTitle = title?.trim();
@@ -272,6 +309,19 @@ export function extractIssueMentionIds(markdown: string): string[] {
   while ((match = re.exec(source)) !== null) {
     const parsed = parseIssueMentionHref(match[1]);
     if (parsed) ids.add(parsed.issueId);
+  }
+  return [...ids];
+}
+
+export function extractChatMentionIds(markdown: string): string[] {
+  if (!markdown) return [];
+  const ids = new Set<string>();
+  const re = new RegExp(CHAT_MENTION_LINK_RE);
+  const source = stripMarkdownCode(markdown);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    const parsed = parseChatMentionHref(match[1]);
+    if (parsed) ids.add(parsed.conversationId);
   }
   return [...ids];
 }

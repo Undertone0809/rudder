@@ -1,4 +1,4 @@
-import type { Agent, Issue, LibraryDocumentSummary, OrganizationWorkspaceFileEntry, Project } from "@rudderhq/shared";
+import type { Agent, ChatConversation, Issue, LibraryDocumentSummary, OrganizationWorkspaceFileEntry, Project } from "@rudderhq/shared";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { formatChatAgentLabel } from "./agent-labels";
 import { formatAssigneeUserLabel } from "./assignees";
@@ -30,6 +30,7 @@ export function buildMarkdownMentionOptions(params: {
   agents?: MentionAgent[] | null;
   projects?: MentionProject[] | null;
   issues?: MentionIssue[] | null;
+  chats?: ChatConversation[] | null;
   libraryDocuments?: LibraryDocumentSummary[] | null;
   libraryFiles?: OrganizationWorkspaceFileEntry[] | null;
   skillMentionOptions?: MentionOption[] | null;
@@ -91,6 +92,30 @@ export function buildMarkdownMentionOptions(params: {
       issueAssigneeName: assigneeName,
       issueAssigneeIcon: assigneeAgent?.icon ?? null,
       issueAssigneeRole: assigneeAgent?.role ?? null,
+    });
+  }
+
+  for (const chat of params.chats ?? []) {
+    const primaryIssueLabel = chat.primaryIssue
+      ? chat.primaryIssue.identifier ?? chat.primaryIssue.title
+      : null;
+    options.push({
+      id: `chat:${chat.id}`,
+      name: chat.title,
+      kind: "chat",
+      searchText: [
+        chat.title,
+        chat.summary,
+        chat.latestReplyPreview,
+        chat.searchPreview,
+        chat.status,
+        primaryIssueLabel,
+      ].filter(Boolean).join(" "),
+      chatConversationId: chat.id,
+      chatTitle: chat.title,
+      chatStatus: chat.status,
+      chatSummary: chat.summary,
+      chatUpdatedAt: chat.updatedAt,
     });
   }
 

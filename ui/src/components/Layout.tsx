@@ -50,6 +50,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useI18n } from "@/context/I18nContext";
 import { CalendarWorkspaceProvider } from "@/context/CalendarWorkspaceContext";
+import { MarkdownMentionsProvider } from "@/context/MarkdownMentionsContext";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
@@ -714,6 +715,7 @@ export function Layout() {
       </a>
       <WorktreeBanner />
       <DevRestartBanner devServer={health?.devServer} />
+      <MarkdownMentionsProvider>
       <CalendarWorkspaceProvider>
       <div className={cn("min-h-0 flex-1", isMobile ? "w-full" : "flex overflow-hidden")}>
         {isMobile && sidebarOpen && (
@@ -953,6 +955,7 @@ export function Layout() {
       <NewGoalDialog />
       <NewAgentDialog />
       </CalendarWorkspaceProvider>
+      </MarkdownMentionsProvider>
     </div>
     </NavigationBackProvider>
   );

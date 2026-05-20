@@ -61,6 +61,26 @@ describe("mention chips", () => {
     expect(element.classList.contains("rudder-mention-chip--library_doc")).toBe(true);
   });
 
+  it("parses and decorates chat mention links", () => {
+    expect(parseMentionChipHref("chat://chat-123?t=Launch%20planning")).toEqual({
+      kind: "chat",
+      conversationId: "chat-123",
+      title: "Launch planning",
+    });
+
+    const element = document.createElement("a");
+    element.textContent = "@Launch planning";
+    applyMentionChipDecoration(element, {
+      kind: "chat",
+      conversationId: "chat-123",
+      title: "Launch planning",
+    });
+
+    expect(element.textContent).toBe("Launch planning");
+    expect(element.dataset.mentionKind).toBe("chat");
+    expect(element.classList.contains("rudder-mention-chip--chat")).toBe(true);
+  });
+
   it("parses and decorates library file mention links", () => {
     expect(parseMentionChipHref("library-file://file?p=docs%2Fproduct-brief.md&t=Product%20brief")).toEqual({
       kind: "library_file",
