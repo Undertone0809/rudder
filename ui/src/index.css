@@ -1633,22 +1633,26 @@ button[draggable="false"] {
   content: "";
   position: absolute;
   bottom: -1px;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   pointer-events: none;
   z-index: -1;
 }
 
 .rudder-doc-editor-tab--active::before {
-  left: -16px;
-  border-bottom-right-radius: 16px;
-  box-shadow: 8px 8px 0 8px var(--surface-elevated);
+  left: -18px;
+  border-right: 1px solid var(--border-base);
+  border-bottom: 1px solid var(--border-base);
+  border-bottom-right-radius: 18px;
+  box-shadow: 9px 9px 0 8px var(--surface-elevated);
 }
 
 .rudder-doc-editor-tab--active::after {
-  right: -16px;
-  border-bottom-left-radius: 16px;
-  box-shadow: -8px 8px 0 8px var(--surface-elevated);
+  right: -18px;
+  border-bottom: 1px solid var(--border-base);
+  border-left: 1px solid var(--border-base);
+  border-bottom-left-radius: 18px;
+  box-shadow: -9px 9px 0 8px var(--surface-elevated);
 }
 
 .rudder-inline-markdown-surface {
