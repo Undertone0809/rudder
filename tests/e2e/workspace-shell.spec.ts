@@ -897,6 +897,12 @@ test.describe("Workspace shell", () => {
     await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
     await page.keyboard.press("Escape");
+    await filesCard.getByRole("button", { name: "instructions", exact: true }).click();
+    await filesCard.getByRole("button", { name: "HEARTBEAT.md", exact: true }).click();
+    const agentPathBreadcrumb = page.getByTestId("org-workspaces-path-breadcrumb");
+    await expect(agentPathBreadcrumb.getByRole("button", { name: "Jade", exact: true })).toBeVisible();
+    await expect(agentPathBreadcrumb.getByText(originalWorkspaceKey, { exact: true })).toHaveCount(0);
+    await expect(agentPathBreadcrumb.getByTestId("org-workspaces-path-breadcrumb-agent-icon")).toBeVisible();
     await expect(filesCard.getByRole("button", { name: ".DS_Store", exact: true })).toHaveCount(0);
     await expect(filesCard.getByRole("button", { name: ".cache", exact: true })).toHaveCount(0);
     await expect(filesCard.getByRole("button", { name: ".npm", exact: true })).toHaveCount(0);

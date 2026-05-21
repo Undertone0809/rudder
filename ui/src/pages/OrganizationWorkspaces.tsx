@@ -274,13 +274,41 @@ function displayWorkspaceFileTabLabel(filePath: string) {
   return filePath.split("/").filter(Boolean).at(-1) ?? filePath;
 }
 
-function workspacePathBreadcrumb(filePath: string) {
+interface WorkspacePathBreadcrumbPart {
+  label: string;
+  path: string;
+  isFile: boolean;
+  kind: "folder" | "file" | "agents_root" | "agent_workspace";
+  agentIcon?: string | null;
+  agentRole?: OrganizationWorkspaceFileEntry["agentRole"];
+}
+
+function workspacePathBreadcrumb(
+  filePath: string,
+  agentWorkspaceEntryByName: Map<string, OrganizationWorkspaceFileEntry>,
+): WorkspacePathBreadcrumbPart[] {
   const segments = filePath.split("/").filter(Boolean);
-  return segments.map((segment, index) => ({
-    label: segment,
-    path: segments.slice(0, index + 1).join("/"),
-    isFile: index === segments.length - 1,
-  }));
+  return segments.map((segment, index) => {
+    const path = segments.slice(0, index + 1).join("/");
+    const isFile = index === segments.length - 1;
+    if (segments[0] === "agents" && index === 1) {
+      const agentWorkspaceEntry = agentWorkspaceEntryByName.get(segment);
+      return {
+        label: agentWorkspaceEntry ? displayWorkspaceEntryLabel(agentWorkspaceEntry) : segment,
+        path,
+        isFile,
+        kind: "agent_workspace",
+        agentIcon: agentWorkspaceEntry?.agentIcon ?? null,
+        agentRole: agentWorkspaceEntry?.agentRole ?? null,
+      };
+    }
+    return {
+      label: segment,
+      path,
+      isFile,
+      kind: segment === "agents" && index === 0 ? "agents_root" : isFile ? "file" : "folder",
+    };
+  });
 }
 
 function focusWorkspaceTreeEntry(entryPath: string | null) {
@@ -1255,6 +1283,17 @@ export function OrganizationWorkspaceBrowser({
     enabled: !!viewedOrganizationId,
     refetchOnWindowFocus: false,
   });
+  const agentWorkspaceEntriesQuery = useQuery({
+    queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", "agents"),
+    queryFn: () => organizationsApi.listWorkspaceFiles(viewedOrganizationId!, "agents"),
+    enabled: !!viewedOrganizationId && Boolean(selectedFilePath?.startsWith("agents/")),
+    refetchOnWindowFocus: false,
+  });
+  const agentWorkspaceEntryByName = useMemo(() => new Map(
+    (agentWorkspaceEntriesQuery.data?.entries ?? [])
+      .filter((entry) => entry.entityType === "agent_workspace")
+      .map((entry) => [entry.name, entry] as const),
+  ), [agentWorkspaceEntriesQuery.data?.entries]);
 
   const fileQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFile(viewedOrganizationId ?? "__none__", selectedFilePath ?? ""),
@@ -2100,7 +2139,7 @@ export function OrganizationWorkspaceBrowser({
                 className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-[color:var(--surface-elevated)] px-3 text-xs text-muted-foreground"
                 aria-label="File path"
               >
-                {workspacePathBreadcrumb(selectedFilePath).map((part, index, parts) => {
+                {workspacePathBreadcrumb(selectedFilePath, agentWorkspaceEntryByName).map((part, index, parts) => {
                   const isLast = index === parts.length - 1;
                   return (
                     <div key={part.path} className="flex min-w-0 items-center gap-1">
@@ -2120,7 +2159,16 @@ export function OrganizationWorkspaceBrowser({
                           }
                         }}
                       >
-                        {part.isFile ? (
+                        {part.kind === "agent_workspace" ? (
+                          <span
+                            data-testid="org-workspaces-path-breadcrumb-agent-icon"
+                            className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                          >
+                            <AgentIcon icon={part.agentIcon} role={part.agentRole} className="h-3.5 w-3.5 text-[12px]" />
+                          </span>
+                        ) : part.kind === "agents_root" ? (
+                          <Bot className="h-3.5 w-3.5 shrink-0" />
+                        ) : part.isFile ? (
                           <FileCode2 className="h-3.5 w-3.5 shrink-0" />
                         ) : (
                           <Folder className="h-3.5 w-3.5 shrink-0" />
