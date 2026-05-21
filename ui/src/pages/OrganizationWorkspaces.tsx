@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   buildAgentMentionHref,
@@ -66,6 +66,7 @@ import {
 const WORKSPACE_LAUNCH_TARGET_STORAGE_KEY = "rudder.workspace.launchTargetId";
 const MOBILE_BREAKPOINT = 768;
 const WORKSPACE_FLUSH_DRAFT_EVENT = "rudder:workspace-flush-draft";
+const WORKSPACE_TREE_ENTRY_SELECTOR = "[data-workspace-entry-path]";
 const WORKSPACE_LAUNCH_TARGET_IDS = [
   "cursor",
   "vscode",
@@ -295,6 +296,14 @@ function canDropWorkspaceEntryIntoDirectory(
   return parentWorkspaceDirectoryPath(source.path) !== destinationDirectoryPath;
 }
 
+function hasWorkspaceDragPayload(dataTransfer: DataTransfer) {
+  return Array.from(dataTransfer.types).includes(WORKSPACE_ENTRY_DND_MIME);
+}
+
+function isDraggingOverWorkspaceTreeEntry(event: DragEvent<HTMLElement>) {
+  return event.target instanceof HTMLElement && Boolean(event.target.closest(WORKSPACE_TREE_ENTRY_SELECTOR));
+}
+
 function enrichAgentMentionMarkdown(markdown: string, mentionOptions: MentionOption[]) {
   if (!markdown || mentionOptions.length === 0) return markdown;
   const iconByAgentId = new Map(
@@ -401,12 +410,42 @@ function workspacePathBreadcrumb(
 
 function focusWorkspaceTreeEntry(entryPath: string | null) {
   if (typeof document === "undefined") return;
-  const entry = Array.from(document.querySelectorAll<HTMLElement>("[data-workspace-entry-path]"))
+  const entry = Array.from(document.querySelectorAll<HTMLElement>(WORKSPACE_TREE_ENTRY_SELECTOR))
     .find((node) => node.dataset.workspaceEntryPath === entryPath);
   if (!entry) return;
   entry.scrollIntoView({ block: "center" });
   const button = entry.querySelector<HTMLButtonElement>("button");
   button?.focus({ preventScroll: true });
+}
+
+function visibleWorkspaceTreeEntries() {
+  if (typeof document === "undefined") return [];
+  return Array.from(document.querySelectorAll<HTMLElement>(WORKSPACE_TREE_ENTRY_SELECTOR));
+}
+
+function focusWorkspaceTreeEntryByOffset(
+  currentPath: string,
+  offset: -1 | 1,
+  onFocusEntry: (entryPath: string) => void,
+) {
+  const entries = visibleWorkspaceTreeEntries();
+  const currentIndex = entries.findIndex((node) => node.dataset.workspaceEntryPath === currentPath);
+  if (currentIndex < 0) return;
+  const next = entries[currentIndex + offset];
+  const nextPath = next?.dataset.workspaceEntryPath;
+  if (!nextPath) return;
+  onFocusEntry(nextPath);
+  focusWorkspaceTreeEntry(nextPath);
+}
+
+function focusWorkspaceParentEntry(
+  currentPath: string,
+  onFocusEntry: (entryPath: string) => void,
+) {
+  const parentPath = parentWorkspaceDirectoryPath(currentPath);
+  if (!parentPath) return;
+  onFocusEntry(parentPath);
+  focusWorkspaceTreeEntry(parentPath);
 }
 
 function updateSelectedPath(
@@ -424,7 +463,9 @@ function DirectoryChildren({
   orgId,
   directoryPath,
   selectedFilePath,
+  activeEntryPath,
   onSelectFile,
+  onFocusEntry,
   onCopyPath,
   onStartCreateEntry,
   onStartRename,
@@ -436,7 +477,9 @@ function DirectoryChildren({
   orgId: string;
   directoryPath: string;
   selectedFilePath: string | null;
+  activeEntryPath: string | null;
   onSelectFile: (filePath: string) => void;
+  onFocusEntry: (entryPath: string) => void;
   onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -463,7 +506,9 @@ function DirectoryChildren({
           orgId={orgId}
           entry={entry}
           selectedFilePath={selectedFilePath}
+          activeEntryPath={activeEntryPath}
           onSelectFile={onSelectFile}
+          onFocusEntry={onFocusEntry}
           onCopyPath={onCopyPath}
           onStartCreateEntry={onStartCreateEntry}
           onStartRename={onStartRename}
@@ -481,7 +526,9 @@ function WorkspaceTreeNode({
   orgId,
   entry,
   selectedFilePath,
+  activeEntryPath,
   onSelectFile,
+  onFocusEntry,
   onCopyPath,
   onStartCreateEntry,
   onStartRename,
@@ -493,7 +540,9 @@ function WorkspaceTreeNode({
   orgId: string;
   entry: OrganizationWorkspaceFileEntry;
   selectedFilePath: string | null;
+  activeEntryPath: string | null;
   onSelectFile: (filePath: string) => void;
+  onFocusEntry: (entryPath: string) => void;
   onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -512,9 +561,11 @@ function WorkspaceTreeNode({
   const canCreateInsideDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
   const canMoveEntry = canMoveWorkspaceEntry(entry);
   const canDropIntoDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
+  const isActive = activeEntryPath === entry.path || (!activeEntryPath && selectedFilePath === entry.path);
   const handleOpenActionMenu = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    onFocusEntry(entry.path);
     setActionMenuOpen(true);
   };
   const handleDragStart = (event: DragEvent<HTMLElement>) => {
@@ -527,7 +578,7 @@ function WorkspaceTreeNode({
     event.dataTransfer.setData("text/plain", entry.path);
   };
   const handleDragOver = (event: DragEvent<HTMLElement>) => {
-    if (!canDropIntoDirectory || !event.dataTransfer.types.includes(WORKSPACE_ENTRY_DND_MIME)) return;
+    if (!canDropIntoDirectory || !hasWorkspaceDragPayload(event.dataTransfer)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     setDropActive(true);
@@ -547,6 +598,48 @@ function WorkspaceTreeNode({
     if (!canDropWorkspaceEntryIntoDirectory(source, entry.path)) return;
     onMoveEntry(source, entry.path);
     setExpanded(true);
+  };
+  const handleKeyboardNavigation = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusWorkspaceTreeEntryByOffset(entry.path, 1, onFocusEntry);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusWorkspaceTreeEntryByOffset(entry.path, -1, onFocusEntry);
+      return;
+    }
+    if (event.key === "ArrowRight" && entry.isDirectory) {
+      event.preventDefault();
+      onFocusEntry(entry.path);
+      if (!expanded) {
+        setExpanded(true);
+      } else {
+        window.requestAnimationFrame(() => focusWorkspaceTreeEntryByOffset(entry.path, 1, onFocusEntry));
+      }
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      onFocusEntry(entry.path);
+      if (entry.isDirectory && expanded) {
+        setExpanded(false);
+      } else {
+        focusWorkspaceParentEntry(entry.path, onFocusEntry);
+      }
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      onFocusEntry(entry.path);
+      if (entry.isDirectory) {
+        setExpanded((value) => !value);
+      } else {
+        onSelectFile(entry.path);
+      }
+    }
   };
 
   const actionMenu = (
@@ -620,12 +713,14 @@ function WorkspaceTreeNode({
         <div
           className={cn(
             "group flex w-full items-center rounded-md pr-1 text-sm text-foreground transition-colors hover:bg-accent/60",
+            isActive && "bg-accent text-foreground",
             dropActive && "bg-[#2f80ed]/10 ring-1 ring-[#2f80ed]/30",
           )}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
           data-workspace-entry-path={entry.path}
           draggable={canMoveEntry}
           onDragStart={handleDragStart}
+          onDragEnd={() => setDropActive(false)}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
@@ -634,8 +729,14 @@ function WorkspaceTreeNode({
           <button
             type="button"
             className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
-            onClick={() => setExpanded((value) => !value)}
+            onClick={() => {
+              onFocusEntry(entry.path);
+              setExpanded((value) => !value);
+            }}
+            onFocus={() => onFocusEntry(entry.path)}
+            onKeyDown={handleKeyboardNavigation}
             aria-expanded={expanded}
+            aria-selected={isActive}
           >
             <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
               {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -672,7 +773,9 @@ function WorkspaceTreeNode({
             orgId={orgId}
             directoryPath={entry.path}
             selectedFilePath={selectedFilePath}
+            activeEntryPath={activeEntryPath}
             onSelectFile={onSelectFile}
+            onFocusEntry={onFocusEntry}
             onCopyPath={onCopyPath}
             onStartCreateEntry={onStartCreateEntry}
             onStartRename={onStartRename}
@@ -696,18 +799,25 @@ function WorkspaceTreeNode({
     <li>
       <div
         className={`group flex w-full items-center rounded-md pr-1 text-sm transition-colors ${
-          isSelected ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+          isSelected || isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
         }`}
         style={{ paddingLeft: `${depth * 14 + 23}px` }}
         data-workspace-entry-path={entry.path}
         draggable={canMoveEntry}
         onDragStart={handleDragStart}
+        onDragEnd={() => setDropActive(false)}
         onContextMenu={handleOpenActionMenu}
       >
         <button
           type="button"
           className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-0 pr-2 text-left"
-          onClick={() => onSelectFile(entry.path)}
+          onClick={() => {
+            onFocusEntry(entry.path);
+            onSelectFile(entry.path);
+          }}
+          onFocus={() => onFocusEntry(entry.path)}
+          onKeyDown={handleKeyboardNavigation}
+          aria-selected={isActive || isSelected}
         >
           <FileIcon className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{primaryLabel}</span>
@@ -734,6 +844,7 @@ export function OrganizationWorkspaceFilesSidebar() {
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [rootDropActive, setRootDropActive] = useState(false);
+  const [activeEntryPath, setActiveEntryPath] = useState<string | null>(selectedFilePath);
   const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
   const [lastWorkspaceLaunchTargetId, setLastWorkspaceLaunchTargetId] = useState<DesktopWorkspaceLaunchTarget["id"] | null>(
     () => readStoredWorkspaceLaunchTargetId(),
@@ -761,6 +872,20 @@ export function OrganizationWorkspaceFilesSidebar() {
     () => (selectedFilePath ? parentDirectories(selectedFilePath) : new Set<string>()),
     [selectedFilePath],
   );
+
+  useEffect(() => {
+    if (selectedFilePath) setActiveEntryPath(selectedFilePath);
+  }, [selectedFilePath]);
+
+  useEffect(() => {
+    const clearRootDropState = () => setRootDropActive(false);
+    window.addEventListener("dragend", clearRootDropState);
+    window.addEventListener("drop", clearRootDropState, true);
+    return () => {
+      window.removeEventListener("dragend", clearRootDropState);
+      window.removeEventListener("drop", clearRootDropState, true);
+    };
+  }, []);
 
   const invalidateWorkspaceBrowser = useCallback(async () => {
     if (!viewedOrganizationId) return;
@@ -825,6 +950,7 @@ export function OrganizationWorkspaceFilesSidebar() {
           queryKeys.organizations.workspaceFile(viewedOrganizationId, result.filePath),
           result,
         );
+        setActiveEntryPath(result.filePath);
         updateSelectedPath(searchParams, setSearchParams, result.filePath);
       }
       const createdPath = "filePath" in result ? result.filePath : result.path;
@@ -861,6 +987,9 @@ export function OrganizationWorkspaceFilesSidebar() {
           updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
         }
       }
+      if (result.previousPath && activeEntryPath) {
+        setActiveEntryPath(applyMovedWorkspacePath(activeEntryPath, result.previousPath, result.path));
+      }
       pushToast({
         title: "Workspace entry renamed",
         body: result.previousPath ? `${result.previousPath} -> ${result.path}` : result.path,
@@ -891,6 +1020,9 @@ export function OrganizationWorkspaceFilesSidebar() {
           updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
         }
       }
+      if (result.previousPath && activeEntryPath) {
+        setActiveEntryPath(applyMovedWorkspacePath(activeEntryPath, result.previousPath, result.path));
+      }
       pushToast({
         title: "Workspace entry moved",
         body: result.previousPath ? `${result.previousPath} -> ${result.path}` : result.path,
@@ -913,6 +1045,9 @@ export function OrganizationWorkspaceFilesSidebar() {
       setDeleteTarget(null);
       if (selectedFilePath && (selectedFilePath === result.path || selectedFilePath.startsWith(`${result.path}/`))) {
         updateSelectedPath(searchParams, setSearchParams, null);
+      }
+      if (activeEntryPath && (activeEntryPath === result.path || activeEntryPath.startsWith(`${result.path}/`))) {
+        setActiveEntryPath(parentWorkspaceDirectoryPath(result.path) || null);
       }
       pushToast({
         title: "Workspace entry deleted",
@@ -1007,12 +1142,17 @@ export function OrganizationWorkspaceFilesSidebar() {
     entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">,
     destinationDirectoryPath: string,
   ) {
+    setRootDropActive(false);
     if (!canDropWorkspaceEntryIntoDirectory(entry, destinationDirectoryPath)) return;
     moveWorkspaceEntry.mutate({ entry, destinationDirectoryPath });
   }
 
   function handleRootDragOver(event: DragEvent<HTMLElement>) {
-    if (!event.dataTransfer.types.includes(WORKSPACE_ENTRY_DND_MIME)) return;
+    if (!hasWorkspaceDragPayload(event.dataTransfer)) return;
+    if (isDraggingOverWorkspaceTreeEntry(event)) {
+      setRootDropActive(false);
+      return;
+    }
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     setRootDropActive(true);
@@ -1184,7 +1324,9 @@ export function OrganizationWorkspaceFilesSidebar() {
                       orgId={viewedOrganizationId}
                       entry={entry}
                       selectedFilePath={selectedFilePath}
+                      activeEntryPath={activeEntryPath}
                       onSelectFile={handleSelectFile}
+                      onFocusEntry={setActiveEntryPath}
                       onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
                       onStartCreateEntry={handleStartCreateEntry}
                       onStartRename={handleStartRename}
@@ -1407,6 +1549,7 @@ export function OrganizationWorkspaceBrowser({
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [rootDropActive, setRootDropActive] = useState(false);
+  const [activeEntryPath, setActiveEntryPath] = useState<string | null>(requestedFilePath);
   const [createTarget, setCreateTarget] = useState<{
     parent: OrganizationWorkspaceFileEntry;
     kind: "file" | "folder";
@@ -1423,6 +1566,20 @@ export function OrganizationWorkspaceBrowser({
     selectedFilePath ? `org-workspaces:editor:${selectedFilePath}` : "org-workspaces:editor",
   );
   selectedFilePathRef.current = selectedFilePath;
+
+  useEffect(() => {
+    if (selectedFilePath) setActiveEntryPath(selectedFilePath);
+  }, [selectedFilePath]);
+
+  useEffect(() => {
+    const clearRootDropState = () => setRootDropActive(false);
+    window.addEventListener("dragend", clearRootDropState);
+    window.addEventListener("drop", clearRootDropState, true);
+    return () => {
+      window.removeEventListener("dragend", clearRootDropState);
+      window.removeEventListener("drop", clearRootDropState, true);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1675,6 +1832,9 @@ export function OrganizationWorkspaceBrowser({
           updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
         }
       }
+      if (previousPath && activeEntryPath) {
+        setActiveEntryPath(applyMovedWorkspacePath(activeEntryPath, previousPath, result.path));
+      }
       pushToast({
         title: "Workspace entry renamed",
         body: result.previousPath ? `${result.previousPath} -> ${result.path}` : result.path,
@@ -1715,6 +1875,9 @@ export function OrganizationWorkspaceBrowser({
             }
             updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
           }
+        }
+        if (activeEntryPath) {
+          setActiveEntryPath(applyMovedWorkspacePath(activeEntryPath, previousPath, result.path));
         }
       }
       pushToast({
@@ -1802,6 +1965,9 @@ export function OrganizationWorkspaceBrowser({
         setDraftFilePath(null);
         syncedFileRef.current = { filePath: null, content: "" };
         updateSelectedPath(searchParams, setSearchParams, null);
+      }
+      if (activeEntryPath && (activeEntryPath === result.path || activeEntryPath.startsWith(`${result.path}/`))) {
+        setActiveEntryPath(parentWorkspaceDirectoryPath(result.path) || null);
       }
       pushToast({
         title: "Workspace entry deleted",
@@ -2014,6 +2180,7 @@ export function OrganizationWorkspaceBrowser({
     setTabContextMenu(null);
     flushCurrentDraft();
     openWorkspaceFileTab(filePath);
+    setActiveEntryPath(filePath);
     setSelectedFilePath(filePath);
     updateSelectedPath(searchParams, setSearchParams, filePath);
   };
@@ -2216,13 +2383,18 @@ export function OrganizationWorkspaceBrowser({
     entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">,
     destinationDirectoryPath: string,
   ) {
+    setRootDropActive(false);
     if (!canDropWorkspaceEntryIntoDirectory(entry, destinationDirectoryPath)) return;
     flushCurrentDraft();
     moveWorkspaceEntry.mutate({ entry, destinationDirectoryPath });
   }
 
   function handleRootDragOver(event: DragEvent<HTMLElement>) {
-    if (!event.dataTransfer.types.includes(WORKSPACE_ENTRY_DND_MIME)) return;
+    if (!hasWorkspaceDragPayload(event.dataTransfer)) return;
+    if (isDraggingOverWorkspaceTreeEntry(event)) {
+      setRootDropActive(false);
+      return;
+    }
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     setRootDropActive(true);
@@ -2324,7 +2496,9 @@ export function OrganizationWorkspaceBrowser({
                           orgId={viewedOrganizationId}
                           entry={entry}
                           selectedFilePath={selectedFilePath}
+                          activeEntryPath={activeEntryPath}
                           onSelectFile={handleSelectFile}
+                          onFocusEntry={setActiveEntryPath}
                           onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
                           onStartCreateEntry={handleStartCreateEntry}
                           onStartRename={handleStartRename}
