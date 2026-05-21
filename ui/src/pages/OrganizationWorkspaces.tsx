@@ -2042,7 +2042,7 @@ export function OrganizationWorkspaceBrowser({
               data-testid="org-workspaces-editor-tabs"
               role="tablist"
               aria-label="Open files"
-              className="flex h-11 shrink-0 items-stretch justify-between border-b border-border bg-[color:var(--surface-page)]"
+              className="flex h-11 shrink-0 items-stretch justify-between bg-[color:var(--surface-page)]"
             >
               <div className="scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto px-2 pt-1">
                 {openFilePaths.length > 0 ? (
