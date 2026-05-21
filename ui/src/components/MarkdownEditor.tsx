@@ -1324,7 +1324,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
         const option = mentionOptionByKey.get(`agent:${parsed.agentId}`);
         applyMentionChipDecoration(link, {
           ...parsed,
-          icon: parsed.icon ?? option?.agentIcon ?? null,
+          icon: option?.agentIcon ?? parsed.icon ?? null,
         });
         continue;
       }

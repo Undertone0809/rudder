@@ -175,6 +175,7 @@ function milkdownMentionDecorationAttrs(mention: ParsedMentionChip, label: strin
   const attrs: Record<string, string> = {
     class: classNames.join(" "),
     "data-mention-kind": mention.kind,
+    "data-mention-href": href,
   };
   const navigationPath = rudderTokenNavigationPath(href);
   attrs.title = navigationPath ? `Open ${label}` : label;
@@ -183,6 +184,38 @@ function milkdownMentionDecorationAttrs(mention: ParsedMentionChip, label: strin
     attrs.style = style;
   }
   return attrs;
+}
+
+function applyMentionStyleProperties(element: HTMLElement, mention: ParsedMentionChip) {
+  element.style.removeProperty("--rudder-mention-project-color");
+  element.style.removeProperty("--rudder-mention-agent-avatar-background");
+  element.style.removeProperty("--rudder-mention-agent-avatar-shell-background");
+  element.style.removeProperty("--rudder-mention-icon-mask");
+  const style = mentionChipInlineStyle(mention);
+  if (!style) return;
+  for (const [key, value] of Object.entries(style)) {
+    if (typeof value !== "string") continue;
+    if (key.startsWith("--")) {
+      element.style.setProperty(key, value);
+    } else {
+      (element.style as CSSStyleDeclaration & Record<string, string>)[key] = value;
+    }
+  }
+}
+
+function refreshMilkdownMentionTokenStyles(root: HTMLElement | null, mentions: MentionOption[]) {
+  if (!root) return;
+  const optionByKey = mentionOptionMap(mentions);
+  for (const element of root.querySelectorAll<HTMLElement>("[data-mention-href]")) {
+    const parsed = parseMentionChipHref(element.dataset.mentionHref ?? "");
+    if (!parsed) continue;
+    const mention = parsed.kind === "agent"
+      ? { ...parsed, icon: optionByKey.get(`agent:${parsed.agentId}`)?.agentIcon ?? parsed.icon ?? null }
+      : parsed.kind === "project"
+        ? { ...parsed, color: parsed.color ?? optionByKey.get(`project:${parsed.projectId}`)?.projectColor ?? null }
+        : parsed;
+    applyMentionStyleProperties(element, mention);
+  }
 }
 
 function milkdownSkillDecorationAttrs(href: string, label: string) {
@@ -221,7 +254,7 @@ function buildMilkdownTokenDecorations(doc: ProseMirrorDoc, mentions: MentionOpt
     if (parsed) {
       const label = node.text.replace(/^@(?=\S)/, "");
       const mention = parsed.kind === "agent"
-        ? { ...parsed, icon: parsed.icon ?? optionByKey.get(`agent:${parsed.agentId}`)?.agentIcon ?? null }
+        ? { ...parsed, icon: optionByKey.get(`agent:${parsed.agentId}`)?.agentIcon ?? parsed.icon ?? null }
         : parsed.kind === "project"
           ? { ...parsed, color: parsed.color ?? optionByKey.get(`project:${parsed.projectId}`)?.projectColor ?? null }
           : parsed;
@@ -489,10 +522,6 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     mentionsRef.current = mentions ?? [];
   }, [imageUploadHandler, onBlur, onChange]);
 
-  useEffect(() => {
-    mentionsRef.current = mentions ?? [];
-  }, [mentions]);
-
   const tokenDecorationsPlugin = useMemo(
     () => $prose(() => new ProsePlugin({
       props: {
@@ -525,6 +554,20 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   [tokenDecorationsPlugin]);
 
   const [loading, getInstance] = useInstance();
+
+  useEffect(() => {
+    mentionsRef.current = mentions ?? [];
+    const editor = loading ? get() : getInstance();
+    editor?.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      view.dispatch(view.state.tr.setMeta("rudderMentionOptionsUpdated", true));
+    });
+    requestAnimationFrame(() => refreshMilkdownMentionTokenStyles(containerRef.current, mentionsRef.current));
+  }, [get, getInstance, loading, mentions]);
+
+  useEffect(() => {
+    requestAnimationFrame(() => refreshMilkdownMentionTokenStyles(containerRef.current, mentionsRef.current));
+  }, [value]);
 
   const focus = useCallback(() => {
     const editor = loading ? get() : getInstance();

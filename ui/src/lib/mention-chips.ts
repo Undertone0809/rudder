@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { parseAgentMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDocMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
-import { getAgentAvatarImageSrc } from "./agent-avatar";
+import { getAgentAvatarBackgroundStyle, getAgentAvatarImageSrc } from "./agent-avatar";
 import { getAgentIcon } from "./agent-icons";
 
 export type ParsedMentionChip =
@@ -110,6 +110,10 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
     const avatarImageSrc = getAgentAvatarImageSrc(mention.icon);
     if (avatarImageSrc) {
       style["--rudder-mention-agent-avatar-background"] = `url("${escapeCssUrl(avatarImageSrc)}") center / cover no-repeat`;
+      const avatarShellStyle = getAgentAvatarBackgroundStyle(mention.icon);
+      if (typeof avatarShellStyle?.background === "string") {
+        style["--rudder-mention-agent-avatar-shell-background"] = avatarShellStyle.background;
+      }
       style["--rudder-mention-icon-mask"] = "none";
       return style as CSSProperties;
     }
@@ -169,6 +173,7 @@ export function clearMentionChipDecoration(element: HTMLElement) {
   element.style.removeProperty("color");
   element.style.removeProperty("--rudder-mention-project-color");
   element.style.removeProperty("--rudder-mention-agent-avatar-background");
+  element.style.removeProperty("--rudder-mention-agent-avatar-shell-background");
   element.style.removeProperty("--rudder-mention-icon-mask");
 }
 

@@ -49,6 +49,15 @@ describe("project-mentions", () => {
     expect(extractAgentMentionIds(`[@CodexCoder](${href})`)).toEqual(["agent-123"]);
   });
 
+  it("round-trips agent mentions with avatar metadata", () => {
+    const icon = "dicebear:notionists:11111111-1111-4111-8111-111111111111?bg=mint";
+    const href = buildAgentMentionHref("agent-123", icon);
+    expect(parseAgentMentionHref(href)).toEqual({
+      agentId: "agent-123",
+      icon,
+    });
+  });
+
   it("round-trips issue mentions with identifier metadata", () => {
     const href = buildIssueMentionHref("issue-123", "PAP-123");
     expect(parseIssueMentionHref(href)).toEqual({

@@ -1,7 +1,12 @@
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import {
+  buildAgentMentionHref,
+  parseAgentMentionHref,
+  type OrganizationWorkspaceFileDetail,
+  type OrganizationWorkspaceFileEntry,
+} from "@rudderhq/shared";
 import { useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -30,7 +35,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
-import { MarkdownEditor } from "../components/MarkdownEditor";
+import { MarkdownEditor, type MentionOption } from "../components/MarkdownEditor";
 import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
 import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
@@ -78,6 +83,7 @@ const WORKSPACE_TAB_CONTEXT_MENU_WIDTH = 220;
 const WORKSPACE_TAB_CONTEXT_MENU_MAX_HEIGHT = 256;
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
 const WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx", ".txt", ".text"]);
+const AGENT_MENTION_MARKDOWN_LINK_RE = /\[([^\]]*)]\((agent:\/\/[^)\s]+)\)/g;
 const WORKSPACE_ENTRY_DND_MIME = "application/x-rudder-workspace-entry";
 const WORKSPACE_LAUNCH_TARGET_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
   label: string;
@@ -287,6 +293,24 @@ function canDropWorkspaceEntryIntoDirectory(
   if (source.path === destinationDirectoryPath) return false;
   if (source.isDirectory && destinationDirectoryPath.startsWith(`${source.path}/`)) return false;
   return parentWorkspaceDirectoryPath(source.path) !== destinationDirectoryPath;
+}
+
+function enrichAgentMentionMarkdown(markdown: string, mentionOptions: MentionOption[]) {
+  if (!markdown || mentionOptions.length === 0) return markdown;
+  const iconByAgentId = new Map(
+    mentionOptions
+      .filter((option) => option.kind === "agent" && option.agentId && option.agentIcon)
+      .map((option) => [option.agentId!, option.agentIcon!] as const),
+  );
+  if (iconByAgentId.size === 0) return markdown;
+
+  return markdown.replace(AGENT_MENTION_MARKDOWN_LINK_RE, (match, label: string, href: string) => {
+    const parsed = parseAgentMentionHref(href);
+    if (!parsed) return match;
+    const icon = iconByAgentId.get(parsed.agentId);
+    if (!icon || parsed.icon === icon) return match;
+    return `[${label}](${buildAgentMentionHref(parsed.agentId, icon)})`;
+  });
 }
 
 function serializeWorkspaceDragEntry(entry: OrganizationWorkspaceFileEntry) {
@@ -1472,7 +1496,7 @@ export function OrganizationWorkspaceBrowser({
   const agentWorkspaceEntriesQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFiles(viewedOrganizationId ?? "__none__", "agents"),
     queryFn: () => organizationsApi.listWorkspaceFiles(viewedOrganizationId!, "agents"),
-    enabled: !!viewedOrganizationId && Boolean(selectedFilePath?.startsWith("agents/")),
+    enabled: !!viewedOrganizationId,
     refetchOnWindowFocus: false,
   });
   const agentWorkspaceEntryByName = useMemo(() => new Map(
@@ -1480,6 +1504,19 @@ export function OrganizationWorkspaceBrowser({
       .filter((entry) => entry.entityType === "agent_workspace")
       .map((entry) => [entry.name, entry] as const),
   ), [agentWorkspaceEntriesQuery.data?.entries]);
+  const agentWorkspaceMentionOptions = useMemo<MentionOption[]>(
+    () => (agentWorkspaceEntriesQuery.data?.entries ?? [])
+      .filter((entry) => entry.entityType === "agent_workspace" && entry.agentId)
+      .map((entry) => ({
+        id: `agent:${entry.agentId}`,
+        name: entry.displayLabel ?? entry.name,
+        kind: "agent",
+        agentId: entry.agentId!,
+        agentIcon: entry.agentIcon ?? null,
+        agentRole: entry.agentRole ?? null,
+      })),
+    [agentWorkspaceEntriesQuery.data?.entries],
+  );
 
   const fileQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceFile(viewedOrganizationId ?? "__none__", selectedFilePath ?? ""),
@@ -2033,6 +2070,10 @@ export function OrganizationWorkspaceBrowser({
     ? draftContent
     : selectedFileDetail?.content ?? "";
   const selectedMarkdownParts = splitYamlFrontmatter(selectedEditorContent);
+  const selectedMarkdownBodyForEditor = enrichAgentMentionMarkdown(
+    selectedMarkdownParts.body,
+    agentWorkspaceMentionOptions,
+  );
   const selectedFileUsesMarkdownEditor = isWorkspaceMarkdownFilePath(selectedFilePath);
   const canEditSelectedFile = Boolean(
     selectedFilePath
@@ -2481,8 +2522,9 @@ export function OrganizationWorkspaceBrowser({
                         <MarkdownEditor
                           key={selectedFilePath}
                           engine="milkdown"
-                          value={selectedMarkdownParts.body}
+                          value={selectedMarkdownBodyForEditor}
                           onChange={(nextContent) => handleMarkdownBodyDraftChange(selectedFilePath, nextContent)}
+                          mentions={agentWorkspaceMentionOptions}
                           bordered={false}
                           placeholder="Write in Markdown..."
                           contentClassName="rudder-library-document-editor min-h-[420px] text-[15px] leading-7 text-foreground"

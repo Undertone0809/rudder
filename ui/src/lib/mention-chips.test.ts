@@ -49,6 +49,7 @@ describe("mention chips", () => {
     }) as Record<string, string>;
 
     expect(style["--rudder-mention-agent-avatar-background"]).toContain("/api/assets/11111111-1111-4111-8111-111111111111/content");
+    expect(style["--rudder-mention-agent-avatar-shell-background"]).toContain("#bae6fd");
     expect(style["--rudder-mention-icon-mask"]).toBe("none");
   });
 

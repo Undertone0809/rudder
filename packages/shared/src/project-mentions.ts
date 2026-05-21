@@ -1,4 +1,8 @@
-import { PROJECT_COLORS } from "./constants.js";
+import {
+  AGENT_AVATAR_BACKGROUND_PRESET_IDS,
+  AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX,
+  PROJECT_COLORS,
+} from "./constants.js";
 
 export const PROJECT_MENTION_SCHEME = "project://";
 export const AGENT_MENTION_SCHEME = "agent://";
@@ -18,7 +22,14 @@ const CHAT_MENTION_LINK_RE = /\[[^\]]*]\((chat:\/\/[^)\s]+)\)/gi;
 const LIBRARY_DOC_MENTION_LINK_RE = /\[[^\]]*]\((library-doc:\/\/[^)\s]+)\)/gi;
 const LIBRARY_FILE_MENTION_LINK_RE = /\[[^\]]*]\((library-file:\/\/[^)\s]+)\)/gi;
 const AGENT_ICON_NAME_RE = /^[a-z0-9-]+$/i;
+const AGENT_AVATAR_UUID_RE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const AGENT_ASSET_ICON_RE = new RegExp(`^asset:${AGENT_AVATAR_UUID_RE}(?:\\?bg=([a-z0-9-]+))?$`, "i");
+const AGENT_DICEBEAR_NOTIONISTS_ICON_RE = new RegExp(
+  `^${AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX}${AGENT_AVATAR_UUID_RE}(?:\\?bg=([a-z0-9-]+))?$`,
+  "i",
+);
 const PROJECT_COLOR_VALUES = new Set<string>(PROJECT_COLORS);
+const AGENT_AVATAR_BACKGROUND_VALUES = new Set<string>(AGENT_AVATAR_BACKGROUND_PRESET_IDS);
 
 export interface ParsedProjectMention {
   projectId: string;
@@ -355,6 +366,15 @@ export function extractLibraryFileMentionPaths(markdown: string): string[] {
 function normalizeAgentIcon(input: string | null | undefined): string | null {
   if (!input) return null;
   const trimmed = input.trim().toLowerCase();
+  const avatarBackground = trimmed.match(AGENT_ASSET_ICON_RE)?.[1]
+    ?? trimmed.match(AGENT_DICEBEAR_NOTIONISTS_ICON_RE)?.[1]
+    ?? null;
+  if (
+    AGENT_ASSET_ICON_RE.test(trimmed)
+    || AGENT_DICEBEAR_NOTIONISTS_ICON_RE.test(trimmed)
+  ) {
+    return avatarBackground && !AGENT_AVATAR_BACKGROUND_VALUES.has(avatarBackground) ? null : trimmed;
+  }
   if (!trimmed || !AGENT_ICON_NAME_RE.test(trimmed)) return null;
   return trimmed;
 }

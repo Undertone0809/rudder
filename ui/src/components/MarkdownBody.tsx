@@ -3,6 +3,7 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
+import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { mentionChipInlineStyle, parseMentionChipHref, stripMentionChipLabelPrefix } from "../lib/mention-chips";
 import { parseSkillReference } from "../lib/skill-reference";
 import { ImagePreviewDialog, type ImagePreviewState } from "./ImagePreviewDialog";
@@ -231,7 +232,13 @@ export function MarkdownBody({
   copyMarkdownOnCopy = false,
 }: MarkdownBodyProps) {
   const { resolvedTheme } = useTheme();
+  const { mentions } = useMarkdownMentions();
   const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
+  const agentMentionById = new Map(
+    mentions
+      .filter((mention) => mention.kind === "agent")
+      .map((mention) => [mention.agentId ?? mention.id.replace(/^agent:/, ""), mention] as const),
+  );
   const skillPreviewByHref = new Map(
     (skillReferences ?? [])
       .map((preview) => [normalizeSkillReferenceLookupKey(preview.href), preview] as const)
@@ -302,29 +309,35 @@ export function MarkdownBody({
     a: ({ node, href, children: linkChildren }) => {
       const parsed = href ? parseMentionChipHref(href) : null;
       if (parsed) {
+        const mention = parsed.kind === "agent"
+          ? {
+              ...parsed,
+              icon: agentMentionById.get(parsed.agentId)?.agentIcon ?? parsed.icon,
+            }
+          : parsed;
         const mentionLabel = stripMentionChipLabelPrefix(flattenText(linkChildren));
-        const targetHref = parsed.kind === "project"
-          ? `/projects/${parsed.projectId}`
-          : parsed.kind === "issue"
-            ? `/issues/${parsed.ref ?? parsed.issueId}`
-            : parsed.kind === "chat"
-              ? `/messenger/chat/${parsed.conversationId}`
-              : parsed.kind === "library_doc"
-                ? `/library?doc=${encodeURIComponent(parsed.documentId)}`
-                : parsed.kind === "library_file"
-                  ? `/library?path=${encodeURIComponent(parsed.filePath)}`
-                  : `/agents/${parsed.agentId}`;
+        const targetHref = mention.kind === "project"
+          ? `/projects/${mention.projectId}`
+          : mention.kind === "issue"
+            ? `/issues/${mention.ref ?? mention.issueId}`
+            : mention.kind === "chat"
+              ? `/messenger/chat/${mention.conversationId}`
+              : mention.kind === "library_doc"
+                ? `/library?doc=${encodeURIComponent(mention.documentId)}`
+                : mention.kind === "library_file"
+                  ? `/library?path=${encodeURIComponent(mention.filePath)}`
+                  : `/agents/${mention.agentId}`;
         return (
           <a
             href={targetHref}
             title={`Open ${mentionLabel}`}
             className={cn(
               "rudder-mention-chip",
-              `rudder-mention-chip--${parsed.kind}`,
-              parsed.kind === "project" && "rudder-project-mention-chip",
+              `rudder-mention-chip--${mention.kind}`,
+              mention.kind === "project" && "rudder-project-mention-chip",
             )}
-            data-mention-kind={parsed.kind}
-            style={mentionChipInlineStyle(parsed)}
+            data-mention-kind={mention.kind}
+            style={mentionChipInlineStyle(mention)}
             {...markdownSourceAttributes(node)}
           >
             {mentionLabel}

@@ -7,10 +7,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildLibraryDocMentionHref, buildLibraryFileMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { ThemeProvider } from "../context/ThemeContext";
 import { MarkdownBody } from "./MarkdownBody";
+import type { MentionOption } from "./MarkdownEditor";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
+
+const markdownMentionsMock = vi.hoisted(() => ({
+  mentions: [] as MentionOption[],
+}));
 
 Object.defineProperty(window, "matchMedia", {
   writable: true,
@@ -51,11 +56,19 @@ vi.mock("@/components/ui/dialog", () => ({
   DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
+vi.mock("../context/MarkdownMentionsContext", () => ({
+  useMarkdownMentions: () => ({
+    mentions: markdownMentionsMock.mentions,
+    onMentionQueryChange: vi.fn(),
+  }),
+}));
+
 let cleanupFn: (() => void) | null = null;
 
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
+  markdownMentionsMock.mentions = [];
   document.body.innerHTML = "";
 });
 
@@ -277,6 +290,29 @@ describe("MarkdownBody", () => {
     expect(html).toContain("--rudder-mention-project-color:#336699");
     expect(html).toContain(">Rudder App</a>");
     expect(html).not.toContain(">@Rudder App</a>");
+  });
+
+  it("uses the current agent avatar when rendering existing agent mention links", () => {
+    markdownMentionsMock.mentions = [{
+      id: "agent:agent-123",
+      name: "CodexCoder",
+      kind: "agent",
+      agentId: "agent-123",
+      agentIcon: "dicebear:notionists:11111111-1111-4111-8111-111111111111",
+    }];
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[@CodexCoder](${buildAgentMentionHref("agent-123", "user")})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('data-mention-kind="agent"');
+    expect(html).toContain("--rudder-mention-agent-avatar-background");
+    expect(html).toContain("data:image/svg+xml");
+    expect(html).toContain("--rudder-mention-icon-mask:none");
   });
 
   it("renders issue mentions as chips that link to the issue route", () => {
