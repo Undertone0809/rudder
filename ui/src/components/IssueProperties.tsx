@@ -752,7 +752,13 @@ export function IssueProperties({
   );
 
   const existingSubIssuePicker = existingSubIssueOpen ? (
-    <div className="rounded-md border border-border bg-popover p-1">
+    <div
+      className={cn(
+        "shrink-0 rounded-md border border-border bg-popover p-1",
+        inline ? "w-full" : undefined,
+      )}
+      style={inline ? undefined : { width: "480px", maxWidth: "calc(100vw - 2rem)" }}
+    >
       <div className="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
         <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <input
@@ -952,42 +958,48 @@ export function IssueProperties({
               </div>
             </div>
 
-            <div className={cn("mt-1.5 min-w-0 space-y-1", inline ? "ml-0" : "ml-[5.75rem]")}>
-              {existingSubIssuePicker}
-              {visibleChildIssues.length === 0 ? (
-                <button
-                  type="button"
-                  className="w-full rounded px-1 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-                  onClick={openSubIssueComposer}
-                >
-                  No sub-issues.
-                </button>
-              ) : (
-                visibleChildIssues.map((child) => {
-                  const childPathId = child.identifier ?? child.id;
-                  const childLabel = child.identifier ?? child.id.slice(0, 8);
-
-                  return (
-                    <Link
-                      key={child.id}
-                      to={`/issues/${childPathId}`}
-                      className="grid max-w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 overflow-hidden rounded px-1 py-1 text-xs transition-colors hover:bg-accent/50"
-                      title={child.title}
-                    >
-                      <StatusIcon status={child.status} />
-                      <span className="min-w-0 flex-1 truncate">{child.title}</span>
-                      <span className="min-w-0 max-w-[5.5rem] truncate font-mono text-[11px] text-muted-foreground">
-                        {childLabel}
-                      </span>
-                    </Link>
-                  );
-                })
-              )}
-              {childIssues.length > visibleChildIssues.length ? (
-                <p className="px-1 text-[11px] text-muted-foreground">
-                  +{childIssues.length - visibleChildIssues.length} more
-                </p>
+            <div className="mt-1.5 min-w-0 space-y-1">
+              {existingSubIssuePicker ? (
+                <div className={cn(inline ? undefined : "flex justify-end")}>
+                  {existingSubIssuePicker}
+                </div>
               ) : null}
+              <div className={cn("min-w-0 space-y-1", inline ? "ml-0" : "ml-[5.75rem]")}>
+                {visibleChildIssues.length === 0 ? (
+                  <button
+                    type="button"
+                    className="w-full rounded px-1 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+                    onClick={openSubIssueComposer}
+                  >
+                    No sub-issues.
+                  </button>
+                ) : (
+                  visibleChildIssues.map((child) => {
+                    const childPathId = child.identifier ?? child.id;
+                    const childLabel = child.identifier ?? child.id.slice(0, 8);
+
+                    return (
+                      <Link
+                        key={child.id}
+                        to={`/issues/${childPathId}`}
+                        className="grid max-w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 overflow-hidden rounded px-1 py-1 text-xs transition-colors hover:bg-accent/50"
+                        title={child.title}
+                      >
+                        <StatusIcon status={child.status} />
+                        <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                        <span className="min-w-0 max-w-[5.5rem] truncate font-mono text-[11px] text-muted-foreground">
+                          {childLabel}
+                        </span>
+                      </Link>
+                    );
+                  })
+                )}
+                {childIssues.length > visibleChildIssues.length ? (
+                  <p className="px-1 text-[11px] text-muted-foreground">
+                    +{childIssues.length - visibleChildIssues.length} more
+                  </p>
+                ) : null}
+              </div>
             </div>
           </div>
         ) : null}
