@@ -228,16 +228,16 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const defaultCodexHome = resolveManagedCodexHomeDir(sourceEnv, agent.orgId, agent.id);
   const effectiveCodexHome = configuredCodexHome ?? preparedManagedCodexHome ?? defaultCodexHome;
   await fs.mkdir(effectiveCodexHome, { recursive: true });
-  const isolatedHome = agentHome || path.join(effectiveCodexHome, "home");
-  await fs.mkdir(isolatedHome, { recursive: true });
+  const runtimeHome = path.join(effectiveCodexHome, "home");
+  await fs.mkdir(runtimeHome, { recursive: true });
   await syncLocalCliCredentialHomeEntries({
     sourceHome: operatorHome,
-    targetHome: isolatedHome,
+    targetHome: runtimeHome,
     onLog,
   });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
-    home: isolatedHome,
+    home: runtimeHome,
     sourceEnv,
     onLog,
   });
@@ -264,8 +264,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildRudderEnv(agent) };
   env.CODEX_HOME = effectiveCodexHome;
-  env.HOME = isolatedHome;
-  env.USERPROFILE = isolatedHome;
+  env.HOME = runtimeHome;
+  env.USERPROFILE = runtimeHome;
   env.RUDDER_RUN_ID = runId;
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -332,7 +332,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (workspaceWorktreePath) {
     env.RUDDER_WORKSPACE_WORKTREE_PATH = workspaceWorktreePath;
   }
-  env.AGENT_HOME = agentHome || isolatedHome;
+  env.AGENT_HOME = agentHome || runtimeHome;
   if (agentHome) {
     env.RUDDER_AGENT_ROOT = agentHome;
   }
@@ -372,8 +372,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v === "string") env[k] = v;
   }
-  env.HOME = isolatedHome;
-  env.USERPROFILE = isolatedHome;
+  env.HOME = runtimeHome;
+  env.USERPROFILE = runtimeHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
@@ -388,7 +388,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const billingType = resolveCodexBillingType(effectiveEnv);
   const runtimeEnv = await ensureLocalCliCredentialShimsInPath({
     operatorHome,
-    targetHome: isolatedHome,
+    targetHome: runtimeHome,
     cwd,
     env: ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv)),
     onLog,

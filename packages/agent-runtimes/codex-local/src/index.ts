@@ -47,7 +47,7 @@ Notes:
 - Agent enabled-skill state is controlled only by Rudder's bundled skills plus the selections saved on the agent's Skills page.
 - The codex_local adapter does not materialize skills into repo-scoped ".agents/skills"; it realizes selected skills by linking them into the Rudder-managed \`CODEX_HOME/skills\` directory that Codex discovers at runtime.
 - Unless explicitly overridden in adapter config, Rudder runs Codex with a per-agent managed CODEX_HOME under the active Rudder instance and seeds auth/config from the shared Codex home (the CODEX_HOME env var, when set, or ~/.codex).
-- Rudder uses a managed runtime HOME so Codex does not auto-discover unrelated global skills from ~/.agents/skills during agent runs, but bridges common local CLI credential directories (for example gh/ssh/npm/cloud CLIs) into that managed HOME.
+- Rudder uses a managed runtime HOME under CODEX_HOME/home so Codex does not auto-discover unrelated global skills from ~/.agents/skills during agent runs, but bridges common local CLI credential directories (for example gh/ssh/npm/cloud CLIs) into that managed HOME. This runtime HOME is intentionally separate from AGENT_HOME, which remains the agent's personal instructions, memory, and private-skill workspace.
 - Rudder prepares a managed Git config for the run, forces user.useConfigOnly=true, and points Git at it with GIT_CONFIG_GLOBAL so commits use the normal repo-local or host Git identity and never fall back to hostname .local authors.
 - When Rudder realizes a workspace/runtime for a run, it injects RUDDER_WORKSPACE_* and RUDDER_RUNTIME_* env vars for agent-side tooling.
 `;

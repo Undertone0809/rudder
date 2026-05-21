@@ -40,6 +40,10 @@ const path = require("node:path");
 const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
 const workspaceSkillsPath = path.join(process.cwd(), ".agents", "skills");
 const codexSkillsPath = process.env.CODEX_HOME ? path.join(process.env.CODEX_HOME, "skills") : null;
+const homeSkillsPath = process.env.HOME ? path.join(process.env.HOME, ".agents", "skills") : null;
+const operatorSkillsPath = process.env.RUDDER_OPERATOR_HOME
+  ? path.join(process.env.RUDDER_OPERATOR_HOME, ".agents", "skills")
+  : null;
 const payload = {
   argv: process.argv.slice(2),
   prompt: fs.readFileSync(0, "utf8"),
@@ -54,6 +58,12 @@ const payload = {
     : [],
   codexSkillEntries: codexSkillsPath && fs.existsSync(codexSkillsPath)
     ? fs.readdirSync(codexSkillsPath).sort()
+    : [],
+  homeSkillEntries: homeSkillsPath && fs.existsSync(homeSkillsPath)
+    ? fs.readdirSync(homeSkillsPath).sort()
+    : [],
+  operatorSkillEntries: operatorSkillsPath && fs.existsSync(operatorSkillsPath)
+    ? fs.readdirSync(operatorSkillsPath).sort()
     : [],
   rudderEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("RUDDER_"))
@@ -306,6 +316,8 @@ type CapturePayload = {
   pathEnv: string | null;
   workspaceSkillEntries: string[];
   codexSkillEntries: string[];
+  homeSkillEntries: string[];
+  operatorSkillEntries: string[];
   rudderEnvKeys: string[];
 };
 
@@ -659,9 +671,15 @@ describe("codex execute", () => {
     await fs.mkdir(hostBin, { recursive: true });
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(path.join(operatorHome, ".config", "gh"), { recursive: true });
+    await fs.mkdir(path.join(operatorHome, ".agents", "skills", "leak-probe"), { recursive: true });
     await fs.writeFile(
       path.join(operatorHome, ".config", "gh", "hosts.yml"),
       "github.com:\n  oauth_token: operator\n",
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(operatorHome, ".agents", "skills", "leak-probe", "SKILL.md"),
+      "---\nname: leak-probe\n---\nThis operator-home skill must not be visible to Codex agent runs.\n",
       "utf8",
     );
     await fs.mkdir(sharedCodexHome, { recursive: true });
@@ -737,6 +755,8 @@ describe("codex execute", () => {
       expect(capture.rudderOperatorHome).toBe(operatorHome);
       expect(capture.pathEnv?.split(":")[0]).not.toBe(path.join(managedCodexHome, "home", ".rudder", "local-cli-shims"));
       expect(capture.codexSkillEntries).toEqual(["rudder"]);
+      expect(capture.homeSkillEntries).toEqual([]);
+      expect(capture.operatorSkillEntries).toEqual(["leak-probe"]);
       expect(capture.argv).toEqual(expect.arrayContaining([
         "exec",
         "--json",
@@ -2079,7 +2099,7 @@ describe("codex execute", () => {
     }
   });
 
-  it("prunes stale managed-home skill directories including .system and isolates HOME from the shared user home", async () => {
+  it("prunes stale managed-home skill directories including .system while keeping runtime HOME separate from AGENT_HOME", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-prune-skill-surface-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
@@ -2152,8 +2172,8 @@ describe("codex execute", () => {
       expect(result.errorMessage).toBeNull();
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      expect(capture.home).toBe(agentHome);
-      expect(capture.userProfile).toBe(agentHome);
+      expect(capture.home).toBe(path.join(managedCodexHome, "home"));
+      expect(capture.userProfile).toBe(path.join(managedCodexHome, "home"));
       expect(capture.agentHome).toBe(agentHome);
       expect(capture.codexSkillEntries).toEqual(["rudder"]);
       await expect(fs.lstat(path.join(managedCodexHome, "skills", "stale-skill"))).rejects.toMatchObject({

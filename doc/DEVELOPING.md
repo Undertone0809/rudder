@@ -214,8 +214,8 @@ runtime descriptor instead of polling only the requested port.
 
 ### Agent Git Identity
 
-Local agent runtimes isolate `HOME`, so Git must not rely on the host user's global `~/.gitconfig`.
-When Rudder prepares Codex local runs, it writes an isolated `$AGENT_HOME/.gitconfig` with
+Local agent runtimes may isolate process `HOME`, so Git must not rely on the host user's global `~/.gitconfig`.
+When Rudder prepares Codex local runs, it writes an isolated runtime-home `.gitconfig` with
 `user.useConfigOnly=true` and includes the host global Git config when a safe identity can be
 resolved from explicit `GIT_AUTHOR_*` / `GIT_COMMITTER_*`, the workspace repo-local config, or the
 host global config. Runtime-created git worktrees also get repo-local `user.useConfigOnly=true`.
@@ -224,7 +224,7 @@ Rudder does not store or inject a separate confirmed Git identity. If no safe id
 fallback commit.
 
 Local runtimes expose `RUDDER_OPERATOR_HOME` for host desktop and CLI state while keeping child
-`HOME` isolated. Runtime code, scripts, and skills that need operator-owned app state such as `gh`,
+`HOME` isolated when the adapter needs a runtime discovery boundary. Runtime code, scripts, and skills that need operator-owned app state such as `gh`,
 `ssh`, `npm`, or desktop app config should read `RUDDER_OPERATOR_HOME` and only bridge approved
 paths into the managed home; they should not set child `HOME` back to the operator home.
 
