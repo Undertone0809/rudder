@@ -246,6 +246,10 @@ export function Dashboard() {
     () => formatRangeLabel(preset as DashboardDatePreset, customFrom, customTo),
     [customFrom, customTo, preset],
   );
+  const dashboardMotionKey = useMemo(
+    () => `${preset}:${customFrom}:${customTo}:${chartDays.join("|")}`,
+    [chartDays, customFrom, customTo, preset],
+  );
 
   const showFilteredSections = preset !== "custom" || customReady;
 
@@ -556,28 +560,28 @@ export function Dashboard() {
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <ChartCard title="Run Activity" subtitle={`${rangeLabel} · relative daily run volume · hover for details`}>
               {showFilteredSections ? (
-                <RunActivityChart runs={filteredRuns} days={chartDays} />
+                <RunActivityChart key={`runs:${dashboardMotionKey}`} runs={filteredRuns} days={chartDays} />
               ) : (
                 <p className="text-xs text-muted-foreground">Select a start and end date to filter dashboard activity.</p>
               )}
             </ChartCard>
             <ChartCard title="Issues by Priority" subtitle={`${rangeLabel} · relative daily issue volume · hover for details`}>
               {showFilteredSections ? (
-                <PriorityChart issues={filteredIssuesForCharts} days={chartDays} />
+                <PriorityChart key={`priority:${dashboardMotionKey}`} issues={filteredIssuesForCharts} days={chartDays} />
               ) : (
                 <p className="text-xs text-muted-foreground">Select a start and end date to filter dashboard activity.</p>
               )}
             </ChartCard>
             <ChartCard title="Issues by Status" subtitle={`${rangeLabel} · relative daily issue volume · hover for details`}>
               {showFilteredSections ? (
-                <IssueStatusChart issues={filteredIssuesForCharts} days={chartDays} />
+                <IssueStatusChart key={`status:${dashboardMotionKey}`} issues={filteredIssuesForCharts} days={chartDays} />
               ) : (
                 <p className="text-xs text-muted-foreground">Select a start and end date to filter dashboard activity.</p>
               )}
             </ChartCard>
             <ChartCard title="Success Rate" subtitle={`${rangeLabel} · daily success rate · hover for details`}>
               {showFilteredSections ? (
-                <SuccessRateChart runs={filteredRuns} days={chartDays} />
+                <SuccessRateChart key={`success:${dashboardMotionKey}`} runs={filteredRuns} days={chartDays} />
               ) : (
                 <p className="text-xs text-muted-foreground">Select a start and end date to filter dashboard activity.</p>
               )}
@@ -598,7 +602,7 @@ export function Dashboard() {
                   <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill usage</div>
                 </div>
               </div>
-              <SkillsUsageChart analytics={visibleSkillAnalytics} />
+              <SkillsUsageChart key={`skills:${dashboardMotionKey}`} analytics={visibleSkillAnalytics} />
             </div>
           ) : null}
 

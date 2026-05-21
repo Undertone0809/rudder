@@ -119,6 +119,9 @@ test.describe("Dashboard date filter", () => {
     await expect(mainContent.getByRole("link", { name: /^Older dashboard task DAS-/ })).toBeVisible();
     await expect(mainContent.getByText("Last 30 days · relative daily run volume · hover for details")).toBeVisible();
     await expect(mainContent.getByText("Input 1.9k · Output 600")).toBeVisible();
+    await expect(mainContent.locator('.metric-value-motion[aria-label="2.5k"][data-animated="true"]')).toBeVisible();
+    await expect(mainContent.locator(".dashboard-chart-motion").first()).toBeVisible();
+    await expect(mainContent.locator(".dashboard-chart-bar").first()).toBeVisible();
 
     await mainContent.getByRole("button", { name: /Custom/ }).click();
     const fromInput = page.getByLabel("From");

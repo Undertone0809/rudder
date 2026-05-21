@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatPriorityLabel } from "../lib/priorities";
@@ -45,6 +46,10 @@ function formatDayTitle(dateStr: string): string {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function chartColumnMotionStyle(index: number): CSSProperties {
+  return { "--dashboard-chart-index": index } as CSSProperties;
 }
 
 /* ---- Sub-components ---- */
@@ -348,9 +353,9 @@ export function RunActivityChart({
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div>
+      <div className="dashboard-chart-motion">
         <div className="flex items-end gap-[3px] h-20">
-          {days.map(day => {
+          {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const total = entry.succeeded + entry.failed + entry.other;
             const heightPct = (total / maxValue) * 100;
@@ -371,13 +376,19 @@ export function RunActivityChart({
                 trigger={
                   <div className="flex h-full flex-col justify-end">
                     {total > 0 ? (
-                      <div className="flex flex-col-reverse gap-px overflow-hidden" style={{ height: `${heightPct}%`, minHeight: 2 }}>
+                      <div
+                        className="dashboard-chart-bar flex flex-col-reverse gap-px overflow-hidden"
+                        style={{ ...chartColumnMotionStyle(index), height: `${heightPct}%`, minHeight: 2 }}
+                      >
                         {entry.succeeded > 0 && <div className="bg-emerald-500" style={{ flex: entry.succeeded }} />}
                         {entry.failed > 0 && <div className="bg-red-500" style={{ flex: entry.failed }} />}
                         {entry.other > 0 && <div className="bg-neutral-500" style={{ flex: entry.other }} />}
                       </div>
                     ) : (
-                      <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+                      <div
+                        className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
+                        style={{ ...chartColumnMotionStyle(index), height: 2 }}
+                      />
                     )}
                   </div>
                 }
@@ -424,9 +435,9 @@ export function PriorityChart({
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div>
+      <div className="dashboard-chart-motion">
         <div className="flex items-end gap-[3px] h-20">
-          {days.map(day => {
+          {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const total = Object.values(entry).reduce((a, b) => a + b, 0);
             const heightPct = (total / maxValue) * 100;
@@ -452,13 +463,19 @@ export function PriorityChart({
                 trigger={
                   <div className="flex h-full flex-col justify-end">
                     {total > 0 ? (
-                      <div className="flex flex-col-reverse gap-px overflow-hidden" style={{ height: `${heightPct}%`, minHeight: 2 }}>
+                      <div
+                        className="dashboard-chart-bar flex flex-col-reverse gap-px overflow-hidden"
+                        style={{ ...chartColumnMotionStyle(index), height: `${heightPct}%`, minHeight: 2 }}
+                      >
                         {priorityOrder.map(p => entry[p] > 0 ? (
                           <div key={p} style={{ flex: entry[p], backgroundColor: priorityColors[p] }} />
                         ) : null)}
                       </div>
                     ) : (
-                      <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+                      <div
+                        className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
+                        style={{ ...chartColumnMotionStyle(index), height: 2 }}
+                      />
                     )}
                   </div>
                 }
@@ -519,9 +536,9 @@ export function IssueStatusChart({
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div>
+      <div className="dashboard-chart-motion">
         <div className="flex items-end gap-[3px] h-20">
-          {days.map(day => {
+          {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const total = Object.values(entry).reduce((a, b) => a + b, 0);
             const heightPct = (total / maxValue) * 100;
@@ -547,13 +564,19 @@ export function IssueStatusChart({
                 trigger={
                   <div className="flex h-full flex-col justify-end">
                     {total > 0 ? (
-                      <div className="flex flex-col-reverse gap-px overflow-hidden" style={{ height: `${heightPct}%`, minHeight: 2 }}>
+                      <div
+                        className="dashboard-chart-bar flex flex-col-reverse gap-px overflow-hidden"
+                        style={{ ...chartColumnMotionStyle(index), height: `${heightPct}%`, minHeight: 2 }}
+                      >
                         {statusOrder.map(s => (entry[s] ?? 0) > 0 ? (
                           <div key={s} style={{ flex: entry[s], backgroundColor: statusColors[s] ?? "#6b7280" }} />
                         ) : null)}
                       </div>
                     ) : (
-                      <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+                      <div
+                        className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
+                        style={{ ...chartColumnMotionStyle(index), height: 2 }}
+                      />
                     )}
                   </div>
                 }
@@ -590,9 +613,9 @@ export function SuccessRateChart({
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div>
+      <div className="dashboard-chart-motion">
         <div className="flex items-end gap-[3px] h-20">
-          {days.map(day => {
+          {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const rate = entry.total > 0 ? entry.succeeded / entry.total : 0;
             const roundedRate = entry.total > 0 ? Math.round(rate * 100) : 0;
@@ -615,9 +638,15 @@ export function SuccessRateChart({
                 trigger={
                   <div className="flex h-full flex-col justify-end">
                     {entry.total > 0 ? (
-                      <div style={{ height: `${rate * 100}%`, minHeight: 2, backgroundColor: color }} />
+                      <div
+                        className="dashboard-chart-bar"
+                        style={{ ...chartColumnMotionStyle(index), height: `${rate * 100}%`, minHeight: 2, backgroundColor: color }}
+                      />
                     ) : (
-                      <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+                      <div
+                        className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
+                        style={{ ...chartColumnMotionStyle(index), height: 2 }}
+                      />
                     )}
                   </div>
                 }
@@ -671,9 +700,9 @@ export function SkillsUsageChart({
         </SkillChartPanel>
 
         <SkillChartPanel title="Skill Usage Timeline" subtitle={`Daily skill usage over the last ${analytics.windowDays} day${analytics.windowDays === 1 ? "" : "s"}.`}>
-          <div>
+          <div className="dashboard-chart-motion">
             <div className="flex items-end gap-[3px] h-36">
-              {days.map((day) => {
+              {days.map((day, index) => {
                 const heightPct = (day.totalCount / maxValue) * 100;
                 const topSkills = day.skills.slice(0, 6);
                 const otherCount = day.skills.slice(6).reduce((sum, skill) => sum + skill.count, 0);
@@ -712,7 +741,10 @@ export function SkillsUsageChart({
                     trigger={
                       <div className="flex h-full flex-col justify-end">
                         {day.totalCount > 0 ? (
-                          <div className="flex flex-col-reverse gap-px overflow-hidden" style={{ height: `${heightPct}%`, minHeight: 2 }}>
+                          <div
+                            className="dashboard-chart-bar flex flex-col-reverse gap-px overflow-hidden"
+                            style={{ ...chartColumnMotionStyle(index), height: `${heightPct}%`, minHeight: 2 }}
+                          >
                             {day.skills.map((skill) => (
                               <div
                                 key={`${day.date}:${skill.key}`}
@@ -724,7 +756,10 @@ export function SkillsUsageChart({
                             ))}
                           </div>
                         ) : (
-                          <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+                          <div
+                            className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
+                            style={{ ...chartColumnMotionStyle(index), height: 2 }}
+                          />
                         )}
                       </div>
                     }

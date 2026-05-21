@@ -4,8 +4,8 @@ import { act } from "react";
 import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AgentSkillAnalytics } from "@rudderhq/shared";
-import { SkillsUsageChart } from "./ActivityCharts";
+import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
+import { RunActivityChart, SkillsUsageChart } from "./ActivityCharts";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -106,5 +106,22 @@ describe("SkillsUsageChart", () => {
     expect(container.textContent).toContain("Skill Usage Timeline");
     expect(container.textContent).not.toContain("Prompt requested");
     expect(container.textContent).not.toContain("Loaded only");
+  });
+});
+
+describe("RunActivityChart", () => {
+  it("marks chart columns with dashboard update motion classes", () => {
+    const run = {
+      id: "run-1",
+      orgId: "org-1",
+      agentId: "agent-1",
+      status: "succeeded",
+      createdAt: new Date("2026-05-12T10:00:00Z"),
+    } as HeartbeatRun;
+
+    const container = render(<RunActivityChart runs={[run]} days={["2026-05-12"]} />);
+
+    expect(container.querySelector(".dashboard-chart-motion")).toBeTruthy();
+    expect(container.querySelector(".dashboard-chart-bar")).toBeTruthy();
   });
 });
