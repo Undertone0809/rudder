@@ -9,6 +9,7 @@ export type {
   OrganizationWorkspaceFileCreateRequest,
   OrganizationWorkspaceFileUpdateRequest,
   OrganizationWorkspaceEntryRenameRequest,
+  OrganizationWorkspaceEntryMoveRequest,
   OrganizationWorkspaceEntryMutationResult,
 } from "./organization.js";
 export type {

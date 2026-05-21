@@ -336,7 +336,8 @@ describe("MarkdownBody", () => {
     expect(html).toContain("~/.agents/skills");
     expect(html).toContain("Turn vague build feedback into expert diagnosis.");
     expect(html).toContain('href="/skills/skill-1"');
-    expect(html).toContain(">build-advisor</span>");
+    expect(html).toContain('class="rudder-skill-token"');
+    expect(html).toContain(">build-advisor</a>");
     expect(html).not.toContain("rudder/build-advisor");
   });
 

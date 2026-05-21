@@ -337,6 +337,7 @@ describe("organization workspace browser", () => {
 
     const root = resolveOrganizationWorkspaceRoot(orgId);
     await fs.mkdir(path.join(root, "artifacts"), { recursive: true });
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
     await fs.mkdir(path.join(root, "agents", workspaceKey, "instructions"), { recursive: true });
     await fs.writeFile(path.join(root, "agents", workspaceKey, "instructions", "MEMORY.md"), "# Memory\n", "utf8");
 
@@ -363,6 +364,25 @@ describe("organization workspace browser", () => {
     await expect(workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}`)).rejects.toMatchObject({
       status: 422,
     });
+    await expect(workspaceBrowser.moveEntry(orgId, "agents", "docs")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.moveEntry(orgId, `agents/${workspaceKey}`, "docs")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.moveEntry(orgId, "artifacts/new-file.md", "agents")).rejects.toMatchObject({
+      status: 422,
+    });
+    await expect(workspaceBrowser.moveEntry(orgId, "artifacts/new-file.md", `agents/${workspaceKey}`)).rejects.toMatchObject({
+      status: 422,
+    });
+
+    await expect(workspaceBrowser.moveEntry(orgId, "artifacts/new-file.md", "docs")).resolves.toEqual({
+      previousPath: "artifacts/new-file.md",
+      path: "docs/new-file.md",
+      isDirectory: false,
+    });
+    await expect(fs.readFile(path.join(root, "docs", "new-file.md"), "utf8")).resolves.toBe("# New\n");
 
     await expect(
       workspaceBrowser.createFile(orgId, `agents/${workspaceKey}/instructions/NOTES.md`, "# Notes\n"),
@@ -377,16 +397,23 @@ describe("organization workspace browser", () => {
       isDirectory: true,
     });
     await expect(
-      workspaceBrowser.renameEntry(orgId, `agents/${workspaceKey}/instructions/NOTES.md`, "renamed-notes.md"),
+      workspaceBrowser.moveEntry(orgId, `agents/${workspaceKey}/instructions/NOTES.md`, `agents/${workspaceKey}/instructions/scratch`),
     ).resolves.toEqual({
       previousPath: `agents/${workspaceKey}/instructions/NOTES.md`,
-      path: `agents/${workspaceKey}/instructions/renamed-notes.md`,
+      path: `agents/${workspaceKey}/instructions/scratch/NOTES.md`,
       isDirectory: false,
     });
     await expect(
-      workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}/instructions/renamed-notes.md`),
+      workspaceBrowser.renameEntry(orgId, `agents/${workspaceKey}/instructions/scratch/NOTES.md`, "renamed-notes.md"),
     ).resolves.toEqual({
-      path: `agents/${workspaceKey}/instructions/renamed-notes.md`,
+      previousPath: `agents/${workspaceKey}/instructions/scratch/NOTES.md`,
+      path: `agents/${workspaceKey}/instructions/scratch/renamed-notes.md`,
+      isDirectory: false,
+    });
+    await expect(
+      workspaceBrowser.deleteEntry(orgId, `agents/${workspaceKey}/instructions/scratch/renamed-notes.md`),
+    ).resolves.toEqual({
+      path: `agents/${workspaceKey}/instructions/scratch/renamed-notes.md`,
       isDirectory: false,
     });
   });

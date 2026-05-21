@@ -1793,6 +1793,102 @@ button[draggable="false"] {
   color: color-mix(in oklab, var(--primary) 75%, var(--foreground));
 }
 
+.rudder-milkdown-content :is(
+  a[href^="agent://"],
+  a[href^="chat://"],
+  a[href^="issue://"],
+  a[href^="project://"],
+  a[href^="library-doc://"],
+  a[href^="library-file://"],
+  a[href^="skill://"],
+  a[href$="/SKILL.md"]
+) {
+  gap: 0.28em;
+  margin: 0 0.05em;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in oklab, #2f80ed 82%, var(--foreground) 18%);
+  font-size: inherit;
+  font-weight: 560;
+  line-height: 1;
+  letter-spacing: 0;
+  text-decoration: none;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.rudder-milkdown-content :is(
+  a[href^="agent://"],
+  a[href^="chat://"],
+  a[href^="issue://"],
+  a[href^="project://"],
+  a[href^="library-doc://"],
+  a[href^="library-file://"],
+  a[href^="skill://"],
+  a[href$="/SKILL.md"]
+):hover {
+  background: color-mix(in oklab, #2f80ed 10%, transparent);
+  border-radius: 4px;
+  color: color-mix(in oklab, #2f80ed 92%, var(--foreground) 8%);
+}
+
+.rudder-milkdown-content :is(
+  a[href^="agent://"],
+  a[href^="chat://"],
+  a[href^="issue://"],
+  a[href^="project://"],
+  a[href^="library-doc://"],
+  a[href^="library-file://"],
+  a[href^="skill://"],
+  a[href$="/SKILL.md"]
+)::before {
+  content: "";
+  flex: none;
+  display: inline-block;
+  width: 0.86em;
+  height: 0.86em;
+  background: currentColor;
+  opacity: 0.95;
+  transform: translateY(0.01em);
+}
+
+.rudder-milkdown-content a[href^="agent://"]::before {
+  border: 0;
+  border-radius: 999px;
+  background: var(--rudder-mention-agent-avatar-background, currentColor);
+  mask-image: var(--rudder-mention-icon-mask, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='5'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"));
+  -webkit-mask-image: var(--rudder-mention-icon-mask, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='5'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"));
+  mask-position: center;
+  -webkit-mask-position: center;
+  mask-repeat: no-repeat;
+  -webkit-mask-repeat: no-repeat;
+  mask-size: contain;
+  -webkit-mask-size: contain;
+}
+
+.rudder-milkdown-content a[href^="issue://"]::before {
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.rudder-milkdown-content a[href^="chat://"]::before {
+  border: 0;
+  border-radius: 0;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.rudder-milkdown-content a[href^="skill://"]::before,
+.rudder-milkdown-content a[href$="/SKILL.md"]::before {
+  font-size: inherit;
+  font-weight: inherit;
+  color: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
 .rudder-milkdown-content pre {
   overflow-x: auto;
   border-radius: var(--radius);
@@ -1907,11 +2003,12 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
 a.rudder-mention-chip[data-mention-kind="agent"]::before {
   content: "";
   flex: none;
-  width: 0.75rem;
-  height: 0.75rem;
-  background-color: currentColor;
-  -webkit-mask-image: var(--rudder-mention-icon-mask);
-  mask-image: var(--rudder-mention-icon-mask);
+  width: 0.86em;
+  height: 0.86em;
+  border-radius: 999px;
+  background: var(--rudder-mention-agent-avatar-background, currentColor);
+  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
+  mask-image: var(--rudder-mention-icon-mask, none);
   -webkit-mask-position: center;
   mask-position: center;
   -webkit-mask-repeat: no-repeat;
@@ -2421,8 +2518,12 @@ a.rudder-skill-token:hover {
 }
 
 .rudder-mdxeditor-content .rudder-skill-token,
-a.rudder-skill-token {
+a.rudder-skill-token:not([href]) {
   cursor: default;
+}
+
+a.rudder-skill-token[href] {
+  cursor: pointer;
 }
 
 .rudder-markdown blockquote {
@@ -2677,6 +2778,85 @@ a.rudder-mention-chip[data-mention-kind="library_file"]:hover {
   background-color: transparent;
   color: var(--rudder-doc-link-hover);
   text-decoration: none;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip,
+.rudder-mdxeditor-content .rudder-project-mention-chip,
+a.rudder-mention-chip,
+a.rudder-project-mention-chip {
+  gap: 0.28em;
+  margin: 0 0.05em;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in oklab, #2f80ed 82%, var(--foreground) 18%);
+  font-size: inherit;
+  font-weight: 560;
+  line-height: 1;
+  letter-spacing: 0;
+  text-decoration: none;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip:hover,
+.rudder-mdxeditor-content .rudder-project-mention-chip:hover,
+a.rudder-mention-chip:hover,
+a.rudder-project-mention-chip:hover {
+  background: color-mix(in oklab, #2f80ed 10%, transparent);
+  border-radius: 4px;
+  color: color-mix(in oklab, #2f80ed 92%, var(--foreground) 8%);
+  text-decoration: none;
+}
+
+a.rudder-mention-chip,
+a.rudder-project-mention-chip {
+  cursor: pointer;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip::before,
+a.rudder-mention-chip::before,
+.rudder-mdxeditor-content .rudder-project-mention-chip::before,
+a.rudder-project-mention-chip::before {
+  content: "";
+  flex: none;
+  display: inline-block;
+  width: 0.86em;
+  height: 0.86em;
+  background: currentColor;
+  opacity: 0.95;
+  transform: translateY(0.01em);
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"]::before,
+a.rudder-mention-chip[data-mention-kind="project"]::before {
+  width: 0.74em;
+  height: 0.74em;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="issue"]::before,
+a.rudder-mention-chip[data-mention-kind="issue"]::before {
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="chat"]::before,
+a.rudder-mention-chip[data-mention-kind="chat"]::before {
+  border: 0;
+  border-radius: 0;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]::before,
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_file"]::before,
+a.rudder-mention-chip[data-mention-kind="library_doc"]::before,
+a.rudder-mention-chip[data-mention-kind="library_file"]::before {
+  width: 0.86em;
+  height: 0.86em;
 }
 
 /* Keep MDXEditor popups above app dialogs, even when they portal to <body>. */

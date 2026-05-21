@@ -41,6 +41,7 @@ export {
   createOrganizationWorkspaceFileSchema,
   updateOrganizationWorkspaceFileSchema,
   renameOrganizationWorkspaceEntrySchema,
+  moveOrganizationWorkspaceEntrySchema,
   type CreateOrganization,
   type UpdateOrganization,
   type UpdateOrganizationBranding,
@@ -48,6 +49,7 @@ export {
   type CreateOrganizationWorkspaceFile,
   type UpdateOrganizationWorkspaceFile,
   type RenameOrganizationWorkspaceEntry,
+  type MoveOrganizationWorkspaceEntry,
 } from "./organization.js";
 export {
   organizationResourceKindSchema,

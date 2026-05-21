@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type CSSProperties,
   type DragEvent,
 } from "react";
 import { Milkdown, MilkdownProvider, useEditor, useInstance } from "@milkdown/react";
@@ -15,7 +16,9 @@ import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import { history } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
-import { getMarkdown, insert, replaceAll } from "@milkdown/kit/utils";
+import { Plugin as ProsePlugin } from "@milkdown/kit/prose/state";
+import { Decoration, DecorationSet } from "@milkdown/kit/prose/view";
+import { $prose, getMarkdown, insert, replaceAll } from "@milkdown/kit/utils";
 import {
   buildAgentMentionHref,
   buildChatMentionHref,
@@ -28,10 +31,16 @@ import { Boxes, FileText, MessageSquare } from "lucide-react";
 import { useI18n } from "@/context/I18nContext";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
-import { parseMentionChipHref } from "../lib/mention-chips";
+import {
+  mentionChipInlineStyle,
+  parseMentionChipHref,
+  type ParsedMentionChip,
+} from "../lib/mention-chips";
 import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
-import { parseSkillReference } from "../lib/skill-reference";
+import {
+  parseSkillReference,
+} from "../lib/skill-reference";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
 import type { MarkdownEditorProps, MarkdownEditorRef, MentionOption } from "./MarkdownEditor";
@@ -134,6 +143,98 @@ export function isRudderTokenHref(href: string, label: string) {
     || parseSkillReference(href, label)
     || (href.trim().startsWith("skill://") && label.trim().startsWith("$")),
   );
+}
+
+export function rudderTokenNavigationPath(href: string) {
+  const parsed = parseMentionChipHref(href);
+  if (parsed) {
+    if (parsed.kind === "project") return `/projects/${parsed.projectId}`;
+    if (parsed.kind === "issue") return `/issues/${parsed.ref ?? parsed.issueId}`;
+    if (parsed.kind === "chat") return `/messenger/chat/${parsed.conversationId}`;
+    if (parsed.kind === "library_doc") return `/library?doc=${encodeURIComponent(parsed.documentId)}`;
+    if (parsed.kind === "library_file") return `/library?path=${encodeURIComponent(parsed.filePath)}`;
+    return `/agents/${parsed.agentId}`;
+  }
+
+  return null;
+}
+
+function serializeInlineStyle(style: CSSProperties | undefined) {
+  if (!style) return undefined;
+  const declarations = Object.entries(style)
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    .map(([key, value]) => `${key}: ${value};`);
+  return declarations.length > 0 ? declarations.join(" ") : undefined;
+}
+
+function milkdownMentionDecorationAttrs(mention: ParsedMentionChip, label: string, href: string) {
+  const classNames = ["rudder-mention-chip", `rudder-mention-chip--${mention.kind}`];
+  if (mention.kind === "project") {
+    classNames.push("rudder-project-mention-chip");
+  }
+  const attrs: Record<string, string> = {
+    class: classNames.join(" "),
+    "data-mention-kind": mention.kind,
+  };
+  const navigationPath = rudderTokenNavigationPath(href);
+  attrs.title = navigationPath ? `Open ${label}` : label;
+  const style = serializeInlineStyle(mentionChipInlineStyle(mention));
+  if (style) {
+    attrs.style = style;
+  }
+  return attrs;
+}
+
+function milkdownSkillDecorationAttrs(href: string, label: string) {
+  return {
+    class: "rudder-skill-token",
+    "data-skill-token": "true",
+    "data-skill-href": href,
+    title: label,
+  };
+}
+
+function mentionOptionMap(mentions: MentionOption[]) {
+  const map = new Map<string, MentionOption>();
+  for (const mention of mentions) {
+    if (mention.kind === "agent") {
+      const agentId = mention.agentId ?? mention.id.replace(/^agent:/, "");
+      map.set(`agent:${agentId}`, mention);
+    }
+    if (mention.kind === "project" && mention.projectId) {
+      map.set(`project:${mention.projectId}`, mention);
+    }
+  }
+  return map;
+}
+
+function buildMilkdownTokenDecorations(doc: ProseMirrorDoc, mentions: MentionOption[]) {
+  const optionByKey = mentionOptionMap(mentions);
+  const decorations: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    if (!node.isText || !node.text) return;
+    const linkMark = node.marks?.find((mark) => mark.type?.name === "link" && mark.attrs?.href);
+    const href = linkMark?.attrs?.href?.trim() ?? "";
+    if (!href) return;
+
+    const parsed = parseMentionChipHref(href);
+    if (parsed) {
+      const label = node.text.replace(/^@(?=\S)/, "");
+      const mention = parsed.kind === "agent"
+        ? { ...parsed, icon: parsed.icon ?? optionByKey.get(`agent:${parsed.agentId}`)?.agentIcon ?? null }
+        : parsed.kind === "project"
+          ? { ...parsed, color: parsed.color ?? optionByKey.get(`project:${parsed.projectId}`)?.projectColor ?? null }
+          : parsed;
+      decorations.push(Decoration.inline(pos, pos + node.nodeSize, milkdownMentionDecorationAttrs(mention, label, href)));
+      return;
+    }
+
+    const skillReference = parseSkillReference(href, node.text);
+    if (skillReference) {
+      decorations.push(Decoration.inline(pos, pos + node.nodeSize, milkdownSkillDecorationAttrs(skillReference.href, skillReference.label)));
+    }
+  });
+  return DecorationSet.create(doc as never, decorations);
 }
 
 function findRudderTokenRangeAt(doc: ProseMirrorDoc, targetPos: number): RudderTokenRange | null {
@@ -369,6 +470,7 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
   const onChangeRef = useRef(onChange);
   const onBlurRef = useRef(onBlur);
   const imageUploadHandlerRef = useRef(imageUploadHandler);
+  const mentionsRef = useRef<MentionOption[]>(mentions ?? []);
   const [mentionState, setMentionState] = useState<MentionState | null>(null);
   const mentionStateRef = useRef<MentionState | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -384,7 +486,21 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
     onChangeRef.current = onChange;
     onBlurRef.current = onBlur;
     imageUploadHandlerRef.current = imageUploadHandler;
+    mentionsRef.current = mentions ?? [];
   }, [imageUploadHandler, onBlur, onChange]);
+
+  useEffect(() => {
+    mentionsRef.current = mentions ?? [];
+  }, [mentions]);
+
+  const tokenDecorationsPlugin = useMemo(
+    () => $prose(() => new ProsePlugin({
+      props: {
+        decorations: (state) => buildMilkdownTokenDecorations(state.doc as unknown as ProseMirrorDoc, mentionsRef.current),
+      },
+    })),
+    [],
+  );
 
   const { get } = useEditor((root) =>
     Editor
@@ -404,8 +520,9 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       .use(listener)
       .use(history)
       .use(commonmark)
-      .use(gfm),
-  []);
+      .use(gfm)
+      .use(tokenDecorationsPlugin),
+  [tokenDecorationsPlugin]);
 
   const [loading, getInstance] = useInstance();
 
@@ -686,6 +803,9 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         const href = anchor.getAttribute("href") ?? "";
         if (!href || !isRudderTokenHref(href, label)) return;
         event.preventDefault();
+        const navigationPath = rudderTokenNavigationPath(href);
+        if (!navigationPath) return;
+        window.location.assign(navigationPath);
       }}
       onKeyUpCapture={checkMention}
       onMouseUpCapture={checkMention}

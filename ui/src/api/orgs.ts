@@ -8,6 +8,7 @@ import type {
   OrganizationResource,
   OrganizationWorkspaceDirectoryCreateRequest,
   OrganizationWorkspaceEntryMutationResult,
+  OrganizationWorkspaceEntryMoveRequest,
   OrganizationWorkspaceEntryRenameRequest,
   OrganizationWorkspaceFileCreateRequest,
   OrganizationWorkspaceFileDetail,
@@ -141,6 +142,15 @@ export const organizationsApi = {
     const query = search.toString();
     return api.patch<OrganizationWorkspaceEntryMutationResult>(
       `/orgs/${orgId}/workspace/entry${query ? `?${query}` : ""}`,
+      data,
+    );
+  },
+  moveWorkspaceEntry: (orgId: string, entryPath: string, data: OrganizationWorkspaceEntryMoveRequest) => {
+    const search = new URLSearchParams();
+    if (entryPath) search.set("path", entryPath);
+    const query = search.toString();
+    return api.patch<OrganizationWorkspaceEntryMutationResult>(
+      `/orgs/${orgId}/workspace/entry/move${query ? `?${query}` : ""}`,
       data,
     );
   },

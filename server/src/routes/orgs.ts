@@ -16,6 +16,7 @@ import {
   updateOrganizationSchema,
   updateOrganizationWorkspaceFileSchema,
   renameOrganizationWorkspaceEntrySchema,
+  moveOrganizationWorkspaceEntrySchema,
   createWorkspaceBackupSchema,
   restoreWorkspaceBackupSchema,
 } from "@rudderhq/shared";
@@ -510,6 +511,32 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       details: {
         previousPath: result.previousPath,
         path: result.path,
+        isDirectory: result.isDirectory,
+      },
+    });
+    res.json(result);
+  });
+
+  router.patch("/:orgId/workspace/entry/move", validate(moveOrganizationWorkspaceEntrySchema), async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    const entryPath = typeof req.query.path === "string" ? req.query.path : "";
+    const result = await workspaceBrowser.moveEntry(orgId, entryPath, req.body.destinationDirectoryPath);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      action: "organization.workspace_entry.moved",
+      entityType: "organization",
+      entityId: orgId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      details: {
+        previousPath: result.previousPath,
+        path: result.path,
+        destinationDirectoryPath: req.body.destinationDirectoryPath,
         isDirectory: result.isDirectory,
       },
     });

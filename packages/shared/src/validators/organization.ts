@@ -70,3 +70,9 @@ export const renameOrganizationWorkspaceEntrySchema = z.object({
 });
 
 export type RenameOrganizationWorkspaceEntry = z.infer<typeof renameOrganizationWorkspaceEntrySchema>;
+
+export const moveOrganizationWorkspaceEntrySchema = z.object({
+  destinationDirectoryPath: z.string().trim().max(1000).default(""),
+});
+
+export type MoveOrganizationWorkspaceEntry = z.infer<typeof moveOrganizationWorkspaceEntrySchema>;

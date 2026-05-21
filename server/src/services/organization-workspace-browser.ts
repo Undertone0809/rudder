@@ -577,6 +577,66 @@ export function organizationWorkspaceBrowserService(db: Db) {
       };
     },
 
+    async moveEntry(
+      orgId: string,
+      entryPath: string,
+      destinationDirectoryPath: string,
+    ): Promise<OrganizationWorkspaceEntryMutationResult> {
+      const root = await resolveWorkspaceRoot(orgId);
+      const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, entryPath);
+      const {
+        resolvedTarget: resolvedDestinationDirectory,
+        normalizedPath: normalizedDestinationDirectory,
+      } = resolveWithinRoot(root.rootPath, destinationDirectoryPath);
+      const rootExists = await pathExistsAsDirectory(resolvedRoot);
+      if (!rootExists) {
+        throw notFound("The workspace root is not available on this machine yet.");
+      }
+      assertMutableWorkspaceEntry(normalizedPath);
+      if (isProtectedAgentWorkspaceContainerPath(normalizedDestinationDirectory)) {
+        throw unprocessable("Entries cannot be moved into the protected agent workspace area");
+      }
+
+      const stat = await statWorkspaceEntry(resolvedTarget);
+      if (!stat) {
+        throw notFound("Entry not found inside the organization workspace");
+      }
+      if (!(await pathExistsAsDirectory(resolvedDestinationDirectory))) {
+        throw notFound("Destination directory not found inside the organization workspace");
+      }
+      if (stat.isDirectory()) {
+        const relativeDestination = path.relative(resolvedTarget, resolvedDestinationDirectory);
+        if (relativeDestination === "" || (!relativeDestination.startsWith("..") && !path.isAbsolute(relativeDestination))) {
+          throw unprocessable("A folder cannot be moved into itself or one of its children");
+        }
+      }
+
+      const nextTarget = path.resolve(resolvedDestinationDirectory, path.basename(resolvedTarget));
+      const nextRelativePath = path.relative(resolvedRoot, nextTarget);
+      if (nextRelativePath.startsWith("..") || path.isAbsolute(nextRelativePath)) {
+        throw unprocessable("Entry path must stay inside the organization workspace root");
+      }
+      const nextPath = toPortableRelativePath(nextRelativePath);
+      assertCanCreateWorkspaceEntry(nextPath);
+      if (normalizedPath === nextPath) {
+        return {
+          previousPath: normalizedPath,
+          path: normalizedPath,
+          isDirectory: stat.isDirectory(),
+        };
+      }
+      if (await statWorkspaceEntry(nextTarget)) {
+        throw conflict("An entry with that name already exists in the destination directory");
+      }
+
+      await fs.rename(resolvedTarget, nextTarget);
+      return {
+        previousPath: normalizedPath,
+        path: nextPath,
+        isDirectory: stat.isDirectory(),
+      };
+    },
+
     async deleteEntry(orgId: string, entryPath: string): Promise<OrganizationWorkspaceEntryMutationResult> {
       const root = await resolveWorkspaceRoot(orgId);
       const { resolvedRoot, resolvedTarget, normalizedPath } = resolveWithinRoot(root.rootPath, entryPath);

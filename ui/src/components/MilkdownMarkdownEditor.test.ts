@@ -9,7 +9,13 @@ import {
   buildLibraryFileMentionHref,
   buildProjectMentionHref,
 } from "@rudderhq/shared";
-import { applyMention, isRudderTokenHref, mentionMarkdown, readCanonicalFragmentMarkdown } from "./MilkdownMarkdownEditor";
+import {
+  applyMention,
+  isRudderTokenHref,
+  mentionMarkdown,
+  readCanonicalFragmentMarkdown,
+  rudderTokenNavigationPath,
+} from "./MilkdownMarkdownEditor";
 import type { MentionOption } from "./MarkdownEditor";
 
 describe("MilkdownMarkdownEditor mention serialization", () => {
@@ -147,5 +153,14 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     fragment.append(" today");
 
     expect(readCanonicalFragmentMarkdown(fragment)).toBe("Ask [Jade](agent://agent-1) today");
+  });
+
+  it("resolves special Rudder references to app navigation paths", () => {
+    expect(rudderTokenNavigationPath(buildAgentMentionHref("agent-1", "bot"))).toBe("/agents/agent-1");
+    expect(rudderTokenNavigationPath(buildIssueMentionHref("issue-1", "R-1"))).toBe("/issues/R-1");
+    expect(rudderTokenNavigationPath(buildLibraryFileMentionHref("docs/spec.md", "spec.md"))).toBe(
+      "/library?path=docs%2Fspec.md",
+    );
+    expect(rudderTokenNavigationPath("skill://writer")).toBeNull();
   });
 });

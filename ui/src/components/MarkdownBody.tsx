@@ -317,6 +317,7 @@ export function MarkdownBody({
         return (
           <a
             href={targetHref}
+            title={`Open ${mentionLabel}`}
             className={cn(
               "rudder-mention-chip",
               `rudder-mention-chip--${parsed.kind}`,

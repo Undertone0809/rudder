@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useSearchParams } from "@/lib/router";
@@ -78,6 +78,7 @@ const WORKSPACE_TAB_CONTEXT_MENU_WIDTH = 220;
 const WORKSPACE_TAB_CONTEXT_MENU_MAX_HEIGHT = 256;
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
 const WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx", ".txt", ".text"]);
+const WORKSPACE_ENTRY_DND_MIME = "application/x-rudder-workspace-entry";
 const WORKSPACE_LAUNCH_TARGET_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
   label: string;
   className: string;
@@ -259,6 +260,62 @@ function canCreateInsideWorkspaceDirectory(directoryPath: string) {
   return !isProtectedAgentWorkspaceContainerPath(directoryPath);
 }
 
+function canMoveWorkspaceEntry(entry: Pick<OrganizationWorkspaceFileEntry, "path">) {
+  return !isProtectedAgentWorkspaceContainerPath(entry.path);
+}
+
+function parentWorkspaceDirectoryPath(entryPath: string) {
+  const segments = entryPath.split("/").filter(Boolean);
+  segments.pop();
+  return segments.join("/");
+}
+
+function applyMovedWorkspacePath(currentPath: string, previousPath: string, nextPath: string) {
+  if (currentPath === previousPath) return nextPath;
+  if (currentPath.startsWith(`${previousPath}/`)) {
+    return `${nextPath}${currentPath.slice(previousPath.length)}`;
+  }
+  return currentPath;
+}
+
+function canDropWorkspaceEntryIntoDirectory(
+  source: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">,
+  destinationDirectoryPath: string,
+) {
+  if (!canMoveWorkspaceEntry(source)) return false;
+  if (!canCreateInsideWorkspaceDirectory(destinationDirectoryPath)) return false;
+  if (source.path === destinationDirectoryPath) return false;
+  if (source.isDirectory && destinationDirectoryPath.startsWith(`${source.path}/`)) return false;
+  return parentWorkspaceDirectoryPath(source.path) !== destinationDirectoryPath;
+}
+
+function serializeWorkspaceDragEntry(entry: OrganizationWorkspaceFileEntry) {
+  return JSON.stringify({
+    path: entry.path,
+    isDirectory: entry.isDirectory,
+  });
+}
+
+function parseWorkspaceDragEntry(event: DragEvent<HTMLElement>) {
+  const payload = event.dataTransfer.getData(WORKSPACE_ENTRY_DND_MIME);
+  if (!payload) return null;
+  try {
+    const parsed = JSON.parse(payload) as Partial<Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">>;
+    if (typeof parsed.path !== "string" || typeof parsed.isDirectory !== "boolean") return null;
+    return {
+      path: parsed.path,
+      isDirectory: parsed.isDirectory,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function didDragLeaveCurrentTarget(event: DragEvent<HTMLElement>) {
+  const relatedTarget = event.relatedTarget;
+  return !(relatedTarget instanceof Node) || !event.currentTarget.contains(relatedTarget);
+}
+
 function isValidWorkspaceEntryName(name: string) {
   const trimmed = name.trim();
   return Boolean(trimmed)
@@ -348,6 +405,7 @@ function DirectoryChildren({
   onStartCreateEntry,
   onStartRename,
   onStartDelete,
+  onMoveEntry,
   expandedDirectories,
   depth,
 }: {
@@ -359,6 +417,7 @@ function DirectoryChildren({
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
+  onMoveEntry: (entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">, destinationDirectoryPath: string) => void;
   expandedDirectories: Set<string>;
   depth: number;
 }) {
@@ -385,6 +444,7 @@ function DirectoryChildren({
           onStartCreateEntry={onStartCreateEntry}
           onStartRename={onStartRename}
           onStartDelete={onStartDelete}
+          onMoveEntry={onMoveEntry}
           expandedDirectories={expandedDirectories}
           depth={depth}
         />
@@ -402,6 +462,7 @@ function WorkspaceTreeNode({
   onStartCreateEntry,
   onStartRename,
   onStartDelete,
+  onMoveEntry,
   expandedDirectories,
   depth = 0,
 }: {
@@ -413,20 +474,55 @@ function WorkspaceTreeNode({
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
+  onMoveEntry: (entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">, destinationDirectoryPath: string) => void;
   expandedDirectories: Set<string>;
   depth?: number;
 }) {
   const [expanded, setExpanded] = useState(expandedDirectories.has(entry.path));
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
   const primaryLabel = displayWorkspaceEntryLabel(entry);
   const isAgentWorkspace = entry.entityType === "agent_workspace";
   const isAgentsRoot = entry.path === "agents";
   const isProtectedContainer = isProtectedAgentWorkspaceContainerPath(entry.path);
   const canCreateInsideDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
+  const canMoveEntry = canMoveWorkspaceEntry(entry);
+  const canDropIntoDirectory = entry.isDirectory && canCreateInsideWorkspaceDirectory(entry.path);
   const handleOpenActionMenu = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     event.stopPropagation();
     setActionMenuOpen(true);
+  };
+  const handleDragStart = (event: DragEvent<HTMLElement>) => {
+    if (!canMoveEntry) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(WORKSPACE_ENTRY_DND_MIME, serializeWorkspaceDragEntry(entry));
+    event.dataTransfer.setData("text/plain", entry.path);
+  };
+  const handleDragOver = (event: DragEvent<HTMLElement>) => {
+    if (!canDropIntoDirectory || !event.dataTransfer.types.includes(WORKSPACE_ENTRY_DND_MIME)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropActive(true);
+  };
+  const handleDragLeave = (event: DragEvent<HTMLElement>) => {
+    if (didDragLeaveCurrentTarget(event)) {
+      setDropActive(false);
+    }
+  };
+  const handleDrop = (event: DragEvent<HTMLElement>) => {
+    if (!canDropIntoDirectory) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDropActive(false);
+    const source = parseWorkspaceDragEntry(event);
+    if (!source) return;
+    if (!canDropWorkspaceEntryIntoDirectory(source, entry.path)) return;
+    onMoveEntry(source, entry.path);
+    setExpanded(true);
   };
 
   const actionMenu = (
@@ -498,9 +594,17 @@ function WorkspaceTreeNode({
     return (
       <li>
         <div
-          className="group flex w-full items-center rounded-md pr-1 text-sm text-foreground hover:bg-accent/60"
+          className={cn(
+            "group flex w-full items-center rounded-md pr-1 text-sm text-foreground transition-colors hover:bg-accent/60",
+            dropActive && "bg-[#2f80ed]/10 ring-1 ring-[#2f80ed]/30",
+          )}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
           data-workspace-entry-path={entry.path}
+          draggable={canMoveEntry}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
           onContextMenu={handleOpenActionMenu}
         >
           <button
@@ -549,6 +653,7 @@ function WorkspaceTreeNode({
             onStartCreateEntry={onStartCreateEntry}
             onStartRename={onStartRename}
             onStartDelete={onStartDelete}
+            onMoveEntry={onMoveEntry}
             expandedDirectories={expandedDirectories}
             depth={depth + 1}
           />
@@ -571,6 +676,8 @@ function WorkspaceTreeNode({
         }`}
         style={{ paddingLeft: `${depth * 14 + 23}px` }}
         data-workspace-entry-path={entry.path}
+        draggable={canMoveEntry}
+        onDragStart={handleDragStart}
         onContextMenu={handleOpenActionMenu}
       >
         <button
@@ -602,6 +709,7 @@ export function OrganizationWorkspaceFilesSidebar() {
   const [renameTarget, setRenameTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
+  const [rootDropActive, setRootDropActive] = useState(false);
   const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
   const [lastWorkspaceLaunchTargetId, setLastWorkspaceLaunchTargetId] = useState<DesktopWorkspaceLaunchTarget["id"] | null>(
     () => readStoredWorkspaceLaunchTargetId(),
@@ -743,6 +851,36 @@ export function OrganizationWorkspaceFilesSidebar() {
     },
   });
 
+  const moveWorkspaceEntry = useMutation({
+    mutationFn: (payload: {
+      entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">;
+      destinationDirectoryPath: string;
+    }) =>
+      organizationsApi.moveWorkspaceEntry(viewedOrganizationId!, payload.entry.path, {
+        destinationDirectoryPath: payload.destinationDirectoryPath,
+      }),
+    onSuccess: (result) => {
+      void invalidateWorkspaceBrowser();
+      if (result.previousPath && selectedFilePath) {
+        const nextSelectedPath = applyMovedWorkspacePath(selectedFilePath, result.previousPath, result.path);
+        if (nextSelectedPath !== selectedFilePath) {
+          updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
+        }
+      }
+      pushToast({
+        title: "Workspace entry moved",
+        body: result.previousPath ? `${result.previousPath} -> ${result.path}` : result.path,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to move workspace entry",
+        tone: "error",
+      });
+    },
+  });
+
   const deleteWorkspaceEntry = useMutation({
     mutationFn: (entry: OrganizationWorkspaceFileEntry) =>
       organizationsApi.deleteWorkspaceEntry(viewedOrganizationId!, entry.path),
@@ -839,6 +977,35 @@ export function OrganizationWorkspaceFilesSidebar() {
   function handleStartDelete(entry: OrganizationWorkspaceFileEntry) {
     if (isProtectedAgentWorkspaceContainerPath(entry.path)) return;
     setDeleteTarget(entry);
+  }
+
+  function handleMoveEntry(
+    entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">,
+    destinationDirectoryPath: string,
+  ) {
+    if (!canDropWorkspaceEntryIntoDirectory(entry, destinationDirectoryPath)) return;
+    moveWorkspaceEntry.mutate({ entry, destinationDirectoryPath });
+  }
+
+  function handleRootDragOver(event: DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes(WORKSPACE_ENTRY_DND_MIME)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setRootDropActive(true);
+  }
+
+  function handleRootDragLeave(event: DragEvent<HTMLElement>) {
+    if (didDragLeaveCurrentTarget(event)) {
+      setRootDropActive(false);
+    }
+  }
+
+  function handleRootDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    setRootDropActive(false);
+    const source = parseWorkspaceDragEntry(event);
+    if (!source || !canDropWorkspaceEntryIntoDirectory(source, "")) return;
+    handleMoveEntry(source, "");
   }
 
   return (
@@ -957,7 +1124,13 @@ export function OrganizationWorkspaceFilesSidebar() {
 
         <section
           data-testid="org-workspaces-files-card"
-          className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border"
+          className={cn(
+            "flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border transition-colors",
+            rootDropActive && "bg-[#2f80ed]/5 ring-1 ring-inset ring-[#2f80ed]/25",
+          )}
+          onDragOver={handleRootDragOver}
+          onDragLeave={handleRootDragLeave}
+          onDrop={handleRootDrop}
         >
           <div
             ref={filesScrollRef}
@@ -992,6 +1165,7 @@ export function OrganizationWorkspaceFilesSidebar() {
                       onStartCreateEntry={handleStartCreateEntry}
                       onStartRename={handleStartRename}
                       onStartDelete={handleStartDelete}
+                      onMoveEntry={handleMoveEntry}
                       expandedDirectories={expandedDirectories}
                     />
                   ))}
@@ -1208,6 +1382,7 @@ export function OrganizationWorkspaceBrowser({
   const [renameTarget, setRenameTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<OrganizationWorkspaceFileEntry | null>(null);
+  const [rootDropActive, setRootDropActive] = useState(false);
   const [createTarget, setCreateTarget] = useState<{
     parent: OrganizationWorkspaceFileEntry;
     kind: "file" | "folder";
@@ -1472,6 +1647,48 @@ export function OrganizationWorkspaceBrowser({
     onError: (error) => {
       pushToast({
         title: error instanceof Error ? error.message : "Failed to rename workspace entry",
+        tone: "error",
+      });
+    },
+  });
+
+  const moveWorkspaceEntry = useMutation({
+    mutationFn: (payload: {
+      entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">;
+      destinationDirectoryPath: string;
+    }) =>
+      organizationsApi.moveWorkspaceEntry(viewedOrganizationId!, payload.entry.path, {
+        destinationDirectoryPath: payload.destinationDirectoryPath,
+      }),
+    onSuccess: (result) => {
+      if (!viewedOrganizationId) return;
+      void invalidateWorkspaceBrowser();
+      const previousPath = result.previousPath;
+      if (previousPath) {
+        setOpenFilePaths((current) =>
+          current.map((filePath) => applyMovedWorkspacePath(filePath, previousPath, result.path)),
+        );
+        if (selectedFilePath) {
+          const nextSelectedPath = applyMovedWorkspacePath(selectedFilePath, previousPath, result.path);
+          if (nextSelectedPath !== selectedFilePath) {
+            setSelectedFilePath(nextSelectedPath);
+            setDraftFilePath(nextSelectedPath);
+            if (syncedFileRef.current.filePath === previousPath) {
+              syncedFileRef.current = { ...syncedFileRef.current, filePath: nextSelectedPath };
+            }
+            updateSelectedPath(searchParams, setSearchParams, nextSelectedPath);
+          }
+        }
+      }
+      pushToast({
+        title: "Workspace entry moved",
+        body: result.previousPath ? `${result.previousPath} -> ${result.path}` : result.path,
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: error instanceof Error ? error.message : "Failed to move workspace entry",
         tone: "error",
       });
     },
@@ -1954,6 +2171,36 @@ export function OrganizationWorkspaceBrowser({
     setCreateDraft(kind === "file" ? "untitled.md" : "new-folder");
   }
 
+  function handleMoveEntry(
+    entry: Pick<OrganizationWorkspaceFileEntry, "path" | "isDirectory">,
+    destinationDirectoryPath: string,
+  ) {
+    if (!canDropWorkspaceEntryIntoDirectory(entry, destinationDirectoryPath)) return;
+    flushCurrentDraft();
+    moveWorkspaceEntry.mutate({ entry, destinationDirectoryPath });
+  }
+
+  function handleRootDragOver(event: DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes(WORKSPACE_ENTRY_DND_MIME)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setRootDropActive(true);
+  }
+
+  function handleRootDragLeave(event: DragEvent<HTMLElement>) {
+    if (didDragLeaveCurrentTarget(event)) {
+      setRootDropActive(false);
+    }
+  }
+
+  function handleRootDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    setRootDropActive(false);
+    const source = parseWorkspaceDragEntry(event);
+    if (!source || !canDropWorkspaceEntryIntoDirectory(source, "")) return;
+    handleMoveEntry(source, "");
+  }
+
   const showInlineFiles = isMobileViewport;
 
   return (
@@ -1969,7 +2216,13 @@ export function OrganizationWorkspaceBrowser({
           {showInlineFiles ? (
             <section
               data-testid="org-workspaces-files-card"
-              className="flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card lg:min-h-0 lg:w-[320px] lg:flex-none"
+              className={cn(
+                "flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card transition-colors lg:min-h-0 lg:w-[320px] lg:flex-none",
+                rootDropActive && "bg-[#2f80ed]/5 ring-1 ring-inset ring-[#2f80ed]/25",
+              )}
+              onDragOver={handleRootDragOver}
+              onDragLeave={handleRootDragLeave}
+              onDrop={handleRootDrop}
             >
               <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
                 <div className="min-w-0">
@@ -2035,6 +2288,7 @@ export function OrganizationWorkspaceBrowser({
                           onStartCreateEntry={handleStartCreateEntry}
                           onStartRename={handleStartRename}
                           onStartDelete={handleStartDelete}
+                          onMoveEntry={handleMoveEntry}
                           expandedDirectories={expandedDirectories}
                         />
                       ))}

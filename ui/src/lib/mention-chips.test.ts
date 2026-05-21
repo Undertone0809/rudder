@@ -41,6 +41,17 @@ describe("mention chips", () => {
     expect(style.backgroundColor).toBeUndefined();
   });
 
+  it("uses agent avatar images when an agent mention has an image-backed icon", () => {
+    const style = mentionChipInlineStyle({
+      kind: "agent",
+      agentId: "agent-123",
+      icon: "asset:11111111-1111-4111-8111-111111111111?bg=sky",
+    }) as Record<string, string>;
+
+    expect(style["--rudder-mention-agent-avatar-background"]).toContain("/api/assets/11111111-1111-4111-8111-111111111111/content");
+    expect(style["--rudder-mention-icon-mask"]).toBe("none");
+  });
+
   it("parses and decorates library document mention links", () => {
     expect(parseMentionChipHref("library-doc://doc-123?t=Product%20principles")).toEqual({
       kind: "library_doc",
