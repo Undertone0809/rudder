@@ -32,7 +32,9 @@ export const ISSUE_ASSIGN_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent
 
 {{context.issueDocumentsPrompt}}
 
-Your task is to review this issue and begin working on it. Use the available tools to explore the codebase, understand the requirements, and implement a solution.`;
+Your task is to review this issue, understand what kind of work it asks for, and take the appropriate next action.
+
+Do not assume every issue is a codebase task. If the issue is a question, screenshot check, review, planning request, coordination task, or another non-code request, answer or handle that request directly. Inspect the codebase and implement a change only when the issue actually asks for engineering work or when the relevant project resources make code changes necessary.`;
 
 export const COMMENT_MENTION_PROMPT_TEMPLATE = `You are agent {{agent.id}} ({{agent.name}}). You were mentioned in a comment and your attention is needed.
 

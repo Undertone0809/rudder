@@ -106,6 +106,33 @@ describe("ensureRudderCliInPath", () => {
 });
 
 describe("selectPromptTemplate", () => {
+  it("keeps issue assignment prompts neutral for non-code work", () => {
+    const context = {
+      wakeReason: "issue_assigned",
+      issue: {
+        id: "issue-screenshot",
+        title: "Can you see this screen?",
+        status: "todo",
+        priority: "medium",
+        description: "![](/api/assets/screenshot/content)",
+      },
+    };
+
+    const template = selectPromptTemplate(undefined, context);
+    const rendered = renderTemplate(template, {
+      agent: { id: "agent-1", name: "Operator" },
+      context,
+      issue: context.issue,
+    });
+
+    expect(rendered).toContain("understand what kind of work it asks for");
+    expect(rendered).toContain("Do not assume every issue is a codebase task.");
+    expect(rendered).toContain("If the issue is a question, screenshot check, review, planning request, coordination task");
+    expect(rendered).toContain("Inspect the codebase and implement a change only when");
+    expect(rendered).not.toContain("Use the available tools to explore the codebase");
+    expect(rendered).not.toContain("implement a solution.");
+  });
+
   it("renders an issue-aware recovery prompt when recovery metadata and issue context are present", () => {
     const context = {
       wakeReason: "retry_failed_run",
