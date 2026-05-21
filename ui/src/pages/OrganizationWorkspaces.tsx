@@ -2054,10 +2054,10 @@ export function OrganizationWorkspaceBrowser({
                         data-testid={`org-workspaces-editor-tab-${filePath}`}
                         onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
                         className={cn(
-                          "group mb-[-1px] flex h-10 min-w-[132px] max-w-[248px] items-center overflow-hidden border px-1 transition-colors",
+                          "rudder-doc-editor-tab group relative mb-[-1px] flex h-10 min-w-[132px] max-w-[248px] items-center border px-1 transition-colors",
                           active
-                            ? "rounded-t-[16px] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
-                            : "rounded-t-[14px] border-transparent text-muted-foreground hover:border-[color:var(--border-soft)] hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                            ? "rudder-doc-editor-tab--active overflow-visible rounded-t-[20px] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
+                            : "overflow-hidden rounded-t-[14px] border-transparent text-muted-foreground hover:border-[color:var(--border-soft)] hover:bg-[color:var(--surface-active)] hover:text-foreground",
                         )}
                       >
                         <button

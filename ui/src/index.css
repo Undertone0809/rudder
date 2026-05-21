@@ -1624,6 +1624,33 @@ button[draggable="false"] {
   border-color: var(--code-border);
 }
 
+.rudder-doc-editor-tab {
+  isolation: isolate;
+}
+
+.rudder-doc-editor-tab--active::before,
+.rudder-doc-editor-tab--active::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.rudder-doc-editor-tab--active::before {
+  left: -16px;
+  border-bottom-right-radius: 16px;
+  box-shadow: 8px 8px 0 8px var(--surface-elevated);
+}
+
+.rudder-doc-editor-tab--active::after {
+  right: -16px;
+  border-bottom-left-radius: 16px;
+  box-shadow: -8px 8px 0 8px var(--surface-elevated);
+}
+
 .rudder-inline-markdown-surface {
   min-height: 2rem;
   transition: background-color 120ms ease;
