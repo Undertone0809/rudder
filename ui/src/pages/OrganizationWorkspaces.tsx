@@ -44,6 +44,7 @@ import {
   ExternalLink,
   HardDrive,
   FilePlus2,
+  FileText,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -76,6 +77,7 @@ const WORKSPACE_IMAGE_FILE_EXTENSIONS = new Set([".avif", ".bmp", ".gif", ".ico"
 const WORKSPACE_TAB_CONTEXT_MENU_WIDTH = 220;
 const WORKSPACE_TAB_CONTEXT_MENU_MAX_HEIGHT = 256;
 const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown"]);
+const WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx", ".txt", ".text"]);
 const WORKSPACE_LAUNCH_TARGET_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
   label: string;
   className: string;
@@ -211,6 +213,11 @@ function isWorkspaceImageFilePath(filePath: string | null) {
 function isWorkspaceMarkdownFilePath(filePath: string | null) {
   const extension = getWorkspaceFileExtension(filePath);
   return extension !== null && WORKSPACE_MARKDOWN_FILE_EXTENSIONS.has(extension);
+}
+
+function isWorkspaceTextDocumentFilePath(filePath: string | null) {
+  const extension = getWorkspaceFileExtension(filePath);
+  return extension !== null && WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS.has(extension);
 }
 
 function splitYamlFrontmatter(content: string) {
@@ -551,7 +558,11 @@ function WorkspaceTreeNode({
   }
 
   const isSelected = selectedFilePath === entry.path;
-  const FileIcon = isWorkspaceImageFilePath(entry.path) ? ImageIcon : FileCode2;
+  const FileIcon = isWorkspaceImageFilePath(entry.path)
+    ? ImageIcon
+    : isWorkspaceTextDocumentFilePath(entry.path)
+      ? FileText
+      : FileCode2;
   return (
     <li>
       <div
