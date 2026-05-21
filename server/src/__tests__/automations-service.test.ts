@@ -404,6 +404,65 @@ describe("automation service live-execution coalescing", () => {
     });
   });
 
+  it("creates a new chat output destination when no conversation is selected", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture();
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Daily digest",
+        description: "Post a fresh digest.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(run.status).toBe("issue_created");
+    expect(run.linkedChatConversationId).toBeTruthy();
+    expect(run.startedChatMessageId).toBeTruthy();
+
+    const createdChat = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.id, run.linkedChatConversationId!))
+      .then((rows) => rows[0] ?? null);
+    expect(createdChat).toMatchObject({
+      orgId,
+      title: "Daily digest",
+      preferredAgentId: agentId,
+      status: "active",
+    });
+
+    const startedMessage = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, run.startedChatMessageId!))
+      .then((rows) => rows[0] ?? null);
+    expect(startedMessage?.conversationId).toBe(run.linkedChatConversationId);
+
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, run.linkedIssueId!));
+    const completed = await svc.syncRunStatusForIssue(run.linkedIssueId!);
+
+    expect(completed?.terminalChatMessageId).toBeTruthy();
+    expect(completed?.linkedChatConversationId).toBe(run.linkedChatConversationId);
+    const terminalMessage = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, completed!.terminalChatMessageId!))
+      .then((rows) => rows[0] ?? null);
+    expect(terminalMessage?.conversationId).toBe(run.linkedChatConversationId);
+  });
+
   it("rejects inactive chat output destinations", async () => {
     const { agentId, orgId, projectId, svc } = await seedFixture();
     const [chat] = await db

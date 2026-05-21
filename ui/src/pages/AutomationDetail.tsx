@@ -10,6 +10,7 @@ import {
   Copy,
   MessageSquare,
   Play,
+  Plus,
   RefreshCw,
   Repeat,
   Trash2,
@@ -202,8 +203,7 @@ export function AutomationDetail() {
   }, [editDraft, automationDefaults]);
   const canAutoSaveAutomation = Boolean(
     editDraft.title.trim() &&
-    editDraft.assigneeAgentId &&
-    (editDraft.outputMode !== "chat_output" || editDraft.chatConversationId),
+    editDraft.assigneeAgentId,
   );
   const editDraftKey = useMemo(
     () => JSON.stringify({
@@ -215,7 +215,7 @@ export function AutomationDetail() {
       concurrencyPolicy: editDraft.concurrencyPolicy,
       catchUpPolicy: editDraft.catchUpPolicy,
       outputMode: editDraft.outputMode,
-      chatConversationId: editDraft.outputMode === "chat_output" ? editDraft.chatConversationId : null,
+      chatConversationId: editDraft.outputMode === "chat_output" ? editDraft.chatConversationId || null : null,
     }),
     [editDraft],
   );
@@ -269,7 +269,7 @@ export function AutomationDetail() {
         ...draft,
         projectId: draft.projectId || null,
         description: draft.description.trim() || null,
-        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId : null,
+        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId || null : null,
       });
     },
     onSuccess: async () => {
@@ -1115,7 +1115,7 @@ export function AutomationDetail() {
                     <div className="font-medium">{editDraft.outputMode === "chat_output" ? "Send to chat" : "Track as issue"}</div>
                     <div className="truncate text-xs text-muted-foreground">
                       {editDraft.outputMode === "chat_output"
-                        ? (currentChat ? currentChat.title : "Select a chat destination")
+                        ? (currentChat ? currentChat.title : "New chat")
                         : "Each run opens board-tracked work"}
                     </div>
                   </div>
@@ -1124,8 +1124,8 @@ export function AutomationDetail() {
                   <InlineEntitySelector
                     value={editDraft.chatConversationId}
                     options={chatOptions}
-                    placeholder="Select chat"
-                    noneLabel="Select chat"
+                    placeholder="New chat"
+                    noneLabel="New chat"
                     searchPlaceholder="Search chats..."
                     emptyMessage="No active chats found."
                     className="min-h-10 w-full justify-between bg-transparent px-3 py-2 text-sm font-medium"
@@ -1138,8 +1138,22 @@ export function AutomationDetail() {
                         </SidebarSelectValue>
                       ) : (
                         <SidebarSelectValue>
-                          <span className="text-muted-foreground">Select chat</span>
+                          <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span>New chat</span>
                         </SidebarSelectValue>
+                      )
+                    }
+                    renderOption={(option) =>
+                      option.id ? (
+                        <>
+                          <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate">{option.label}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate">{option.label}</span>
+                        </>
                       )
                     }
                   />

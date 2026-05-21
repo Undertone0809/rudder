@@ -484,7 +484,7 @@ export function Automations() {
         concurrencyPolicy: draft.concurrencyPolicy,
         catchUpPolicy: draft.catchUpPolicy,
         outputMode: draft.outputMode,
-        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId : null,
+        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId || null : null,
         allowAssigneeChatMismatch: draft.allowAssigneeChatMismatch,
       });
 
@@ -644,8 +644,7 @@ export function Automations() {
     }),
     [agents, issues, projects, skillMentionOptions],
   );
-  const chatOutputReady = draft.outputMode !== "chat_output" || Boolean(draft.chatConversationId);
-  const isDraftReady = Boolean(draft.title.trim() && draft.assigneeAgentId && chatOutputReady);
+  const isDraftReady = Boolean(draft.title.trim() && draft.assigneeAgentId);
 
   if (!selectedOrganizationId) {
     return <EmptyState icon={Repeat} message="Select an organization to view automations." />;
@@ -1001,8 +1000,8 @@ export function Automations() {
                 <InlineEntitySelector
                   value={draft.chatConversationId}
                   options={chatOptions}
-                  placeholder="Select chat"
-                  noneLabel="Select chat"
+                  placeholder="New chat"
+                  noneLabel="New chat"
                   searchPlaceholder="Search chats..."
                   emptyMessage="No active chats found."
                   className="h-8 max-w-[240px] bg-transparent px-2 text-sm"
@@ -1022,8 +1021,21 @@ export function Automations() {
                       </>
                     ) : (
                       <>
+                        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">New chat</span>
+                      </>
+                    )
+                  }
+                  renderOption={(option) =>
+                    option.id ? (
+                      <>
                         <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate text-muted-foreground">Select chat</span>
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
                       </>
                     )
                   }
