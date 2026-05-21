@@ -1063,6 +1063,77 @@ describe("runtime install helpers", () => {
     }
   });
 
+  it("falls back to latest when the exact version is not found on npm", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-fallback-test."));
+    try {
+      const spawnSyncImpl = vi
+        .fn()
+        .mockReturnValueOnce({
+          status: 1,
+          stdout: "",
+          stderr: "npm error code ETARGET\nnpm error notarget No matching version found for @rudderhq/server@1.2.3.",
+        })
+        .mockReturnValueOnce({
+          status: 0,
+          stdout: "added 1 package",
+          stderr: "",
+        });
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+      });
+
+      expect(result.status).toBe("installed");
+      expect(result.packageSpec).toBe("@rudderhq/server@latest");
+      expect(result.cacheDir).toBe(resolveRuntimeCacheDir("latest", root));
+      expect(result.output).toBe("added 1 package");
+      expect(spawnSyncImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to latest cache hit when the exact version is not found on npm", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-fallback-hit-test."));
+    try {
+      const fallbackCacheDir = resolveRuntimeCacheDir("latest", root);
+      const packageDir = path.join(fallbackCacheDir, "node_modules", "@rudderhq", "server");
+      await mkdir(packageDir, { recursive: true });
+      await writeFile(path.join(fallbackCacheDir, "package.json"), JSON.stringify({ private: true }), "utf8");
+      await writeFile(
+        path.join(fallbackCacheDir, RUNTIME_METADATA_FILE),
+        JSON.stringify({ version: 1, packageName: "@rudderhq/server", packageVersion: "latest", installedAt: "now" }),
+        "utf8",
+      );
+      await writeFile(
+        path.join(packageDir, "package.json"),
+        JSON.stringify({ name: "@rudderhq/server", version: "1.0.0" }),
+        "utf8",
+      );
+
+      const spawnSyncImpl = vi.fn(() => ({
+        status: 1,
+        stdout: "",
+        stderr: "npm error code ETARGET\nnpm error notarget No matching version found for @rudderhq/server@1.2.3.",
+      }));
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+      });
+
+      expect(result.status).toBe("hit");
+      expect(result.packageSpec).toBe("@rudderhq/server@latest");
+      expect(result.cacheDir).toBe(fallbackCacheDir);
+      expect(spawnSyncImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("prunes older canary runtime caches while retaining current, latest stable, and previous entries", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-prune-test."));
     try {
