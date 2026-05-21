@@ -2091,21 +2091,6 @@ export function OrganizationWorkspaceBrowser({
                 ) : (
                   <div className="mb-1 flex h-9 items-center px-2 text-sm text-muted-foreground">No file open</div>
                 )}
-                {workspaceRootPath ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        className="mb-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                        aria-label="New file"
-                        onClick={() => handleStartCreateRootEntry("file")}
-                      >
-                        <FilePlus2 className="h-4 w-4" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>New file</TooltipContent>
-                  </Tooltip>
-                ) : null}
               </div>
               {canOpenInIde && primaryIde ? (
                 <div className="flex shrink-0 items-center gap-2 border-l border-border px-3 text-xs text-muted-foreground">
