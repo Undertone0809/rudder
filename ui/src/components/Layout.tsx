@@ -889,6 +889,7 @@ export function Layout() {
                       className={cn(
                         "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
                         "workspace-main-card rounded-[5px]",
+                        isLibraryRoute && "workspace-main-card--frameless",
                       )}
                     >
                       {!isLibraryRoute ? (

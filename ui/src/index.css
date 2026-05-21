@@ -481,6 +481,15 @@
       inset 0 1px 0 rgb(255 255 255 / 0.04);
   }
 
+  .workspace-main-card--frameless,
+  .dark .workspace-main-card--frameless,
+  html.desktop-shell-macos .workspace-main-card--frameless,
+  html.dark.desktop-shell-macos .workspace-main-card--frameless {
+    border-width: 0;
+    border-color: transparent;
+    box-shadow: none;
+  }
+
   .workspace-context-card .workspace-context-sidebar {
     border-right: 0;
     background: transparent;
