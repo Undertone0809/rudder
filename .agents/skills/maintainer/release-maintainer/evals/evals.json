@@ -30,6 +30,12 @@
       "prompt": "这是 Rudder 第一次发包。我想发 0.1.0-canary.1，包还没在 npm 上创建过，用户要可以直接 npx @rudderhq/cli start。你直接操作的话应该怎么推进和验收？",
       "expected_output": "A first-public canary bootstrap playbook that uses @rudderhq package names from scripts/release-package-map.mjs, works from a clean temp clone if the main checkout is dirty, treats trusted publishing as unavailable until package names exist, uses any authorized npm token only through a temporary npmrc without echoing it, publishes each package/version once under canary, moves latest to the same canary only as the explicit first-release bootstrap exception for bare npx, triggers or verifies the canary/v0.1.0-canary.1 Desktop release assets, checks all package dist-tags, runs isolated npx @rudderhq/cli@canary start and npx @rudderhq/cli start dry-run smokes, and reminds the user to rotate pasted tokens.",
       "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "0.2.6 stable 准备发了，这次主要修 Desktop 点 Restart to update 后会弹 write EPIPE。CI、npm dry-run、Desktop assets 都绿了，可以 promote stable 吗？",
+      "expected_output": "Requires a real Desktop update drill before stable promotion because the risk is installed in-app update behavior. The answer should choose a candidate canary, verify an older installed Rudder.app can Check update, download, Restart to update, reopen on the candidate version, preserve data/profile/workspace, and show no EPIPE or Electron main-process error. It must not treat npm dry-run, release assets, or ordinary smoke as enough proof.",
+      "files": []
     }
   ]
 }

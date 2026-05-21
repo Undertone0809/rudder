@@ -171,6 +171,23 @@ concrete artifact:
 Do not move to the next stage when the current stage has a blocker that changes
 the route.
 
+Before implementation on a visible workflow or known hotspot file, run a quick
+scope guard:
+
+- If the request changes a user-visible workflow such as parent/sub-issue
+  selection, approval attention, chat composer behavior, or document/library
+  navigation, require the relevant E2E path unless the user explicitly approves
+  a lower-level substitute.
+- If the likely edit target is an already oversized UI file, especially
+  `IssueDetail.tsx` or another multi-responsibility page component, prefer a
+  small extracted component/helper for new behavior instead of making the
+  hotspot file harder to maintain.
+- If extraction would be larger than the requested fix, keep the fix narrow but
+  record the hotspot risk in handoff and avoid unrelated cleanup.
+- Do not broaden a small bug into an architecture refactor solely because the
+  file is large; use the guard to preserve workflow coverage and scope
+  discipline.
+
 ### 3.1 Recover continuation state before resuming work
 
 When the thread resumes after `turn_aborted`, rollback, compaction, a long
@@ -314,6 +331,16 @@ Route: `implementation -> verification -> review -> handoff`.
 
 Default review still applies. Keep the review lightweight when the bug is
 narrow, but produce a real verdict and blocker assessment before handoff.
+
+### Visible workflow change in a hotspot file
+
+Route: `implementation -> verification -> review -> handoff`.
+
+Before editing, identify whether the change affects a real workflow and whether
+the target file is already a hotspot. Add E2E coverage for the workflow path
+when behavior changes. Prefer extracting a small component/helper if the new
+logic would otherwise deepen an oversized page component, but keep the task
+scoped and avoid opportunistic refactors.
 
 ### Proposal-only request
 

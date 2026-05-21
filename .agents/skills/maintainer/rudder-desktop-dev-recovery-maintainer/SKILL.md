@@ -104,6 +104,9 @@ Common causes to distinguish:
 - Electron launched but cannot reach the server
 - Desktop profile or instance id points to unexpected data
 - update metadata resolves but asset download/checksum/install fails
+- update helper or CLI child process writes progress after its parent pipe is
+  closed, causing `EPIPE`, `ERR_STREAM_DESTROYED`, `broken pipe`, or an Electron
+  main-process error dialog during restart
 - packaged smoke differs from dev-shell behavior
 
 ### 4. Repair narrowly
@@ -132,6 +135,10 @@ Validation depends on what failed:
 - update/download path: dry-run is not enough when the issue is download,
   checksum, extraction, or launch; run the strongest safe non-dry-run local
   check available and state platform limitations
+- update restart path: if the failure appears after clicking "Restart to
+  update", reproduce or simulate the pipe lifecycle. Check the old app process,
+  update child process, progress JSON/stdout/stderr handling, installed app path,
+  and whether the child handles closed output streams as a normal shutdown case.
 
 If code changed, run the narrow relevant tests first, then the repo baseline
 when feasible:
@@ -144,6 +151,36 @@ pnpm build
 
 For Desktop startup, migration, profile routing, or packaging changes, do not
 claim done without packaged verification or an explicit blocker.
+
+#### Closed Progress Pipe / Update Child Recovery
+
+Use this branch when the UI update flow starts a helper process or CLI mode and
+the error appears after the parent app exits or restarts.
+
+Evidence to collect:
+
+- installed app path, for example `/Users/zeeland/Applications/Rudder.app`
+- exact update action clicked: automatic prompt, About check, download, or
+  "Restart to update"
+- old version, target version, and whether the app reopened
+- stderr/dialog text including `EPIPE`, `ERR_STREAM_DESTROYED`, `write after
+  end`, `broken pipe`, or uncaught exception text
+- code paths that write progress JSON, flush stdout/stderr, or install/relaunch
+  the app
+
+Repair pattern:
+
+- Treat closed stdout/stderr/progress pipes during update handoff as expected
+  when the parent app has exited.
+- Add a shared broken-pipe predicate rather than scattering string checks.
+- Guard process-level `uncaughtException` and `unhandledRejection` only for
+  known broken-pipe shutdown errors; do not swallow arbitrary exceptions.
+- Add a regression test that closes or destroys the progress reader before the
+  helper writes/flushed output, and assert the update path exits quietly or
+  reports success as appropriate.
+- Finish with packaged or installed-app verification. If a full in-app update
+  drill is too expensive, state that limitation and provide the strongest local
+  substitute plus the exact remaining manual drill.
 
 ### 6. Handoff or escalate
 
@@ -177,6 +214,8 @@ Next route:
 - Looking only at Electron logs when embedded Postgres never started.
 - Claiming update install is fixed from a dry-run that never downloads or
   launches the app.
+- Treating `EPIPE` during update restart as a generic release failure before
+  checking whether the parent progress pipe intentionally closed.
 - Mixing unrelated dirty package changes into a Desktop recovery commit.
 
 ## Safety Rules

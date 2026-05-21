@@ -92,6 +92,11 @@ cannot be safely inferred.
   risk. After the first stable exists, ordinary canary promotion should not move
   npm `latest`; verify that invariant instead of waiting indefinitely for every
   unrelated canary smoke.
+- A stable promotion is not proven by npm, GitHub Release assets, and dry-run
+  smoke alone when the changed area can affect Desktop update behavior. If the
+  release fixes or depends on Desktop update/install behavior, run a real
+  Desktop update drill from an older installed build to the candidate before
+  saying the stable is ready.
 
 ## Required Context
 
@@ -378,14 +383,19 @@ node scripts/release-package-map.mjs list
    - after npm stable exists, ordinary canaries should leave `latest` alone via
      `--only-if-no-stable`;
    - do not wait for unrelated canaries merely to adopt their newer commits.
-5. Run the `Release` workflow with `dry_run: true`, using the locked SHA as
+5. If the stable contains Desktop startup, install, update, profile, migration,
+   or release-shell changes, choose a canary candidate and run the Desktop
+   update drill below before real stable publish. If the drill cannot run on
+   the local platform, name the missing platform and treat stable readiness as
+   not fully proven.
+6. Run the `Release` workflow with `dry_run: true`, using the locked SHA as
    `source_ref`.
-6. If dry-run passes, rerun with `dry_run: false`, again using the same locked
+7. If dry-run passes, rerun with `dry_run: false`, again using the same locked
    SHA as `source_ref`.
-7. Wait for or request `npm-stable` approval.
-8. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
+8. Wait for or request `npm-stable` approval.
+9. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
    workflow, and assets.
-9. Smoke test:
+10. Smoke test:
 
 ```bash
 npx @rudderhq/cli@latest start --no-open
@@ -397,6 +407,41 @@ The second command is only expected to work after the persistent CLI exists.
 If the workflow fails after npm publish, do not rerun the whole stable workflow
 without first classifying the partial state. Stable npm versions are immutable;
 repair the missing downstream surfaces for the same version and tag.
+
+#### Desktop Update Drill Before Stable Promotion
+
+Use this gate when the stable is meant to prove installed Desktop behavior, not
+just package availability. A candidate canary is ready for stable only after the
+operator can update an already-installed app without a user-visible main-process
+error or data/profile loss.
+
+Minimum drill on the available local platform:
+
+1. Record the starting installed app path and version, for example
+   `/Users/zeeland/Applications/Rudder.app` plus the About/settings version.
+2. Install or launch an older release that should discover the candidate update.
+3. Use the app UI, preferably with Computer Use when available, to run
+   "Check for update" from About/settings.
+4. Download the update, click "Restart to update", and wait for the app to
+   exit, replace itself, and reopen.
+5. Verify the reopened app reports the candidate version and still points at
+   the expected data/profile/workspace.
+6. Inspect logs or UI for Electron main-process errors such as `EPIPE`,
+   `ERR_STREAM_DESTROYED`, broken progress pipes, failed replacement, checksum
+   failures, or repeated relaunch loops.
+7. When practical, verify active-work safeguards: an active run should block,
+   defer, or clearly explain update timing instead of silently killing work.
+
+Evidence to report:
+
+- candidate canary tag/version and stable target version
+- installed app path, old version, new version, and platform
+- screenshots, logs, or Computer Use notes for check/download/restart/reopen
+- whether data/profile/workspace persisted
+- any skipped drill item and why it could not run locally
+
+Do not substitute a `--dry-run` or asset-list check for this drill when the
+known risk is the in-app update path itself.
 
 ### Version Bump
 

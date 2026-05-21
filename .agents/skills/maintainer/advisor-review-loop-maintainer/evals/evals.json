@@ -84,6 +84,18 @@
         "The result inspects current state before editing or claiming progress.",
         "The result produces a resumable checklist and validation boundary before continuing implementation."
       ]
+    },
+    {
+      "id": 7,
+      "prompt": "刚才你只是在讨论 agent HOME 要不要改。给你 new worktree 了，你自己做实验试试吧，把这个问题给解决。[$advisor-review-loop-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/advisor-review-loop-maintainer/SKILL.md)",
+      "expected_output": "Switches from proposal/advisor mode into evidence-producing experiment or implementation mode, checks the provided worktree state, identifies a falsifiable hypothesis from the prior architecture discussion, runs the smallest experiment needed, implements only after evidence points to a concrete fix, and reviews the actual diff plus validation before handoff.",
+      "files": [],
+      "expectations": [
+        "The result does not keep repeating the architecture proposal after the user asks to experiment and solve it.",
+        "The result treats the new worktree as authorization to inspect and implement scoped changes.",
+        "The result validates the experiment or implementation with concrete evidence.",
+        "The result keeps unrelated dirty worktree changes out of the final commit."
+      ]
     }
   ]
 }

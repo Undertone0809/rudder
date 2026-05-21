@@ -132,6 +132,18 @@
         "The result reconstructs current phase, files touched, validation state, blockers, and next safe action.",
         "The final handoff verifies that commit and push state correspond to the recovered task rather than an older ghost task."
       ]
+    },
+    {
+      "id": 11,
+      "prompt": "IssueDetail 里也增加一个 parent issue 的选项，sub-issue 可以选择现有的。讨论完交互和 UI 后就实现。",
+      "expected_output": "Routes to implementation with verification and review, identifies this as a visible issue workflow change likely touching an oversized IssueDetail hotspot, adds or updates E2E coverage for parent/sub-issue selection behavior, prefers extracting a small component/helper if new logic would deepen the hotspot file, and keeps unrelated cleanup out of scope.",
+      "files": [],
+      "expectations": [
+        "The result does not treat this as a cosmetic UI tweak with only unit tests.",
+        "The result requires E2E or an explicitly justified lower-level substitute for the workflow behavior.",
+        "The result recognizes hotspot-file risk without turning the task into an unrequested broad refactor.",
+        "The result validates and reviews the actual user-visible workflow before handoff."
+      ]
     }
   ]
 }
