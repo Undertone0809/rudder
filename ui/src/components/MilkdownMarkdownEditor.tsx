@@ -15,7 +15,7 @@ import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import { history } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
-import { insert, replaceAll } from "@milkdown/kit/utils";
+import { getMarkdown, insert, replaceAll } from "@milkdown/kit/utils";
 import {
   buildAgentMentionHref,
   buildChatMentionHref,
@@ -195,6 +195,14 @@ export function readCanonicalFragmentMarkdown(fragment: DocumentFragment) {
   };
 
   return Array.from(fragment.childNodes).map(read).join("");
+}
+
+function normalizeVisibleCopyText(value: string) {
+  return value
+    .replace(/\u200B/g, "")
+    .replace(/\u00A0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function getAllSubstringIndexes(value: string, search: string): number[] {
@@ -648,8 +656,26 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
         ) {
           return;
         }
-        const canonicalMarkdown = readCanonicalFragmentMarkdown(selection.getRangeAt(0).cloneContents());
-        if (!canonicalMarkdown.includes("](")) return;
+        const selectedVisibleText = normalizeVisibleCopyText(selection.toString());
+        const fullVisibleText = normalizeVisibleCopyText(editable.innerText);
+        let canonicalMarkdown = selectedVisibleText && selectedVisibleText === fullVisibleText
+          ? latestValueRef.current
+          : "";
+        if (!canonicalMarkdown) {
+          const editor = loading ? get() : getInstance();
+          editor?.action((ctx) => {
+            const view = ctx.get(editorViewCtx) as unknown as ProseMirrorView;
+            if (view.state.selection.empty) return;
+            canonicalMarkdown = getMarkdown({
+              from: view.state.selection.from,
+              to: view.state.selection.to,
+            })(ctx);
+          });
+        }
+        if (!canonicalMarkdown) {
+          canonicalMarkdown = readCanonicalFragmentMarkdown(selection.getRangeAt(0).cloneContents());
+        }
+        if (!canonicalMarkdown.trim()) return;
         event.preventDefault();
         event.clipboardData.setData("text/plain", canonicalMarkdown);
       }}
