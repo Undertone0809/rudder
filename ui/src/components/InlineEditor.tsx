@@ -15,6 +15,7 @@ interface InlineEditorProps {
   mentions?: MentionOption[];
   onMentionQueryChange?: (query: string | null) => void;
   editorEngine?: "legacy" | "milkdown";
+  alwaysEdit?: boolean;
 }
 
 /** Shared padding so display and edit modes occupy the exact same box. */
@@ -39,6 +40,7 @@ export function InlineEditor({
   mentions,
   onMentionQueryChange,
   editorEngine,
+  alwaysEdit = false,
 }: InlineEditorProps) {
   const [editing, setEditing] = useState(false);
   const [multilineFocused, setMultilineFocused] = useState(false);
@@ -115,7 +117,9 @@ export function InlineEditor({
       setDraft(value);
       if (multiline) {
         setMultilineFocused(false);
-        setEditing(false);
+        if (!alwaysEdit) {
+          setEditing(false);
+        }
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
         }
@@ -150,7 +154,7 @@ export function InlineEditor({
     };
   }, [autosaveState, commit, draft, markDirty, multiline, multilineFocused, reset, runSave, value]);
 
-  if (multiline && editing) {
+  if (multiline && (editing || alwaysEdit)) {
     return (
       <div
         className={cn(
@@ -164,7 +168,9 @@ export function InlineEditor({
             clearTimeout(autosaveDebounceRef.current);
           }
           setMultilineFocused(false);
-          setEditing(false);
+          if (!alwaysEdit) {
+            setEditing(false);
+          }
           const trimmed = draft.trim();
           if (trimmed === value) {
             reset();

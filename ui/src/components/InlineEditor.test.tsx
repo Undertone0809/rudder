@@ -55,6 +55,22 @@ describe("InlineEditor", () => {
     expect(html).not.toContain("hover:bg-accent/50");
   });
 
+  it("can keep multiline markdown in the wysiwyg editor before any click", () => {
+    const html = renderToStaticMarkup(
+      <InlineEditor
+        value="Issue context"
+        onSave={() => undefined}
+        multiline
+        alwaysEdit
+      />,
+    );
+
+    expect(html).toContain("data-testid=\"markdown-editor\"");
+    expect(html).toContain("Issue context");
+    expect(html).not.toContain("data-testid=\"markdown-body\"");
+    expect(html).not.toContain("hover:bg-accent/50");
+  });
+
   it("keeps hover feedback for compact single-line fields", () => {
     const html = renderToStaticMarkup(
       <InlineEditor
