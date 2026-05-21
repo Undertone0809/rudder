@@ -2054,10 +2054,10 @@ export function OrganizationWorkspaceBrowser({
                         data-testid={`org-workspaces-editor-tab-${filePath}`}
                         onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
                         className={cn(
-                          "rudder-doc-editor-tab group relative mb-[-1px] flex h-10 min-w-[132px] max-w-[248px] items-center border px-1 transition-colors",
+                          "rudder-doc-editor-tab group relative flex min-w-[132px] max-w-[248px] items-center border px-1 transition-[color,background-color,border-color,box-shadow]",
                           active
-                            ? "rudder-doc-editor-tab--active overflow-visible rounded-t-[20px] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
-                            : "overflow-hidden rounded-t-[14px] border-transparent text-muted-foreground hover:border-[color:var(--border-soft)] hover:bg-[color:var(--surface-active)] hover:text-foreground",
+                            ? "rudder-doc-editor-tab--active mb-[-1px] h-10 overflow-visible rounded-t-[20px] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
+                            : "mb-1 h-9 overflow-hidden rounded-[18px] border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
                         )}
                       >
                         <button
@@ -2075,7 +2075,7 @@ export function OrganizationWorkspaceBrowser({
                           type="button"
                           className={cn(
                             "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground",
-                            active ? "opacity-100" : "opacity-60 group-hover:opacity-100",
+                            active ? "opacity-100" : "opacity-0 group-hover:opacity-100",
                           )}
                           aria-label={`Close ${filePath}`}
                           onClick={(event) => {
