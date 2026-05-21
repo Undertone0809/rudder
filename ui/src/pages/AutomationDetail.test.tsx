@@ -462,12 +462,40 @@ describe("AutomationDetail", () => {
     expect(document.querySelector('[data-testid="automation-add-trigger-card"]')).toBeNull();
     expect(configurationCard?.querySelector('[data-testid="automation-triggers-list"]')).toBeTruthy();
     expect(configurationCard?.querySelector('[data-testid="automation-trigger-editor-body"]')?.hasAttribute("hidden")).toBe(true);
+    const deliveryRules = configurationCard?.querySelector('[data-testid="automation-delivery-rules-section"]');
+    expect(deliveryRules?.className).toContain("rounded-md");
+    expect(deliveryRules?.className).toContain("bg-background/35");
+    expect(deliveryRules?.className).not.toContain("border-t");
     const overviewStrip = container.querySelector('[data-testid="automation-overview-strip"]');
     expect(overviewStrip?.textContent).toContain("Active");
     expect(overviewStrip?.textContent).not.toContain("Automation UX");
     expect(overviewStrip?.textContent).not.toContain("Ada");
     expect(container.querySelector('[data-testid="automation-detail-agent-control"]')?.textContent).toContain("Ada");
     expect(container.querySelector('[data-testid="automation-detail-project-control"]')?.textContent).toContain("Automation UX");
+  });
+
+  it("keeps delivery rule controls contained in the sidebar width", async () => {
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const deliveryRules = container.querySelector('[data-testid="automation-delivery-rules-section"]');
+    const toggle = Array.from(deliveryRules?.querySelectorAll("button") ?? []).find((button) => button.textContent?.includes("Delivery rules"));
+
+    await act(async () => {
+      toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const selectTriggers = Array.from(deliveryRules?.querySelectorAll("button") ?? [])
+      .filter((button) => /coalesce if active|skip missed/.test(button.textContent ?? ""));
+
+    expect(selectTriggers).toHaveLength(2);
+    for (const trigger of selectTriggers) {
+      expect(trigger.className).toContain("w-full");
+    }
   });
 
   it("registers the header as the only manual action surface", async () => {

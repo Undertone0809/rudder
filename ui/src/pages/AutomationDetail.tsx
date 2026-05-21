@@ -1220,6 +1220,56 @@ export function AutomationDetail() {
               </div>
             </SidebarSection>
 
+            <Collapsible
+              open={advancedOpen}
+              onOpenChange={setAdvancedOpen}
+              data-testid="automation-delivery-rules-section"
+              className="overflow-hidden rounded-md border border-border/70 bg-background/35"
+            >
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <span>Delivery rules</span>
+                {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </CollapsibleTrigger>
+              <CollapsibleContent className="border-t border-border/60 p-3">
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Concurrency</Label>
+                    <Select
+                      value={editDraft.concurrencyPolicy}
+                      onValueChange={(concurrencyPolicy) => setEditDraft((current) => ({ ...current, concurrencyPolicy }))}
+                    >
+                      <SelectTrigger size="sm" className="w-full bg-background/60">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {concurrencyPolicies.map((value) => (
+                          <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs leading-4 text-muted-foreground">{concurrencyPolicyDescriptions[editDraft.concurrencyPolicy]}</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Catch-up</Label>
+                    <Select
+                      value={editDraft.catchUpPolicy}
+                      onValueChange={(catchUpPolicy) => setEditDraft((current) => ({ ...current, catchUpPolicy }))}
+                    >
+                      <SelectTrigger size="sm" className="w-full bg-background/60">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {catchUpPolicies.map((value) => (
+                          <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs leading-4 text-muted-foreground">{catchUpPolicyDescriptions[editDraft.catchUpPolicy]}</p>
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+
             <SidebarSection title="Triggers">
               <Popover open={newTriggerOpen} onOpenChange={setNewTriggerOpen}>
                 <PopoverTrigger asChild>
@@ -1309,49 +1359,6 @@ export function AutomationDetail() {
                 </SidebarRow>
               ) : null}
             </SidebarSection>
-
-            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="border-t border-border/70 pt-5">
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                Delivery rules
-                {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              </CollapsibleTrigger>
-              <CollapsibleContent className="space-y-4 pt-4">
-                <div className="space-y-2">
-                  <Label className="text-xs">Concurrency</Label>
-                  <Select
-                    value={editDraft.concurrencyPolicy}
-                    onValueChange={(concurrencyPolicy) => setEditDraft((current) => ({ ...current, concurrencyPolicy }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {concurrencyPolicies.map((value) => (
-                        <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs leading-5 text-muted-foreground">{concurrencyPolicyDescriptions[editDraft.concurrencyPolicy]}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-xs">Catch-up</Label>
-                  <Select
-                    value={editDraft.catchUpPolicy}
-                    onValueChange={(catchUpPolicy) => setEditDraft((current) => ({ ...current, catchUpPolicy }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {catchUpPolicies.map((value) => (
-                        <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs leading-5 text-muted-foreground">{catchUpPolicyDescriptions[editDraft.catchUpPolicy]}</p>
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
 
           </div>
         </aside>
