@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatContextLink, ChatConversation, ChatMessage } from "@rudderhq/shared";
+import type { ChatAttachment, ChatContextLink, ChatConversation, ChatMessage } from "@rudderhq/shared";
 
 const mockAdapter = vi.hoisted(() => ({
   type: "codex_local",
@@ -168,6 +168,31 @@ function makeMessages(): ChatMessage[] {
     createdAt: now,
     updatedAt: now,
   }];
+}
+
+function makeAttachment(overrides: Partial<ChatAttachment> = {}): ChatAttachment {
+  const now = new Date("2026-03-29T08:01:00.000Z");
+  const id = overrides.id ?? "attachment-1";
+  const assetId = overrides.assetId ?? "asset-1";
+  return {
+    id,
+    orgId: "organization-1",
+    conversationId: "chat-1",
+    messageId: "message-1",
+    assetId,
+    provider: "local_disk",
+    objectKey: `chats/chat-1/${id}`,
+    contentType: "image/png",
+    byteSize: 1234,
+    sha256: "sha256",
+    originalFilename: `${id}.png`,
+    createdByAgentId: null,
+    createdByUserId: "user-1",
+    contentPath: `/api/assets/${assetId}/content`,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
 }
 
 function makeStorageService(body = Buffer.from("image-bytes")) {
@@ -464,6 +489,100 @@ describe("chatAssistantService operator profile prompt injection", () => {
     ]);
     expect(storage.getObject).toHaveBeenCalledWith("organization-1", "chats/chat-1/image.png");
     expect(executeInput?.authToken).toEqual(expect.any(String));
+  });
+
+  it("prepares multiple chat images in message order and does not pass non-images as runtime media", async () => {
+    const storage = makeStorageService();
+    const svc = chatAssistantService({} as any, storage as any);
+    const [message] = makeMessages();
+    const messageWithAttachments: ChatMessage = {
+      ...message!,
+      attachments: [
+        makeAttachment({
+          id: "attachment-image-1",
+          assetId: "asset-image-1",
+          objectKey: "chats/chat-1/first.png",
+          originalFilename: "first.png",
+          contentType: "image/png",
+          contentPath: "/api/assets/asset-image-1/content",
+        }),
+        makeAttachment({
+          id: "attachment-text-1",
+          assetId: "asset-text-1",
+          objectKey: "chats/chat-1/notes.txt",
+          originalFilename: "notes.txt",
+          contentType: "text/plain",
+          contentPath: "/api/assets/asset-text-1/content",
+        }),
+        makeAttachment({
+          id: "attachment-image-2",
+          assetId: "asset-image-2",
+          objectKey: "chats/chat-1/second.png",
+          originalFilename: "second.png",
+          contentType: "image/png",
+          contentPath: "/api/assets/asset-image-2/content",
+        }),
+      ],
+    };
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: [messageWithAttachments],
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
+    expect(executeInput?.media?.map((item) => item.attachmentId)).toEqual([
+      "attachment-image-1",
+      "attachment-image-2",
+    ]);
+    expect(executeInput?.context?.chatAttachments).toEqual([
+      expect.objectContaining({ attachmentId: "attachment-image-1", localPath: expect.stringMatching(/first\.png$/) }),
+      expect.objectContaining({ attachmentId: "attachment-image-2", localPath: expect.stringMatching(/second\.png$/) }),
+    ]);
+    expect(storage.getObject).toHaveBeenCalledTimes(2);
+    expect(storage.getObject).toHaveBeenNthCalledWith(1, "organization-1", "chats/chat-1/first.png");
+    expect(storage.getObject).toHaveBeenNthCalledWith(2, "organization-1", "chats/chat-1/second.png");
+    const prompt = executeInput?.context?.chatPrompt as string;
+    expect(prompt).toContain("name=notes.txt; contentType=text/plain");
+    expect(prompt).not.toMatch(/notes\.txt;.*runtimeReference=local_image_file/);
+  });
+
+  it("records image attachment materialization failures without passing broken media to the runtime", async () => {
+    const storage = makeStorageService();
+    storage.getObject.mockRejectedValueOnce(new Error("storage unavailable"));
+    const svc = chatAssistantService({} as any, storage as any);
+    const [message] = makeMessages();
+    const messageWithAttachment: ChatMessage = {
+      ...message!,
+      attachments: [makeAttachment({
+        id: "attachment-broken",
+        assetId: "asset-broken",
+        objectKey: "chats/chat-1/broken.png",
+        originalFilename: "broken.png",
+        contentPath: "/api/assets/asset-broken/content",
+      })],
+    };
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: [messageWithAttachment],
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
+    expect(executeInput?.media).toBeUndefined();
+    expect(executeInput?.context?.chatAttachments).toEqual([
+      expect.objectContaining({
+        attachmentId: "attachment-broken",
+        localPathError: "storage unavailable",
+      }),
+    ]);
+    const prompt = executeInput?.context?.chatPrompt as string;
+    expect(prompt).toContain("localPathError=storage unavailable");
+    expect(prompt).not.toContain("runtimeReference=local_image_file");
   });
 
   it("prepares chat image attachments for Claude chat agents too", async () => {

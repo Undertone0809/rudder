@@ -1458,6 +1458,102 @@ describe("codex execute", () => {
     }
   });
 
+  it("passes multiple runtime image media to Codex and ignores non-image media", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-images-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    const firstImagePath = path.join(root, "first.png");
+    const secondImagePath = path.join(root, "second.png");
+    const textPath = path.join(root, "notes.txt");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(firstImagePath, "first-image", "utf8");
+    await fs.writeFile(secondImagePath, "second-image", "utf8");
+    await fs.writeFile(textPath, "notes", "utf8");
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      let commandNotes: string[] = [];
+      const result = await execute({
+        runId: "run-multiple-images",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Describe attached media.",
+        },
+        context: {
+          rudderScene: "chat",
+        },
+        media: [
+          {
+            source: "chat_attachment",
+            attachmentId: "attachment-image-1",
+            assetId: "asset-image-1",
+            name: "first.png",
+            originalFilename: "first.png",
+            contentType: "image/png",
+            byteSize: 11,
+            localPath: firstImagePath,
+          },
+          {
+            source: "chat_attachment",
+            attachmentId: "attachment-text-1",
+            assetId: "asset-text-1",
+            name: "notes.txt",
+            originalFilename: "notes.txt",
+            contentType: "text/plain",
+            byteSize: 5,
+            localPath: textPath,
+          },
+          {
+            source: "chat_attachment",
+            attachmentId: "attachment-image-2",
+            assetId: "asset-image-2",
+            name: "second.png",
+            originalFilename: "second.png",
+            contentType: "image/png",
+            byteSize: 12,
+            localPath: secondImagePath,
+          },
+        ],
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          commandNotes = meta.commandNotes ?? [];
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.argv).toEqual(expect.arrayContaining(["--image", firstImagePath, "--image", secondImagePath]));
+      expect(capture.argv).not.toContain(textPath);
+      expect(commandNotes).toContain("Attached 2 image attachments to the initial Codex prompt via --image.");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not add --skip-git-repo-check outside the chat scene", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-non-chat-scene-"));
     const workspace = path.join(root, "workspace");
