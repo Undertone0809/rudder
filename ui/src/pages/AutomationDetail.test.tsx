@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { forwardRef, useImperativeHandle } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AutomationDetail } from "./AutomationDetail";
 
 (
@@ -382,6 +382,14 @@ vi.mock("../components/LiveRunWidget", () => ({
 
 let cleanupFn: (() => void) | null = null;
 
+beforeEach(() => {
+  automation.outputMode = "track_issue";
+  automation.chatConversationId = null;
+  automation.chatConversation = null;
+  automation.recentRuns[0]!.linkedChatConversationId = null;
+  automation.recentRuns[0]!.linkedChatConversation = null;
+});
+
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
@@ -428,7 +436,6 @@ describe("AutomationDetail", () => {
     expect(container.textContent).toContain("Run status");
     expect(container.textContent).toContain("Manual run is in progress");
     expect(container.textContent).toContain("AUT-7");
-    expect(container.textContent).toContain('Updated automation settings for "Daily automation review"');
     expect(container.textContent).toContain("Added schedule trigger");
     expect(container.textContent).toContain("for Schedule 0 10 * * *");
     expect(container.textContent).toContain("Live run widget");
@@ -441,6 +448,7 @@ describe("AutomationDetail", () => {
     expect(container.textContent).not.toContain("Changes save automatically as you edit instructions, ownership, and delivery rules.");
     expect(container.textContent).not.toContain("Automatic triggers are live.");
     expect(container.textContent).not.toContain("Previous runs");
+    expect(container.textContent).not.toContain('Updated automation settings for "Daily automation review"');
     expect(container.textContent).not.toContain("automation updated");
     expect(container.textContent).not.toContain("Automation updated");
     expect(container.textContent).not.toContain("Title: Daily automation review");
@@ -463,7 +471,7 @@ describe("AutomationDetail", () => {
     expect(configurationCard?.querySelector('[data-testid="automation-add-trigger-button"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="automation-add-trigger-card"]')).toBeNull();
     expect(configurationCard?.querySelector('[data-testid="automation-triggers-list"]')).toBeTruthy();
-    expect(configurationCard?.querySelector('[data-testid="automation-trigger-editor-body"]')?.hasAttribute("hidden")).toBe(true);
+    expect(document.querySelector('[data-testid="automation-trigger-editor-body"]')).toBeNull();
     const deliveryRules = configurationCard?.querySelector('[data-testid="automation-delivery-rules-section"]');
     expect(deliveryRules?.className).toContain("rounded-md");
     expect(deliveryRules?.className).toContain("bg-background/35");
@@ -482,11 +490,30 @@ describe("AutomationDetail", () => {
     expect(activitySection?.textContent).toContain("Activity");
     expect(activitySection?.querySelector('[data-testid="automation-activity-list"]')).toBeTruthy();
     const activityRow = activitySection?.querySelector('[data-testid="automation-activity-row"]');
-    expect(activityRow?.className).toContain("grid-cols-[auto_minmax(0,1fr)]");
-    expect(activityRow?.className).toContain("sm:grid-cols-[auto_minmax(0,1fr)_auto]");
-    expect(activityRow?.querySelector('[data-testid="automation-activity-summary"]')?.className).toContain("flex-wrap");
+    expect(activityRow?.className).toContain("min-h-8");
+    expect(activityRow?.className).toContain("grid-cols-[16px_minmax(0,1fr)]");
+    expect(activityRow?.className).toContain("sm:grid-cols-[16px_minmax(0,1fr)_auto]");
+    expect(activityRow?.querySelector('[data-testid="automation-activity-summary"]')?.className).toContain("whitespace-nowrap");
+    expect(activityRow?.querySelector('[data-testid="automation-activity-summary"] span')?.className).toContain("truncate");
+    expect(activityRow?.querySelector("svg")).toBeNull();
     expect(container.querySelector('[data-testid="automation-detail-agent-control"]')?.textContent).toContain("Ada");
     expect(container.querySelector('[data-testid="automation-detail-project-control"]')?.textContent).toContain("Automation UX");
+  });
+
+  it("shows chat output as an automation-owned chat without an existing-chat selector", async () => {
+    automation.outputMode = "chat_output";
+    automation.chatConversationId = null;
+    automation.chatConversation = null;
+
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Send to chat");
+    expect(container.textContent).toContain("New chat");
+    expect(container.textContent).not.toContain("Search chats");
   });
 
   it("keeps delivery rule controls contained in the sidebar width", async () => {
@@ -611,8 +638,7 @@ describe("AutomationDetail", () => {
     expect(triggersList?.textContent).toContain("Schedule 0 10 * * *");
     expect(triggersList?.textContent).toContain("daily-check");
     expect(triggersList?.textContent).not.toContain("In sync");
-    const triggerEditorBody = container.querySelector('[data-testid="automation-trigger-editor-body"]');
-    expect(triggerEditorBody?.hasAttribute("hidden")).toBe(true);
+    expect(document.querySelector('[data-testid="automation-trigger-editor-body"]')).toBeNull();
 
     const editTriggerButton = container.querySelector('button[aria-label="Edit trigger"]');
     expect(editTriggerButton).toBeTruthy();
@@ -622,8 +648,9 @@ describe("AutomationDetail", () => {
       await Promise.resolve();
     });
 
-    expect(triggerEditorBody?.hasAttribute("hidden")).toBe(false);
-    expect(container.querySelector('button[aria-label="Collapse trigger editor"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="automation-trigger-editor-body"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="automation-trigger-editor-body"] [data-testid="schedule-editor"]')?.getAttribute("data-variant")).toBe("compact");
+    expect(container.querySelector('button[aria-label="Collapse trigger editor"]')).toBeNull();
 
     const deleteTriggerButton = container.querySelector('button[aria-label="Delete trigger"]');
     expect(deleteTriggerButton).toBeTruthy();

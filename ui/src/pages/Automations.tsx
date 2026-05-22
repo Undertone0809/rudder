@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import { automationsApi } from "../api/automations";
 import { agentsApi } from "../api/agents";
-import { chatsApi } from "../api/chats";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { projectsApi } from "../api/projects";
@@ -292,8 +291,8 @@ function localizeText(text: LocalizedText, locale = getUiLocale()) {
 function outputInstruction(mode: AutomationOutputMode, locale = getUiLocale()) {
   if (mode === "chat_output") {
     return locale === "zh-CN"
-      ? "输出：将结果发送到相关 Rudder chat 对话；只有出现明确阻塞或后续动作时才创建任务。"
-      : "Output: send the result to the relevant Rudder chat conversation; create tracked work only for concrete blockers or follow-up actions.";
+      ? "输出：将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。"
+      : "Output: send the final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions.";
   }
   return locale === "zh-CN"
     ? "输出：创建或更新 board 可跟踪任务，确保结果可以被 review。"
@@ -310,8 +309,10 @@ function removeOutputInstruction(description: string) {
   return description
     .replace(/\n*Output: create or update board-tracked work so the result can be reviewed\.\s*$/u, "")
     .replace(/\n*Output: send the result to the relevant Rudder chat conversation; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
+    .replace(/\n*Output: send the final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
     .replace(/\n*输出：创建或更新 board 可跟踪任务，确保结果可以被 review。\s*$/u, "")
     .replace(/\n*输出：将结果发送到相关 Rudder chat 对话；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
+    .replace(/\n*输出：将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
     .trim();
 }
 
@@ -368,7 +369,6 @@ export function Automations() {
     scheduleCron: "0 9 * * *",
     outputMode: "track_issue" as AutomationOutputMode,
     chatConversationId: "",
-    allowAssigneeChatMismatch: false,
   });
 
   const resetDraft = useCallback(() => {
@@ -383,7 +383,6 @@ export function Automations() {
       scheduleCron: "0 9 * * *",
       outputMode: "track_issue",
       chatConversationId: "",
-      allowAssigneeChatMismatch: false,
     });
   }, []);
 
@@ -448,11 +447,6 @@ export function Automations() {
     queryFn: () => projectsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
-  const { data: chats } = useQuery({
-    queryKey: queryKeys.chats.list(selectedOrganizationId!, "active"),
-    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
-    enabled: !!selectedOrganizationId && composerOpen && draft.outputMode === "chat_output",
-  });
   const { data: issues } = useQuery({
     queryKey: queryKeys.issues.list(selectedOrganizationId!),
     queryFn: () => issuesApi.list(selectedOrganizationId!),
@@ -484,8 +478,7 @@ export function Automations() {
         concurrencyPolicy: draft.concurrencyPolicy,
         catchUpPolicy: draft.catchUpPolicy,
         outputMode: draft.outputMode,
-        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId || null : null,
-        allowAssigneeChatMismatch: draft.allowAssigneeChatMismatch,
+        chatConversationId: null,
       });
 
       if (draft.scheduleCron.trim()) {
@@ -604,15 +597,6 @@ export function Automations() {
       })),
     [projects],
   );
-  const chatOptions = useMemo<InlineEntityOption[]>(
-    () =>
-      (chats ?? []).map((chat) => ({
-        id: chat.id,
-        label: chat.title,
-        searchText: chat.summary ?? chat.latestReplyPreview ?? "",
-      })),
-    [chats],
-  );
   const agentById = useMemo(
     () => new Map((agents ?? []).map((agent) => [agent.id, agent])),
     [agents],
@@ -623,9 +607,6 @@ export function Automations() {
   );
   const currentAssignee = draft.assigneeAgentId ? agentById.get(draft.assigneeAgentId) ?? null : null;
   const currentProject = draft.projectId ? projectById.get(draft.projectId) ?? null : null;
-  const currentChat = draft.chatConversationId
-    ? (chats ?? []).find((chat) => chat.id === draft.chatConversationId) ?? null
-    : null;
   const skillMentionOptions = useMemo(
     () => buildAgentSkillMentionOptions({
       agent: currentAssignee,
@@ -968,7 +949,7 @@ export function Automations() {
                       value: "chat_output" as const,
                       icon: MessageSquare,
                       title: "Send to chat",
-                      summary: "Post summary to a chat conversation",
+                      summary: "Post final result to a new chat",
                     },
                   ]).map((option) => {
                     const Icon = option.icon;
@@ -997,49 +978,12 @@ export function Automations() {
               </Popover>
 
               {draft.outputMode === "chat_output" ? (
-                <InlineEntitySelector
-                  value={draft.chatConversationId}
-                  options={chatOptions}
-                  placeholder="New chat"
-                  noneLabel="New chat"
-                  searchPlaceholder="Search chats..."
-                  emptyMessage="No active chats found."
-                  className="h-8 max-w-[240px] bg-transparent px-2 text-sm"
-                  disablePortal
-                  side="top"
-                  sideOffset={8}
-                  onChange={(chatConversationId) => setDraft((current) => ({
-                    ...current,
-                    chatConversationId,
-                    allowAssigneeChatMismatch: false,
-                  }))}
-                  renderTriggerValue={(option) =>
-                    option && currentChat ? (
-                      <>
-                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{option.label}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">New chat</span>
-                      </>
-                    )
-                  }
-                  renderOption={(option) =>
-                    option.id ? (
-                      <>
-                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{option.label}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{option.label}</span>
-                      </>
-                    )
-                  }
-                />
+                <span
+                  data-testid="automation-create-chat-destination"
+                  className="inline-flex h-8 min-w-0 max-w-[240px] items-center rounded-md border border-border/70 bg-background/40 px-2 text-sm font-medium text-foreground"
+                >
+                  <span className="truncate">New chat</span>
+                </span>
               ) : null}
 
               <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>

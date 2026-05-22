@@ -384,7 +384,9 @@ describe("Automations", () => {
       await Promise.resolve();
     });
 
-    expect(runbookInput?.value).toContain("relevant Rudder chat conversation");
+    expect(runbookInput?.value).toContain("final result to a new Rudder chat");
+    expect(document.body.querySelector('[data-testid="automation-create-chat-destination"]')?.textContent).toContain("New chat");
+    expect(document.body.textContent).not.toContain("Search chats");
   });
 
   it("opens templates from the composer header and applies the advisor review loop template", async () => {
@@ -451,7 +453,7 @@ describe("Automations", () => {
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
     expect(titleInput?.value).toBe("日会");
     expect(runbookInput?.value).toContain("上一个工作日以来更新的进行中任务");
-    expect(runbookInput?.value).toContain("发送到相关 Rudder chat");
+    expect(runbookInput?.value).toContain("发送到新的 Rudder chat");
   });
 
   it("renders last run as a fixed timestamp without the run status caption", async () => {
