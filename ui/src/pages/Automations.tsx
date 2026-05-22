@@ -71,9 +71,9 @@ const catchUpPolicyDescriptions: Record<string, string> = {
   enqueue_missed_with_cap: "Catch up missed schedule windows in capped batches after recovery.",
 };
 const automationComposerChipClass =
-  "h-7 rounded-[5px] px-2 text-xs font-medium";
+  "h-8 items-center rounded-md px-2.5 text-xs font-medium leading-none";
 const automationComposerChipIconClass =
-  "h-3 w-3 shrink-0 text-muted-foreground";
+  "h-3.5 w-3.5 shrink-0 text-muted-foreground";
 
 type AutomationOutputMode = "track_issue" | "chat_output";
 
@@ -250,28 +250,8 @@ const blankAutomationTemplate: AutomationTemplate = {
   title: { en: "", "zh-CN": "" },
   summary: { en: "Create a custom recurring workflow.", "zh-CN": "创建自定义循环工作流。" },
   description: {
-    en: [
-      "# Goal",
-      "What should the agent accomplish?",
-      "",
-      "# Context",
-      "Who is this for? Any constraints?",
-      "",
-      "# Steps",
-      "1. ...",
-      "2. ...",
-    ].join("\n"),
-    "zh-CN": [
-      "# 目标",
-      "智能体需要完成什么？",
-      "",
-      "# 背景",
-      "服务谁？有哪些约束？",
-      "",
-      "# 步骤",
-      "1. ...",
-      "2. ...",
-    ].join("\n"),
+    en: "",
+    "zh-CN": "",
   },
   scheduleCron: "0 9 * * *",
   outputMode: "track_issue",
@@ -293,8 +273,10 @@ function outputInstruction(mode: AutomationOutputMode, locale = getUiLocale()) {
 }
 
 function withOutputInstruction(description: string, mode: AutomationOutputMode, locale = getUiLocale()) {
+  const trimmedDescription = description.trim();
+  if (!trimmedDescription) return "";
   const instruction = outputInstruction(mode, locale);
-  return `${description.trim()}\n\n${instruction}`;
+  return `${trimmedDescription}\n\n${instruction}`;
 }
 
 function removeOutputInstruction(description: string) {
@@ -338,6 +320,7 @@ export function Automations() {
   const { pushToast } = useToast();
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const titleInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const descriptionComposerRef = useRef<HTMLDivElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
   const composerBodyScrollRef = useScrollbarActivityRef("rudder:automation-composer-body");
@@ -715,20 +698,25 @@ export function Automations() {
                   autoFocus
                 />
 
-                <MarkdownEditor
-                  ref={descriptionEditorRef}
-                  value={draft.description}
-                  onChange={(description) => setDraft((current) => ({ ...current, description }))}
-                  mentions={mentionOptions}
-                  placeholder="Add prompt e.g. look for crashes in Sentry"
-                  bordered={false}
-                  contentClassName="min-h-[320px] text-[15px] leading-7 text-foreground/90 placeholder:text-muted-foreground/55 md:min-h-[440px]"
-                  onSubmit={() => {
-                    if (!createAutomation.isPending && isDraftReady) {
-                      createAutomation.mutate();
-                    }
-                  }}
-                />
+                <div ref={descriptionComposerRef} data-testid="automation-description-composer">
+                  <MarkdownEditor
+                    ref={descriptionEditorRef}
+                    value={draft.description}
+                    onChange={(description) => setDraft((current) => ({ ...current, description }))}
+                    mentions={mentionOptions}
+                    mentionMenuAnchorRef={descriptionComposerRef}
+                    mentionMenuPlacement="container"
+                    plainText
+                    placeholder="Add prompt e.g. look for crashes in Sentry"
+                    bordered={false}
+                    contentClassName="min-h-[320px] bg-transparent text-[15px] leading-7 text-foreground/90 placeholder:text-muted-foreground/55 md:min-h-[440px]"
+                    onSubmit={() => {
+                      if (!createAutomation.isPending && isDraftReady) {
+                        createAutomation.mutate();
+                      }
+                    }}
+                  />
+                </div>
               </main>
             </div>
 
@@ -920,7 +908,7 @@ export function Automations() {
                   noneLabel="New chat"
                   searchPlaceholder="Search chats..."
                   emptyMessage="No active chats found."
-                  className="h-8 max-w-[240px] bg-transparent px-2 text-sm"
+                  className={cn(automationComposerChipClass, "max-w-[240px] bg-transparent")}
                   disablePortal
                   side="top"
                   sideOffset={8}
