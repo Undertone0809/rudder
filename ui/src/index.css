@@ -1633,8 +1633,33 @@ button[draggable="false"] {
   border-color: var(--code-border);
 }
 
+.rudder-doc-editor-tab-strip {
+  position: relative;
+  isolation: isolate;
+}
+
+.rudder-doc-editor-tab-strip::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--border-base);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.rudder-doc-editor-tab-scroller {
+  position: relative;
+  z-index: 1;
+}
+
 .rudder-doc-editor-tab {
   isolation: isolate;
+}
+
+.rudder-doc-editor-tab--active {
+  z-index: 2;
 }
 
 .rudder-doc-editor-tab--active::before,
@@ -1642,26 +1667,30 @@ button[draggable="false"] {
   content: "";
   position: absolute;
   bottom: -1px;
-  width: 18px;
-  height: 18px;
+  width: 19px;
+  height: 19px;
   pointer-events: none;
   z-index: -1;
 }
 
 .rudder-doc-editor-tab--active::before {
-  left: -18px;
+  left: -19px;
   border-right: 1px solid var(--border-base);
   border-bottom: 1px solid var(--border-base);
-  border-bottom-right-radius: 18px;
+  border-bottom-right-radius: 19px;
   box-shadow: 9px 9px 0 8px var(--surface-elevated);
 }
 
 .rudder-doc-editor-tab--active::after {
-  right: -18px;
+  right: -19px;
   border-bottom: 1px solid var(--border-base);
   border-left: 1px solid var(--border-base);
-  border-bottom-left-radius: 18px;
+  border-bottom-left-radius: 19px;
   box-shadow: -9px 9px 0 8px var(--surface-elevated);
+}
+
+.rudder-doc-editor-tab--first-active::before {
+  display: none;
 }
 
 .rudder-inline-markdown-surface {

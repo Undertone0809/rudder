@@ -2522,22 +2522,24 @@ export function OrganizationWorkspaceBrowser({
               data-testid="org-workspaces-editor-tabs"
               role="tablist"
               aria-label="Open files"
-              className="flex h-11 shrink-0 items-stretch justify-between bg-[color:var(--surface-page)]"
+              className="rudder-doc-editor-tab-strip flex h-11 shrink-0 items-stretch justify-between bg-[color:var(--surface-page)]"
             >
-              <div className="scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto px-2 pt-1">
+              <div className="rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto px-2 pt-1">
                 {openFilePaths.length > 0 ? (
-                  openFilePaths.map((filePath) => {
+                  openFilePaths.map((filePath, index) => {
                     const active = selectedFilePath === filePath;
+                    const first = index === 0;
                     return (
                       <div
                         key={filePath}
                         data-testid={`org-workspaces-editor-tab-${filePath}`}
                         onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
                         className={cn(
-                          "rudder-doc-editor-tab group relative flex min-w-[132px] max-w-[248px] items-center border px-1 transition-[color,background-color,border-color,box-shadow]",
+                          "rudder-doc-editor-tab group relative flex min-w-[132px] max-w-[248px] shrink-0 items-center border px-1 transition-[color,background-color,border-color,box-shadow]",
                           active
                             ? "rudder-doc-editor-tab--active mb-[-1px] h-10 overflow-visible rounded-t-[20px] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
                             : "mb-1 h-9 overflow-hidden rounded-[18px] border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
+                          active && first && "rudder-doc-editor-tab--first-active",
                         )}
                       >
                         <button
