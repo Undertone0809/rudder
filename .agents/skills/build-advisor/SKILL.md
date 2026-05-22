@@ -233,6 +233,27 @@ When the user mentions Langfuse, or when the available evidence lives in Langfus
 
 Do not guess if you can verify quickly.
 
+#### External Product Reference Mode
+
+When the user names an external product as a strong reference or says it is
+"most like Rudder's ideal shape", treat the product as evidence, not decoration.
+Do a source-backed pass before proposing Rudder changes:
+
+- inspect the named product's public site, docs, screenshots, or user-provided
+  artifact when available
+- separate observed product behavior from the user's interpretation of why it
+  matters
+- map the insight through both Rudder operator workflow and agent workflow
+- identify which existing Rudder concepts should converge, split, or disappear
+  instead of adding another synonym
+- distinguish product principle from implementation imitation; do not copy a
+  surface pattern unless it solves the same Rudder job
+- turn the conclusion into a decision artifact with source of truth,
+  user/agent flow, implementation surface, and validation bar
+
+If live external access is blocked, say what evidence was available and avoid
+claiming a complete competitor analysis.
+
 ### 5. Scenario And First-Principles Pass
 
 Make this pass explicit before judging solutions. This is the default posture
@@ -648,6 +669,23 @@ wireframes. Each option states its hierarchy, density, tone, and tradeoff.
 Must not:
 Skip directly to editing the component, or return only abstract advice like
 "make it cleaner" without an inspectable visual artifact.
+
+### Case: External Product Reference Research
+
+Input:
+"https://moxt.ai/ 这个产品很像 Rudder 理想中的样子。深度调研一下，从用户视角和 Agent 视角看 docs/workspaces/resources 应该怎么收敛。"
+
+Expected behavior:
+The response treats the external product and the user's interpretation as
+evidence, inspects available source material, separates product principle from
+surface imitation, maps implications through both operator and agent workflows,
+and produces a decision-ready Rudder proposal with source of truth,
+concept/naming convergence, implementation surface, and validation bar.
+
+Must not:
+Give a generic competitor summary, add another top-level concept without
+collapsing existing terminology, or copy the reference product's UI pattern
+without proving it solves the same Rudder workflow.
 
 ### Case: Approved Implementation Handoff
 

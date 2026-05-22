@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { automationsApi } from "../api/automations";
 import { agentsApi } from "../api/agents";
+import { chatsApi } from "../api/chats";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { projectsApi } from "../api/projects";
@@ -74,7 +75,7 @@ const automationComposerChipClass =
 const automationComposerChipIconClass =
   "h-3 w-3 shrink-0 text-muted-foreground";
 
-type AutomationOutputMode = "create_issue" | "send_to_chat";
+type AutomationOutputMode = "track_issue" | "chat_output";
 
 type LocalizedText = {
   en: string;
@@ -96,7 +97,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Bug triage", "zh-CN": "Bug 分诊" },
     summary: { en: "Assess and prioritize new bug reports.", "zh-CN": "评估并排序新提交的缺陷。" },
     scheduleCron: "0 9 * * 1-5",
-    outputMode: "create_issue",
+    outputMode: "track_issue",
     description: {
       en: [
         "1. List all open issues labeled bug, triage, or backlog that have not been prioritized.",
@@ -119,7 +120,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "PR review reminder", "zh-CN": "PR review 提醒" },
     summary: { en: "Flag stale pull requests that need review.", "zh-CN": "找出等待 review 过久的 PR。" },
     scheduleCron: "0 10 * * 1-5",
-    outputMode: "create_issue",
+    outputMode: "track_issue",
     description: {
       en: [
         "1. Find pull requests waiting for review for more than one business day.",
@@ -140,7 +141,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Weekly progress report", "zh-CN": "周进展报告" },
     summary: { en: "Compile a concise summary of team progress.", "zh-CN": "整理团队本周进展和风险。" },
     scheduleCron: "0 17 * * 1",
-    outputMode: "create_issue",
+    outputMode: "track_issue",
     description: {
       en: [
         "1. Gather issues completed in the past 7 days.",
@@ -163,7 +164,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Dependency audit", "zh-CN": "依赖审计" },
     summary: { en: "Scan for security and maintenance risks.", "zh-CN": "检查依赖安全和维护风险。" },
     scheduleCron: "0 11 * * 2",
-    outputMode: "create_issue",
+    outputMode: "track_issue",
     description: {
       en: [
         "1. Inspect dependency and lockfile changes since the last audit.",
@@ -184,7 +185,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Documentation check", "zh-CN": "文档检查" },
     summary: { en: "Review recent changes for documentation gaps.", "zh-CN": "检查近期变更对应的文档缺口。" },
     scheduleCron: "0 14 * * 3",
-    outputMode: "create_issue",
+    outputMode: "track_issue",
     description: {
       en: [
         "1. Review merged product or engineering changes from the past week.",
@@ -205,7 +206,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Daily news digest", "zh-CN": "每日信息简报" },
     summary: { en: "Search and summarize relevant updates for the team.", "zh-CN": "检索并总结团队需要知道的外部变化。" },
     scheduleCron: "0 8 * * 1-5",
-    outputMode: "send_to_chat",
+    outputMode: "chat_output",
     description: {
       en: [
         "1. Search for important market, customer, or platform updates relevant to the organization.",
@@ -226,7 +227,7 @@ const automationTemplates: AutomationTemplate[] = [
     title: { en: "Daily standup", "zh-CN": "日会" },
     summary: { en: "Collect blockers, priorities, and handoffs for today.", "zh-CN": "汇总今天的阻塞、重点和交接事项。" },
     scheduleCron: "30 9 * * 1-5",
-    outputMode: "send_to_chat",
+    outputMode: "chat_output",
     description: {
       en: [
         "1. Review active issues, latest comments, and runs updated since the previous workday.",
@@ -273,7 +274,7 @@ const blankAutomationTemplate: AutomationTemplate = {
     ].join("\n"),
   },
   scheduleCron: "0 9 * * *",
-  outputMode: "create_issue",
+  outputMode: "track_issue",
 };
 
 function localizeText(text: LocalizedText, locale = getUiLocale()) {
@@ -281,7 +282,7 @@ function localizeText(text: LocalizedText, locale = getUiLocale()) {
 }
 
 function outputInstruction(mode: AutomationOutputMode, locale = getUiLocale()) {
-  if (mode === "send_to_chat") {
+  if (mode === "chat_output") {
     return locale === "zh-CN"
       ? "输出：将结果发送到相关 Rudder chat 对话；只有出现明确阻塞或后续动作时才创建任务。"
       : "Output: send the result to the relevant Rudder chat conversation; create tracked work only for concrete blockers or follow-up actions.";
@@ -354,7 +355,9 @@ export function Automations() {
     concurrencyPolicy: "coalesce_if_active",
     catchUpPolicy: "skip_missed",
     scheduleCron: "0 9 * * *",
-    outputMode: "create_issue" as AutomationOutputMode,
+    outputMode: "track_issue" as AutomationOutputMode,
+    chatConversationId: "",
+    allowAssigneeChatMismatch: false,
   });
 
   const resetDraft = useCallback(() => {
@@ -367,7 +370,9 @@ export function Automations() {
       concurrencyPolicy: "coalesce_if_active",
       catchUpPolicy: "skip_missed",
       scheduleCron: "0 9 * * *",
-      outputMode: "create_issue",
+      outputMode: "track_issue",
+      chatConversationId: "",
+      allowAssigneeChatMismatch: false,
     });
   }, []);
 
@@ -379,6 +384,8 @@ export function Automations() {
       description: withOutputInstruction(localizeText(template.description, locale), template.outputMode, locale),
       scheduleCron: template.scheduleCron,
       outputMode: template.outputMode,
+      chatConversationId: "",
+      allowAssigneeChatMismatch: false,
     }));
     setAdvancedOpen(false);
     setComposerOpen(true);
@@ -388,6 +395,8 @@ export function Automations() {
     setDraft((current) => ({
       ...current,
       outputMode,
+      chatConversationId: outputMode === "chat_output" ? current.chatConversationId : "",
+      allowAssigneeChatMismatch: outputMode === "chat_output" ? current.allowAssigneeChatMismatch : false,
       description: withOutputInstruction(removeOutputInstruction(current.description), outputMode),
     }));
   }, []);
@@ -427,6 +436,11 @@ export function Automations() {
     queryFn: () => projectsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
+  const { data: chats } = useQuery({
+    queryKey: queryKeys.chats.list(selectedOrganizationId!, "active"),
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
+    enabled: !!selectedOrganizationId && composerOpen && draft.outputMode === "chat_output",
+  });
   const { data: issues } = useQuery({
     queryKey: queryKeys.issues.list(selectedOrganizationId!),
     queryFn: () => issuesApi.list(selectedOrganizationId!),
@@ -457,6 +471,9 @@ export function Automations() {
         priority: draft.priority,
         concurrencyPolicy: draft.concurrencyPolicy,
         catchUpPolicy: draft.catchUpPolicy,
+        outputMode: draft.outputMode,
+        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId || null : null,
+        allowAssigneeChatMismatch: draft.allowAssigneeChatMismatch,
       });
 
       if (draft.scheduleCron.trim()) {
@@ -572,6 +589,15 @@ export function Automations() {
       })),
     [projects],
   );
+  const chatOptions = useMemo<InlineEntityOption[]>(
+    () =>
+      (chats ?? []).map((chat) => ({
+        id: chat.id,
+        label: chat.title,
+        searchText: chat.summary ?? chat.latestReplyPreview ?? "",
+      })),
+    [chats],
+  );
   const agentById = useMemo(
     () => new Map((agents ?? []).map((agent) => [agent.id, agent])),
     [agents],
@@ -582,6 +608,9 @@ export function Automations() {
   );
   const currentAssignee = draft.assigneeAgentId ? agentById.get(draft.assigneeAgentId) ?? null : null;
   const currentProject = draft.projectId ? projectById.get(draft.projectId) ?? null : null;
+  const currentChat = draft.chatConversationId
+    ? (chats ?? []).find((chat) => chat.id === draft.chatConversationId) ?? null
+    : null;
   const skillMentionOptions = useMemo(
     () => buildAgentSkillMentionOptions({
       agent: currentAssignee,
@@ -831,12 +860,12 @@ export function Automations() {
                       automationComposerChipClass,
                     )}
                   >
-                    {draft.outputMode === "create_issue" ? (
+                    {draft.outputMode === "track_issue" ? (
                       <CheckCircle2 className={automationComposerChipIconClass} />
                     ) : (
                       <MessageSquare className={automationComposerChipIconClass} />
                     )}
-                    <span>{draft.outputMode === "create_issue" ? "Track as issue" : "Send to chat"}</span>
+                    <span>{draft.outputMode === "track_issue" ? "Track as issue" : "Send to chat"}</span>
                     <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/80" />
                   </button>
                 </PopoverTrigger>
@@ -844,13 +873,13 @@ export function Automations() {
                   <p className="px-1 pt-1 text-xs font-medium text-muted-foreground">Run output</p>
                   {([
                     {
-                      value: "create_issue" as const,
+                      value: "track_issue" as const,
                       icon: CheckCircle2,
                       title: "Track as issue",
                       summary: "Each run opens board-tracked work",
                     },
                     {
-                      value: "send_to_chat" as const,
+                      value: "chat_output" as const,
                       icon: MessageSquare,
                       title: "Send to chat",
                       summary: "Post summary to a chat conversation",
@@ -880,6 +909,54 @@ export function Automations() {
                   })}
                 </PopoverContent>
               </Popover>
+
+
+
+              {draft.outputMode === "chat_output" ? (
+                <InlineEntitySelector
+                  value={draft.chatConversationId}
+                  options={chatOptions}
+                  placeholder="New chat"
+                  noneLabel="New chat"
+                  searchPlaceholder="Search chats..."
+                  emptyMessage="No active chats found."
+                  className="h-8 max-w-[240px] bg-transparent px-2 text-sm"
+                  disablePortal
+                  side="top"
+                  sideOffset={8}
+                  onChange={(chatConversationId) => setDraft((current) => ({
+                    ...current,
+                    chatConversationId,
+                    allowAssigneeChatMismatch: false,
+                  }))}
+                  renderTriggerValue={(option) =>
+                    option && currentChat ? (
+                      <>
+                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">New chat</span>
+                      </>
+                    )
+                  }
+                  renderOption={(option) =>
+                    option.id ? (
+                      <>
+                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
+                      </>
+                    )
+                  }
+                />
+              ) : null}
 
               <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
                 <PopoverTrigger asChild>

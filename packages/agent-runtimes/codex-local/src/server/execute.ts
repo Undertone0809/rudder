@@ -132,6 +132,13 @@ function hasCliArg(args: string[], flag: string): boolean {
   return args.includes(flag);
 }
 
+function runtimeImagePaths(media: AgentRuntimeExecutionContext["media"]): string[] {
+  return (media ?? [])
+    .filter((item) => item.source === "chat_attachment" && item.contentType.toLowerCase().startsWith("image/"))
+    .map((item) => item.localPath)
+    .filter((value) => value.trim().length > 0);
+}
+
 function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean {
   const raw = env[key];
   return typeof raw === "string" && raw.trim().length > 0;
@@ -425,13 +432,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
   const instructionsPrefix = loadedInstructions.prefix;
   const instructionsDir = loadedInstructions.instructionsDir;
+  const imagePaths = runtimeImagePaths(ctx.media);
   const repoAgentsNote =
     "Codex exec automatically applies repo-scoped AGENTS.md instructions from the current workspace; Rudder does not currently suppress that discovery.";
+  const imageAttachmentNote =
+    imagePaths.length > 0
+      ? `Attached ${imagePaths.length} image attachment${imagePaths.length === 1 ? "" : "s"} to the initial Codex prompt via --image.`
+      : null;
   const commandNotes = (() => {
     if (!instructionsFilePath) {
       return [
         ...loadedInstructions.commandNotes,
         "Prepended Rudder operating contract to stdin prompt.",
+        ...(imageAttachmentNote ? [imageAttachmentNote] : []),
         repoAgentsNote,
       ];
     }
@@ -439,11 +452,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       return [
         ...loadedInstructions.commandNotes,
         `Prepended instructions + path directive to stdin prompt (relative references from ${instructionsDir}).`,
+        ...(imageAttachmentNote ? [imageAttachmentNote] : []),
         repoAgentsNote,
       ];
     }
     return [
       ...loadedInstructions.commandNotes,
+      ...(imageAttachmentNote ? [imageAttachmentNote] : []),
       repoAgentsNote,
     ];
   })();
@@ -515,6 +530,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (bypass) args.push("--dangerously-bypass-approvals-and-sandbox");
     if (model) args.push("--model", model);
     if (modelReasoningEffort) args.push("-c", `model_reasoning_effort=${JSON.stringify(modelReasoningEffort)}`);
+    for (const imagePath of imagePaths) {
+      args.push("--image", imagePath);
+    }
     if (runtimeScene === "chat" && !hasCliArg(extraArgs, "--skip-git-repo-check")) {
       args.push("--skip-git-repo-check");
     }

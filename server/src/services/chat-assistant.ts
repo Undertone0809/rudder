@@ -333,10 +333,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
     await maybeEmitAssistantState(input.onAssistantState, "streaming");
 
-    const chatAttachments = Array.from(preparedAttachments.references.entries()).map(([attachmentId, reference]) => ({
-      attachmentId,
-      ...reference,
-    }));
+    const chatAttachments = input.messages
+      .slice(-12)
+      .flatMap((message) => message.attachments)
+      .map((attachment) => {
+        const reference = preparedAttachments.references.get(attachment.id);
+        return reference ? { attachmentId: attachment.id, ...reference } : null;
+      })
+      .filter((attachment): attachment is { attachmentId: string } & ChatAttachmentPromptReference =>
+        attachment !== null,
+      );
+    const media = preparedAttachments.media;
 
     const result = await (async () => {
       try {
@@ -369,6 +376,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ...(linkedIssueIds[0] ? { issueId: linkedIssueIds[0] } : {}),
             ...(linkedIssueIds.length > 0 ? { issueIds: linkedIssueIds } : {}),
           },
+          ...(media.length > 0 ? { media } : {}),
           onMeta: async (meta) => {
             await input.onInvocationMeta?.({
               ...meta,

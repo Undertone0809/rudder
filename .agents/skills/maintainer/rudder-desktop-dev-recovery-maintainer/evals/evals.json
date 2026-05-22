@@ -24,6 +24,12 @@
       "prompt": "我本地 Desktop 好像指到错的 Rudder instance 了，页面数据不对。",
       "expected_output": "Verifies the active Desktop base URL, API health, org list, and instance/profile path before diagnosing data, avoids deleting ~/.rudder, and routes to rudder-data-path-diagnostician-maintainer only after the runtime target is pinned down.",
       "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Rudder 更新下载完点 Restart to update 后，旧 app 退出，过一会儿新 app 弹 Electron main process write EPIPE。你先 debug，不要直接说 release 坏了。",
+      "expected_output": "Classifies the failure as an update restart / closed progress pipe candidate, records installed app path plus old/new versions, inspects progress JSON/stdout/stderr writer paths and child-process handoff, treats EPIPE or ERR_STREAM_DESTROYED from a closed parent pipe as expected shutdown only when narrowly identified, adds or recommends a regression test that destroys the progress reader before writes or flushes, and finishes with packaged or installed-app verification rather than a dry-run.",
+      "files": []
     }
   ]
 }

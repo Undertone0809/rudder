@@ -6,7 +6,8 @@ description: >
   publishing to npm, canary/stable promotion, GitHub Release assets, Desktop
   distribution, `npx @rudderhq/cli@latest start`, `npx @rudderhq/cli start`,
   broken npm `latest` dist-tags, full Desktop install smoke tests, GitHub
-  Release API/rate-limit failures, version bumps, rollback, first-time package
+  Release API/rate-limit failures, version bumps, rollback, obsolete canary
+  GitHub Release/tag cleanup after stable promotion, first-time package
   bootstrap, npm token-based fallback publishing, or release workflow failures.
   Prefer this skill for both planning and hands-on release operations in the
   Rudder repository, even when the user only asks "现在要做什么" or "帮我发版".
@@ -52,6 +53,11 @@ cannot be safely inferred.
   npm dist-tag `latest`.
 - Stable tags point at the original source commit, not at a generated release
   commit.
+- After a stable `vX.Y.Z` is published and verified, older canary GitHub
+  Releases and `canary/*` git tags for released-or-older base versions should
+  be cleaned up unless the user asks to preserve them. This cleanup does not
+  unpublish npm package versions; npm `*-canary.*` versions are immutable
+  package history and should remain published.
 - For stable releases, `main` is only a selector until you resolve it. Before
   the real publish, lock the source to an immutable commit SHA or stable tag and
   use that same ref for dry-run, publish, Desktop recovery, and verification.
@@ -92,6 +98,11 @@ cannot be safely inferred.
   risk. After the first stable exists, ordinary canary promotion should not move
   npm `latest`; verify that invariant instead of waiting indefinitely for every
   unrelated canary smoke.
+- A stable promotion is not proven by npm, GitHub Release assets, and dry-run
+  smoke alone when the changed area can affect Desktop update behavior. If the
+  release fixes or depends on Desktop update/install behavior, run a real
+  Desktop update drill from an older installed build to the candidate before
+  saying the stable is ready.
 
 ## Required Context
 
@@ -128,6 +139,7 @@ git log --oneline --decorate --graph -8
 git tag --list 'v*' --sort=-version:refname | head -10
 node scripts/release-package-map.mjs list
 ./scripts/release.sh stable --print-version
+./scripts/release.sh canary --print-version
 ```
 
 When the task depends on remote truth, also check:
@@ -138,6 +150,7 @@ gh run list --workflow release.yml --limit 10
 gh run list --workflow desktop-release.yml --limit 10
 gh run list --workflow npm-dist-tag.yml --limit 5
 gh release list --repo Undertone0809/rudder --limit 20
+git ls-remote --tags origin 'refs/tags/canary/v*'
 npm view @rudderhq/cli dist-tags --json
 npm view @rudderhq/cli versions --json
 ```
@@ -378,14 +391,24 @@ node scripts/release-package-map.mjs list
    - after npm stable exists, ordinary canaries should leave `latest` alone via
      `--only-if-no-stable`;
    - do not wait for unrelated canaries merely to adopt their newer commits.
-5. Run the `Release` workflow with `dry_run: true`, using the locked SHA as
+5. If the stable contains Desktop startup, install, update, profile, migration,
+   or release-shell changes, choose a canary candidate and run the Desktop
+   update drill below before real stable publish. If the drill cannot run on
+   the local platform, name the missing platform and treat stable readiness as
+   not fully proven.
+6. Run the `Release` workflow with `dry_run: true`, using the locked SHA as
    `source_ref`.
-6. If dry-run passes, rerun with `dry_run: false`, again using the same locked
+7. If dry-run passes, rerun with `dry_run: false`, again using the same locked
    SHA as `source_ref`.
-7. Wait for or request `npm-stable` approval.
-8. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
+8. Wait for or request `npm-stable` approval.
+9. Verify npm `latest`, git tag `vX.Y.Z`, GitHub Release notes, Desktop release
    workflow, and assets.
-9. Smoke test:
+10. Clean up obsolete canary GitHub Releases and `canary/*` tags for the stable
+    base and any older base versions after the stable is proven. Preserve the
+    active next-line canary, for example keep `canary/v0.2.6-canary.N` after
+    stable `v0.2.5`, and never unpublish npm canary package versions as part of
+    this cleanup.
+11. Smoke test:
 
 ```bash
 npx @rudderhq/cli@latest start --no-open
@@ -397,6 +420,97 @@ The second command is only expected to work after the persistent CLI exists.
 If the workflow fails after npm publish, do not rerun the whole stable workflow
 without first classifying the partial state. Stable npm versions are immutable;
 repair the missing downstream surfaces for the same version and tag.
+
+#### Post-Stable Canary Cleanup
+
+Use this after a stable release succeeds, or when the user asks why old canary
+versions still appear in GitHub Releases.
+
+1. Read the current stable and active canary dist-tags:
+
+```bash
+npm view @rudderhq/cli dist-tags --json
+```
+
+   Treat npm `latest` as the current stable and npm `canary` as the active
+   prerelease line. Do not delete the canary line that matches the active npm
+   `canary` version unless the user explicitly asks for a broader purge.
+2. List GitHub Releases and remote canary tags:
+
+```bash
+gh release list --repo Undertone0809/rudder --limit 100
+git ls-remote --tags origin 'refs/tags/canary/v*'
+```
+
+3. Select obsolete canaries: releases/tags whose base version is less than or
+   equal to the current stable base. For example, when `latest=0.2.5` and
+   `canary=0.2.6-canary.9`, delete `canary/v0.2.5-canary.*` and older canary
+   releases/tags, but preserve `canary/v0.2.6-canary.*`.
+4. Delete GitHub Releases with tag cleanup:
+
+```bash
+gh release delete 'canary/v0.2.5-canary.N' \
+  --repo Undertone0809/rudder \
+  --cleanup-tag \
+  -y
+```
+
+5. Run a separate orphan-tag pass because `gh release delete --cleanup-tag` only
+   removes tags attached to Releases that still existed:
+
+```bash
+git ls-remote --tags origin 'refs/tags/canary/v*'
+git push origin ':refs/tags/canary/v0.2.5-canary.N'
+```
+
+6. Verify the cleanup did not move npm dist-tags and did not remove the active
+   canary line:
+
+```bash
+gh release list --repo Undertone0809/rudder --limit 100
+git ls-remote --tags origin 'refs/tags/canary/v*'
+npm view @rudderhq/cli dist-tags --json
+```
+
+Report the exact retained active canary, deleted release/tag ranges, and the
+npm dist-tag state. If the user says "delete all previous canaries", interpret
+that as all canary GitHub Releases/tags older than the active canary line, not
+as npm unpublish authority.
+
+#### Desktop Update Drill Before Stable Promotion
+
+Use this gate when the stable is meant to prove installed Desktop behavior, not
+just package availability. A candidate canary is ready for stable only after the
+operator can update an already-installed app without a user-visible main-process
+error or data/profile loss.
+
+Minimum drill on the available local platform:
+
+1. Record the starting installed app path and version, for example
+   `/Users/zeeland/Applications/Rudder.app` plus the About/settings version.
+2. Install or launch an older release that should discover the candidate update.
+3. Use the app UI, preferably with Computer Use when available, to run
+   "Check for update" from About/settings.
+4. Download the update, click "Restart to update", and wait for the app to
+   exit, replace itself, and reopen.
+5. Verify the reopened app reports the candidate version and still points at
+   the expected data/profile/workspace.
+6. Inspect logs or UI for Electron main-process errors such as `EPIPE`,
+   `ERR_STREAM_DESTROYED`, broken progress pipes, failed replacement, checksum
+   failures, or repeated relaunch loops.
+7. When practical, verify active-work safeguards: an active run should block,
+   defer, or clearly explain update timing instead of silently killing work.
+
+Evidence to report:
+
+- candidate canary tag/version and stable target version
+- installed app path, old version, new version, and platform
+- screenshots, logs, or Computer Use notes for check/download/restart/reopen
+- whether data/profile/workspace persisted
+- any skipped drill item and why it could not run locally
+
+Do not substitute a `--dry-run` or asset-list check for this drill when the
+known risk is the in-app update path itself.
 
 ### Version Bump
 
@@ -527,6 +641,8 @@ git status --short --branch
 node scripts/release-package-map.mjs list
 npm view @rudderhq/cli dist-tags --json
 gh release view '<tag>' --json tagName,url,isPrerelease,isDraft,assets
+gh release list --repo Undertone0809/rudder --limit 100
+git ls-remote --tags origin 'refs/tags/canary/v*'
 ```
 
 Also check whether any `release.yml` run is still in progress and could publish
@@ -539,6 +655,9 @@ gh run list --workflow release.yml --limit 10
 For stable releases, report in-progress unrelated canary or smoke workflows
 separately from the fixed stable result. Do not keep retargeting or revalidating
 against newer `main` commits after `vX.Y.Z` points at the locked source SHA.
+Also report whether obsolete canary GitHub Releases/tags were cleaned up or why
+they were intentionally preserved; include the retained active canary line and
+confirm npm dist-tags were not changed by cleanup.
 If a supplemental cross-platform public install smoke is still running after the
 stable npm/tag/Release/Desktop surfaces and at least the available local full
 install smoke are verified, state that residual status explicitly instead of
@@ -576,6 +695,13 @@ path.
 
 - Do not run a real stable publish without an explicit user request.
 - Do not unpublish npm packages as a rollback strategy.
+- Do not unpublish npm canary package versions as a post-stable cleanup
+  strategy. Cleanup means GitHub Releases and git `canary/*` tags unless the
+  user gives separate, explicit npm unpublish authority and the npm policy
+  allows it.
+- Do not delete the active next-line canary GitHub Release/tag during
+  post-stable cleanup unless the user explicitly asks to remove the current
+  canary too.
 - Do not republish an npm version that already exists.
 - Do not force-push release tags unless the user explicitly approves the exact
   tag and reason.
@@ -703,6 +829,30 @@ Expected behavior:
 - on macOS, verify quarantine cleanup and that portable app symlinks resolve
 - report the exact resolved version, Release tag, workflow run IDs, smoke exit
   code, and any in-progress release runs that could still affect `latest`
+
+**Old canary cleanup after stable**
+
+User: `发正式版的时候把之前的 Canary 版本都删掉，这个事情现在没有做到吗？为什么我能看到很多 0.2.5 版本之前的 Canary version，帮我把之前的都删了`
+
+Observed state:
+- npm `latest=0.2.5`
+- npm `canary=0.2.6-canary.9`
+- GitHub Releases still include `canary/v0.2.5-canary.0..14`
+
+Expected behavior:
+- explain that prior canary cleanup was not a stable-release completion gate if
+  old GitHub Releases/tags remain visible after the stable
+- delete obsolete GitHub Releases with `gh release delete --cleanup-tag`
+- run a separate remote tag pass for orphaned `refs/tags/canary/*`
+- preserve the active next-line canary, here `canary/v0.2.6-canary.*`
+- verify `npm view @rudderhq/cli dist-tags --json` still reports
+  `latest=0.2.5` and `canary=0.2.6-canary.9`
+
+Must not:
+- unpublish npm `0.2.5-canary.*` package versions
+- delete the active `0.2.6` canary line without explicit user authority
+- claim cleanup is complete without checking both GitHub Releases and remote
+  tags
 
 **Entrypoint confusion**
 

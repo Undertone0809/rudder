@@ -134,7 +134,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     allowAssigneeChatMismatch?: boolean;
   }) {
     if (input.outputMode !== "chat_output") return null;
-    if (!input.chatConversationId) throw unprocessable("Chat output requires a destination conversation");
+    if (!input.chatConversationId) return null;
     const conversation = await db
       .select({
         id: chatConversations.id,
@@ -156,6 +156,44 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       throw unprocessable("Chat conversation preferred agent must match the automation assignee");
     }
     return conversation;
+  }
+
+  async function resolveAutomationRunChatConversationId(input: {
+    automation: typeof automations.$inferSelect;
+    runId: string;
+    executor: Db;
+  }) {
+    if (input.automation.outputMode !== "chat_output") return null;
+    if (input.automation.chatConversationId) return input.automation.chatConversationId;
+
+    const existingRun = await input.executor
+      .select({ linkedChatConversationId: automationRuns.linkedChatConversationId })
+      .from(automationRuns)
+      .where(eq(automationRuns.id, input.runId))
+      .then((rows) => rows[0] ?? null);
+    if (existingRun?.linkedChatConversationId) return existingRun.linkedChatConversationId;
+
+    const [conversation] = await input.executor
+      .insert(chatConversations)
+      .values({
+        orgId: input.automation.orgId,
+        title: input.automation.title || "New chat",
+        preferredAgentId: input.automation.assigneeAgentId,
+        status: "active",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      })
+      .returning({ id: chatConversations.id });
+    if (!conversation) return null;
+
+    await input.executor
+      .update(automationRuns)
+      .set({
+        linkedChatConversationId: conversation.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(automationRuns.id, input.runId));
+    return conversation.id;
   }
 
   async function listTriggersForAutomationIds(orgId: string, automationIds: string[]) {
@@ -475,7 +513,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     issueId?: string | null;
     failureReason?: string | null;
   }) {
-    if (input.status === "issue_created") return `${input.title} started.`;
+    if (input.status === "issue_created") return `From automation ${input.title}.`;
     if (input.status === "completed") return `${input.title} completed.`;
     if (input.status === "coalesced") return `${input.title} coalesced into an active automation run.`;
     if (input.status === "skipped") return `${input.title} skipped because an active automation run already exists.`;
@@ -496,11 +534,24 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     terminal?: boolean;
     executor?: Db;
   }) {
-    if (input.automation.outputMode !== "chat_output" || !input.automation.chatConversationId) return null;
+    if (input.automation.outputMode !== "chat_output") return null;
     const executor = input.executor ?? db;
+    if (
+      !input.automation.chatConversationId &&
+      (input.status === "coalesced" || input.status === "skipped")
+    ) {
+      return null;
+    }
+    if (input.status === "completed") return null;
+    const conversationId = await resolveAutomationRunChatConversationId({
+      automation: input.automation,
+      runId: input.runId,
+      executor,
+    });
+    if (!conversationId) return null;
     const now = new Date();
     const eventType =
-      input.status === "issue_created" ? "automation_run_started"
+      input.status === "issue_created" ? "automation_source"
       : input.status === "completed" ? "automation_run_completed"
       : input.status === "failed" ? "automation_run_failed"
       : input.status === "skipped" ? "automation_run_skipped"
@@ -510,7 +561,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       .insert(chatMessages)
       .values({
         orgId: input.automation.orgId,
-        conversationId: input.automation.chatConversationId,
+        conversationId,
         role: "system",
         kind: "system_event",
         status: "completed",
@@ -523,6 +574,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         structuredPayload: {
           eventType,
           automationId: input.automation.id,
+          automationTitle: input.automation.title,
           runId: input.runId,
           issueId: input.issueId ?? null,
           triggerId: input.triggerId ?? null,
@@ -541,11 +593,11 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     await executor
       .update(chatConversations)
       .set({ lastMessageAt: message.createdAt, updatedAt: message.createdAt })
-      .where(eq(chatConversations.id, input.automation.chatConversationId));
+      .where(eq(chatConversations.id, conversationId));
     await executor
       .update(automationRuns)
       .set({
-        linkedChatConversationId: input.automation.chatConversationId,
+        linkedChatConversationId: conversationId,
         startedChatMessageId: input.status === "issue_created" ? message.id : undefined,
         terminalChatMessageId: input.terminal ? message.id : undefined,
         lastChatMessageId: message.id,

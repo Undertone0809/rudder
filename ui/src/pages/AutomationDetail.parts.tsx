@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Activity,
   ChevronDown,
   ChevronRight,
   Clock3,
@@ -9,7 +10,7 @@ import {
   Zap,
 } from "lucide-react";
 import { buildAutomationTriggerPatch } from "../lib/automation-trigger-patch";
-import { formatDateTime } from "../lib/utils";
+import { cn, formatDateTime } from "../lib/utils";
 import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
 import { useDialog } from "../context/DialogContext";
 import { Button } from "@/components/ui/button";
@@ -203,6 +204,28 @@ export function SidebarRow({
   );
 }
 
+export function SidebarPropertyRow({
+  label,
+  children,
+  align = "center",
+}: {
+  label: string;
+  children: ReactNode;
+  align?: "center" | "start";
+}) {
+  return (
+    <div
+      className={cn(
+        "flex gap-3 py-1.5",
+        align === "start" ? "items-start" : "items-center",
+      )}
+    >
+      <span className="w-20 shrink-0 text-xs text-muted-foreground">{label}</span>
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">{children}</div>
+    </div>
+  );
+}
+
 export function SidebarSelectValue({ children }: { children: ReactNode }) {
   return (
     <>
@@ -300,6 +323,12 @@ export function TriggerEditor({
     : trigger.kind === "webhook"
       ? "Webhook"
       : "API";
+  const primaryTriggerLabel = trigger.kind === "schedule" ? triggerSummary : triggerLabel;
+  const secondaryTriggerLabel = trigger.kind === "schedule" && trigger.label?.trim()
+    ? trigger.label.trim()
+    : trigger.kind === "schedule"
+      ? triggerTimingLabel
+      : triggerSummary;
   const syncLabel = isDeleting
     ? "Deleting..."
     : isRotating
@@ -320,6 +349,7 @@ export function TriggerEditor({
       : !canAutosaveTrigger
         ? "border-border/70 bg-muted/20 text-muted-foreground"
         : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  const showSyncBadge = syncLabel !== "In sync";
 
   useEffect(() => {
     if (skipNextAutosaveRef.current) {
@@ -336,21 +366,23 @@ export function TriggerEditor({
   }, [canAutosaveTrigger, draft, isTriggerDirty, onSave, trigger]);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="overflow-hidden rounded-md border border-border/70 bg-background/45">
-      <div className="flex min-w-0 items-start gap-2 p-3">
+    <Collapsible open={open} onOpenChange={setOpen} className="overflow-hidden rounded-md border border-border/70 bg-background/35">
+      <div className="flex min-w-0 items-center gap-2 px-3 py-2.5">
         <div className="flex min-w-0 flex-1 items-start gap-2">
           <span className="mt-0.5 shrink-0 text-muted-foreground">
             {trigger.kind === "schedule" ? <Clock3 className="h-3.5 w-3.5" /> : trigger.kind === "webhook" ? <Webhook className="h-3.5 w-3.5" /> : <Zap className="h-3.5 w-3.5" />}
           </span>
           <div className="min-w-0 space-y-0.5">
-            <div className="truncate text-sm font-medium">{triggerLabel}</div>
-            <div className="truncate text-xs text-muted-foreground" title={triggerSummary}>{triggerSummary}</div>
+            <div className="truncate text-sm font-medium" title={primaryTriggerLabel}>{primaryTriggerLabel}</div>
+            <div className="truncate text-xs text-muted-foreground" title={secondaryTriggerLabel}>{secondaryTriggerLabel}</div>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <Badge variant="outline" className={syncClassName}>
-            {syncLabel}
-          </Badge>
+          {showSyncBadge ? (
+            <Badge variant="outline" className={syncClassName}>
+              {syncLabel}
+            </Badge>
+          ) : null}
           <span className="hidden max-w-[8rem] truncate text-xs text-muted-foreground 2xl:inline" title={triggerTimingLabel}>
             {triggerTimingLabel}
           </span>
@@ -466,5 +498,13 @@ export function TriggerEditor({
         ) : null}
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+export function AutomationActivityGlyph() {
+  return (
+    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+      <Activity className="h-3 w-3" />
+    </span>
   );
 }

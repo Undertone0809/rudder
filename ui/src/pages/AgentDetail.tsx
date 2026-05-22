@@ -1034,7 +1034,7 @@ export function AgentDetail() {
   const agentLookupRef = agent?.id ?? routeAgentRef;
   const resolvedAgentId = agent?.id ?? null;
 
-  const { data: runtimeState } = useQuery({
+  const { data: runtimeState, isLoading: isRuntimeStateLoading } = useQuery({
     queryKey: queryKeys.agents.runtimeState(resolvedAgentId ?? routeAgentRef),
     queryFn: () => agentsApi.runtimeState(resolvedAgentId!, resolvedCompanyId ?? undefined),
     enabled: Boolean(resolvedAgentId) && needsDashboardData,
@@ -1074,7 +1074,7 @@ export function AgentDetail() {
     [customFrom, customTo, datePreset],
   );
 
-  const { data: skillAnalytics } = useQuery({
+  const { data: skillAnalytics, isLoading: isSkillAnalyticsLoading } = useQuery({
     queryKey: [
       ...queryKeys.agents.skillsAnalytics(resolvedAgentId ?? routeAgentRef),
       datePreset,
@@ -1090,13 +1090,13 @@ export function AgentDetail() {
     enabled: Boolean(resolvedAgentId) && needsDashboardData && (datePreset !== "custom" || customReady),
   });
 
-  const { data: heartbeats } = useQuery({
+  const { data: heartbeats, isLoading: isHeartbeatsLoading } = useQuery({
     queryKey: queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined),
     queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined),
     enabled: !!resolvedCompanyId && !!agent?.id && shouldLoadHeartbeats,
   });
 
-  const { data: allIssues } = useQuery({
+  const { data: allIssues, isLoading: isIssuesLoading } = useQuery({
     queryKey: [...queryKeys.issues.list(resolvedCompanyId!), "participant-agent", resolvedAgentId ?? "__none__"],
     queryFn: () => issuesApi.list(resolvedCompanyId!, { participantAgentId: resolvedAgentId! }),
     enabled: !!resolvedCompanyId && !!resolvedAgentId && needsDashboardData,
@@ -1390,6 +1390,13 @@ export function AgentDetail() {
   const isPendingApproval = agent.status === "pending_approval";
   const showConfigActionBar = (activeView === "configuration" || activeView === "instructions") && (configDirty || configSaving);
   const agentAvatarImageSrc = getAgentAvatarImageSrc(agent.icon);
+  const isDashboardContentLoading = needsDashboardData && (
+    isHeartbeatsLoading
+    || isIssuesLoading
+    || isRuntimeStateLoading
+    || isSkillAnalyticsLoading
+  );
+  const isRunsContentLoading = needsRunData && isHeartbeatsLoading;
 
   return (
     <>
@@ -1648,6 +1655,9 @@ export function AgentDetail() {
 
       {/* View content */}
       {activeView === "dashboard" && (
+        isDashboardContentLoading ? (
+          <AgentDashboardContentSkeleton />
+        ) : (
         <AgentOverview
           agent={agent}
           runs={heartbeats ?? []}
@@ -1676,6 +1686,7 @@ export function AgentDetail() {
             </div>
           )}
         />
+        )
       )}
 
       {activeView === "instructions" && (
@@ -1710,6 +1721,9 @@ export function AgentDetail() {
       )}
 
       {activeView === "runs" && (
+        isRunsContentLoading ? (
+          <AgentRunsContentSkeleton />
+        ) : (
         <RunsTab
           runs={heartbeats ?? []}
           orgId={resolvedCompanyId!}
@@ -1718,6 +1732,7 @@ export function AgentDetail() {
           selectedRunId={urlRunId ?? null}
           agentRuntimeType={agent.agentRuntimeType}
         />
+        )
       )}
 
       {activeView === "budget" && resolvedCompanyId ? (
@@ -1736,6 +1751,78 @@ export function AgentDetail() {
 }
 
 /* ---- Helper components ---- */
+
+function AgentDashboardContentSkeleton() {
+  return (
+    <div
+      aria-busy="true"
+      aria-label="Loading agent dashboard"
+      className="space-y-8"
+      data-testid="agent-dashboard-skeleton"
+    >
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-4 w-20" />
+        </div>
+        <Skeleton className="h-24 w-full rounded-lg border border-border" />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-44 w-full rounded-lg border border-border" />
+        ))}
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-4 w-28" />
+          <Skeleton className="h-4 w-16" />
+        </div>
+        <div className="space-y-1 rounded-lg border border-border p-3">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-9 w-full rounded-sm" />
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <Skeleton className="h-4 w-16" />
+        <Skeleton className="h-36 w-full rounded-lg border border-border" />
+      </div>
+    </div>
+  );
+}
+
+function AgentRunsContentSkeleton() {
+  return (
+    <div
+      aria-busy="true"
+      aria-label="Loading agent runs"
+      className="flex min-w-0 items-start gap-4"
+      data-testid="agent-runs-skeleton"
+    >
+      <div className="min-w-0 flex-1 basis-0 space-y-4 rounded-lg border border-border p-4">
+        <div className="flex items-center justify-between gap-3">
+          <Skeleton className="h-5 w-44" />
+          <Skeleton className="h-7 w-20" />
+        </div>
+        <Skeleton className="h-28 w-full rounded-lg" />
+        <div className="grid grid-cols-2 gap-3">
+          <Skeleton className="h-20 w-full rounded-lg" />
+          <Skeleton className="h-20 w-full rounded-lg" />
+        </div>
+        <Skeleton className="h-64 w-full rounded-lg" />
+      </div>
+
+      <div className="hidden w-[14rem] shrink-0 space-y-1 rounded-lg border border-border p-2 xl:block">
+        {Array.from({ length: 5 }).map((_, index) => (
+          <Skeleton key={index} className="h-16 w-full rounded-md" />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function SummaryRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (

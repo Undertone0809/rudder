@@ -2,20 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Activity as ActivityIcon,
   Check,
   ChevronDown,
   ChevronRight,
-  CirclePause,
-  Clock3,
   Copy,
   MessageSquare,
   Play,
+  Plus,
   RefreshCw,
   Repeat,
   Trash2,
-  Webhook,
   X,
-  Zap,
 } from "lucide-react";
 import { automationsApi, type AutomationTriggerResponse, type RotateAutomationTriggerResponse } from "../api/automations";
 import { heartbeatsApi } from "../api/heartbeats";
@@ -35,7 +33,7 @@ import { formatChatAgentLabel } from "../lib/agent-labels";
 import { buildMarkdownMentionOptions } from "../lib/markdown-mention-options";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import { timeAgo } from "../lib/timeAgo";
-import { cn, formatDateTime } from "../lib/utils";
+import { cn } from "../lib/utils";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
@@ -43,7 +41,6 @@ import { InlineEntitySelector, type InlineEntityOption } from "../components/Inl
 import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
 import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useDialog } from "../context/DialogContext";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -58,8 +55,9 @@ import {
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import type { ActivityEvent, AutomationRunSummary, AutomationTrigger } from "@rudderhq/shared";
-import { concurrencyPolicies, catchUpPolicies, signingModes, concurrencyPolicyDescriptions, catchUpPolicyDescriptions, SecretMessage, addUniqueId, removeId, autoResizeTextarea, formatActivityDetailValue, getActivityDetailString, humanizeToken, triggerKindLabel, runSourceLabel, runStatusTitle, runStatusDetail, getLocalTimezone, formatAutomationTimestamp, summarizeTrigger, automationRiskLabel, automationNextActionLabel, SidebarSection, SidebarRow, SidebarSelectValue, OverviewMetaPill, TriggerEditor } from "./AutomationDetail.parts";
+import { concurrencyPolicies, catchUpPolicies, signingModes, concurrencyPolicyDescriptions, catchUpPolicyDescriptions, SecretMessage, addUniqueId, removeId, autoResizeTextarea, formatActivityDetailValue, getActivityDetailString, humanizeToken, triggerKindLabel, runSourceLabel, getLocalTimezone, formatAutomationTimestamp, summarizeTrigger, automationRiskLabel, SidebarSection, SidebarRow, SidebarPropertyRow, SidebarSelectValue, AutomationActivityGlyph, TriggerEditor } from "./AutomationDetail.parts";
 
 export function AutomationDetail() {
   const { automationId } = useParams<{ automationId: string }>();
@@ -75,7 +73,6 @@ export function AutomationDetail() {
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
-  const sidebarScrollRef = useScrollbarActivityRef("rudder:automation-detail-sidebar");
   const copiedSecretResetRef = useRef<number | null>(null);
   const [secretMessage, setSecretMessage] = useState<SecretMessage | null>(null);
   const [copiedSecretField, setCopiedSecretField] = useState<"url" | "secret" | null>(null);
@@ -202,8 +199,7 @@ export function AutomationDetail() {
   }, [editDraft, automationDefaults]);
   const canAutoSaveAutomation = Boolean(
     editDraft.title.trim() &&
-    editDraft.assigneeAgentId &&
-    (editDraft.outputMode !== "chat_output" || editDraft.chatConversationId),
+    editDraft.assigneeAgentId,
   );
   const editDraftKey = useMemo(
     () => JSON.stringify({
@@ -215,7 +211,7 @@ export function AutomationDetail() {
       concurrencyPolicy: editDraft.concurrencyPolicy,
       catchUpPolicy: editDraft.catchUpPolicy,
       outputMode: editDraft.outputMode,
-      chatConversationId: editDraft.outputMode === "chat_output" ? editDraft.chatConversationId : null,
+      chatConversationId: editDraft.outputMode === "chat_output" ? editDraft.chatConversationId || null : null,
     }),
     [editDraft],
   );
@@ -269,7 +265,7 @@ export function AutomationDetail() {
         ...draft,
         projectId: draft.projectId || null,
         description: draft.description.trim() || null,
-        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId : null,
+        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId || null : null,
       });
     },
     onSuccess: async () => {
@@ -381,21 +377,22 @@ export function AutomationDetail() {
     }
 
     const isEnabled = automation.status === "active";
-    const statusActionLabel = isEnabled ? "Pause automation" : "Enable automation";
-    const StatusIcon = updateAutomationStatus.isPending ? RefreshCw : isEnabled ? CirclePause : Repeat;
+    const statusActionLabel = isEnabled ? "Disable automation" : "Enable automation";
 
     setHeaderActions(
       <>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={statusActionLabel}
-          title={statusActionLabel}
-          disabled={updateAutomationStatus.isPending}
-          onClick={() => updateAutomationStatus.mutate(isEnabled ? "paused" : "active")}
-        >
-          <StatusIcon className={updateAutomationStatus.isPending ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-        </Button>
+        <div className="flex h-8 items-center gap-2 rounded-md px-1 text-xs text-muted-foreground">
+          <ToggleSwitch
+            checked={isEnabled}
+            size="md"
+            tone="success"
+            aria-label={statusActionLabel}
+            title={statusActionLabel}
+            disabled={updateAutomationStatus.isPending}
+            onClick={() => updateAutomationStatus.mutate(isEnabled ? "paused" : "active")}
+          />
+          <span className="min-w-5 tabular-nums">{isEnabled ? "On" : "Off"}</span>
+        </div>
         <Button
           variant="ghost"
           size="icon-sm"
@@ -423,12 +420,13 @@ export function AutomationDetail() {
         <Button
           variant="default"
           size="sm"
-          className="min-w-[92px] border-white/70 bg-white px-3 text-black shadow-none hover:bg-white/90"
+          className="border-white/70 bg-white px-2 text-black shadow-none hover:bg-white/90 min-[420px]:min-w-[92px] min-[420px]:px-3"
+          aria-label="Run now"
           disabled={runAutomation.isPending || !isEnabled}
           onClick={() => runAutomation.mutate()}
         >
           <Play className="h-3.5 w-3.5" />
-          {runAutomation.isPending ? "Starting..." : "Run now"}
+          <span className="hidden min-[420px]:inline">{runAutomation.isPending ? "Starting..." : "Run now"}</span>
         </Button>
       </>,
     );
@@ -684,54 +682,91 @@ export function AutomationDetail() {
       return summary && summary !== kind ? `${kind}: ${summary}` : kind;
     };
 
+    const formatRunActivityTitle = (source: string, status: string) => {
+      const sourceLabel = runSourceLabel(source);
+      switch (status) {
+        case "issue_created":
+          return `${sourceLabel} opened an execution issue`;
+        case "running":
+          return `${sourceLabel} is in progress`;
+        case "failed":
+          return `${sourceLabel} failed`;
+        case "coalesced":
+          return `${sourceLabel} joined an active execution`;
+        case "skipped":
+          return `${sourceLabel} skipped`;
+        case "completed":
+          return `${sourceLabel} completed`;
+        default:
+          return `${sourceLabel} ${humanizeToken(status)}`;
+      }
+    };
+
+    const formatTriggerContext = (triggerDescription: string | null) => {
+      if (!triggerDescription) return null;
+      return triggerDescription.startsWith("Schedule trigger: ")
+        ? `for ${triggerDescription.replace("Schedule trigger: ", "")}`
+        : triggerDescription;
+    };
+
     const pushEventItem = (event: ActivityEvent) => {
       const details = event.details ?? null;
       const eventDetails: ReactNode[] = [];
       let title = event.action.replaceAll(".", " ");
+      let useFallbackDetail = false;
 
       if (event.action === "automation.created") {
-        title = "Automation created";
         const createdTitle = getActivityDetailString(details, "title");
-        eventDetails.push(detailText(createdTitle ? `"${createdTitle}"` : automation?.title, "title"));
+        title = createdTitle
+          ? `Created "${createdTitle}"`
+          : "Created automation";
         eventDetails.push(detailText(`Assigned to ${describeAgent(getActivityDetailString(details, "assigneeAgentId")) ?? "agent"}`, "assignee"));
       } else if (event.action === "automation.updated") {
-        title = "Automation updated";
         const updatedTitle = getActivityDetailString(details, "title");
-        eventDetails.push(detailText(updatedTitle ? `Title: ${updatedTitle}` : "Settings changed", "updated"));
+        title = updatedTitle
+          ? `Updated automation settings for "${updatedTitle}"`
+          : "Updated automation settings";
       } else if (event.action === "automation.deleted") {
-        title = "Automation deleted";
-        eventDetails.push(detailText(getActivityDetailString(details, "title"), "title"));
+        const deletedTitle = getActivityDetailString(details, "title");
+        title = deletedTitle
+          ? `Deleted "${deletedTitle}"`
+          : "Deleted automation";
       } else if (event.action === "automation.trigger_created") {
-        title = "Trigger added";
         const trigger = triggerById.get(event.entityId);
+        const triggerKind = trigger?.kind ?? getActivityDetailString(details, "kind");
+        title = `Added ${triggerKindLabel(triggerKind).toLowerCase()}`;
         eventDetails.push(detailText(
-          describeTrigger(event.entityId, {
+          formatTriggerContext(describeTrigger(event.entityId, {
             kind: getActivityDetailString(details, "kind") ?? "trigger",
             cronExpression: trigger?.cronExpression ?? null,
             label: trigger?.label ?? null,
-          }),
+          })),
           "trigger",
         ));
       } else if (event.action === "automation.trigger_updated") {
-        title = "Trigger updated";
+        const trigger = triggerById.get(event.entityId);
+        const triggerKind = trigger?.kind ?? getActivityDetailString(details, "kind");
+        title = `Updated ${triggerKindLabel(triggerKind).toLowerCase()}`;
         eventDetails.push(detailText(
-          describeTrigger(event.entityId, {
+          formatTriggerContext(describeTrigger(event.entityId, {
             kind: getActivityDetailString(details, "kind") ?? "trigger",
             cronExpression: null,
             label: null,
-          }),
+          })),
           "trigger",
         ));
       } else if (event.action === "automation.trigger_deleted") {
-        title = "Trigger removed";
-        eventDetails.push(detailText(triggerKindLabel(getActivityDetailString(details, "kind")), "trigger"));
+        title = `Removed ${triggerKindLabel(getActivityDetailString(details, "kind")).toLowerCase()}`;
       } else if (event.action === "automation.trigger_secret_rotated") {
         title = "Webhook secret rotated";
       } else if (event.action === "automation.run_triggered") {
-        title = runStatusTitle(getActivityDetailString(details, "status") ?? "started");
-        eventDetails.push(detailText(runSourceLabel(getActivityDetailString(details, "source") ?? "run"), "source"));
-        eventDetails.push(detailText(runStatusDetail(getActivityDetailString(details, "status") ?? ""), "status"));
+        const source = getActivityDetailString(details, "source") ?? "run";
+        const status = getActivityDetailString(details, "status") ?? "started";
+        title = formatRunActivityTitle(source, status);
+        const triggerDescription = describeTrigger(getActivityDetailString(details, "triggerId"), null);
+        eventDetails.push(detailText(formatTriggerContext(triggerDescription), "trigger"));
       } else {
+        useFallbackDetail = true;
         Object.entries(details ?? {})
           .filter(([key]) => !["automationId", "triggerId", "assigneeAgentId", "projectId"].includes(key))
           .slice(0, 2)
@@ -749,7 +784,9 @@ export function AutomationDetail() {
       items.push({
         id: `event:${event.id}`,
         title,
-        details: resolvedDetails.length > 0 ? resolvedDetails : [<span key="fallback">Activity recorded</span>],
+        details: resolvedDetails.length > 0 || !useFallbackDetail
+          ? resolvedDetails
+          : [<span key="fallback">Activity recorded</span>],
         createdAt: event.createdAt,
         sortAt: new Date(event.createdAt).getTime(),
       });
@@ -757,24 +794,22 @@ export function AutomationDetail() {
 
     for (const run of (automationRuns ?? automation?.recentRuns ?? []) as AutomationRunSummary[]) {
       const details: ReactNode[] = [];
-      details.push(<span key="source">{runSourceLabel(run.source)}</span>);
-      const statusDetail = runStatusDetail(run.status);
-      if (statusDetail) details.push(<span key="status">{statusDetail}</span>);
       const triggerDescription = describeTrigger(
         run.triggerId,
         run.trigger ? { ...run.trigger, cronExpression: null } : null,
       );
-      if (triggerDescription) details.push(<span key="trigger">{triggerDescription}</span>);
+      const triggerContext = formatTriggerContext(triggerDescription);
+      if (triggerContext) details.push(<span key="trigger">{triggerContext}</span>);
       if (run.linkedIssue) {
         details.push(
-          <Link key="issue" to={`/issues/${run.linkedIssue.identifier ?? run.linkedIssue.id}`} className="font-medium text-foreground hover:underline">
+          <Link key="issue" to={`/issues/${run.linkedIssue.identifier ?? run.linkedIssue.id}`} className="whitespace-nowrap font-medium text-foreground hover:underline">
             {run.linkedIssue.identifier ?? run.linkedIssue.title}
           </Link>,
         );
       }
       if (run.linkedChatConversation) {
         details.push(
-          <Link key="chat" to={`/messenger/chat/${run.linkedChatConversation.id}`} className="font-medium text-foreground hover:underline">
+          <Link key="chat" to={`/messenger/chat/${run.linkedChatConversation.id}`} className="whitespace-nowrap font-medium text-foreground hover:underline">
             {run.linkedChatConversation.title}
           </Link>,
         );
@@ -783,7 +818,7 @@ export function AutomationDetail() {
 
       items.push({
         id: `run:${run.id}`,
-        title: runStatusTitle(run.status),
+        title: formatRunActivityTitle(run.source, run.status),
         details,
         createdAt: run.triggeredAt,
         sortAt: new Date(run.triggeredAt).getTime(),
@@ -818,12 +853,6 @@ export function AutomationDetail() {
 
   const automationEnabled = automation.status === "active";
   const automationLabel = automationEnabled ? "Active" : "Paused";
-  const automationLabelClassName = automationEnabled
-      ? "text-emerald-400"
-      : "text-muted-foreground";
-  const automationBadgeClassName = automationEnabled
-      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-      : "border-border/70 bg-muted/20 text-muted-foreground";
   const editSyncLabel = saveAutomation.isPending
     ? "Saving..."
     : !canAutoSaveAutomation
@@ -850,11 +879,6 @@ export function AutomationDetail() {
     hasAssignee: Boolean(editDraft.assigneeAgentId),
     hasLiveRun,
     latestRunStatus: latestRun?.status,
-  });
-  const nextActionLabel = automationNextActionLabel({
-    status: automation.status,
-    triggerCount: automation.triggers.length,
-    hasLiveRun,
   });
 
   return (
@@ -896,7 +920,7 @@ export function AutomationDetail() {
         </div>
       )}
 
-      <div className="grid gap-6 px-4 pt-3 sm:px-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:px-6 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 px-4 pt-3 sm:px-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:px-6 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
         <main className="min-w-0 space-y-6">
           <section className="max-w-none space-y-3">
             <textarea
@@ -934,47 +958,38 @@ export function AutomationDetail() {
               data-testid="automation-overview-strip"
               className="border-y border-border/60 bg-transparent py-2.5"
             >
-              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                <Badge variant="outline" className={automationBadgeClassName}>
-                  <span className={automationLabelClassName}>{automationLabel}</span>
-                </Badge>
+              <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className={cn(
+                    "h-2 w-2 rounded-full",
+                    automationEnabled ? "bg-emerald-500" : "bg-muted-foreground/45",
+                  )} />
+                  <span className="text-foreground">{automationLabel}</span>
+                </span>
                 {hasLiveRun ? (
-                  <Badge variant="outline" className="border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300">
+                  <span className="inline-flex items-center gap-1.5 text-blue-700 dark:text-blue-300">
+                    <span className="h-2 w-2 rounded-full bg-blue-500" />
                     In progress
-                  </Badge>
+                  </span>
                 ) : null}
-                <OverviewMetaPill
-                  label="Repeats"
-                  value={summarizeTrigger(nextTrigger)}
-                  icon={<Clock3 className="h-3.5 w-3.5" />}
-                />
-                <OverviewMetaPill
-                  label="Next"
-                  value={formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}
-                  icon={<Repeat className="h-3.5 w-3.5" />}
-                />
-                <div className="hidden sm:contents">
-                  <OverviewMetaPill
-                    label="Action"
-                    value={nextActionLabel}
-                  />
-                  <OverviewMetaPill
-                    label="Risk"
-                    value={riskLabel}
-                  />
-                </div>
+                <span className="min-w-0">
+                  <span className="text-muted-foreground">Repeats</span>{" "}
+                  <span className="text-foreground">{summarizeTrigger(nextTrigger)}</span>
+                </span>
+                <span className="min-w-0">
+                  <span className="text-muted-foreground">Next</span>{" "}
+                  <span className="text-foreground">{formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}</span>
+                </span>
                 {automation.activeIssue && activeIssueLabel ? (
-                  <OverviewMetaPill
-                    label="Issue"
-                    value={(
+                  <span className="min-w-0">
+                    <span className="text-muted-foreground">Issue</span>{" "}
                       <Link
                         to={`/issues/${activeIssueLabel}`}
                         className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                       >
                         {activeIssueLabel}
                       </Link>
-                    )}
-                  />
+                  </span>
                 ) : null}
               </div>
             </div>
@@ -987,17 +1002,60 @@ export function AutomationDetail() {
               placeholder="Add instructions..."
               bordered
               className="bg-background/40"
-              contentClassName="min-h-[240px] text-[15px] leading-7 text-foreground/90 md:min-h-[420px]"
+              contentClassName="min-h-[180px] text-[15px] leading-7 text-foreground/90 md:min-h-[240px]"
             />
+          </section>
+
+          <section aria-label="Activity" className="space-y-3 border-t border-border/70 pt-4">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <ActivityIcon className="h-3.5 w-3.5 text-muted-foreground" />
+              <span>Activity</span>
+            </div>
+            {hasLiveRun && activeIssueId && automation ? (
+              <LiveRunWidget issueId={activeIssueId} orgId={automation.orgId} />
+            ) : null}
+            {automationActivityItems.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No activity yet.</p>
+            ) : (
+              <div data-testid="automation-activity-list" className="space-y-1">
+                {automationActivityItems.map((item) => (
+                  <div
+                    key={item.id}
+                    data-testid="automation-activity-row"
+                    className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-0.5 rounded-sm px-1 py-0.5 text-xs text-muted-foreground sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center"
+                  >
+                    <AutomationActivityGlyph />
+                    <span data-testid="automation-activity-summary" className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                      <span className="text-foreground/90">{item.title}</span>
+                      {item.details.length > 0 && (
+                        <span
+                          data-testid="automation-activity-details"
+                          className="inline-flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-muted-foreground"
+                        >
+                          {item.details.map((detail, i) => (
+                            <span key={i}>
+                              {i > 0 && <span className="mr-1.5 text-border">·</span>}
+                              {detail}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </span>
+                    <span data-testid="automation-activity-time" className="col-start-2 shrink-0 text-muted-foreground/70 sm:col-start-auto">
+                      {timeAgo(item.createdAt)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         </main>
 
-        <aside ref={sidebarScrollRef} className="scrollbar-auto-hide border-t border-border/70 pt-4 lg:sticky lg:top-20 lg:max-h-[calc(100vh-5.5rem)] lg:self-start lg:overflow-y-auto lg:border-t-0 lg:pt-0">
-          <div data-testid="automation-configuration-card" className="space-y-6 rounded-md border border-border/70 bg-card/85 p-4 shadow-sm">
+        <aside className="min-w-0 border-t border-border/70 pt-4 lg:sticky lg:top-20 lg:self-start lg:border-t-0 lg:pt-0">
+          <div data-testid="automation-configuration-card" className="min-w-0 space-y-6 rounded-md border border-border/70 bg-card/85 p-4 shadow-sm">
             <SidebarSection title="Configuration">
-              <div className="space-y-2.5">
-                <Label className="text-xs">Assignee</Label>
-                <div data-testid="automation-detail-agent-control" className="rounded-md border border-border/80 bg-background/50">
+              <SidebarPropertyRow label="Assignee">
+                <div data-testid="automation-detail-agent-control" className="min-w-0 flex-1">
                   <InlineEntitySelector
                     ref={assigneeSelectorRef}
                     value={editDraft.assigneeAgentId}
@@ -1006,7 +1064,7 @@ export function AutomationDetail() {
                     noneLabel="No assignee"
                     searchPlaceholder="Search assignees..."
                     emptyMessage="No assignees found."
-                    className="min-h-11 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
+                    className="-mx-1 min-h-7 w-full justify-between border-0 bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:bg-accent/50"
                     onChange={(assigneeAgentId) => {
                       if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
                       setEditDraft((current) => ({ ...current, assigneeAgentId }));
@@ -1048,10 +1106,9 @@ export function AutomationDetail() {
                     }}
                   />
                 </div>
-              </div>
+              </SidebarPropertyRow>
 
-              <div className="space-y-2.5">
-                <Label className="text-xs">Run output</Label>
+              <SidebarPropertyRow label="Output">
                 <Select
                   value={editDraft.outputMode}
                   onValueChange={(outputMode) => setEditDraft((current) => ({
@@ -1060,7 +1117,7 @@ export function AutomationDetail() {
                     chatConversationId: outputMode === "chat_output" ? current.chatConversationId : "",
                   }))}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger size="sm" className="-mx-1 h-7 w-fit border-0 bg-transparent px-1 py-0.5 text-sm shadow-none hover:bg-accent/50">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1068,30 +1125,17 @@ export function AutomationDetail() {
                     <SelectItem value="chat_output">Send to chat</SelectItem>
                   </SelectContent>
                 </Select>
-                <div className="flex min-h-12 items-center gap-3 rounded-md border border-border/80 bg-background/50 px-3 py-2 text-sm">
-                  {editDraft.outputMode === "chat_output" ? (
-                    <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <Check className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  )}
-                  <div className="min-w-0">
-                    <div className="font-medium">{editDraft.outputMode === "chat_output" ? "Send to chat" : "Track as issue"}</div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {editDraft.outputMode === "chat_output"
-                        ? (currentChat ? currentChat.title : "Select a chat destination")
-                        : "Each run opens board-tracked work"}
-                    </div>
-                  </div>
-                </div>
-                {editDraft.outputMode === "chat_output" ? (
+              </SidebarPropertyRow>
+              {editDraft.outputMode === "chat_output" ? (
+                <SidebarPropertyRow label="Chat">
                   <InlineEntitySelector
                     value={editDraft.chatConversationId}
                     options={chatOptions}
-                    placeholder="Select chat"
-                    noneLabel="Select chat"
+                    placeholder="New chat"
+                    noneLabel="New chat"
                     searchPlaceholder="Search chats..."
                     emptyMessage="No active chats found."
-                    className="min-h-10 w-full justify-between bg-transparent px-3 py-2 text-sm font-medium"
+                    className="-mx-1 min-h-7 w-full justify-between border-0 bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:bg-accent/50"
                     onChange={(chatConversationId) => setEditDraft((current) => ({ ...current, chatConversationId }))}
                     renderTriggerValue={(option) =>
                       option && currentChat ? (
@@ -1101,30 +1145,42 @@ export function AutomationDetail() {
                         </SidebarSelectValue>
                       ) : (
                         <SidebarSelectValue>
-                          <span className="text-muted-foreground">Select chat</span>
+                          <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span>New chat</span>
                         </SidebarSelectValue>
                       )
                     }
+                    renderOption={(option) =>
+                      option.id ? (
+                        <>
+                          <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate">{option.label}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate">{option.label}</span>
+                        </>
+                      )
+                    }
                   />
-                ) : null}
-              </div>
+                </SidebarPropertyRow>
+              ) : null}
 
-              <div className="space-y-2.5">
-                <Label className="text-xs">Schedule</Label>
-                <div className="rounded-md border border-border/80 bg-background/50 px-3 py-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <Clock3 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 truncate">{summarizeTrigger(nextTrigger)}</span>
-                  </div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    Next: {formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}
-                  </div>
-                </div>
-              </div>
+              <SidebarPropertyRow label="Repeats">
+                <span className="min-w-0 truncate text-sm text-foreground" title={summarizeTrigger(nextTrigger)}>
+                  {summarizeTrigger(nextTrigger)}
+                </span>
+              </SidebarPropertyRow>
 
-              <div className="space-y-2.5">
-                <Label className="text-xs">Project</Label>
-                <div data-testid="automation-detail-project-control" className="rounded-md border border-border/80 bg-background/50">
+              <SidebarPropertyRow label="Next run">
+                <span className="min-w-0 truncate text-sm text-muted-foreground" title={formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}>
+                  {formatAutomationTimestamp(nextTrigger?.nextRunAt, "-")}
+                </span>
+              </SidebarPropertyRow>
+
+              <SidebarPropertyRow label="Project">
+                <div data-testid="automation-detail-project-control" className="min-w-0 flex-1">
                   <InlineEntitySelector
                     ref={projectSelectorRef}
                     value={editDraft.projectId}
@@ -1133,7 +1189,7 @@ export function AutomationDetail() {
                     noneLabel="No project"
                     searchPlaceholder="Search projects..."
                     emptyMessage="No projects found."
-                    className="min-h-10 w-full justify-between border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none hover:bg-accent/50"
+                    className="-mx-1 min-h-7 w-full justify-between border-0 bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:bg-accent/50"
                     onChange={(projectId) => setEditDraft((current) => ({ ...current, projectId }))}
                     onConfirm={() => descriptionEditorRef.current?.focus()}
                     renderTriggerValue={(option) =>
@@ -1166,8 +1222,58 @@ export function AutomationDetail() {
                     }}
                   />
                 </div>
-              </div>
+              </SidebarPropertyRow>
             </SidebarSection>
+
+            <Collapsible
+              open={advancedOpen}
+              onOpenChange={setAdvancedOpen}
+              data-testid="automation-delivery-rules-section"
+              className="overflow-hidden rounded-md border border-border/70 bg-background/35"
+            >
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <span>Delivery rules</span>
+                {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </CollapsibleTrigger>
+              <CollapsibleContent className="border-t border-border/60 p-3">
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Concurrency</Label>
+                    <Select
+                      value={editDraft.concurrencyPolicy}
+                      onValueChange={(concurrencyPolicy) => setEditDraft((current) => ({ ...current, concurrencyPolicy }))}
+                    >
+                      <SelectTrigger size="sm" className="w-full bg-background/60">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {concurrencyPolicies.map((value) => (
+                          <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs leading-4 text-muted-foreground">{concurrencyPolicyDescriptions[editDraft.concurrencyPolicy]}</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Catch-up</Label>
+                    <Select
+                      value={editDraft.catchUpPolicy}
+                      onValueChange={(catchUpPolicy) => setEditDraft((current) => ({ ...current, catchUpPolicy }))}
+                    >
+                      <SelectTrigger size="sm" className="w-full bg-background/60">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {catchUpPolicies.map((value) => (
+                          <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs leading-4 text-muted-foreground">{catchUpPolicyDescriptions[editDraft.catchUpPolicy]}</p>
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
 
             <SidebarSection title="Triggers">
               <Popover open={newTriggerOpen} onOpenChange={setNewTriggerOpen}>
@@ -1259,97 +1365,10 @@ export function AutomationDetail() {
               ) : null}
             </SidebarSection>
 
-            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="border-t border-border/70 pt-5">
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                Delivery rules
-                {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              </CollapsibleTrigger>
-              <CollapsibleContent className="space-y-4 pt-4">
-                <div className="space-y-2">
-                  <Label className="text-xs">Concurrency</Label>
-                  <Select
-                    value={editDraft.concurrencyPolicy}
-                    onValueChange={(concurrencyPolicy) => setEditDraft((current) => ({ ...current, concurrencyPolicy }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {concurrencyPolicies.map((value) => (
-                        <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs leading-5 text-muted-foreground">{concurrencyPolicyDescriptions[editDraft.concurrencyPolicy]}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-xs">Catch-up</Label>
-                  <Select
-                    value={editDraft.catchUpPolicy}
-                    onValueChange={(catchUpPolicy) => setEditDraft((current) => ({ ...current, catchUpPolicy }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {catchUpPolicies.map((value) => (
-                        <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs leading-5 text-muted-foreground">{catchUpPolicyDescriptions[editDraft.catchUpPolicy]}</p>
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-
           </div>
         </aside>
       </div>
 
-      <div className="grid gap-6 px-4 pt-5 sm:px-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:px-6 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
-        <main className="min-w-0 space-y-6">
-          <section className="max-w-none space-y-3 border-t border-border/70 pt-4">
-            <h2 className="text-sm font-medium">Activity</h2>
-            {hasLiveRun && activeIssueId && automation ? (
-              <LiveRunWidget issueId={activeIssueId} orgId={automation.orgId} />
-            ) : null}
-            {automationActivityItems.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No activity yet.</p>
-            ) : (
-              <div data-testid="automation-activity-list" className="divide-y divide-border/70 border-y border-border/70">
-                {automationActivityItems.map((item) => (
-                  <div
-                    key={item.id}
-                    data-testid="automation-activity-row"
-                    className="flex flex-col gap-1.5 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-4"
-                  >
-                    <div data-testid="automation-activity-summary" className="min-w-0 space-y-1 sm:flex sm:items-center sm:gap-2 sm:space-y-0">
-                      <span className="shrink-0 font-medium text-foreground/90">{item.title}</span>
-                      {item.details.length > 0 && (
-                        <span
-                          data-testid="automation-activity-details"
-                          className="block break-words leading-5 text-muted-foreground sm:truncate"
-                        >
-                          {item.details.map((detail, i) => (
-                            <span key={i}>
-                              {i > 0 && <span className="mx-1 text-border">·</span>}
-                              {detail}
-                            </span>
-                          ))}
-                        </span>
-                      )}
-                    </div>
-                    <span data-testid="automation-activity-time" className="shrink-0 text-muted-foreground/60">
-                      {timeAgo(item.createdAt)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        </main>
-
-      </div>
     </div>
   );
 }

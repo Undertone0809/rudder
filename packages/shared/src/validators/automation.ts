@@ -24,28 +24,11 @@ const automationBodySchema = z.object({
   allowAssigneeChatMismatch: z.boolean().optional().default(false),
 });
 
-const requireChatConversationForChatOutput = (
-  value: { outputMode?: string; chatConversationId?: string | null },
-  ctx: z.RefinementCtx,
-) => {
-  if (value.outputMode === "chat_output" && !value.chatConversationId) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "chatConversationId is required when outputMode is chat_output",
-      path: ["chatConversationId"],
-    });
-  }
-};
-
-export const createAutomationSchema = automationBodySchema.superRefine(
-  requireChatConversationForChatOutput,
-);
+export const createAutomationSchema = automationBodySchema;
 
 export type CreateAutomation = z.infer<typeof createAutomationSchema>;
 
-export const updateAutomationSchema = automationBodySchema.partial().superRefine(
-  requireChatConversationForChatOutput,
-);
+export const updateAutomationSchema = automationBodySchema.partial();
 export type UpdateAutomation = z.infer<typeof updateAutomationSchema>;
 
 const baseTriggerSchema = z.object({

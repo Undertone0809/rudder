@@ -960,6 +960,8 @@ export function IssueDetail() {
   const [libraryFileMentionQuery, setLibraryFileMentionQuery] = useState<string | null>(null);
   const [subIssueComposerOpen, setSubIssueComposerOpen] = useState(false);
   const [subIssueTitle, setSubIssueTitle] = useState("");
+  const [existingSubIssuePickerOpen, setExistingSubIssuePickerOpen] = useState(false);
+  const [existingSubIssueSearch, setExistingSubIssueSearch] = useState("");
   const [subIssueStatusPickerIssueId, setSubIssueStatusPickerIssueId] = useState<string | null>(null);
   const [updatingSubIssueId, setUpdatingSubIssueId] = useState<string | null>(null);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -1284,6 +1286,20 @@ export function IssueDetail() {
     () => [...childIssues].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     [childIssues],
   );
+  const issueById = useMemo(() => new Map((allIssues ?? []).map((candidate) => [candidate.id, candidate])), [allIssues]);
+  const existingSubIssueCandidates = useMemo(() => {
+    if (!issue) return [];
+    const q = existingSubIssueSearch.trim().toLowerCase();
+    return (allIssues ?? [])
+      .filter((candidate) => candidate.id !== issue.id)
+      .filter((candidate) => candidate.parentId !== issue.id)
+      .filter((candidate) => !(issue.ancestors ?? []).some((ancestor) => ancestor.id === candidate.id))
+      .filter((candidate) => {
+        if (!q) return true;
+        return `${candidate.identifier ?? ""} ${candidate.title}`.toLowerCase().includes(q);
+      })
+      .slice(0, 12);
+  }, [allIssues, existingSubIssueSearch, issue]);
 
   const commentsWithRunMeta = useMemo(() => {
     const runMetaByCommentId = new Map<string, { runId: string; runAgentId: string | null }>();
@@ -1561,6 +1577,31 @@ export function IssueDetail() {
     },
   });
 
+  const linkExistingSubIssue = useMutation({
+    mutationFn: async (candidate: Issue) => {
+      if (!issue) throw new Error("Issue is not ready");
+      return issuesApi.update(candidate.id, { parentId: issue.id });
+    },
+    onSuccess: (updated, candidate) => {
+      setExistingSubIssuePickerOpen(false);
+      setExistingSubIssueSearch("");
+      invalidateIssue();
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(updated.id) });
+      if (updated.identifier) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(updated.identifier) });
+      }
+      if (issue?.orgId && candidate.parentId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.children(issue.orgId, candidate.parentId) });
+      }
+    },
+    onError: (err) => {
+      pushToast({
+        title: err instanceof Error ? err.message : "Failed to add existing issue",
+        tone: "error",
+      });
+    },
+  });
+
   useEffect(() => {
     const titleLabel = issue?.title ?? issueId ?? "Issue";
     setBreadcrumbs([
@@ -1713,13 +1754,13 @@ export function IssueDetail() {
     <div
       className={cn(
         "flex items-center gap-1 shrink-0",
-        grouped && "rounded-lg border border-border bg-background/80 p-1",
+        grouped && "rounded-full border border-border bg-background/80 p-1",
       )}
     >
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 px-2 text-xs"
+        className={cn("h-7 px-2 text-xs", grouped && "rounded-full")}
         onClick={copyIssueIdToClipboard}
         title={`Copy ${issueDisplayId}`}
       >
@@ -1729,7 +1770,7 @@ export function IssueDetail() {
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 px-2 text-xs"
+        className={cn("h-7 px-2 text-xs", grouped && "rounded-full")}
         onClick={openInChat}
       >
         <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
@@ -1737,7 +1778,12 @@ export function IssueDetail() {
       </Button>
       <Popover open={moreOpen} onOpenChange={onMoreOpenChange}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-7 w-7 px-0 shrink-0" aria-label="More issue actions">
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn("h-7 w-7 px-0 shrink-0", grouped && "rounded-full")}
+            aria-label="More issue actions"
+          >
             <MoreHorizontal className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
@@ -1944,19 +1990,39 @@ export function IssueDetail() {
               {subIssueCountLabel}
             </span>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 px-2.5 text-xs"
-            onClick={() => {
-              setSubIssueComposerOpen(true);
-              setSubIssueTitle("");
-            }}
-            disabled={createSubIssue.isPending}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add sub-issue
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 px-2.5 text-xs"
+                disabled={createSubIssue.isPending || linkExistingSubIssue.isPending}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add sub-issue
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onSelect={() => {
+                  setExistingSubIssuePickerOpen(false);
+                  setSubIssueComposerOpen(true);
+                  setSubIssueTitle("");
+                }}
+              >
+                Create new sub-issue
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => {
+                  setSubIssueComposerOpen(false);
+                  setSubIssueTitle("");
+                  setExistingSubIssuePickerOpen(true);
+                }}
+              >
+                Add existing issue
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {subIssueComposerOpen ? (
@@ -2010,6 +2076,67 @@ export function IssueDetail() {
             {createSubIssue.error instanceof Error ? (
               <p className="mt-2 text-xs text-destructive">{createSubIssue.error.message}</p>
             ) : null}
+          </div>
+        ) : null}
+
+        {existingSubIssuePickerOpen ? (
+          <div className="rounded-lg border border-border bg-background/80 p-2.5">
+            <div className="flex items-center gap-2 border-b border-border/70 pb-2">
+              <Input
+                value={existingSubIssueSearch}
+                onChange={(evt) => setExistingSubIssueSearch(evt.target.value)}
+                placeholder="Search existing issues"
+                autoFocus
+                disabled={linkExistingSubIssue.isPending}
+                className="h-8 text-sm"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2.5 text-xs"
+                onClick={() => {
+                  setExistingSubIssuePickerOpen(false);
+                  setExistingSubIssueSearch("");
+                }}
+                disabled={linkExistingSubIssue.isPending}
+              >
+                Cancel
+              </Button>
+            </div>
+            <div className="max-h-64 overflow-y-auto pt-2">
+              {existingSubIssueCandidates.length === 0 ? (
+                <p className="px-1 py-2 text-xs text-muted-foreground">No matching issues.</p>
+              ) : (
+                existingSubIssueCandidates.map((candidate) => {
+                  const candidateRef = candidate.identifier ?? candidate.id.slice(0, 8);
+                  const moveFrom = candidate.parentId ? issueById.get(candidate.parentId) ?? null : null;
+                  const candidateProject = candidate.projectId
+                    ? projectById.get(candidate.projectId) ?? candidate.project ?? null
+                    : candidate.project ?? null;
+                  const secondary = moveFrom
+                    ? `Move from ${moveFrom.identifier ?? moveFrom.id.slice(0, 8)}`
+                    : candidateProject && candidate.projectId !== issue.projectId
+                      ? candidateProject.name
+                      : "No parent";
+
+                  return (
+                    <button
+                      type="button"
+                      key={candidate.id}
+                      className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent/40 disabled:cursor-wait disabled:opacity-60"
+                      onClick={() => linkExistingSubIssue.mutate(candidate)}
+                      disabled={linkExistingSubIssue.isPending}
+                    >
+                      <StatusIcon status={candidate.status} />
+                      <span className="min-w-0 truncate">{candidate.title}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{candidateRef}</span>
+                      <span className="col-start-2 min-w-0 truncate text-xs text-muted-foreground">{secondary}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
         ) : null}
 

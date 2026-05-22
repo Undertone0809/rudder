@@ -67,6 +67,7 @@ import {
   resolveDefaultAgentWorkspaceDir,
 } from "../../home-paths.js";
 import { summarizeHeartbeatRunResultJson } from "../heartbeat-run-summary.js";
+import { publishAutomationRunOutputToChat } from "../automation-chat-output.js";
 import { summarizeRuntimeSkillsForTrace } from "../runtime-trace-metadata.js";
 import {
   buildWorkspaceReadyComment,
@@ -1193,6 +1194,21 @@ export function createHeartbeatExecuteHandlers(context: any) {
           "Failed to export heartbeat transcript tree to Langfuse",
         );
       }
+      await publishAutomationRunOutputToChat(db, {
+        issueId,
+        output: finalObservationOutput,
+        status: finalObservationStatus,
+        transcript: executionTranscript,
+      }).catch((error) => {
+        logger.warn(
+          {
+            runId: run.id,
+            issueId,
+            err: error instanceof Error ? error.message : String(error),
+          },
+          "Failed to publish automation run output to chat",
+        );
+      });
       updateExecutionObservation(observation, heartbeatObservationContext, {
         input: rootObservationInput,
         output: finalObservationOutput,

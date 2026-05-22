@@ -140,6 +140,10 @@ Defaults:
 Restore creates a pre-restore workspace backup before replacing live workspace
 files. Workspace backups do not include the database, secrets, logs, or storage
 assets.
+Runtime and package-manager cache trees under managed agent homes are skipped
+from workspace snapshots. Large individual files and snapshots past the local
+size guardrail are skipped with backup warnings instead of failing the entire
+version.
 - `RUDDER_DB_BACKUP_INTERVAL_MINUTES=<minutes>`
 - `RUDDER_DB_BACKUP_RETENTION_DAYS=<days>`
 - `RUDDER_DB_BACKUP_DIR=/absolute/or/~/path`

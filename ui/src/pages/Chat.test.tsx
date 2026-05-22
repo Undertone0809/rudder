@@ -176,6 +176,22 @@ describe("ChatSystemMessageBody", () => {
     expect(html).toContain("<strong>approved</strong>");
     expect(html).not.toContain("chat-system-issue-link");
   });
+
+  it("renders automation source events as links back to automation detail", () => {
+    const html = renderSystemMessageBody(message({
+      body: "From automation Say hello.",
+      structuredPayload: {
+        eventType: "automation_source",
+        automationId: "auto-1",
+        automationTitle: "Say hello",
+      },
+    }));
+
+    expect(html).toContain("From automation");
+    expect(html).toContain('href="/automations/auto-1"');
+    expect(html).toContain('aria-label="Open automation Say hello"');
+    expect(html).toContain(">Say hello</a>.");
+  });
 });
 
 describe("draft issue chat context", () => {

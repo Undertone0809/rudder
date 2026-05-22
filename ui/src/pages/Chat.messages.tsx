@@ -451,6 +451,20 @@ export function issueCreatedSystemMessageParts(message: ChatMessage) {
   };
 }
 
+function automationSourceSystemMessageParts(message: ChatMessage) {
+  const payload = message.structuredPayload;
+  if (!payload || payload.eventType !== "automation_source") return null;
+
+  const automationId = readStructuredPayloadString(payload, "automationId");
+  const automationTitle = readStructuredPayloadString(payload, "automationTitle") ?? "automation";
+  if (!automationId) return null;
+
+  return {
+    automationId,
+    automationTitle,
+  };
+}
+
 export function ChatSystemMessageBody({
   message,
   skillReferences,
@@ -461,6 +475,23 @@ export function ChatSystemMessageBody({
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
 }) {
   const issueCreatedParts = issueCreatedSystemMessageParts(message);
+  const automationSourceParts = automationSourceSystemMessageParts(message);
+
+  if (automationSourceParts) {
+    return (
+      <span className="min-w-0 flex-1 leading-5">
+        From automation{" "}
+        <Link
+          to={`/automations/${automationSourceParts.automationId}`}
+          className="chat-system-issue-link"
+          aria-label={`Open automation ${automationSourceParts.automationTitle}`}
+        >
+          {automationSourceParts.automationTitle}
+        </Link>
+        .
+      </span>
+    );
+  }
 
   if (issueCreatedParts) {
     return (

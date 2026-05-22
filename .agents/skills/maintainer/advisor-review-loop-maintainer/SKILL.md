@@ -64,7 +64,9 @@ Resolve these before starting:
 - Target artifact: proposal, plan doc, skill, code diff, PR, commit, release,
   UI state, transcript, or workflow.
 - Requested mode: proposal-only, implementation, review-only, or
-  proposal-then-implementation.
+  proposal-then-implementation. Treat "给你 new worktree", "自己做实验",
+  "把这个问题解决", "try harder", or equivalent escalation after prior advice as
+  experiment/implementation mode unless the user explicitly says proposal-only.
 - Evidence source: repo files, docs, screenshots, logs, traces, commits,
   branches, PRs, eval outputs, or user-provided artifacts.
 - Review bar: what must be true before the result can be accepted.
@@ -76,6 +78,18 @@ Respect `review-only` strictly. In review-only mode, produce the advisor frame,
 review findings, verdicts, and smallest changes needed, but do not edit files,
 rewrite the artifact, or continue into implementation unless the user
 explicitly asks for rework after seeing the findings.
+
+When the user escalates from architecture discussion to a new worktree or asks
+the agent to experiment and solve the issue, stop repeating the advisory answer.
+Reclassify the loop as `proposal-then-implementation` or direct
+`implementation`:
+
+- rebuild branch and dirty state in the provided worktree
+- identify the falsifiable hypothesis from the advisor pass
+- run the smallest experiment that can prove or disprove it
+- implement the fix only after the experiment points to a concrete change
+- review the actual diff and validation evidence, not the earlier proposal
+- commit and push only scoped files for the solved task
 
 When the conversation resumes after a `turn_aborted`, `/goal`, or a long-running
 implementation checkpoint, rebuild the current state before continuing:
@@ -247,6 +261,10 @@ Treat the result as not ready when any of these are true:
   not begin implementation without confirmation.
 - User asked for review only: stop at verdicts and smallest changes needed. Do
   not rework the artifact until the user asks you to switch into rework.
+- User provides a fresh worktree or says to experiment and solve it after an
+  advisor answer: switch to evidence-producing implementation. Do not keep
+  debating the same architecture point unless the new experiment finds a
+  product decision blocker.
 - User asked for implementation: write the plan only when repo rules require
   it, implement after the advisor pass, then review the actual diff and
   validation evidence.

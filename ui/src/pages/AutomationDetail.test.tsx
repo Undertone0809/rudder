@@ -420,24 +420,20 @@ describe("AutomationDetail", () => {
 
     expect(container.textContent).toContain("Configuration");
     expect(container.textContent).toContain("Assignee");
-    expect(container.textContent).toContain("Run output");
+    expect(container.textContent).toContain("Output");
     expect(container.textContent).toContain("Track as issue");
-    expect(container.textContent).toContain("Schedule");
+    expect(container.textContent).toContain("Repeats");
+    expect(container.textContent).toContain("Next run");
     expect(container.textContent).toContain("Project");
     expect(container.textContent).toContain("Run status");
-    expect(container.textContent).toContain("Run in progress");
-    expect(container.textContent).toContain("Manual run");
+    expect(container.textContent).toContain("Manual run is in progress");
     expect(container.textContent).toContain("AUT-7");
-    expect(container.textContent).toContain("Automation updated");
-    expect(container.textContent).toContain("Title: Daily automation review");
-    expect(container.textContent).toContain("Trigger added");
-    expect(container.textContent).toContain("Schedule trigger: Schedule 0 10 * * *");
+    expect(container.textContent).toContain('Updated automation settings for "Daily automation review"');
+    expect(container.textContent).toContain("Added schedule trigger");
+    expect(container.textContent).toContain("for Schedule 0 10 * * *");
     expect(container.textContent).toContain("Live run widget");
     expect(container.textContent).toContain("Last ran");
     expect(container.textContent).toContain("In sync");
-    expect(container.textContent).toContain("Action");
-    expect(container.textContent).toContain("Risk");
-    expect(container.textContent).toContain("Monitor run");
     expect(container.textContent).toContain("Active run");
     expect(container.textContent).toContain("Repeats");
     expect(container.textContent).toContain("Issue");
@@ -446,11 +442,19 @@ describe("AutomationDetail", () => {
     expect(container.textContent).not.toContain("Automatic triggers are live.");
     expect(container.textContent).not.toContain("Previous runs");
     expect(container.textContent).not.toContain("automation updated");
+    expect(container.textContent).not.toContain("Automation updated");
+    expect(container.textContent).not.toContain("Title: Daily automation review");
+    expect(container.textContent).not.toContain("Execution issue is active");
+    expect(container.textContent).not.toContain("Activity recorded");
     expect(container.textContent).not.toContain("kind: schedule");
     expect(container.textContent).not.toContain("Pause automation");
     expect(container.textContent).not.toContain("Run now");
     expect(container.querySelector('[role="switch"]')).toBeNull();
-    expect(container.querySelector("aside")?.className).toContain("lg:sticky");
+    const sidebar = container.querySelector("aside");
+    expect(sidebar?.className).toContain("lg:sticky");
+    expect(sidebar?.className).not.toContain("overflow-y-auto");
+    expect(sidebar?.className).not.toContain("max-h");
+    expect(sidebar?.className).not.toContain("scrollbar-auto-hide");
     const configurationCard = container.querySelector('[data-testid="automation-configuration-card"]');
     expect(configurationCard).toBeTruthy();
     expect(configurationCard?.className).toContain("bg-card/85");
@@ -460,12 +464,53 @@ describe("AutomationDetail", () => {
     expect(document.querySelector('[data-testid="automation-add-trigger-card"]')).toBeNull();
     expect(configurationCard?.querySelector('[data-testid="automation-triggers-list"]')).toBeTruthy();
     expect(configurationCard?.querySelector('[data-testid="automation-trigger-editor-body"]')?.hasAttribute("hidden")).toBe(true);
+    const deliveryRules = configurationCard?.querySelector('[data-testid="automation-delivery-rules-section"]');
+    expect(deliveryRules?.className).toContain("rounded-md");
+    expect(deliveryRules?.className).toContain("bg-background/35");
+    expect(deliveryRules?.className).not.toContain("border-t");
     const overviewStrip = container.querySelector('[data-testid="automation-overview-strip"]');
     expect(overviewStrip?.textContent).toContain("Active");
+    expect(overviewStrip?.textContent).toContain("Repeats");
+    expect(overviewStrip?.textContent).toContain("Next");
+    expect(overviewStrip?.textContent).toContain("Issue");
+    expect(overviewStrip?.textContent).not.toContain("Action");
+    expect(overviewStrip?.textContent).not.toContain("Risk");
     expect(overviewStrip?.textContent).not.toContain("Automation UX");
     expect(overviewStrip?.textContent).not.toContain("Ada");
+    const activitySection = container.querySelector('section[aria-label="Activity"]');
+    expect(activitySection).toBeTruthy();
+    expect(activitySection?.textContent).toContain("Activity");
+    expect(activitySection?.querySelector('[data-testid="automation-activity-list"]')).toBeTruthy();
+    const activityRow = activitySection?.querySelector('[data-testid="automation-activity-row"]');
+    expect(activityRow?.className).toContain("grid-cols-[auto_minmax(0,1fr)]");
+    expect(activityRow?.className).toContain("sm:grid-cols-[auto_minmax(0,1fr)_auto]");
+    expect(activityRow?.querySelector('[data-testid="automation-activity-summary"]')?.className).toContain("flex-wrap");
     expect(container.querySelector('[data-testid="automation-detail-agent-control"]')?.textContent).toContain("Ada");
     expect(container.querySelector('[data-testid="automation-detail-project-control"]')?.textContent).toContain("Automation UX");
+  });
+
+  it("keeps delivery rule controls contained in the sidebar width", async () => {
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const deliveryRules = container.querySelector('[data-testid="automation-delivery-rules-section"]');
+    const toggle = Array.from(deliveryRules?.querySelectorAll("button") ?? []).find((button) => button.textContent?.includes("Delivery rules"));
+
+    await act(async () => {
+      toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const selectTriggers = Array.from(deliveryRules?.querySelectorAll("button") ?? [])
+      .filter((button) => /coalesce if active|skip missed/.test(button.textContent ?? ""));
+
+    expect(selectTriggers).toHaveLength(2);
+    for (const trigger of selectTriggers) {
+      expect(trigger.className).toContain("w-full");
+    }
   });
 
   it("registers the header as the only manual action surface", async () => {
@@ -488,7 +533,10 @@ describe("AutomationDetail", () => {
       headerRoot.render(<>{headerActions}</>);
     });
 
-    expect(headerContainer.querySelector('button[aria-label="Pause automation"]')).toBeTruthy();
+    const statusSwitch = headerContainer.querySelector('button[role="switch"][aria-label="Disable automation"]');
+    expect(statusSwitch).toBeTruthy();
+    expect(statusSwitch?.getAttribute("aria-checked")).toBe("true");
+    expect(headerContainer.textContent).toContain("On");
     const deleteButton = headerContainer.querySelector('button[aria-label="Delete automation"]');
     expect(deleteButton).toBeTruthy();
     expect(Array.from(headerContainer.querySelectorAll("button")).filter((button) => button.textContent?.includes("Run now"))).toHaveLength(1);
@@ -558,7 +606,11 @@ describe("AutomationDetail", () => {
       await Promise.resolve();
     });
 
-    expect((container.textContent?.match(/In sync/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((container.textContent?.match(/In sync/g) ?? []).length).toBe(1);
+    const triggersList = container.querySelector('[data-testid="automation-triggers-list"]');
+    expect(triggersList?.textContent).toContain("Schedule 0 10 * * *");
+    expect(triggersList?.textContent).toContain("daily-check");
+    expect(triggersList?.textContent).not.toContain("In sync");
     const triggerEditorBody = container.querySelector('[data-testid="automation-trigger-editor-body"]');
     expect(triggerEditorBody?.hasAttribute("hidden")).toBe(true);
 

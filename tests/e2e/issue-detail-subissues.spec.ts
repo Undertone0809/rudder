@@ -32,6 +32,7 @@ test.describe("Issue detail sub-issues", () => {
     const propertiesDialog = page.getByRole("dialog", { name: "Properties" });
     await expect(propertiesDialog.getByText("Sub-issues", { exact: true })).toBeVisible();
     await propertiesDialog.getByRole("button", { name: "Add" }).click();
+    await page.getByRole("button", { name: "Create new sub-issue" }).click();
 
     const newIssueDialog = page.getByRole("dialog").filter({ hasText: "New sub-issue" });
     await expect(newIssueDialog.getByText("New sub-issue", { exact: true })).toBeVisible();
@@ -102,6 +103,15 @@ test.describe("Issue detail sub-issues", () => {
     });
     expect(existingChildRes.ok()).toBe(true);
 
+    const standaloneExistingRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Standalone existing issue",
+        status: "todo",
+        priority: "medium",
+      },
+    });
+    expect(standaloneExistingRes.ok()).toBe(true);
+
     await page.goto(`/issues/${issue.identifier ?? issue.id}`);
 
     const subIssuesSection = page.getByLabel("Sub-issues");
@@ -116,20 +126,22 @@ test.describe("Issue detail sub-issues", () => {
     await expect(page.getByRole("tab", { name: "Activity" })).toHaveCount(0);
     await expect(page.getByRole("region", { name: "Activity" })).toBeVisible();
 
+    await page.getByRole("button", { name: "Add sub-issue" }).click();
+    await page.getByRole("menuitem", { name: "Add existing issue" }).click();
+    await expect(subIssuesSection.getByPlaceholder("Search existing issues")).toBeVisible();
+    await subIssuesSection.getByPlaceholder("Search existing issues").fill("Standalone existing issue");
+    await subIssuesSection.getByRole("button", { name: /Standalone existing issue/ }).click();
+    await expect(subIssuesSection.getByText("Standalone existing issue", { exact: true })).toBeVisible();
+
     const propertiesPanel = page.getByRole("region", { name: "Issue properties" });
-    await expect(propertiesPanel.getByText("Parent", { exact: true })).toBeVisible();
-    await expect(propertiesPanel.getByRole("link", { name: "Parent issue container" })).toHaveAttribute(
+    await expect(propertiesPanel.getByText("Parent issue", { exact: true })).toBeVisible();
+    await expect(propertiesPanel.getByText("Parent issue container", { exact: true })).toBeVisible();
+    await expect(propertiesPanel.getByRole("link", { name: "Open parent issue" })).toHaveAttribute(
       "href",
       new RegExp(`/issues/${parentIssue.identifier ?? parentIssue.id}$`),
     );
     await expect(propertiesPanel.getByText("Sub-issues", { exact: true })).toBeVisible();
     await expect(propertiesPanel.getByText("Existing child issue", { exact: true })).toBeVisible();
-
-    await propertiesPanel.getByRole("button", { name: "Add" }).click();
-    await expect(propertiesPanel.getByPlaceholder("Sub-issue title")).toBeVisible();
-    await propertiesPanel.getByPlaceholder("Sub-issue title").fill("Sidebar child issue");
-    await propertiesPanel.getByRole("button", { name: "Create", exact: true }).click();
-    await expect(propertiesPanel.getByText("Sidebar child issue", { exact: true })).toBeVisible();
 
     const subIssuesBox = await page.getByLabel("Sub-issues").boundingBox();
     const activityBox = await page.getByRole("region", { name: "Activity" }).boundingBox();
@@ -144,6 +156,7 @@ test.describe("Issue detail sub-issues", () => {
     await expect(page).toHaveURL(new RegExp(`${issue.identifier ?? issue.id}$`));
 
     await page.getByRole("button", { name: "Add sub-issue" }).click();
+    await page.getByRole("menuitem", { name: "Create new sub-issue" }).click();
     await expect(subIssuesSection.getByPlaceholder("Add sub-issue title")).toBeVisible();
 
     await subIssuesSection.getByPlaceholder("Add sub-issue title").fill("Inline child issue");
@@ -152,7 +165,7 @@ test.describe("Issue detail sub-issues", () => {
     await expect(subIssuesSection.getByText("Inline child issue", { exact: true })).toBeVisible();
     await expect(page.getByPlaceholder("Add sub-issue title")).toHaveCount(0);
     await expect(subIssuesSection.locator("a").nth(0)).toContainText("Existing child issue");
-    await expect(subIssuesSection.locator("a").nth(1)).toContainText("Sidebar child issue");
+    await expect(subIssuesSection.locator("a").nth(1)).toContainText("Standalone existing issue");
     await expect(subIssuesSection.locator("a").nth(2)).toContainText("Inline child issue");
 
     const childIssuesRes = await page.request.get(
@@ -164,12 +177,13 @@ test.describe("Issue detail sub-issues", () => {
     expect(childIssues.map((child: { title: string }) => child.title).sort()).toEqual([
       "Existing child issue",
       "Inline child issue",
-      "Sidebar child issue",
+      "Standalone existing issue",
     ]);
     expect(childIssues.every((child: { parentId: string }) => child.parentId === issue.id)).toBe(true);
     expect(childIssues.find((child: { title: string; status: string }) => child.title === "Existing child issue")?.status).toBe("done");
 
     await page.getByRole("button", { name: "Add sub-issue" }).click();
+    await page.getByRole("menuitem", { name: "Create new sub-issue" }).click();
     await subIssuesSection.getByPlaceholder("Add sub-issue title").fill("Cancel me");
     await subIssuesSection.getByRole("button", { name: "Cancel" }).click();
     await expect(page.getByPlaceholder("Add sub-issue title")).toHaveCount(0);

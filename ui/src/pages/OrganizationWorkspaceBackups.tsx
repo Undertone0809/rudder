@@ -58,6 +58,16 @@ function formatFileCount(value: number) {
   return `${value} ${value === 1 ? "file" : "files"}`;
 }
 
+function canBrowseBackup(backup: WorkspaceBackupSummary | null) {
+  return backup?.status === "succeeded" || backup?.status === "restored";
+}
+
+function backupUnavailableMessage(backup: WorkspaceBackupSummary) {
+  if (backup.status === "running") return "This backup is still running. Files will appear after it finishes.";
+  if (backup.status === "failed") return backup.error ? `This backup failed: ${backup.error}` : "This backup failed before writing files.";
+  return "This backup has no browsable artifact.";
+}
+
 function inferLanguageFromPath(filePath: string | null) {
   if (!filePath) return "text";
   const normalized = filePath.toLowerCase();
@@ -130,7 +140,8 @@ export function OrganizationWorkspaceBackups() {
   });
 
   const backups = backupsQuery.data?.backups ?? [];
-  const selectedBackup = backups.find((backup) => backup.id === requestedBackupId) ?? backups[0] ?? null;
+  const selectedBackup = backups.find((backup) => backup.id === requestedBackupId) ?? backups.find(canBrowseBackup) ?? backups[0] ?? null;
+  const selectedBackupCanBrowse = canBrowseBackup(selectedBackup);
 
   useEffect(() => {
     if (!selectedBackup) {
@@ -139,13 +150,20 @@ export function OrganizationWorkspaceBackups() {
       }
       return;
     }
+    if (!selectedBackupCanBrowse && selectedFilePath) {
+      const next = new URLSearchParams(searchParams);
+      next.set("backup", selectedBackup.id);
+      next.delete("file");
+      setSearchParams(next, { replace: true });
+      return;
+    }
     if (selectedBackup.id !== requestedBackupId) {
       const next = new URLSearchParams(searchParams);
       next.set("backup", selectedBackup.id);
       next.delete("file");
       setSearchParams(next, { replace: true });
     }
-  }, [requestedBackupId, searchParams, selectedBackup, selectedFilePath, setSearchParams]);
+  }, [requestedBackupId, searchParams, selectedBackup, selectedBackupCanBrowse, selectedFilePath, setSearchParams]);
 
   const rootQuery = useQuery({
     queryKey: queryKeys.organizations.workspaceBackupFiles(
@@ -154,7 +172,7 @@ export function OrganizationWorkspaceBackups() {
       "",
     ),
     queryFn: () => organizationsApi.listWorkspaceBackupFiles(viewedOrganizationId!, selectedBackup!.id, ""),
-    enabled: !!viewedOrganizationId && !!selectedBackup,
+    enabled: !!viewedOrganizationId && !!selectedBackup && selectedBackupCanBrowse,
     refetchOnWindowFocus: false,
   });
 
@@ -175,7 +193,7 @@ export function OrganizationWorkspaceBackups() {
       selectedFilePath ?? "",
     ),
     queryFn: () => organizationsApi.readWorkspaceBackupFile(viewedOrganizationId!, selectedBackup!.id, selectedFilePath!),
-    enabled: !!viewedOrganizationId && !!selectedBackup && !!selectedFilePath,
+    enabled: !!viewedOrganizationId && !!selectedBackup && selectedBackupCanBrowse && !!selectedFilePath,
     refetchOnWindowFocus: false,
   });
 
@@ -297,6 +315,8 @@ export function OrganizationWorkspaceBackups() {
         <div className="min-h-0 flex-1 overflow-hidden">
           {!selectedBackup ? (
             <div className="px-4 py-6 text-sm text-muted-foreground">Select a backup version.</div>
+          ) : !selectedBackupCanBrowse ? (
+            <div className="px-4 py-6 text-sm text-muted-foreground">{backupUnavailableMessage(selectedBackup)}</div>
           ) : !selectedFilePath ? (
             <div className="px-4 py-6 text-sm text-muted-foreground">Select a file.</div>
           ) : fileQuery.isLoading ? (
