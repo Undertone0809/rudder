@@ -3,6 +3,7 @@ export const queryKeys = {
     all: ["organizations"] as const,
     detail: (id: string) => ["organizations", id] as const,
     stats: ["organizations", "stats"] as const,
+    intelligenceProfiles: (orgId: string) => ["organizations", orgId, "intelligence-profiles"] as const,
     resources: (orgId: string) => ["organizations", orgId, "resources"] as const,
     workspaceFiles: (orgId: string, directoryPath: string) =>
       ["organizations", orgId, "workspace-files", directoryPath] as const,

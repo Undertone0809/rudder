@@ -44,6 +44,14 @@ export {
   type UpdateOrganizationWorkspaceFile,
 } from "./organization.js";
 export {
+  organizationIntelligenceProfilePurposeSchema,
+  organizationIntelligenceProfileStatusSchema,
+  organizationIntelligenceProfileConfigSchema,
+  upsertOrganizationIntelligenceProfileSchema,
+  type OrganizationIntelligenceProfilePurposeInput,
+  type UpsertOrganizationIntelligenceProfileInput,
+} from "./organization-intelligence-profile.js";
+export {
   organizationResourceKindSchema,
   projectResourceAttachmentRoleSchema,
   createOrganizationResourceSchema,

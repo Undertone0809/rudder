@@ -172,6 +172,8 @@ export function RuntimeProviderCard({
   onRemove,
   hideRuntimeType = false,
   hideInstructionsFile = false,
+  runtimeTypeLabel = "Runtime type",
+  runtimeTypeHint = help.agentRuntimeType,
   createValues,
   createSet,
   environmentStatus,
@@ -193,6 +195,8 @@ export function RuntimeProviderCard({
   onRemove?: () => void;
   hideRuntimeType?: boolean;
   hideInstructionsFile?: boolean;
+  runtimeTypeLabel?: string;
+  runtimeTypeHint?: string;
   createValues?: CreateConfigValues | null;
   createSet?: ((patch: Partial<CreateConfigValues>) => void) | null;
   environmentStatus?: RuntimeEnvironmentStatus;
@@ -253,7 +257,7 @@ export function RuntimeProviderCard({
       </div>
       <div className="space-y-3">
         {!hideRuntimeType && (
-          <Field label="Runtime type" hint={help.agentRuntimeType}>
+          <Field label={runtimeTypeLabel} hint={runtimeTypeHint}>
             <AdapterTypeDropdown value={runtimeType} onChange={onRuntimeTypeChange} />
           </Field>
         )}

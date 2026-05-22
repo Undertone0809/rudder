@@ -86,6 +86,12 @@ async function createApp(actor: Record<string, unknown>) {
   vi.resetModules();
   vi.doMock("../services/index.js", () => ({
     accessService: () => mockAccessService,
+    organizationIntelligenceProfileService: () => ({
+      list: vi.fn(),
+      getByPurpose: vi.fn(),
+      upsert: vi.fn(),
+      ensureDefaultsFromRuntime: vi.fn(),
+    }),
     logActivity: mockLogActivity,
     automationService: () => mockAutomationService,
   }));

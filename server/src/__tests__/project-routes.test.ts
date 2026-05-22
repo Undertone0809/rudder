@@ -28,6 +28,12 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 vi.mock("../services/index.js", () => ({
   projectService: () => mockProjectService,
   resourceCatalogService: () => mockResourceCatalogService,
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: mockLogActivity,
 }));
 

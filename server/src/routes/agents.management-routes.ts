@@ -90,6 +90,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     secretsSvc,
     instructions,
     organizationSkills,
+    intelligenceProfiles,
     workspaceOperations,
     instanceSettings,
     avatarUpload,
@@ -191,6 +192,13 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       desiredSkillAssignment.desiredSkills,
     );
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
+    if (!requiresApproval) {
+      await intelligenceProfiles.ensureDefaultsFromRuntime({
+        orgId,
+        agentRuntimeType: agent.agentRuntimeType,
+        agentRuntimeConfig: (agent.agentRuntimeConfig ?? {}) as Record<string, unknown>,
+      });
+    }
 
     let approval: Awaited<ReturnType<typeof approvalsSvc.getById>> | null = null;
     const actor = getActorInfo(req);
@@ -363,6 +371,11 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       desiredSkillAssignment.desiredSkills,
     );
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
+    await intelligenceProfiles.ensureDefaultsFromRuntime({
+      orgId,
+      agentRuntimeType: agent.agentRuntimeType,
+      agentRuntimeConfig: (agent.agentRuntimeConfig ?? {}) as Record<string, unknown>,
+    });
 
     const actor = getActorInfo(req);
     await logActivity(db, {

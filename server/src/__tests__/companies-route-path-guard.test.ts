@@ -55,6 +55,12 @@ vi.mock("../services/index.js", () => ({
   secretService: () => ({
     normalizeAdapterConfigForPersistence: vi.fn(async (_companyId, config) => ({ config: config ?? {} })),
   }),
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: vi.fn(),
 }));
 

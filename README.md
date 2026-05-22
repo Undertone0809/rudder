@@ -18,6 +18,10 @@ Rudder turns those coordination patterns into product primitives for agent teams
 
 ![](./doc/assets/readme_imgs/1.png)
 
+![](./doc/assets/readme_imgs/9.png)
+
+![](./doc/assets/readme_imgs/10.png)
+
 ![](./doc/assets/readme_imgs/2.png)
 
 ![](./doc/assets/readme_imgs/3.png)
@@ -31,6 +35,8 @@ Rudder turns those coordination patterns into product primitives for agent teams
 ![](./doc/assets/readme_imgs/7.png)
 
 ![](./doc/assets/readme_imgs/8.png)
+
+
 
 That means:
 

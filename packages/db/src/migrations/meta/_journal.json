@@ -512,6 +512,13 @@
       "when": 1779207406019,
       "tag": "0072_overjoyed_red_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1779440902448,
+      "tag": "0073_bizarre_calypso",
+      "breakpoints": true
     }
   ]
 }

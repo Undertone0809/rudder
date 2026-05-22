@@ -652,6 +652,36 @@ Chat behavior requirements:
 - the selected chat agent may use that per-user profile as prompt context only when at least one profile field is non-empty
 - assistant turns require an explicit `preferred_agent_id`; the UI defaults editable conversations to the last selected available agent or first available agent, while conversations with no selected chat agent remain discussable/editable but cannot invoke a runtime until one is chosen
 
+## 10.9.1 Organization Intelligence Profiles
+
+Rudder product intelligence features that are not agent work use organization-level
+Intelligence profiles instead of a hidden agent identity.
+
+Initial profiles:
+
+- `lightweight` / Fast Intelligence: low-latency utilities such as chat title
+  generation, short summaries, and classification.
+- `reasoning` / Smart Intelligence: reasoning-heavy utilities such as issue AI
+  search, reranking, and complex summaries.
+
+Requirements:
+
+- profiles are organization-scoped
+- profiles are not agents and do not appear in the org chart
+- profiles must not create `replyingAgentId`, heartbeat runs, agent runtime
+  sessions, or hidden Copilot rows
+- profile config may use the same adapter model and `modelFallbacks` shape as
+  agent runtime config
+- profile execution must filter agent-only identity/workspace fields such as
+  instructions, prompt templates, enabled skills, and workspace strategy
+- product utility calls resolve Fast or Smart by purpose through a product
+  intelligence service that uses a synthetic product identity, no persisted
+  agent row, no heartbeat run, and no local agent API token
+- Organization Settings exposes Fast and Smart with the same horizontal primary
+  model plus fallback-chain card interaction used by agent config
+- chat assistant replies still require explicit `preferred_agent_id`; no chat
+  reply may fall back to an Intelligence profile
+
 ## 10.10 Error Semantics
 
 - `400` validation error

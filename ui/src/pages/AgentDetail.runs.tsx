@@ -214,24 +214,26 @@ export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; i
       onClick={openRun}
       onKeyDown={handleRowKeyDown}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", statusInfo.color, run.status === "running" && "animate-spin")} />
-        <button
-          type="button"
-          className="min-w-0 truncate font-mono text-xs text-muted-foreground hover:text-foreground transition-colors cursor-copy"
-          aria-label={`Copy run ID ${runLabel}`}
-          title="Copy run ID"
-          onClick={handleCopyRunId}
-        >
-          {runLabel}
-        </button>
-        <span className={cn(
-          "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium shrink-0",
-          runReasonBadgeClassName(runReason.tone)
-        )} title={runReason.description}>
-          {runReason.label}
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+        <span className="flex min-w-0 items-center gap-2">
+          <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", statusInfo.color, run.status === "running" && "animate-spin")} />
+          <button
+            type="button"
+            className="min-w-0 truncate font-mono text-xs text-muted-foreground hover:text-foreground transition-colors cursor-copy"
+            aria-label={`Copy run ID ${runLabel}`}
+            title="Copy run ID"
+            onClick={handleCopyRunId}
+          >
+            {runLabel}
+          </button>
+          <span className={cn(
+            "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium shrink-0",
+            runReasonBadgeClassName(runReason.tone)
+          )} title={runReason.description}>
+            {runReason.label}
+          </span>
         </span>
-        <span className="ml-auto shrink-0 text-[11px] font-medium tabular-nums text-foreground" title={timingTitle || undefined}>
+        <span className="shrink-0 whitespace-nowrap text-[11px] font-medium tabular-nums text-foreground" title={timingTitle || undefined}>
           {durationLabel}
         </span>
       </div>
@@ -323,7 +325,7 @@ export function RunsTab({
       </div>
 
       <div
-        className="w-[14rem] shrink-0 border border-border rounded-lg xl:w-[14.5rem] 2xl:w-[15rem]"
+        className="w-[clamp(18rem,24vw,24rem)] shrink-0 border border-border rounded-lg"
         data-testid="agent-runs-list-pane"
       >
         <div className="sticky top-4 overflow-y-auto" style={{ maxHeight: "calc(100vh - 2rem)" }}>

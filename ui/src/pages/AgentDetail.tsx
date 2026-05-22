@@ -759,14 +759,9 @@ export function AgentDetail() {
       )}
 
       {/* Floating Save/Cancel (desktop) */}
-      {!isMobile && (
+      {!isMobile && showConfigActionBar && (
         <div
-          className={cn(
-            "sticky top-6 z-10 float-right transition-opacity duration-150",
-            showConfigActionBar
-              ? "opacity-100"
-              : "opacity-0 pointer-events-none"
-          )}
+          className="sticky top-6 z-10 float-right transition-opacity duration-150"
         >
           <div className="flex items-center gap-2 bg-background/90 backdrop-blur-sm border border-border rounded-lg px-3 py-1.5 shadow-lg">
             <Button

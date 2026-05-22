@@ -96,6 +96,12 @@ vi.mock("../services/index.js", () => ({
   organizationService: () => mockCompanyService,
   goalService: () => mockGoalService,
   issueService: () => mockIssueService,
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: mockLogActivity,
   operatorProfileService: () => mockOperatorProfileService,
   projectService: () => mockProjectService,

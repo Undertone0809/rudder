@@ -58,6 +58,12 @@ vi.mock("../services/index.js", () => ({
   heartbeatService: () => ({}),
   issueApprovalService: () => ({ linkManyForApproval: vi.fn() }),
   issueService: () => ({}),
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: mockLogActivity,
   secretService: () => mockSecretService,
   syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),

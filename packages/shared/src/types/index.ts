@@ -8,6 +8,10 @@ export type {
   OrganizationWorkspaceFileUpdateRequest,
 } from "./organization.js";
 export type {
+  OrganizationIntelligenceProfile,
+  UpsertOrganizationIntelligenceProfile,
+} from "./organization-intelligence-profile.js";
+export type {
   ChatConversation,
   ChatMessage,
   ChatAttachment,
