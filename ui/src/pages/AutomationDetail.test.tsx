@@ -420,9 +420,10 @@ describe("AutomationDetail", () => {
 
     expect(container.textContent).toContain("Configuration");
     expect(container.textContent).toContain("Assignee");
-    expect(container.textContent).toContain("Run output");
+    expect(container.textContent).toContain("Output");
     expect(container.textContent).toContain("Track as issue");
-    expect(container.textContent).toContain("Schedule");
+    expect(container.textContent).toContain("Repeats");
+    expect(container.textContent).toContain("Next run");
     expect(container.textContent).toContain("Project");
     expect(container.textContent).toContain("Run status");
     expect(container.textContent).toContain("Manual run is in progress");
@@ -433,9 +434,6 @@ describe("AutomationDetail", () => {
     expect(container.textContent).toContain("Live run widget");
     expect(container.textContent).toContain("Last ran");
     expect(container.textContent).toContain("In sync");
-    expect(container.textContent).toContain("Action");
-    expect(container.textContent).toContain("Risk");
-    expect(container.textContent).toContain("Monitor run");
     expect(container.textContent).toContain("Active run");
     expect(container.textContent).toContain("Repeats");
     expect(container.textContent).toContain("Issue");
@@ -472,8 +470,21 @@ describe("AutomationDetail", () => {
     expect(deliveryRules?.className).not.toContain("border-t");
     const overviewStrip = container.querySelector('[data-testid="automation-overview-strip"]');
     expect(overviewStrip?.textContent).toContain("Active");
+    expect(overviewStrip?.textContent).toContain("Repeats");
+    expect(overviewStrip?.textContent).toContain("Next");
+    expect(overviewStrip?.textContent).toContain("Issue");
+    expect(overviewStrip?.textContent).not.toContain("Action");
+    expect(overviewStrip?.textContent).not.toContain("Risk");
     expect(overviewStrip?.textContent).not.toContain("Automation UX");
     expect(overviewStrip?.textContent).not.toContain("Ada");
+    const activitySection = container.querySelector('section[aria-label="Activity"]');
+    expect(activitySection).toBeTruthy();
+    expect(activitySection?.textContent).toContain("Activity");
+    expect(activitySection?.querySelector('[data-testid="automation-activity-list"]')).toBeTruthy();
+    const activityRow = activitySection?.querySelector('[data-testid="automation-activity-row"]');
+    expect(activityRow?.className).toContain("grid-cols-[auto_minmax(0,1fr)]");
+    expect(activityRow?.className).toContain("sm:grid-cols-[auto_minmax(0,1fr)_auto]");
+    expect(activityRow?.querySelector('[data-testid="automation-activity-summary"]')?.className).toContain("flex-wrap");
     expect(container.querySelector('[data-testid="automation-detail-agent-control"]')?.textContent).toContain("Ada");
     expect(container.querySelector('[data-testid="automation-detail-project-control"]')?.textContent).toContain("Automation UX");
   });
@@ -595,7 +606,11 @@ describe("AutomationDetail", () => {
       await Promise.resolve();
     });
 
-    expect((container.textContent?.match(/In sync/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((container.textContent?.match(/In sync/g) ?? []).length).toBe(1);
+    const triggersList = container.querySelector('[data-testid="automation-triggers-list"]');
+    expect(triggersList?.textContent).toContain("Schedule 0 10 * * *");
+    expect(triggersList?.textContent).toContain("daily-check");
+    expect(triggersList?.textContent).not.toContain("In sync");
     const triggerEditorBody = container.querySelector('[data-testid="automation-trigger-editor-body"]');
     expect(triggerEditorBody?.hasAttribute("hidden")).toBe(true);
 
