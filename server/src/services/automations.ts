@@ -513,7 +513,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     issueId?: string | null;
     failureReason?: string | null;
   }) {
-    if (input.status === "issue_created") return `${input.title} started.`;
+    if (input.status === "issue_created") return `From automation ${input.title}.`;
     if (input.status === "completed") return `${input.title} completed.`;
     if (input.status === "coalesced") return `${input.title} coalesced into an active automation run.`;
     if (input.status === "skipped") return `${input.title} skipped because an active automation run already exists.`;
@@ -536,6 +536,13 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
   }) {
     if (input.automation.outputMode !== "chat_output") return null;
     const executor = input.executor ?? db;
+    if (
+      !input.automation.chatConversationId &&
+      (input.status === "coalesced" || input.status === "skipped")
+    ) {
+      return null;
+    }
+    if (input.status === "completed") return null;
     const conversationId = await resolveAutomationRunChatConversationId({
       automation: input.automation,
       runId: input.runId,
@@ -544,7 +551,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     if (!conversationId) return null;
     const now = new Date();
     const eventType =
-      input.status === "issue_created" ? "automation_run_started"
+      input.status === "issue_created" ? "automation_source"
       : input.status === "completed" ? "automation_run_completed"
       : input.status === "failed" ? "automation_run_failed"
       : input.status === "skipped" ? "automation_run_skipped"
@@ -567,6 +574,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         structuredPayload: {
           eventType,
           automationId: input.automation.id,
+          automationTitle: input.automation.title,
           runId: input.runId,
           issueId: input.issueId ?? null,
           triggerId: input.triggerId ?? null,
