@@ -755,8 +755,13 @@ export function OrganizationSettings() {
       </div>
 
       <div className="space-y-4">
-        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Intelligence
+        <div>
+          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Intelligence
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Organization-level AI profiles for product features that are not agent work.
+          </p>
         </div>
         {viewedOrganizationId ? (
           <OrganizationIntelligenceProfilesSettings orgId={viewedOrganizationId} />

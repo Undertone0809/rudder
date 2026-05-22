@@ -166,21 +166,14 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
 
   if (profilesQuery.isLoading) {
     return (
-      <div className="rounded-xl border border-border/70 bg-card/60 px-4 py-4 text-sm text-muted-foreground">
+      <div className="text-sm text-muted-foreground">
         Loading intelligence profiles...
       </div>
     );
   }
 
   return (
-    <div data-testid="organization-intelligence-profiles" className="space-y-4 rounded-xl border border-border/70 bg-card/60 px-4 py-4">
-      <div>
-        <div className="text-sm font-medium">Intelligence</div>
-        <p className="text-sm text-muted-foreground">
-          Organization-level AI profiles for product features that are not agent work.
-        </p>
-      </div>
-
+    <div data-testid="organization-intelligence-profiles" className="space-y-5">
       <div className="space-y-5">
         {purposes.map((purpose) => {
           const draft = currentDrafts[purpose];
