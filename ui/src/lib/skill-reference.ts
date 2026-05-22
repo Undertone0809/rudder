@@ -1,3 +1,7 @@
+import type { CSSProperties } from "react";
+import { Boxes } from "lucide-react";
+import { buildLucideIconMask } from "./mention-chips";
+
 export interface ParsedSkillReference {
   href: string;
   label: string;
@@ -85,6 +89,10 @@ export function applySkillTokenDecoration(element: HTMLElement, href?: string | 
   element.setAttribute("tabindex", "-1");
   element.setAttribute("draggable", "false");
   element.classList.add("rudder-skill-token");
+  const style = skillTokenIconInlineStyle();
+  if (style["--rudder-skill-icon-mask"]) {
+    element.style.setProperty("--rudder-skill-icon-mask", style["--rudder-skill-icon-mask"]);
+  }
 }
 
 export function clearSkillTokenDecoration(element: HTMLElement) {
@@ -94,4 +102,10 @@ export function clearSkillTokenDecoration(element: HTMLElement) {
   element.removeAttribute("tabindex");
   element.removeAttribute("draggable");
   element.classList.remove("rudder-skill-token");
+  element.style.removeProperty("--rudder-skill-icon-mask");
+}
+
+export function skillTokenIconInlineStyle(): CSSProperties & Record<string, string> {
+  const iconMask = buildLucideIconMask(Boxes, "lucide:boxes");
+  return iconMask ? ({ "--rudder-skill-icon-mask": iconMask } as CSSProperties & Record<string, string>) : {};
 }

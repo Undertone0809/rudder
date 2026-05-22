@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { parseAgentMentionHref, parseChatMentionHref, parseIssueMentionHref, parseLibraryDocMentionHref, parseLibraryFileMentionHref, parseProjectMentionHref } from "@rudderhq/shared";
+import { FileText } from "lucide-react";
 import { getAgentAvatarBackgroundStyle, getAgentAvatarImageSrc } from "./agent-avatar";
 import { getAgentIcon } from "./agent-icons";
 
@@ -124,6 +125,13 @@ export function mentionChipInlineStyle(mention: ParsedMentionChip): CSSPropertie
     }
   }
 
+  if (mention.kind === "library_doc" || mention.kind === "library_file") {
+    const iconMask = buildLucideIconMask(FileText, "lucide:file-text");
+    if (iconMask) {
+      style["--rudder-mention-icon-mask"] = iconMask;
+    }
+  }
+
   return Object.keys(style).length > 0 ? (style as CSSProperties) : undefined;
 }
 
@@ -186,11 +194,14 @@ function escapeCssUrl(value: string) {
 
 function buildAgentIconMask(iconName: string | null): string | null {
   const cacheKey = iconName ?? "__default__";
+  return buildLucideIconMask(getAgentIcon(iconName), `agent:${cacheKey}`);
+}
+
+export function buildLucideIconMask(icon: unknown, cacheKey: string): string | null {
   const cached = iconMaskCache.get(cacheKey);
   if (cached) return cached;
 
-  const Icon = getAgentIcon(iconName);
-  const iconNode = resolveLucideIconNode(Icon);
+  const iconNode = resolveLucideIconNode(icon);
   if (!Array.isArray(iconNode) || iconNode.length === 0) return null;
 
   const body = iconNode.map(([tag, attrs]) => {

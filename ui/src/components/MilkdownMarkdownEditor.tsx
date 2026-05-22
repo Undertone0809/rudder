@@ -40,6 +40,7 @@ import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
   parseSkillReference,
+  skillTokenIconInlineStyle,
 } from "../lib/skill-reference";
 import { cn } from "../lib/utils";
 import { AgentIcon } from "./AgentIconPicker";
@@ -219,12 +220,17 @@ function refreshMilkdownMentionTokenStyles(root: HTMLElement | null, mentions: M
 }
 
 function milkdownSkillDecorationAttrs(href: string, label: string) {
-  return {
+  const attrs: Record<string, string> = {
     class: "rudder-skill-token",
     "data-skill-token": "true",
     "data-skill-href": href,
     title: label,
   };
+  const style = serializeInlineStyle(skillTokenIconInlineStyle());
+  if (style) {
+    attrs.style = style;
+  }
+  return attrs;
 }
 
 function mentionOptionMap(mentions: MentionOption[]) {

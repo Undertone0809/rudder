@@ -1751,8 +1751,8 @@ button[draggable="false"] {
   height: 0.95em;
   background-color: currentColor;
   opacity: 0.95;
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M7%203.5h7l3%203v14H7z%22/%3E%3Cpath%20d%3D%22M10%209h4%22/%3E%3Cpath%20d%3D%22M10%2013h4%22/%3E%3Cpath%20d%3D%22M10%2017h3%22/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M7%203.5h7l3%203v14H7z%22/%3E%3Cpath%20d%3D%22M10%209h4%22/%3E%3Cpath%20d%3D%22M10%2013h4%22/%3E%3Cpath%20d%3D%22M10%2017h3%22/%3E%3C/svg%3E");
+  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
+  mask-image: var(--rudder-mention-icon-mask, none);
   -webkit-mask-position: center;
   mask-position: center;
   -webkit-mask-repeat: no-repeat;
@@ -1887,8 +1887,8 @@ button[draggable="false"] {
   font-size: inherit;
   font-weight: inherit;
   color: currentColor;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: var(--rudder-skill-icon-mask, none) center / contain no-repeat;
+  -webkit-mask: var(--rudder-skill-icon-mask, none) center / contain no-repeat;
 }
 
 .rudder-milkdown-content a:has(> .rudder-mention-chip),
@@ -2061,8 +2061,8 @@ a.rudder-mention-chip[data-mention-kind="library_file"]::before {
   height: 0.95em;
   background-color: currentColor;
   opacity: 0.95;
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M7%203.5h7l3%203v14H7z%22/%3E%3Cpath%20d%3D%22M10%209h4%22/%3E%3Cpath%20d%3D%22M10%2013h4%22/%3E%3Cpath%20d%3D%22M10%2017h3%22/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M7%203.5h7l3%203v14H7z%22/%3E%3Cpath%20d%3D%22M10%209h4%22/%3E%3Cpath%20d%3D%22M10%2013h4%22/%3E%3Cpath%20d%3D%22M10%2017h3%22/%3E%3C/svg%3E");
+  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
+  mask-image: var(--rudder-mention-icon-mask, none);
   -webkit-mask-position: center;
   mask-position: center;
   -webkit-mask-repeat: no-repeat;
@@ -2460,8 +2460,8 @@ a.rudder-skill-token::before {
   height: 1.25em;
   background: currentColor;
   transform: translateY(0.01em);
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 16-9 5-9-5V8l9-5 9 5Z'/%3E%3Cpath d='m3.3 7 8.7 5 8.7-5'/%3E%3Cpath d='M12 22V12'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: var(--rudder-skill-icon-mask, none) center / contain no-repeat;
+  -webkit-mask: var(--rudder-skill-icon-mask, none) center / contain no-repeat;
 }
 
 .rudder-skill-token-wrap {
@@ -2925,8 +2925,8 @@ a.rudder-mention-chip[data-mention-kind="library_doc"]::before,
 a.rudder-mention-chip[data-mention-kind="library_file"]::before {
   width: 1.25em;
   height: 1.25em;
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M7%203.5h7l3%203v14H7z%22/%3E%3Cpath%20d%3D%22M10%209h4%22/%3E%3Cpath%20d%3D%22M10%2013h4%22/%3E%3Cpath%20d%3D%22M10%2017h3%22/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M7%203.5h7l3%203v14H7z%22/%3E%3Cpath%20d%3D%22M10%209h4%22/%3E%3Cpath%20d%3D%22M10%2013h4%22/%3E%3Cpath%20d%3D%22M10%2017h3%22/%3E%3C/svg%3E");
+  -webkit-mask-image: var(--rudder-mention-icon-mask, none);
+  mask-image: var(--rudder-mention-icon-mask, none);
   -webkit-mask-position: center;
   mask-position: center;
   -webkit-mask-repeat: no-repeat;

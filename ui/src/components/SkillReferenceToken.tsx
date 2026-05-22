@@ -1,4 +1,5 @@
 import { Boxes, ArrowUpRight } from "lucide-react";
+import { skillTokenIconInlineStyle } from "@/lib/skill-reference";
 import { cn } from "@/lib/utils";
 
 export interface MarkdownSkillReferencePreview {
@@ -29,6 +30,7 @@ export function SkillReferenceToken({ label, preview }: SkillReferenceTokenProps
       data-skill-token="true"
       href={detailsHref}
       aria-label={`${displayName} skill`}
+      style={skillTokenIconInlineStyle()}
     >
       {label}
     </a>
@@ -38,6 +40,7 @@ export function SkillReferenceToken({ label, preview }: SkillReferenceTokenProps
       data-skill-token="true"
       tabIndex={hasPreview ? 0 : undefined}
       aria-label={hasPreview ? `${displayName} skill` : undefined}
+      style={skillTokenIconInlineStyle()}
     >
       {label}
     </span>

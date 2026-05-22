@@ -151,6 +151,7 @@ test.describe("Organization workspaces agent avatar", () => {
         tokens: Array.from(document.querySelectorAll<HTMLElement>(tokenSelector)).map((element) => ({
           text: element.textContent,
           display: getComputedStyle(element).display,
+          style: element.getAttribute("style") ?? "",
           beforeContent: getComputedStyle(element, "::before").content,
           beforeMask: getComputedStyle(element, "::before").maskImage || getComputedStyle(element, "::before").webkitMaskImage,
         })),
@@ -168,6 +169,9 @@ test.describe("Organization workspaces agent avatar", () => {
       expect.objectContaining({ text: "skill-creator", display: "inline-flex", beforeContent: "\"\"" }),
     ]));
     expect(tokenStyles.tokens.find((token) => token.text === "docs-proposal.md")?.beforeMask).not.toBe("none");
+    expect(tokenStyles.tokens.find((token) => token.text === "docs-proposal.md")?.style).toContain("--rudder-mention-icon-mask");
+    expect(tokenStyles.tokens.find((token) => token.text === "skill-creator")?.beforeMask).not.toBe("none");
+    expect(tokenStyles.tokens.find((token) => token.text === "skill-creator")?.style).toContain("--rudder-skill-icon-mask");
     expect(tokenStyles.wrapperLinks).toHaveLength(3);
     for (const wrapper of tokenStyles.wrapperLinks) {
       expect(wrapper.display).toBe("inline");
