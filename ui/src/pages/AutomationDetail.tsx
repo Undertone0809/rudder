@@ -5,7 +5,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  CirclePause,
   Clock3,
   Copy,
   MessageSquare,
@@ -59,6 +58,7 @@ import {
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import type { ActivityEvent, AutomationRunSummary, AutomationTrigger } from "@rudderhq/shared";
 import { concurrencyPolicies, catchUpPolicies, signingModes, concurrencyPolicyDescriptions, catchUpPolicyDescriptions, SecretMessage, addUniqueId, removeId, autoResizeTextarea, formatActivityDetailValue, getActivityDetailString, humanizeToken, triggerKindLabel, runSourceLabel, getLocalTimezone, formatAutomationTimestamp, summarizeTrigger, automationRiskLabel, automationNextActionLabel, SidebarSection, SidebarRow, SidebarSelectValue, OverviewMetaPill, TriggerEditor } from "./AutomationDetail.parts";
 
@@ -381,21 +381,22 @@ export function AutomationDetail() {
     }
 
     const isEnabled = automation.status === "active";
-    const statusActionLabel = isEnabled ? "Pause automation" : "Enable automation";
-    const StatusIcon = updateAutomationStatus.isPending ? RefreshCw : isEnabled ? CirclePause : Repeat;
+    const statusActionLabel = isEnabled ? "Disable automation" : "Enable automation";
 
     setHeaderActions(
       <>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={statusActionLabel}
-          title={statusActionLabel}
-          disabled={updateAutomationStatus.isPending}
-          onClick={() => updateAutomationStatus.mutate(isEnabled ? "paused" : "active")}
-        >
-          <StatusIcon className={updateAutomationStatus.isPending ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-        </Button>
+        <div className="flex h-8 items-center gap-2 rounded-md px-1 text-xs text-muted-foreground">
+          <ToggleSwitch
+            checked={isEnabled}
+            size="md"
+            tone="success"
+            aria-label={statusActionLabel}
+            title={statusActionLabel}
+            disabled={updateAutomationStatus.isPending}
+            onClick={() => updateAutomationStatus.mutate(isEnabled ? "paused" : "active")}
+          />
+          <span className="min-w-5 tabular-nums">{isEnabled ? "On" : "Off"}</span>
+        </div>
         <Button
           variant="ghost"
           size="icon-sm"

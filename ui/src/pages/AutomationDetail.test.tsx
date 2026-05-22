@@ -518,7 +518,10 @@ describe("AutomationDetail", () => {
       headerRoot.render(<>{headerActions}</>);
     });
 
-    expect(headerContainer.querySelector('button[aria-label="Pause automation"]')).toBeTruthy();
+    const statusSwitch = headerContainer.querySelector('button[role="switch"][aria-label="Disable automation"]');
+    expect(statusSwitch).toBeTruthy();
+    expect(statusSwitch?.getAttribute("aria-checked")).toBe("true");
+    expect(headerContainer.textContent).toContain("On");
     const deleteButton = headerContainer.querySelector('button[aria-label="Delete automation"]');
     expect(deleteButton).toBeTruthy();
     expect(Array.from(headerContainer.querySelectorAll("button")).filter((button) => button.textContent?.includes("Run now"))).toHaveLength(1);
