@@ -34,6 +34,7 @@ import {
   accessService,
   approvalService,
   organizationSkillService,
+  organizationIntelligenceProfileService,
   budgetService,
   heartbeatService,
   issueApprovalService,
@@ -182,6 +183,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
   const secretsSvc = secretService(db);
   const instructions = agentInstructionsService();
   const organizationSkills = organizationSkillService(db);
+  const intelligenceProfiles = organizationIntelligenceProfileService(db);
   const workspaceOperations = workspaceOperationService(db);
   const instanceSettings = instanceSettingsService(db);
   const strictSecretsMode = process.env.RUDDER_SECRETS_STRICT_MODE === "true";
@@ -1412,6 +1414,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     secretsSvc,
     instructions,
     organizationSkills,
+    intelligenceProfiles,
     workspaceOperations,
     instanceSettings,
     avatarUpload,

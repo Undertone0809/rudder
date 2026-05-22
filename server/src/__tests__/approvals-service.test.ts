@@ -4,10 +4,14 @@ import { approvalService } from "../services/approvals.ts";
 const mockAgentService = vi.hoisted(() => ({
   activatePendingApproval: vi.fn(),
   create: vi.fn(),
+  getById: vi.fn(),
   terminate: vi.fn(),
 }));
 
 const mockNotifyHireApproved = vi.hoisted(() => vi.fn());
+const mockOrganizationIntelligenceProfiles = vi.hoisted(() => ({
+  ensureDefaultsFromRuntime: vi.fn(),
+}));
 
 vi.mock("../services/agents.js", () => ({
   agentService: vi.fn(() => mockAgentService),
@@ -15,6 +19,10 @@ vi.mock("../services/agents.js", () => ({
 
 vi.mock("../services/hire-hook.js", () => ({
   notifyHireApproved: mockNotifyHireApproved,
+}));
+
+vi.mock("../services/organization-intelligence-profiles.js", () => ({
+  organizationIntelligenceProfileService: vi.fn(() => mockOrganizationIntelligenceProfiles),
 }));
 
 type ApprovalRecord = {
@@ -60,7 +68,13 @@ describe("approvalService resolution idempotency", () => {
     vi.clearAllMocks();
     mockAgentService.activatePendingApproval.mockResolvedValue(undefined);
     mockAgentService.create.mockResolvedValue({ id: "agent-1" });
+    mockAgentService.getById.mockResolvedValue({
+      id: "agent-1",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "gpt-5.4" },
+    });
     mockAgentService.terminate.mockResolvedValue(undefined);
+    mockOrganizationIntelligenceProfiles.ensureDefaultsFromRuntime.mockResolvedValue([]);
     mockNotifyHireApproved.mockResolvedValue(undefined);
   });
 
@@ -102,6 +116,11 @@ describe("approvalService resolution idempotency", () => {
 
     expect(result.applied).toBe(true);
     expect(mockAgentService.activatePendingApproval).toHaveBeenCalledWith("agent-1");
+    expect(mockOrganizationIntelligenceProfiles.ensureDefaultsFromRuntime).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "gpt-5.4" },
+    });
     expect(mockNotifyHireApproved).toHaveBeenCalledTimes(1);
   });
 });

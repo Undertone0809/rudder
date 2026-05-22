@@ -23,6 +23,12 @@ const mockUpdateConfigFile = vi.hoisted(() => vi.fn());
 vi.mock("../services/index.js", () => ({
   boardAuthService: () => mockBoardAuthService,
   instanceSettingsService: () => mockInstanceSettingsService,
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: mockLogActivity,
   operatorProfileService: () => mockOperatorProfileService,
 }));

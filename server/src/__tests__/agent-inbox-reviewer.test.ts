@@ -17,6 +17,12 @@ vi.mock("../services/index.js", () => ({
   heartbeatService: () => ({}),
   issueApprovalService: () => ({}),
   issueService: () => mockIssueService,
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: vi.fn(),
   organizationSkillService: () => ({}),
   secretService: () => ({}),

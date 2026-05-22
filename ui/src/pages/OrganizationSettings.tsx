@@ -30,6 +30,7 @@ import {
   readStoredSettingsOverlayBackgroundPath,
 } from "@/lib/settings-overlay-state";
 import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
+import { OrganizationIntelligenceProfilesSettings } from "@/components/settings/OrganizationIntelligenceProfilesSettings";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { useI18n } from "../context/I18nContext";
 import type { TranslationKey } from "@/i18n/locales/en";
@@ -751,6 +752,15 @@ export function OrganizationSettings() {
             onChange={(v) => settingsMutation.mutate(v)}
           />
         </div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Intelligence
+        </div>
+        {viewedOrganizationId ? (
+          <OrganizationIntelligenceProfilesSettings orgId={viewedOrganizationId} />
+        ) : null}
       </div>
 
       <div className="space-y-4">
