@@ -483,7 +483,7 @@ function DirectoryChildren({
   onSelectFile: (filePath: string) => void;
   onFocusEntry: (entryPath: string) => void;
   onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
-  onOpenEntry: (entry: OrganizationWorkspaceFileEntry) => void;
+  onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -549,7 +549,7 @@ function WorkspaceTreeNode({
   onSelectFile: (filePath: string) => void;
   onFocusEntry: (entryPath: string) => void;
   onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
-  onOpenEntry: (entry: OrganizationWorkspaceFileEntry) => void;
+  onOpenEntry?: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -679,14 +679,16 @@ function WorkspaceTreeNode({
         </DropdownMenuItem>
         {!isProtectedContainer ? (
           <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onOpenEntry(entry)}>
-              <ExternalLink className="h-3.5 w-3.5" />
-              {entry.isDirectory ? "Open folder" : "Open in editor"}
-            </DropdownMenuItem>
+            {onOpenEntry || canCreateInsideDirectory ? <DropdownMenuSeparator /> : null}
+            {onOpenEntry ? (
+              <DropdownMenuItem onSelect={() => onOpenEntry(entry)}>
+                <ExternalLink className="h-3.5 w-3.5" />
+                {entry.isDirectory ? "Open folder" : "Open in editor"}
+              </DropdownMenuItem>
+            ) : null}
             {canCreateInsideDirectory ? (
               <>
-                <DropdownMenuSeparator />
+                {onOpenEntry ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem onSelect={() => onStartCreateEntry(entry, "file")}>
                   <FilePlus2 className="h-3.5 w-3.5" />
                   New file
@@ -1129,11 +1131,6 @@ export function OrganizationWorkspaceFilesSidebar() {
     const targetPath = joinWorkspacePath(workspaceRootPath, entry.path);
     const desktopShell = readDesktopShell();
     if (!desktopShell?.openPath) {
-      pushToast({
-        title: "Open in editor unavailable",
-        body: "Opening workspace files is available in the desktop app.",
-        tone: "error",
-      });
       return;
     }
 
@@ -1368,7 +1365,9 @@ export function OrganizationWorkspaceFilesSidebar() {
                       onSelectFile={handleSelectFile}
                       onFocusEntry={setActiveEntryPath}
                       onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
-                      onOpenEntry={(entryToOpen) => void handleOpenEntryDefault(entryToOpen)}
+                      onOpenEntry={readDesktopShell()?.openPath
+                        ? (entryToOpen) => void handleOpenEntryDefault(entryToOpen)
+                        : undefined}
                       onStartCreateEntry={handleStartCreateEntry}
                       onStartRename={handleStartRename}
                       onStartDelete={handleStartDelete}
@@ -2353,11 +2352,6 @@ export function OrganizationWorkspaceBrowser({
     const targetPath = joinWorkspacePath(workspaceRootPath, entry.path);
     const desktopShell = readDesktopShell();
     if (!desktopShell?.openPath) {
-      pushToast({
-        title: "Open in editor unavailable",
-        body: "Opening workspace files is available in the desktop app.",
-        tone: "error",
-      });
       return;
     }
 
@@ -2615,7 +2609,9 @@ export function OrganizationWorkspaceBrowser({
                           onSelectFile={handleSelectFile}
                           onFocusEntry={setActiveEntryPath}
                           onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
-                          onOpenEntry={(entryToOpen) => void handleOpenEntryDefault(entryToOpen)}
+                          onOpenEntry={readDesktopShell()?.openPath
+                            ? (entryToOpen) => void handleOpenEntryDefault(entryToOpen)
+                            : undefined}
                           onStartCreateEntry={handleStartCreateEntry}
                           onStartRename={handleStartRename}
                           onStartDelete={handleStartDelete}
