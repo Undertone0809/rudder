@@ -1004,14 +1004,16 @@ export function AutomationDetail() {
             {automationActivityItems.length === 0 ? (
               <p className="text-xs text-muted-foreground">No activity yet.</p>
             ) : (
-              <div data-testid="automation-activity-list" className="relative space-y-1 before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-px before:bg-border/70">
+              <div data-testid="automation-activity-list" className="relative space-y-1 before:absolute before:bottom-2 before:left-[7.5px] before:top-2 before:w-px before:bg-border/70">
                 {automationActivityItems.map((item) => (
                   <div
                     key={item.id}
                     data-testid="automation-activity-row"
                     className="grid min-h-8 grid-cols-[16px_minmax(0,1fr)] gap-x-2 rounded-sm py-1 text-xs text-muted-foreground sm:grid-cols-[16px_minmax(0,1fr)_auto] sm:items-center"
                   >
-                    <span aria-hidden="true" className="relative mt-1.5 h-2 w-2 rounded-full border border-background bg-muted-foreground/40 shadow-[0_0_0_2px_hsl(var(--background))] sm:mt-0" />
+                    <span aria-hidden="true" className="relative z-10 row-span-2 flex h-full min-h-6 w-4 items-start justify-center pt-[7px] sm:row-span-1 sm:items-center sm:pt-0">
+                      <span className="h-2 w-2 rounded-full border border-background bg-muted-foreground/40 shadow-[0_0_0_2px_hsl(var(--background))]" />
+                    </span>
                     <span data-testid="automation-activity-summary" className="flex min-w-0 items-baseline gap-x-1.5 overflow-hidden whitespace-nowrap">
                       <span className="min-w-0 truncate text-foreground/90">{item.title}</span>
                       {item.details.length > 0 && (

@@ -488,11 +488,14 @@ describe("AutomationDetail", () => {
     const activitySection = container.querySelector('section[aria-label="Activity"]');
     expect(activitySection).toBeTruthy();
     expect(activitySection?.textContent).toContain("Activity");
-    expect(activitySection?.querySelector('[data-testid="automation-activity-list"]')).toBeTruthy();
+    const activityList = activitySection?.querySelector('[data-testid="automation-activity-list"]');
+    expect(activityList).toBeTruthy();
+    expect(activityList?.className).toContain("before:left-[7.5px]");
     const activityRow = activitySection?.querySelector('[data-testid="automation-activity-row"]');
     expect(activityRow?.className).toContain("min-h-8");
     expect(activityRow?.className).toContain("grid-cols-[16px_minmax(0,1fr)]");
     expect(activityRow?.className).toContain("sm:grid-cols-[16px_minmax(0,1fr)_auto]");
+    expect(activityRow?.firstElementChild?.className).toContain("justify-center");
     expect(activityRow?.querySelector('[data-testid="automation-activity-summary"]')?.className).toContain("whitespace-nowrap");
     expect(activityRow?.querySelector('[data-testid="automation-activity-summary"] span')?.className).toContain("truncate");
     expect(activityRow?.querySelector("svg")).toBeNull();
