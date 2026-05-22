@@ -436,7 +436,6 @@ describe("AutomationDetail", () => {
     expect(container.textContent).toContain("Run status");
     expect(container.textContent).toContain("Manual run is in progress");
     expect(container.textContent).toContain("AUT-7");
-    expect(container.textContent).toContain('Updated automation settings for "Daily automation review"');
     expect(container.textContent).toContain("Added schedule trigger");
     expect(container.textContent).toContain("for Schedule 0 10 * * *");
     expect(container.textContent).toContain("Live run widget");
@@ -449,6 +448,7 @@ describe("AutomationDetail", () => {
     expect(container.textContent).not.toContain("Changes save automatically as you edit instructions, ownership, and delivery rules.");
     expect(container.textContent).not.toContain("Automatic triggers are live.");
     expect(container.textContent).not.toContain("Previous runs");
+    expect(container.textContent).not.toContain('Updated automation settings for "Daily automation review"');
     expect(container.textContent).not.toContain("automation updated");
     expect(container.textContent).not.toContain("Automation updated");
     expect(container.textContent).not.toContain("Title: Daily automation review");
@@ -471,7 +471,7 @@ describe("AutomationDetail", () => {
     expect(configurationCard?.querySelector('[data-testid="automation-add-trigger-button"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="automation-add-trigger-card"]')).toBeNull();
     expect(configurationCard?.querySelector('[data-testid="automation-triggers-list"]')).toBeTruthy();
-    expect(configurationCard?.querySelector('[data-testid="automation-trigger-editor-body"]')?.hasAttribute("hidden")).toBe(true);
+    expect(document.querySelector('[data-testid="automation-trigger-editor-body"]')).toBeNull();
     const deliveryRules = configurationCard?.querySelector('[data-testid="automation-delivery-rules-section"]');
     expect(deliveryRules?.className).toContain("rounded-md");
     expect(deliveryRules?.className).toContain("bg-background/35");
@@ -638,8 +638,7 @@ describe("AutomationDetail", () => {
     expect(triggersList?.textContent).toContain("Schedule 0 10 * * *");
     expect(triggersList?.textContent).toContain("daily-check");
     expect(triggersList?.textContent).not.toContain("In sync");
-    const triggerEditorBody = container.querySelector('[data-testid="automation-trigger-editor-body"]');
-    expect(triggerEditorBody?.hasAttribute("hidden")).toBe(true);
+    expect(document.querySelector('[data-testid="automation-trigger-editor-body"]')).toBeNull();
 
     const editTriggerButton = container.querySelector('button[aria-label="Edit trigger"]');
     expect(editTriggerButton).toBeTruthy();
@@ -649,8 +648,9 @@ describe("AutomationDetail", () => {
       await Promise.resolve();
     });
 
-    expect(triggerEditorBody?.hasAttribute("hidden")).toBe(false);
-    expect(container.querySelector('button[aria-label="Collapse trigger editor"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="automation-trigger-editor-body"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="automation-trigger-editor-body"] [data-testid="schedule-editor"]')?.getAttribute("data-variant")).toBe("compact");
+    expect(container.querySelector('button[aria-label="Collapse trigger editor"]')).toBeNull();
 
     const deleteTriggerButton = container.querySelector('button[aria-label="Delete trigger"]');
     expect(deleteTriggerButton).toBeTruthy();

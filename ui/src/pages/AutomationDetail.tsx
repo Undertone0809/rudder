@@ -810,6 +810,9 @@ export function AutomationDetail() {
     }
 
     for (const event of activity ?? []) {
+      if (event.action === "automation.updated") {
+        continue;
+      }
       if (event.action === "automation.run_triggered" && event.entityType === "automation_run" && runIds.has(event.entityId)) {
         continue;
       }

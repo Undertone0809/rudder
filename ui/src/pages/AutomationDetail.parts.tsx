@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ChevronDown,
-  ChevronRight,
   RefreshCw,
   Trash2,
 } from "lucide-react";
@@ -10,9 +9,9 @@ import { cn, formatDateTime } from "../lib/utils";
 import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
 import { useDialog } from "../context/DialogContext";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -362,31 +361,28 @@ export function TriggerEditor({
   }, [canAutosaveTrigger, draft, isTriggerDirty, onSave, trigger]);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="overflow-hidden rounded-md border border-border/60 bg-background/25">
-      <div className="flex min-h-12 min-w-0 items-center gap-2 px-3 py-2">
-        <div className="min-w-0 flex-1 space-y-0.5">
-          <div className="truncate text-sm font-medium" title={primaryTriggerLabel}>{primaryTriggerLabel}</div>
-          <div className="truncate text-xs text-muted-foreground" title={secondaryTriggerLabel}>{secondaryTriggerLabel}</div>
-        </div>
+    <Popover open={open} onOpenChange={setOpen}>
+      <div className="flex min-h-12 min-w-0 items-center gap-2 rounded-md border border-border/60 bg-background/25 px-3 py-2">
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="group flex min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="Edit trigger"
+            data-testid="automation-trigger-menu-button"
+          >
+            <span className="min-w-0 flex-1 space-y-0.5">
+              <span className="block truncate text-sm font-medium" title={primaryTriggerLabel}>{primaryTriggerLabel}</span>
+              <span className="block truncate text-xs text-muted-foreground" title={secondaryTriggerLabel}>{secondaryTriggerLabel}</span>
+            </span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-data-[state=open]:rotate-180" />
+          </button>
+        </PopoverTrigger>
         <div className="flex shrink-0 items-center gap-1.5">
           {showSyncBadge ? (
             <Badge variant="outline" className={syncClassName}>
               {syncLabel}
             </Badge>
           ) : null}
-          <span className="hidden max-w-[8rem] truncate text-xs text-muted-foreground 2xl:inline" title={triggerTimingLabel}>
-            {triggerTimingLabel}
-          </span>
-          <CollapsibleTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground hover:text-foreground"
-              aria-label={open ? "Collapse trigger editor" : "Edit trigger"}
-            >
-              {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            </Button>
-          </CollapsibleTrigger>
           <Button
             variant="ghost"
             size="icon-xs"
@@ -409,13 +405,19 @@ export function TriggerEditor({
         </div>
       </div>
 
-      <CollapsibleContent
+      <PopoverContent
         data-testid="automation-trigger-editor-body"
-        className="px-3 pb-3 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-1"
+        align="end"
+        side="left"
+        sideOffset={8}
+        className="automation-trigger-menu-content glass-popover w-[min(320px,calc(100vw-2rem))] space-y-3 rounded-md p-3 text-foreground"
       >
-        <div className="grid gap-2 border-t border-border/50 pt-3">
-          <div className="grid gap-1.5 sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
-            <Label className="text-xs text-muted-foreground">Label</Label>
+        <div className="px-1 text-sm font-medium text-muted-foreground">
+          {trigger.kind === "schedule" ? "Schedule" : triggerKindLabel(trigger.kind)}
+        </div>
+        <div className="grid gap-2">
+          <div className="grid gap-1.5">
+            <Label className="px-1 text-xs text-muted-foreground">Label</Label>
             <Input
               value={draft.label}
               className="h-8"
@@ -423,9 +425,10 @@ export function TriggerEditor({
             />
           </div>
           {trigger.kind === "schedule" && (
-            <div className="grid gap-1.5 sm:grid-cols-[92px_minmax(0,1fr)] sm:items-start">
-              <Label className="pt-2 text-xs text-muted-foreground">Schedule</Label>
+            <div className="grid gap-1.5">
+              <Label className="px-1 text-xs text-muted-foreground">Schedule</Label>
               <ScheduleEditor
+                variant="compact"
                 value={draft.cronExpression}
                 onChange={(cronExpression) => setDraft((current) => ({ ...current, cronExpression }))}
               />
@@ -433,8 +436,8 @@ export function TriggerEditor({
           )}
           {trigger.kind === "webhook" && (
             <>
-              <div className="grid gap-1.5 sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
-                <Label className="text-xs text-muted-foreground">Signing mode</Label>
+              <div className="grid gap-1.5">
+                <Label className="px-1 text-xs text-muted-foreground">Signing mode</Label>
                 <Select
                   value={draft.signingMode}
                   onValueChange={(signingMode) => setDraft((current) => ({ ...current, signingMode }))}
@@ -449,8 +452,8 @@ export function TriggerEditor({
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid gap-1.5 sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
-                <Label className="text-xs text-muted-foreground">Replay window</Label>
+              <div className="grid gap-1.5">
+                <Label className="px-1 text-xs text-muted-foreground">Replay window</Label>
                 <Input
                   value={draft.replayWindowSec}
                   className="h-8"
@@ -489,7 +492,7 @@ export function TriggerEditor({
             </div>
           </div>
         ) : null}
-      </CollapsibleContent>
-    </Collapsible>
+      </PopoverContent>
+    </Popover>
   );
 }
