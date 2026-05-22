@@ -135,11 +135,23 @@ export interface AgentRuntimeExecutionContext {
   runtime: AgentRuntimeState;
   config: Record<string, unknown>;
   context: Record<string, unknown>;
+  media?: AgentRuntimeMediaAttachment[];
   onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
   onMeta?: (meta: AgentRuntimeInvocationMeta) => Promise<void>;
   onSpawn?: (meta: { pid: number; startedAt: string }) => Promise<void>;
   authToken?: string;
   abortSignal?: AbortSignal;
+}
+
+export interface AgentRuntimeMediaAttachment {
+  source: "chat_attachment";
+  attachmentId: string;
+  assetId: string;
+  name: string;
+  originalFilename: string | null;
+  contentType: string;
+  byteSize: number;
+  localPath: string;
 }
 
 export interface AgentRuntimeModel {

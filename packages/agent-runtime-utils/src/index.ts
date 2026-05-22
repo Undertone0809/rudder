@@ -8,6 +8,7 @@ export type {
   AgentRuntimeLoadedSkillMeta,
   AgentRuntimeInvocationMeta,
   AgentRuntimeExecutionContext,
+  AgentRuntimeMediaAttachment,
   AgentRuntimeEnvironmentCheckLevel,
   AgentRuntimeEnvironmentCheck,
   AgentRuntimeEnvironmentTestStatus,

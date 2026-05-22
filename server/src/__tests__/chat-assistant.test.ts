@@ -453,8 +453,87 @@ describe("chatAssistantService operator profile prompt injection", () => {
         localPath: expect.stringMatching(/image\.png$/),
       }),
     ]);
+    expect(executeInput?.media).toEqual([
+      expect.objectContaining({
+        source: "chat_attachment",
+        attachmentId: "attachment-1",
+        assetId: "asset-1",
+        contentType: "image/png",
+        localPath: expect.stringMatching(/image\.png$/),
+      }),
+    ]);
     expect(storage.getObject).toHaveBeenCalledWith("organization-1", "chats/chat-1/image.png");
     expect(executeInput?.authToken).toEqual(expect.any(String));
+  });
+
+  it("prepares chat image attachments for Claude chat agents too", async () => {
+    const storage = makeStorageService();
+    const svc = chatAssistantService({} as any, storage as any);
+    mockAgentService.getById.mockResolvedValueOnce({
+      id: "agent-1",
+      orgId: "organization-1",
+      name: "Claude Specialist",
+      status: "idle",
+      agentRuntimeType: "claude_local",
+      agentRuntimeConfig: { model: "claude-sonnet-4.5" },
+      metadata: null,
+    });
+    mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
+      resolvedConfig: { model: "claude-sonnet-4.5" },
+      runtimeConfig: {
+        model: "claude-sonnet-4.5",
+        rudderSkillSync: { desiredSkills: [] },
+        paperclipSkillSync: { desiredSkills: [] },
+        rudderRuntimeSkills: [],
+        paperclipRuntimeSkills: [],
+      },
+      runtimeSkillEntries: [],
+      secretKeys: new Set(),
+    });
+    const [message] = makeMessages();
+    const messageWithAttachment: ChatMessage = {
+      ...message!,
+      attachments: [{
+        id: "attachment-claude-1",
+        orgId: "organization-1",
+        conversationId: "chat-1",
+        messageId: "message-1",
+        assetId: "asset-claude-1",
+        provider: "local_disk",
+        objectKey: "chats/chat-1/claude-image.png",
+        contentType: "image/png",
+        byteSize: 1234,
+        sha256: "sha256",
+        originalFilename: "claude-image.png",
+        createdByAgentId: null,
+        createdByUserId: "user-1",
+        contentPath: "/api/assets/asset-claude-1/content",
+        createdAt: new Date("2026-03-29T08:01:00.000Z"),
+        updatedAt: new Date("2026-03-29T08:01:00.000Z"),
+      }],
+    };
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: [messageWithAttachment],
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
+    const prompt = executeInput?.context?.chatPrompt as string;
+    expect(prompt).toContain("localPath=");
+    expect(prompt).toContain("runtimeReference=local_image_file");
+    expect(executeInput?.media).toEqual([
+      expect.objectContaining({
+        source: "chat_attachment",
+        attachmentId: "attachment-claude-1",
+        assetId: "asset-claude-1",
+        contentType: "image/png",
+        localPath: expect.stringMatching(/claude-image\.png$/),
+      }),
+    ]);
+    expect(storage.getObject).toHaveBeenCalledWith("organization-1", "chats/chat-1/claude-image.png");
   });
 
   it("applies plan-mode prompt guidance and a read-only Codex runtime overlay", async () => {

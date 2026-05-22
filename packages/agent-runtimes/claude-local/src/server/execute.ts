@@ -79,6 +79,13 @@ function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function runtimeImagePaths(media: AgentRuntimeExecutionContext["media"]): string[] {
+  return (media ?? [])
+    .filter((item) => item.source === "chat_attachment" && item.contentType.toLowerCase().startsWith("image/"))
+    .map((item) => item.localPath)
+    .filter((value) => value.trim().length > 0);
+}
+
 async function pathExists(candidate: string): Promise<boolean> {
   return fs.access(candidate).then(() => true).catch(() => false);
 }
@@ -506,6 +513,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     warningStream: "stderr",
   });
   const instructionsFileDir = loadedInstructions.instructionsDir;
+  const imagePaths = runtimeImagePaths(ctx.media);
+  const imageAttachmentNote =
+    imagePaths.length > 0
+      ? `Provided ${imagePaths.length} local image attachment path${imagePaths.length === 1 ? "" : "s"} in the prompt for Claude Code inspection.`
+      : null;
 
   // When instructionsFilePath is configured, create a combined temp file that
   // includes both the file content and the path directive, so we only need
@@ -521,12 +533,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       return [
         ...loadedInstructions.commandNotes,
         "Injected Rudder operating contract via --append-system-prompt-file.",
+        ...(imageAttachmentNote ? [imageAttachmentNote] : []),
       ];
     }
-    if (!loadedInstructions.prefix) return loadedInstructions.commandNotes;
+    if (!loadedInstructions.prefix) {
+      return [
+        ...loadedInstructions.commandNotes,
+        ...(imageAttachmentNote ? [imageAttachmentNote] : []),
+      ];
+    }
     return [
       ...loadedInstructions.commandNotes,
       `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended; relative references from ${instructionsFileDir}).`,
+      ...(imageAttachmentNote ? [imageAttachmentNote] : []),
     ];
   })();
 

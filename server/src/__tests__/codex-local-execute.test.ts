@@ -1389,6 +1389,75 @@ describe("codex execute", () => {
     }
   });
 
+  it("passes runtime image media to Codex with native --image attachments", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-image-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    const imagePath = path.join(root, "chat-image.png");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(imagePath, "png-bytes", "utf8");
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      let commandNotes: string[] = [];
+      const result = await execute({
+        runId: "run-chat-image",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Codex Coder",
+          agentRuntimeType: "codex_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Reply in chat.",
+        },
+        context: {
+          rudderScene: "chat",
+        },
+        media: [{
+          source: "chat_attachment",
+          attachmentId: "attachment-1",
+          assetId: "asset-1",
+          name: "chat-image.png",
+          originalFilename: "chat-image.png",
+          contentType: "image/png",
+          byteSize: 9,
+          localPath: imagePath,
+        }],
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          commandNotes = meta.commandNotes ?? [];
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.argv).toEqual(expect.arrayContaining(["--image", imagePath]));
+      expect(commandNotes).toContain("Attached 1 image attachment to the initial Codex prompt via --image.");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not add --skip-git-repo-check outside the chat scene", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-non-chat-scene-"));
     const workspace = path.join(root, "workspace");

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { pipeline } from "node:stream/promises";
-import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type { AgentRuntimeMediaAttachment, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { RudderSkillEntry } from "@rudderhq/agent-runtime-utils/server-utils";
 import type { Db } from "@rudderhq/db";
 import type {
@@ -34,6 +34,8 @@ export interface ChatAttachmentPromptReference {
   localPath?: string;
   localPathError?: string;
 }
+
+const CHAT_LOCAL_IMAGE_RUNTIME_TYPES = new Set<AgentRuntimeType>(["codex_local", "claude_local"]);
 
 export interface ResolvedChatRuntimeSource {
   descriptor: ChatRuntimeDescriptor;
@@ -625,8 +627,9 @@ export async function prepareChatAttachmentReferences(input: {
   runId: string;
 }) {
   const references = new Map<string, ChatAttachmentPromptReference>();
-  if (input.runtimeType !== "codex_local" || !input.storage) {
-    return { references, cleanup: async () => {} };
+  const media: AgentRuntimeMediaAttachment[] = [];
+  if (!CHAT_LOCAL_IMAGE_RUNTIME_TYPES.has(input.runtimeType) || !input.storage) {
+    return { references, media, cleanup: async () => {} };
   }
 
   const attachments = input.messages
@@ -634,27 +637,40 @@ export async function prepareChatAttachmentReferences(input: {
     .flatMap((message) => message.attachments)
     .filter(isImageAttachment);
   if (attachments.length === 0) {
-    return { references, cleanup: async () => {} };
+    return { references, media, cleanup: async () => {} };
   }
 
   const safeRunId = input.runId.replace(/[^a-zA-Z0-9._-]+/g, "_");
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), `rudder-chat-attachments-${safeRunId}-`));
 
-  await Promise.all(attachments.map(async (attachment, index) => {
+  const preparedMedia = await Promise.all(attachments.map(async (attachment, index) => {
     const targetPath = path.join(dir, safeAttachmentFilename(attachment, index));
     try {
       const object = await input.storage!.getObject(attachment.orgId, attachment.objectKey);
       await pipeline(object.stream, createWriteStream(targetPath, { mode: 0o600 }));
       references.set(attachment.id, { localPath: targetPath });
+      return {
+        source: "chat_attachment",
+        attachmentId: attachment.id,
+        assetId: attachment.assetId,
+        name: attachment.originalFilename ?? attachment.assetId,
+        originalFilename: attachment.originalFilename,
+        contentType: attachment.contentType,
+        byteSize: attachment.byteSize,
+        localPath: targetPath,
+      } satisfies AgentRuntimeMediaAttachment;
     } catch (error) {
       references.set(attachment.id, {
         localPathError: error instanceof Error ? error.message : "Failed to prepare image attachment",
       });
+      return null;
     }
   }));
+  media.push(...preparedMedia.filter((item): item is AgentRuntimeMediaAttachment => item !== null));
 
   return {
     references,
+    media,
     cleanup: async () => {
       await fs.rm(dir, { recursive: true, force: true });
     },
@@ -1092,4 +1108,3 @@ export function shouldSuppressChatTranscriptEntry(entry: TranscriptEntry, result
   }
   return false;
 }
-

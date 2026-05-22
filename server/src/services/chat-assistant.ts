@@ -337,6 +337,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       attachmentId,
       ...reference,
     }));
+    const media = preparedAttachments.media;
 
     const result = await (async () => {
       try {
@@ -369,6 +370,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ...(linkedIssueIds[0] ? { issueId: linkedIssueIds[0] } : {}),
             ...(linkedIssueIds.length > 0 ? { issueIds: linkedIssueIds } : {}),
           },
+          ...(media.length > 0 ? { media } : {}),
           onMeta: async (meta) => {
             await input.onInvocationMeta?.({
               ...meta,
