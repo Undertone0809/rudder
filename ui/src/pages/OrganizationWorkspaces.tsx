@@ -86,6 +86,7 @@ const WORKSPACE_MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown"
 const WORKSPACE_TEXT_DOCUMENT_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mdx", ".txt", ".text"]);
 const AGENT_MENTION_MARKDOWN_LINK_RE = /\[([^\]]*)]\((agent:\/\/[^)\s]+)\)/g;
 const WORKSPACE_ENTRY_DND_MIME = "application/x-rudder-workspace-entry";
+const WORKSPACE_TAB_DND_MIME = "application/x-rudder-workspace-tab";
 const WORKSPACE_LAUNCH_TARGET_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
   label: string;
   className: string;
@@ -467,6 +468,7 @@ function DirectoryChildren({
   onSelectFile,
   onFocusEntry,
   onCopyPath,
+  onOpenEntry,
   onStartCreateEntry,
   onStartRename,
   onStartDelete,
@@ -481,6 +483,7 @@ function DirectoryChildren({
   onSelectFile: (filePath: string) => void;
   onFocusEntry: (entryPath: string) => void;
   onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
+  onOpenEntry: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -510,6 +513,7 @@ function DirectoryChildren({
           onSelectFile={onSelectFile}
           onFocusEntry={onFocusEntry}
           onCopyPath={onCopyPath}
+          onOpenEntry={onOpenEntry}
           onStartCreateEntry={onStartCreateEntry}
           onStartRename={onStartRename}
           onStartDelete={onStartDelete}
@@ -530,6 +534,7 @@ function WorkspaceTreeNode({
   onSelectFile,
   onFocusEntry,
   onCopyPath,
+  onOpenEntry,
   onStartCreateEntry,
   onStartRename,
   onStartDelete,
@@ -544,6 +549,7 @@ function WorkspaceTreeNode({
   onSelectFile: (filePath: string) => void;
   onFocusEntry: (entryPath: string) => void;
   onCopyPath: (entry: OrganizationWorkspaceFileEntry) => void;
+  onOpenEntry: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartCreateEntry: (entry: OrganizationWorkspaceFileEntry, kind: "file" | "folder") => void;
   onStartRename: (entry: OrganizationWorkspaceFileEntry) => void;
   onStartDelete: (entry: OrganizationWorkspaceFileEntry) => void;
@@ -674,8 +680,13 @@ function WorkspaceTreeNode({
         {!isProtectedContainer ? (
           <>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => onOpenEntry(entry)}>
+              <ExternalLink className="h-3.5 w-3.5" />
+              {entry.isDirectory ? "Open folder" : "Open in editor"}
+            </DropdownMenuItem>
             {canCreateInsideDirectory ? (
               <>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => onStartCreateEntry(entry, "file")}>
                   <FilePlus2 className="h-3.5 w-3.5" />
                   New file
@@ -684,9 +695,9 @@ function WorkspaceTreeNode({
                   <FolderPlus className="h-3.5 w-3.5" />
                   New folder
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
               </>
             ) : null}
+            <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => onStartRename(entry)}>
               <Pencil className="h-3.5 w-3.5" />
               Rename
@@ -777,6 +788,7 @@ function WorkspaceTreeNode({
             onSelectFile={onSelectFile}
             onFocusEntry={onFocusEntry}
             onCopyPath={onCopyPath}
+            onOpenEntry={onOpenEntry}
             onStartCreateEntry={onStartCreateEntry}
             onStartRename={onStartRename}
             onStartDelete={onStartDelete}
@@ -1113,6 +1125,34 @@ export function OrganizationWorkspaceFilesSidebar() {
     }
   }
 
+  async function handleOpenEntryDefault(entry: OrganizationWorkspaceFileEntry) {
+    const targetPath = joinWorkspacePath(workspaceRootPath, entry.path);
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.openPath) {
+      pushToast({
+        title: "Open in editor unavailable",
+        body: "Opening workspace files is available in the desktop app.",
+        tone: "error",
+      });
+      return;
+    }
+
+    try {
+      await desktopShell.openPath(targetPath);
+      pushToast({
+        title: entry.isDirectory ? "Opened folder" : "Opened in editor",
+        body: targetPath,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: entry.isDirectory ? "Failed to open folder" : "Failed to open in editor",
+        body: error instanceof Error ? error.message : targetPath,
+        tone: "error",
+      });
+    }
+  }
+
   function handleSelectFile(filePath: string) {
     updateSelectedPath(searchParams, setSearchParams, filePath);
   }
@@ -1328,6 +1368,7 @@ export function OrganizationWorkspaceFilesSidebar() {
                       onSelectFile={handleSelectFile}
                       onFocusEntry={setActiveEntryPath}
                       onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
+                      onOpenEntry={(entryToOpen) => void handleOpenEntryDefault(entryToOpen)}
                       onStartCreateEntry={handleStartCreateEntry}
                       onStartRename={handleStartRename}
                       onStartDelete={handleStartDelete}
@@ -1530,11 +1571,12 @@ export function OrganizationWorkspaceBrowser({
     left: number;
     top: number;
   } | null>(null);
+  const [draggedTabPath, setDraggedTabPath] = useState<string | null>(null);
+  const [tabDragOverPath, setTabDragOverPath] = useState<string | null>(null);
   const [draftContent, setDraftContent] = useState("");
   const [draftFilePath, setDraftFilePath] = useState<string | null>(null);
   const selectedFilePathRef = useRef<string | null>(selectedFilePath);
   const [availableIdes, setAvailableIdes] = useState<DesktopIdeTarget[]>([]);
-  const [openingInIde, setOpeningInIde] = useState(false);
   const [workspaceLaunchTargets, setWorkspaceLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
   const [lastWorkspaceLaunchTargetId, setLastWorkspaceLaunchTargetId] = useState<
     DesktopWorkspaceLaunchTarget["id"] | null
@@ -2249,16 +2291,6 @@ export function OrganizationWorkspaceBrowser({
     && !selectedFileDetail.truncated,
   );
   const primaryIde = availableIdes[0] ?? null;
-  const hasLoadedSelectedFile = Boolean(
-    selectedFilePath
-    && selectedFileDetail
-    && selectedFileDetail.filePath === selectedFilePath,
-  );
-  const canOpenInIde = Boolean(
-    primaryIde
-    && workspaceRootPath
-    && hasLoadedSelectedFile,
-  );
   const tabContextMenuIndex = tabContextMenu ? openFilePaths.indexOf(tabContextMenu.filePath) : -1;
   const canCloseOtherTabs = Boolean(tabContextMenu && openFilePaths.length > 1);
   const canCloseTabsToRight = tabContextMenuIndex >= 0 && tabContextMenuIndex < openFilePaths.length - 1;
@@ -2269,7 +2301,6 @@ export function OrganizationWorkspaceBrowser({
     if (!desktopShell) return;
     if (typeof desktopShell.openWorkspaceFileInIde !== "function") return;
 
-    setOpeningInIde(true);
     try {
       await desktopShell.openWorkspaceFileInIde(workspaceRootPath, filePath, primaryIde.id);
       pushToast({
@@ -2283,14 +2314,7 @@ export function OrganizationWorkspaceBrowser({
         body: error instanceof Error ? error.message : "Could not open the selected workspace file in a local IDE.",
         tone: "error",
       });
-    } finally {
-      setOpeningInIde(false);
     }
-  }
-
-  async function handleOpenInIde() {
-    if (!selectedFilePath || !hasLoadedSelectedFile) return;
-    await handleOpenFileInIde(selectedFilePath);
   }
 
   async function handleCopyWorkspacePath(entryPath: string) {
@@ -2322,6 +2346,34 @@ export function OrganizationWorkspaceBrowser({
     await handleCopyWorkspacePath(entry.path);
   }
 
+  async function handleOpenEntryDefault(entry: OrganizationWorkspaceFileEntry) {
+    const targetPath = joinWorkspacePath(workspaceRootPath, entry.path);
+    const desktopShell = readDesktopShell();
+    if (!desktopShell?.openPath) {
+      pushToast({
+        title: "Open in editor unavailable",
+        body: "Opening workspace files is available in the desktop app.",
+        tone: "error",
+      });
+      return;
+    }
+
+    try {
+      await desktopShell.openPath(targetPath);
+      pushToast({
+        title: entry.isDirectory ? "Opened folder" : "Opened in editor",
+        body: targetPath,
+        tone: "info",
+      });
+    } catch (error) {
+      pushToast({
+        title: entry.isDirectory ? "Failed to open folder" : "Failed to open in editor",
+        body: error instanceof Error ? error.message : targetPath,
+        tone: "error",
+      });
+    }
+  }
+
   function handleOpenTabContextMenu(event: MouseEvent<HTMLElement>, filePath: string) {
     event.preventDefault();
     event.stopPropagation();
@@ -2330,6 +2382,50 @@ export function OrganizationWorkspaceBrowser({
       filePath,
       ...clampWorkspaceTabContextMenuPosition(event.clientX, event.clientY),
     });
+  }
+
+  function handleOpenFileTabDragStart(event: DragEvent<HTMLElement>, filePath: string) {
+    if (openFilePaths.length < 2) {
+      event.preventDefault();
+      return;
+    }
+    setDraggedTabPath(filePath);
+    setTabContextMenu(null);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(WORKSPACE_TAB_DND_MIME, filePath);
+    event.dataTransfer.setData("text/plain", filePath);
+  }
+
+  function handleOpenFileTabDragOver(event: DragEvent<HTMLElement>, targetFilePath: string) {
+    const sourceFilePath = draggedTabPath || event.dataTransfer.getData(WORKSPACE_TAB_DND_MIME);
+    if (!sourceFilePath || sourceFilePath === targetFilePath) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setTabDragOverPath(targetFilePath);
+    const targetRect = event.currentTarget.getBoundingClientRect();
+    const insertBeforeTarget = event.clientX < targetRect.left + targetRect.width / 2;
+    setOpenFilePaths((current) => {
+      const sourceIndex = current.indexOf(sourceFilePath);
+      const targetIndex = current.indexOf(targetFilePath);
+      if (sourceIndex === -1 || targetIndex === -1) return current;
+      const withoutSource = current.filter((candidate) => candidate !== sourceFilePath);
+      const targetIndexAfterRemoval = withoutSource.indexOf(targetFilePath);
+      const insertIndex = targetIndexAfterRemoval + (insertBeforeTarget ? 0 : 1);
+      const next = [...withoutSource];
+      next.splice(insertIndex, 0, sourceFilePath);
+      return next.join("\u0000") === current.join("\u0000") ? current : next;
+    });
+  }
+
+  function handleOpenFileTabDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    setDraggedTabPath(null);
+    setTabDragOverPath(null);
+  }
+
+  function handleOpenFileTabDragEnd() {
+    setDraggedTabPath(null);
+    setTabDragOverPath(null);
   }
 
   function handleMarkdownDraftChange(filePath: string | null, nextContent: string) {
@@ -2500,6 +2596,7 @@ export function OrganizationWorkspaceBrowser({
                           onSelectFile={handleSelectFile}
                           onFocusEntry={setActiveEntryPath}
                           onCopyPath={(entryToCopy) => void handleCopyEntryPath(entryToCopy)}
+                          onOpenEntry={(entryToOpen) => void handleOpenEntryDefault(entryToOpen)}
                           onStartCreateEntry={handleStartCreateEntry}
                           onStartRename={handleStartRename}
                           onStartDelete={handleStartDelete}
@@ -2524,28 +2621,38 @@ export function OrganizationWorkspaceBrowser({
               aria-label="Open files"
               className="rudder-doc-editor-tab-strip flex h-11 shrink-0 items-stretch justify-between bg-[color:var(--surface-page)]"
             >
-              <div className="rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto px-2 pt-1">
+              <div className="rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pl-0 pr-2 pt-1">
                 {openFilePaths.length > 0 ? (
                   openFilePaths.map((filePath, index) => {
                     const active = selectedFilePath === filePath;
                     const first = index === 0;
+                    const dragging = draggedTabPath === filePath;
+                    const dragTarget = tabDragOverPath === filePath;
                     return (
                       <div
                         key={filePath}
                         data-testid={`org-workspaces-editor-tab-${filePath}`}
+                        draggable={openFilePaths.length > 1}
+                        onDragStart={(event) => handleOpenFileTabDragStart(event, filePath)}
+                        onDragOver={(event) => handleOpenFileTabDragOver(event, filePath)}
+                        onDrop={handleOpenFileTabDrop}
+                        onDragEnd={handleOpenFileTabDragEnd}
                         onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
                         className={cn(
-                          "rudder-doc-editor-tab group relative flex min-w-[132px] max-w-[248px] shrink-0 items-center border px-1 transition-[color,background-color,border-color,box-shadow]",
+                          "rudder-doc-editor-tab group relative flex min-w-[132px] max-w-[248px] shrink-0 cursor-default items-center border px-1 transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
                           active
-                            ? "rudder-doc-editor-tab--active mb-[-1px] h-10 overflow-visible rounded-t-[20px] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
-                            : "mb-1 h-9 overflow-hidden rounded-[18px] border-transparent text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
+                            ? "rudder-doc-editor-tab--active mb-[-1px] h-10 overflow-visible rounded-t-[24px] border-[color:var(--border-base)] border-b-[color:var(--surface-elevated)] bg-[color:var(--surface-elevated)] text-foreground shadow-[0_-1px_0_color-mix(in_oklab,var(--foreground)_6%,transparent)]"
+                            : "mb-1 h-9 translate-y-px overflow-hidden rounded-[18px] border-transparent text-muted-foreground hover:translate-y-0 hover:bg-[color:var(--surface-active)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
                           active && first && "rudder-doc-editor-tab--first-active",
+                          dragging && "opacity-55",
+                          dragTarget && !dragging && "shadow-[0_0_0_1px_color-mix(in_oklab,var(--foreground)_10%,transparent)]",
                         )}
                       >
                         <button
                           type="button"
                           role="tab"
                           aria-selected={active}
+                          draggable={false}
                           className="min-w-0 flex-1 truncate rounded-[10px] px-2 text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                           title={filePath}
                           onClick={() => handleSelectFile(filePath)}
@@ -2555,6 +2662,7 @@ export function OrganizationWorkspaceBrowser({
                         </button>
                         <button
                           type="button"
+                          draggable={false}
                           className={cn(
                             "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[color:var(--surface-active)] hover:text-foreground",
                             active ? "opacity-100" : "opacity-0 group-hover:opacity-100",
@@ -2574,29 +2682,67 @@ export function OrganizationWorkspaceBrowser({
                   <div className="mb-1 flex h-9 items-center px-2 text-sm text-muted-foreground">No file open</div>
                 )}
               </div>
-              {canOpenInIde && primaryIde ? (
-                <div className="flex shrink-0 items-center gap-2 border-l border-border px-3 text-xs text-muted-foreground">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
+              {workspaceRootPath && selectedWorkspaceLaunchTarget ? (
+                <div className="flex shrink-0 items-center border-l border-border px-2 text-xs text-muted-foreground">
+                  <div
+                    className="inline-flex h-8 items-stretch overflow-hidden rounded-[18px] border border-[color:var(--border-base)] bg-[color:var(--surface-elevated)] shadow-none"
+                    data-testid="org-workspaces-editor-launcher"
+                  >
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-full rounded-none border-0 px-2 text-sm text-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)]"
+                      aria-label={`Open workspace in ${selectedWorkspaceLaunchTarget.label}`}
+                      onClick={() => void handleOpenWorkspace(selectedWorkspaceLaunchTarget)}
+                      disabled={openingWorkspaceTargetId !== null}
+                    >
+                      {openingWorkspaceTargetId === selectedWorkspaceLaunchTarget.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <WorkspaceLaunchTargetIcon
+                          target={selectedWorkspaceLaunchTarget}
+                          className="h-3.5 w-3.5"
+                        />
+                      )}
+                      <span className="ml-1.5 max-w-20 truncate">{selectedWorkspaceLaunchTarget.label}</span>
+                    </Button>
+                    <div className="my-1 w-px bg-[color:var(--border-soft)]" aria-hidden="true" />
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         size="icon"
-                        className="h-8 w-8"
-                        aria-label={`Open in ${primaryIde.label}`}
-                        data-testid="org-workspaces-open-in-ide-button"
-                        onClick={() => void handleOpenInIde()}
-                        disabled={openingInIde}
+                        className="h-full w-8 rounded-none border-0 text-muted-foreground shadow-none hover:border-0 hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                        aria-label="Open workspace menu"
+                        disabled={openingWorkspaceTargetId !== null}
                       >
-                        {openingInIde ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        )}
+                        <ChevronDown className="h-3.5 w-3.5" />
                       </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{`Open in ${primaryIde.label}`}</TooltipContent>
-                  </Tooltip>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuRadioGroup
+                          value={selectedWorkspaceLaunchTarget.id}
+                          onValueChange={(targetId) => {
+                            const target = workspaceLaunchTargets.find((candidate) => candidate.id === targetId);
+                            if (target) handleSelectWorkspaceLaunchTarget(target);
+                          }}
+                        >
+                          {workspaceLaunchTargets.map((target) => (
+                            <DropdownMenuRadioItem
+                              key={target.id}
+                              value={target.id}
+                              data-testid={`org-workspaces-editor-launch-target-${target.id}`}
+                            >
+                              <WorkspaceLaunchTargetIcon target={target} className="h-4 w-4" />
+                              <span>{target.label}</span>
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
               ) : null}
             </div>
