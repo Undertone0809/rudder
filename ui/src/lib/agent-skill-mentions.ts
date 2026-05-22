@@ -73,11 +73,6 @@ function normalizeOptionalText(value: string | null | undefined) {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeOptionalText(value: string | null | undefined) {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : null;
-}
-
 function buildExternalSkillSearchText(publicRef: string, entry: AgentSkillEntry) {
   return [
     publicRef,

@@ -16,7 +16,6 @@ import {
   type ClaudeLoginResult,
   type AgentPermissionUpdate,
 } from "../api/agents";
-import { agentLearningApi } from "../api/agentLearning";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { budgetsApi } from "../api/budgets";
 import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
@@ -103,19 +102,8 @@ import {
   Search,
   MessageSquare,
   Maximize2,
-  Brain,
-  BookOpenCheck,
-  CircleDot,
 } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -148,10 +136,8 @@ import {
   type HeartbeatRun,
   type HeartbeatRunEvent,
   type AgentRuntimeState,
-  type AgentLearningSummary,
   type LiveEvent,
   type OrganizationSkillCreateRequest,
-  type RunLoadedSkillsSummary,
   type WorkspaceOperation,
 } from "@rudderhq/shared";
 import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@rudderhq/agent-runtime-utils";
@@ -387,13 +373,11 @@ export function AgentDetail() {
           ? "configuration"
           : activeView === "skills"
             ? "skills"
-            : activeView === "learning"
-              ? "learning"
-              : activeView === "runs"
-                ? "runs"
-                : activeView === "budget"
-                  ? "budget"
-                  : "dashboard";
+            : activeView === "runs"
+              ? "runs"
+              : activeView === "budget"
+                ? "budget"
+              : "dashboard";
     if (routeAgentRef !== canonicalAgentRef || urlTab !== canonicalTab) {
       navigate(`/agents/${canonicalAgentRef}/${canonicalTab}`, { replace: true });
       return;
@@ -532,10 +516,8 @@ export function AgentDetail() {
         crumbs.push({ label: "Instructions" });
       } else if (activeView === "configuration") {
         crumbs.push({ label: "Configuration" });
-      } else if (activeView === "skills") {
-        crumbs.push({ label: "Skills" });
-      } else if (activeView === "learning") {
-        crumbs.push({ label: "Learning" });
+      // } else if (activeView === "skills") { // TODO: bring back later
+      //   crumbs.push({ label: "Skills" });
       } else if (activeView === "runs") {
         crumbs.push({ label: "Runs" });
       } else if (activeView === "budget") {
@@ -744,7 +726,6 @@ export function AgentDetail() {
                 { value: "dashboard", label: "Dashboard" },
                 { value: "instructions", label: "Instructions" },
                 { value: "skills", label: "Skills" },
-                { value: "learning", label: "Learning" },
                 { value: "configuration", label: "Configuration" },
                 { value: "runs", label: "Runs" },
                 { value: "budget", label: "Budget" },
@@ -890,13 +871,6 @@ export function AgentDetail() {
 
       {activeView === "skills" && (
         <AgentSkillsTab
-          agent={agent}
-          orgId={resolvedCompanyId ?? undefined}
-        />
-      )}
-
-      {activeView === "learning" && (
-        <AgentLearningPage
           agent={agent}
           orgId={resolvedCompanyId ?? undefined}
         />

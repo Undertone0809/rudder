@@ -75,31 +75,6 @@ export function AgentIconPicker({
     onUpload(file);
   }
 
-  const trimmedEmoji = emojiValue.trim();
-  const emojiDisabled =
-    trimmedEmoji.length === 0 ||
-    trimmedEmoji.length > MAX_CUSTOM_ICON_LENGTH ||
-    /[<>\u0000-\u001f\u007f]/u.test(trimmedEmoji);
-
-  function selectIcon(icon: string | null) {
-    onChange(icon);
-    setOpen(false);
-    setSearch("");
-  }
-
-  function handleEmojiApply() {
-    if (emojiDisabled) return;
-    selectIcon(trimmedEmoji);
-    setEmojiValue("");
-  }
-
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0] ?? null;
-    event.currentTarget.value = "";
-    if (!file || !onUpload) return;
-    onUpload(file);
-  }
-
   return (
     <Popover
       open={open}

@@ -24,19 +24,6 @@ import {
   HintIcon,
 } from "../components/agent-config-primitives";
 import {
-  AdapterEnvironmentError,
-  AdapterEnvironmentResult,
-  RuntimeProviderCard,
-  defaultConfigForRuntime,
-  defaultFallbackItem,
-  formatRuntimeEnvironmentLabel,
-  normalizeModelFallbacksForEditor,
-  primaryModelFallbackKey,
-  type RuntimeEnvironmentStatus,
-  runtimeProviderItemClassName,
-  runtimeProviderRailClassName,
-} from "../components/AgentConfigForm";
-import {
   clearStoredSettingsOverlayBackgroundPath,
   preserveSettingsOverlayState,
   readSettingsOverlayBackgroundPath,
@@ -148,24 +135,6 @@ export function OrganizationSettings() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.organizations.all });
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "active") });
       await queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(viewedOrganizationId!, "archived") });
-    },
-  });
-
-  const chatRuntimeSecretsQuery = useQuery({
-    queryKey: viewedOrganizationId ? queryKeys.secrets.list(viewedOrganizationId) : ["secrets", "none"],
-    queryFn: () => secretsApi.list(viewedOrganizationId!),
-    enabled: Boolean(viewedOrganizationId),
-    staleTime: SETTINGS_PREFETCH_STALE_TIME_MS,
-  });
-
-  const createChatRuntimeSecret = useMutation({
-    mutationFn: (input: { name: string; value: string }) => {
-      if (!viewedOrganizationId) throw new Error("Select a organization to create secrets");
-      return secretsApi.create(viewedOrganizationId, input);
-    },
-    onSuccess: async () => {
-      if (!viewedOrganizationId) return;
-      await queryClient.invalidateQueries({ queryKey: queryKeys.secrets.list(viewedOrganizationId) });
     },
   });
 
