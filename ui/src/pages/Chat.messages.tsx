@@ -53,12 +53,12 @@ import {
 import { MarkdownBody, type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences";
 import { TextDots } from "@/components/TextDots";
-import { formatPriorityLabel } from "@/lib/priorities";
 import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { AgentIcon, getAgentAvatarImageSrc } from "@/components/AgentIconPicker";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
+import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
 import { RunTranscriptView } from "@/components/transcript/RunTranscriptView";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -212,13 +212,6 @@ export function ProposalCard({
       : planDocument
         ? "Plan proposal"
         : "Proposal";
-  const proposalKindDetail = issueProposal
-    ? "Draft issue awaiting review"
-    : operationProposal
-      ? "Proposed change awaiting review"
-      : planDocument
-        ? "Draft plan awaiting review"
-        : "Review item";
 
   return (
     <div className="text-foreground">
@@ -245,14 +238,13 @@ export function ProposalCard({
       >
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border-soft)] pb-3">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--accent-base)_24%,var(--border-base))] bg-[color:color-mix(in_oklab,var(--surface-proposal)_82%,var(--surface-elevated))] text-[color:var(--accent-strong)]">
-              <ListChecks className="h-4 w-4" aria-hidden="true" />
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--accent-base)_28%,var(--border-base))] bg-[color:color-mix(in_oklab,var(--surface-proposal)_86%,var(--surface-elevated))] text-[color:var(--accent-strong)]">
+              <ListChecks className="h-5 w-5" aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[color:var(--accent-strong)]">
+              <div className="text-lg font-semibold leading-6 text-[color:var(--accent-strong)]">
                 {proposalKindLabel}
               </div>
-              <div className="mt-0.5 text-xs text-muted-foreground">{proposalKindDetail}</div>
             </div>
           </div>
           {reviewStatus ? (
@@ -268,8 +260,11 @@ export function ProposalCard({
               <>
                 <div className="mb-1 text-[11px] font-medium text-muted-foreground">Proposed issue</div>
                 <div className="text-base font-medium text-foreground">{String(issueProposal.title)}</div>
-                <div className="mt-1 text-xs font-medium text-muted-foreground">
-                  Priority · {formatPriorityLabel(String(issueProposal.priority ?? "medium"))}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-shell)_78%,transparent)] px-2.5 py-1 text-xs text-muted-foreground">
+                    <span>Priority</span>
+                    <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
+                  </span>
                 </div>
                 {proposalAssigneeLabel || proposalReviewerLabel ? (
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -288,7 +283,7 @@ export function ProposalCard({
             ) : planDocument ? (
               <div className="text-base font-medium text-foreground">{planDocument.title}</div>
             ) : null}
-            {reviewBanner ? (
+            {reviewBanner && (!issueProposal || reviewStatus !== "pending") ? (
               <p className="mt-3 text-sm leading-6 text-muted-foreground">
                 {reviewBanner}
               </p>
