@@ -4,23 +4,23 @@
     {
       "id": 0,
       "prompt": "这个 Rudder UI 感觉不对，但我不确定是需求问题还是设计问题。先判断应该走哪个链路，必要的话每个阶段结束后找 reviewer 看一下。",
-      "expected_output": "Classifies the request before implementation, starts with requirements/advisor or UI design rather than coding, defines stage exit criteria, and defaults to a review gate after a concrete artifact exists, preferring spawned reviewers when the current request and tool policy allow them.",
+      "expected_output": "Classifies the request before implementation, starts with requirements/advisor or UI design rather than coding, defines stage exit criteria, and requires a spawned-reviewer gate after a concrete artifact exists. If spawned reviewers are unavailable, the review gate is blocked rather than replaced by self-check or serial fallback.",
       "files": [],
       "expectations": [
         "The result states the lifecycle route and current stage before doing work.",
         "The result routes vague dissatisfaction to build-advisor or UI design evidence rather than immediately editing CSS.",
         "The result defines what artifact must exist before reviewer evaluation.",
-        "The result prefers spawned reviewers when authorized and states whether reviewers are spawned or a serial fallback is used."
+        "The result requires spawned reviewers by default and does not use self-check or serial fallback as a passed review gate."
       ]
     },
     {
       "id": 1,
       "prompt": "这个问题很明显没修好，没有用他们自己的 app logo。修一下这个问题，最后 review 一下。",
-      "expected_output": "Treats the task as a narrow implementation bug followed by verification and review, not as a full advisor-review loop. It checks git state, fixes the icon path, validates the behavior, then performs a real findings-level review before handoff, preferring spawned reviewers when authorized.",
+      "expected_output": "Treats the task as a narrow implementation bug followed by verification and review, not as a full advisor-review loop. It checks git state, fixes the icon path, validates the behavior, then performs a real spawned-reviewer gate before handoff.",
       "files": [],
       "expectations": [
         "The result routes to implementation -> verification -> review instead of starting with a broad proposal.",
-        "The result performs review after the diff and validation evidence exist, preferring spawned reviewers when authorized.",
+        "The result performs review after the diff and validation evidence exist by spawning reviewers.",
         "The result does not claim review happened without findings, verdict, and blocker assessment.",
         "The result avoids unsafe amend or unrelated commits in a shared dirty worktree."
       ]
@@ -28,11 +28,11 @@
     {
       "id": 2,
       "prompt": "我想从需求设计到 UI 设计到功能实现到测试再到 review 都走一遍，每个阶段结束后 spawn subagent review，没有通过就返工。",
-      "expected_output": "Runs the full lifecycle route, creates stage exit artifacts for requirements, UI, implementation, verification, and review, and uses explicit spawned reviewer gates or honestly reports serial fallback when reviewers are unavailable.",
+      "expected_output": "Runs the full lifecycle route, creates stage exit artifacts for requirements, UI, implementation, verification, and review, and uses spawned reviewer gates after each stage artifact. If reviewers are unavailable, the stage is blocked rather than passed by serial fallback.",
       "files": [],
       "expectations": [
         "The result keeps stages separate and does not collapse requirements, UI, implementation, and review into one author pass.",
-        "The result spawns reviewers only after each stage artifact exists when subagents are available and explicitly requested.",
+        "The result spawns reviewers after each stage artifact exists without waiting for an additional user request.",
         "The result blocks handoff on reviewer blockers and performs rework before moving on.",
         "The final handoff summarizes stage outcomes, validation, and residual risks."
       ]
@@ -40,109 +40,151 @@
     {
       "id": 3,
       "prompt": "发布 0.2.6，顺便你自己判断是不是需要先 review。",
-      "expected_output": "Routes directly to release-maintainer because this is a release operation, uses live release state rather than a generic lifecycle plan, and includes a release-evidence review gate by default before handoff.",
+      "expected_output": "Routes directly to release-maintainer because this is a release operation, uses live release state rather than a generic lifecycle plan, and includes spawned reviewers plus a release-evidence ledger before handoff.",
       "files": [],
       "expectations": [
         "The result selects release-maintainer as the primary route.",
         "The result uses live npm/GitHub/tag/workflow state for release decisions.",
         "The result does not route through UI, implementation, or advisor stages unless release evidence exposes a specific blocker.",
-        "The result keeps release validation, review, and handoff requirements explicit."
+        "The result keeps release validation, spawned review, and handoff requirements explicit."
       ]
     },
     {
       "id": 4,
       "prompt": "review 一下 codex session id 019e417b-8e78-7623-9fd9-d1414dde5fe0，看是不是 workflow 用错了。不要改代码。",
-      "expected_output": "Routes to codex-session-product-reviewer-maintainer or agent-work-reviewer-maintainer in review-only mode, reads the local session evidence, gives a verdict on workflow routing, and does not edit files.",
+      "expected_output": "Routes to codex-session-product-reviewer-maintainer or agent-work-reviewer-maintainer in review-only mode, reads the local session evidence, gives a verdict on workflow routing, does not edit files, and uses spawned reviewers to review the review artifact before handoff unless the artifact itself was produced by spawned reviewer agents.",
       "files": [],
       "expectations": [
         "The result recognizes review-only mode and avoids implementation or file edits.",
         "The result extracts real user requests and agent actions from the Codex session log.",
         "The result judges whether the lifecycle route and skill selection were appropriate.",
-        "The result gives blocking workflow gaps and the smallest next change."
+        "The result gives blocking workflow gaps and the smallest next change.",
+        "The result does not treat review-only mode as an exemption from spawned reviewer evidence."
       ]
     },
     {
       "id": 5,
       "prompt": "这个 agent run 为什么失败了？run id 是 7d28669d，先别修，先判断应该怎么看。",
-      "expected_output": "Routes to debug-run-transcript as the first stage, reconstructs the run from run-intelligence/log sources before proposing fixes, and stays out of implementation because the user asked to inspect first.",
+      "expected_output": "Routes to debug-run-transcript as the first stage, reconstructs the run from run-intelligence/log sources before proposing fixes, stays out of implementation because the user asked to inspect first, and uses spawned reviewers on the diagnostic artifact before handoff.",
       "files": [],
       "expectations": [
         "The result selects the debug stage and debug-run-transcript route.",
         "The result uses the run-intelligence/log source priority before raw database guesses.",
         "The result does not start fixing until the failure mode and target artifact are clear.",
-        "The result states what evidence is needed to move from debug to implementation or review."
+        "The result states what evidence is needed to move from debug to implementation or review.",
+        "The result requires spawned reviewer evidence before treating the diagnostic artifact as complete."
       ]
     },
     {
       "id": 6,
       "prompt": "修一下这个 Workspaces 页面的小 UI bug。",
-      "expected_output": "Routes to implementation -> verification -> review -> handoff even though the user did not explicitly ask for review, keeps the review lightweight for a narrow bug, and prefers spawned reviewers when authorized.",
+      "expected_output": "Routes to implementation -> verification -> review -> handoff even though the user did not explicitly ask for review, keeps the fix narrow, and still requires spawned reviewers before handoff.",
       "files": [],
       "expectations": [
         "The result does not skip review merely because the user only asked to fix a bug.",
         "The result waits until there is a diff and verification evidence before reviewing.",
-        "The result prefers spawned reviewers when authorized, or explicitly reports serial fallback.",
+        "The result uses spawned reviewers by default, or reports the review gate as blocked if reviewers are unavailable.",
         "The result keeps the route narrow and avoids a broad advisor loop unless the bug exposes unclear product requirements."
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "这里 UI 有问题，需要优化，推进一下。",
+      "expected_output": "Uses a fast-path route to the narrow UI polish workflow, states the current stage and required visual evidence concisely, avoids a heavyweight lifecycle plan, and requires spawned reviewer evidence before final handoff.",
+      "files": [],
+      "expectations": [
+        "The result states the route in one concise update and names rudder-ui-polish-maintainer as the downstream workflow.",
+        "The result names required UI evidence such as browser or screenshot verification.",
+        "The result does not expand a small UI polish request into an advisor loop unless a product decision is unclear.",
+        "The result requires spawned reviewers before claiming handoff is complete."
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "这个 parent/sub-issue 交互先讨论下 UI 和边界，先别改代码。",
+      "expected_output": "Routes to requirements or UI design, stops at a decision artifact because the user asked to discuss first, and runs spawned reviewers on that artifact before recommending implementation.",
+      "files": [],
+      "expectations": [
+        "The result does not start implementation or edit files.",
+        "The result produces a scenario/UI decision artifact with edge cases and non-goals.",
+        "The result uses spawned reviewers to review the decision artifact by default.",
+        "The result names what evidence would be required if the user later switches to implementation."
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "修完这个小 bug。当前环境没有 subagent/spawn 工具。",
+      "expected_output": "Completes the implementation and validation evidence that can be done locally, but marks the review gate as blocked because spawned reviewers are unavailable. It does not substitute self-check or serial two-role fallback and does not claim complete handoff.",
+      "files": [],
+      "expectations": [
+        "The result does not use self-check or serial fallback as review.",
+        "The result records execution mode as blocked: spawned reviewers unavailable.",
+        "The result includes implementation and validation evidence gathered so far.",
+        "The result stops short of claiming the routed stage is complete."
       ]
     },
     {
       "id": 7,
       "prompt": "organization-portability 这个文件太大了，一口气做完架构优化，但可以分批 commit，不要一下子来一个很大的 commit。",
-      "expected_output": "Routes the long refactor through phased implementation, creates a visible phase checklist, commits coherent phases separately when safe, and keeps checkpoint evidence after each phase.",
+      "expected_output": "Routes the long refactor through phased implementation, creates a visible phase checklist, commits coherent phases separately when safe, keeps checkpoint evidence after each phase, and requires spawned reviewers before each phase handoff or final completion.",
       "files": [],
       "expectations": [
         "The result does not collapse the whole refactor into one mixed commit.",
         "The result defines commit-sized phases before the first commit.",
         "The result keeps validation state and remaining blockers visible after each phase.",
-        "The result preserves unrelated dirty worktree changes and avoids unsafe history rewriting."
+        "The result preserves unrelated dirty worktree changes and avoids unsafe history rewriting.",
+        "The result does not treat phase checkpoints or final handoff as complete without spawned reviewer evidence."
       ]
     },
     {
       "id": 8,
       "prompt": "看看 codex session id 019e3f7c-d54b-71b3-ba08-2ee20ce6be27，和 rudder-oss 最近 100 条运行记录横向对比一下效率和问题处理率如何。",
-      "expected_output": "Routes to codex-session-benchmark-maintainer, builds a deduped local Codex-session cohort, reports proxy metrics with caveats, and does not treat the task as a single-session product review or run-transcript debug.",
+      "expected_output": "Routes to codex-session-benchmark-maintainer, builds a deduped local Codex-session cohort, reports proxy metrics with caveats, does not treat the task as a single-session product review or run-transcript debug, and uses spawned reviewers before treating the benchmark report as final.",
       "files": [],
       "expectations": [
         "The result chooses codex-session-benchmark-maintainer as the primary route.",
         "The result dedupes by session_meta id and excludes the current active session.",
         "The result separates direct metrics from proxy outcome claims.",
-        "The result names any downstream skill optimization only after identifying a reusable failure class."
+        "The result names any downstream skill optimization only after identifying a reusable failure class.",
+        "The result includes spawned reviewer evidence or marks the handoff blocked if reviewers are unavailable."
       ]
     },
     {
       "id": 9,
       "prompt": "pnpm dev 好像桌面端跑不起来了，修完之后再发版 0.2.5。",
-      "expected_output": "Routes the startup failure to rudder-desktop-dev-recovery-maintainer first, validates local Desktop health, then routes the release phase to release-maintainer instead of mixing the two workflows.",
+      "expected_output": "Routes the startup failure to rudder-desktop-dev-recovery-maintainer first, validates local Desktop health, then routes the release phase to release-maintainer instead of mixing the two workflows, with spawned reviewer gates before local recovery handoff and release completion.",
       "files": [],
       "expectations": [
         "The result treats local Desktop recovery as the blocking first stage.",
         "The result distinguishes API server, Electron shell, embedded Postgres, and update/install layers.",
         "The result does not start npm/GitHub release operations before local Desktop validation is clear.",
-        "The result preserves unrelated dirty worktree files during recovery and release handoff."
+        "The result preserves unrelated dirty worktree files during recovery and release handoff.",
+        "The result requires spawned reviewer evidence or blocks completion when reviewers are unavailable."
       ]
     },
     {
       "id": 10,
       "prompt": "<turn_aborted> previous work was interrupted. 我不知道刚才怎么跑出 stash 了，你结合刚才几个 codex session 处理一下，别把功能弄没了。",
-      "expected_output": "Runs continuation recovery before editing: identifies the latest user request, inspects branch/status/stash/recent commits and named sessions, separates task changes from unrelated dirty files, and only then resumes or hands off with a current-state checkpoint.",
+      "expected_output": "Runs continuation recovery before editing: identifies the latest user request, inspects branch/status/stash/recent commits and named sessions, separates task changes from unrelated dirty files, and only then resumes or hands off with a current-state checkpoint that still requires spawned reviewer evidence before completion.",
       "files": [],
       "expectations": [
         "The result does not continue a stale pre-interruption task without checking the newest user request.",
         "The result classifies stashes before applying, popping, or dropping them.",
         "The result reconstructs current phase, files touched, validation state, blockers, and next safe action.",
-        "The final handoff verifies that commit and push state correspond to the recovered task rather than an older ghost task."
+        "The final handoff verifies that commit and push state correspond to the recovered task rather than an older ghost task.",
+        "The result does not close the recovered handoff without spawned reviewer evidence or an explicit blocked review gate."
       ]
     },
     {
       "id": 11,
       "prompt": "IssueDetail 里也增加一个 parent issue 的选项，sub-issue 可以选择现有的。讨论完交互和 UI 后就实现。",
-      "expected_output": "Routes to implementation with verification and review, identifies this as a visible issue workflow change likely touching an oversized IssueDetail hotspot, adds or updates E2E coverage for parent/sub-issue selection behavior, prefers extracting a small component/helper if new logic would deepen the hotspot file, and keeps unrelated cleanup out of scope.",
+      "expected_output": "Routes to implementation with verification and spawned-reviewer review, identifies this as a visible issue workflow change likely touching an oversized IssueDetail hotspot, adds or updates E2E coverage for parent/sub-issue selection behavior, prefers extracting a small component/helper if new logic would deepen the hotspot file, and keeps unrelated cleanup out of scope.",
       "files": [],
       "expectations": [
         "The result does not treat this as a cosmetic UI tweak with only unit tests.",
         "The result requires E2E or an explicitly justified lower-level substitute for the workflow behavior.",
         "The result recognizes hotspot-file risk without turning the task into an unrequested broad refactor.",
-        "The result validates and reviews the actual user-visible workflow before handoff."
+        "The result validates the actual user-visible workflow, includes an evidence ledger, and uses spawned reviewers before handoff."
       ]
     }
   ]

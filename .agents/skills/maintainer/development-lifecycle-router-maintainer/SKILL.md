@@ -7,7 +7,7 @@ description: >
   when the user gives an ambiguous or end-to-end development request, asks which
   workflow or skill should handle a task, wants to enter at any lifecycle stage,
   wants reviewer subagents after each stage, or expects review by default before
-  handoff. Prefer spawned reviewers for review gates. Prefer narrower
+  handoff. Review gates require spawned reviewers by default. Prefer narrower
   maintainer skills directly when the user clearly asks for a release, UI
   polish, run transcript debug, local preview, data diagnosis, PR preview, or
   review-only task.
@@ -57,11 +57,21 @@ state the lifecycle stage and the acceptance bar for leaving that stage. The
 router fails when it silently jumps from a user complaint to implementation, or
 when it claims review happened without real reviewer evidence.
 
-Default to review. Prefer real spawned reviewers when the current user request
-and runtime policy allow subagents. Use a serial fallback when subagents are
-unavailable, not authorized by the active tool policy, the user explicitly asks
-for a lightweight single-agent pass, or the task is a truly mechanical no-code
-operation.
+Default to review with real spawned reviewers. Do not use self-review or a
+serial two-role simulation as a substitute for the reviewer gate; those modes
+overfit to the author's own reasoning and cannot close a routed stage as
+complete.
+
+When reviewer spawning is available, run it by default after each stage artifact
+exists. Do not wait for the user to ask for subagents; this skill is the user's
+standing instruction that routed development work needs independent reviewer
+agents.
+
+If the active runtime truly cannot spawn reviewers, mark the review gate as
+`blocked: spawned reviewers unavailable`. You may still provide the stage
+artifact and local validation evidence, but do not claim the routed stage is
+complete, do not call the review passed, and do not hand off as done until real
+spawned reviewer evidence exists or the user explicitly changes this policy.
 
 ## Stage Classifier
 
@@ -150,9 +160,23 @@ Before implementation, say:
 - lifecycle stage now
 - downstream skill or normal coding workflow selected
 - acceptance bar for the current stage
-- review gate plan, with `spawned reviewers` as the preferred mode
+- review gate plan, with `spawned reviewers` as the required mode
 
 Keep this concise. For a small bug, one sentence is enough.
+
+### 2.1 Fast-path obvious routes
+
+When the user request clearly matches a narrow maintainer skill, keep the router
+thin:
+
+- state the route and current stage in one short sentence
+- name the downstream skill
+- name the required evidence for leaving the current stage
+- state that the stage will need spawned reviewer evidence before handoff
+
+Then execute the narrow workflow. Do not expand into a full lifecycle plan for a
+small UI polish, data-path diagnosis, release, preview, run-debug, or Desktop
+recovery task unless the work reveals a product or architecture decision.
 
 ### 3. Execute the current stage
 
@@ -217,6 +241,10 @@ decision, diff, validation bundle, or handoff. This includes narrow bug fixes:
 implement first, collect verification evidence, then review the actual diff and
 evidence before final handoff.
 
+Reviewer gates mean spawned reviewer agents. The author rereading the diff,
+writing two internal personas, or labeling a serial pass as "Reviewer A/B" is
+not a valid review gate for this skill.
+
 Escalate the review depth when:
 
 - the user explicitly asks for reviewer agents, two rounds, or "not done until
@@ -228,18 +256,23 @@ Escalate the review depth when:
 
 Skip or defer the review gate only when:
 
-- the user explicitly says not to review
-- the current task is review-only and the review itself is the artifact
-- the work is a truly mechanical no-code operation such as a quick status check
+- the user explicitly changes this spawned-reviewer policy for the current turn
+- the work is a truly mechanical no-code operation such as a quick status check,
+  with no routed artifact, diff, validation bundle, or handoff to judge
 - the stage has no artifact yet; create the artifact first, then review it
 
-Prefer spawned reviewers. When subagents are available and authorized by the
-current user request and active tool policy, spawn reviewers after the stage
-artifact exists. Record execution mode as `spawned reviewers`.
+Review-only requests are not an exemption from independent review. Route them to
+the reviewer skill, produce the review artifact, then use spawned reviewers to
+review that artifact before handoff unless the review artifact itself was
+produced by spawned reviewer agents.
 
-If subagents are unavailable or not authorized, run a labeled serial two-role
-fallback. Record execution mode as `serial two-role fallback`, say independence
-confidence is lower, and do not imply independent review happened.
+When subagents are available, spawn reviewers after the stage artifact exists.
+Record execution mode as `spawned reviewers`.
+
+If subagents are unavailable, do not run a serial fallback. Record execution mode
+as `blocked: spawned reviewers unavailable`, include the artifact and validation
+evidence gathered so far, and stop before complete handoff unless the user
+explicitly changes the review policy.
 
 Reviewer A owns scenario correctness:
 
@@ -266,6 +299,21 @@ changes needed.
 
 If either reviewer rejects or names a blocker, rework before final handoff or
 report the blocker as requiring user judgment.
+
+### 4.1 Evidence ledger
+
+Before handoff, include a compact evidence ledger:
+
+- Required: the checks or artifacts this route requires, including spawned
+  reviewer verdicts
+- Proven: commands, screenshots, browser/Desktop checks, live release evidence,
+  or reviewer outputs that actually ran
+- Missing or substituted: anything not proven, why it is missing, and whether it
+  blocks completion
+
+For user-visible UI, workflow, Desktop, release, and cross-contract changes,
+missing required evidence blocks the handoff unless the user explicitly changes
+the acceptance bar.
 
 ### 5. Keep git safe in shared worktrees
 
@@ -307,7 +355,8 @@ Do not hand off as complete when any of these are true:
 
 - the route was never stated and the agent silently jumped stages
 - a narrow specialized skill was bypassed for a heavyweight advisor loop
-- reviewer gates were requested but no real review artifact was produced
+- spawned reviewer evidence is missing for a routed stage artifact, decision,
+  diff, validation bundle, or handoff
 - "review" only means the author reread their own diff without findings
 - user-visible UI lacks rendered or screenshot evidence when required
 - feature/workflow changes skip required E2E coverage without explicit approval
@@ -330,7 +379,7 @@ unclear product decision.
 Route: `implementation -> verification -> review -> handoff`.
 
 Default review still applies. Keep the review lightweight when the bug is
-narrow, but produce a real verdict and blocker assessment before handoff.
+narrow, but the gate still requires spawned reviewers before handoff.
 
 ### Visible workflow change in a hotspot file
 
@@ -346,8 +395,8 @@ scoped and avoid opportunistic refactors.
 
 Route: `requirements -> advisor -> review -> handoff`.
 
-Do not implement. Produce the decision artifact, run reviewer gates if asked,
-and stop with verdicts, blockers, and next decision.
+Do not implement. Produce the decision artifact, run spawned reviewer gates by
+default, and stop with verdicts, blockers, and next decision.
 
 ### Codex session audit
 
@@ -381,12 +430,17 @@ Used:
 - ...
 
 Review:
-- Mode: spawned reviewers / serial two-role fallback / not required
+- Mode: spawned reviewers / blocked: spawned reviewers unavailable / not a routed review gate
 - Verdict: ...
 
 Validation:
 - Passed: ...
 - Not run / not proven: ...
+
+Evidence:
+- Required: ...
+- Proven: ...
+- Missing or substituted: ...
 
 Git:
 - Commit: ...
