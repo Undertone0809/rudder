@@ -452,7 +452,11 @@ describe("AutomationDetail", () => {
     expect(container.textContent).not.toContain("Pause automation");
     expect(container.textContent).not.toContain("Run now");
     expect(container.querySelector('[role="switch"]')).toBeNull();
-    expect(container.querySelector("aside")?.className).toContain("lg:sticky");
+    const sidebar = container.querySelector("aside");
+    expect(sidebar?.className).toContain("lg:sticky");
+    expect(sidebar?.className).not.toContain("overflow-y-auto");
+    expect(sidebar?.className).not.toContain("max-h");
+    expect(sidebar?.className).not.toContain("scrollbar-auto-hide");
     const configurationCard = container.querySelector('[data-testid="automation-configuration-card"]');
     expect(configurationCard).toBeTruthy();
     expect(configurationCard?.className).toContain("bg-card/85");

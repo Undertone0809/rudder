@@ -43,7 +43,6 @@ import { InlineEntitySelector, type InlineEntityOption } from "../components/Inl
 import { MarkdownEditor, type MarkdownEditorRef } from "../components/MarkdownEditor";
 import { ScheduleEditor, describeSchedule } from "../components/ScheduleEditor";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
-import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useDialog } from "../context/DialogContext";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -76,7 +75,6 @@ export function AutomationDetail() {
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
-  const sidebarScrollRef = useScrollbarActivityRef("rudder:automation-detail-sidebar");
   const copiedSecretResetRef = useRef<number | null>(null);
   const [secretMessage, setSecretMessage] = useState<SecretMessage | null>(null);
   const [copiedSecretField, setCopiedSecretField] = useState<"url" | "secret" | null>(null);
@@ -1030,7 +1028,7 @@ export function AutomationDetail() {
           </section>
         </main>
 
-        <aside ref={sidebarScrollRef} className="scrollbar-auto-hide border-t border-border/70 pt-4 lg:sticky lg:top-20 lg:max-h-[calc(100vh-5.5rem)] lg:self-start lg:overflow-y-auto lg:border-t-0 lg:pt-0">
+        <aside className="border-t border-border/70 pt-4 lg:sticky lg:top-20 lg:self-start lg:border-t-0 lg:pt-0">
           <div data-testid="automation-configuration-card" className="space-y-6 rounded-md border border-border/70 bg-card/85 p-4 shadow-sm">
             <SidebarSection title="Configuration">
               <div className="space-y-2.5">
