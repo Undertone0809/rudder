@@ -204,6 +204,21 @@ export function ProposalCard({
   const resolvedDecisionNoteLabel = reviewStatus === "revision_requested" ? "Requested changes" : "Decision note";
   const proposalAssigneeLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "assignee", agents) : null;
   const proposalReviewerLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "reviewer", agents) : null;
+  const proposalKind = issueProposal ? "issue" : operationProposal ? "operation" : planDocument ? "plan" : "default";
+  const proposalKindLabel = issueProposal
+    ? "Issue proposal"
+    : operationProposal
+      ? "Operation proposal"
+      : planDocument
+        ? "Plan proposal"
+        : "Proposal";
+  const proposalKindDetail = issueProposal
+    ? "Draft issue awaiting review"
+    : operationProposal
+      ? "Proposed change awaiting review"
+      : planDocument
+        ? "Draft plan awaiting review"
+        : "Review item";
 
   return (
     <div className="text-foreground">
@@ -225,12 +240,33 @@ export function ProposalCard({
       <div
         data-testid="proposal-review-block"
         data-status={reviewStatus ?? "default"}
+        data-kind={proposalKind}
         className="chat-review-block mt-4 rounded-[var(--radius-xl)] p-5 text-foreground transition-all duration-200"
       >
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border-soft)] pb-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--accent-base)_24%,var(--border-base))] bg-[color:color-mix(in_oklab,var(--surface-proposal)_82%,var(--surface-elevated))] text-[color:var(--accent-strong)]">
+              <ListChecks className="h-4 w-4" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[color:var(--accent-strong)]">
+                {proposalKindLabel}
+              </div>
+              <div className="mt-0.5 text-xs text-muted-foreground">{proposalKindDetail}</div>
+            </div>
+          </div>
+          {reviewStatus ? (
+            <div data-testid="proposal-review-status">
+              <StatusBadge status={reviewStatus} />
+            </div>
+          ) : null}
+        </div>
+
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             {issueProposal ? (
               <>
+                <div className="mb-1 text-[11px] font-medium text-muted-foreground">Proposed issue</div>
                 <div className="text-base font-medium text-foreground">{String(issueProposal.title)}</div>
                 <div className="mt-1 text-xs font-medium text-muted-foreground">
                   Priority · {formatPriorityLabel(String(issueProposal.priority ?? "medium"))}
@@ -258,15 +294,11 @@ export function ProposalCard({
               </p>
             ) : null}
           </div>
-          {reviewStatus ? (
-            <div data-testid="proposal-review-status">
-              <StatusBadge status={reviewStatus} />
-            </div>
-          ) : null}
         </div>
 
         {issueProposal ? (
           <div className="mt-4 border-t border-[color:var(--border-soft)] pt-4 text-sm leading-6 text-muted-foreground">
+            <div className="mb-2 text-[11px] font-medium text-muted-foreground">Issue description</div>
             <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
               {String(issueProposal.description)}
             </MarkdownBody>

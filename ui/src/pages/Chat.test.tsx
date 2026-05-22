@@ -264,6 +264,10 @@ describe("ProposalCard", () => {
     expect(html.indexOf(assistantBody)).toBeLessThan(reviewBlockIndex);
 
     const reviewBlockHtml = html.slice(reviewBlockIndex);
+    expect(reviewBlockHtml).toContain("Issue proposal");
+    expect(reviewBlockHtml).toContain("Draft issue awaiting review");
+    expect(reviewBlockHtml).toContain("Proposed issue");
+    expect(reviewBlockHtml).toContain("Issue description");
     expect(reviewBlockHtml).toContain(issueTitle);
     expect(reviewBlockHtml).toContain(issueDescription);
     expect(reviewBlockHtml).not.toContain(assistantBody);

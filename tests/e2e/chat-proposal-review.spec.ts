@@ -100,6 +100,10 @@ test.describe("Chat proposal review block", () => {
     const reviewBlock = page.getByTestId("proposal-review-block").last();
     await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
     await expect(reviewBlock).toHaveAttribute("data-status", "pending");
+    await expect(reviewBlock).toHaveAttribute("data-kind", "issue");
+    await expect(reviewBlock).toContainText("Issue proposal");
+    await expect(reviewBlock).toContainText("Draft issue awaiting review");
+    await expect(reviewBlock).toContainText("Proposed issue");
     await expect(reviewBlock.getByTestId("proposal-review-note")).toBeVisible();
     await expect(page.getByTestId("proposal-review-gate")).toHaveCount(0);
     await expect(page.getByPlaceholder("Ask anything")).toHaveCount(0);
