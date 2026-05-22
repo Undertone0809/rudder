@@ -265,9 +265,12 @@ describe("ProposalCard", () => {
 
     const reviewBlockHtml = html.slice(reviewBlockIndex);
     expect(reviewBlockHtml).toContain("Issue proposal");
-    expect(reviewBlockHtml).toContain("Draft issue awaiting review");
-    expect(reviewBlockHtml).toContain("Proposed issue");
-    expect(reviewBlockHtml).toContain("Issue description");
+    expect(reviewBlockHtml).not.toContain("Draft issue awaiting review");
+    expect(reviewBlockHtml).not.toContain("Proposed issue");
+    expect(reviewBlockHtml).not.toContain("Issue description");
+    expect(reviewBlockHtml).toContain("Priority");
+    expect(reviewBlockHtml).toContain("High");
+    expect(reviewBlockHtml).not.toContain("Review this proposal here before continuing the conversation.");
     expect(reviewBlockHtml).toContain(issueTitle);
     expect(reviewBlockHtml).toContain(issueDescription);
     expect(reviewBlockHtml).not.toContain(assistantBody);
@@ -414,6 +417,25 @@ describe("ProposalCard", () => {
     expect(html).not.toContain(">Approve</button>");
     expect(html).not.toContain(">Request changes</button>");
     expect(html).not.toContain(">Reject</button>");
+  });
+
+  it("keeps pending review guidance visible for lightweight operation proposals", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "operation_proposal",
+      body: "Please review this lightweight change.",
+      structuredPayload: {
+        operationProposal: {
+          targetType: "agent",
+          targetId: "agent-1",
+          summary: "Update agent title",
+          patch: { title: "Founding Engineer" },
+        },
+      },
+    }));
+
+    expect(html).toContain("Operation proposal");
+    expect(html).toContain("Review this proposal here before continuing the conversation.");
   });
 });
 
