@@ -102,8 +102,9 @@ test.describe("Chat proposal review block", () => {
     await expect(reviewBlock).toHaveAttribute("data-status", "pending");
     await expect(reviewBlock).toHaveAttribute("data-kind", "issue");
     await expect(reviewBlock).toContainText("Issue proposal");
-    await expect(reviewBlock).toContainText("Proposed issue");
     await expect(reviewBlock).toContainText("Priority");
+    await expect(reviewBlock).not.toContainText("Proposed issue");
+    await expect(reviewBlock).not.toContainText("Issue description");
     await expect(reviewBlock).not.toContainText("Draft issue awaiting review");
     await expect(reviewBlock).not.toContainText("Review this proposal here before continuing the conversation.");
     await expect(reviewBlock.getByTestId("proposal-review-note")).toBeVisible();

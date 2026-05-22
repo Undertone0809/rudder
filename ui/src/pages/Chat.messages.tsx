@@ -258,8 +258,7 @@ export function ProposalCard({
           <div className="min-w-0">
             {issueProposal ? (
               <>
-                <div className="mb-1 text-[11px] font-medium text-muted-foreground">Proposed issue</div>
-                <div className="text-base font-medium text-foreground">{String(issueProposal.title)}</div>
+                <div className="text-xl font-semibold leading-7 text-foreground">{String(issueProposal.title)}</div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-shell)_78%,transparent)] px-2.5 py-1 text-xs text-muted-foreground">
                     <span>Priority</span>
@@ -293,7 +292,6 @@ export function ProposalCard({
 
         {issueProposal ? (
           <div className="mt-4 border-t border-[color:var(--border-soft)] pt-4 text-sm leading-6 text-muted-foreground">
-            <div className="mb-2 text-[11px] font-medium text-muted-foreground">Issue description</div>
             <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
               {String(issueProposal.description)}
             </MarkdownBody>

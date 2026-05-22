@@ -266,8 +266,8 @@ describe("ProposalCard", () => {
     const reviewBlockHtml = html.slice(reviewBlockIndex);
     expect(reviewBlockHtml).toContain("Issue proposal");
     expect(reviewBlockHtml).not.toContain("Draft issue awaiting review");
-    expect(reviewBlockHtml).toContain("Proposed issue");
-    expect(reviewBlockHtml).toContain("Issue description");
+    expect(reviewBlockHtml).not.toContain("Proposed issue");
+    expect(reviewBlockHtml).not.toContain("Issue description");
     expect(reviewBlockHtml).toContain("Priority");
     expect(reviewBlockHtml).toContain("High");
     expect(reviewBlockHtml).not.toContain("Review this proposal here before continuing the conversation.");
