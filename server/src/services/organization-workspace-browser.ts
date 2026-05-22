@@ -17,6 +17,7 @@ import { organizationService } from "./orgs.js";
 
 const MAX_PREVIEW_BYTES = 200_000;
 const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm"]);
+const PROTECTED_LIBRARY_RESOURCE_ROOTS = new Set(["agents", "artifacts", "plans", "skills"]);
 const WORKSPACE_TEXT_CONTENT_TYPES = new Map([
   [".md", "text/markdown"],
   [".markdown", "text/markdown"],
@@ -76,6 +77,11 @@ function isProtectedAgentWorkspaceContainerPath(normalizedPath: string) {
   if (normalizedPath === "agents") return true;
   const segments = normalizedPath.split("/").filter(Boolean);
   return segments.length === 2 && segments[0] === "agents";
+}
+
+function isProtectedLibraryResourcePath(normalizedPath: string) {
+  const root = normalizedPath.split("/").filter(Boolean)[0] ?? "";
+  return PROTECTED_LIBRARY_RESOURCE_ROOTS.has(root);
 }
 
 function assertMutableWorkspaceEntry(normalizedPath: string) {
@@ -302,7 +308,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
       const limit = Math.max(1, Math.min(MAX_MENTIONABLE_WORKSPACE_FILES_LIMIT, requestedLimit));
       async function visit(directoryPath: string) {
         if (entries.length >= limit) return;
-        if (directoryPath === "agents" || directoryPath.startsWith("agents/")) return;
+        if (isProtectedLibraryResourcePath(directoryPath)) return;
 
         const directoryAbsolutePath = directoryPath
           ? path.join(resolvedRoot, ...directoryPath.split("/"))
@@ -314,7 +320,7 @@ export function organizationWorkspaceBrowserService(db: Db) {
           if (entries.length >= limit) break;
           if (shouldHideWorkspaceEntry(entry.name)) continue;
           const entryPath = directoryPath ? `${directoryPath}/${entry.name}` : entry.name;
-          if (entryPath === "agents" || entryPath.startsWith("agents/")) continue;
+          if (isProtectedLibraryResourcePath(entryPath)) continue;
           if (entry.isDirectory()) {
             await visit(entryPath);
             continue;

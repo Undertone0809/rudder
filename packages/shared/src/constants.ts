@@ -227,6 +227,12 @@ export const ORGANIZATION_RESOURCE_KINDS = [
 ] as const;
 export type OrganizationResourceKind = (typeof ORGANIZATION_RESOURCE_KINDS)[number];
 
+export const ORGANIZATION_RESOURCE_SOURCE_TYPES = [
+  "external",
+  "library",
+] as const;
+export type OrganizationResourceSourceType = (typeof ORGANIZATION_RESOURCE_SOURCE_TYPES)[number];
+
 export const PROJECT_RESOURCE_ATTACHMENT_ROLES = [
   "working_set",
   "reference",

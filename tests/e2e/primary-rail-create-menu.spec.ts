@@ -248,13 +248,14 @@ test.describe("Primary rail create menu", () => {
     await expect(dialog.getByText(resourceHelpText)).toHaveCount(0);
     await expect(dialog.getByText("No project-specific resources yet. You can still create the project now and attach resources later.")).toHaveCount(0);
 
-    await dialog.getByRole("button", { name: "About project resources" }).hover();
+    await dialog.getByRole("button", { name: "About project context" }).hover();
     await expect(page.getByText(resourceHelpText)).toBeVisible();
 
-    const newResourceButton = dialog.getByRole("button", { name: "New resource" });
-    await newResourceButton.click();
+    const addResourcesButton = dialog.getByRole("button", { name: "Add resources" });
+    await addResourcesButton.click();
+    await page.getByRole("button", { name: /Create external resource/ }).click();
 
-    const sharedControlRadius = await computedBorderRadius(newResourceButton);
+    const sharedControlRadius = await computedBorderRadius(addResourcesButton);
     const resourceNameInput = dialog.getByPlaceholder("Rudder repo");
     const resourceKindSelect = dialog.getByLabel("Kind");
     const resourceLocatorInput = dialog.getByPlaceholder("~/projects/rudder or https://linear.app/acme/project/...");
@@ -290,7 +291,7 @@ test.describe("Primary rail create menu", () => {
       resources: Array<{
         role: string;
         note: string | null;
-        resource: { name: string; kind: string; locator: string; description: string | null };
+        resource: { name: string; kind: string; sourceType: string; locator: string; description: string | null };
       }>;
     };
 
@@ -301,6 +302,7 @@ test.describe("Primary rail create menu", () => {
       resource: expect.objectContaining({
         name: "Rudder repo",
         kind: "directory",
+        sourceType: "external",
         locator: "~/projects/rudder",
         description: "Main monorepo checkout for implementation work.",
       }),
@@ -310,6 +312,65 @@ test.describe("Primary rail create menu", () => {
     expect(detailRes.ok()).toBe(true);
     const detail = await detailRes.json() as { resources: Array<{ resource: { name: string } }> };
     expect(detail.resources.map((attachment) => attachment.resource.name)).toEqual(["Rudder repo"]);
+  });
+
+  test("creates a project with a Docs file attached as a path-based library resource", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `PrimaryRail-Project-Library-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const fileRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+      data: {
+        filePath: "docs/project-brief.md",
+        content: "# Project brief\n\nUse this as project context.",
+      },
+    });
+    expect(fileRes.ok()).toBe(true);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByTestId("primary-rail").getByRole("button", { name: "Create" }).click();
+    await page.getByRole("menuitem", { name: "Create new project" }).click();
+
+    const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New project") }).first();
+    await expect(dialog).toBeVisible();
+    await dialog.getByPlaceholder("Project name").fill("Docs Context Project");
+
+    await dialog.getByRole("button", { name: "Add resources" }).click();
+    await page.getByRole("button", { name: /project-brief\.md/ }).click();
+    await expect(dialog.getByText("Docs · File · docs/project-brief.md")).toBeVisible();
+
+    const createResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST"
+      && response.url().includes(`/api/orgs/${organization.id}/projects`)
+      && response.ok(),
+    );
+    await dialog.getByRole("button", { name: "Create project" }).click();
+    const created = await (await createResponse).json() as {
+      resources: Array<{
+        role: string;
+        resource: { name: string; kind: string; sourceType: string; locator: string };
+      }>;
+    };
+
+    expect(created.resources).toHaveLength(1);
+    expect(created.resources[0]).toEqual(expect.objectContaining({
+      role: "reference",
+      resource: expect.objectContaining({
+        name: "project-brief.md",
+        kind: "file",
+        sourceType: "library",
+        locator: "docs/project-brief.md",
+      }),
+    }));
   });
 
   test("uses the desktop file picker for inline directory resources in the new project dialog", async ({ page }) => {
@@ -336,7 +397,8 @@ test.describe("Primary rail create menu", () => {
     await expect(dialog).toBeVisible();
 
     await dialog.getByPlaceholder("Project name").fill("Desktop Picker Project");
-    await dialog.getByRole("button", { name: "New resource" }).click();
+    await dialog.getByRole("button", { name: "Add resources" }).click();
+    await page.getByRole("button", { name: /Create external resource/ }).click();
     await dialog.getByRole("button", { name: "Browse for directory" }).click();
 
     const locatorInput = dialog.getByDisplayValue("/tmp/picked-repo");

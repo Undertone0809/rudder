@@ -37,6 +37,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useToast } from "../context/ToastContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useNavigationBack } from "../context/NavigationBackContext";
 import { retryHeartbeatRun } from "../lib/heartbeat-retry";
 import { queryKeys } from "../lib/queryKeys";
 import { findOrganizationByPrefix } from "../lib/organization-routes";
@@ -144,6 +145,7 @@ import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@
 import { agentRouteRef } from "../lib/utils";
 import { heartbeatRunEventText, heartbeatRunEventToTranscriptEntry, mergeTranscriptEntries } from "../lib/run-detail-events";
 import { shouldPollLiveRunBackfill } from "../lib/live-run-backfill";
+import { hasBrowserBackStackEntry, shouldHandleDetailEscape } from "../lib/detail-escape";
 import {
   arraysEqual,
   canManageSkillEntry,
@@ -990,6 +992,7 @@ export function AgentDetail() {
   const { closePanel } = usePanel();
   const { openNewIssue } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const navigateBack = useNavigationBack();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [actionError, setActionError] = useState<string | null>(null);
@@ -1360,6 +1363,23 @@ export function AgentDetail() {
       event.returnValue = "";
     }, [configDirty]),
   );
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!shouldHandleDetailEscape(event)) return;
+      if (configDirty || configSaving) return;
+      event.preventDefault();
+      if (navigateBack?.()) return;
+      if (hasBrowserBackStackEntry()) {
+        navigate(-1);
+        return;
+      }
+      navigate("/agents");
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [configDirty, configSaving, navigate, navigateBack]);
 
   if (isLoading) return <PageSkeleton variant="detail" />;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;

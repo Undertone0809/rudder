@@ -53,6 +53,7 @@ export {
 } from "./organization.js";
 export {
   organizationResourceKindSchema,
+  organizationResourceSourceTypeSchema,
   projectResourceAttachmentRoleSchema,
   createOrganizationResourceSchema,
   updateOrganizationResourceSchema,

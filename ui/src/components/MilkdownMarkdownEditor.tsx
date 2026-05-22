@@ -146,6 +146,24 @@ export function isRudderTokenHref(href: string, label: string) {
   );
 }
 
+const MARKDOWN_LINK_FRAGMENT_RE = /\[([^\]\n]+)]\(([^)\n]+)\)/g;
+
+function unescapeMarkdownLinkDestination(value: string) {
+  return value.replace(/\\([\\`*_[\]()#+\-.!{}>|&])/g, "$1").trim();
+}
+
+export function hasRudderMarkdownReference(markdown: string) {
+  const normalized = markdown.replace(/\r\n/g, "\n");
+  const re = new RegExp(MARKDOWN_LINK_FRAGMENT_RE);
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(normalized)) !== null) {
+    const label = match[1]?.trim() ?? "";
+    const href = unescapeMarkdownLinkDestination(match[2] ?? "");
+    if (isRudderTokenHref(href, label)) return true;
+  }
+  return false;
+}
+
 export function rudderTokenNavigationPath(href: string) {
   const parsed = parseMentionChipHref(href);
   if (parsed) {
@@ -859,11 +877,20 @@ const MilkdownEditorInner = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(f
       onKeyUpCapture={checkMention}
       onMouseUpCapture={checkMention}
       onPasteCapture={(event) => {
-        if (!canDropImage || !hasFilePayload(event)) return;
-        const file = firstImageFile(event.clipboardData.files);
-        if (!file) return;
+        if (canDropImage && hasFilePayload(event)) {
+          const file = firstImageFile(event.clipboardData.files);
+          if (!file) return;
+          event.preventDefault();
+          void uploadImage(file);
+          return;
+        }
+
+        const markdown = event.clipboardData.getData("text/plain");
+        if (!markdown || !hasRudderMarkdownReference(markdown)) return;
         event.preventDefault();
-        void uploadImage(file);
+        const editor = loading ? get() : getInstance();
+        editor?.action(insert(markdown, false));
+        requestAnimationFrame(checkMention);
       }}
       onDragEnter={(event) => {
         if (!canDropImage || !hasFilePayload(event)) return;

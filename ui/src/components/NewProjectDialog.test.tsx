@@ -161,6 +161,15 @@ afterEach(() => {
 });
 
 describe("NewProjectDialog", () => {
+  it("uses one add resources entry point in Project Context", () => {
+    const container = renderDialog();
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>("button")].map((button) => button.textContent ?? "");
+
+    expect(buttons.filter((text) => text.includes("Add resources"))).toHaveLength(1);
+    expect(buttons.some((text) => text.includes("Attach resource"))).toBe(false);
+    expect(buttons.some((text) => text.includes("New resource"))).toBe(false);
+  });
+
   it("opens the created project's issue board slice after creation", async () => {
     const container = renderDialog();
     const nameInput = container.querySelector<HTMLInputElement>("input[placeholder='Project name']");

@@ -270,7 +270,7 @@ describe("organization workspace browser", () => {
     }));
   });
 
-  it("searches mentionable Library files beyond the default result window while excluding agent workspaces", async () => {
+  it("searches mentionable Library files beyond the default result window while excluding protected roots", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);
     process.env.RUDDER_HOME = rudderHome;
@@ -295,6 +295,16 @@ describe("organization workspace browser", () => {
     await fs.writeFile(path.join(root, "docs", "z-special-product-brief.md"), "# Product brief\n", "utf8");
     await fs.mkdir(path.join(root, "agents", "worker--1234"), { recursive: true });
     await fs.writeFile(path.join(root, "agents", "worker--1234", "secret-product-brief.md"), "# Agent memory\n", "utf8");
+    await Promise.all([
+      fs.mkdir(path.join(root, "artifacts"), { recursive: true }),
+      fs.mkdir(path.join(root, "plans"), { recursive: true }),
+      fs.mkdir(path.join(root, "skills", "writer"), { recursive: true }),
+    ]);
+    await Promise.all([
+      fs.writeFile(path.join(root, "artifacts", "special-product-report.md"), "# Report\n", "utf8"),
+      fs.writeFile(path.join(root, "plans", "special-product-plan.md"), "# Plan\n", "utf8"),
+      fs.writeFile(path.join(root, "skills", "writer", "special-product-skill.md"), "# Skill\n", "utf8"),
+    ]);
 
     const defaultEntries = await workspaceBrowser.listMentionableFiles(orgId);
     expect(defaultEntries).toHaveLength(200);

@@ -512,6 +512,13 @@
       "when": 1779207406019,
       "tag": "0072_overjoyed_red_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1779440083084,
+      "tag": "0073_careful_jigsaw",
+      "breakpoints": true
     }
   ]
 }

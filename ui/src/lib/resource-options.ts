@@ -1,7 +1,9 @@
 import {
   ORGANIZATION_RESOURCE_KINDS,
+  ORGANIZATION_RESOURCE_SOURCE_TYPES,
   PROJECT_RESOURCE_ATTACHMENT_ROLES,
   type OrganizationResourceKind,
+  type OrganizationResourceSourceType,
   type ProjectResourceAttachmentRole,
 } from "@rudderhq/shared";
 
@@ -13,6 +15,14 @@ export const organizationResourceKindOptions: Array<{
   { value: "file", label: "File" },
   { value: "url", label: "URL" },
   { value: "connector_object", label: "Connector object" },
+];
+
+export const organizationResourceSourceTypeOptions: Array<{
+  value: OrganizationResourceSourceType;
+  label: string;
+}> = [
+  { value: "external", label: "External" },
+  { value: "library", label: "Docs" },
 ];
 
 export const projectResourceRoleOptions: Array<{
@@ -29,6 +39,11 @@ export const projectResourceRoleOptions: Array<{
 export function organizationResourceKindLabel(kind: OrganizationResourceKind) {
   return organizationResourceKindOptions.find((option) => option.value === kind)?.label
     ?? kind.replace(/_/g, " ");
+}
+
+export function organizationResourceSourceTypeLabel(sourceType: OrganizationResourceSourceType | null | undefined) {
+  return organizationResourceSourceTypeOptions.find((option) => option.value === sourceType)?.label
+    ?? "External";
 }
 
 export function isLocalPathOrganizationResourceKind(kind: OrganizationResourceKind) {
@@ -56,6 +71,10 @@ export function projectResourceRoleLabel(role: ProjectResourceAttachmentRole) {
 
 export function isOrganizationResourceKind(value: string): value is OrganizationResourceKind {
   return (ORGANIZATION_RESOURCE_KINDS as readonly string[]).includes(value);
+}
+
+export function isOrganizationResourceSourceType(value: string): value is OrganizationResourceSourceType {
+  return (ORGANIZATION_RESOURCE_SOURCE_TYPES as readonly string[]).includes(value);
 }
 
 export function isProjectResourceRole(value: string): value is ProjectResourceAttachmentRole {

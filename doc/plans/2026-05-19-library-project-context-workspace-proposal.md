@@ -56,8 +56,9 @@ inside `Library`, with provenance and review state.
 The durable split is:
 
 - `Library`: human and agent shared knowledge files and reusable assets.
-- `Project Context`: the subset of Library items, codebases, trackers, skills,
-  and references selected for one project.
+- `Project Context`: the explicitly selected subset of Library paths, codebases,
+  trackers, skills, and references selected for one project. It is a curated
+  starting point, not a boundary on what agents may inspect.
 - `Workspaces`: the runtime filesystem and execution layer where agents run.
 - `Outputs`: a Library view for agent-produced work products awaiting review or
   promotion.
@@ -447,8 +448,10 @@ The migration path:
 
 `@doc` mention behavior:
 
-- stored as a structured markdown link such as
-  `[@Product principles](library-doc://<document-id>)`
+- stored as a structured markdown link to a Library path. Older
+  `library-doc://<document-id>` and `library-file://...` links remain
+  compatibility formats, but new Project Context resources should use a single
+  path-based Library resource model.
 - rendered as a mention chip with a document icon
 - hover/preview shows title, Library path, status, last updated, and linked
   project when available
@@ -737,8 +740,8 @@ does not claim the full Library document model is complete.
 2. Redirect legacy `/resources` routes to `/library`.
 3. Rename the project resources surface to `Project Context` while keeping the
    current backing resource attachment model.
-4. Add `library-doc://` mention parsing/rendering and preserve the scheme in
-   Markdown editor round trips.
+4. Preserve old `library-doc://` / `library-file://` links for compatibility,
+   but make new Project Context resources path-based Library attachments.
 5. Stop automatically inlining issue document bodies into agent prompts. Pass
    document references/fetch instructions until Library doc APIs exist.
 

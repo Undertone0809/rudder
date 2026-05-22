@@ -11,6 +11,7 @@ import {
 } from "@rudderhq/shared";
 import {
   applyMention,
+  hasRudderMarkdownReference,
   isRudderTokenHref,
   mentionMarkdown,
   readCanonicalFragmentMarkdown,
@@ -107,6 +108,13 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
     expect(isRudderTokenHref("skill://writer", "$writer")).toBe(true);
     expect(isRudderTokenHref("/workspace/skills/build-advisor/SKILL.md", "$build-advisor")).toBe(true);
     expect(isRudderTokenHref("https://example.com", "Example")).toBe(false);
+  });
+
+  it("detects pasted canonical Rudder markdown references", () => {
+    expect(hasRudderMarkdownReference("[Winter](agent://agent-1?i=bot)")).toBe(true);
+    expect(hasRudderMarkdownReference("[docs-proposal.md](library-file://file?p=docs-proposal.md\\&t=docs-proposal.md)")).toBe(true);
+    expect(hasRudderMarkdownReference("[skill-creator](/Users/zeeland/rudder/server/resources/bundled-skills/skill-creator/SKILL.md)")).toBe(true);
+    expect(hasRudderMarkdownReference("[Example](https://example.com)")).toBe(false);
   });
 
   it("replaces the active repeated mention query instead of the last matching text", () => {

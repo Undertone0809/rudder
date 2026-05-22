@@ -51,7 +51,11 @@ Important files and conventions:
 
 - Structured shared references live in the org `Resources` catalog. Agents do not receive the whole org catalog automatically.
 - If a run or chat is linked to a project, Rudder injects only that project's attached resources into the runtime context.
-- If you need broader org-wide resources, query the org resource catalog explicitly instead of assuming it is already in the prompt.
+- Project Context is the explicit operator-curated starting set, not a knowledge boundary. If those resources are insufficient, inspect broader Library files and other org workspace know-how before concluding context is missing.
+- Library-backed resources use `sourceType: "library"` and a safe `locator` relative to `$RUDDER_ORG_WORKSPACE_ROOT` (for example `docs/product-brief.md` or `product-brief.md`). Read them as files from `$RUDDER_ORG_WORKSPACE_ROOT/<locator>` when the shared workspace is available. Protected system roots such as `agents/`, `artifacts/`, `plans/`, and `skills/` are not valid project Library resources.
+- External resources use `sourceType: "external"` and keep their original URL, local path, repo path, or connector locator.
+- If you encounter older `library-file://...` or `library-doc://...` links, treat them as legacy Rudder Library references. Prefer path-based Library resources going forward; `library-file` points at a Library workspace file, while `library-doc` was an older document-id based link.
+- If you need broader org-wide resources, query the org resource catalog or inspect the Library workspace explicitly instead of assuming it is already in the prompt.
 - Use Workspaces for disk-backed shared files, plans, and skill packages.
 - When you need to place durable generated output on disk, prefer `$RUDDER_ORG_ARTIFACTS_DIR` for screenshots, images, mockups, reports, CSVs, handoff logs, and other user-visible files. Use `/tmp` only for transient scratch files and temporary verification artifacts.
 - For other shared output, prefer the managed workspace paths Rudder injected for this run such as `$RUDDER_ORG_PLANS_DIR`, `$RUDDER_ORG_SKILLS_DIR`, and the active `$RUDDER_WORKSPACE_CWD` or `$RUDDER_ORG_WORKSPACE_ROOT`. Do not invent new top-level `projects/` folders.

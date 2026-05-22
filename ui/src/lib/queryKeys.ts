@@ -13,6 +13,8 @@ export const queryKeys = {
       ["organizations", orgId, "workspace-files", directoryPath] as const,
     workspaceFile: (orgId: string, filePath: string) =>
       ["organizations", orgId, "workspace-file", filePath] as const,
+    workspaceMentionFiles: (orgId: string, query: string = "") =>
+      ["organizations", orgId, "workspace-mention-files", query] as const,
     workspaceBackups: (orgId: string) =>
       ["organizations", orgId, "workspace-backups"] as const,
     workspaceBackupFiles: (orgId: string, backupId: string, directoryPath: string) =>

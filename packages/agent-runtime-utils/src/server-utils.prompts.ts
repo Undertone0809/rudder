@@ -276,6 +276,8 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "- Shared organization skills live under `$RUDDER_ORG_SKILLS_DIR`.",
   "- Shared organization plans live under `$RUDDER_ORG_PLANS_DIR`.",
   "- Shared organization artifacts live under `$RUDDER_ORG_ARTIFACTS_DIR`.",
+  "- Library-backed project resources use `sourceType: \"library\"`; their `locator` is a safe path relative to `$RUDDER_ORG_WORKSPACE_ROOT`, so read them from `$RUDDER_ORG_WORKSPACE_ROOT/<locator>` when that root is available. Rudder does not use protected system roots such as `agents/`, `artifacts/`, `plans/`, or `skills/` as project Library resources.",
+  "- Project Context is explicit operator-curated context, not the whole knowledge boundary. When it is insufficient, inspect broader Library files and org workspace know-how before concluding context is missing.",
   "- Durable generated outputs such as screenshots, images, mockups, reports, CSVs, handoff logs, and other user-visible files should be written under `$RUDDER_ORG_ARTIFACTS_DIR` when available.",
   "- Use `/tmp` only for transient scratch files and temporary verification artifacts; do not put durable work product there.",
   "- Local trusted runtimes may expose the host operator home as `$RUDDER_OPERATOR_HOME`; use it only when a local skill or script intentionally needs operator-owned desktop app or CLI state. Do not replace `$HOME` with it.",
@@ -300,4 +302,3 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "- Never exfiltrate secrets or private data.",
   "- Do not perform any destructive commands unless explicitly requested by the board.",
 ].join("\n");
-

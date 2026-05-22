@@ -219,7 +219,8 @@ describe("project service workspace resolution", () => {
       orgId,
       name: "Existing spec",
       kind: "file",
-      locator: "~/projects/rudder/doc/SPEC-implementation.md",
+      sourceType: "library",
+      locator: "docs/SPEC-implementation.md",
       description: "Implementation contract",
     }).returning().then((rows) => rows[0]!);
 
@@ -238,6 +239,7 @@ describe("project service workspace resolution", () => {
         {
           name: "Main repo",
           kind: "directory",
+          sourceType: "external",
           locator: "~/projects/rudder",
           description: "Monorepo checkout",
           role: "working_set",
@@ -254,6 +256,7 @@ describe("project service workspace resolution", () => {
       resource: expect.objectContaining({
         id: existingResource.id,
         name: "Existing spec",
+        sourceType: "library",
       }),
     }));
     expect(created.resources[1]).toEqual(expect.objectContaining({
@@ -262,6 +265,7 @@ describe("project service workspace resolution", () => {
       resource: expect.objectContaining({
         name: "Main repo",
         kind: "directory",
+        sourceType: "external",
         locator: "~/projects/rudder",
       }),
     }));
@@ -277,5 +281,47 @@ describe("project service workspace resolution", () => {
       .from(projectResourceAttachments)
       .where(eq(projectResourceAttachments.projectId, created.id));
     expect(persistedAttachments).toHaveLength(2);
+  });
+
+  it("reuses existing library resources when inline project resources target the same path", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Reusable Resource Org",
+      urlKey: deriveOrganizationUrlKey("Reusable Resource Org"),
+      issuePrefix: "RRO",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const existingResource = await db.insert(organizationResources).values({
+      orgId,
+      name: "Existing spec",
+      kind: "file",
+      sourceType: "library",
+      locator: "docs/spec.md",
+    }).returning().then((rows) => rows[0]!);
+
+    const created = await projectSvc.create(orgId, {
+      name: "Path Based Context",
+      status: "planned",
+      newResources: [
+        {
+          name: "Spec copy",
+          kind: "file",
+          sourceType: "library",
+          locator: "docs/spec.md",
+          role: "reference",
+        },
+      ],
+    });
+
+    expect(created.resources).toHaveLength(1);
+    expect(created.resources[0]?.resourceId).toBe(existingResource.id);
+
+    const persistedOrgResources = await db
+      .select({ id: organizationResources.id })
+      .from(organizationResources)
+      .where(eq(organizationResources.orgId, orgId));
+    expect(persistedOrgResources).toHaveLength(1);
   });
 });
