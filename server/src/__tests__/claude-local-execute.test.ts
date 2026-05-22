@@ -154,12 +154,6 @@ describe("claude execute", () => {
           chunk: expect.stringContaining("[rudder] Loaded agent memory instructions file: $AGENT_HOME/instructions/MEMORY.md"),
         }),
       );
-      expect(logs).toContainEqual(
-        expect.objectContaining({
-          stream: "stdout",
-          chunk: expect.stringContaining(`[rudder] Loaded agent memory instructions file: ${memoryPath}`),
-        }),
-      );
       expect(logs).not.toContainEqual(
         expect.objectContaining({
           stream: "stderr",

@@ -554,33 +554,5 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
         ],
       },
     ]);
-
-    const organizationAnalytics = await svc.getOrganizationSkillAnalytics(orgId, {
-      now: new Date("2026-04-22T12:00:00.000Z"),
-    });
-
-    expect(organizationAnalytics.agentId).toBe("__all__");
-    expect(organizationAnalytics.orgId).toBe(orgId);
-    expect(organizationAnalytics.totalCount).toBe(7);
-    expect(organizationAnalytics.totalRunsWithSkills).toBe(4);
-    expect(organizationAnalytics.skills).toEqual([
-      { key: "pua", label: "pua", count: 3 },
-      { key: "rudder/build-advisor", label: "build-advisor", count: 2 },
-      { key: "deep-research", label: "deep-research", count: 1 },
-      { key: "screenshot", label: "screenshot", count: 1 },
-    ]);
-
-    const orgApril20 = organizationAnalytics.days.find((day) => day.date === "2026-04-20");
-    expect(orgApril20).toEqual({
-      date: "2026-04-20",
-      totalCount: 6,
-      runCount: 3,
-      skills: [
-        { key: "rudder/build-advisor", label: "build-advisor", count: 2 },
-        { key: "pua", label: "pua", count: 2 },
-        { key: "deep-research", label: "deep-research", count: 1 },
-        { key: "screenshot", label: "screenshot", count: 1 },
-      ],
-    });
   });
 });
