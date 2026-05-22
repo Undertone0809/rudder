@@ -91,7 +91,7 @@ export async function publishAutomationRunOutputToChat(
         eq(chatMessages.conversationId, conversationId),
         eq(chatMessages.role, "assistant"),
         sql<boolean>`${chatMessages.structuredPayload}->>'eventType' = 'automation_run_result'`,
-        sql<boolean>`${chatMessages.structuredPayload}->>'runId' = ${row.runId}`,
+        sql<boolean>`${chatMessages.structuredPayload}->>'runId' = ${row.runId}::text`,
       ),
     )
     .then((rows) => rows[0] ?? null);
