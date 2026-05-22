@@ -52,7 +52,7 @@ export async function publishAutomationRunOutputToChat(
       linkedChatConversationId: automationRuns.linkedChatConversationId,
     })
     .from(issues)
-    .innerJoin(automationRuns, eq(issues.originRunId, automationRuns.id))
+    .innerJoin(automationRuns, sql`${issues.originRunId} = ${automationRuns.id}::text`)
     .innerJoin(automations, eq(automationRuns.automationId, automations.id))
     .where(and(eq(issues.id, input.issueId), eq(issues.originKind, "automation_execution")))
     .then((rows) => rows[0] ?? null);
