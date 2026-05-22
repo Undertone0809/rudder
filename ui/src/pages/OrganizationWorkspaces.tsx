@@ -1572,7 +1572,10 @@ export function OrganizationWorkspaceBrowser({
     top: number;
   } | null>(null);
   const [draggedTabPath, setDraggedTabPath] = useState<string | null>(null);
-  const [tabDragOverPath, setTabDragOverPath] = useState<string | null>(null);
+  const [tabDropPreview, setTabDropPreview] = useState<{
+    targetPath: string;
+    position: "before" | "after";
+  } | null>(null);
   const [draftContent, setDraftContent] = useState("");
   const [draftFilePath, setDraftFilePath] = useState<string | null>(null);
   const selectedFilePathRef = useRef<string | null>(selectedFilePath);
@@ -2401,7 +2404,27 @@ export function OrganizationWorkspaceBrowser({
     if (!sourceFilePath || sourceFilePath === targetFilePath) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
-    setTabDragOverPath(targetFilePath);
+    const targetRect = event.currentTarget.getBoundingClientRect();
+    const insertBeforeTarget = event.clientX < targetRect.left + targetRect.width / 2;
+    setTabDropPreview({
+      targetPath: targetFilePath,
+      position: insertBeforeTarget ? "before" : "after",
+    });
+  }
+
+  function handleOpenFileTabDragLeave(event: DragEvent<HTMLElement>, targetFilePath: string) {
+    if (!didDragLeaveCurrentTarget(event)) return;
+    setTabDropPreview((current) => current?.targetPath === targetFilePath ? null : current);
+  }
+
+  function handleOpenFileTabDrop(event: DragEvent<HTMLElement>, targetFilePath: string) {
+    event.preventDefault();
+    const sourceFilePath = draggedTabPath || event.dataTransfer.getData(WORKSPACE_TAB_DND_MIME);
+    if (!sourceFilePath || sourceFilePath === targetFilePath) {
+      setDraggedTabPath(null);
+      setTabDropPreview(null);
+      return;
+    }
     const targetRect = event.currentTarget.getBoundingClientRect();
     const insertBeforeTarget = event.clientX < targetRect.left + targetRect.width / 2;
     setOpenFilePaths((current) => {
@@ -2415,17 +2438,13 @@ export function OrganizationWorkspaceBrowser({
       next.splice(insertIndex, 0, sourceFilePath);
       return next.join("\u0000") === current.join("\u0000") ? current : next;
     });
-  }
-
-  function handleOpenFileTabDrop(event: DragEvent<HTMLElement>) {
-    event.preventDefault();
     setDraggedTabPath(null);
-    setTabDragOverPath(null);
+    setTabDropPreview(null);
   }
 
   function handleOpenFileTabDragEnd() {
     setDraggedTabPath(null);
-    setTabDragOverPath(null);
+    setTabDropPreview(null);
   }
 
   function handleMarkdownDraftChange(filePath: string | null, nextContent: string) {
@@ -2627,7 +2646,8 @@ export function OrganizationWorkspaceBrowser({
                     const active = selectedFilePath === filePath;
                     const first = index === 0;
                     const dragging = draggedTabPath === filePath;
-                    const dragTarget = tabDragOverPath === filePath;
+                    const dropBefore = tabDropPreview?.targetPath === filePath && tabDropPreview.position === "before";
+                    const dropAfter = tabDropPreview?.targetPath === filePath && tabDropPreview.position === "after";
                     return (
                       <div
                         key={filePath}
@@ -2635,7 +2655,8 @@ export function OrganizationWorkspaceBrowser({
                         draggable={openFilePaths.length > 1}
                         onDragStart={(event) => handleOpenFileTabDragStart(event, filePath)}
                         onDragOver={(event) => handleOpenFileTabDragOver(event, filePath)}
-                        onDrop={handleOpenFileTabDrop}
+                        onDragLeave={(event) => handleOpenFileTabDragLeave(event, filePath)}
+                        onDrop={(event) => handleOpenFileTabDrop(event, filePath)}
                         onDragEnd={handleOpenFileTabDragEnd}
                         onContextMenu={(event) => handleOpenTabContextMenu(event, filePath)}
                         className={cn(
@@ -2645,7 +2666,8 @@ export function OrganizationWorkspaceBrowser({
                             : "mb-1 h-9 translate-y-px overflow-hidden rounded-[18px] border-transparent text-muted-foreground hover:translate-y-0 hover:bg-[color:var(--surface-active)] hover:text-foreground hover:shadow-[0_1px_2px_color-mix(in_oklab,var(--foreground)_8%,transparent)]",
                           active && first && "rudder-doc-editor-tab--first-active",
                           dragging && "opacity-55",
-                          dragTarget && !dragging && "shadow-[0_0_0_1px_color-mix(in_oklab,var(--foreground)_10%,transparent)]",
+                          dropBefore && !dragging && "rudder-doc-editor-tab--drop-before",
+                          dropAfter && !dragging && "rudder-doc-editor-tab--drop-after",
                         )}
                       >
                         <button

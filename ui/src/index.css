@@ -1693,8 +1693,12 @@ button[draggable="false"] {
   display: none;
 }
 
-.rudder-doc-editor-tab--first-active {
-  border-top-left-radius: 0;
+.rudder-doc-editor-tab--drop-before {
+  box-shadow: -3px 0 0 color-mix(in oklab, #2f80ed 72%, transparent);
+}
+
+.rudder-doc-editor-tab--drop-after {
+  box-shadow: 3px 0 0 color-mix(in oklab, #2f80ed 72%, transparent);
 }
 
 .rudder-inline-markdown-surface {
