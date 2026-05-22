@@ -13,6 +13,8 @@ import { instanceSettingsService } from "./instance-settings.js";
 
 const PLUGIN_EVENT_SET: ReadonlySet<string> = new Set(PLUGIN_EVENT_TYPES);
 const LANGFUSE_ACTIVITY_EXPORT_ALLOWLIST: ReadonlySet<string> = new Set();
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ACTIVITY_RUN_ID_FK_CONSTRAINT = "activity_log_run_id_heartbeat_runs_id_fk";
 
 let _pluginEventBus: PluginEventBus | null = null;
 
@@ -46,6 +48,18 @@ function shouldExportActivityToLangfuse(
     && LANGFUSE_ACTIVITY_EXPORT_ALLOWLIST.has(input.action);
 }
 
+function normalizeHeartbeatRunId(runId: string | null | undefined): string | null {
+  if (typeof runId !== "string") return null;
+  const trimmed = runId.trim();
+  return UUID_RE.test(trimmed) ? trimmed : null;
+}
+
+function isActivityRunIdPersistenceError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const record = error as Record<string, unknown>;
+  return record.code === "23503" && record.constraint_name === ACTIVITY_RUN_ID_FK_CONSTRAINT;
+}
+
 export async function logActivity(db: Db, input: LogActivityInput) {
   const currentUserRedactionOptions = {
     enabled: (await instanceSettingsService(db).getGeneral()).censorUsernameInLogs,
@@ -54,17 +68,34 @@ export async function logActivity(db: Db, input: LogActivityInput) {
   const redactedDetails = sanitizedDetails
     ? redactCurrentUserValue(sanitizedDetails, currentUserRedactionOptions)
     : null;
-  await db.insert(activityLog).values({
-    orgId: input.orgId,
-    actorType: input.actorType,
-    actorId: input.actorId,
-    action: input.action,
-    entityType: input.entityType,
-    entityId: input.entityId,
-    agentId: input.agentId ?? null,
-    runId: input.runId ?? null,
-    details: redactedDetails,
-  });
+  let persistedRunId = normalizeHeartbeatRunId(input.runId);
+  const insertActivity = async () => {
+    await db.insert(activityLog).values({
+      orgId: input.orgId,
+      actorType: input.actorType,
+      actorId: input.actorId,
+      action: input.action,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      agentId: input.agentId ?? null,
+      runId: persistedRunId,
+      details: redactedDetails,
+    });
+  };
+
+  try {
+    await insertActivity();
+  } catch (error) {
+    if (!persistedRunId || !isActivityRunIdPersistenceError(error)) {
+      throw error;
+    }
+    logger.warn(
+      { err: error instanceof Error ? error.message : String(error), runId: persistedRunId, action: input.action },
+      "Activity run id did not match a heartbeat run; logging activity without run linkage",
+    );
+    persistedRunId = null;
+    await insertActivity();
+  }
 
   publishLiveEvent({
     orgId: input.orgId,
@@ -76,16 +107,17 @@ export async function logActivity(db: Db, input: LogActivityInput) {
       entityType: input.entityType,
       entityId: input.entityId,
       agentId: input.agentId ?? null,
-      runId: input.runId ?? null,
+      runId: persistedRunId,
       details: redactedDetails,
     },
   });
 
-  if (shouldExportActivityToLangfuse(input)) {
+  const persistedInput = { ...input, runId: persistedRunId };
+  if (shouldExportActivityToLangfuse(persistedInput)) {
     void observeExecutionEvent(
       {
         surface: "activity_mutation",
-        rootExecutionId: input.runId,
+        rootExecutionId: persistedInput.runId,
         orgId: input.orgId,
         agentId: input.agentId ?? null,
         issueId: typeof redactedDetails?.issueId === "string" ? redactedDetails.issueId : null,
@@ -107,7 +139,7 @@ export async function logActivity(db: Db, input: LogActivityInput) {
         },
       },
     ).catch((error) => {
-      logger.warn({ err: error instanceof Error ? error.message : String(error), runId: input.runId }, "Failed to emit Langfuse activity event");
+      logger.warn({ err: error instanceof Error ? error.message : String(error), runId: persistedRunId }, "Failed to emit Langfuse activity event");
     });
   }
 
@@ -124,7 +156,7 @@ export async function logActivity(db: Db, input: LogActivityInput) {
       payload: {
         ...redactedDetails,
         agentId: input.agentId ?? null,
-        runId: input.runId ?? null,
+        runId: persistedRunId,
       },
     };
     void _pluginEventBus.emit(event).then(({ errors }) => {

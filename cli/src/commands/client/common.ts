@@ -84,6 +84,7 @@ export function resolveCommandContext(
   const api = new RudderApiClient({
     apiBase,
     apiKey,
+    agentId,
     runId,
     recoverAuth: explicitApiKey || !canAttemptInteractiveBoardAuth()
       ? undefined

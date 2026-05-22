@@ -5,7 +5,7 @@
     "rootDir": ".",
     "lib": ["ES2023", "DOM"],
     "jsx": "react-jsx",
-    "types": ["vitest/globals"]
+    "types": ["node", "vitest/globals"]
   },
   "include": ["src", "tests"]
 }

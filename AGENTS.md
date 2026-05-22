@@ -17,6 +17,16 @@ The product north-star metric is the weekly count of real agent-work loops succe
 
 Read docs in layers instead of scanning the whole `doc/` tree.
 
+Documentation folders have different audiences:
+
+- `docs/` is the public website documentation. It is user-facing, use-case-led,
+  and written for installation, onboarding, and product understanding.
+- `doc/` is internal product, engineering, operations, release, and development
+  documentation for contributors working on Rudder itself.
+
+When the task is to improve website docs, edit `docs/`. When the task is to
+change contributor/product-development guidance, edit `doc/`.
+
 Start here for almost every task:
 
 1. `doc/GOAL.md`
@@ -66,7 +76,8 @@ Then choose the route that matches the work:
 - `ui/`: React + Vite board UI
 - `packages/db/`: Drizzle schema, migrations, DB clients
 - `packages/shared/`: shared types, constants, validators, API path constants
-- `doc/`: operational and product docs
+- `docs/`: public website documentation
+- `doc/`: internal product, engineering, operations, and release docs
 
 ## 4. Dev Setup (Auto DB)
 
@@ -163,6 +174,10 @@ New plan docs should start with the standard YAML frontmatter described in `doc/
 Any shipped feature or user-visible workflow change must add or update automated E2E coverage for the path being introduced or changed.
 If no suitable E2E suite exists yet for that area, create it as part of the feature work.
 Do not treat unit, integration, or smoke coverage as a substitute unless the user explicitly approves that exception.
+E2E coverage must exercise the real user-visible workflow plus the highest-risk corner cases for that workflow.
+Do not stop at a happy-path fixture when the behavior depends on data volume, date windows, permissions, organization boundaries, persistence, async runtime state, database aggregation, or external-process results.
+Include at least one representative edge case or production-shaped failure mode whenever that is where the implementation is likely to break.
+If a corner case is too expensive or impossible to cover in E2E, document why and add the closest lower-level regression test instead.
 
 ## 6. Database Change Workflow
 
@@ -210,6 +225,7 @@ Task-specific additions:
   - verify the rendered result in a browser or desktop shell, not just by tests
   - when browser verification is needed, prefer `@browser-use` for local navigation, inspection, interaction checks, and screenshots before falling back to other browser automation paths
   - store temporary screenshots and other ad-hoc verification artifacts outside the repository tree (for example under `/tmp` or the system temp dir), not in the project root
+  - store durable generated work product intended for handoff under `$RUDDER_ORG_ARTIFACTS_DIR` when that runtime path is available
 
 ## 8. API and Auth Expectations
 

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import type { RunProcessResult } from "@rudderhq/agent-runtime-utils/server-utils";
 import {
   asString,
@@ -17,8 +18,11 @@ import {
   redactEnvForLogs,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
+  ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
   ensurePathInEnv,
+  resolveLocalOperatorHome,
+  syncLocalCliCredentialHomeEntries,
   renderTemplate,
   loadAgentInstructionsPrefix,
   runChildProcess,
@@ -73,6 +77,13 @@ async function buildSkillsDir(config: Record<string, unknown>): Promise<string> 
 
 function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function runtimeImagePaths(media: AgentRuntimeExecutionContext["media"]): string[] {
+  return (media ?? [])
+    .filter((item) => item.source === "chat_attachment" && item.contentType.toLowerCase().startsWith("image/"))
+    .map((item) => item.localPath)
+    .filter((value) => value.trim().length > 0);
 }
 
 async function pathExists(candidate: string): Promise<boolean> {
@@ -211,6 +222,10 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const orgWorkspaceRoot = asString(workspaceContext.orgWorkspaceRoot, "") || null;
   const orgSkillsDir = asString(workspaceContext.orgSkillsDir, "") || null;
   const orgPlansDir = asString(workspaceContext.orgPlansDir, "") || null;
+  const orgArtifactsDir = asString(
+    workspaceContext.orgArtifactsDir,
+    orgWorkspaceRoot ? path.join(orgWorkspaceRoot, "artifacts") : "",
+  ) || null;
   const workspaceHints = Array.isArray(context.rudderWorkspaces)
     ? context.rudderWorkspaces.filter(
         (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
@@ -327,6 +342,9 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   if (orgPlansDir) {
     env.RUDDER_ORG_PLANS_DIR = orgPlansDir;
   }
+  if (orgArtifactsDir) {
+    env.RUDDER_ORG_ARTIFACTS_DIR = orgArtifactsDir;
+  }
   if (workspaceHints.length > 0) {
     env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);
   }
@@ -344,17 +362,41 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     if (typeof value === "string") env[key] = value;
   }
 
+  const sourceEnv = { ...process.env, ...env };
+  const operatorHome = resolveLocalOperatorHome(sourceEnv);
   env.HOME = await prepareManagedClaudeHome(
-    { ...process.env, ...env },
+    sourceEnv,
     input.onLog ?? (async () => {}),
     agent.orgId,
   );
+  await syncLocalCliCredentialHomeEntries({
+    sourceHome: operatorHome,
+    targetHome: env.HOME,
+    onLog: input.onLog,
+  });
+  const preparedGitIdentity = await ensureGitIdentityFileConfig({
+    cwd,
+    home: env.HOME,
+    sourceEnv,
+    onLog: input.onLog,
+  });
 
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
   }
+  env.RUDDER_OPERATOR_HOME = operatorHome;
+  applyGitIdentityPreparationEnv(env, preparedGitIdentity);
+  applyGitCredentialHelperPolicyEnv(env);
 
-  const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env }));
+  const runtimeEnv = await ensureLocalCliCredentialShimsInPath({
+    operatorHome,
+    targetHome: env.HOME,
+    cwd,
+    env: ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env })),
+    onLog: input.onLog,
+  });
+  if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
+  if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
@@ -454,6 +496,16 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   );
   const billingType = resolveClaudeBillingType(effectiveEnv);
   const skillsDir = await buildSkillsDir(config);
+  const claudeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
+  const desiredClaudeSkillNames = resolveClaudeDesiredSkillNames(config, claudeSkillEntries);
+  const loadedSkills = claudeSkillEntries
+    .filter((entry) => desiredClaudeSkillNames.includes(entry.key))
+    .map((entry) => ({
+      key: entry.key,
+      runtimeName: entry.runtimeName,
+      name: entry.name ?? null,
+      description: entry.description ?? null,
+    }));
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const loadedInstructions = await loadAgentInstructionsPrefix({
     instructionsFilePath,
@@ -461,6 +513,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     warningStream: "stderr",
   });
   const instructionsFileDir = loadedInstructions.instructionsDir;
+  const imagePaths = runtimeImagePaths(ctx.media);
+  const imageAttachmentNote =
+    imagePaths.length > 0
+      ? `Provided ${imagePaths.length} local image attachment path${imagePaths.length === 1 ? "" : "s"} in the prompt for Claude Code inspection.`
+      : null;
 
   // When instructionsFilePath is configured, create a combined temp file that
   // includes both the file content and the path directive, so we only need
@@ -476,12 +533,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       return [
         ...loadedInstructions.commandNotes,
         "Injected Rudder operating contract via --append-system-prompt-file.",
+        ...(imageAttachmentNote ? [imageAttachmentNote] : []),
       ];
     }
-    if (!loadedInstructions.prefix) return loadedInstructions.commandNotes;
+    if (!loadedInstructions.prefix) {
+      return [
+        ...loadedInstructions.commandNotes,
+        ...(imageAttachmentNote ? [imageAttachmentNote] : []),
+      ];
+    }
     return [
       ...loadedInstructions.commandNotes,
       `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended; relative references from ${instructionsFileDir}).`,
+      ...(imageAttachmentNote ? [imageAttachmentNote] : []),
     ];
   })();
 
@@ -601,6 +665,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         env: redactEnvForLogs(env),
         prompt,
         promptMetrics,
+        loadedSkills,
         context,
       });
     }
@@ -674,9 +739,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       parsedStream.usage ??
       (() => {
         const usageObj = parseObject(parsed.usage);
+        const cacheReadInputTokens = asNumber(usageObj.cache_read_input_tokens, 0);
+        const cacheCreationInputTokens = asNumber(usageObj.cache_creation_input_tokens, 0);
         return {
           inputTokens: asNumber(usageObj.input_tokens, 0),
-          cachedInputTokens: asNumber(usageObj.cache_read_input_tokens, 0),
+          cachedInputTokens: cacheReadInputTokens + cacheCreationInputTokens,
           outputTokens: asNumber(usageObj.output_tokens, 0),
         };
       })();

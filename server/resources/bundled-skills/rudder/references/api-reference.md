@@ -118,7 +118,7 @@ When updating an existing document, send the latest `baseRevisionId` or the API 
 - `POST /api/issues/:issueId/release`
 - `POST /api/issues/:issueId/approvals`
 
-`PATCH` accepts `comment` alongside mutable issue fields such as `status`, `priority`, `assigneeAgentId`, `assigneeUserId`, `projectId`, `goalId`, and `parentId`.
+`PATCH` accepts `comment` alongside mutable issue fields such as `status`, `priority`, `assigneeAgentId`, `assigneeUserId`, `reviewerAgentId`, `reviewerUserId`, `projectId`, `goalId`, and `parentId`.
 
 ### Attachments
 
@@ -181,7 +181,7 @@ When `RUDDER_APPROVAL_ID` is set, read the approval and its linked issues first.
 
 - `GET /llms/agent-configuration.txt`
 - `GET /llms/agent-configuration/:agentRuntimeType.txt`
-- `GET /llms/agent-icons.txt`
+- `GET /llms/agent-icons.txt` (legacy named icons for compatibility/debugging; normal hires should omit `icon`)
 - `GET /api/orgs/:orgId/agent-configurations`
 - `GET /api/agents/:agentId/configuration`
 - `GET /api/agents/:agentId/config-revisions`

@@ -490,6 +490,15 @@ export function agentInstructionsService() {
   async function reconcileBundle(agent: AgentLike): Promise<ReconciledBundleResult> {
     const derived = deriveBundleState(agent);
     const current = await recoverManagedBundleState(agent, derived);
+    if (current.mode === "managed" && !current.rootPath && current.legacyPromptTemplateActive) {
+      const prepared = await ensureWritableBundle(agent, { clearLegacyPromptTemplate: true });
+      const nextAgent = { ...agent, agentRuntimeConfig: prepared.agentRuntimeConfig };
+      return {
+        bundle: await getBundle(nextAgent),
+        agentRuntimeConfig: prepared.agentRuntimeConfig,
+        changed: true,
+      };
+    }
     const agentRuntimeConfig = buildPersistedBundleConfig(derived, current);
     const changed = agentRuntimeConfig !== derived.config;
     const bundle = await getBundle(changed ? { ...agent, agentRuntimeConfig } : agent);

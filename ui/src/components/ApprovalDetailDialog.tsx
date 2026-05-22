@@ -5,6 +5,9 @@ import type { ApprovalComment } from "@rudderhq/shared";
 import { accessApi } from "@/api/access";
 import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
+import { chatsApi } from "@/api/chats";
+import { issuesApi } from "@/api/issues";
+import { projectsApi } from "@/api/projects";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,14 +20,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { useDialog } from "@/context/DialogContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { queryKeys } from "@/lib/queryKeys";
+import { formatDateTime } from "@/lib/utils";
 import { Link, useNavigate, useSearchParams } from "@/lib/router";
 import { resolveBoardActorLabel } from "@/lib/activity-actors";
+import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
 import { MarkdownBody } from "./MarkdownBody";
 import {
   ApprovalPayloadRenderer,
+  ChatIssueApprovalLabelPicker,
+  approvalPayloadWithChatIssueLabelIds,
   approvalLabel,
+  chatIssueApprovalLabelIds,
+  chatIssueApprovalNeedsLabelSelection,
+  chatConversationIdFromApprovalPayload,
   defaultTypeIcon,
   typeIcon,
 } from "./ApprovalPayload";
@@ -51,6 +61,8 @@ export function ApprovalDetailDialog({
   const [commentBody, setCommentBody] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showRawPayload, setShowRawPayload] = useState(false);
+  const [selectedChatIssueLabelIds, setSelectedChatIssueLabelIds] = useState<string[]>([]);
+  const operatorDisplayName = useOperatorDisplayName();
 
   const { data: approval, isLoading } = useQuery({
     queryKey: queryKeys.approvals.detail(approvalId ?? "__none__"),
@@ -77,6 +89,31 @@ export function ApprovalDetailDialog({
     enabled: Boolean(resolvedOrgId && open),
   });
 
+  const { data: projects } = useQuery({
+    queryKey: queryKeys.projects.list(resolvedOrgId ?? ""),
+    queryFn: () => projectsApi.list(resolvedOrgId ?? ""),
+    enabled: Boolean(resolvedOrgId && open),
+  });
+
+  const { data: labels } = useQuery({
+    queryKey: queryKeys.issues.labels(resolvedOrgId ?? ""),
+    queryFn: () => issuesApi.listLabels(resolvedOrgId ?? ""),
+    enabled: Boolean(resolvedOrgId && open),
+  });
+
+  const payload = useMemo(
+    () => (approval?.payload ?? {}) as Record<string, unknown>,
+    [approval?.payload],
+  );
+  const initialChatIssueLabelIds = useMemo(() => chatIssueApprovalLabelIds(payload), [payload]);
+  const initialChatIssueLabelKey = initialChatIssueLabelIds.join("\u0000");
+  const chatConversationId = chatConversationIdFromApprovalPayload(payload);
+  const { data: chatConversation } = useQuery({
+    queryKey: queryKeys.chats.detail(chatConversationId ?? "__none__"),
+    queryFn: () => chatsApi.get(chatConversationId!),
+    enabled: Boolean(chatConversationId && open),
+  });
+
   const { data: currentBoardAccess } = useQuery({
     queryKey: queryKeys.access.currentBoardAccess,
     queryFn: () => accessApi.getCurrentBoardAccess(),
@@ -89,7 +126,12 @@ export function ApprovalDetailDialog({
     setCommentBody("");
     setError(null);
     setShowRawPayload(false);
+    setSelectedChatIssueLabelIds([]);
   }, [approvalId]);
+
+  useEffect(() => {
+    setSelectedChatIssueLabelIds(initialChatIssueLabelIds);
+  }, [approvalId, initialChatIssueLabelKey]);
 
   useEffect(() => {
     if (!approval?.orgId || approval.orgId === selectedOrganizationId) return;
@@ -119,7 +161,13 @@ export function ApprovalDetailDialog({
   };
 
   const approveMutation = useMutation({
-    mutationFn: () => approvalsApi.approve(approvalId!, decisionNote.trim() || undefined),
+    mutationFn: () => {
+      const nextPayload =
+        approval?.type === "chat_issue_creation"
+          ? approvalPayloadWithChatIssueLabelIds(payload, selectedChatIssueLabelIds)
+          : undefined;
+      return approvalsApi.approve(approvalId!, decisionNote.trim() || undefined, nextPayload);
+    },
     onSuccess: () => {
       setDecisionNote("");
       setError(null);
@@ -178,10 +226,14 @@ export function ApprovalDetailDialog({
     onError: (err) => setError(err instanceof Error ? err.message : "Delete failed"),
   });
 
-  const payload = (approval?.payload ?? {}) as Record<string, unknown>;
   const linkedAgentId = typeof payload.agentId === "string" ? payload.agentId : null;
-  const isActionable = approval?.status === "pending" || approval?.status === "revision_requested";
+  const isActionable = approval?.status === "pending";
   const isBudgetApproval = approval?.type === "budget_override_required";
+  const isChatReviewApproval = approval?.type === "chat_issue_creation" || approval?.type === "chat_operation";
+  const chatIssueLabelsRequired =
+    approval?.type === "chat_issue_creation"
+    && chatIssueApprovalNeedsLabelSelection(payload, labels, selectedChatIssueLabelIds);
+  const chatIssueLabelOptionsLoading = approval?.type === "chat_issue_creation" && labels === undefined;
   const TypeIcon = approval ? (typeIcon[approval.type] ?? defaultTypeIcon) : defaultTypeIcon;
   const showApprovedBanner = searchParams.get("resolved") === "approved" && approval?.status === "approved";
   const primaryLinkedIssue = linkedIssues?.[0] ?? null;
@@ -290,8 +342,29 @@ export function ApprovalDetailDialog({
                     ) : null}
 
                     <ApprovalInset className="px-3 py-3">
-                      <ApprovalPayloadRenderer type={approval.type} payload={payload} />
+                      <ApprovalPayloadRenderer
+                        type={approval.type}
+                        payload={payload}
+                        context={{
+                          agents,
+                          projects,
+                          labels,
+                          selectedLabelIds: selectedChatIssueLabelIds,
+                          chatConversation,
+                          currentUserId: currentBoardUserId,
+                        }}
+                      />
                     </ApprovalInset>
+
+                    {approval.type === "chat_issue_creation" && isActionable ? (
+                      <ChatIssueApprovalLabelPicker
+                        labels={labels}
+                        selectedLabelIds={selectedChatIssueLabelIds}
+                        onChange={setSelectedChatIssueLabelIds}
+                        required={Boolean(chatIssueLabelsRequired)}
+                        disabled={approveMutation.isPending || chatIssueLabelOptionsLoading}
+                      />
+                    ) : null}
 
                     {approval.decisionNote ? (
                       <ApprovalInset className="px-3 py-3">
@@ -365,7 +438,7 @@ export function ApprovalDetailDialog({
                           size="sm"
                           className="bg-green-700 text-white hover:bg-green-600"
                           onClick={() => approveMutation.mutate()}
-                          disabled={approveMutation.isPending}
+                          disabled={approveMutation.isPending || Boolean(chatIssueLabelsRequired) || chatIssueLabelOptionsLoading}
                         >
                           Approve
                         </Button>
@@ -394,11 +467,17 @@ export function ApprovalDetailDialog({
                         onClick={() => revisionMutation.mutate()}
                         disabled={revisionMutation.isPending}
                       >
-                        Request revision
-                      </Button>
+                          Request changes
+                        </Button>
+                      ) : null}
+
+                    {approval.status === "revision_requested" && isChatReviewApproval ? (
+                      <p className="text-sm text-muted-foreground">
+                        Waiting for the agent to submit a revised proposal in the source chat.
+                      </p>
                     ) : null}
 
-                    {approval.status === "revision_requested" ? (
+                    {approval.status === "revision_requested" && !isChatReviewApproval ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -449,12 +528,12 @@ export function ApprovalDetailDialog({
                             </Link>
                           ) : (
                             <Identity
-                              name={resolveBoardActorLabel("user", comment.authorUserId, currentBoardUserId)}
+                              name={resolveBoardActorLabel("user", comment.authorUserId, currentBoardUserId, operatorDisplayName)}
                               size="sm"
                             />
                           )}
                           <span className="text-xs text-muted-foreground">
-                            {new Date(comment.createdAt).toLocaleString()}
+                            {formatDateTime(comment.createdAt)}
                           </span>
                         </div>
                         <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>

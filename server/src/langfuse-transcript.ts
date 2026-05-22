@@ -1,7 +1,7 @@
 import type { LangfuseObservation } from "@langfuse/tracing";
 import type { TranscriptEntry, UsageSummary } from "@rudderhq/agent-runtime-utils";
 import type { ExecutionObservabilityContext } from "@rudderhq/shared";
-import { startExecutionChildObservation, updateExecutionObservation } from "./langfuse.js";
+import { startExecutionChildObservation, updateExecutionObservation, updateExecutionTraceIO } from "./langfuse.js";
 
 interface TranscriptFallbackResult {
   ts?: string | null;
@@ -68,6 +68,12 @@ function appendTranscriptText(current: string, next: string, isDelta = false) {
   return current + next;
 }
 
+function formatTodoListOutput(entry: Extract<TranscriptEntry, { kind: "todo_list" }>) {
+  return entry.items
+    .map((item) => `${item.status === "completed" ? "[x]" : item.status === "in_progress" ? "[~]" : "[ ]"} ${item.text}`)
+    .join("\n");
+}
+
 function appendTurnInput(current: unknown, next: string) {
   const normalized = next.trim();
   if (!normalized) return current;
@@ -112,7 +118,7 @@ function createTranscriptEvent(
 export function emitExecutionTranscriptTree(
   input: EmitExecutionTranscriptTreeInput,
 ): ExecutionTranscriptTreeStats {
-  if (!input.parentObservation || input.transcript.length === 0) {
+  if (!input.parentObservation) {
     return {
       turnCount: 0,
       toolCount: 0,
@@ -137,6 +143,7 @@ export function emitExecutionTranscriptTree(
   let finalUsage: UsageSummary | null = null;
   let finalSessionId: string | null = pendingSessionId ?? null;
   let finalHasError = false;
+  let latestTranscriptTs: string | null = null;
   let activeTurn: ActiveTurnState | null = null;
   const pendingTools = new Map<string, PendingToolState>();
 
@@ -190,6 +197,7 @@ export function emitExecutionTranscriptTree(
         sessionId: pendingSessionId,
       },
     });
+    updateExecutionTraceIO(turnObservation, { input: pendingTurnInput });
 
     activeTurn = {
       index: turnCount,
@@ -255,6 +263,10 @@ export function emitExecutionTranscriptTree(
         errors,
       },
     });
+    updateExecutionTraceIO(turn.observation, {
+      input: turn.input,
+      output,
+    });
     turn.observation?.end(parseTs(ts));
     finalOutput = output;
     finalModel = turn.model ?? result?.model ?? finalModel;
@@ -264,6 +276,7 @@ export function emitExecutionTranscriptTree(
   };
 
   for (const entry of input.transcript) {
+    latestTranscriptTs = entry.ts;
     switch (entry.kind) {
       case "init": {
         pendingModel = entry.model;
@@ -367,6 +380,23 @@ export function emitExecutionTranscriptTree(
         break;
       }
 
+      case "todo_list": {
+        createTranscriptEvent(input.parentObservation, input.context, {
+          name: "todo_list",
+          ts: entry.ts,
+          output: formatTodoListOutput(entry),
+          metadata: {
+            todoListId: entry.todoListId ?? null,
+            itemCount: entry.items.length,
+            completedCount: entry.items.filter((item) => item.status === "completed").length,
+          },
+        });
+        eventCount += 1;
+        const turn = activeTurn as ActiveTurnState | null;
+        if (turn) turn.lastTs = entry.ts;
+        break;
+      }
+
       case "result": {
         const turn = ensureTurn(entry.ts);
         finalizeTurn(turn, entry.ts, {
@@ -431,6 +461,16 @@ export function emitExecutionTranscriptTree(
         }
         break;
     }
+  }
+
+  if (
+    !activeTurn &&
+    turnCount === 0 &&
+    (pendingTurnInput !== undefined || (input.fallbackResult !== null && input.fallbackResult !== undefined))
+  ) {
+    const syntheticTs = input.fallbackResult?.ts ?? latestTranscriptTs ?? new Date().toISOString();
+    const syntheticTurn = ensureTurn(syntheticTs);
+    finalizeTurn(syntheticTurn, syntheticTs, input.fallbackResult ?? null);
   }
 
   const finalTurn = activeTurn as ActiveTurnState | null;

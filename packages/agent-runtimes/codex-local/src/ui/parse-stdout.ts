@@ -1,4 +1,5 @@
-import { type TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import { type TranscriptEntry, type TranscriptTodoItemStatus } from "@rudderhq/agent-runtime-utils";
+import { isCodexClosedStdinToolSessionError } from "../shared/tool-errors.js";
 
 function safeJsonParse(text: string): unknown {
   try {
@@ -48,6 +49,89 @@ function stringifyUnknown(value: unknown): string {
   }
 }
 
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return "";
+}
+
+function toolResultContent(item: Record<string, unknown>, fallback: string): string {
+  return (
+    firstString(item.content, item.output, item.result, item.aggregated_output) ||
+    stringifyUnknown(item.content ?? item.output ?? item.result) ||
+    fallback
+  );
+}
+
+function isToolError(item: Record<string, unknown>): boolean {
+  const status = asString(item.status).toLowerCase();
+  return (
+    item.is_error === true ||
+    item.error === true ||
+    status === "error" ||
+    status === "failed" ||
+    status === "errored"
+  );
+}
+
+function normalizeTodoStatus(item: Record<string, unknown>): TranscriptTodoItemStatus {
+  const rawStatus = asString(item.status) || asString(item.state);
+  const normalizedStatus = rawStatus.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (normalizedStatus === "completed" || normalizedStatus === "complete" || normalizedStatus === "done") {
+    return "completed";
+  }
+  if (normalizedStatus === "in_progress" || normalizedStatus === "running" || normalizedStatus === "active" || normalizedStatus === "current") {
+    return "in_progress";
+  }
+  if (item.completed === true) return "completed";
+  if (item.in_progress === true || item.current === true || item.active === true) return "in_progress";
+  return "pending";
+}
+
+function parseTodoListItem(item: Record<string, unknown>, ts: string): TranscriptEntry[] {
+  const rawItems = Array.isArray(item.items) ? item.items : [];
+  const items = rawItems
+    .map((rawItem) => asRecord(rawItem))
+    .filter((todoItem): todoItem is Record<string, unknown> => Boolean(todoItem))
+    .map((todoItem) => {
+      const text = asString(todoItem.text) || asString(todoItem.title) || asString(todoItem.content) || asString(todoItem.task);
+      if (!text.trim()) return null;
+      return {
+        text,
+        status: normalizeTodoStatus(todoItem),
+      };
+    })
+    .filter((todoItem): todoItem is { text: string; status: TranscriptTodoItemStatus } => Boolean(todoItem));
+
+  if (items.length === 0) return [];
+
+  const id = asString(item.id);
+  return [{
+    kind: "todo_list",
+    ts,
+    todoListId: id || undefined,
+    items,
+  }];
+}
+
+function parseCodexItemUpdated(item: Record<string, unknown>, ts: string): TranscriptEntry[] {
+  const itemType = asString(item.type);
+
+  if (itemType === "todo_list") {
+    return parseTodoListItem(item, ts);
+  }
+
+  const id = asString(item.id);
+  const status = asString(item.status);
+  const meta = [id ? `id=${id}` : "", status ? `status=${status}` : ""].filter(Boolean).join(" ");
+  return [{
+    kind: "system",
+    ts,
+    text: `item updated: ${itemType || "unknown"}${meta ? ` (${meta})` : ""}`,
+  }];
+}
+
 function parseCommandExecutionItem(
   item: Record<string, unknown>,
   ts: string,
@@ -88,6 +172,7 @@ function parseCommandExecutionItem(
     status === "errored" ||
     status === "error" ||
     status === "cancelled";
+  if (isError && isCodexClosedStdinToolSessionError(output)) return [];
 
   return [{
     kind: "tool_result",
@@ -118,12 +203,100 @@ function parseFileChangeItem(item: Record<string, unknown>, ts: string): Transcr
   return [{ kind: "system", ts, text: `file changes: ${preview}${more}` }];
 }
 
+function parseWebSearchItem(
+  item: Record<string, unknown>,
+  ts: string,
+  phase: "started" | "completed",
+): TranscriptEntry[] {
+  const id = asString(item.id) || "web_search";
+  if (phase === "started") {
+    return [{
+      kind: "tool_call",
+      ts,
+      name: "web_search",
+      toolUseId: id,
+      input: {
+        id,
+        action: item.action ?? item,
+      },
+    }];
+  }
+
+  const content = toolResultContent(item, "web search completed");
+  const isError = isToolError(item);
+  if (isError && isCodexClosedStdinToolSessionError(content)) return [];
+  return [{ kind: "tool_result", ts, toolUseId: id, toolName: "web_search", content, isError }];
+}
+
+function parseMcpToolCallItem(
+  item: Record<string, unknown>,
+  ts: string,
+  phase: "started" | "completed",
+): TranscriptEntry[] {
+  const id = asString(item.id) || asString(item.call_id) || "mcp_tool_call";
+  const invocation = asRecord(item.invocation) ?? asRecord(item.request) ?? item;
+  const server = firstString(
+    invocation.server,
+    invocation.serverName,
+    invocation.server_name,
+    invocation.serverLabel,
+    invocation.server_label,
+    item.server,
+    item.serverName,
+    item.server_name,
+  );
+  const tool = firstString(
+    invocation.tool,
+    invocation.toolName,
+    invocation.tool_name,
+    invocation.name,
+    item.tool,
+    item.toolName,
+    item.tool_name,
+    item.name,
+  );
+  const safeServer = server.replace(/[^A-Za-z0-9_-]+/g, "_");
+  const safeTool = tool.replace(/[^A-Za-z0-9_-]+/g, "_");
+  const name = safeServer && safeTool ? `mcp__${safeServer}__${safeTool}` : "mcp_tool_call";
+
+  if (phase === "started") {
+    return [{
+      kind: "tool_call",
+      ts,
+      name,
+      toolUseId: id,
+      input: {
+        id,
+        server,
+        tool,
+        invocation,
+        args:
+          invocation.arguments ??
+          invocation.args ??
+          invocation.params ??
+          item.arguments ??
+          item.args ??
+          item.params,
+      },
+    }];
+  }
+
+  const content = toolResultContent(item, "mcp tool completed");
+  const isError = isToolError(item);
+  if (isError && isCodexClosedStdinToolSessionError(content)) return [];
+  return [{ kind: "tool_result", ts, toolUseId: id, toolName: name, content, isError }];
+}
+
 function parseCodexItem(
   item: Record<string, unknown>,
   ts: string,
   phase: "started" | "completed",
 ): TranscriptEntry[] {
   const itemType = asString(item.type);
+
+  if (itemType === "todo_list") {
+    return parseTodoListItem(item, ts);
+  }
 
   if (itemType === "agent_message") {
     const text = asString(item.text);
@@ -139,6 +312,14 @@ function parseCodexItem(
 
   if (itemType === "command_execution") {
     return parseCommandExecutionItem(item, ts, phase);
+  }
+
+  if (itemType === "web_search") {
+    return parseWebSearchItem(item, ts, phase);
+  }
+
+  if (itemType === "mcp_tool_call" || itemType === "mcp_tool_call_begin" || itemType === "mcp_tool_call_end") {
+    return parseMcpToolCallItem(item, ts, phase);
   }
 
   if (itemType === "file_change" && phase === "completed") {
@@ -163,11 +344,13 @@ function parseCodexItem(
       asString(item.result) ||
       stringifyUnknown(item.content ?? item.output ?? item.result);
     const isError = item.is_error === true || asString(item.status) === "error";
+    if (isError && isCodexClosedStdinToolSessionError(content)) return [];
     return [{ kind: "tool_result", ts, toolUseId, content, isError }];
   }
 
   if (itemType === "error" && phase === "completed") {
     const text = errorText(item.message ?? item.error ?? item);
+    if (isCodexClosedStdinToolSessionError(text)) return [];
     return [{ kind: "stderr", ts, text: text || "error" }];
   }
 
@@ -209,6 +392,12 @@ export function parseCodexStdoutLine(line: string, ts: string): TranscriptEntry[
     return parseCodexItem(item, ts, type === "item.started" ? "started" : "completed");
   }
 
+  if (type === "item.updated") {
+    const item = asRecord(parsed.item);
+    if (!item) return [{ kind: "system", ts, text: "item updated" }];
+    return parseCodexItemUpdated(item, ts);
+  }
+
   if (type === "turn.completed") {
     const usage = asRecord(parsed.usage);
     const inputTokens = asNumber(usage?.input_tokens);
@@ -236,6 +425,7 @@ export function parseCodexStdoutLine(line: string, ts: string): TranscriptEntry[
     const outputTokens = asNumber(usage?.output_tokens);
     const cachedTokens = asNumber(usage?.cached_input_tokens, asNumber(usage?.cache_read_input_tokens));
     const message = errorText(parsed.error ?? parsed.message);
+    if (isCodexClosedStdinToolSessionError(message)) return [];
     return [{
       kind: "result",
       ts,
@@ -252,6 +442,7 @@ export function parseCodexStdoutLine(line: string, ts: string): TranscriptEntry[
 
   if (type === "error") {
     const message = errorText(parsed.message ?? parsed.error ?? parsed);
+    if (isCodexClosedStdinToolSessionError(message)) return [];
     return [{ kind: "stderr", ts, text: message || line }];
   }
 

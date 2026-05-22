@@ -37,6 +37,11 @@ Data to show:
 - cost events attached to issue work
 - heartbeat runs summarizing progress
 
+Ground this in production-like Rudder work when the target product is Rudder
+itself: Desktop packaging, local startup reliability, release notes, public
+launch material, support coverage, and agent closeout review. Use sanitized
+details and synthetic actors, but keep the causal work realistic.
+
 ## Engineering Lead Governing Agent Work
 
 Persona: engineering lead using agents but needing review gates.
@@ -88,6 +93,11 @@ Data to show:
 - chats where operator corrections turn into issues and fixture rules
 
 Read `rudder-studio-scenario.md` for the durable fixture and seed script.
+
+For screenshots, this scenario should make Dashboard, Calendar, Messenger,
+approvals, and agent run detail look like different views over the same real
+month of work. Do not create decorative calendar events, empty run pages, or
+generic marketing-use-case rows just to fill space.
 
 ## New Team Understanding Rudder
 

@@ -89,6 +89,7 @@ const zhExactPhrases: Record<string, string> = {
   "By agent": "按智能体",
   "By biller": "按计费方",
   "By project": "按项目",
+  "Calendar": "日历",
   "Choose a GitHub repo or upload a local Rudder zip package.": "选择一个 GitHub 仓库，或上传本地 Rudder zip 包。",
   "Choose how this agent will run tasks.": "选择这个智能体执行任务的方式。",
   "Choose your runtime type for advanced setup.": "选择你的运行时类型以进行高级配置。",
@@ -124,11 +125,15 @@ const zhExactPhrases: Record<string, string> = {
   "Cost Summary": "成本汇总",
   "Costs": "成本",
   "Create": "创建",
+  "Create new chat": "创建新聊天",
+  "Create new agent": "创建新智能体",
   "Create issue": "创建任务",
   "Create new issue": "创建新任务",
   "Create new organization": "创建新组织",
+  "Create new project": "创建新项目",
   "credits": "入账",
-  "Critical": "严重",
+  "Urgent": "紧急",
+  "Critical": "紧急",
   "Danger Zone": "危险操作区",
   "Dashboard": "总览",
   "Date": "日期",
@@ -140,7 +145,9 @@ const zhExactPhrases: Record<string, string> = {
   "Destructive": "危险",
   "Details": "详情",
   "Disabled": "已禁用",
+  "Display": "显示",
   "Documents": "文档",
+  "done": "已完成",
   "Edit": "编辑",
   "Enable": "启用",
   "Enabled": "已启用",
@@ -154,6 +161,7 @@ const zhExactPhrases: Record<string, string> = {
   "Failed to delete workspace.": "删除工作区失败。",
   "Failed to save workspace.": "保存工作区失败。",
   "Failed to update workspace.": "更新工作区失败。",
+  "Filter": "筛选",
   "Filters": "筛选",
   "For": "给",
   "Ghost": "幽灵",
@@ -165,13 +173,21 @@ const zhExactPhrases: Record<string, string> = {
   "Identity": "身份",
   "Import source": "导入来源",
   "In Progress": "进行中",
+  "In Review": "评审中",
   "in": "在",
   "Inbox": "收件箱",
   "Input": "输入",
   "Invalid board claim URL.": "无效的控制台认领链接。",
   "Invalid invite token.": "无效的邀请码。",
+  "Agent comment": "Agent 评论",
+  "Comment from someone else": "他人的评论",
   "Issue creation": "任务创建",
+  "Issue comment": "任务评论",
+  "Issue": "任务",
+  "Issue Tracker": "任务跟踪",
+  "Issue update": "任务更新",
   "Issues": "任务",
+  "Issues assistant": "任务助手",
   "Install Plugin": "安装插件",
   "Keep paused": "保持暂停",
   "Keep my draft": "保留我的草稿",
@@ -192,6 +208,7 @@ const zhExactPhrases: Record<string, string> = {
   "Loading plugin details...": "正在加载插件详情...",
   "Local folder": "本地目录",
   "Me": "我",
+  "Messenger": "消息",
   "Mode": "模式",
   "Model": "模型",
   "My recent issues": "我最近处理的任务",
@@ -225,6 +242,7 @@ const zhExactPhrases: Record<string, string> = {
   "No cost events yet.": "暂无成本事件。",
   "No finance events in this period.": "该时间段内暂无财务事件。",
   "No finance events yet.": "暂无财务事件。",
+  "No finance events yet. Add account-level charges once biller invoices or credits land.": "暂无财务事件。计费方发票或抵扣入账后，可添加账户级费用。",
   "No goals yet.": "还没有目标。",
   "No icons match": "没有匹配的图标",
   "No issues": "没有任务",
@@ -247,9 +265,13 @@ const zhExactPhrases: Record<string, string> = {
   "Nothing here yet": "这里还没有内容",
   "Observed": "已观察",
   "Output": "输出",
+  "Tokens Used": "Token 消耗量",
+  "Not available for this time window": "当前时间窗口暂无可用数据",
+  "Select a start and end date": "请选择开始和结束日期",
   "One-time claim secret (save now)": "一次性认领密钥（请立即保存）",
   "Open board": "打开工作台",
   "Open dashboard": "打开总览",
+  "Open issue": "打开任务",
   "Open run": "打开运行详情",
   "Open chat settings": "打开聊天设置",
   "Operation mode": "操作模式",
@@ -321,20 +343,9 @@ const zhExactPhrases: Record<string, string> = {
   "Hiring": "招聘",
   "Require board approval for new hires": "新招聘成员需要董事会审批",
   "New agent hires stay pending until approved by board.": "新智能体招聘会保持待审批状态，直到董事会批准。",
-  "Conversations without a preferred agent use Rudder Copilot. Preferred-agent chats inherit that agent's own runtime, skills, and instructions.": "没有首选智能体的会话会使用 Rudder Copilot。指定首选智能体的聊天会继承该智能体自己的运行时、技能和指令。",
-  "Rudder Copilot": "Rudder Copilot",
-  "Copilot runtime": "Copilot 运行时",
-  "Used only when a conversation has no preferred agent.": "仅在会话没有首选智能体时使用。",
-  "Copilot not configured": "Copilot 尚未配置",
-  "Copilot model": "Copilot 模型",
-  "Keep this aligned with the model family you want Rudder Copilot to use for unassigned chats.": "让这里与希望 Rudder Copilot 在未分配聊天中使用的模型族保持一致。",
-  "Choose a runtime first": "请先选择运行时",
-  "Loading models...": "正在加载模型...",
-  "Use runtime default": "使用运行时默认值",
   "Default issue creation mode": "默认任务创建模式",
   "Controls whether chat-generated issue proposals wait for approval or create issues immediately.": "控制聊天生成的任务提案是等待审批，还是立即创建任务。",
   "Manual approval": "手动审批",
-  "Save Copilot settings": "保存 Copilot 设置",
   "Open settings": "打开设置",
   "Invites": "邀请",
   "Organization Packages": "组织包",
@@ -348,7 +359,6 @@ const zhExactPhrases: Record<string, string> = {
   "Failed to archive organization": "归档组织失败",
   "How can Rudder help you today?": "今天 Rudder 可以帮你做什么？",
   "Describe the work, desired outcome, or constraints.": "描述这项工作、期望结果或约束条件。",
-  "Choose Rudder Copilot or a specific agent, or configure Copilot in Company Settings before sending messages.": "请选择 Rudder Copilot 或指定一个智能体，或者先在组织设置里配置 Copilot 后再发送消息。",
   "Add files and options": "添加文件和选项",
   "Scope a new feature": "规划一个新功能",
   "Clarify a vague request": "澄清一个模糊需求",
@@ -362,6 +372,7 @@ const zhExactPhrases: Record<string, string> = {
   "Figure out what 'make Messenger less noisy' should mean": "明确“让 Messenger 更不吵”到底意味着什么",
   "Translate a founder ask into acceptance criteria": "把创始人的需求翻译成验收标准",
   "Extract the next shippable task from this discussion": "从这段讨论中提炼下一个可交付任务",
+  "List my open tasks by priority": "按优先级列出我的未完成任务",
   "Split this conversation into scope, owner, and done criteria": "把这段对话拆成范围、负责人和完成标准",
   "Draft an issue from a decision we already made": "把已经做出的决定整理成 issue 草案",
   "Diagnose why a packaged desktop build is failing": "诊断为什么打包后的桌面构建失败",
@@ -445,6 +456,7 @@ const zhExactPhrases: Record<string, string> = {
   "Signing mode": "签名模式",
   "Skills": "技能",
   "Source": "来源",
+  "Source comment on this issue": "这条任务上的原始评论",
   "Sort": "排序",
   "stderr excerpt": "stderr 摘要",
   "Status": "状态",
@@ -453,6 +465,8 @@ const zhExactPhrases: Record<string, string> = {
   "stdout excerpt": "stdout 摘要",
   "This will be the CEO": "这会成为 CEO",
   "Task": "任务",
+  "Threads": "话题",
+  "Threads sorted by latest activity": "话题按最近活动排序",
   "Sub Goal": "子目标",
   "planned": "计划中",
   "Thinking effort": "思考强度",
@@ -470,6 +484,7 @@ const zhExactPhrases: Record<string, string> = {
   "Version": "版本",
   "View": "查看",
   "View details": "查看详情",
+  "Your comment": "你的评论",
   "Archived": "已归档",
   "On": "开启",
   "Off": "关闭",
@@ -535,6 +550,7 @@ const zhExactPhrases: Record<string, string> = {
   "Remove document": "移除文档",
   "Reports to": "汇报给",
   "Reports To": "汇报对象",
+  "Resources": "资源",
   "Revoke": "吊销",
   "Role": "角色",
   "Runtime": "运行时",
@@ -560,11 +576,13 @@ const zhExactPhrases: Record<string, string> = {
   "Skill name": "技能名称",
   "Source issue": "来源任务",
   "Started": "已开始",
+  "Structure": "组织结构",
   "Sub-issues": "子任务",
   "Success rate": "成功率",
   "Summary": "摘要",
   "Target date": "目标日期",
   "Target Date": "目标日期",
+  "Top-ups, fees, credits, commitments, and other non-request charges.": "充值、费用、抵扣、承诺用量，以及其他非请求产生的费用。",
   "This week": "本周",
   "Title": "标题",
   "View full error": "查看完整错误",
@@ -588,6 +606,7 @@ const zhExactPhrases: Record<string, string> = {
   "Inference spend": "推理支出",
   "Last error": "最近错误",
   "Last Heartbeat": "最近心跳",
+  "Heartbeats": "心跳",
   "Metric": "指标",
   "Owner": "负责人",
   "Parent": "父级",
@@ -597,6 +616,7 @@ const zhExactPhrases: Record<string, string> = {
   "Pending approvals": "待审批",
   "Period spend": "期间支出",
   "Project paused by budget": "项目因预算限制已暂停",
+  "Quick comment": "快速评论",
   "Scroll to bottom": "滚动到底部",
   "Select an organization to view automations.": "选择一个组织以查看自动化。",
   "Show properties": "显示属性",
@@ -652,11 +672,13 @@ const zhExactPhrases: Record<string, string> = {
   "Choose": "选择",
   "Couldn't open path picker": "无法打开路径选择器",
   "Work": "工作",
+  "Workspaces": "工作区",
   "Done": "已完成",
   "Board": "控制台",
   "instance settings general updated": "实例通用设置已更新",
   "High": "高",
   "Medium": "中",
+  "medium": "中",
   "Low": "低",
   "Toggle username log censoring": "切换用户名日志脱敏",
   "Worktree parent dir": "工作树父目录",
@@ -666,7 +688,9 @@ const zhExactPhrases: Record<string, string> = {
   "Views and project slices": "视图与项目切片",
   "Recent conversations": "最近会话",
   "All Issues": "全部任务",
+  "Draft Issues": "草稿任务",
   "Assigned to Me": "指派给我",
+  "Following": "关注中",
   "Starred": "已加星标",
   "Recently Viewed": "最近查看",
   "All Agents": "全部智能体",
@@ -683,12 +707,17 @@ const zhExactPhrases: Record<string, string> = {
   "Welcome to Rudder. Set up your first organization and agent to get started.": "欢迎使用 Rudder。先创建你的第一个组织和智能体，即可开始使用。",
   "Other": "其他",
   "To Do": "待办",
+  "Todo": "待办",
   "Blocked": "阻塞",
   "No runs": "暂无运行记录",
   "Financial event mix": "财务事件构成",
   "Recent financial events": "最近财务事件",
   "net": "净额",
   "debits": "支出",
+  "created by me": "我创建的",
+  "assigned to me": "指派给我",
+  "in progress": "进行中",
+  "in review": "评审中",
   "No worker process registered.": "尚未注册工作进程。",
   "NPM Package": "NPM 包",
   "Full approval details stay inside Messenger.": "完整审批详情保留在 Messenger 中查看。",
@@ -776,7 +805,28 @@ const zhExactPhrases: Record<string, string> = {
   "succeeded": "已成功",
 };
 
-const zhSubstitutions: Array<[RegExp, string]> = [
+function translateIssueStatus(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized === "todo") return "待办";
+  if (normalized === "in progress") return "进行中";
+  if (normalized === "in review") return "评审中";
+  if (normalized === "done") return "已完成";
+  if (normalized === "blocked") return "阻塞";
+  if (normalized === "cancelled") return "已取消";
+  if (normalized === "backlog") return "待整理";
+  return status;
+}
+
+function translatePriority(priority: string) {
+  const normalized = priority.toLowerCase();
+  if (normalized === "critical" || normalized === "urgent") return "紧急";
+  if (normalized === "high") return "高";
+  if (normalized === "medium") return "中";
+  if (normalized === "low") return "低";
+  return priority;
+}
+
+const zhSubstitutions: Array<[RegExp, string | ((substring: string, ...args: any[]) => string)]> = [
   [/\bboard UI\b/g, "控制台界面"],
   [/\bboard shell\b/g, "控制台外壳"],
   [/\bhome-directory paths\b/g, "主目录路径"],
@@ -784,11 +834,20 @@ const zhSubstitutions: Array<[RegExp, string]> = [
   [/^just now$/i, "刚刚"],
   [/^(\d+)\s+running,\s+(\d+)\s+paused,\s+(\d+)\s+errors$/i, "$1 运行中，$2 已暂停，$3 错误"],
   [/^(\d+)\s+open,\s+(\d+)\s+blocked$/i, "$1 打开，$2 阻塞"],
+  [/^in\s+(.+)\s+·\s+out\s+(.+)$/i, "输入 $1 · 输出 $2"],
+  [/^(\d+)\s+api\s+·\s+(\d+)\s+subscriptions?$/i, "$1 API · $2 订阅"],
+  [/^(todo|in progress|in review|done|blocked|cancelled|backlog)\s+·\s+(critical|high|medium|low)\s+·\s+created by me\s+·\s+assigned to me$/i, (_match, status: string, priority: string) => `${translateIssueStatus(status)} · ${translatePriority(priority)} · 我创建的 · 指派给我`],
+  [/^(todo|in progress|in review|done|blocked|cancelled|backlog)\s+·\s+(critical|high|medium|low)\s+·\s+created by me$/i, (_match, status: string, priority: string) => `${translateIssueStatus(status)} · ${translatePriority(priority)} · 我创建的`],
+  [/^(todo|in progress|in review|done|blocked|cancelled|backlog)\s+·\s+(critical|high|medium|low)\s+·\s+assigned to me$/i, (_match, status: string, priority: string) => `${translateIssueStatus(status)} · ${translatePriority(priority)} · 指派给我`],
   [/^(\d+)%\s+of\s+(.+)\s+budget$/i, "$1% / $2 预算"],
   [/^(\d+)\s+budget overrides awaiting board review$/i, "$1 个预算覆盖项等待董事会审查"],
   [/^Projects\s+\((\d+)\)$/i, "项目（$1）"],
+  [/^Draft Issues\s+\((\d+)\)$/i, "草稿任务（$1）"],
+  [/^Following\s+\((\d+)\)$/i, "关注中（$1）"],
   [/^Starred\s+\((\d+)\)$/i, "已加星标（$1）"],
   [/^Recently Viewed\s+\((\d+)\)$/i, "最近查看（$1）"],
+  [/^Show\s+(\d+)\s+more$/i, "显示另外 $1 个"],
+  [/^Created issue\s+([^ ]+)\s+from\s+(.+)$/i, "已从 $2 创建任务 $1"],
   [/^See All\s+→$/i, "查看全部 →"],
   [/^Show more issues\s+\((\d+)\s+of\s+(\d+)\)$/i, "显示更多任务（$1 / $2）"],
   [/^Sub-Goals\s+\((\d+)\)$/i, "子目标（$1）"],
@@ -824,7 +883,9 @@ export function translateLegacyString(locale: InstanceLocale, text: string) {
   return preserveWhitespace(text, (core) => {
     let translated = zhExactPhrases[core] ?? core;
     for (const [pattern, replacement] of zhSubstitutions) {
-      translated = translated.replace(pattern, replacement);
+      translated = typeof replacement === "string"
+        ? translated.replace(pattern, replacement)
+        : translated.replace(pattern, replacement);
     }
     return translated;
   });

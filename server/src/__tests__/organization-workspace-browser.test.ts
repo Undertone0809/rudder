@@ -16,6 +16,11 @@ import { buildAgentWorkspaceKey } from "../agent-workspace-key.js";
 import { resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 
+const ONE_BY_ONE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X5p1sAAAAASUVORK5CYII=",
+  "base64",
+);
+
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
   start(): Promise<void>;
@@ -197,4 +202,72 @@ describe("organization workspace browser", () => {
       }),
     ]);
   });
+
+  it("returns inline preview metadata for image files", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Image Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Image Org"),
+      issuePrefix: "WBI",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const imagePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "artifacts", "cost-trend.png");
+    await fs.mkdir(path.dirname(imagePath), { recursive: true });
+    await fs.writeFile(imagePath, ONE_BY_ONE_PNG);
+
+    const detail = await workspaceBrowser.readFile(orgId, "artifacts/cost-trend.png");
+
+    expect(detail).toEqual(expect.objectContaining({
+      filePath: "artifacts/cost-trend.png",
+      rootExists: true,
+      content: null,
+      contentType: "image/png",
+      previewKind: "image",
+      message: null,
+      truncated: false,
+    }));
+    expect(detail.contentPath).toContain(`/api/orgs/${orgId}/workspace/file/content?`);
+    expect(detail.contentPath).toContain("path=artifacts%2Fcost-trend.png");
+  });
+
+  it("keeps non-image binary files out of inline preview", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Binary Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Binary Org"),
+      issuePrefix: "WBB",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const binaryPath = path.join(resolveOrganizationWorkspaceRoot(orgId), "artifacts", "archive.bin");
+    await fs.mkdir(path.dirname(binaryPath), { recursive: true });
+    await fs.writeFile(binaryPath, Buffer.from([0, 1, 2, 3]));
+
+    const detail = await workspaceBrowser.readFile(orgId, "artifacts/archive.bin");
+
+    expect(detail).toEqual(expect.objectContaining({
+      filePath: "artifacts/archive.bin",
+      rootExists: true,
+      content: null,
+      contentType: "application/octet-stream",
+      previewKind: "binary",
+      contentPath: null,
+      message: "Binary files are not previewed in the organization workspace view.",
+      truncated: false,
+    }));
+  });
+
 });

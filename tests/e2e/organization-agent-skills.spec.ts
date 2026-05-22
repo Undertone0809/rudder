@@ -105,11 +105,6 @@ test.describe("Organization and agent skills", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: organizationName,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          model: "gpt-5.4",
-          command: E2E_CODEX_STUB,
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -155,11 +150,6 @@ test.describe("Organization and agent skills", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: organizationName,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          model: "gpt-5.4",
-          command: E2E_CODEX_STUB,
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -273,11 +263,6 @@ test.describe("Organization and agent skills", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: organizationName,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          model: "gpt-5.4",
-          command: E2E_CODEX_STUB,
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -313,11 +298,6 @@ test.describe("Organization and agent skills", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: organizationName,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          model: "gpt-5.4",
-          command: E2E_CODEX_STUB,
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -374,6 +354,7 @@ test.describe("Organization and agent skills", () => {
     expect(agentHeadingBox?.y ?? 0).toBeLessThan(orgHeadingBox?.y ?? Number.MAX_SAFE_INTEGER);
     await expect(agentMain.getByText("agent-helper")).toBeVisible();
     await expect(agentMain.getByText("Private agent helper skill.")).toBeVisible();
+    await expect(agentMain.getByText("Installed, not enabled").first()).toBeVisible();
     await expect(agentMain.getByText("alpha-test").first()).toBeVisible();
     await expect(agentMain.getByText("Alpha test skill.")).toBeVisible();
     const agentHelperToggle = agentMain.getByRole("switch", { name: "agent-helper" });
@@ -445,11 +426,6 @@ test.describe("Organization and agent skills", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: organizationName,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          model: "gpt-5.4",
-          command: E2E_CODEX_STUB,
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -555,13 +531,6 @@ test.describe("Organization and agent skills", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: organizationName,
-        defaultChatAgentRuntimeType: "claude_local",
-        defaultChatAgentRuntimeConfig: {
-          command: E2E_CLAUDE_STUB,
-          env: {
-            HOME: E2E_HOME,
-          },
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -703,13 +672,6 @@ test.describe("Organization and agent skills", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: organizationName,
-        defaultChatAgentRuntimeType: "claude_local",
-        defaultChatAgentRuntimeConfig: {
-          command: E2E_CLAUDE_STUB,
-          env: {
-            HOME: E2E_HOME,
-          },
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -783,14 +745,6 @@ test.describe("Organization and agent skills", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: organizationName,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          command: E2E_CODEX_STUB,
-          model: "gpt-5.4",
-          env: {
-            CODEX_HOME: codexHome,
-          },
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -856,14 +810,6 @@ test.describe("Organization and agent skills", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: organizationName,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          command: captureCommandPath,
-          model: "gpt-5.4",
-          rudderSkillSync: {
-            desiredSkills: ["rudder/rudder"],
-          },
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);

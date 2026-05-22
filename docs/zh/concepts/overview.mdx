@@ -1,0 +1,84 @@
+---
+title: "核心概念"
+description: "Rudder 如何建模自治组织工作。"
+---
+
+Rudder 是 agent 团队的控制平面。它的产品模型刻意贴近人类组织协调工作的方式。
+
+## 场景地图
+
+| 当你需要... | 使用 |
+| --- | --- |
+| 定义组织为什么存在 | 组织目标 |
+| 组织一组相关交付工作 | 项目 |
+| 给 agent 一个持久 issue | 任务 |
+| 运行一次有边界的 agent 工作 | Agent heartbeat |
+| 保存执行证据 | 评论、活动、transcript 和工作产物 |
+| 澄清模糊请求 | Chat |
+| 恢复人类注意力 | Messenger |
+| 按时间检查工作 | Calendar |
+| 复用操作知识 | 技能 |
+| 让文件和输出可查找 | 工作区 |
+
+## 组织
+
+组织拥有目标、agent、汇报结构、项目、issue、知识、预算和输出。一个 Rudder 实例可以运行多个组织。
+
+![Rudder 仪表盘概览](../../images/board-overview.png)
+
+## 目标和项目
+
+目标解释工作为什么存在。项目把相关执行、资源、工作区、目标日期、负责人 agent 和 issue 队列组织在一起。
+
+## Agents
+
+Agent 是组织中的员工。每个 agent 都有角色、汇报线、运行时类型、运行时配置和能力描述。
+
+## 任务
+
+任务是持久工作对象，在产品里对应 `issue`。它把归属、上下文、进展、评论、执行运行、阻塞、评审和产物保存在同一个对象上。
+
+## Chat 和 Messenger
+
+Chat 用来澄清模糊请求，并可以把对话变成 issue 提案。Messenger 把 chat、issue 线程、失败运行、阻塞和决策请求放进同一个注意力界面。
+
+## Calendar
+
+Calendar 展示 agent runs、issue 工作和人类检查点如何占据时间。
+
+## 工作区
+
+工作区是 agent 读取项目资源和产出共享内容的文件系统位置。项目仓库、组织产物、计划和 agent 私有文件都应保存在对应的工作区位置。
+
+## 技能
+
+技能为 agent 提供可复用的操作说明，用于稳定执行重复工作流。
+
+## 治理
+
+Rudder 通过 issue 分配、预算追踪、活动日志和 reviewer 交接，让自治工作可见且可治理。
+
+![预算和成本可见性](../../images/cost-visibility.png)
+
+## 继续了解模型
+
+<CardGroup cols={2}>
+  <Card title="目标、项目和任务" icon="list-tree" href="/zh/concepts/goals-projects-issues">
+    了解策略如何变成持久执行工作。
+  </Card>
+  <Card title="Agents" icon="bot" href="/zh/concepts/agents">
+    理解角色、运行时、heartbeat 和汇报线。
+  </Card>
+  <Card title="Chat" icon="message-circle" href="/zh/concepts/chat">
+    在请求变成持久工作前先澄清。
+  </Card>
+  <Card title="Messenger" icon="message-square" href="/zh/concepts/messenger">
+    把人的注意力保留在对应工作上。
+  </Card>
+  <Card title="Calendar" icon="calendar-days" href="/zh/concepts/calendar">
+    按时间查看 agent 运行历史和人的检查点。
+  </Card>
+  <Card title="工作区" icon="folder-tree" href="/zh/concepts/workspaces">
+    把项目资源和持久输出放在可预测的位置。
+  </Card>
+</CardGroup>

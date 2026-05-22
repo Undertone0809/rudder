@@ -41,6 +41,7 @@ export const help: Record<string, string> = {
   payloadTemplateJson: "Optional JSON merged into remote runtime request payloads before Rudder adds its standard wake and workspace fields.",
   webhookUrl: "The URL that receives POST requests when the agent is invoked.",
   heartbeatInterval: "Run this agent automatically on a timer. Useful for periodic tasks like checking for new work.",
+  heartbeatPreflight: "Check the control plane for assigned or review work before launching the runtime on timer heartbeats.",
   intervalSec: "Seconds between automatic heartbeat invocations.",
   timeoutSec: "Maximum seconds a run can take before being terminated. 0 means no timeout.",
   graceSec: "Seconds to wait after sending interrupt before force-killing the process.",
@@ -80,13 +81,26 @@ export function HintIcon({ text }: { text: string }) {
   );
 }
 
-export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+export function Field({
+  label,
+  hint,
+  description,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <div className="flex items-center gap-1.5 mb-1">
-        <label className="text-xs text-muted-foreground">{label}</label>
+      <div className="mb-1 flex items-center gap-1.5">
+        <label className={description ? "text-sm text-foreground" : "text-xs text-muted-foreground"}>{label}</label>
         {hint && <HintIcon text={hint} />}
       </div>
+      {description ? (
+        <p className="mb-2 text-sm leading-snug text-muted-foreground">{description}</p>
+      ) : null}
       {children}
     </div>
   );
@@ -95,24 +109,32 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
 export function ToggleField({
   label,
   hint,
+  description,
   checked,
   onChange,
 }: {
   label: string;
   hint?: string;
+  description?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs text-muted-foreground">{label}</span>
-        {hint && <HintIcon text={hint} />}
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className={description ? "text-sm text-foreground" : "text-xs text-muted-foreground"}>{label}</span>
+          {hint && <HintIcon text={hint} />}
+        </div>
+        {description ? (
+          <p className="mt-1 max-w-[42rem] text-sm leading-snug text-muted-foreground">{description}</p>
+        ) : null}
       </div>
       <ToggleSwitch
         checked={checked}
         size="sm"
         tone="success"
+        className="mt-0.5 shrink-0"
         aria-label={label}
         onClick={() => onChange(!checked)}
       />
@@ -123,6 +145,7 @@ export function ToggleField({
 export function ToggleWithNumber({
   label,
   hint,
+  description,
   checked,
   onCheckedChange,
   number,
@@ -134,6 +157,7 @@ export function ToggleWithNumber({
 }: {
   label: string;
   hint?: string;
+  description?: string;
   checked: boolean;
   onCheckedChange: (v: boolean) => void;
   number: number;
@@ -146,9 +170,14 @@ export function ToggleWithNumber({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-muted-foreground">{label}</span>
-          {hint && <HintIcon text={hint} />}
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className={description ? "text-sm text-foreground" : "text-xs text-muted-foreground"}>{label}</span>
+            {hint && <HintIcon text={hint} />}
+          </div>
+          {description ? (
+            <p className="mt-1 max-w-[42rem] text-sm leading-snug text-muted-foreground">{description}</p>
+          ) : null}
         </div>
         <ToggleSwitch
           checked={checked}

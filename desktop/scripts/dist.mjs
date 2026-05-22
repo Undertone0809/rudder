@@ -20,11 +20,12 @@ function archFlagFor(arch) {
   return null;
 }
 
-function run(command, args) {
+function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       stdio: "inherit",
       shell: process.platform === "win32",
+      cwd: options.cwd,
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
@@ -88,6 +89,13 @@ async function createPortableZip(platform, arch) {
   await fs.rm(outputPath, { force: true });
   if (platform === "macos") {
     await run("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appDir, outputPath]);
+    return;
+  }
+
+  if (platform === "windows") {
+    await run("7z", ["a", "-tzip", outputPath, path.basename(appDir)], {
+      cwd: path.dirname(appDir),
+    });
     return;
   }
 

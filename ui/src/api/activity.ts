@@ -23,12 +23,24 @@ export interface IssueForRun {
   priority: string;
 }
 
+export interface ActivityListFilters {
+  entityType?: string;
+  entityId?: string;
+  agentId?: string;
+  userId?: string;
+  actorType?: "agent" | "user" | "system";
+  actorId?: string;
+}
+
 export const activityApi = {
-  list: (orgId: string, filters?: { entityType?: string; entityId?: string; agentId?: string }) => {
+  list: (orgId: string, filters?: ActivityListFilters) => {
     const params = new URLSearchParams();
     if (filters?.entityType) params.set("entityType", filters.entityType);
     if (filters?.entityId) params.set("entityId", filters.entityId);
     if (filters?.agentId) params.set("agentId", filters.agentId);
+    if (filters?.userId) params.set("userId", filters.userId);
+    if (filters?.actorType) params.set("actorType", filters.actorType);
+    if (filters?.actorId) params.set("actorId", filters.actorId);
     const qs = params.toString();
     return api.get<ActivityEvent[]>(`/orgs/${orgId}/activity${qs ? `?${qs}` : ""}`);
   },

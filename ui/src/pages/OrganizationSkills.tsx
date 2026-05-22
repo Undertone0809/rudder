@@ -16,6 +16,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useI18n } from "../context/I18nContext";
 import { useToast } from "../context/ToastContext";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { queryKeys } from "../lib/queryKeys";
 import { EmptyState } from "../components/EmptyState";
 import { MarkdownBody } from "../components/MarkdownBody";
@@ -34,6 +35,11 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "../lib/utils";
 import { readDesktopShell } from "../lib/desktop-shell";
+import {
+  formatOrganizationSkillSourceLabel,
+  formatOrganizationSkillSourceTooltip,
+  resolveOrganizationSkillSourceCopyText,
+} from "../lib/organization-skill-source-label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -126,8 +132,49 @@ function sourceMeta(sourceBadge: OrganizationSkillSourceBadge, sourceLabel: stri
   }
 }
 
-function isManagedAgentLearningSkill(detail: OrganizationSkillDetail) {
-  return detail.slug.startsWith("agent-learning-");
+function SkillSourceBadge({
+  sourceBadge,
+  sourceLabel,
+  sourceLocator,
+  sourcePath,
+  fallbackLabel,
+}: {
+  sourceBadge: OrganizationSkillSourceBadge;
+  sourceLabel: string | null;
+  sourceLocator?: string | null;
+  sourcePath?: string | null;
+  fallbackLabel: string;
+}) {
+  const label = formatOrganizationSkillSourceLabel({
+    sourceBadge,
+    sourceLabel,
+    sourceLocator,
+    sourcePath,
+    fallbackLabel,
+  });
+  const tooltip = formatOrganizationSkillSourceTooltip({
+    sourceBadge,
+    sourceLabel,
+    sourceLocator,
+    sourcePath,
+    fallbackLabel,
+  });
+  const badge = (
+    <span className="inline-flex max-w-[10.5rem] items-center truncate rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+      {label}
+    </span>
+  );
+
+  if (!tooltip) return badge;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{badge}</TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[18rem] break-words text-left leading-5">
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 function shortRef(ref: string | null | undefined) {
@@ -417,7 +464,7 @@ function AddSkillDialog({
   );
 }
 
-function SkillList({
+export function SkillList({
   skills,
   selectedSkillId,
   skillFilter,
@@ -428,6 +475,7 @@ function SkillList({
   skillFilter: string;
   onSelectSkill: (skillId: string) => void;
 }) {
+  const listScrollRef = useScrollbarActivityRef("rudder:organization-skills:list");
   const filteredSkills = skills.filter((skill) => {
     const haystack = `${skill.name} ${skill.description ?? ""} ${skill.key} ${skill.slug} ${skill.sourceLabel ?? ""}`.toLowerCase();
     return haystack.includes(skillFilter.toLowerCase());
@@ -442,7 +490,11 @@ function SkillList({
   }
 
   return (
-    <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto">
+    <div
+      ref={listScrollRef}
+      data-testid="organization-skills-list-scroll"
+      className="scrollbar-auto-hide h-full min-h-0 overflow-y-auto"
+    >
       {filteredSkills.map((skill) => {
         const source = sourceMeta(skill.sourceBadge, skill.sourceLabel);
         const SourceIcon = source.icon;
@@ -475,9 +527,13 @@ function SkillList({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="min-w-0 truncate text-sm font-medium text-foreground">{skill.name}</span>
-                  <span className="rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
-                    {skill.sourceLabel ?? source.label}
-                  </span>
+                  <SkillSourceBadge
+                    sourceBadge={skill.sourceBadge}
+                    sourceLabel={skill.sourceLabel}
+                    sourceLocator={skill.sourceLocator}
+                    sourcePath={skill.sourcePath}
+                    fallbackLabel={source.label}
+                  />
                 </div>
                 {summary ? (
                   <p className="mt-1 line-clamp-1 text-xs leading-5 text-muted-foreground">{summary}</p>
@@ -550,6 +606,8 @@ function SkillPane({
   onToggleDir: (path: string) => void;
   onSelectPath: (path: string) => void;
 }) {
+  const fileTreeScrollRef = useScrollbarActivityRef("rudder:organization-skills:file-tree");
+  const fileBodyScrollRef = useScrollbarActivityRef("rudder:organization-skills:file-body");
   const { pushToast } = useToast();
 
   if (!detail) {
@@ -570,9 +628,25 @@ function SkillPane({
   const body = file?.markdown ? stripFrontmatter(file.content) : file?.content ?? "";
   const currentPin = shortRef(detail.sourceRef);
   const latestPin = shortRef(updateStatus?.latestRef);
-  const managedLearningSkill = isManagedAgentLearningSkill(detail);
-  const canEditDirectly = detail.editable && !managedLearningSkill;
-  const effectiveEditMode = editMode && canEditDirectly;
+  const detailSourceLabel = formatOrganizationSkillSourceLabel({
+    sourceBadge: detail.sourceBadge,
+    sourceLabel: detail.sourceLabel,
+    sourceLocator: detail.sourceLocator,
+    sourcePath: detail.sourcePath,
+    fallbackLabel: source.label,
+  });
+  const detailSourceTooltip = formatOrganizationSkillSourceTooltip({
+    sourceBadge: detail.sourceBadge,
+    sourceLabel: detail.sourceLabel,
+    sourceLocator: detail.sourceLocator,
+    sourcePath: detail.sourcePath,
+    fallbackLabel: source.label,
+  });
+  const sourceCopyText = resolveOrganizationSkillSourceCopyText({
+    sourcePath: detail.sourcePath,
+    sourceLocator: detail.sourceLocator,
+    sourceLabel: detail.sourceLabel,
+  });
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
@@ -630,19 +704,30 @@ function SkillPane({
               <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Source</span>
               <span className="flex items-center gap-2">
                 <SourceIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                {detail.sourcePath ? (
-                  <button
-                    className="truncate hover:text-foreground text-muted-foreground transition-colors cursor-pointer"
-                    onClick={() => {
-                      navigator.clipboard.writeText(detail.sourcePath!);
-                      pushToast({ title: "Copied path to organization" });
-                    }}
-                  >
-                    {source.label}
-                  </button>
-                ) : (
-                  <span className="truncate">{source.label}</span>
-                )}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    {sourceCopyText ? (
+                      <button
+                        className="min-w-0 truncate text-muted-foreground transition-colors hover:text-foreground"
+                        onClick={() => {
+                          navigator.clipboard.writeText(sourceCopyText);
+                          pushToast({ title: "Copied skill source" });
+                        }}
+                      >
+                        {detailSourceLabel}
+                      </button>
+                    ) : (
+                      <span className="min-w-0 truncate">
+                        {detailSourceLabel}
+                      </span>
+                    )}
+                  </TooltipTrigger>
+                  {detailSourceTooltip ? (
+                    <TooltipContent side="top" className="max-w-[20rem] break-words text-left leading-5">
+                      {detailSourceTooltip}
+                    </TooltipContent>
+                  ) : null}
+                </Tooltip>
               </span>
             </div>
             {detail.sourceType === "github" && (
@@ -762,7 +847,11 @@ function SkillPane({
           <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             Files
           </div>
-          <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto">
+          <div
+            ref={fileTreeScrollRef}
+            data-testid="organization-skills-file-tree-scroll"
+            className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto"
+          >
             {treeNodes.length === 0 ? (
               <div className="px-3 py-3 text-sm text-muted-foreground">No files available.</div>
             ) : (
@@ -778,7 +867,11 @@ function SkillPane({
           </div>
         </aside>
 
-        <div className="scrollbar-auto-hide min-h-0 min-w-0 overflow-y-auto px-5 py-5">
+        <div
+          ref={fileBodyScrollRef}
+          data-testid="organization-skills-file-body-scroll"
+          className="scrollbar-auto-hide min-h-0 min-w-0 overflow-y-auto px-5 py-5"
+        >
           {fileLoading ? (
             <PageSkeleton variant="detail" />
           ) : !file ? (

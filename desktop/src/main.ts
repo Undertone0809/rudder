@@ -1,4 +1,5 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,15 +8,20 @@ import { Notification, app, BrowserWindow, Menu, MenuItem, Tray, clipboard, dial
 import type { BrowserWindowConstructorOptions, OpenDialogOptions } from "electron";
 import { buildDesktopApiRequestUrl } from "./api-url.js";
 import { resolveDesktopAppName } from "./app-identity.js";
-import { createBootScreenHtml } from "./boot-screen.js";
+import { createBootScreenHtml, createRendererRecoveryScreenHtml } from "./boot-screen.js";
 import { DESKTOP_CLI_FLAG, ensureDesktopCliLink, resolveDesktopCliArgv, shouldInstallDesktopCliLink } from "./cli-link.js";
+import { runDesktopCliMode } from "./cli-runner.js";
 import type { DesktopCapabilities } from "./desktop-capabilities.js";
+import {
+  canOpenBlockedNavigationExternally,
+  collectDesktopNavigationOrigins,
+  isAllowedDesktopNavigation,
+} from "./navigation-guard.js";
 import {
   listAvailableIdeTargets,
   listWorkspaceLaunchTargets,
   openWorkspace,
   openWorkspaceFileInIde,
-  type DesktopWorkspaceLaunchTarget,
   type DesktopWorkspaceLaunchTargetId,
 } from "./ide-opener.js";
 import { syncProcessPathFromLoginShell } from "./login-shell-env.js";
@@ -26,10 +32,33 @@ import {
   type DesktopAppearance,
   type DesktopThemePreference,
 } from "./theme-preference.js";
-import { checkForRudderDesktopUpdates, type DesktopUpdateCheckResult } from "./update-check.js";
+import {
+  normalizeDesktopUpdateChannel,
+  readDesktopUpdateChannel,
+  writeDesktopUpdateChannel,
+} from "./update-channel-preference.js";
+import {
+  clearPostUpdateReloadMarker,
+  consumePostUpdateReloadMarker,
+  resolvePostUpdateReloadDelayMs,
+  writePostUpdateReloadMarker,
+} from "./post-update-reload.js";
+import {
+  checkForRudderDesktopUpdates,
+  type DesktopUpdateChannel,
+  type DesktopUpdateCheckResult,
+} from "./update-check.js";
 
+import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
+import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
+import { imageBufferFromPayload, parseDesktopImageDataPayload, sanitizeDesktopImageFilename } from "./desktop-image-payload.js";
+import { resolveDesktopLocalEnvProfile, type LocalEnvProfile } from "./desktop-local-env.js";
+import { resolveDesktopCapabilities } from "./desktop-main-capabilities.js";
+import {
+  toWorkspaceLaunchTargetPayload,
+  type DesktopWorkspaceLaunchTargetPayload,
+} from "./desktop-workspace-launch-payload.js";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
-
 type BootState = {
   stage: string;
   message: string;
@@ -99,13 +128,6 @@ type CliModule = {
   runCli(argv?: string[]): Promise<number>;
 };
 
-type LocalEnvProfile = {
-  name: "dev" | "prod_local" | "e2e";
-  instanceId: string;
-  port: string;
-  embeddedPostgresPort: string;
-};
-
 type ResidentShellStatus = {
   enabled: boolean;
   controlsAvailable: boolean;
@@ -140,10 +162,6 @@ type DesktopIdeTarget = {
   label: string;
 };
 
-type DesktopWorkspaceLaunchTargetPayload = Omit<DesktopWorkspaceLaunchTarget, "iconPath"> & {
-  iconDataUrl?: string;
-};
-
 type ActiveRunSummary = {
   totalRuns: number;
   organizations: Array<{
@@ -159,309 +177,6 @@ type OpenNotificationSettingsResult = {
   opened: boolean;
   platform: NodeJS.Platform;
 };
-
-type DesktopUpdateInstallResult =
-  | { status: "started"; version: string }
-  | { status: "unavailable"; message: string }
-  | { status: "blocked"; totalRuns: number; message: string }
-  | { status: "failed"; message: string };
-
-const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
-const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
-const DESKTOP_FEEDBACK_EMAIL = "zeeland4work@gmail.com";
-const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
-const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
-
-const LOCAL_ENV_PROFILES: Record<LocalEnvProfile["name"], LocalEnvProfile> = {
-  dev: {
-    name: "dev",
-    instanceId: "dev",
-    port: "3100",
-    embeddedPostgresPort: "54329",
-  },
-  prod_local: {
-    name: "prod_local",
-    instanceId: "default",
-    port: "3200",
-    embeddedPostgresPort: "54339",
-  },
-  e2e: {
-    name: "e2e",
-    instanceId: "e2e",
-    port: "3300",
-    embeddedPostgresPort: "54349",
-  },
-};
-
-function createFeedbackMailtoUrl(): string {
-  const params = new URLSearchParams({
-    subject: `Rudder feedback (${app.getVersion()})`,
-  });
-  return `mailto:${DESKTOP_FEEDBACK_EMAIL}?${params.toString()}`;
-}
-
-function resolveDesktopCapabilities(): DesktopCapabilities {
-  let notifications = false;
-  try {
-    notifications = Notification.isSupported();
-  } catch {
-    notifications = false;
-  }
-
-  return {
-    badgeCount: typeof app.setBadgeCount === "function",
-    notifications,
-  };
-}
-
-function execFileText(command: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(command, args, { encoding: "utf8" }, (error, stdout) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(stdout.trim());
-    });
-  });
-}
-
-async function readPlistRawValue(plistPath: string, key: string): Promise<string | null> {
-  if (process.platform !== "darwin") return null;
-  try {
-    const value = await execFileText("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", plistPath]);
-    return value.length > 0 ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-async function resolveDarwinAppBundleIconPath(appPath: string): Promise<string | null> {
-  if (process.platform !== "darwin" || !appPath.endsWith(".app")) return null;
-
-  const infoPlistPath = path.join(appPath, "Contents", "Info.plist");
-  const resourcesPath = path.join(appPath, "Contents", "Resources");
-  const iconName = await readPlistRawValue(infoPlistPath, "CFBundleIconFile")
-    ?? await readPlistRawValue(infoPlistPath, "CFBundleIconName");
-  if (!iconName) return null;
-
-  const candidates = path.extname(iconName)
-    ? [iconName]
-    : [iconName, `${iconName}.icns`, `${iconName}.png`];
-  for (const candidate of candidates) {
-    const iconPath = path.join(resourcesPath, candidate);
-    if (fs.existsSync(iconPath)) return iconPath;
-  }
-  return null;
-}
-
-async function readWorkspaceLaunchTargetIconDataUrl(target: DesktopWorkspaceLaunchTarget): Promise<string | undefined> {
-  if (!target.iconPath) return undefined;
-
-  const bundleIconPath = await resolveDarwinAppBundleIconPath(target.iconPath);
-  if (bundleIconPath) {
-    const icon = nativeImage.createFromPath(bundleIconPath);
-    if (!icon.isEmpty()) {
-      return icon.resize({ width: 32, height: 32 }).toDataURL();
-    }
-  }
-
-  try {
-    const icon = await app.getFileIcon(target.iconPath, { size: "normal" });
-    if (!icon.isEmpty()) {
-      return icon.toDataURL();
-    }
-  } catch {
-    return undefined;
-  }
-
-  return undefined;
-}
-
-async function toWorkspaceLaunchTargetPayload(
-  target: DesktopWorkspaceLaunchTarget,
-): Promise<DesktopWorkspaceLaunchTargetPayload> {
-  const iconDataUrl = await readWorkspaceLaunchTargetIconDataUrl(target);
-
-  const payload = {
-    id: target.id,
-    label: target.label,
-    kind: target.kind,
-  };
-  return iconDataUrl ? { ...payload, iconDataUrl } : payload;
-}
-
-async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
-  return checkForRudderDesktopUpdates({
-    currentVersion: resolveRudderAppVersion(),
-    appName: app.getName(),
-    repo: DESKTOP_GITHUB_REPO,
-    releasesUrl: DESKTOP_RELEASES_URL,
-  });
-}
-
-function desktopMessageBoxWindow(): BrowserWindow | undefined {
-  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-}
-
-async function showMessageBox(options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
-  const window = desktopMessageBoxWindow();
-  return window
-    ? dialog.showMessageBox(window, options)
-    : dialog.showMessageBox(options);
-}
-
-function resolveRudderAppVersion(): string {
-  return serverHandle?.runtime.version
-    ?? currentBootState.runtime?.version
-    ?? app.getVersion();
-}
-
-function formatVersionForDisplay(version: string | null | undefined): string {
-  if (!version) return "unknown";
-  return version.startsWith("v") ? version : `v${version}`;
-}
-
-async function showUpdateInstallFallbackDialog(installResult: Exclude<DesktopUpdateInstallResult, { status: "started" }>): Promise<void> {
-  await showMessageBox({
-    type: installResult.status === "blocked" ? "warning" : "error",
-    title: APP_NAME,
-    buttons: ["OK"],
-    defaultId: 0,
-    cancelId: 0,
-    noLink: true,
-    message: installResult.status === "blocked" ? "Update paused." : "Update could not start.",
-    detail: installResult.message,
-  });
-}
-
-async function promptToInstallAvailableUpdate(result: DesktopUpdateCheckResult): Promise<void> {
-  if (result.status !== "update-available" || !result.latestVersion) return;
-
-  const response = await showMessageBox({
-    type: "info",
-    title: APP_NAME,
-    buttons: ["Update", "Later"],
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true,
-    message: `Rudder ${formatVersionForDisplay(result.latestVersion)} is available.`,
-    detail:
-      `You are running ${formatVersionForDisplay(result.currentVersion)}. `
-      + (result.channel === "canary"
-        ? "Canary builds update to newer canary releases."
-        : "Stable builds update to stable releases."),
-  });
-
-  if (response.response !== 0) return;
-
-  const installResult = await installUpdate(result.latestVersion);
-  if (installResult.status === "started") return;
-
-  await showUpdateInstallFallbackDialog(installResult);
-}
-
-async function maybeShowStartupUpdateNotice(): Promise<void> {
-  if (startupUpdateNoticeShown || !app.isPackaged) return;
-  startupUpdateNoticeShown = true;
-
-  const result = await checkForUpdates();
-  if (result.status !== "update-available") return;
-
-  await promptToInstallAvailableUpdate(result);
-}
-
-async function showManualUpdateCheckDialog(): Promise<void> {
-  showMainWindow();
-  const result = await checkForUpdates();
-
-  if (result.status === "update-available") {
-    await promptToInstallAvailableUpdate(result);
-    return;
-  }
-
-  if (result.status === "up-to-date") {
-    await showMessageBox({
-      type: "info",
-      title: APP_NAME,
-      buttons: ["OK"],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-      message: "Rudder is up to date.",
-      detail: `You are running ${formatVersionForDisplay(result.currentVersion)}.`,
-    });
-    return;
-  }
-
-  const response = await showMessageBox({
-    type: "warning",
-    title: APP_NAME,
-    buttons: ["Open Releases", "OK"],
-    defaultId: 1,
-    cancelId: 1,
-    noLink: true,
-    message: "Rudder could not check for updates.",
-    detail: "Open GitHub Releases to inspect available builds manually.",
-  });
-  if (response.response === 0) {
-    await shell.openExternal(result.releaseUrl ?? DESKTOP_RELEASES_URL);
-  }
-}
-
-async function installUpdate(version: string | null | undefined): Promise<DesktopUpdateInstallResult> {
-  const normalizedVersion = version?.trim();
-  if (!app.isPackaged) {
-    return {
-      status: "unavailable",
-      message: "In-app updates are available only from packaged Rudder Desktop builds.",
-    };
-  }
-  if (!normalizedVersion) {
-    return {
-      status: "unavailable",
-      message: "The update check did not return a target version.",
-    };
-  }
-
-  try {
-    const activeRuns = await listActiveRunsForQuit();
-    if (activeRuns.totalRuns > 0) {
-      return {
-        status: "blocked",
-        totalRuns: activeRuns.totalRuns,
-        message:
-          `Rudder has ${activeRuns.totalRuns} active run${activeRuns.totalRuns === 1 ? "" : "s"}.\n\n`
-          + `${formatQuitRunDetail(activeRuns)}\n\nStop active work, then run the update again.`,
-      };
-    }
-
-    const profileName = currentBootState.runtime?.localEnv;
-    const args = [
-      DESKTOP_CLI_FLAG,
-      ...(profileName ? ["--local-env", profileName] : []),
-      "start",
-      "--no-cli",
-      "--version",
-      normalizedVersion,
-      "--repo",
-      DESKTOP_GITHUB_REPO,
-      "--no-version-check",
-    ];
-    const child = spawn(process.execPath, args, {
-      detached: true,
-      env: process.env,
-      stdio: "ignore",
-    });
-    child.unref();
-    return { status: "started", version: normalizedVersion };
-  } catch (error) {
-    return {
-      status: "failed",
-      message: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
 
 function normalizeBooleanEnvFlag(value: string | null | undefined): boolean | null {
   const normalized = value?.trim().toLowerCase();
@@ -531,7 +246,6 @@ function createResidentTrayIcon(): string | Electron.NativeImage {
   if (process.platform === "darwin") {
     const templatePath = resolveResidentTrayTemplatePath();
     if (templatePath) {
-      // Pass the Template image path directly so macOS keeps Template/@2x semantics.
       return templatePath;
     }
   }
@@ -622,12 +336,41 @@ let currentBootState: BootState = {
 };
 let serverHandle: StartedServer | null = null;
 let startInFlight: Promise<void> | null = null;
-let quitInFlight: Promise<void> | null = null;
-let quitRequested = false;
-let quitting = false;
-let quitExceptionGuardInstalled = false;
-let startupUpdateNoticeShown = false;
 let pendingDesktopNavigationPath: string | null = null;
+let lastKnownAppUrl: string | null = null;
+let rendererRecoveryInFlight = false;
+const desktopQuitFlow = createDesktopQuitFlow({
+  appName: APP_NAME,
+  getMainWindow: () => mainWindow,
+  setMainWindow: (value) => { mainWindow = value; },
+  getServerHandle: () => serverHandle,
+  stopLocalRudder,
+  destroyResidentTray: () => { residentTray?.destroy(); residentTray = null; },
+});
+const {
+  listActiveRunsForQuit,
+  formatQuitRunDetail,
+  beginQuitFlow,
+  resolveUpdateQuitResponsePath,
+  writeUpdateQuitResponse,
+  handleUpdateQuitRequest,
+  isQuitting,
+  isQuitRequested,
+} = desktopQuitFlow;
+const desktopUpdateFlow = createDesktopUpdateFlow({
+  appName: APP_NAME,
+  getMainWindow: () => mainWindow,
+  getServerHandle: () => serverHandle,
+  getBootState: () => currentBootState,
+  listActiveRunsForQuit,
+  formatQuitRunDetail,
+  showMainWindow,
+});
+const {
+  checkForUpdates, getDesktopUpdateChannel, setDesktopUpdateChannel, resolveRudderAppVersion,
+  maybeShowStartupUpdateNotice, showManualUpdateCheckDialog, installUpdate, applyUpdate,
+  createFeedbackMailtoUrl, getDesktopUpdateProgress,
+} = desktopUpdateFlow;
 
 function resolveDesktopWindowBackgroundColor(appearance: DesktopAppearance = currentAppearance): string {
   return DESKTOP_WINDOW_BACKGROUND[appearance];
@@ -699,17 +442,6 @@ function applyDesktopThemePreference(preference: DesktopThemePreference): void {
 function refreshDesktopAppearanceFromSystem(): void {
   if (currentThemePreference !== "system") return;
   applyDesktopAppearance(resolveAppearanceForThemePreference("system", nativeTheme.shouldUseDarkColors));
-}
-
-function normalizeLocalEnvName(value: string | null | undefined): LocalEnvProfile["name"] | null {
-  const normalized = value?.trim().toLowerCase().replace(/-/g, "_") ?? "";
-  return Object.hasOwn(LOCAL_ENV_PROFILES, normalized) ? (normalized as LocalEnvProfile["name"]) : null;
-}
-
-function resolveDesktopLocalEnvProfile(): LocalEnvProfile {
-  const explicit = normalizeLocalEnvName(process.env.RUDDER_LOCAL_ENV);
-  if (explicit) return LOCAL_ENV_PROFILES[explicit];
-  return app.isPackaged ? LOCAL_ENV_PROFILES.prod_local : LOCAL_ENV_PROFILES.dev;
 }
 
 function resolveSharedRudderHomeDir(): string {
@@ -813,6 +545,139 @@ function resolveBootScreenUrl(): string {
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
+function resolveRendererRecoveryScreenUrl(reason: {
+  title?: string;
+  message?: string;
+  detail?: string;
+}): string {
+  const html = createRendererRecoveryScreenHtml(APP_NAME, reason);
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+function rememberAppUrl(targetUrl: string): void {
+  if (!targetUrl.startsWith("http")) return;
+  lastKnownAppUrl = targetUrl;
+}
+
+function fallbackAppUrl(): string | null {
+  if (lastKnownAppUrl) return lastKnownAppUrl;
+  const baseUrl = resolveDesktopAppBaseUrl();
+  return baseUrl;
+}
+
+async function reloadAppWindow(): Promise<void> {
+  const targetUrl = fallbackAppUrl();
+  if (!targetUrl) {
+    await restartFromResidentControls();
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    await openAppWindow(targetUrl);
+    return;
+  }
+  rendererRecoveryInFlight = false;
+  rememberAppUrl(targetUrl);
+  await mainWindow.loadURL(targetUrl);
+  showMainWindow();
+}
+
+async function showRendererRecovery(reason: {
+  title?: string;
+  message?: string;
+  detail?: string;
+}): Promise<void> {
+  if (isQuitting() || rendererRecoveryInFlight || !mainWindow || mainWindow.isDestroyed()) return;
+  rendererRecoveryInFlight = true;
+  console.error("[rudder-desktop] renderer recovery screen shown", reason);
+  updateBootState({
+    stage: "renderer_error",
+    message: reason.message ?? "Rudder hit a UI failure.",
+    detail: reason.detail ?? "The desktop renderer stopped responding.",
+  });
+  await mainWindow.loadURL(resolveRendererRecoveryScreenUrl(reason));
+  showMainWindow();
+}
+
+async function promptForUnresponsiveRenderer(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed() || isQuitting()) return;
+  const result = await dialog.showMessageBox(mainWindow, {
+    type: "warning",
+    title: APP_NAME,
+    buttons: ["Reload UI", "Restart Rudder", "Wait"],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+    message: "Rudder is not responding.",
+    detail: "The local runtime may still be running. Reload the UI first; restart Rudder if it stays stuck.",
+  });
+  if (result.response === 0) {
+    await reloadAppWindow();
+  } else if (result.response === 1) {
+    await restartFromResidentControls();
+  }
+}
+
+function installRendererRecoveryHandlers(window: BrowserWindow, initialUrl: string): void {
+  const allowedOrigins = () => collectDesktopNavigationOrigins(
+    initialUrl,
+    resolveDesktopAppBaseUrl(),
+    serverHandle?.apiUrl,
+  );
+  const handleBlockedNavigation = (targetUrl: string) => {
+    if (isAllowedDesktopNavigation(targetUrl, allowedOrigins(), { allowInternalProtocols: false })) return false;
+
+    if (canOpenBlockedNavigationExternally(targetUrl)) {
+      shell.openExternal(targetUrl).catch((error) => {
+        console.warn("[rudder-desktop] failed to open external navigation", targetUrl, error);
+      });
+    }
+    return true;
+  };
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (handleBlockedNavigation(url)) return { action: "deny" };
+
+    window.loadURL(url).catch((error) => {
+      console.warn("[rudder-desktop] failed to load same-origin navigation", url, error);
+    });
+    return { action: "deny" };
+  });
+
+  window.webContents.on("will-navigate", (event, targetUrl) => {
+    if (handleBlockedNavigation(targetUrl)) {
+      event.preventDefault();
+    }
+  });
+
+  window.webContents.on("did-navigate", (_event, targetUrl) => {
+    if (isAllowedDesktopNavigation(targetUrl, allowedOrigins())) {
+      rememberAppUrl(targetUrl);
+    }
+    rendererRecoveryInFlight = false;
+  });
+
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3 || validatedURL.startsWith("data:")) return;
+    void showRendererRecovery({
+      title: "Load failed",
+      message: "Rudder could not load the UI.",
+      detail: `${errorDescription || "Unknown load error"} (${errorCode})`,
+    });
+  });
+
+  window.webContents.on("render-process-gone", (_event, details) => {
+    void showRendererRecovery({
+      title: "Renderer exited",
+      message: "Rudder's UI process exited unexpectedly.",
+      detail: `${details.reason}${typeof details.exitCode === "number" ? ` (${details.exitCode})` : ""}`,
+    });
+  });
+
+  window.on("unresponsive", () => {
+    void promptForUnresponsiveRenderer();
+  });
+}
+
 async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
   const preloadPath = path.resolve(MODULE_DIR, "preload.js");
   const macWindowEffects = process.platform === "darwin"
@@ -827,17 +692,24 @@ async function createDesktopWindow(initialUrl: string): Promise<BrowserWindow> {
     minHeight: 720,
     title: APP_NAME,
     show: false,
+    autoHideMenuBar: process.platform !== "darwin",
     ...macWindowEffects,
     ...(desktopWindowIcon ? { icon: desktopWindowIcon } : {}),
     webPreferences: createDesktopWebPreferences(preloadPath),
   });
 
+  if (process.platform !== "darwin") {
+    window.setMenuBarVisibility(false);
+  }
+
   window.once("ready-to-show", () => {
     window.show();
   });
 
+  installRendererRecoveryHandlers(window, initialUrl);
+
   window.on("close", (event) => {
-    if (!shouldHideToResidentShell() || quitRequested || quitting) return;
+    if (!shouldHideToResidentShell() || isQuitRequested() || isQuitting()) return;
     event.preventDefault();
     hideMainWindowToResident();
   });
@@ -877,7 +749,26 @@ async function openBootWindow(): Promise<void> {
 }
 
 async function openAppWindow(loadUrl: string): Promise<void> {
+  rememberAppUrl(loadUrl);
   await replaceMainWindow(await createDesktopWindow(loadUrl));
+}
+
+function schedulePostUpdateRendererReloadIfNeeded(): void {
+  const marker = consumePostUpdateReloadMarker(app.getPath("userData"));
+  if (!marker) return;
+
+  const delayMs = resolvePostUpdateReloadDelayMs();
+  setTimeout(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const currentUrl = mainWindow.webContents.getURL();
+    if (!currentUrl.startsWith("http")) return;
+    console.info("[rudder-desktop] reloading renderer after Desktop update", {
+      updateId: marker.updateId,
+      targetVersion: marker.targetVersion,
+      delayMs,
+    });
+    mainWindow.webContents.reloadIgnoringCache();
+  }, delayMs);
 }
 
 function normalizeDesktopNavigationPath(targetPath: string): string {
@@ -955,6 +846,7 @@ async function openDesktopRoute(targetPath: string): Promise<void> {
   }
 
   showMainWindow();
+  rememberAppUrl(targetUrl);
   if (mainWindow.webContents.getURL() !== targetUrl && !(await navigateExistingAppWindowToRoute(normalizedPath, targetUrl))) {
     await mainWindow.loadURL(targetUrl);
   }
@@ -962,7 +854,10 @@ async function openDesktopRoute(targetPath: string): Promise<void> {
 }
 
 function installApplicationMenu(appName: string): void {
-  if (process.platform !== "darwin") return;
+  if (process.platform !== "darwin") {
+    Menu.setApplicationMenu(null);
+    return;
+  }
 
   const menu = Menu.getApplicationMenu();
   const appMenu = menu?.items[0]?.submenu;
@@ -1220,6 +1115,7 @@ async function startLocalRudder(): Promise<void> {
         });
       }
       await openAppWindow(loadUrl);
+      schedulePostUpdateRendererReloadIfNeeded();
       await captureDesktopWindowIfRequested();
     } catch (error) {
       updateBootState({
@@ -1271,270 +1167,6 @@ async function stopLocalRudder(): Promise<void> {
   await handle.stop();
 }
 
-async function desktopApiRequest<T>(apiPath: string, init?: RequestInit): Promise<T> {
-  const apiBase = serverHandle?.apiUrl;
-  if (!apiBase) {
-    throw new Error("Local Rudder runtime is not ready");
-  }
-
-  const headers = new Headers(init?.headers ?? undefined);
-  if (!headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
-  if (!headers.has("Accept")) {
-    headers.set("Accept", "application/json");
-  }
-
-  const response = await fetch(buildDesktopApiRequestUrl(apiBase, apiPath), {
-    ...init,
-    headers,
-  });
-
-  if (!response.ok) {
-    throw new Error(`Desktop API request failed (${response.status} ${response.statusText}) for ${apiPath}`);
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return response.json() as Promise<T>;
-}
-
-async function listActiveRunsForQuit(): Promise<ActiveRunSummary> {
-  if (!serverHandle) {
-    return {
-      totalRuns: 0,
-      organizations: [],
-    };
-  }
-
-  const organizations = await desktopApiRequest<DesktopOrganization[]>("/orgs");
-  const summaries = await Promise.all(organizations.map(async (organization) => {
-    const runs = await desktopApiRequest<DesktopLiveRun[]>(
-      `/orgs/${encodeURIComponent(organization.id)}/live-runs`,
-    );
-    return {
-      id: organization.id,
-      name: organization.name,
-      runs,
-    };
-  }));
-
-  const activeOrganizations = summaries.filter((organization) => organization.runs.length > 0);
-  return {
-    totalRuns: activeOrganizations.reduce((total, organization) => total + organization.runs.length, 0),
-    organizations: activeOrganizations,
-  };
-}
-
-function formatQuitRunDetail(summary: ActiveRunSummary): string {
-  const lines = summary.organizations.map((organization) => {
-    const runningCount = organization.runs.filter((run) => run.status === "running").length;
-    const queuedCount = organization.runs.filter((run) => run.status === "queued").length;
-    const parts: string[] = [];
-    if (runningCount > 0) parts.push(`${runningCount} running`);
-    if (queuedCount > 0) parts.push(`${queuedCount} queued`);
-    if (parts.length === 0) parts.push(`${organization.runs.length} active`);
-    return `${organization.name}: ${parts.join(", ")}`;
-  });
-
-  const maxVisibleLines = 6;
-  const visible = lines.slice(0, maxVisibleLines);
-  if (lines.length > maxVisibleLines) {
-    visible.push(`+${lines.length - maxVisibleLines} more organizations`);
-  }
-
-  return visible.join("\n");
-}
-
-async function promptForQuitBehavior(summary: ActiveRunSummary): Promise<"cancel" | "quit" | "stop-runs"> {
-  const runtimeMode = serverHandle?.runtime.mode;
-  const attachedRuntime = runtimeMode === "attached";
-  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  const detail = formatQuitRunDetail(summary);
-
-  if (attachedRuntime) {
-    const options: Electron.MessageBoxOptions = {
-      type: "warning",
-      title: APP_NAME,
-      buttons: ["Keep Runs Running", "Stop Runs and Quit", "Cancel"],
-      defaultId: 2,
-      cancelId: 2,
-      noLink: true,
-      message: summary.totalRuns === 1
-        ? "There is 1 active run."
-        : `There are ${summary.totalRuns} active runs.`,
-      detail:
-        "Rudder is attached to an existing local runtime. You can quit the desktop app and leave those runs running, or stop them first.\n\n"
-        + detail,
-    };
-    const result = window
-      ? await dialog.showMessageBox(window, options)
-      : await dialog.showMessageBox(options);
-
-    if (result.response === 0) return "quit";
-    if (result.response === 1) return "stop-runs";
-    return "cancel";
-  }
-
-  const options: Electron.MessageBoxOptions = {
-    type: "warning",
-    title: APP_NAME,
-    buttons: ["Stop Runs and Quit", "Cancel"],
-    defaultId: 1,
-    cancelId: 1,
-    noLink: true,
-    message: summary.totalRuns === 1
-      ? "There is 1 active run. Quitting will stop it."
-      : `There are ${summary.totalRuns} active runs. Quitting will stop them.`,
-    detail:
-      "This desktop app currently owns the local runtime, so quitting will stop any active work.\n\n"
-      + detail,
-  };
-  const result = window
-    ? await dialog.showMessageBox(window, options)
-    : await dialog.showMessageBox(options);
-
-  return result.response === 0 ? "stop-runs" : "cancel";
-}
-
-async function cancelActiveRunsBeforeQuit(summary: ActiveRunSummary): Promise<void> {
-  const runIds = summary.organizations.flatMap((organization) => organization.runs.map((run) => run.id));
-  if (runIds.length === 0) return;
-
-  const results = await Promise.allSettled(runIds.map((runId) =>
-    desktopApiRequest(`/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    })));
-
-  const failed = results.filter((result) => result.status === "rejected");
-  if (failed.length > 0) {
-    console.warn(
-      `[rudder-desktop] failed to cancel ${failed.length}/${runIds.length} active runs before quit`,
-      failed.map((result) => result.status === "rejected" ? result.reason : null),
-    );
-  }
-}
-
-function isThreadStreamWorkerExitError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const text = `${error.message}\n${error.stack ?? ""}`.toLowerCase();
-  return text.includes("the worker has exited") || text.includes("thread-stream");
-}
-
-function installQuitExceptionGuard(): void {
-  if (quitExceptionGuardInstalled) return;
-  quitExceptionGuardInstalled = true;
-
-  process.on("uncaughtException", (error) => {
-    if (isThreadStreamWorkerExitError(error)) {
-      console.warn("[rudder-desktop] suppressed shutdown-time logging transport error", error);
-      return;
-    }
-
-    console.error("[rudder-desktop] uncaught exception while quitting", error);
-    app.exit(1);
-  });
-}
-
-async function finalizeQuit(): Promise<void> {
-  if (quitting) return;
-  quitting = true;
-  quitRequested = true;
-  installQuitExceptionGuard();
-
-  try {
-    await stopLocalRudder();
-  } finally {
-    residentTray?.destroy();
-    residentTray = null;
-    app.quit();
-  }
-}
-
-async function beginQuitFlow(): Promise<void> {
-  if (quitting) return;
-  if (quitInFlight) {
-    await quitInFlight;
-    return;
-  }
-
-  quitInFlight = (async () => {
-    try {
-      let activeRuns: ActiveRunSummary = { totalRuns: 0, organizations: [] };
-      try {
-        activeRuns = await listActiveRunsForQuit();
-      } catch (error) {
-        console.warn("[rudder-desktop] failed to inspect active runs before quit; continuing with normal quit", error);
-      }
-
-      if (activeRuns.totalRuns > 0) {
-        const decision = await promptForQuitBehavior(activeRuns);
-        if (decision === "cancel") {
-          return;
-        }
-        if (decision === "stop-runs") {
-          await cancelActiveRunsBeforeQuit(activeRuns);
-        }
-      }
-
-      await finalizeQuit();
-    } finally {
-      quitInFlight = null;
-      if (!quitting) {
-        quitRequested = false;
-      }
-    }
-  })();
-
-  await quitInFlight;
-}
-
-function resolveUpdateQuitResponsePath(argv: string[] = process.argv): string | null {
-  const inline = argv.find((arg) => arg.startsWith(`${DESKTOP_UPDATE_QUIT_ARG}=`));
-  if (inline) return inline.slice(`${DESKTOP_UPDATE_QUIT_ARG}=`.length).trim() || null;
-
-  const flagIndex = argv.indexOf(DESKTOP_UPDATE_QUIT_ARG);
-  if (flagIndex === -1) return null;
-  return argv[flagIndex + 1]?.trim() || null;
-}
-
-function writeUpdateQuitResponse(responsePath: string, payload: unknown): void {
-  fs.mkdirSync(path.dirname(responsePath), { recursive: true });
-  fs.writeFileSync(responsePath, `${JSON.stringify(payload)}\n`, "utf8");
-}
-
-async function handleUpdateQuitRequest(responsePath: string): Promise<void> {
-  try {
-    let activeRuns: ActiveRunSummary = { totalRuns: 0, organizations: [] };
-    try {
-      activeRuns = await listActiveRunsForQuit();
-    } catch (error) {
-      console.warn("[rudder-desktop] failed to inspect active runs for update quit; continuing with quit", error);
-    }
-
-    if (activeRuns.totalRuns > 0) {
-      writeUpdateQuitResponse(responsePath, {
-        ok: false,
-        status: "active_runs",
-        totalRuns: activeRuns.totalRuns,
-      });
-      return;
-    }
-
-    writeUpdateQuitResponse(responsePath, { ok: true, status: "quitting" });
-    await finalizeQuit();
-  } catch (error) {
-    writeUpdateQuitResponse(responsePath, {
-      ok: false,
-      status: "failed",
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
 function registerIpc(): void {
   ipcMain.handle("desktop:get-boot-state", async () => {
     refreshDesktopSystemPermissions();
@@ -1567,14 +1199,41 @@ function registerIpc(): void {
   ipcMain.handle("desktop:copy-text", async (_event, value: string) => {
     clipboard.writeText(value);
   });
+  ipcMain.handle("desktop:copy-image", async (_event, rawPayload: unknown) => {
+    const payload = parseDesktopImageDataPayload(rawPayload);
+    const image = nativeImage.createFromBuffer(imageBufferFromPayload(payload));
+    if (image.isEmpty()) {
+      throw new Error("Unable to copy this image.");
+    }
+    clipboard.writeImage(image);
+  });
+  ipcMain.handle("desktop:show-image-in-folder", async (_event, rawPayload: unknown) => {
+    const payload = parseDesktopImageDataPayload(rawPayload);
+    const directoryPath = path.join(app.getPath("temp"), "rudder-chat-images");
+    const filename = sanitizeDesktopImageFilename(payload.filename, payload.contentType);
+    const targetPath = path.join(directoryPath, `${Date.now()}-${randomUUID()}-${filename}`);
+
+    await fs.promises.mkdir(directoryPath, { recursive: true });
+    await fs.promises.writeFile(targetPath, imageBufferFromPayload(payload));
+    shell.showItemInFolder(targetPath);
+  });
   ipcMain.handle("desktop:set-appearance", async (_event, preference: DesktopThemePreference) => {
     applyDesktopThemePreference(preference);
+  });
+  ipcMain.handle("desktop:get-update-channel", async () => getDesktopUpdateChannel());
+  ipcMain.handle("desktop:set-update-channel", async (_event, channel: DesktopUpdateChannel) =>
+    setDesktopUpdateChannel(channel),
+  );
+  ipcMain.handle("desktop:reload-app", async () => {
+    await reloadAppWindow();
   });
   ipcMain.handle("desktop:restart", async () => {
     await restartFromResidentControls();
   });
   ipcMain.handle("desktop:check-for-updates", async () => checkForUpdates());
   ipcMain.handle("desktop:install-update", async (_event, version: string) => installUpdate(version));
+  ipcMain.handle("desktop:apply-update", async (_event, updateId: string) => applyUpdate(updateId));
+  ipcMain.handle("desktop:get-update-progress", async () => getDesktopUpdateProgress());
   ipcMain.handle("desktop:send-feedback", async () => {
     await shell.openExternal(createFeedbackMailtoUrl());
   });
@@ -1769,15 +1428,11 @@ const desktopCliArgv = resolveDesktopCliArgv(process.argv);
 const updateQuitResponsePath = resolveUpdateQuitResponsePath(process.argv);
 
 if (desktopCliArgv) {
-  void importCliModule()
-    .then((cliModule) => cliModule.runCli(desktopCliArgv))
-    .then((exitCode) => {
-      app.exit(exitCode);
-    })
-    .catch((error) => {
-      console.error("[rudder-desktop] failed to run desktop CLI mode", error);
-      app.exit(1);
-    });
+  void runDesktopCliMode({
+    argv: desktopCliArgv,
+    importCliModule,
+    exit: (exitCode) => app.exit(exitCode),
+  });
 } else {
   const singleInstanceLock = app.requestSingleInstanceLock();
   if (updateQuitResponsePath && singleInstanceLock) {
@@ -1809,7 +1464,7 @@ if (desktopCliArgv) {
     });
 
     app.on("before-quit", (event) => {
-      if (quitting) return;
+      if (isQuitting()) return;
       event.preventDefault();
       void beginQuitFlow();
     });

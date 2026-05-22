@@ -11,7 +11,7 @@
     "dev": "node ./esbuild.config.mjs --watch",
     "dev:ui": "rudder-plugin-dev-server --root . --ui-dir dist/ui --port 4177",
     "test": "vitest run --config ./vitest.config.ts",
-    "typecheck": "pnpm --filter @rudderhq/plugin-sdk build && tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "rudderPlugin": {
     "manifest": "./dist/manifest.js",

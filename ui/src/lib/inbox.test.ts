@@ -148,6 +148,8 @@ function makeIssue(id: string, isUnreadForMe: boolean): Issue {
     boardOrder: 1000,
     assigneeAgentId: null,
     assigneeUserId: null,
+    reviewerAgentId: null,
+    reviewerUserId: null,
     createdByAgentId: null,
     createdByUserId: null,
     issueNumber: 1,
@@ -187,6 +189,7 @@ function makeThreadSummary(
     lastReadAt: null,
     unreadCount: 0,
     needsAttention: false,
+    isPinned: false,
     href: "/messenger/issues",
     ...overrides,
   };
@@ -280,7 +283,7 @@ describe("inbox helpers", () => {
     expect(issues).toHaveLength(2);
   });
 
-  it("shows recent approvals in updated order and unread approvals as actionable only", () => {
+  it("shows recent approvals in updated order and treats only pending approvals as actionable", () => {
     const approvals = [
       makeApprovalWithTimestamps("approval-approved", "approved", "2026-03-11T02:00:00.000Z"),
       makeApprovalWithTimestamps("approval-pending", "pending", "2026-03-11T01:00:00.000Z"),
@@ -297,10 +300,10 @@ describe("inbox helpers", () => {
       "approval-pending",
     ]);
     expect(getApprovalsForTab(approvals, "unread", "all").map((approval) => approval.id)).toEqual([
-      "approval-revision",
       "approval-pending",
     ]);
     expect(getApprovalsForTab(approvals, "all", "resolved").map((approval) => approval.id)).toEqual([
+      "approval-revision",
       "approval-approved",
     ]);
   });
@@ -402,7 +405,7 @@ describe("inbox helpers", () => {
         makeThreadSummary({
           threadKey: "issues",
           title: "Issues",
-          preview: "## Update\nReview the hiring plan",
+          preview: "RUD-41 · Improve notification detail — Completed",
           latestActivityAt: new Date("2026-03-11T04:00:00.000Z"),
           unreadCount: 1,
         }),
@@ -411,7 +414,7 @@ describe("inbox helpers", () => {
 
     expect(content).toEqual({
       title: "Issues",
-      body: "Update Review the hiring plan",
+      body: "RUD-41 · Improve notification detail — Completed",
     });
   });
 

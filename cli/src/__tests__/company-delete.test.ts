@@ -17,8 +17,6 @@ function makeCompany(overrides: Partial<Organization>): Organization {
     spentMonthlyCents: 0,
     requireBoardApprovalForNewAgents: false,
     defaultChatIssueCreationMode: "manual_approval",
-    defaultChatAgentRuntimeType: null,
-    defaultChatAgentRuntimeConfig: null,
     workspace: null,
     brandColor: null,
     logoAssetId: null,

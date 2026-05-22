@@ -30,7 +30,7 @@ export interface IssueFollow {
 export interface IssueFollowEntry extends IssueFollow {
   issue: Pick<
     Issue,
-    "id" | "identifier" | "title" | "status" | "priority" | "assigneeAgentId" | "assigneeUserId" | "createdByUserId" | "updatedAt"
+    "id" | "identifier" | "title" | "status" | "priority" | "assigneeAgentId" | "assigneeUserId" | "reviewerUserId" | "createdByUserId" | "updatedAt"
   >;
 }
 
@@ -52,6 +52,7 @@ export interface MessengerThreadSummary {
   lastReadAt: Date | null;
   unreadCount: number;
   needsAttention: boolean;
+  isPinned: boolean;
   href: string;
 }
 
@@ -85,6 +86,7 @@ export interface MessengerIssueThreadItem extends MessengerThreadItem {
   issueId: string;
   issueIdentifier: string | null;
   sourceCommentId: string | null;
+  sourceCommentAuthorLabel: string | null;
   sourceCommentBody: string | null;
 }
 

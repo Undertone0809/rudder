@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentCompactLabel,
   agentSupportingLabel,
+  agentTitleBadgeLabel,
   formatChatAgentLabel,
   formatSidebarAgentLabel,
 } from "./agent-labels";
@@ -57,6 +58,28 @@ describe("formatChatAgentLabel", () => {
         title: null,
       }),
     ).toBe("CEO");
+  });
+});
+
+describe("agentTitleBadgeLabel", () => {
+  it("returns the supporting label for a separate badge", () => {
+    expect(
+      agentTitleBadgeLabel({
+        name: "Ella",
+        role: "cto",
+        title: "Chief Technology Officer",
+      }),
+    ).toBe("Chief Technology Officer");
+  });
+
+  it("omits the badge when the supporting label repeats the name", () => {
+    expect(
+      agentTitleBadgeLabel({
+        name: "CEO",
+        role: "ceo",
+        title: null,
+      }),
+    ).toBeNull();
   });
 });
 

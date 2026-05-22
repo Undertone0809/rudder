@@ -69,7 +69,9 @@ export function printClaudeStreamEvent(raw: string, debug: boolean): void {
         : {};
     const input = Number(usage.input_tokens ?? 0);
     const output = Number(usage.output_tokens ?? 0);
-    const cached = Number(usage.cache_read_input_tokens ?? 0);
+    const cached =
+      Number(usage.cache_read_input_tokens ?? 0) +
+      Number(usage.cache_creation_input_tokens ?? 0);
     const cost = Number(parsed.total_cost_usd ?? 0);
     const subtype = typeof parsed.subtype === "string" ? parsed.subtype : "";
     const isError = parsed.is_error === true;

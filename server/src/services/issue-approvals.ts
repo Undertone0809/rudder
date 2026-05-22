@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { approvals, issueApprovals, issues } from "@rudderhq/db";
+import { approvals, issueApprovals, issues, issueLabels, labels } from "@rudderhq/db";
 import { notFound, unprocessable } from "../errors.js";
 import { redactEventPayload } from "../redaction.js";
 
@@ -40,6 +40,26 @@ export function issueApprovalService(db: Db) {
     return { issue, approval };
   }
 
+  async function labelsByIssueId(issueIds: string[]) {
+    const result = new Map<string, Array<typeof labels.$inferSelect>>();
+    if (issueIds.length === 0) return result;
+    const labelRows = await db
+      .select({
+        issueId: issueLabels.issueId,
+        label: labels,
+      })
+      .from(issueLabels)
+      .innerJoin(labels, eq(issueLabels.labelId, labels.id))
+      .where(inArray(issueLabels.issueId, issueIds))
+      .orderBy(asc(labels.name), asc(labels.id));
+    for (const row of labelRows) {
+      const existing = result.get(row.issueId) ?? [];
+      existing.push(row.label);
+      result.set(row.issueId, existing);
+    }
+    return result;
+  }
+
   return {
     listApprovalsForIssue: async (issueId: string) => {
       const issue = await getIssue(issueId);
@@ -59,14 +79,36 @@ export function issueApprovalService(db: Db) {
           decidedAt: approvals.decidedAt,
           createdAt: approvals.createdAt,
           updatedAt: approvals.updatedAt,
+          linkIssueId: issueApprovals.issueId,
+          linkApprovalId: issueApprovals.approvalId,
+          linkLinkedByAgentId: issueApprovals.linkedByAgentId,
+          linkLinkedByUserId: issueApprovals.linkedByUserId,
+          linkCreatedAt: issueApprovals.createdAt,
         })
         .from(issueApprovals)
         .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
         .where(eq(issueApprovals.issueId, issueId))
         .orderBy(desc(issueApprovals.createdAt));
       return result.map((approval) => ({
-        ...approval,
+        id: approval.id,
+        orgId: approval.orgId,
+        type: approval.type,
+        requestedByAgentId: approval.requestedByAgentId,
+        requestedByUserId: approval.requestedByUserId,
+        status: approval.status,
         payload: redactEventPayload(approval.payload) ?? {},
+        decisionNote: approval.decisionNote,
+        decidedByUserId: approval.decidedByUserId,
+        decidedAt: approval.decidedAt,
+        createdAt: approval.createdAt,
+        updatedAt: approval.updatedAt,
+        link: {
+          issueId: approval.linkIssueId,
+          approvalId: approval.linkApprovalId,
+          linkedByAgentId: approval.linkLinkedByAgentId,
+          linkedByUserId: approval.linkLinkedByUserId,
+          createdAt: approval.linkCreatedAt,
+        },
       }));
     },
 
@@ -74,7 +116,7 @@ export function issueApprovalService(db: Db) {
       const approval = await getApproval(approvalId);
       if (!approval) throw notFound("Approval not found");
 
-      return db
+      const result = await db
         .select({
           id: issues.id,
           orgId: issues.orgId,
@@ -86,6 +128,7 @@ export function issueApprovalService(db: Db) {
           status: issues.status,
           priority: issues.priority,
           assigneeAgentId: issues.assigneeAgentId,
+          assigneeUserId: issues.assigneeUserId,
           createdByAgentId: issues.createdByAgentId,
           createdByUserId: issues.createdByUserId,
           issueNumber: issues.issueNumber,
@@ -102,6 +145,15 @@ export function issueApprovalService(db: Db) {
         .innerJoin(issues, eq(issueApprovals.issueId, issues.id))
         .where(eq(issueApprovals.approvalId, approvalId))
         .orderBy(desc(issueApprovals.createdAt));
+      const labelsForIssues = await labelsByIssueId(result.map((issue) => issue.id));
+      return result.map((issue) => {
+        const issueLabels = labelsForIssues.get(issue.id) ?? [];
+        return {
+          ...issue,
+          labels: issueLabels,
+          labelIds: issueLabels.map((label) => label.id),
+        };
+      });
     },
 
     link: async (issueId: string, approvalId: string, actor?: LinkActor) => {
@@ -133,7 +185,7 @@ export function issueApprovalService(db: Db) {
     },
 
     linkManyForApproval: async (approvalId: string, issueIds: string[], actor?: LinkActor) => {
-      if (issueIds.length === 0) return;
+      if (issueIds.length === 0) return [];
 
       const approval = await getApproval(approvalId);
       if (!approval) throw notFound("Approval not found");
@@ -157,7 +209,7 @@ export function issueApprovalService(db: Db) {
         }
       }
 
-      await db
+      return db
         .insert(issueApprovals)
         .values(
           uniqueIssueIds.map((issueId) => ({
@@ -168,7 +220,8 @@ export function issueApprovalService(db: Db) {
             linkedByUserId: actor?.userId ?? null,
           })),
         )
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .returning();
     },
   };
 }

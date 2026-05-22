@@ -6,13 +6,15 @@ import { issuesApi } from "../api/issues";
 import { authApi } from "../api/auth";
 import { AgentIcon } from "./AgentIconPicker";
 import { queryKeys } from "../lib/queryKeys";
-import { formatChatAgentLabel } from "../lib/agent-labels";
+import { agentTitleBadgeLabel, formatChatAgentLabel } from "../lib/agent-labels";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { groupBy } from "../lib/groupBy";
 import { formatDate, cn } from "../lib/utils";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { timeAgo } from "../lib/timeAgo";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
+import { formatPriorityLabel } from "../lib/priorities";
 import { AssigneeLabel } from "./AssigneeLabel";
 import { EmptyState } from "./EmptyState";
 import { IssueLabelChip } from "./IssueLabelChip";
@@ -31,7 +33,7 @@ import { Popover, PopoverAnchor, PopoverTrigger, PopoverContent } from "@/compon
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { CircleDot, Plus, Filter, ArrowUpDown, Layers, Check, X, ChevronRight, List, Columns3, User, Search, Star, SlidersHorizontal } from "lucide-react";
-import { KanbanBoard, type IssueDisplayProperty } from "./KanbanBoard";
+import { DEFAULT_ISSUE_DISPLAY_PROPERTIES, KanbanBoard, type IssueDisplayProperty } from "./KanbanBoard";
 import type { AgentRole, Issue, ReorderIssue } from "@rudderhq/shared";
 
 /* ── Helpers ── */
@@ -60,6 +62,7 @@ const displayPropertyOptions: Array<{ value: IssueDisplayProperty; label: string
   { value: "identifier", label: "Identifier" },
   { value: "priority", label: "Priority" },
   { value: "assignee", label: "Assignee" },
+  { value: "reviewer", label: "Reviewer" },
   { value: "labels", label: "Labels" },
   { value: "project", label: "Project" },
   { value: "updated", label: "Updated" },
@@ -70,7 +73,7 @@ const displayPropertyValues = new Set<IssueDisplayProperty>(
   displayPropertyOptions.map((option) => option.value),
 );
 
-const defaultDisplayProperties: IssueDisplayProperty[] = ["identifier", "priority", "assignee"];
+const defaultDisplayProperties: IssueDisplayProperty[] = [...DEFAULT_ISSUE_DISPLAY_PROPERTIES];
 
 const defaultViewState: IssueViewState = {
   statuses: [],
@@ -82,7 +85,7 @@ const defaultViewState: IssueViewState = {
   sortField: "updated",
   sortDir: "desc",
   groupBy: "none",
-  viewMode: "list",
+  viewMode: "board",
   collapsedGroups: [],
 };
 
@@ -92,6 +95,56 @@ const quickFilterPresets = [
   { label: "Backlog", statuses: ["backlog"] },
   { label: "Done", statuses: ["done", "cancelled"] },
 ];
+
+const ONBOARDING_PROJECT_NAME = "Getting Started";
+
+const onboardingGroupOrder = ["welcome", "core", "recommended", "advanced", "other"] as const;
+
+const onboardingGroupCopy: Record<(typeof onboardingGroupOrder)[number], { label: string; description: string }> = {
+  welcome: {
+    label: "Welcome",
+    description: "Reference issue for Rudder’s collaboration model."
+  },
+  core: {
+    label: "Core loop",
+    description: "Complete these issues to experience chat → issue → execution → review → project context."
+  },
+  recommended: {
+    label: "Recommended next",
+    description: "Bring real context and one real task into Rudder."
+  },
+  advanced: {
+    label: "Advanced",
+    description: "Optional next steps for goals, reusable workflows, agent roles, and recurring loops."
+  },
+  other: {
+    label: "Other",
+    description: "Additional issues in this project."
+  }
+};
+
+function onboardingIssueGroup(issue: Issue): (typeof onboardingGroupOrder)[number] {
+  if (issue.title.startsWith("👋 Welcome to Rudder")) return "welcome";
+  if (/^[1-5]\./.test(issue.title)) return "core";
+  if (/^[6-7]\./.test(issue.title)) return "recommended";
+  if (/^(?:[8-9]|10|11)\./.test(issue.title)) return "advanced";
+  return "other";
+}
+
+function onboardingIssueSortValue(issue: Issue): number {
+  if (issue.title.startsWith("👋 Welcome to Rudder")) return 0;
+  const match = /^(\d+)\./.exec(issue.title);
+  if (match) return Number(match[1]);
+  return 99;
+}
+
+function sortOnboardingIssues(issues: Issue[]): Issue[] {
+  return [...issues].sort((a, b) => {
+    const numeric = onboardingIssueSortValue(a) - onboardingIssueSortValue(b);
+    if (numeric !== 0) return numeric;
+    return a.title.localeCompare(b.title);
+  });
+}
 
 function getViewState(key: string): IssueViewState {
   try {
@@ -216,6 +269,13 @@ interface IssuesListProps {
   onReorderIssue?: (data: ReorderIssue) => void;
 }
 
+type GroupedIssueContent = {
+  key: string;
+  label: string | null;
+  description?: string;
+  items: Issue[];
+};
+
 export function IssuesList({
   issues,
   isLoading,
@@ -261,6 +321,10 @@ export function IssuesList({
   const [assigneeSearch, setAssigneeSearch] = useState("");
   const [issueSearch, setIssueSearch] = useState(initialSearch ?? "");
   const [debouncedIssueSearch, setDebouncedIssueSearch] = useState(issueSearch);
+  const filterAssigneeScrollRef = useScrollbarActivityRef();
+  const filterLabelsScrollRef = useScrollbarActivityRef();
+  const filterProjectsScrollRef = useScrollbarActivityRef();
+  const assigneePickerScrollRef = useScrollbarActivityRef();
   const normalizedIssueSearch = debouncedIssueSearch.trim();
 
   useEffect(() => {
@@ -324,6 +388,7 @@ export function IssuesList({
     () => projects?.find((project) => project.id === projectId)?.name ?? null,
     [projectId, projects],
   );
+  const isGettingStartedProject = selectedProjectName === ONBOARDING_PROJECT_NAME;
   const emptyStateMessage = useMemo(() => {
     if (normalizedIssueSearch.length > 0) {
       return `No issues match “${normalizedIssueSearch}”. Try a different search or clear some filters.`;
@@ -349,7 +414,18 @@ export function IssuesList({
     return "No issues match the current board. Use a lane + button to create a new issue in the right status.";
   }, [activeFilterCount, normalizedIssueSearch, selectedProjectName]);
 
-  const groupedContent = useMemo(() => {
+  const groupedContent = useMemo<GroupedIssueContent[]>(() => {
+    if (isGettingStartedProject && viewState.groupBy === "none") {
+      const groups = groupBy(filtered, onboardingIssueGroup);
+      return onboardingGroupOrder
+        .filter((key) => groups[key]?.length)
+        .map((key) => ({
+          key: `onboarding:${key}`,
+          label: onboardingGroupCopy[key].label,
+          description: onboardingGroupCopy[key].description,
+          items: sortOnboardingIssues(groups[key]!),
+        }));
+    }
     if (viewState.groupBy === "none") {
       return [{ key: "__all", label: null as string | null, items: filtered }];
     }
@@ -363,7 +439,7 @@ export function IssuesList({
       const groups = groupBy(filtered, (i) => i.priority);
       return priorityOrder
         .filter((p) => groups[p]?.length)
-        .map((p) => ({ key: p, label: statusLabel(p), items: groups[p]! }));
+        .map((p) => ({ key: p, label: formatPriorityLabel(p), items: groups[p]! }));
     }
     if (viewState.groupBy === "project") {
       const groups = groupBy(filtered, (issue) => issue.projectId ?? "__no_project");
@@ -398,7 +474,7 @@ export function IssuesList({
             : (agentLabel(key) ?? key.slice(0, 8)),
       items: groups[key]!,
     }));
-  }, [agentLabel, currentUserId, filtered, projects, viewState.groupBy]);
+  }, [agentLabel, currentUserId, filtered, isGettingStartedProject, projects, viewState.groupBy]);
 
   const contextNewIssueDefaults = useMemo<NewIssueDefaults>(() => {
     const defaults: NewIssueDefaults = {};
@@ -606,7 +682,7 @@ export function IssuesList({
                               onCheckedChange={() => updateView({ priorities: toggleInArray(viewState.priorities, p) })}
                             />
                             <PriorityIcon priority={p} />
-                            <span className="text-sm">{statusLabel(p)}</span>
+                            <span className="text-sm">{formatPriorityLabel(p)}</span>
                           </label>
                         ))}
                       </div>
@@ -615,7 +691,11 @@ export function IssuesList({
                     {/* Assignee */}
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">Assignee</span>
-                      <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                      <div
+                        ref={filterAssigneeScrollRef}
+                        data-testid="issues-filter-assignee-scroll"
+                        className="scrollbar-auto-hide space-y-0.5 max-h-32 overflow-y-auto"
+                      >
                         <label className="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-accent/50 cursor-pointer">
                           <Checkbox
                             checked={viewState.assignees.includes("__unassigned")}
@@ -649,7 +729,11 @@ export function IssuesList({
                     {labels && labels.length > 0 && (
                       <div className="space-y-1">
                         <span className="text-xs text-muted-foreground">Labels</span>
-                        <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                        <div
+                          ref={filterLabelsScrollRef}
+                          data-testid="issues-filter-labels-scroll"
+                          className="scrollbar-auto-hide space-y-0.5 max-h-32 overflow-y-auto"
+                        >
                           {labels.map((label) => (
                             <label key={label.id} className="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-accent/50 cursor-pointer">
                               <Checkbox
@@ -667,7 +751,11 @@ export function IssuesList({
                     {projects && projects.length > 0 && (
                       <div className="space-y-1">
                         <span className="text-xs text-muted-foreground">Project</span>
-                        <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                        <div
+                          ref={filterProjectsScrollRef}
+                          data-testid="issues-filter-projects-scroll"
+                          className="scrollbar-auto-hide space-y-0.5 max-h-32 overflow-y-auto"
+                        >
                           {projects.map((project) => (
                             <label key={project.id} className="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-accent/50 cursor-pointer">
                               <Checkbox
@@ -818,6 +906,7 @@ export function IssuesList({
             displayProperties={viewState.displayProperties}
             sortState={{ sortField: viewState.sortField, sortDir: viewState.sortDir }}
             liveIssueIds={liveIssueIds}
+            issueLinkState={issueLinkState}
             projects={projects}
             onCreateIssue={(status) => openNewIssue({ ...contextNewIssueDefaults, status })}
             onOpenIssue={onOpenIssue}
@@ -844,8 +933,15 @@ export function IssuesList({
               <div className="flex items-center py-1.5 pl-1 pr-3">
                 <CollapsibleTrigger className="flex items-center gap-1.5">
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform [[data-state=open]>&]:rotate-90" />
-                  <span className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                    {group.label}
+                  <span className="flex flex-col items-start gap-0.5 text-left">
+                    <span className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      {group.label}
+                    </span>
+                    {group.description ? (
+                      <span className="max-w-[68ch] text-xs font-normal normal-case tracking-normal text-muted-foreground/80">
+                        {group.description}
+                      </span>
+                    ) : null}
                   </span>
                 </CollapsibleTrigger>
                 <Button
@@ -962,7 +1058,8 @@ export function IssuesList({
                             {issue.assigneeAgentId && agentById.get(issue.assigneeAgentId) ? (
                               <AssigneeLabel
                                 kind="agent"
-                                label={formatChatAgentLabel(agentById.get(issue.assigneeAgentId)!)}
+                                label={agentById.get(issue.assigneeAgentId)!.name}
+                                badgeLabel={agentTitleBadgeLabel(agentById.get(issue.assigneeAgentId)!)}
                                 agentIcon={agentById.get(issue.assigneeAgentId)?.icon}
                                 agentRole={agentById.get(issue.assigneeAgentId)?.role}
                               />
@@ -989,7 +1086,11 @@ export function IssuesList({
                             onChange={(e) => setAssigneeSearch(e.target.value)}
                             autoFocus
                           />
-                          <div className="max-h-48 overflow-y-auto overscroll-contain">
+                          <div
+                            ref={assigneePickerScrollRef}
+                            data-testid="issue-row-assignee-picker-scroll"
+                            className="scrollbar-auto-hide max-h-48 overflow-y-auto overscroll-contain"
+                          >
                             <button
                               className={cn(
                                 "flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent/50",
@@ -1040,7 +1141,8 @@ export function IssuesList({
                                 >
                                   <AssigneeLabel
                                     kind="agent"
-                                    label={formatChatAgentLabel(agent)}
+                                    label={agent.name}
+                                    badgeLabel={agentTitleBadgeLabel(agent)}
                                     agentIcon={agent.icon}
                                     agentRole={agent.role}
                                     className="min-w-0"

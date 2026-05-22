@@ -1,0 +1,23 @@
+{
+  "skill_name": "codex-session-benchmark-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "看看 codex session id 019e3f7c-d54b-71b3-ba08-2ee20ce6be27，和 rudder-oss 最近 100 条 Codex session 横向对比一下效率和问题处理率如何。",
+      "expected_output": "Finds the target session, builds a deduped recent-session cohort for the relevant Rudder cwd/worktrees, reports proxy metrics rather than true satisfaction, compares the target against similar task categories, and names workflow failure classes or improvements.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "这个 session 看起来返工很多，和最近 30 个 session 比是不是明显更差？别泛泛讲，给我指标和证据。",
+      "expected_output": "Computes direct or derived metrics such as user follow-ups, interruptions, elapsed time, validation evidence, and handoff state, clearly labels missing fields and proxy assumptions, and avoids claiming ground-truth success without evidence.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "最近一个 release 修复 session 到底算不算高效？和最近 release/debug 类 session 比一下，然后告诉我应该优化哪个 skill。",
+      "expected_output": "Compares the target only against relevant release/debug sessions, separates task complexity from agent inefficiency, and hands off a concrete skill-optimizer target only after naming the reusable failure class and decision point.",
+      "files": []
+    }
+  ]
+}

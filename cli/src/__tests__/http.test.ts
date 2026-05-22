@@ -6,7 +6,7 @@ describe("RudderApiClient", () => {
     vi.restoreAllMocks();
   });
 
-  it("adds authorization and run-id headers on mutating requests", async () => {
+  it("adds authorization and agent context headers on mutating requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
     );
@@ -15,6 +15,7 @@ describe("RudderApiClient", () => {
     const client = new RudderApiClient({
       apiBase: "http://localhost:3100",
       apiKey: "token-123",
+      agentId: "agent-123",
       runId: "run-abc",
     });
 
@@ -26,11 +27,12 @@ describe("RudderApiClient", () => {
 
     const headers = call[1].headers as Record<string, string>;
     expect(headers.authorization).toBe("Bearer token-123");
+    expect(headers["x-rudder-agent-id"]).toBe("agent-123");
     expect(headers["x-rudder-run-id"]).toBe("run-abc");
     expect(headers["content-type"]).toBe("application/json");
   });
 
-  it("does not attach run-id headers on read requests", async () => {
+  it("does not attach agent context headers on read requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
     );
@@ -39,6 +41,7 @@ describe("RudderApiClient", () => {
     const client = new RudderApiClient({
       apiBase: "http://localhost:3100",
       apiKey: "token-123",
+      agentId: "agent-123",
       runId: "run-abc",
     });
 
@@ -47,6 +50,7 @@ describe("RudderApiClient", () => {
     const call = fetchMock.mock.calls[0] as [string, RequestInit];
     const headers = call[1].headers as Record<string, string>;
     expect(headers.authorization).toBe("Bearer token-123");
+    expect(headers["x-rudder-agent-id"]).toBeUndefined();
     expect(headers["x-rudder-run-id"]).toBeUndefined();
   });
 

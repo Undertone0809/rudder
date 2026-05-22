@@ -68,6 +68,14 @@ Stable releases do not rewrite versions. They publish the committed workspace se
 
 Canary rewrites are temporary. The working tree is restored after publish or dry-run.
 
+Canary releases cannot reuse a stable base after that base is public. If
+`X.Y.Z` exists as an npm stable package version or remote git tag `vX.Y.Z`,
+`scripts/release.sh canary --print-version` and the real canary publish path
+fail with instructions to commit an explicit base bump first, for example
+`0.2.2 -> 0.2.3`. This keeps Desktop update checks aligned with semver:
+`X.Y.Z` remains newer than `X.Y.Z-canary.N`, so post-stable canaries must move
+to the next base to be visible as updates to stable users.
+
 ## Version formats
 
 Rudder uses committed semver:
@@ -136,8 +144,9 @@ That means:
 - no long-lived `NPM_TOKEN` in repository secrets
 - GitHub Actions obtains short-lived publish credentials
 - trusted publisher rules are configured per workflow file
-- publish jobs use npm CLI for the final `npm publish` step while pnpm remains
-  the workspace build and install tool
+- publish jobs use `pnpm publish` so that `publishConfig` overrides (including
+  `exports`) are applied correctly; pnpm remains the workspace build and install
+  tool
 
 See [doc/RELEASE-AUTOMATION-SETUP.md](RELEASE-AUTOMATION-SETUP.md) for the GitHub/npm setup steps.
 

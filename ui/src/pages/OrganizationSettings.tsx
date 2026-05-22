@@ -1,22 +1,17 @@
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
-import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
-import type { AgentRuntimeEnvironmentTestResult, AgentRuntimeType, OrganizationSecret } from "@rudderhq/shared";
 import { useOrganization } from "../context/OrganizationContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { organizationsApi } from "../api/orgs";
 import { accessApi } from "../api/access";
-import { agentsApi } from "../api/agents";
-import { secretsApi } from "../api/secrets";
 import { assetsApi } from "../api/assets";
 import { chatsApi } from "../api/chats";
 import { issuesApi } from "../api/issues";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { Settings, Check, Download, Upload, ArchiveRestore, MessageSquareMore, Plus, Trash2, Tags } from "lucide-react";
+import { Settings, Check, Download, Upload, ArchiveRestore, Trash2, Tags, Plus } from "lucide-react";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { OrganizationPatternIcon } from "../components/OrganizationPatternIcon";
 import { getOrganizationSettingsPath } from "@/lib/organization-settings-path";
@@ -27,7 +22,6 @@ import {
   Field,
   ToggleField,
   HintIcon,
-  adapterLabels,
 } from "../components/agent-config-primitives";
 import {
   AdapterEnvironmentError,
@@ -49,6 +43,7 @@ import {
   readStoredSettingsOverlayBackgroundPath,
 } from "@/lib/settings-overlay-state";
 import { SettingsPageSkeleton } from "@/components/settings/SettingsPageSkeleton";
+import { OrganizationIntelligenceProfilesSettings } from "@/components/settings/OrganizationIntelligenceProfilesSettings";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { useI18n } from "../context/I18nContext";
 import type { TranslationKey } from "@/i18n/locales/en";
@@ -58,48 +53,6 @@ type AgentSnippetInput = {
   connectionCandidates?: string[] | null;
   testResolutionUrl?: string | null;
 };
-
-type RuntimeEnvironmentTestTarget = {
-  key: string;
-  title: string;
-  runtimeType: string;
-  model: string;
-  config: Record<string, unknown>;
-};
-
-type RuntimeEnvironmentTestItemResult = RuntimeEnvironmentTestTarget & {
-  result?: AgentRuntimeEnvironmentTestResult;
-  error?: Error;
-};
-
-const CHAT_DEFAULT_ADAPTER_OPTIONS: AgentRuntimeType[] = [
-  "claude_local",
-  "codex_local",
-  "gemini_local",
-  "opencode_local",
-  "pi_local",
-  "cursor",
-  "openclaw_gateway",
-];
-
-function asConfigRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
-  }
-  if (typeof value === "object" && value !== null) {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, entryValue]) => entryValue !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJson(entryValue)}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
 
 export function OrganizationSettings() {
   const { t } = useI18n();
@@ -127,10 +80,6 @@ export function OrganizationSettings() {
   const [logoUrl, setLogoUrl] = useState("");
   const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
   const [defaultChatIssueCreationMode, setDefaultChatIssueCreationMode] = useState<"manual_approval" | "auto_create">("manual_approval");
-  const [defaultChatAgentRuntimeType, setDefaultChatAdapterType] = useState<AgentRuntimeType | "">("");
-  const [defaultChatModel, setDefaultChatModel] = useState("");
-  const [defaultChatRuntimeConfig, setDefaultChatRuntimeConfig] = useState<Record<string, unknown>>({});
-  const [defaultChatFallbackModels, setDefaultChatFallbackModels] = useState<ModelFallbackConfig[]>([]);
   const [newLabelName, setNewLabelName] = useState("");
   const [newLabelColor, setNewLabelColor] = useState("#6366f1");
   const [labelDrafts, setLabelDrafts] = useState<Record<string, { name: string; color: string }>>({});
@@ -143,19 +92,6 @@ export function OrganizationSettings() {
     setBrandColor(viewedOrganization.brandColor ?? "");
     setLogoUrl(viewedOrganization.logoUrl ?? "");
     setDefaultChatIssueCreationMode(viewedOrganization.defaultChatIssueCreationMode ?? "manual_approval");
-    const runtimeType = viewedOrganization.defaultChatAgentRuntimeType ?? "";
-    const runtimeConfig = asConfigRecord(viewedOrganization.defaultChatAgentRuntimeConfig);
-    const model = typeof runtimeConfig.model === "string" ? runtimeConfig.model : "";
-    setDefaultChatAdapterType(runtimeType);
-    setDefaultChatModel(
-      model,
-    );
-    setDefaultChatRuntimeConfig(runtimeConfig);
-    setDefaultChatFallbackModels(
-      runtimeType
-        ? normalizeModelFallbacksForEditor(runtimeConfig.modelFallbacks, primaryModelFallbackKey(runtimeType, model))
-        : [],
-    );
   }, [viewedOrganization]);
 
   useEffect(() => {
@@ -176,117 +112,9 @@ export function OrganizationSettings() {
       description !== (viewedOrganization.description ?? "") ||
       brandColor !== (viewedOrganization.brandColor ?? ""));
 
-  const defaultChatAgentRuntimeConfig = useMemo<Record<string, unknown> | null>(() => {
-    if (!defaultChatAgentRuntimeType) return null;
-    const config = { ...defaultChatRuntimeConfig };
-    if (defaultChatModel) {
-      config.model = defaultChatModel;
-    } else {
-      delete config.model;
-    }
-    const modelFallbacks = normalizeModelFallbacks(
-      defaultChatFallbackModels,
-      primaryModelFallbackKey(defaultChatAgentRuntimeType, defaultChatModel),
-    );
-    if (modelFallbacks.length > 0) {
-      config.modelFallbacks = modelFallbacks;
-    } else {
-      delete config.modelFallbacks;
-    }
-    return config;
-  }, [defaultChatAgentRuntimeType, defaultChatFallbackModels, defaultChatModel, defaultChatRuntimeConfig]);
-
-  const savedDefaultChatAgentRuntimeConfig = useMemo<Record<string, unknown> | null>(() => {
-    if (!viewedOrganization?.defaultChatAgentRuntimeType) return null;
-    const runtimeType = viewedOrganization.defaultChatAgentRuntimeType;
-    const config = { ...asConfigRecord(viewedOrganization.defaultChatAgentRuntimeConfig) };
-    const model = typeof config.model === "string" ? config.model : "";
-    const modelFallbacks = normalizeModelFallbacks(
-      config.modelFallbacks,
-      primaryModelFallbackKey(runtimeType, model),
-    );
-    if (modelFallbacks.length > 0) {
-      config.modelFallbacks = modelFallbacks;
-    } else {
-      delete config.modelFallbacks;
-    }
-    return config;
-  }, [viewedOrganization?.defaultChatAgentRuntimeConfig, viewedOrganization?.defaultChatAgentRuntimeType]);
-
-  function buildDefaultChatRuntimeEnvironmentTestTargets(): RuntimeEnvironmentTestTarget[] {
-    if (!defaultChatAgentRuntimeType) return [];
-    const primaryConfig = { ...defaultChatRuntimeConfig };
-    delete primaryConfig.modelFallbacks;
-    return [
-      {
-        key: "primary",
-        title: "Primary",
-        runtimeType: defaultChatAgentRuntimeType,
-        model: defaultChatModel,
-        config: {
-          ...primaryConfig,
-          ...(defaultChatModel ? { model: defaultChatModel } : {}),
-        },
-      },
-      ...defaultChatFallbackModels.map((fallback, index) => ({
-        key: `fallback-${index}`,
-        title: `Fallback ${index + 1}`,
-        runtimeType: fallback.agentRuntimeType,
-        model: fallback.model,
-        config: {
-          ...(fallback.config ?? {}),
-          ...(fallback.model ? { model: fallback.model } : {}),
-        },
-      })),
-    ];
-  }
-
-  const testDefaultChatRuntimeChain = useMutation({
-    mutationFn: async (): Promise<RuntimeEnvironmentTestItemResult[]> => {
-      if (!viewedOrganizationId) {
-        throw new Error("Select a organization to test Copilot runtime environment");
-      }
-      const targets = buildDefaultChatRuntimeEnvironmentTestTargets();
-      if (targets.length === 0) {
-        throw new Error("Configure Copilot before testing the runtime chain");
-      }
-      const results: RuntimeEnvironmentTestItemResult[] = [];
-      for (const target of targets) {
-        try {
-          const result = await agentsApi.testEnvironment(viewedOrganizationId, target.runtimeType, {
-            agentRuntimeConfig: target.config,
-          });
-          results.push({ ...target, result });
-        } catch (error) {
-          results.push({
-            ...target,
-            error: error instanceof Error ? error : new Error(String(error)),
-          });
-        }
-      }
-      return results;
-    },
-  });
-
-  const defaultChatRuntimeEnvironmentResultsByKey = useMemo(() => {
-    return new Map((testDefaultChatRuntimeChain.data ?? []).map((item) => [item.key, item]));
-  }, [testDefaultChatRuntimeChain.data]);
-
-  function defaultChatRuntimeEnvironmentStatusFor(key: string): RuntimeEnvironmentStatus | undefined {
-    if (testDefaultChatRuntimeChain.isPending) return "testing";
-    const item = defaultChatRuntimeEnvironmentResultsByKey.get(key);
-    if (!item) return undefined;
-    if (item.error) return "error";
-    return item.result?.status;
-  }
-
   const chatSettingsDirty =
     !!viewedOrganization &&
-    (
-      defaultChatIssueCreationMode !== (viewedOrganization.defaultChatIssueCreationMode ?? "manual_approval") ||
-      defaultChatAgentRuntimeType !== (viewedOrganization.defaultChatAgentRuntimeType ?? "") ||
-      stableJson(defaultChatAgentRuntimeConfig) !== stableJson(savedDefaultChatAgentRuntimeConfig)
-    );
+    defaultChatIssueCreationMode !== (viewedOrganization.defaultChatIssueCreationMode ?? "manual_approval");
 
   const generalMutation = useMutation({
     mutationFn: (data: {
@@ -312,13 +140,9 @@ export function OrganizationSettings() {
   const chatSettingsMutation = useMutation({
     mutationFn: (data: {
       defaultChatIssueCreationMode: "manual_approval" | "auto_create";
-      defaultChatAgentRuntimeType: AgentRuntimeType | null;
-      defaultChatAgentRuntimeConfig: Record<string, unknown> | null;
     }) =>
       organizationsApi.update(viewedOrganizationId!, {
         defaultChatIssueCreationMode: data.defaultChatIssueCreationMode,
-        defaultChatAgentRuntimeType: data.defaultChatAgentRuntimeType,
-        defaultChatAgentRuntimeConfig: data.defaultChatAgentRuntimeConfig,
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.organizations.all });
@@ -579,46 +403,7 @@ export function OrganizationSettings() {
   function handleSaveChatSettings() {
     chatSettingsMutation.mutate({
       defaultChatIssueCreationMode,
-      defaultChatAgentRuntimeType: defaultChatAgentRuntimeType || null,
-      defaultChatAgentRuntimeConfig,
     });
-  }
-
-  function applyDefaultChatRuntimeType(nextRuntimeType: string) {
-    if (!nextRuntimeType) {
-      setDefaultChatAdapterType("");
-      setDefaultChatModel("");
-      setDefaultChatRuntimeConfig({});
-      setDefaultChatFallbackModels([]);
-      return;
-    }
-    const nextConfig = defaultConfigForRuntime(nextRuntimeType);
-    setDefaultChatAdapterType(nextRuntimeType as AgentRuntimeType);
-    setDefaultChatModel(typeof nextConfig.model === "string" ? nextConfig.model : "");
-    setDefaultChatRuntimeConfig(nextConfig);
-    setDefaultChatFallbackModels([]);
-  }
-
-  function updateDefaultChatRuntimeConfigField(field: string, value: unknown) {
-    setDefaultChatRuntimeConfig((current) => {
-      const next = { ...current };
-      if (value === undefined) {
-        delete next[field];
-      } else {
-        next[field] = value;
-      }
-      return next;
-    });
-  }
-
-  function updateDefaultChatFallbackModels(nextFallbacks: ModelFallbackConfig[]) {
-    if (!defaultChatAgentRuntimeType) return;
-    setDefaultChatFallbackModels(
-      normalizeModelFallbacksForEditor(
-        nextFallbacks,
-        primaryModelFallbackKey(defaultChatAgentRuntimeType, defaultChatModel),
-      ),
-    );
   }
 
   async function handleArchiveOrganization() {
@@ -1001,206 +786,24 @@ export function OrganizationSettings() {
       </div>
 
       <div className="space-y-4">
+        <div>
+          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Intelligence
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Organization-level AI profiles for product features that are not agent work.
+          </p>
+        </div>
+        {viewedOrganizationId ? (
+          <OrganizationIntelligenceProfilesSettings orgId={viewedOrganizationId} />
+        ) : null}
+      </div>
+
+      <div className="space-y-4">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
           {t("organizationSettings.section.chat")}
         </div>
         <div className="space-y-4 rounded-xl border border-border/70 bg-card/60 px-4 py-4">
-          <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/40 px-4 py-3">
-            <div className="rounded-full border border-border/60 bg-background/80 p-2">
-              <MessageSquareMore className="h-4 w-4 text-muted-foreground" />
-            </div>
-            <div className="space-y-1">
-              <div className="text-sm font-medium">{t("organizationSettings.chat.copilot.title")}</div>
-              <p className="text-sm text-muted-foreground">
-                {t("organizationSettings.chat.copilot.description")}
-              </p>
-            </div>
-          </div>
-
-          {defaultChatAgentRuntimeType ? (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs font-medium text-muted-foreground">Copilot runtime chain</div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2.5 text-xs"
-                  onClick={() => testDefaultChatRuntimeChain.mutate()}
-                  disabled={testDefaultChatRuntimeChain.isPending || !viewedOrganizationId}
-                >
-                  {testDefaultChatRuntimeChain.isPending
-                    ? "Testing Copilot runtime chain..."
-                    : "Test Copilot runtime chain"}
-                </Button>
-              </div>
-
-              {testDefaultChatRuntimeChain.error && (
-                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                  {testDefaultChatRuntimeChain.error instanceof Error
-                    ? testDefaultChatRuntimeChain.error.message
-                    : "Copilot runtime chain environment test failed"}
-                </div>
-              )}
-
-              {testDefaultChatRuntimeChain.data && (
-                <div className="space-y-2">
-                  <div className="text-xs font-medium text-muted-foreground">Copilot runtime environment</div>
-                  {testDefaultChatRuntimeChain.data.map((item) =>
-                    item.result ? (
-                      <AdapterEnvironmentResult
-                        key={item.key}
-                        result={item.result}
-                        label={formatRuntimeEnvironmentLabel(item)}
-                      />
-                    ) : (
-                      <AdapterEnvironmentError
-                        key={item.key}
-                        label={formatRuntimeEnvironmentLabel(item)}
-                        message={item.error?.message ?? "Environment test failed"}
-                      />
-                    ),
-                  )}
-                </div>
-              )}
-
-              <div className={runtimeProviderRailClassName}>
-                <RuntimeProviderCard
-                  title="Primary"
-                  className={runtimeProviderItemClassName}
-                  runtimeType={defaultChatAgentRuntimeType}
-                  model={defaultChatModel}
-                  config={{ ...defaultChatRuntimeConfig, ...(defaultChatModel ? { model: defaultChatModel } : {}) }}
-                  selectedOrganizationId={viewedOrganizationId}
-                  availableSecrets={chatRuntimeSecretsQuery.data ?? []}
-                  onCreateSecret={(name, value): Promise<OrganizationSecret> =>
-                    createChatRuntimeSecret.mutateAsync({ name, value })
-                  }
-                  onRuntimeTypeChange={applyDefaultChatRuntimeType}
-                  onModelChange={(model) => {
-                    const normalizedFallbacks = normalizeModelFallbacksForEditor(
-                      defaultChatFallbackModels,
-                      primaryModelFallbackKey(defaultChatAgentRuntimeType, model),
-                    );
-                    setDefaultChatModel(model);
-                    updateDefaultChatRuntimeConfigField("model", model || undefined);
-                    setDefaultChatFallbackModels(normalizedFallbacks);
-                  }}
-                  onConfigFieldChange={updateDefaultChatRuntimeConfigField}
-                  hideInstructionsFile
-                  environmentStatus={defaultChatRuntimeEnvironmentStatusFor("primary")}
-                  triggerTestId="chat-primary-model"
-                />
-
-                {defaultChatFallbackModels.map((fallback, index) => (
-                  <RuntimeProviderCard
-                    key={`${fallback.agentRuntimeType}-${index}`}
-                    title={`Fallback ${index + 1}`}
-                    className={runtimeProviderItemClassName}
-                    runtimeType={fallback.agentRuntimeType}
-                    model={fallback.model}
-                    config={{ ...(fallback.config ?? {}), model: fallback.model }}
-                    selectedOrganizationId={viewedOrganizationId}
-                    availableSecrets={chatRuntimeSecretsQuery.data ?? []}
-                    onCreateSecret={(name, value): Promise<OrganizationSecret> =>
-                      createChatRuntimeSecret.mutateAsync({ name, value })
-                    }
-                    hideInstructionsFile
-                    onRemove={() =>
-                      updateDefaultChatFallbackModels(defaultChatFallbackModels.filter((_, itemIndex) => itemIndex !== index))
-                    }
-                    onRuntimeTypeChange={(nextRuntimeType) => {
-                      const nextConfig = defaultConfigForRuntime(nextRuntimeType);
-                      const next = [...defaultChatFallbackModels];
-                      next[index] = {
-                        agentRuntimeType: nextRuntimeType,
-                        model: typeof nextConfig.model === "string" ? nextConfig.model : "",
-                        config: nextConfig,
-                      };
-                      updateDefaultChatFallbackModels(next);
-                    }}
-                    onModelChange={(model) => {
-                      const next = [...defaultChatFallbackModels];
-                      next[index] = {
-                        ...fallback,
-                        model,
-                        config: {
-                          ...(fallback.config ?? {}),
-                          model,
-                        },
-                      };
-                      updateDefaultChatFallbackModels(next);
-                    }}
-                    onConfigFieldChange={(field, value) => {
-                      const next = [...defaultChatFallbackModels];
-                      const nextConfig = { ...(fallback.config ?? {}) };
-                      if (value === undefined) {
-                        delete nextConfig[field];
-                      } else {
-                        nextConfig[field] = value;
-                      }
-                      next[index] = {
-                        ...fallback,
-                        config: nextConfig,
-                      };
-                      updateDefaultChatFallbackModels(next);
-                    }}
-                    environmentStatus={defaultChatRuntimeEnvironmentStatusFor(`fallback-${index}`)}
-                    triggerTestId={`chat-fallback-model-${index + 1}`}
-                  />
-                ))}
-
-                <button
-                  type="button"
-                  className={cn(
-                    runtimeProviderItemClassName,
-                    "min-h-[180px] rounded-lg border border-dashed border-border/80 px-4 py-4 text-left transition-colors hover:border-primary/50 hover:bg-accent/30",
-                  )}
-                  onClick={() =>
-                    updateDefaultChatFallbackModels([
-                      ...defaultChatFallbackModels,
-                      defaultFallbackItem(defaultChatAgentRuntimeType),
-                    ])
-                  }
-                >
-                  <div className="flex h-full min-h-[140px] flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-                    <span className="rounded-full border border-border p-2">
-                      <Plus className="h-4 w-4" />
-                    </span>
-                    <span>Add fallback</span>
-                  </div>
-                </button>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 px-2.5 text-xs"
-                onClick={() => applyDefaultChatRuntimeType("")}
-              >
-                {t("organizationSettings.chat.runtime.none")}
-              </Button>
-            </div>
-          ) : (
-            <Field
-              label={t("organizationSettings.chat.runtime.label")}
-              hint={t("organizationSettings.chat.runtime.hint")}
-            >
-              <select
-                className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
-                value={defaultChatAgentRuntimeType}
-                onChange={(event) => applyDefaultChatRuntimeType(event.target.value)}
-              >
-                <option value="">{t("organizationSettings.chat.runtime.none")}</option>
-                {CHAT_DEFAULT_ADAPTER_OPTIONS.map((agentRuntimeType) => (
-                  <option key={agentRuntimeType} value={agentRuntimeType}>
-                    {adapterLabels[agentRuntimeType] ?? agentRuntimeType}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          )}
-
           <Field
             label={t("organizationSettings.chat.issueMode.label")}
             hint={t("organizationSettings.chat.issueMode.hint")}

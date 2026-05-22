@@ -5,6 +5,7 @@ import { resolveActivityActorName } from "@/lib/activity-actors";
 import { timeAgo } from "../lib/timeAgo";
 import { cn } from "../lib/utils";
 import { deriveProjectUrlKey, type ActivityEvent, type Agent } from "@rudderhq/shared";
+import { formatPriorityLabel } from "../lib/priorities";
 
 const ACTION_VERBS: Record<string, string> = {
   "issue.created": "created",
@@ -12,12 +13,14 @@ const ACTION_VERBS: Record<string, string> = {
   "issue.checked_out": "checked out",
   "issue.released": "released",
   "issue.comment_added": "commented on",
+  "issue.code_committed": "committed",
   "issue.attachment_added": "attached file to",
   "issue.attachment_removed": "removed attachment from",
   "issue.document_created": "created document for",
   "issue.document_updated": "updated document on",
   "issue.document_deleted": "deleted document from",
   "issue.commented": "commented on",
+  "issue.human_intervention_required": "requested human intervention on",
   "issue.deleted": "deleted",
   "agent.created": "created",
   "agent.updated": "updated",
@@ -52,6 +55,12 @@ function humanizeValue(value: unknown): string {
 }
 
 function formatVerb(action: string, details?: Record<string, unknown> | null): string {
+  if (action === "issue.code_committed" && details) {
+    const shortSha = typeof details.shortSha === "string" ? details.shortSha : null;
+    const subject = typeof details.subject === "string" ? details.subject : null;
+    if (shortSha && subject) return `committed ${shortSha}: ${subject} to`;
+    if (shortSha) return `committed ${shortSha} to`;
+  }
   if (action === "issue.updated" && details) {
     const previous = (details._previous ?? {}) as Record<string, unknown>;
     if (details.status !== undefined) {
@@ -63,8 +72,8 @@ function formatVerb(action: string, details?: Record<string, unknown> | null): s
     if (details.priority !== undefined) {
       const from = previous.priority;
       return from
-        ? `changed priority from ${humanizeValue(from)} to ${humanizeValue(details.priority)} on`
-        : `changed priority to ${humanizeValue(details.priority)} on`;
+        ? `changed priority from ${formatPriorityLabel(humanizeValue(from))} to ${formatPriorityLabel(humanizeValue(details.priority))} on`
+        : `changed priority to ${formatPriorityLabel(humanizeValue(details.priority))} on`;
     }
   }
   return ACTION_VERBS[action] ?? action.replace(/[._]/g, " ");
@@ -101,6 +110,7 @@ interface ActivityRowProps {
   entityTitleMap?: Map<string, string>;
   className?: string;
   currentBoardUserId?: string | null;
+  operatorDisplayName?: string | null;
 }
 
 export function ActivityRow({
@@ -110,6 +120,7 @@ export function ActivityRow({
   entityTitleMap,
   className,
   currentBoardUserId,
+  operatorDisplayName,
 }: ActivityRowProps) {
   const verb = formatVerb(event.action, event.details);
 
@@ -130,7 +141,7 @@ export function ActivityRow({
     : entityLink(event.entityType, event.entityId, name);
 
   const actor = event.actorType === "agent" ? agentMap.get(event.actorId) : null;
-  const actorName = actor?.name ?? resolveActivityActorName(event, agentMap, currentBoardUserId);
+  const actorName = actor?.name ?? resolveActivityActorName(event, agentMap, currentBoardUserId, operatorDisplayName);
   const entityLabel = activityEntityLabel(event.entityType);
 
   const inner = (

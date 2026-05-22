@@ -1,4 +1,5 @@
 import { asString, asNumber, parseObject, parseJson } from "@rudderhq/agent-runtime-utils/server-utils";
+import { isCodexClosedStdinToolSessionError } from "../shared/tool-errors.js";
 
 export function parseCodexJsonl(stdout: string) {
   let sessionId: string | null = null;
@@ -25,7 +26,7 @@ export function parseCodexJsonl(stdout: string) {
 
     if (type === "error") {
       const msg = asString(event.message, "").trim();
-      if (msg) errorMessage = msg;
+      if (msg && !isCodexClosedStdinToolSessionError(msg)) errorMessage = msg;
       continue;
     }
 
@@ -49,7 +50,7 @@ export function parseCodexJsonl(stdout: string) {
     if (type === "turn.failed") {
       const err = parseObject(event.error);
       const msg = asString(err.message, "").trim();
-      if (msg) errorMessage = msg;
+      if (msg && !isCodexClosedStdinToolSessionError(msg)) errorMessage = msg;
     }
   }
 

@@ -1,12 +1,15 @@
-import { AGENT_ICON_NAMES, type AgentIconName, type AgentRole } from "@rudderhq/shared";
+import { type CSSProperties } from "react";
+import { type AgentRole } from "@rudderhq/shared";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { getAgentIcon, getDefaultAgentIconForRole } from "../lib/agent-icons";
+import {
+  getAgentAvatarBackgroundStyle,
+  getAgentAvatarImageSrc,
+  normalizeAgentAvatarIconValue,
+} from "../lib/agent-avatar";
 
 type IdentitySize = "xs" | "sm" | "default" | "lg";
-
-const AGENT_ASSET_ICON_RE =
-  /^asset:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 
 const textSize: Record<IdentitySize, string> = {
   xs: "text-sm",
@@ -22,29 +25,15 @@ const iconSize: Record<IdentitySize, string> = {
   lg: "h-4.5 w-4.5 text-base",
 };
 
-function normalizeIconValue(icon: string | null | undefined) {
-  const normalized = icon?.trim();
-  return normalized && normalized.length > 0 ? normalized : null;
-}
-
-export function getAgentAvatarImageSrc(icon: string | null | undefined): string | null {
-  const normalized = normalizeIconValue(icon);
-  const assetId = normalized?.match(AGENT_ASSET_ICON_RE)?.[1] ?? null;
-  return assetId ? `/api/assets/${assetId}/content` : null;
-}
-
-function isNamedAgentIcon(icon: string | null | undefined): icon is AgentIconName {
-  return Boolean(icon && AGENT_ICON_NAMES.includes(icon as AgentIconName));
-}
-
 interface AgentIconProps {
   icon: string | null | undefined;
   role?: AgentRole | null;
   className?: string;
+  style?: CSSProperties;
 }
 
-export function AgentIcon({ icon, role, className }: AgentIconProps) {
-  const normalized = normalizeIconValue(icon);
+export function AgentIcon({ icon, role, className, style }: AgentIconProps) {
+  const normalized = normalizeAgentAvatarIconValue(icon);
   const effectiveIcon = normalized ?? getDefaultAgentIconForRole(role);
   const imageSrc = getAgentAvatarImageSrc(effectiveIcon);
   if (imageSrc) {
@@ -53,15 +42,9 @@ export function AgentIcon({ icon, role, className }: AgentIconProps) {
         src={imageSrc}
         alt=""
         className={cn("inline-flex rounded-full object-cover", className)}
+        style={{ ...getAgentAvatarBackgroundStyle(effectiveIcon), ...style }}
         loading="lazy"
       />
-    );
-  }
-  if (effectiveIcon && !isNamedAgentIcon(effectiveIcon)) {
-    return (
-      <span className={cn("inline-flex items-center justify-center leading-none", className)}>
-        {effectiveIcon}
-      </span>
     );
   }
   const Icon = getAgentIcon(effectiveIcon);
@@ -83,7 +66,7 @@ export function AgentIdentity({
   size = "default",
   className,
 }: AgentIdentityProps) {
-  const normalizedIcon = normalizeIconValue(icon) ?? getDefaultAgentIconForRole(role);
+  const normalizedIcon = normalizeAgentAvatarIconValue(icon) ?? getDefaultAgentIconForRole(role);
   const imageSrc = getAgentAvatarImageSrc(normalizedIcon);
 
   return (

@@ -1,0 +1,65 @@
+---
+title: "Messenger"
+description: "集中处理回复、阻塞、失败运行和决策请求的注意力界面。"
+---
+
+Messenger 是 Rudder 的沟通和注意力界面。它把 Chat 对话、issue 线程、失败运行、阻塞、评审提示、预算提醒和决策请求放在一个地方，但不替代 issue 作为执行系统。
+
+![Messenger 注意力界面](../../images/messenger-approvals.png)
+
+## Messenger 的工作
+
+Messenger 回答一个 operator 问题：
+
+> 现在什么需要我的注意，它属于哪个持久工作对象？
+
+它应该把注意力带回行动：
+
+| 注意力信号 | 持久下一步 |
+| --- | --- |
+| Agent 提问 | 回复，并把决定保留在 issue 上 |
+| Run 失败 | 打开关联 issue 或 run，决定如何恢复 |
+| 工作阻塞 | 写清楚缺少什么输入或 owner |
+| 评审等待 | 接受、要求修改或标记 blocked |
+| Chat 生成 issue 提案 | 接受、编辑或拒绝后再执行 |
+
+## Messenger 和 Chat
+
+Chat 是一种 Messenger 线程，适合接收请求和澄清意图。
+
+Messenger 更宽。它还包括围绕 issue、评审、失败和系统提示的运营注意力流。
+
+## Messenger 和 issue
+
+Messenger 不应该变成第二套任务系统。如果一个线程产生了真实工作，下一步应该回到 issue：
+
+- 创建新 issue
+- 更新现有 issue 状态
+- 添加关闭评论
+- 附加产物
+- 指定 reviewer
+
+这样即使对话滚走了，agent 工作仍然可检查。
+
+## Messenger 和决策
+
+Messenger 可以展示决策，但决策必须留下持久痕迹。评审用 issue reviewer 决定。产品判断、权限请求或预算选择，都应该记录在关联 issue 或线程上。
+
+## 好的使用场景
+
+- Reviewer 要求修改，assignee 需要恢复工作。
+- 失败 run 需要人工 triage 后再重试。
+- 预算停止条件需要 operator 决定是否继续。
+- Chat 创建的 issue 提案需要人工确认。
+- 阻塞需要明确 owner 和下一步。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="Chat" icon="message-circle" href="/zh/concepts/chat">
+    理解对话入口如何变成工作。
+  </Card>
+  <Card title="任务" icon="circle-check" href="/zh/concepts/issues">
+    查看 Messenger 指向的持久执行对象。
+  </Card>
+</CardGroup>

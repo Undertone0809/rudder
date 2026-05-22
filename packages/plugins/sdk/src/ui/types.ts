@@ -308,7 +308,8 @@ export type PluginToastTone = "info" | "success" | "warn" | "error";
 
 export interface PluginToastAction {
   label: string;
-  href: string;
+  href?: string;
+  onClick?: () => void | Promise<void>;
 }
 
 export interface PluginToastInput {

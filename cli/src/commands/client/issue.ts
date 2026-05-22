@@ -1,15 +1,22 @@
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
 import { Command } from "commander";
 import {
   addIssueCommentSchema,
   checkoutIssueSchema,
   createIssueSchema,
+  reportIssueCommitSchema,
   updateIssueSchema,
   upsertIssueDocumentSchema,
   type DocumentRevision,
   type IssueDocument,
   type IssueDocumentSummary,
+  type LegacyPlanDocument,
   type Issue,
+  type IssueAttachment,
   type IssueComment,
+  type IssueCommitReport,
+  type IssueLabel,
 } from "@rudderhq/shared";
 import {
   addCommonClientOptions,
@@ -25,7 +32,14 @@ interface IssueBaseOptions extends BaseClientOptions {
   status?: string;
   assigneeAgentId?: string;
   projectId?: string;
+  query?: string;
   match?: string;
+}
+
+interface IssueSearchOptions extends BaseClientOptions {
+  status?: string;
+  assigneeAgentId?: string;
+  projectId?: string;
 }
 
 interface IssueCreateOptions extends BaseClientOptions {
@@ -39,7 +53,11 @@ interface IssueCreateOptions extends BaseClientOptions {
   parentId?: string;
   requestDepth?: string;
   billingCode?: string;
+  labelId?: string[];
+  label?: string[];
 }
+
+interface IssueLabelsListOptions extends BaseClientOptions {}
 
 interface IssueUpdateOptions extends BaseClientOptions {
   title?: string;
@@ -53,12 +71,23 @@ interface IssueUpdateOptions extends BaseClientOptions {
   requestDepth?: string;
   billingCode?: string;
   comment?: string;
+  image?: string[];
   hiddenAt?: string;
 }
 
 interface IssueCommentOptions extends BaseClientOptions {
   body: string;
+  image?: string[];
   reopen?: boolean;
+}
+
+interface IssueCommitOptions extends BaseClientOptions {
+  sha: string;
+  message: string;
+  branch?: string;
+  repoPath?: string;
+  workspacePath?: string;
+  count?: string;
 }
 
 interface IssueCheckoutOptions extends BaseClientOptions {
@@ -68,7 +97,15 @@ interface IssueCheckoutOptions extends BaseClientOptions {
 
 interface IssueStatusCommentOptions extends BaseClientOptions {
   comment: string;
+  image?: string[];
 }
+
+interface IssueReviewOptions extends BaseClientOptions {
+  decision: "approve" | "request_changes" | "needs_followup" | "blocked";
+  comment: string;
+}
+
+type CommandContext = ReturnType<typeof resolveCommandContext>;
 
 interface IssueContextOptions extends BaseClientOptions {
   wakeCommentId?: string;
@@ -127,6 +164,10 @@ interface IssueHeartbeatContext {
     latestCommentCreatedAt: string | null;
     commentCount: number;
   };
+  planDocument: IssueDocument | null;
+  documentSummaries: IssueDocumentSummary[];
+  legacyPlanDocument: LegacyPlanDocument | null;
+  issueDocumentsPrompt: string;
   wakeComment: IssueComment | null;
 }
 
@@ -141,43 +182,35 @@ export function registerIssueCommands(program: Command): void {
       .option("--status <csv>", "Comma-separated statuses")
       .option("--assignee-agent-id <id>", "Filter by assignee agent ID")
       .option("--project-id <id>", "Filter by project ID")
+      .option("--query <text>", "Server-side search on identifier/title/description/comments")
       .option("--match <text>", "Local text match on identifier/title/description")
       .action(async (opts: IssueBaseOptions) => {
         try {
           const ctx = resolveCommandContext(opts, { requireCompany: true });
-          const params = new URLSearchParams();
-          if (opts.status) params.set("status", opts.status);
-          if (opts.assigneeAgentId) params.set("assigneeAgentId", opts.assigneeAgentId);
-          if (opts.projectId) params.set("projectId", opts.projectId);
-
-          const query = params.toString();
-          const path = `/api/orgs/${ctx.orgId}/issues${query ? `?${query}` : ""}`;
-          const rows = (await ctx.api.get<Issue[]>(path)) ?? [];
-
+          const rows = (await ctx.api.get<Issue[]>(buildIssueListPath(ctx.orgId!, opts, opts.query))) ?? [];
           const filtered = filterIssueRows(rows, opts.match);
-          if (ctx.json) {
-            printOutput(filtered, { json: true });
-            return;
-          }
+          printIssueRows(filtered, ctx.json);
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+    { includeCompany: false },
+  );
 
-          if (filtered.length === 0) {
-            printOutput([], { json: false });
-            return;
-          }
-
-          for (const item of filtered) {
-            console.log(
-              formatInlineRecord({
-                identifier: item.identifier,
-                id: item.id,
-                status: item.status,
-                priority: item.priority,
-                assigneeAgentId: item.assigneeAgentId,
-                title: item.title,
-                projectId: item.projectId,
-              }),
-            );
-          }
+  addCommonClientOptions(
+    issue
+      .command("search")
+      .description(getAgentCliCapabilityById("issue.search").description)
+      .argument("<query>", "Server-side issue search query")
+      .option("-O, --org-id <id>", "Organization ID")
+      .option("--status <csv>", "Comma-separated statuses")
+      .option("--assignee-agent-id <id>", "Filter by assignee agent ID")
+      .option("--project-id <id>", "Filter by project ID")
+      .action(async (query: string, opts: IssueSearchOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const rows = (await ctx.api.get<Issue[]>(buildIssueListPath(ctx.orgId!, opts, query))) ?? [];
+          printIssueRows(rows, ctx.json);
         } catch (err) {
           handleCommandError(err);
         }
@@ -225,6 +258,25 @@ export function registerIssueCommands(program: Command): void {
 
   addCommonClientOptions(
     issue
+      .command("labels")
+      .description("Issue label operations")
+      .command("list")
+      .description("List issue labels for an organization")
+      .option("-O, --org-id <id>", "Organization ID")
+      .action(async (opts: IssueLabelsListOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const rows = (await ctx.api.get<IssueLabel[]>(`/api/orgs/${ctx.orgId}/labels`)) ?? [];
+          printOutput(rows, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+    { includeCompany: false },
+  );
+
+  addCommonClientOptions(
+    issue
       .command("create")
       .description(getAgentCliCapabilityById("issue.create").description)
       .option("-O, --org-id <id>", "Organization ID")
@@ -238,9 +290,12 @@ export function registerIssueCommands(program: Command): void {
       .option("--parent-id <id>", "Parent issue ID")
       .option("--request-depth <n>", "Request depth integer")
       .option("--billing-code <code>", "Billing code")
+      .option("--label-id <id>", "Issue label ID; may be repeated", collectNonEmptyOption("--label-id"), [] as string[])
+      .option("--label <name>", "Issue label name to resolve exactly; may be repeated", collectNonEmptyOption("--label"), [] as string[])
       .action(async (opts: IssueCreateOptions) => {
         try {
           const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const labelIds = await resolveIssueLabelIds(ctx, opts);
           const payload = createIssueSchema.parse({
             title: opts.title,
             description: opts.description,
@@ -252,6 +307,7 @@ export function registerIssueCommands(program: Command): void {
             parentId: opts.parentId,
             requestDepth: parseOptionalInt(opts.requestDepth),
             billingCode: opts.billingCode,
+            labelIds: labelIds.length > 0 ? labelIds : undefined,
           });
 
           const created = await ctx.api.post<Issue>(`/api/orgs/${ctx.orgId}/issues`, payload);
@@ -279,10 +335,12 @@ export function registerIssueCommands(program: Command): void {
       .option("--request-depth <n>", "Request depth integer")
       .option("--billing-code <code>", "Billing code")
       .option("--comment <text>", "Optional comment to add with update")
+      .option("--image <path>", "Image file to upload and append to the update comment; may be repeated", collectImagePath, [] as string[])
       .option("--hidden-at <iso8601|null>", "Set hiddenAt timestamp or literal 'null'")
       .action(async (issueId: string, opts: IssueUpdateOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
+          const comment = await appendUploadedIssueImages(ctx, issueId, opts.comment, opts.image);
           const payload = updateIssueSchema.parse({
             title: opts.title,
             description: opts.description,
@@ -294,7 +352,7 @@ export function registerIssueCommands(program: Command): void {
             parentId: opts.parentId,
             requestDepth: parseOptionalInt(opts.requestDepth),
             billingCode: opts.billingCode,
-            comment: opts.comment,
+            comment,
             hiddenAt: parseHiddenAt(opts.hiddenAt),
           });
 
@@ -312,16 +370,76 @@ export function registerIssueCommands(program: Command): void {
       .description(getAgentCliCapabilityById("issue.comment").description)
       .argument("<issueId>", "Issue ID")
       .requiredOption("--body <text>", "Comment body")
+      .option("--image <path>", "Image file to upload and append to the comment; may be repeated", collectImagePath, [] as string[])
       .option("--reopen", "Reopen if issue is done/cancelled")
       .action(async (issueId: string, opts: IssueCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
+          const body = await appendUploadedIssueImages(ctx, issueId, opts.body, opts.image);
           const payload = addIssueCommentSchema.parse({
-            body: opts.body,
+            body,
             reopen: opts.reopen,
           });
           const comment = await ctx.api.post<IssueComment>(`/api/issues/${issueId}/comments`, payload);
+          if (!isIssueCommentResponse(comment)) {
+            throw new Error("Issue comment request completed without a persisted comment response");
+          }
           printOutput(comment, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+  );
+
+  addCommonClientOptions(
+    issue
+      .command("review")
+      .description(getAgentCliCapabilityById("issue.review").description)
+      .argument("<issueId>", "Issue ID")
+      .requiredOption(
+        "--decision <decision>",
+        "Review decision: approve, request_changes, needs_followup, or blocked",
+      )
+      .requiredOption("--comment <text>", "Required review comment")
+      .action(async (issueId: string, opts: IssueReviewOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts);
+          const decision = parseReviewDecision(opts.decision);
+          const updated = await ctx.api.patch<Issue & { comment?: IssueComment | null }>(`/api/issues/${issueId}`, {
+            reviewDecision: decision,
+            comment: opts.comment,
+          });
+          printOutput(updated, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+  );
+
+  addCommonClientOptions(
+    issue
+      .command("commit")
+      .description(getAgentCliCapabilityById("issue.commit").description)
+      .argument("<issueId>", "Issue ID")
+      .requiredOption("--sha <sha>", "Commit SHA")
+      .requiredOption("--message <subject>", "Commit subject or message")
+      .option("--branch <name>", "Branch name")
+      .option("--repo-path <path>", "Repository path")
+      .option("--workspace-path <path>", "Workspace path")
+      .option("--count <n>", "Number of commits represented by this report")
+      .action(async (issueId: string, opts: IssueCommitOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts);
+          const payload = reportIssueCommitSchema.parse({
+            sha: opts.sha,
+            message: opts.message,
+            branch: opts.branch,
+            repoPath: opts.repoPath,
+            workspacePath: opts.workspacePath,
+            commitCount: parseOptionalInt(opts.count),
+          });
+          const reported = await ctx.api.post<IssueCommitReport>(`/api/issues/${issueId}/commit`, payload);
+          printOutput(reported, { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
         }
@@ -334,12 +452,14 @@ export function registerIssueCommands(program: Command): void {
       .description(getAgentCliCapabilityById("issue.done").description)
       .argument("<issueId>", "Issue ID")
       .requiredOption("--comment <text>", "Required completion comment")
+      .option("--image <path>", "Image file to upload and append to the completion comment; may be repeated", collectImagePath, [] as string[])
       .action(async (issueId: string, opts: IssueStatusCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
+          const comment = await appendUploadedIssueImages(ctx, issueId, opts.comment, opts.image);
           const updated = await ctx.api.patch<Issue>(`/api/issues/${issueId}`, {
             status: "done",
-            comment: opts.comment,
+            comment,
           });
           printOutput(updated, { json: ctx.json });
         } catch (err) {
@@ -354,12 +474,14 @@ export function registerIssueCommands(program: Command): void {
       .description(getAgentCliCapabilityById("issue.block").description)
       .argument("<issueId>", "Issue ID")
       .requiredOption("--comment <text>", "Required blocker comment")
+      .option("--image <path>", "Image file to upload and append to the blocker comment; may be repeated", collectImagePath, [] as string[])
       .action(async (issueId: string, opts: IssueStatusCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
+          const comment = await appendUploadedIssueImages(ctx, issueId, opts.comment, opts.image);
           const updated = await ctx.api.patch<Issue>(`/api/issues/${issueId}`, {
             status: "blocked",
-            comment: opts.comment,
+            comment,
           });
           printOutput(updated, { json: ctx.json });
         } catch (err) {
@@ -539,6 +661,145 @@ export function registerIssueCommands(program: Command): void {
   );
 }
 
+function collectImagePath(value: string, previous: string[]): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("--image path cannot be empty");
+  }
+  return [...previous, trimmed];
+}
+
+function collectNonEmptyOption(optionName: string) {
+  return (value: string, previous: string[]): string[] => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw new Error(`${optionName} cannot be empty`);
+    }
+    return [...previous, trimmed];
+  };
+}
+
+async function resolveIssueLabelIds(
+  ctx: CommandContext,
+  opts: Pick<IssueCreateOptions, "label" | "labelId" | "parentId">,
+): Promise<string[]> {
+  const explicitIds = opts.labelId ?? [];
+  const names = opts.label ?? [];
+  if (names.length === 0 && explicitIds.length > 0) return [...new Set(explicitIds)];
+
+  if (names.length === 0 && opts.parentId) return [];
+
+  const labels = (await ctx.api.get<IssueLabel[]>(`/api/orgs/${ctx.orgId}/labels`)) ?? [];
+  if (names.length === 0) {
+    if (ctx.agentId && labels.length >= 5) {
+      throw new Error(
+        `Organization has ${labels.length} issue labels. Choose at least one with --label-id <id> or --label <name>. Available labels: ${formatAvailableLabelNames(labels)}`,
+      );
+    }
+    return [];
+  }
+
+  const resolvedIds = names.map((name) => {
+    const exact = labels.find((label) => label.name === name)
+      ?? labels.find((label) => label.name.toLowerCase() === name.toLowerCase());
+    if (!exact) {
+      throw new Error(`Unknown issue label "${name}". Available labels: ${formatAvailableLabelNames(labels)}`);
+    }
+    return exact.id;
+  });
+
+  return [...new Set([...explicitIds, ...resolvedIds])];
+}
+
+function formatAvailableLabelNames(labels: IssueLabel[]): string {
+  return labels.map((label) => label.name).join(", ") || "(none)";
+}
+
+async function appendUploadedIssueImages(
+  ctx: CommandContext,
+  issueId: string,
+  body: string | undefined,
+  imagePaths: string[] | undefined,
+): Promise<string | undefined> {
+  const paths = imagePaths ?? [];
+  if (paths.length === 0) return body;
+
+  const issue = await ctx.api.get<Issue>(`/api/issues/${issueId}`);
+  if (!issue) {
+    throw new Error("Issue not found");
+  }
+
+  const links: string[] = [];
+  for (const imagePath of paths) {
+    const attachment = await uploadIssueCommentImage(ctx, issue, imagePath);
+    links.push(formatAttachmentMarkdown(attachment));
+  }
+
+  const base = body?.trimEnd() ?? "";
+  const imageBlock = links.join("\n");
+  return base ? `${base}\n\n${imageBlock}` : imageBlock;
+}
+
+async function uploadIssueCommentImage(
+  ctx: CommandContext,
+  issue: Issue,
+  imagePath: string,
+): Promise<IssueAttachment> {
+  const resolvedPath = path.resolve(process.cwd(), imagePath);
+  const stats = await stat(resolvedPath).catch((err: unknown) => {
+    throw new Error(`Unable to read image ${imagePath}: ${err instanceof Error ? err.message : String(err)}`);
+  });
+  if (!stats.isFile()) {
+    throw new Error(`Image path must be a file: ${imagePath}`);
+  }
+
+  const filename = path.basename(resolvedPath);
+  const contentType = inferCommentImageContentType(filename);
+  const buffer = await readFile(resolvedPath);
+  if (buffer.length <= 0) {
+    throw new Error(`Image is empty: ${imagePath}`);
+  }
+
+  const form = new FormData();
+  form.set("usage", "comment_inline");
+  form.set("file", new Blob([buffer], { type: contentType }), filename);
+
+  const attachment = await ctx.api.postForm<IssueAttachment>(
+    `/api/orgs/${issue.orgId}/issues/${issue.id}/attachments`,
+    form,
+  );
+  if (!attachment) {
+    throw new Error(`Image upload returned no attachment: ${imagePath}`);
+  }
+  return attachment;
+}
+
+function inferCommentImageContentType(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  switch (ext) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    case ".gif":
+      return "image/gif";
+    default:
+      throw new Error(`Unsupported comment image type: ${filename}. Use PNG, JPEG, WebP, or GIF.`);
+  }
+}
+
+function formatAttachmentMarkdown(attachment: IssueAttachment): string {
+  const alt = escapeMarkdownAltText(attachment.originalFilename ?? "image");
+  return `![${alt}](${attachment.contentPath})`;
+}
+
+function escapeMarkdownAltText(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("]", "\\]");
+}
+
 function parseCsv(value: string | undefined): string[] {
   if (!value) return [];
   return value.split(",").map((v) => v.trim()).filter(Boolean);
@@ -559,6 +820,30 @@ function parseHiddenAt(value: string | undefined): string | null | undefined {
   return value;
 }
 
+function parseReviewDecision(value: string): IssueReviewOptions["decision"] {
+  const normalized = value.trim();
+  if (
+    normalized === "approve" ||
+    normalized === "request_changes" ||
+    normalized === "needs_followup" ||
+    normalized === "blocked"
+  ) {
+    return normalized;
+  }
+  throw new Error("Invalid review decision. Use approve, request_changes, needs_followup, or blocked.");
+}
+
+function isIssueCommentResponse(value: IssueComment | null): value is IssueComment {
+  return Boolean(
+    value &&
+      typeof value.id === "string" &&
+      value.id.trim().length > 0 &&
+      typeof value.issueId === "string" &&
+      value.issueId.trim().length > 0 &&
+      typeof value.body === "string",
+  );
+}
+
 function filterIssueRows(rows: Issue[], match: string | undefined): Issue[] {
   if (!match?.trim()) return rows;
   const needle = match.trim().toLowerCase();
@@ -569,4 +854,49 @@ function filterIssueRows(rows: Issue[], match: string | undefined): Issue[] {
       .toLowerCase();
     return text.includes(needle);
   });
+}
+
+function buildIssueListPath(orgId: string, opts: IssueSearchOptions, searchQuery?: string): string {
+  const params = new URLSearchParams();
+  if (opts.status) params.set("status", opts.status);
+  if (opts.assigneeAgentId) params.set("assigneeAgentId", opts.assigneeAgentId);
+  if (opts.projectId) params.set("projectId", opts.projectId);
+  if (searchQuery?.trim()) params.set("q", searchQuery.trim());
+
+  const query = params.toString();
+  return `/api/orgs/${orgId}/issues${query ? `?${query}` : ""}`;
+}
+
+function printIssueRows(rows: Issue[], json: boolean): void {
+  if (json) {
+    printOutput(rows, { json: true });
+    return;
+  }
+
+  if (rows.length === 0) {
+    printOutput([], { json: false });
+    return;
+  }
+
+  for (const item of rows) {
+    console.log(
+      formatInlineRecord({
+        identifier: item.identifier,
+        id: item.id,
+        status: item.status,
+        priority: item.priority,
+        assigneeAgentId: item.assigneeAgentId,
+        assigneeUserId: item.assigneeUserId,
+        title: item.title,
+        projectId: item.projectId,
+        updatedAt: item.updatedAt,
+        ...(item.searchMatch ? { match: formatIssueSearchMatch(item.searchMatch) } : {}),
+      }),
+    );
+  }
+}
+
+function formatIssueSearchMatch(match: NonNullable<Issue["searchMatch"]>): string {
+  const commentSuffix = match.commentId ? `#${match.commentId}` : "";
+  return `${match.field}${commentSuffix}: ${match.snippet}`;
 }

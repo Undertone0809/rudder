@@ -10,6 +10,8 @@ import {
   updateOrganizationBrandingSchema,
   updateOrganizationSchema,
   updateOrganizationWorkspaceFileSchema,
+  organizationIntelligenceProfilePurposeSchema,
+  upsertOrganizationIntelligenceProfileSchema,
   createWorkspaceBackupSchema,
   restoreWorkspaceBackupSchema,
 } from "@rudderhq/shared";
@@ -24,6 +26,7 @@ import {
   organizationPortabilityService,
   workspaceBackupService,
   organizationSkillService,
+  organizationIntelligenceProfileService,
   organizationService,
   logActivity,
 } from "../services/index.js";
@@ -37,6 +40,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   const agents = agentService(db);
   const portability = organizationPortabilityService(db, storage);
   const organizationSkills = organizationSkillService(db);
+  const intelligenceProfiles = organizationIntelligenceProfileService(db);
   const access = accessService(db);
   const budgets = budgetService(db);
   const resources = resourceCatalogService(db);
@@ -128,6 +132,47 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     const catalog = await resources.listOrganizationResources(orgId);
     res.json(catalog);
   });
+
+  router.get("/:orgId/intelligence-profiles", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    res.json(await intelligenceProfiles.list(orgId));
+  });
+
+  router.put(
+    "/:orgId/intelligence-profiles/:purpose",
+    validate(upsertOrganizationIntelligenceProfileSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      assertBoard(req);
+      const purpose = organizationIntelligenceProfilePurposeSchema.safeParse(req.params.purpose);
+      if (!purpose.success) {
+        res.status(404).json({ error: "Unknown intelligence profile purpose" });
+        return;
+      }
+
+      const profile = await intelligenceProfiles.upsert(orgId, purpose.data, req.body);
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "organization.intelligence_profile.updated",
+        entityType: "organization_intelligence_profile",
+        entityId: profile.id,
+        details: {
+          purpose: profile.purpose,
+          agentRuntimeType: profile.agentRuntimeType,
+          status: profile.status,
+        },
+      });
+      res.json(profile);
+    },
+  );
 
   router.post("/:orgId/resources", validate(createOrganizationResourceSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -225,6 +270,30 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
     const result = await workspaceBrowser.readFile(orgId, filePath);
     res.json(result);
+  });
+
+  router.get("/:orgId/workspace/file/content", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    if (req.actor.type !== "agent") {
+      assertBoard(req);
+    }
+    const filePath = typeof req.query.path === "string" ? req.query.path : "";
+    const workspaceFile = await workspaceBrowser.readAttachmentFile(orgId, filePath);
+    if (!workspaceFile.contentType.toLowerCase().startsWith("image/")) {
+      res.status(415).json({ error: "Workspace file is not an image preview" });
+      return;
+    }
+
+    res.setHeader("Content-Type", workspaceFile.contentType);
+    res.setHeader("Content-Length", String(workspaceFile.buffer.length));
+    res.setHeader("Cache-Control", "private, max-age=60");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    if (workspaceFile.contentType === "image/svg+xml") {
+      res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
+    }
+    res.setHeader("Content-Disposition", `inline; filename="${workspaceFile.originalFilename.replaceAll("\"", "")}"`);
+    res.send(workspaceFile.buffer);
   });
 
   router.patch("/:orgId/workspace/file", validate(updateOrganizationWorkspaceFileSchema), async (req, res) => {

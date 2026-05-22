@@ -514,9 +514,15 @@ describe("@rudderhq/plugin-linear UI", () => {
         method: "POST",
       }),
     );
-    const finalConfigCall = fetchMock.mock.calls
-      .filter(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"))
-      .at(-1);
+    const configCalls = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith("/api/plugins/plugin-linear/config"));
+    const seedBody = JSON.parse(String((configCalls.at(0)?.[1] as RequestInit | undefined)?.body ?? "{}"));
+    expect(seedBody.configJson).toMatchObject({
+      apiTokenSecretRef: "secret-1",
+      teamMappings: [],
+      organizationMappings: [],
+    });
+    const finalConfigCall = configCalls.at(-1);
     const finalBody = JSON.parse(String((finalConfigCall?.[1] as RequestInit | undefined)?.body ?? "{}"));
     expect(finalBody.configJson).toMatchObject({
       apiTokenSecretRef: "secret-1",

@@ -1,17 +1,20 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import { approvalComments, approvals } from "@rudderhq/db";
+import type { AgentRuntimeType } from "@rudderhq/shared";
 import { notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { agentService } from "./agents.js";
 import { budgetService } from "./budgets.js";
 import { notifyHireApproved } from "./hire-hook.js";
 import { instanceSettingsService } from "./instance-settings.js";
+import { organizationIntelligenceProfileService } from "./organization-intelligence-profiles.js";
 
 export function approvalService(db: Db) {
   const agentsSvc = agentService(db);
   const budgets = budgetService(db);
   const instanceSettings = instanceSettingsService(db);
+  const intelligenceProfiles = organizationIntelligenceProfileService(db);
   const canResolveStatuses = new Set(["pending", "revision_requested"]);
   const resolvableStatuses = Array.from(canResolveStatuses);
   type ApprovalRecord = typeof approvals.$inferSelect;
@@ -39,6 +42,7 @@ export function approvalService(db: Db) {
     targetStatus: "approved" | "rejected",
     decidedByUserId: string,
     decisionNote: string | null | undefined,
+    payloadOverride?: Record<string, unknown>,
   ): Promise<ResolutionResult> {
     const existing = await getExistingApproval(id);
     if (!canResolveStatuses.has(existing.status)) {
@@ -55,6 +59,7 @@ export function approvalService(db: Db) {
       .update(approvals)
       .set({
         status: targetStatus,
+        ...(payloadOverride ? { payload: payloadOverride } : {}),
         decidedByUserId,
         decisionNote: decisionNote ?? null,
         decidedAt: now,
@@ -99,12 +104,18 @@ export function approvalService(db: Db) {
         .returning()
         .then((rows) => rows[0]),
 
-    approve: async (id: string, decidedByUserId: string, decisionNote?: string | null) => {
+    approve: async (
+      id: string,
+      decidedByUserId: string,
+      decisionNote?: string | null,
+      payloadOverride?: Record<string, unknown>,
+    ) => {
       const { approval: updated, applied } = await resolveApproval(
         id,
         "approved",
         decidedByUserId,
         decisionNote,
+        payloadOverride,
       );
 
       let hireApprovedAgentId: string | null = null;
@@ -141,6 +152,14 @@ export function approvalService(db: Db) {
           hireApprovedAgentId = created?.id ?? null;
         }
         if (hireApprovedAgentId) {
+          const approvedAgent = await agentsSvc.getById(hireApprovedAgentId);
+          if (approvedAgent) {
+            await intelligenceProfiles.ensureDefaultsFromRuntime({
+              orgId: updated.orgId,
+              agentRuntimeType: approvedAgent.agentRuntimeType as AgentRuntimeType,
+              agentRuntimeConfig: (approvedAgent.agentRuntimeConfig ?? {}) as Record<string, unknown>,
+            });
+          }
           const budgetMonthlyCents =
             typeof payload.budgetMonthlyCents === "number" ? payload.budgetMonthlyCents : 0;
           if (budgetMonthlyCents > 0) {

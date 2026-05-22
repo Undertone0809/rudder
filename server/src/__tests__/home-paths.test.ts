@@ -8,10 +8,12 @@ import {
   ensureOrganizationWorkspaceLayout,
   pruneOrphanedOrganizationStorage,
   resolveAgentInstructionsDir,
+  resolveAgentLifeDir,
   resolveAgentMemoryDir,
   resolveAgentSkillsDir,
   resolveDefaultAgentWorkspaceDir,
   resolveOrganizationAgentsDir,
+  resolveOrganizationArtifactsDir,
   resolveOrganizationPlansDir,
   resolveOrganizationSkillsDir,
 } from "../home-paths.js";
@@ -64,20 +66,24 @@ describe("home paths", () => {
       agentsDir: resolveOrganizationAgentsDir(orgId),
       skillsDir: resolveOrganizationSkillsDir(orgId),
       plansDir: resolveOrganizationPlansDir(orgId),
+      artifactsDir: resolveOrganizationArtifactsDir(orgId),
     });
     expect(agentWorkspace).toEqual({
       root: resolveDefaultAgentWorkspaceDir(orgId, workspaceKey),
       instructionsDir: resolveAgentInstructionsDir(orgId, workspaceKey),
       memoryDir: resolveAgentMemoryDir(orgId, workspaceKey),
+      lifeDir: resolveAgentLifeDir(orgId, workspaceKey),
       skillsDir: resolveAgentSkillsDir(orgId, workspaceKey),
     });
 
     await expect(fs.stat(resolveOrganizationAgentsDir(orgId))).resolves.toBeDefined();
     await expect(fs.stat(resolveOrganizationSkillsDir(orgId))).resolves.toBeDefined();
     await expect(fs.stat(resolveOrganizationPlansDir(orgId))).resolves.toBeDefined();
+    await expect(fs.stat(resolveOrganizationArtifactsDir(orgId))).resolves.toBeDefined();
     await expect(fs.stat(resolveDefaultAgentWorkspaceDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentInstructionsDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentMemoryDir(orgId, workspaceKey))).resolves.toBeDefined();
+    await expect(fs.stat(resolveAgentLifeDir(orgId, workspaceKey))).resolves.toBeDefined();
     await expect(fs.stat(resolveAgentSkillsDir(orgId, workspaceKey))).resolves.toBeDefined();
   });
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
+import type { OrganizationWorkspaceFileDetail, OrganizationWorkspaceFileEntry } from "@rudderhq/shared";
 import { useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import { organizationsApi } from "../api/orgs";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "../hooks/useViewedOrganization";
 import { readDesktopShell, type DesktopIdeTarget, type DesktopWorkspaceLaunchTarget } from "../lib/desktop-shell";
 import { queryKeys } from "../lib/queryKeys";
@@ -30,6 +31,7 @@ import {
   Folder,
   FolderOpen,
   FileCode2,
+  Image as ImageIcon,
   RefreshCw,
   Save,
   Loader2,
@@ -49,6 +51,19 @@ const WORKSPACE_LAUNCH_TARGET_IDS = [
   "warp",
   "finder",
 ] as const satisfies readonly DesktopWorkspaceLaunchTarget["id"][];
+const WORKSPACE_IMAGE_FILE_EXTENSIONS = new Set([".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
+const WORKSPACE_LAUNCH_TARGET_FALLBACKS: Partial<Record<DesktopWorkspaceLaunchTarget["id"], {
+  label: string;
+  className: string;
+}>> = {
+  cursor: { label: "C", className: "bg-[#111827] text-white" },
+  vscode: { label: "VS", className: "bg-[#0078d4] text-white" },
+  windsurf: { label: "W", className: "bg-[#14b8a6] text-white" },
+  zed: { label: "Z", className: "bg-[#171717] text-white" },
+  webstorm: { label: "WS", className: "bg-[#ec4899] text-white" },
+  intellij: { label: "IJ", className: "bg-[#f97316] text-white" },
+  xcode: { label: "XC", className: "bg-[#147efb] text-white" },
+};
 
 function isWorkspaceLaunchTargetId(value: string | null): value is DesktopWorkspaceLaunchTarget["id"] {
   return WORKSPACE_LAUNCH_TARGET_IDS.includes(value as DesktopWorkspaceLaunchTarget["id"]);
@@ -65,26 +80,69 @@ function writeStoredWorkspaceLaunchTargetId(targetId: DesktopWorkspaceLaunchTarg
   window.localStorage.setItem(WORKSPACE_LAUNCH_TARGET_STORAGE_KEY, targetId);
 }
 
-function WorkspaceLaunchTargetIcon({
+export function WorkspaceLaunchTargetIcon({
   target,
   className,
 }: {
   target: DesktopWorkspaceLaunchTarget;
   className?: string;
 }) {
-  if (target.iconDataUrl) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const slotClassName = cn(
+    "inline-flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden rounded-[4px] border border-[color:var(--border-soft)] bg-white shadow-[0_0_0_1px_color-mix(in_oklab,var(--surface-page)_70%,transparent)] dark:bg-white",
+    className,
+  );
+
+  if (target.iconDataUrl && !imageFailed) {
     return (
-      <img
-        src={target.iconDataUrl}
-        alt=""
+      <span
         aria-hidden="true"
-        className={cn("h-4 w-4 shrink-0 rounded-[4px] object-contain", className)}
-      />
+        className={slotClassName}
+        data-workspace-launch-target-icon={target.id}
+      >
+        <img
+          src={target.iconDataUrl}
+          alt=""
+          className="h-full w-full object-contain drop-shadow-[0_0_1px_rgba(0,0,0,0.35)]"
+          onError={() => setImageFailed(true)}
+        />
+      </span>
+    );
+  }
+
+  const appSpecificFallback = WORKSPACE_LAUNCH_TARGET_FALLBACKS[target.id];
+  if (appSpecificFallback) {
+    return (
+      <span
+        aria-hidden="true"
+        className={cn(
+          "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-[color:var(--border-base)] text-[8px] font-semibold leading-none",
+          appSpecificFallback.className,
+          className,
+        )}
+        data-workspace-launch-target-icon={target.id}
+        data-fallback-icon="true"
+        data-app-specific-fallback="true"
+      >
+        {appSpecificFallback.label}
+      </span>
     );
   }
 
   const Icon = target.kind === "terminal" ? Terminal : target.kind === "folder" ? FolderOpen : Code2;
-  return <Icon className={className} />;
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-[color:var(--border-base)] bg-[color:var(--surface-page)] text-foreground",
+        className,
+      )}
+      data-workspace-launch-target-icon={target.id}
+      data-fallback-icon="true"
+    >
+      <Icon className="h-[72%] w-[72%]" />
+    </span>
+  );
 }
 
 function parentDirectories(filePath: string) {
@@ -99,6 +157,18 @@ function parentDirectories(filePath: string) {
 function normalizeRequestedPath(value: string | null) {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function getWorkspaceFileExtension(filePath: string | null) {
+  if (!filePath) return null;
+  const basename = filePath.split("/").at(-1) ?? filePath;
+  const extensionIndex = basename.lastIndexOf(".");
+  return extensionIndex === -1 ? null : basename.slice(extensionIndex).toLowerCase();
+}
+
+function isWorkspaceImageFilePath(filePath: string | null) {
+  const extension = getWorkspaceFileExtension(filePath);
+  return extension !== null && WORKSPACE_IMAGE_FILE_EXTENSIONS.has(extension);
 }
 
 function inferLanguageFromPath(filePath: string | null) {
@@ -120,6 +190,20 @@ function inferLanguageFromPath(filePath: string | null) {
 
 function displayWorkspaceEntryLabel(entry: OrganizationWorkspaceFileEntry) {
   return entry.displayLabel?.trim() || entry.name;
+}
+
+function displayWorkspaceFileFormat(filePath: string | null, detail: OrganizationWorkspaceFileDetail | undefined) {
+  if (detail?.previewKind === "image" && detail.contentType) {
+    const subtype = detail.contentType.split("/").at(-1) ?? "image";
+    if (subtype === "svg+xml") return "svg";
+    if (subtype === "x-icon") return "ico";
+    return subtype;
+  }
+
+  const extension = getWorkspaceFileExtension(filePath);
+  if (extension && WORKSPACE_IMAGE_FILE_EXTENSIONS.has(extension)) return extension.slice(1);
+  if (detail?.contentType === "application/pdf") return "pdf";
+  return inferLanguageFromPath(filePath);
 }
 
 function updateSelectedPath(
@@ -251,6 +335,7 @@ function WorkspaceTreeNode({
   }
 
   const isSelected = selectedFilePath === entry.path;
+  const FileIcon = isWorkspaceImageFilePath(entry.path) ? ImageIcon : FileCode2;
   return (
     <li>
       <button
@@ -261,7 +346,7 @@ function WorkspaceTreeNode({
         style={{ paddingLeft: `${depth * 14 + 23}px` }}
         onClick={() => onSelectFile(entry.path)}
       >
-        <FileCode2 className="h-3.5 w-3.5 shrink-0" />
+        <FileIcon className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{primaryLabel}</span>
       </button>
     </li>
@@ -287,6 +372,10 @@ export function OrganizationWorkspaces() {
   const [openingWorkspaceTargetId, setOpeningWorkspaceTargetId] = useState<
     DesktopWorkspaceLaunchTarget["id"] | null
   >(null);
+  const filesScrollRef = useScrollbarActivityRef("org-workspaces:files");
+  const editorScrollRef = useScrollbarActivityRef(
+    selectedFilePath ? `org-workspaces:editor:${selectedFilePath}` : "org-workspaces:editor",
+  );
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Workspaces" }]);
@@ -301,14 +390,18 @@ export function OrganizationWorkspaces() {
     }
 
     let cancelled = false;
-    desktopShell.listAvailableIdes()
-      .then((targets) => {
-        if (!cancelled) setAvailableIdes(targets);
-      })
-      .catch(() => {
-        if (!cancelled) setAvailableIdes([]);
-      });
-    if (desktopShell.listWorkspaceLaunchTargets) {
+    if (typeof desktopShell.listAvailableIdes === "function") {
+      desktopShell.listAvailableIdes()
+        .then((targets) => {
+          if (!cancelled) setAvailableIdes(targets);
+        })
+        .catch(() => {
+          if (!cancelled) setAvailableIdes([]);
+        });
+    } else {
+      setAvailableIdes([]);
+    }
+    if (typeof desktopShell.listWorkspaceLaunchTargets === "function") {
       desktopShell.listWorkspaceLaunchTargets()
         .then((targets) => {
           if (!cancelled) setWorkspaceLaunchTargets(targets);
@@ -554,7 +647,7 @@ export function OrganizationWorkspaces() {
     && !selectedFileDetail.truncated,
   );
   const hasUnsavedChanges = canEditSelectedFile && draftContent !== (selectedFileDetail?.content ?? "");
-  const selectedLanguage = inferLanguageFromPath(selectedFilePath);
+  const selectedFormatLabel = displayWorkspaceFileFormat(selectedFilePath, selectedFileDetail);
   const primaryIde = availableIdes[0] ?? null;
   const hasLoadedSelectedFile = Boolean(
     selectedFilePath
@@ -571,6 +664,7 @@ export function OrganizationWorkspaces() {
     if (!primaryIde || !selectedFilePath || !workspaceRootPath || !hasLoadedSelectedFile) return;
     const desktopShell = readDesktopShell();
     if (!desktopShell) return;
+    if (typeof desktopShell.openWorkspaceFileInIde !== "function") return;
 
     setOpeningInIde(true);
     try {
@@ -592,14 +686,14 @@ export function OrganizationWorkspaces() {
   }
 
   return (
-    <div className="flex min-h-full flex-col gap-4">
+    <div className="flex min-h-full flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
       {!workspace.rootExists ? (
         <EmptyState
           icon={HardDrive}
           message={workspace.message ?? "The shared workspace root is not available on this machine yet."}
         />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 lg:h-full lg:overflow-hidden lg:flex-row">
           <section
             data-testid="org-workspaces-files-card"
             className="flex min-h-[320px] flex-col rounded-[var(--radius-lg)] border border-border bg-card lg:min-h-0 lg:w-[300px] lg:flex-none"
@@ -610,7 +704,11 @@ export function OrganizationWorkspaces() {
                 {workspace.directoryPath ? workspace.directoryPath : "/"}
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
+            <div
+              ref={filesScrollRef}
+              data-testid="org-workspaces-files-scroll"
+              className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto px-2 py-2"
+            >
               {workspace.entries.length === 0 ? (
                 <div className="px-2 py-3 text-sm text-muted-foreground">
                   {workspace.message ?? "This folder is empty."}
@@ -646,7 +744,7 @@ export function OrganizationWorkspaces() {
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 {selectedFilePath ? (
                   <span className="rounded-full border border-border px-2 py-0.5 font-mono">
-                    {selectedLanguage}
+                    {selectedFormatLabel}
                   </span>
                 ) : null}
                 {canOpenInIde && primaryIde ? (
@@ -720,11 +818,29 @@ export function OrganizationWorkspaces() {
                     value={draftContent}
                     onChange={(event) => setDraftContent(event.target.value)}
                     spellCheck={false}
-                    className="block min-h-[280px] flex-1 overflow-auto border-0 bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none"
+                    ref={editorScrollRef}
+                    className="scrollbar-auto-hide block min-h-[280px] flex-1 overflow-auto border-0 bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none"
+                  />
+                </div>
+              ) : selectedFileDetail?.previewKind === "image" && selectedFileDetail.contentPath ? (
+                <div
+                  ref={editorScrollRef}
+                  data-testid="org-workspaces-image-preview-scroll"
+                  className="scrollbar-auto-hide flex h-full min-h-[420px] items-center justify-center overflow-auto bg-accent/10 p-4"
+                >
+                  <img
+                    data-testid="org-workspaces-image-preview"
+                    src={selectedFileDetail.contentPath}
+                    alt={selectedFilePath ?? "Workspace image preview"}
+                    className="max-h-full max-w-full rounded-md object-contain shadow-sm"
                   />
                 </div>
               ) : selectedFileDetail?.content ? (
-                <div className="h-full min-h-0 overflow-auto">
+                <div
+                  ref={editorScrollRef}
+                  data-testid="org-workspaces-readonly-preview-scroll"
+                  className="scrollbar-auto-hide h-full min-h-0 overflow-auto"
+                >
                   <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
                     {selectedFileDetail.message ?? "This file is shown read-only here."}
                   </div>

@@ -1,0 +1,65 @@
+[
+  {
+    "name": "screenshot_status_badge",
+    "prompt": "This Rudder Messenger card shows Issue RUD-42 but I want a small badge beside the issue link showing the issue status. Use build-advisor if needed, then implement it and show me the UI.",
+    "assertions": [
+      "Uses rudder-ui-polish-maintainer for the implementation pass after any short advice pass",
+      "Finds the existing Messenger issue context data instead of hard-coding a status",
+      "Adds or updates focused tests for the visible badge behavior",
+      "Performs rendered visual verification or clearly reports why it was blocked",
+      "Stages and commits only files touched for this UI task"
+    ]
+  },
+  {
+    "name": "remove_redundant_settings_page",
+    "prompt": "这个 Organizations settings 页面没有存在的必要，去掉它，不要影响 organization settings 的正常入口。",
+    "assertions": [
+      "Treats the request as a narrow UI/navigation removal task",
+      "Removes route, sidebar entry, remembered path, and stale tests where applicable",
+      "Preserves the canonical organization settings route",
+      "Runs relevant tests for settings navigation or explains any skipped checks",
+      "Does not touch unrelated dirty worktree files"
+    ]
+  },
+  {
+    "name": "advice_then_polish",
+    "prompt": "这里 settings 里的三行选项很割裂，文字也太多。先说说怎么改，等我确认再优化。",
+    "assertions": [
+      "Stops after a compact design recommendation because the user asked to discuss first",
+      "Keeps the recommendation consistent with Rudder's dense operational UI",
+      "Does not edit files before user approval",
+      "Explains the implementation shape clearly enough for a follow-up edit"
+    ]
+  },
+  {
+    "name": "advisor_invoked_for_small_ui_fix",
+    "prompt": "左上角这个 button 点击了有问题，直接去掉这个 button 好了 [$advisor-review-loop-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/advisor-review-loop-maintainer/SKILL.md)",
+    "assertions": [
+      "Recognizes this as a narrow UI-polish implementation task, not a full two-reviewer loop",
+      "Uses a short advisor check only to confirm scope and non-goals",
+      "Implements through rudder-ui-polish-maintainer discipline",
+      "Reports explicitly that no full reviewer loop was run because no acceptance gate was requested",
+      "Updates focused tests and visual proof or clearly names the blocked visual verification"
+    ]
+  },
+  {
+    "name": "followup_visual_correction",
+    "prompt": "你这 title 和 description 颜色不对啊，截图里 description 看起来像 disabled label。",
+    "assertions": [
+      "Treats the screenshot as evidence that prior visual proof was incomplete",
+      "Re-inspects the rendered state or computed styles before making another patch",
+      "Fixes the smallest visible styling issue without redesigning the surrounding surface",
+      "Includes a screenshot or concrete rendered-state evidence in the handoff"
+    ]
+  },
+  {
+    "name": "explain_blur_layering",
+    "prompt": "这里 setting 背后的模糊不均匀是为什么？",
+    "assertions": [
+      "Classifies the prompt as explain-only unless the user asks to change the UI",
+      "Uses the screenshot as symptom evidence and traces the likely component/CSS/data layering cause",
+      "Stops with a concise explanation and possible fix direction rather than patching files",
+      "Does not claim rendered verification of a new layout because no implementation was requested"
+    ]
+  }
+]

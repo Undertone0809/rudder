@@ -116,7 +116,15 @@ export interface AgentRuntimeInvocationMeta {
   env?: Record<string, string>;
   prompt?: string;
   promptMetrics?: Record<string, number>;
+  /**
+   * Skills made available to the runtime for this invocation.
+   * This is availability evidence, not proof the model used the skill.
+   */
   loadedSkills?: AgentRuntimeLoadedSkillMeta[];
+  /**
+   * Skills the runtime can explicitly confirm were used.
+   * Prompt mentions should be reported separately by the control plane.
+   */
   usedSkills?: AgentRuntimeLoadedSkillMeta[];
   context?: Record<string, unknown>;
 }
@@ -127,11 +135,23 @@ export interface AgentRuntimeExecutionContext {
   runtime: AgentRuntimeState;
   config: Record<string, unknown>;
   context: Record<string, unknown>;
+  media?: AgentRuntimeMediaAttachment[];
   onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
   onMeta?: (meta: AgentRuntimeInvocationMeta) => Promise<void>;
   onSpawn?: (meta: { pid: number; startedAt: string }) => Promise<void>;
   authToken?: string;
   abortSignal?: AbortSignal;
+}
+
+export interface AgentRuntimeMediaAttachment {
+  source: "chat_attachment";
+  attachmentId: string;
+  assetId: string;
+  name: string;
+  originalFilename: string | null;
+  contentType: string;
+  byteSize: number;
+  localPath: string;
 }
 
 export interface AgentRuntimeModel {
@@ -308,11 +328,19 @@ export type TranscriptEntry =
   | { kind: "user"; ts: string; text: string }
   | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string }
   | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean }
+  | { kind: "todo_list"; ts: string; todoListId?: string; items: TranscriptTodoItem[] }
   | { kind: "init"; ts: string; model: string; sessionId: string }
   | { kind: "result"; ts: string; text: string; inputTokens: number; outputTokens: number; cachedTokens: number; costUsd: number; subtype: string; isError: boolean; errors: string[] }
   | { kind: "stderr"; ts: string; text: string }
   | { kind: "system"; ts: string; text: string }
   | { kind: "stdout"; ts: string; text: string };
+
+export type TranscriptTodoItemStatus = "pending" | "in_progress" | "completed";
+
+export interface TranscriptTodoItem {
+  text: string;
+  status: TranscriptTodoItemStatus;
+}
 
 export type StdoutLineParser = (line: string, ts: string) => TranscriptEntry[];
 
@@ -363,5 +391,6 @@ export interface CreateConfigValues {
   maxTurnsPerRun: number;
   heartbeatEnabled: boolean;
   intervalSec: number;
+  preflightEnabled: boolean;
   maxConcurrentRuns: number;
 }

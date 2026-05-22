@@ -1,6 +1,6 @@
 {
   "name": "@rudderhq/cli",
-  "version": "0.1.0",
+  "version": "0.2.7",
   "description": "Rudder CLI — orchestrate AI agent teams to run a business",
   "type": "module",
   "bin": {
@@ -31,12 +31,19 @@
   },
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "node --input-type=module -e \"import esbuild from 'esbuild'; import config from './esbuild.config.mjs'; await esbuild.build(config);\" && chmod +x dist/index.js",
+    "build": "node --input-type=module -e \"import { chmod } from 'node:fs/promises'; import esbuild from 'esbuild'; import config from './esbuild.config.mjs'; await esbuild.build(config); if (process.platform !== 'win32') await chmod('dist/index.js', 0o755);\"",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@clack/prompts": "^0.10.1",
+    "@rudderhq/agent-runtime-utils": "workspace:*",
+    "@rudderhq/shared": "workspace:*",
+    "commander": "^13.1.0",
+    "dotenv": "^17.3.1",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
     "@langfuse/client": "^5.1.0",
     "@rudderhq/agent-runtime-claude-local": "workspace:*",
     "@rudderhq/agent-runtime-codex-local": "workspace:*",
@@ -45,19 +52,12 @@
     "@rudderhq/agent-runtime-openclaw-gateway": "workspace:*",
     "@rudderhq/agent-runtime-opencode-local": "workspace:*",
     "@rudderhq/agent-runtime-pi-local": "workspace:*",
-    "@rudderhq/agent-runtime-utils": "workspace:*",
     "@rudderhq/db": "workspace:*",
     "@rudderhq/run-intelligence-core": "workspace:*",
     "@rudderhq/server": "workspace:*",
-    "@rudderhq/shared": "workspace:*",
-    "commander": "^13.1.0",
-    "dotenv": "^17.3.1",
+    "@types/node": "^22.19.15",
     "drizzle-orm": "0.38.4",
     "embedded-postgres": "18.1.0-beta.16",
-    "picocolors": "^1.1.1"
-  },
-  "devDependencies": {
-    "@types/node": "^22.19.15",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

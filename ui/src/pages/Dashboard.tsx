@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { dashboardApi } from "../api/dashboard";
+import { costsApi } from "../api/costs";
 import { activityApi } from "../api/activity";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
@@ -12,6 +13,7 @@ import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { useOrganization } from "../context/OrganizationContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { useOperatorDisplayName } from "../hooks/useOperatorDisplayName";
 import { queryKeys } from "../lib/queryKeys";
 import { MetricCard } from "../components/MetricCard";
 import { EmptyState } from "../components/EmptyState";
@@ -24,23 +26,14 @@ import { AgentIdentity } from "../components/AgentAvatar";
 import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { timeAgo } from "../lib/timeAgo";
-import { cn, formatCents } from "../lib/utils";
-import { Bot, CalendarDays, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle } from "lucide-react";
+import { cn, formatCents, formatTokens } from "../lib/utils";
+import { Bot, CircleDot, Coins, DollarSign, LayoutDashboard, PauseCircle } from "lucide-react";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart, SkillsUsageChart } from "../components/ActivityCharts";
+import { DashboardDateRangeControl, type DashboardDatePreset } from "../components/DashboardDateRangeControl";
 import { PageSkeleton } from "../components/PageSkeleton";
-import type { Agent, AgentSkillAnalytics, Issue } from "@rudderhq/shared";
+import { summarizeTokenUsage, type Agent, type AgentSkillAnalytics, type Issue } from "@rudderhq/shared";
 import { PluginSlotOutlet } from "@/plugins/slots";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-
-type DashboardDatePreset = "7d" | "15d" | "30d" | "custom";
-
-const DASHBOARD_DATE_PRESETS: Array<{ key: DashboardDatePreset; label: string }> = [
-  { key: "7d", label: "7D" },
-  { key: "15d", label: "15D" },
-  { key: "30d", label: "1M" },
-  { key: "custom", label: "Custom" },
-];
 
 function getRecentIssues(issues: Issue[]): Issue[] {
   return [...issues]
@@ -104,99 +97,6 @@ function formatRangeLabel(preset: DashboardDatePreset, customFrom: string, custo
   return fromLabel === toLabel ? fromLabel : `${fromLabel} - ${toLabel}`;
 }
 
-function DashboardDateRangeControl({
-  preset,
-  customFrom,
-  customTo,
-  customOpen,
-  onCustomOpenChange,
-  onPresetSelect,
-  onCustomFromChange,
-  onCustomToChange,
-}: {
-  preset: DashboardDatePreset;
-  customFrom: string;
-  customTo: string;
-  customOpen: boolean;
-  onCustomOpenChange: (open: boolean) => void;
-  onPresetSelect: (preset: DashboardDatePreset) => void;
-  onCustomFromChange: (value: string) => void;
-  onCustomToChange: (value: string) => void;
-}) {
-  return (
-    <div className="flex justify-end">
-      <div className="flex items-center gap-1 rounded-full border border-[color:var(--border-soft)] bg-background/90 p-1 shadow-sm">
-        {DASHBOARD_DATE_PRESETS.filter((option) => option.key !== "custom").map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            onClick={() => onPresetSelect(option.key)}
-            className={cn(
-              "h-8 rounded-full px-3 text-xs font-medium transition-colors",
-              preset === option.key
-                ? "bg-background text-foreground shadow-sm ring-1 ring-[color:var(--border-soft)]"
-                : "text-muted-foreground hover:bg-[color:var(--surface-hover)] hover:text-foreground",
-            )}
-            aria-pressed={preset === option.key}
-          >
-            {option.label}
-          </button>
-        ))}
-        <Popover open={customOpen} onOpenChange={onCustomOpenChange}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              onClick={() => onPresetSelect("custom")}
-              className={cn(
-                "flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
-                preset === "custom"
-                  ? "bg-background text-foreground shadow-sm ring-1 ring-[color:var(--border-soft)]"
-                  : "text-muted-foreground hover:bg-[color:var(--surface-hover)] hover:text-foreground",
-              )}
-              aria-pressed={preset === "custom"}
-            >
-              <CalendarDays className="h-3.5 w-3.5" />
-              Custom
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-[24rem] p-3">
-            <div className="space-y-3">
-              <div>
-                <div className="text-sm font-medium text-foreground">Custom range</div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Filter charts, skills analytics, and recent lists by a specific date window.
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="grid min-w-0 gap-1.5 text-xs text-muted-foreground">
-                  <span>From</span>
-                  <input
-                    aria-label="From"
-                    type="date"
-                    value={customFrom}
-                    onChange={(event) => onCustomFromChange(event.target.value)}
-                    className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                  />
-                </label>
-                <label className="grid min-w-0 gap-1.5 text-xs text-muted-foreground">
-                  <span>To</span>
-                  <input
-                    aria-label="To"
-                    type="date"
-                    value={customTo}
-                    onChange={(event) => onCustomToChange(event.target.value)}
-                    className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                  />
-                </label>
-              </div>
-            </div>
-          </PopoverContent>
-        </Popover>
-      </div>
-    </div>
-  );
-}
-
 function latestTranscriptSnippet(entries: TranscriptEntry[]): string | null {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
@@ -226,6 +126,7 @@ export function Dashboard() {
   const { selectedOrganizationId, organizations } = useOrganization();
   const { openOnboarding } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const operatorDisplayName = useOperatorDisplayName();
   const [animatedActivityIds, setAnimatedActivityIds] = useState<Set<string>>(new Set());
   const seenActivityIdsRef = useRef<Set<string>>(new Set());
   const hydratedActivityRef = useRef(false);
@@ -345,8 +246,30 @@ export function Dashboard() {
     () => formatRangeLabel(preset as DashboardDatePreset, customFrom, customTo),
     [customFrom, customTo, preset],
   );
+  const dashboardMotionKey = useMemo(
+    () => `${preset}:${customFrom}:${customTo}:${chartDays.join("|")}`,
+    [chartDays, customFrom, customTo, preset],
+  );
 
   const showFilteredSections = preset !== "custom" || customReady;
+
+  const { data: rangeCostSummary } = useQuery({
+    queryKey: queryKeys.costs(selectedOrganizationId ?? "__none__", from, to),
+    queryFn: () => costsApi.summary(selectedOrganizationId!, from, to),
+    enabled: Boolean(selectedOrganizationId) && showFilteredSections,
+  });
+  const hasTokenUsage = (rangeCostSummary?.tokenEventCount ?? 0) > 0;
+  const tokenMetricValue = hasTokenUsage && rangeCostSummary ? formatTokens(rangeCostSummary.totalTokens) : "—";
+  const rangeTokenSummary = rangeCostSummary ? summarizeTokenUsage(rangeCostSummary) : null;
+  const tokenMetricDescription = hasTokenUsage && rangeCostSummary
+    ? `Input ${formatTokens(rangeTokenSummary?.promptTokens ?? rangeCostSummary.inputTokens)} · Cached ${formatTokens(
+        rangeCostSummary.cachedInputTokens,
+      )} · Output ${formatTokens(
+        rangeCostSummary.outputTokens,
+      )}`
+    : showFilteredSections
+      ? "Not available for this time window"
+      : "Select a start and end date";
 
   const { data: skillAnalytics } = useQuery({
     queryKey: [
@@ -622,15 +545,13 @@ export function Dashboard() {
               }
             />
             <MetricCard
-              icon={ShieldCheck}
-              value={data.pendingApprovals + data.budgets.pendingApprovals}
-              label="Pending Approvals"
-              to="/messenger/approvals"
+              icon={Coins}
+              value={tokenMetricValue}
+              label="Tokens Used"
+              to="/costs"
               description={
                 <span>
-                  {data.budgets.pendingApprovals > 0
-                    ? `${data.budgets.pendingApprovals} budget overrides awaiting board review`
-                    : "Awaiting board review"}
+                  {tokenMetricDescription}
                 </span>
               }
             />
@@ -639,28 +560,28 @@ export function Dashboard() {
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <ChartCard title="Run Activity" subtitle={`${rangeLabel} · relative daily run volume · hover for details`}>
               {showFilteredSections ? (
-                <RunActivityChart runs={filteredRuns} days={chartDays} />
+                <RunActivityChart key={`runs:${dashboardMotionKey}`} runs={filteredRuns} days={chartDays} />
               ) : (
                 <p className="text-xs text-muted-foreground">Select a start and end date to filter dashboard activity.</p>
               )}
             </ChartCard>
             <ChartCard title="Issues by Priority" subtitle={`${rangeLabel} · relative daily issue volume · hover for details`}>
               {showFilteredSections ? (
-                <PriorityChart issues={filteredIssuesForCharts} days={chartDays} />
+                <PriorityChart key={`priority:${dashboardMotionKey}`} issues={filteredIssuesForCharts} days={chartDays} />
               ) : (
                 <p className="text-xs text-muted-foreground">Select a start and end date to filter dashboard activity.</p>
               )}
             </ChartCard>
             <ChartCard title="Issues by Status" subtitle={`${rangeLabel} · relative daily issue volume · hover for details`}>
               {showFilteredSections ? (
-                <IssueStatusChart issues={filteredIssuesForCharts} days={chartDays} />
+                <IssueStatusChart key={`status:${dashboardMotionKey}`} issues={filteredIssuesForCharts} days={chartDays} />
               ) : (
                 <p className="text-xs text-muted-foreground">Select a start and end date to filter dashboard activity.</p>
               )}
             </ChartCard>
             <ChartCard title="Success Rate" subtitle={`${rangeLabel} · daily success rate · hover for details`}>
               {showFilteredSections ? (
-                <SuccessRateChart runs={filteredRuns} days={chartDays} />
+                <SuccessRateChart key={`success:${dashboardMotionKey}`} runs={filteredRuns} days={chartDays} />
               ) : (
                 <p className="text-xs text-muted-foreground">Select a start and end date to filter dashboard activity.</p>
               )}
@@ -673,15 +594,15 @@ export function Dashboard() {
                 <div>
                   <h3 className="text-sm font-medium">Skills</h3>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    Explicitly used skills per run for {rangeLabel} across all agents. Hover a day to inspect the breakdown.
+                    Skill usage per run for {rangeLabel} across all agents. Hover a day to inspect the breakdown.
                   </p>
                 </div>
                 <div className="text-right text-[11px] text-muted-foreground tabular-nums">
                   <div>{visibleSkillAnalytics.totalCount} skill uses</div>
-                  <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill use</div>
+                  <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill usage</div>
                 </div>
               </div>
-              <SkillsUsageChart analytics={visibleSkillAnalytics} />
+              <SkillsUsageChart key={`skills:${dashboardMotionKey}`} analytics={visibleSkillAnalytics} />
             </div>
           ) : null}
 
@@ -713,6 +634,7 @@ export function Dashboard() {
                         entityNameMap={entityNameMap}
                         entityTitleMap={entityTitleMap}
                         currentBoardUserId={currentBoardAccess?.user?.id ?? currentBoardAccess?.userId}
+                        operatorDisplayName={operatorDisplayName}
                         className={animatedActivityIds.has(event.id) ? "activity-row-enter" : undefined}
                       />
                     ))}

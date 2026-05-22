@@ -25,6 +25,17 @@ function formatJson(value: unknown) {
   }
 }
 
+function formatTodoList(entry: Extract<TranscriptEntry, { kind: "todo_list" }>) {
+  return entry.items
+    .map((item) => `${item.status === "completed" ? "[x]" : item.status === "in_progress" ? "[~]" : "[ ]"} ${item.text}`)
+    .join("\n");
+}
+
+function summarizeTodoList(entry: Extract<TranscriptEntry, { kind: "todo_list" }>) {
+  const completed = entry.items.filter((item) => item.status === "completed").length;
+  return `Todo list updated: ${completed}/${entry.items.length} complete`;
+}
+
 export function isModelTranscriptEntry(entry: TranscriptEntry) {
   return entry.kind === "assistant" || entry.kind === "thinking" || entry.kind === "result";
 }
@@ -36,6 +47,7 @@ export function isPayloadTranscriptEntry(entry: TranscriptEntry) {
 export function detailTextForTranscriptEntry(entry: TranscriptEntry) {
   if (entry.kind === "tool_call") return formatJson(entry.input);
   if (entry.kind === "tool_result") return entry.content || "";
+  if (entry.kind === "todo_list") return formatTodoList(entry);
   if (entry.kind === "result") {
     return [
       entry.text || "",
@@ -54,6 +66,9 @@ export function previewTextForTranscriptEntry(entry: TranscriptEntry, maxLength 
     const detail = detailTextForTranscriptEntry(entry);
     return truncate(firstMeaningfulLine(detail) || entry.toolName || "(empty tool result)", maxLength);
   }
+  if (entry.kind === "todo_list") {
+    return truncate(summarizeTodoList(entry), maxLength);
+  }
   if (entry.kind === "result") {
     const summary = entry.text ? firstMeaningfulLine(entry.text) : "";
     if (summary) return truncate(summary, maxLength);
@@ -71,6 +86,7 @@ export function previewTextForTranscriptEntry(entry: TranscriptEntry, maxLength 
 function isTurnScopedEntry(entry: TranscriptEntry) {
   return entry.kind === "assistant"
     || entry.kind === "thinking"
+    || entry.kind === "todo_list"
     || entry.kind === "tool_call"
     || entry.kind === "tool_result"
     || entry.kind === "result";

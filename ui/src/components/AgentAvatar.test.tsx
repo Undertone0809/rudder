@@ -39,22 +39,29 @@ describe("AgentIdentity", () => {
     const container = render(
       <AgentIdentity
         name="Alice Smith"
-        icon="asset:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        icon="asset:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa?bg=peach"
         size="sm"
       />,
     );
 
     const img = container.querySelector("img");
     expect(img?.getAttribute("src")).toBe("/api/assets/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/content");
+    expect(img?.getAttribute("style")).toContain("background:");
     expect(container.textContent).toContain("Alice Smith");
   });
 
-  it("renders custom emoji icons instead of derived initials", () => {
-    const container = render(<AgentIdentity name="Alice Smith" icon="🧪" size="sm" />);
+  it("renders DiceBear Notionists avatar references as images", () => {
+    const container = render(
+      <AgentIdentity
+        name="Alice Smith"
+        icon="dicebear:notionists:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb?bg=violet"
+        size="sm"
+      />,
+    );
 
-    const fallback = container.querySelector('[data-slot="avatar-fallback"]');
-    expect(fallback?.textContent).toContain("🧪");
-    expect(fallback?.textContent).not.toContain("AS");
+    const img = container.querySelector("img");
+    expect(img?.getAttribute("src")).toMatch(/^data:image\/svg\+xml/);
+    expect(container.textContent).toContain("Alice Smith");
   });
 
   it("renders a role avatar instead of fallback initials when no custom icon is set", () => {

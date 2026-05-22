@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="720" viewBox="0 0 1440 720" role="img" aria-labelledby="title desc">
+  <title id="title">Rudder 第一个组织工作循环</title>
+  <desc id="desc">从组织目标到 issue、分配执行者、agent heartbeat、评审证据、Messenger 和 Calendar 的端到端流程。</desc>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L12,7 L2,12" fill="none" stroke="#0f766e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect width="1440" height="720" rx="34" fill="#f8fafc"/>
+  <rect x="54" y="56" width="1332" height="608" rx="30" fill="#ffffff" stroke="#dbe3ea" stroke-width="2"/>
+
+  <text x="92" y="124" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="36" font-weight="750">第一条有用的 Rudder 工作循环</text>
+  <text x="92" y="168" fill="#64748b" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="22">先让人类把目标说清楚，再让 agent 接手一个可以检查、可以评审、可以回看的 issue。</text>
+
+  <g filter="url(#shadow)">
+    <rect x="92" y="230" width="250" height="142" rx="22" fill="#ecfdf5" stroke="#99f6e4" stroke-width="2"/>
+    <text x="122" y="276" fill="#0f766e" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">1. 组织目标</text>
+    <text x="122" y="316" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">为什么要做</text>
+    <text x="122" y="348" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">让任务能追溯到方向</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="430" y="230" width="250" height="142" rx="22" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+    <text x="460" y="276" fill="#2563eb" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">2. 创建 issue</text>
+    <text x="460" y="316" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">下一步是什么</text>
+    <text x="460" y="348" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">写清结果、上下文、验收</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="768" y="230" width="250" height="142" rx="22" fill="#fff7ed" stroke="#fed7aa" stroke-width="2"/>
+    <text x="798" y="276" fill="#c2410c" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">3. 分配执行者</text>
+    <text x="798" y="316" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">谁来推进</text>
+    <text x="798" y="348" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">todo + assignee 才适合启动</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1106" y="230" width="250" height="142" rx="22" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="2"/>
+    <text x="1136" y="276" fill="#7c3aed" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">4. Heartbeat 运行</text>
+    <text x="1136" y="316" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">agent 开始工作</text>
+    <text x="1136" y="348" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">留下 transcript 和产物</text>
+  </g>
+
+  <path d="M356 301 H416" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M694 301 H754" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M1032 301 H1092" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+  <path d="M1231 388 V448 C1231 478 1207 502 1177 502 H1032" stroke="#0f766e" stroke-width="4" stroke-linecap="round" fill="none" marker-end="url(#arrow)"/>
+
+  <g filter="url(#shadow)">
+    <rect x="768" y="454" width="250" height="142" rx="22" fill="#fdf2f8" stroke="#fbcfe8" stroke-width="2"/>
+    <text x="798" y="500" fill="#be185d" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">5. 检查证据</text>
+    <text x="798" y="540" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">结果够好吗</text>
+    <text x="798" y="572" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">需要判断时加 reviewer</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="430" y="454" width="250" height="142" rx="22" fill="#fefce8" stroke="#fde68a" stroke-width="2"/>
+    <text x="460" y="500" fill="#a16207" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">6. 记录注意力</text>
+    <text x="460" y="540" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">哪里需要人</text>
+    <text x="460" y="572" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">Messenger 暴露阻塞和回复</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="92" y="454" width="250" height="142" rx="22" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="122" y="500" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">7. 回看历史</text>
+    <text x="122" y="540" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">时间花在哪</text>
+    <text x="122" y="572" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">Calendar 展示运行和检查点</text>
+  </g>
+
+  <path d="M754 525 H694" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M416 525 H356" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+  <path d="M217 438 V394 C217 382 225 376 237 376" stroke="#0f766e" stroke-width="4" stroke-linecap="round" fill="none" marker-end="url(#arrow)"/>
+
+  <text x="92" y="638" fill="#64748b" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">判断标准：每个 issue 都有清楚的下一步、唯一执行者、可检查证据，以及最终能被接受或退回的结论。</text>
+</svg>

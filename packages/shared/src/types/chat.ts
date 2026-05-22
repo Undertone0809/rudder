@@ -7,6 +7,8 @@ export interface ChatLinkedEntity {
   subtitle: string | null;
   identifier: string | null;
   status: string | null;
+  description?: string | null;
+  priority?: string | null;
   href: string;
 }
 
@@ -50,7 +52,7 @@ export interface ChatPrimaryIssueSummary {
 }
 
 export interface ChatRuntimeDescriptor {
-  sourceType: "agent" | "copilot" | "unconfigured";
+  sourceType: "agent" | "unconfigured";
   sourceLabel: string;
   runtimeAgentId: string | null;
   agentRuntimeType: string | null;
@@ -66,6 +68,7 @@ export interface ChatConversation {
   title: string;
   summary: string | null;
   latestReplyPreview: string | null;
+  searchPreview?: string | null;
   preferredAgentId: string | null;
   routedAgentId: string | null;
   primaryIssueId: string | null;
@@ -93,18 +96,18 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   kind:
     | "message"
+    | "ask_user"
     | "issue_proposal"
     | "operation_proposal"
-    | "routing_suggestion"
     | "system_event";
-  status: "completed" | "stopped" | "failed";
+  status: "streaming" | "completed" | "stopped" | "failed" | "interrupted";
   body: string;
   structuredPayload: Record<string, unknown> | null;
   approvalId: string | null;
   approval: Approval | null;
   attachments: ChatAttachment[];
   transcript?: ChatStreamTranscriptEntry[];
-  /** Agent whose runtime produced this assistant message, including the hidden Copilot agent when used. */
+  /** Agent whose runtime produced this assistant message. */
   replyingAgentId: string | null;
   /** Groups user+assistant rows for one logical turn; new variant on edit/regenerate. */
   chatTurnId: string | null;
@@ -113,6 +116,42 @@ export interface ChatMessage {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export type ChatRichReferenceDisplay = "card" | "inline";
+
+export interface ChatAskUserOption {
+  id: string;
+  label: string;
+  description?: string;
+  recommended?: boolean;
+}
+
+export interface ChatAskUserQuestion {
+  id: string;
+  header?: string;
+  question: string;
+  options: ChatAskUserOption[];
+  allowFreeform?: boolean;
+}
+
+export interface ChatAskUserRequest {
+  questions: ChatAskUserQuestion[];
+}
+
+export type ChatRichReference =
+  | {
+    type: "issue";
+    issueId?: string;
+    identifier?: string;
+    display?: ChatRichReferenceDisplay;
+  }
+  | {
+    type: "issue_comment";
+    issueId?: string;
+    identifier?: string;
+    commentId: string;
+    display?: ChatRichReferenceDisplay;
+  };
 
 export type ChatOperationProposalDecisionAction = "approve" | "reject" | "requestRevision";
 
@@ -135,11 +174,19 @@ export type ChatStreamTranscriptEntry =
   | { kind: "user"; ts: string; text: string }
   | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string }
   | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean }
+  | { kind: "todo_list"; ts: string; todoListId?: string; items: ChatStreamTranscriptTodoItem[] }
   | { kind: "init"; ts: string; model: string; sessionId: string }
   | { kind: "result"; ts: string; text: string; inputTokens: number; outputTokens: number; cachedTokens: number; costUsd: number; subtype: string; isError: boolean; errors: string[] }
   | { kind: "stderr"; ts: string; text: string }
   | { kind: "system"; ts: string; text: string }
   | { kind: "stdout"; ts: string; text: string };
+
+export type ChatStreamTranscriptTodoItemStatus = "pending" | "in_progress" | "completed";
+
+export interface ChatStreamTranscriptTodoItem {
+  text: string;
+  status: ChatStreamTranscriptTodoItemStatus;
+}
 
 export interface ChatStreamAckEvent {
   type: "ack";

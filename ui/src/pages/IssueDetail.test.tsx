@@ -2,11 +2,13 @@
 
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
-import { IssueDetail } from "./IssueDetail";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { IssueDetail, buildIssueChatHref } from "./IssueDetail";
 
 let capturedMentions: Array<Record<string, unknown>> = [];
+let capturedCommentThreadProps: Record<string, unknown> | null = null;
 let mockSourceBreadcrumb: { label: string; href: string } | null = null;
+let mockIssuePluginSlots: Array<Record<string, unknown>> = [];
 
 const parentIssue = {
   id: "issue-parent",
@@ -22,6 +24,8 @@ const parentIssue = {
   priority: "medium",
   assigneeAgentId: "agent-1",
   assigneeUserId: null,
+  reviewerAgentId: null,
+  reviewerUserId: null,
   checkoutRunId: null,
   executionRunId: null,
   executionAgentNameKey: null,
@@ -209,8 +213,12 @@ vi.mock("../context/BreadcrumbContext", () => ({
 }));
 
 vi.mock("../lib/assignees", () => ({
-  assigneeValueFromSelection: () => "unassigned",
-  suggestedCommentAssigneeValue: () => "unassigned",
+  formatAssigneeUserLabel: (userId: string | null | undefined, currentUserId: string | null | undefined) => {
+    if (!userId) return null;
+    if (currentUserId && userId === currentUserId) return "Me";
+    if (userId === "local-board") return "Board";
+    return userId.slice(0, 5);
+  },
 }));
 
 vi.mock("../lib/issueDetailBreadcrumb", () => ({
@@ -294,9 +302,24 @@ vi.mock("../components/InlineEditor", () => ({
 }));
 
 vi.mock("../components/CommentThread", () => ({
-  CommentThread: ({ mentions }: { mentions?: Array<Record<string, unknown>> }) => {
+  CommentThread: (props: {
+    mentions?: Array<Record<string, unknown>>;
+    activityItems?: Array<{ id: string; createdAt: Date | string; node: ReactNode }>;
+  }) => {
+    const { mentions, activityItems = [] } = props;
     capturedMentions = mentions ?? [];
-    return <div>Comment thread</div>;
+    capturedCommentThreadProps = props;
+    const sortedActivityItems = [...activityItems].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+    return (
+      <div>
+        Comment thread
+        {sortedActivityItems.map((item) => (
+          <div key={item.id}>{item.node}</div>
+        ))}
+      </div>
+    );
   },
 }));
 
@@ -327,10 +350,6 @@ vi.mock("../components/PriorityIcon", () => ({
   PriorityIcon: () => <span>Priority</span>,
 }));
 
-vi.mock("../components/StatusBadge", () => ({
-  StatusBadge: ({ status }: { status: string }) => <span>{status}</span>,
-}));
-
 vi.mock("../components/Identity", () => ({
   Identity: ({ name }: { name: string }) => <span>{name}</span>,
 }));
@@ -338,7 +357,7 @@ vi.mock("../components/Identity", () => ({
 vi.mock("@/plugins/slots", () => ({
   PluginSlotMount: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   PluginSlotOutlet: () => null,
-  usePluginSlots: () => ({ slots: [] }),
+  usePluginSlots: () => ({ slots: mockIssuePluginSlots }),
 }));
 
 vi.mock("@/plugins/launchers", () => ({
@@ -409,9 +428,12 @@ vi.mock("lucide-react", () => {
     Database: Icon,
     Eye: Icon,
     EyeOff: Icon,
+    ExternalLink: Icon,
+    FileCode2: Icon,
     FileCode: Icon,
     Fingerprint: Icon,
     Flame: Icon,
+    Folder: Icon,
     Gem: Icon,
     GitBranch: Icon,
     Globe: Icon,
@@ -420,6 +442,7 @@ vi.mock("lucide-react", () => {
     Hexagon: Icon,
     Lightbulb: Icon,
     ListTree: Icon,
+    Loader2: Icon,
     Lock: Icon,
     Mail: Icon,
     MessageSquare: Icon,
@@ -434,7 +457,10 @@ vi.mock("lucide-react", () => {
     Repeat: Icon,
     Rocket: Icon,
     Search: Icon,
+    Settings2: Icon,
     Shield: Icon,
+    ShieldAlert: Icon,
+    ShieldCheck: Icon,
     SlidersHorizontal: Icon,
     Sparkles: Icon,
     Star: Icon,
@@ -443,8 +469,11 @@ vi.mock("lucide-react", () => {
     Telescope: Icon,
     Terminal: Icon,
     Trash2: Icon,
+    Upload: Icon,
+    UserPlus: Icon,
     Wand2: Icon,
     Wrench: Icon,
+    XIcon: Icon,
     Zap: Icon,
   };
   return new Proxy(icons, {
@@ -456,7 +485,43 @@ vi.mock("lucide-react", () => {
   });
 });
 
+describe("buildIssueChatHref", () => {
+  it("opens the Messenger new-chat composer with pending issue context", () => {
+    const href = buildIssueChatHref({
+      id: "issue-123",
+      identifier: "ORG2-123",
+      title: "Clarify issue chat behavior",
+      projectId: "project-1",
+      assigneeAgentId: "agent-1",
+    });
+    const url = new URL(href, "http://rudder.test");
+
+    expect(url.pathname).toBe("/messenger/chat");
+    expect(url.searchParams.get("issueId")).toBe("issue-123");
+    expect(url.searchParams.get("projectId")).toBe("project-1");
+    expect(url.searchParams.get("agentId")).toBe("agent-1");
+    expect(url.searchParams.has("prefill")).toBe(false);
+  });
+});
+
 describe("IssueDetail", () => {
+  beforeEach(() => {
+    capturedMentions = [];
+    capturedCommentThreadProps = null;
+    mockSourceBreadcrumb = null;
+    mockIssuePluginSlots = [];
+    queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), []);
+    queryData.set(JSON.stringify(["issues", "approvals", "ORG2-1"]), []);
+    queryData.delete(JSON.stringify([
+      "plugins",
+      "rudder.linear",
+      "issue-link",
+      "org-2",
+      "issue-parent",
+      "plugin-linear",
+    ]));
+  });
+
   it("renders a clickable source breadcrumb in the issue header", () => {
     mockSourceBreadcrumb = { label: "Inbox", href: "/inbox?scope=recent" };
 
@@ -476,6 +541,19 @@ describe("IssueDetail", () => {
     expect(html).toContain("Existing child issue");
     expect(html).toContain("Change status for Existing child issue");
     expect(html).toContain("Documents");
+    expect(html).toContain("Activity");
+    expect(html).toContain("Comment thread");
+    expect(html).not.toContain(">Activity</button>");
+    expect(html).not.toContain("Comments &amp; Runs");
+  });
+
+  it("keeps assignee changes out of the issue comment composer", () => {
+    renderToStaticMarkup(<IssueDetail />);
+
+    expect(capturedCommentThreadProps).not.toHaveProperty("enableReassign");
+    expect(capturedCommentThreadProps).not.toHaveProperty("reassignOptions");
+    expect(capturedCommentThreadProps).not.toHaveProperty("currentAssigneeValue");
+    expect(capturedCommentThreadProps).not.toHaveProperty("suggestedAssigneeValue");
   });
 
   it("includes the issue assignee's enabled skills in mention suggestions", () => {
@@ -489,5 +567,304 @@ describe("IssueDetail", () => {
         skillMarkdownTarget: "/workspace/skills/build-advisor/SKILL.md",
       }),
     ]));
+  });
+
+  it("renders detailed assignment activity and hides low-signal update rows", () => {
+    queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), [
+      {
+        id: "activity-assigned",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: { assigneeAgentId: "agent-1", _previous: { assigneeAgentId: null } },
+        createdAt: new Date("2026-04-20T01:00:00.000Z"),
+      },
+      {
+        id: "activity-reviewer",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {
+          reviewerAgentId: null,
+          reviewerUserId: "user-1",
+          _previous: { reviewerAgentId: "agent-1", reviewerUserId: null },
+        },
+        createdAt: new Date("2026-04-20T01:05:00.000Z"),
+      },
+      {
+        id: "activity-description-only",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: { description: "New description", _previous: { description: "Old description" } },
+        createdAt: new Date("2026-04-20T01:10:00.000Z"),
+      },
+      {
+        id: "activity-document-updated",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.document_updated",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: { key: "note", title: "Hidden document update unique" },
+        createdAt: new Date("2026-04-20T01:15:00.000Z"),
+      },
+      {
+        id: "activity-review-handoff",
+        orgId: "org-2",
+        actorType: "agent",
+        actorId: "agent-1",
+        action: "issue.review_decision_recorded",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: "agent-1",
+        runId: null,
+        details: { decision: "blocked", outcome: "human_handoff", operatorActionRequired: true },
+        createdAt: new Date("2026-04-20T01:20:00.000Z"),
+      },
+      {
+        id: "activity-code-committed",
+        orgId: "org-2",
+        actorType: "agent",
+        actorId: "agent-1",
+        action: "issue.code_committed",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: "agent-1",
+        runId: "run-1",
+        details: { shortSha: "abc1234", subject: "fix: report code commit" },
+        createdAt: new Date("2026-04-20T01:22:00.000Z"),
+      },
+      {
+        id: "activity-human-intervention",
+        orgId: "org-2",
+        actorType: "agent",
+        actorId: "agent-1",
+        action: "issue.human_intervention_required",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: "agent-1",
+        runId: null,
+        details: { decision: "blocked", nextAction: "Owner must grant GitHub Actions publish access." },
+        createdAt: new Date("2026-04-20T01:25:00.000Z"),
+      },
+    ]);
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("assigned the issue to Builder");
+    expect(html).toContain("changed the reviewer from Builder to Me");
+    expect(html).toContain("confirmed blocker; operator handoff needed");
+    expect(html).toContain("committed abc1234: fix: report code commit");
+    expect(html).toContain("requested human intervention");
+    expect(html).not.toContain("updated the description");
+    expect(html).not.toContain("Hidden document update unique");
+  });
+
+  it("renders approval link events as ordinary activity rows", () => {
+    queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), [
+      {
+        id: "activity-approval-linked",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.approval_linked",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {
+          approvalId: "approval-chat-123",
+          linkCreatedAt: "2026-04-20T01:31:00.000Z",
+        },
+        createdAt: new Date("2026-04-20T01:31:00.000Z"),
+      },
+    ]);
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain('href="/messenger/approvals/approval-chat-123"');
+    expect(html).toContain("linked");
+    expect(html).toContain("an approval");
+    expect(html).not.toContain("Linked Approvals");
+    expect(html).not.toContain("Issue proposed from chat");
+  });
+
+  it("orders existing approvals by the later issue link time", () => {
+    queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), [
+      {
+        id: "activity-created",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.created",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {},
+        createdAt: new Date("2026-04-20T00:00:00.000Z"),
+      },
+      {
+        id: "activity-approval-linked",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.approval_linked",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {
+          approvalId: "approval-created-first",
+          linkCreatedAt: "2026-04-20T00:01:00.000Z",
+        },
+        createdAt: new Date("2026-04-20T00:01:00.000Z"),
+      },
+    ]);
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html.indexOf("created the issue")).toBeLessThan(
+      html.indexOf('href="/messenger/approvals/approval-created-first"'),
+    );
+    expect(html).toContain('href="/messenger/approvals/approval-created-first"');
+  });
+
+  it("keeps repeated approval link activity events visible", () => {
+    queryData.set(JSON.stringify(["issues", "activity", "ORG2-1"]), [
+      {
+        id: "activity-approval-linked",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.approval_linked",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {
+          approvalId: "approval-repeat-link",
+          linkCreatedAt: "2026-04-20T00:11:00.000Z",
+        },
+        createdAt: new Date("2026-04-20T00:11:00.000Z"),
+      },
+      {
+        id: "activity-approval-linked-later",
+        orgId: "org-2",
+        actorType: "user",
+        actorId: "user-1",
+        action: "issue.approval_linked",
+        entityType: "issue",
+        entityId: "issue-parent",
+        agentId: null,
+        runId: null,
+        details: {
+          approvalId: "approval-repeat-link",
+          linkCreatedAt: "2026-04-20T00:20:00.000Z",
+        },
+        createdAt: new Date("2026-04-20T00:20:00.000Z"),
+      },
+    ]);
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html.match(/href="\/messenger\/approvals\/approval-repeat-link"/g)).toHaveLength(2);
+  });
+
+  it("moves the linked Linear issue summary into activity instead of a separate tab", () => {
+    mockIssuePluginSlots = [
+      {
+        type: "detailTab",
+        id: "linear-issue-tab",
+        displayName: "Linear",
+        exportName: "LinearIssueTab",
+        entityTypes: ["issue"],
+        pluginId: "plugin-linear",
+        pluginKey: "rudder.linear",
+        pluginDisplayName: "Linear",
+        pluginVersion: "0.1.0",
+      },
+      {
+        type: "detailTab",
+        id: "delivery-tab",
+        displayName: "Delivery",
+        exportName: "DeliveryTab",
+        entityTypes: ["issue"],
+        pluginId: "plugin-delivery",
+        pluginKey: "rudder.delivery",
+        pluginDisplayName: "Delivery",
+        pluginVersion: "0.1.0",
+      },
+    ];
+    queryData.set(JSON.stringify([
+      "plugins",
+      "rudder.linear",
+      "issue-link",
+      "org-2",
+      "issue-parent",
+      "plugin-linear",
+    ]), {
+      linked: true,
+      issueTitle: "Parent issue",
+      link: {
+        externalId: "lin-1",
+        linearIdentifier: "ENG-42",
+        linearTitle: "Imported Linear issue",
+        linearUrl: "https://linear.app/acme/issue/ENG-42/imported-linear-issue",
+        orgId: "org-2",
+        rudderIssueId: "issue-parent",
+        rudderIssueIdentifier: "ORG2-1",
+        teamId: "team-1",
+        teamName: "Engineering",
+        projectId: "linear-project-1",
+        projectName: "Roadmap",
+        stateId: "state-progress",
+        stateName: "In Progress",
+        importedAt: new Date("2026-04-20T00:00:00.000Z"),
+        updatedAt: new Date("2026-04-20T01:00:00.000Z"),
+      },
+      latestIssue: {
+        id: "lin-1",
+        identifier: "ENG-42",
+        title: "Imported Linear issue",
+        description: "Fresh Linear context.",
+        url: "https://linear.app/acme/issue/ENG-42/imported-linear-issue",
+        updatedAt: new Date("2026-04-20T02:00:00.000Z"),
+        createdAt: new Date("2026-04-19T00:00:00.000Z"),
+        team: { id: "team-1", name: "Engineering" },
+        state: { id: "state-progress", name: "In Progress" },
+        project: { id: "linear-project-1", name: "Roadmap" },
+        assignee: { id: "linear-user-1", name: "Amy Zhang" },
+      },
+      staleReason: null,
+    });
+
+    const html = renderToStaticMarkup(<IssueDetail />);
+
+    expect(html).toContain("Linked Linear issue");
+    expect(html).toContain("ENG-42");
+    expect(html).toContain("Fresh Linear context.");
+    expect(html).toContain("Open in Linear");
+    expect(html).toContain(">Delivery</h3>");
+    expect(html).not.toContain(">Linear</h3>");
   });
 });

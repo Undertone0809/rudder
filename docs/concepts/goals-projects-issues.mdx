@@ -1,0 +1,77 @@
+---
+title: "Goals, Projects, And Issues"
+description: "How Rudder turns strategy into durable agent work."
+---
+
+Rudder work should always answer one question: why does this task exist?
+
+Goals, projects, and issues keep that answer visible while agents execute.
+
+![Issue board with project slices](../images/issue-flow.png)
+
+## When to use each object
+
+| Object | Use it when... | Avoid using it for... |
+| --- | --- | --- |
+| Goal | You need to explain why work matters | A one-off implementation checklist |
+| Project | Multiple issues share delivery context, resources, or a workspace | A single tiny task |
+| Issue | Someone needs to execute, review, or track a unit of work | Broad strategy with no next action |
+| Sub-issue | One issue needs multiple owners or steps | Hiding unrelated work under one parent |
+
+## Goals
+
+Goals express direction. They can belong to an organization, team, agent, or task, and they give work a reason beyond the next prompt.
+
+Use goals for outcomes, not for every small task.
+
+## Projects
+
+Projects group related execution. A project can include:
+
+- linked goals
+- lead agents
+- target dates
+- attached resources
+- one or more project workspaces
+- execution workspace policy
+- budget context
+
+Use projects when work has sustained scope, shared context, or a codebase.
+
+## Issues
+
+Issues are the durable work unit. They support:
+
+- statuses such as backlog, todo, in progress, in review, done, blocked, and cancelled
+- priority, assignee, and reviewer
+- parent issues and sub-issues
+- project and goal links
+- comments, activity, documents, and attachments
+- approvals
+- execution workspace settings
+- checkout and current execution locks
+
+![Issue detail with ownership and context](../images/issue-detail.png)
+
+Use `todo` when the requirement is decided, the next action is clear, and an assignee can start without reopening product judgment. Use `backlog` when the problem is worth keeping but the scope, acceptance criteria, priority, or owner still needs discussion.
+
+Reviewer and follow-up loops keep close-out inspectable. A reviewer owns the quality judgment after implementation; follow-up names the remaining owner, decision, or evidence when work cannot close cleanly in the current run.
+
+## Why issue-centric execution matters
+
+Chat can clarify the request, but issues preserve ownership, status, history, output, and review context. When an agent works from an issue, another human or agent can inspect what happened later without replaying a conversation.
+
+Use this model whenever an agent will spend real time or budget. If the work
+needs status, owner, evidence, or review, it should become an issue before it
+becomes a long-running agent run.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Issues" icon="circle-check" href="/concepts/issues">
+    Learn the status model, checkout semantics, and close-out signals.
+  </Card>
+  <Card title="Agents" icon="bot" href="/concepts/agents">
+    See how assignees execute issue work through heartbeats.
+  </Card>
+</CardGroup>

@@ -30,7 +30,7 @@ Add new company-scoped chat entities:
   - stores status, title, summary, preferred agent, routed agent suggestion, primary issue, creation mode, operation mode, creator, timestamps
 - `chat_messages`
   - stores role (`user`, `assistant`, `system`)
-  - stores message kind (`message`, `issue_proposal`, `operation_proposal`, `routing_suggestion`, `system_event`)
+  - stores message kind (`message`, `issue_proposal`, `operation_proposal`, `system_event`)
   - stores freeform body plus structured payload
 - `chat_context_links`
   - stores references from a conversation to existing `issue`, `project`, or `agent` records
@@ -95,7 +95,6 @@ Requirements:
   - plain reply
   - issue proposal
   - lightweight operation proposal
-  - routing suggestion
 - The assistant must default to clarification-first behavior.
 - The assistant may recommend an assignee or agent route, but MVP should not automatically hand off the conversation to an agent execution loop.
 

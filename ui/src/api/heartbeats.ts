@@ -20,6 +20,8 @@ export interface LiveRunForIssue {
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
+  stdoutExcerpt?: string | null;
+  resultJson?: Record<string, unknown> | null;
   agentId: string;
   agentName: string;
   agentRuntimeType: string;
@@ -42,12 +44,14 @@ export const heartbeatsApi = {
   log: (runId: string, offset = 0, limitBytes = 256000) =>
     api.get<{ runId: string; store: string; logRef: string; content: string; endOffset?: number; eof?: boolean; nextOffset?: number }>(
       `/heartbeat-runs/${runId}/log?offset=${encodeURIComponent(String(offset))}&limitBytes=${encodeURIComponent(String(limitBytes))}`,
+      { cache: "no-store" },
     ),
   workspaceOperations: (runId: string) =>
     api.get<WorkspaceOperation[]>(`/heartbeat-runs/${runId}/workspace-operations`),
   workspaceOperationLog: (operationId: string, offset = 0, limitBytes = 256000) =>
     api.get<{ operationId: string; store: string; logRef: string; content: string; endOffset?: number; eof?: boolean; nextOffset?: number }>(
       `/workspace-operations/${operationId}/log?offset=${encodeURIComponent(String(offset))}&limitBytes=${encodeURIComponent(String(limitBytes))}`,
+      { cache: "no-store" },
     ),
   cancel: (runId: string) => api.post<void>(`/heartbeat-runs/${runId}/cancel`, {}),
   retry: (runId: string) => api.post<HeartbeatRun>(`/heartbeat-runs/${runId}/retry`, {}),

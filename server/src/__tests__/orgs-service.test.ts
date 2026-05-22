@@ -432,9 +432,9 @@ describe("organization service", () => {
     ]);
   });
 
-  it("initializes the default chat runtime from the first chat-capable agent", async () => {
+  it("does not seed organization-level chat runtime defaults from the first chat-capable agent", async () => {
     const createdOrg = await orgSvc.create({
-      name: "Copilot Default Org",
+      name: "Explicit Agent Chat Org",
       requireBoardApprovalForNewAgents: false,
     });
 
@@ -466,11 +466,8 @@ describe("organization service", () => {
     });
 
     const reloaded = await orgSvc.getById(createdOrg.id);
-    expect(reloaded?.defaultChatAgentRuntimeType).toBe("codex_local");
-    expect(reloaded?.defaultChatAgentRuntimeConfig).toEqual({
-      model: "gpt-5.4",
-      command: "codex",
-    });
+    expect(reloaded).not.toHaveProperty("defaultChatAgentRuntimeType");
+    expect(reloaded).not.toHaveProperty("defaultChatAgentRuntimeConfig");
   });
 
   it("auto-assigns distinct personal names when agent creation omits them", async () => {
@@ -516,41 +513,6 @@ describe("organization service", () => {
     expect(ceo.name).not.toBe("CEO");
     expect(engineer.name).not.toBe("Engineer");
     expect(engineer.name).not.toBe(ceo.name);
-  });
-
-  it("preserves an explicit organization chat default when the first agent is created", async () => {
-    const createdOrg = await orgSvc.create({
-      name: "Preserved Copilot Default Org",
-      requireBoardApprovalForNewAgents: false,
-      defaultChatAgentRuntimeType: "claude_local",
-      defaultChatAgentRuntimeConfig: {
-        model: "claude-sonnet-4-5",
-      },
-    });
-
-    await agentSvc.create(createdOrg.id, {
-      name: "CEO",
-      role: "ceo",
-      status: "idle",
-      reportsTo: null,
-      capabilities: null,
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: {
-        model: "gpt-5.4",
-      },
-      runtimeConfig: {},
-      budgetMonthlyCents: 0,
-      spentMonthlyCents: 0,
-      permissions: {},
-      lastHeartbeatAt: null,
-      metadata: null,
-    });
-
-    const reloaded = await orgSvc.getById(createdOrg.id);
-    expect(reloaded?.defaultChatAgentRuntimeType).toBe("claude_local");
-    expect(reloaded?.defaultChatAgentRuntimeConfig).toEqual({
-      model: "claude-sonnet-4-5",
-    });
   });
 
   it("bootstraps the fixed org workspace root and ignores legacy workspace config payloads", async () => {

@@ -24,9 +24,17 @@ const mockChatService = vi.hoisted(() => ({
   applyApprovedApproval: vi.fn(),
 }));
 
+const mockAccessService = vi.hoisted(() => ({
+  canUser: vi.fn(),
+}));
+
 const mockIssueApprovalService = vi.hoisted(() => ({
   listIssuesForApproval: vi.fn(),
   linkManyForApproval: vi.fn(),
+}));
+
+const mockIssueService = vi.hoisted(() => ({
+  update: vi.fn(),
 }));
 
 const mockSecretService = vi.hoisted(() => ({
@@ -36,10 +44,18 @@ const mockSecretService = vi.hoisted(() => ({
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/index.js", () => ({
+  accessService: () => mockAccessService,
   approvalService: () => mockApprovalService,
   chatService: () => mockChatService,
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => mockIssueApprovalService,
+  issueService: () => mockIssueService,
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: mockLogActivity,
   secretService: () => mockSecretService,
 }));

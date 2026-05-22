@@ -10,6 +10,33 @@ function countOccurrences(value: string, needle: string) {
   return value.split(needle).length - 1;
 }
 
+function renderCommandSummary(command: string) {
+  return renderToStaticMarkup(
+    <ThemeProvider>
+      <RunTranscriptView
+        density="compact"
+        presentation="chat"
+        entries={[
+          {
+            kind: "tool_call",
+            ts: "2026-03-12T00:00:01.000Z",
+            name: "command_execution",
+            toolUseId: "cmd-summary-1",
+            input: { command },
+          },
+          {
+            kind: "tool_result",
+            ts: "2026-03-12T00:00:02.000Z",
+            toolUseId: "cmd-summary-1",
+            content: "command completed",
+            isError: false,
+          },
+        ]}
+      />
+    </ThemeProvider>,
+  );
+}
+
 describe("RunTranscriptView", () => {
   it("recognizes only local file targets for transcript links", () => {
     expect(resolveTranscriptLocalFileTarget("/Users/zeeland/work/result.md")).toBe("/Users/zeeland/work/result.md");
@@ -120,6 +147,55 @@ describe("RunTranscriptView", () => {
     });
   });
 
+  it("renders Codex todo list updates as a checklist", () => {
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "todo_list",
+        ts: "2026-05-07T05:00:00.000Z",
+        todoListId: "item_3",
+        items: [
+          { text: "Checkout assigned issue", status: "completed" },
+          { text: "Inspect agent patterns", status: "pending" },
+          { text: "Patch transcript UI", status: "in_progress" },
+        ],
+      },
+      {
+        kind: "todo_list",
+        ts: "2026-05-07T05:00:10.000Z",
+        todoListId: "item_3",
+        items: [
+          { text: "Checkout assigned issue", status: "completed" },
+          { text: "Inspect agent patterns", status: "completed" },
+          { text: "Patch transcript UI", status: "in_progress" },
+        ],
+      },
+    ];
+
+    const blocks = normalizeTranscript(entries, true);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      type: "todo_list",
+      items: [
+        { text: "Checkout assigned issue", status: "completed" },
+        { text: "Inspect agent patterns", status: "completed" },
+        { text: "Patch transcript UI", status: "in_progress" },
+      ],
+    });
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView density="compact" entries={entries} />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Todo List");
+    expect(html).toContain("2/3");
+    expect(html).toContain("Checkout assigned issue");
+    expect(html).toContain("Patch transcript UI");
+    expect(html).not.toContain("todo_list");
+  });
+
   it("does not render stderr warning lines or their analytics HTML body", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
@@ -160,6 +236,36 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("Continuing after runtime noise.");
   });
 
+  it("does not render benign Codex model refresh timeout stderr in nice or raw mode", () => {
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "stderr",
+        ts: "2026-05-15T06:57:31.977Z",
+        text: [
+          "2026-05-15T06:57:31.977213Z ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit",
+          "2026-05-15T06:57:34.139709Z ERROR codex_memories_write::phase2: Phase 2 no changes",
+          "2026-05-15T06:57:44.058316Z ERROR codex_core::models_manager::manager: failed to refresh available models: timeout waiting for child process to exit",
+        ].join("\n"),
+      },
+    ];
+
+    const niceHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView entries={entries} />
+      </ThemeProvider>,
+    );
+    const rawHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView entries={entries} mode="raw" />
+      </ThemeProvider>,
+    );
+
+    expect(niceHtml).not.toContain("failed to refresh available models");
+    expect(rawHtml).not.toContain("failed to refresh available models");
+    expect(niceHtml).toContain("Phase 2 no changes");
+    expect(rawHtml).toContain("Phase 2 no changes");
+  });
+
   it("collapses long stderr by default while keeping a short summary visible", () => {
     const longError = [
       "Error: provider returned a long diagnostic",
@@ -191,7 +297,7 @@ describe("RunTranscriptView", () => {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
-      hour12: false,
+      hourCycle: "h23",
     });
     const html = renderToStaticMarkup(
       <ThemeProvider>
@@ -274,6 +380,87 @@ describe("RunTranscriptView", () => {
 
     expect(html).toContain("Preparing the answer.");
     expect(html).not.toContain("Final answer shown in the assistant message.");
+  });
+
+  it("keeps chat assistant progress while redacting only the final answer suffix", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          hiddenAssistantMessageText="Final answer shown in the assistant message."
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:02.000Z",
+              text: "I am checking the chat surface first.",
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:03.000Z",
+              text: "Final answer shown ",
+              delta: true,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:04.000Z",
+              text: "in the assistant message.",
+              delta: true,
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:05.000Z",
+              name: "read_file",
+              toolUseId: "tool-1",
+              input: { path: "ui/src/pages/Chat.tsx" },
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("I am checking the chat surface first.");
+    expect(html).toContain("Read ui/src/pages/Chat.tsx");
+    expect(html).not.toContain("Final answer shown");
+    expect(html).not.toContain("in the assistant message.");
+  });
+
+  it("renders chat thinking inline instead of behind a collapsed summary", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          hideAssistantMessages
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:01.000Z",
+              text: "turn started",
+            },
+            {
+              kind: "thinking",
+              ts: "2026-03-12T00:00:02.000Z",
+              text: [
+                "**Planning the response** with enough context to keep the operator oriented.",
+                "The full reasoning note stays readable in the chat transcript instead of being clipped.",
+                "Final planning checkpoint remains visible inline.",
+              ].join("\n\n"),
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).not.toContain("Expand thinking");
+    expect(html).not.toContain("Collapse thinking");
+    expect(html).toContain("<strong>Planning the response</strong>");
+    expect(html).toContain("Final planning checkpoint remains visible inline.");
   });
 
   it("renders a single chat log inline instead of behind a log-count disclosure", () => {
@@ -407,6 +594,55 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("data-testid=\"command-terminal-detail\"");
   });
 
+  it("summarizes Rudder help pipelines neutrally instead of as issue mutations", () => {
+    const html = renderCommandSummary("rudder issue --help | sed -n '1,120p'");
+
+    expect(html).toContain("Checked rudder issue help");
+    expect(html).not.toContain("Updated sed");
+    expect(html).not.toContain("Updated --help");
+  });
+
+  it("customizes read-only Rudder issue commands separately from issue updates", () => {
+    const html = renderCommandSummary("rudder issue context RUD-38 --json | sed -n '1,80p'");
+    const commentsHtml = renderCommandSummary("rudder issue comments list RUD-38 --json");
+    const updateHtml = renderCommandSummary("rudder issue update ZST-69 --status todo --comment nope");
+
+    expect(html).toContain("Inspected RUD-38");
+    expect(html).not.toContain("Updated RUD-38");
+    expect(commentsHtml).toContain("Inspected comments for RUD-38");
+    expect(commentsHtml).not.toContain("Updated list");
+    expect(updateHtml).toContain("Updated ZST-69");
+    expect(updateHtml).not.toContain("Ran rudder command");
+  });
+
+  it("keeps sed pipelines neutral or read-only unless a strong write signal exists", () => {
+    const readPipeline = renderCommandSummary("cat README.md | sed -n '1,40p'");
+    const writeCommand = renderCommandSummary("sed -i '' 's/old/new/' README.md");
+
+    expect(readPipeline).toContain("Read README.md");
+    expect(readPipeline).not.toContain("Edited");
+    expect(writeCommand).toContain("Edited README.md");
+  });
+
+  it("degrades unknown complex shell pipelines to a neutral fallback", () => {
+    const html = renderCommandSummary("foo --bar | sed -n '1,20p'");
+
+    expect(html).toContain("Ran shell command");
+    expect(html).not.toContain("Updated sed");
+    expect(html).not.toContain("Edited");
+  });
+
+  it("scans complex shell segments for strong write signals", () => {
+    const removeHtml = renderCommandSummary("echo hi && rm file.txt");
+    const redirectHtml = renderCommandSummary("foo --bar | sed -n '1,20p' > out.txt");
+    const installHtml = renderCommandSummary("echo ready && pnpm add zod");
+
+    expect(removeHtml).toContain("Edited file.txt");
+    expect(removeHtml).not.toContain("Ran shell command");
+    expect(redirectHtml).toContain("Edited out.txt");
+    expect(installHtml).toContain("Installed packages");
+  });
+
   it("filters routine Rudder-managed runtime home logs from nice transcript views", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
@@ -430,19 +666,197 @@ describe("RunTranscriptView", () => {
               ts: "2026-03-12T00:00:02.000Z",
               text:
                 "[rudder] Using Rudder-managed Codex home \"/Users/zeeland/.rudder/instances/dev/codex\" (seeded from \"/Users/zeeland/.codex\").\n"
+                + "[rudder] Prepared isolated Git config at /Users/zeeland/.rudder/instances/dev/workspaces/agents/rudder-copilot-system/.gitconfig with user.useConfigOnly=true (using global Git identity Zeeland <zeeland@example.com>).\n"
+                + "[rudder] Prepared repository Git config in /Users/zeeland/.rudder/instances/dev/workspaces/agents/rudder-copilot-system with user.useConfigOnly=true (using global Git identity Zeeland <zeeland@example.com>).\n"
                 + "[rudder] Realized 4 Rudder-managed Codex skill entries in /Users/zeeland/.rudder/instances/dev/codex/skills\n"
-                + "[rudder] Loaded agent instructions file: /Users/zeeland/.rudder/instances/dev/workspaces/agents/rudder-copilot-system/instructions/AGENTS.md",
+                + "[rudder] Loaded agent instructions file: $AGENT_HOME/instructions/AGENTS.md\n"
+                + "[rudder] Loaded agent soul instructions file: $AGENT_HOME/instructions/SOUL.md\n"
+                + "[rudder] Loaded agent tool notes file: $AGENT_HOME/instructions/TOOLS.md\n"
+                + "[rudder] Loaded agent memory instructions file: $AGENT_HOME/instructions/MEMORY.md",
             },
           ]}
         />
       </ThemeProvider>,
     );
 
-    expect(html).toContain("model codex");
+    expect(html).not.toContain("model codex");
     expect(html).not.toContain("Using Rudder-managed Codex home");
+    expect(html).not.toContain("Prepared isolated Git config");
+    expect(html).not.toContain("Prepared repository Git config");
     expect(html).not.toContain("Rudder-managed Codex skill entries");
     expect(html).not.toContain("Loaded agent instructions file");
+    expect(html).not.toContain("Loaded agent soul instructions file");
+    expect(html).not.toContain("Loaded agent tool notes file");
+    expect(html).not.toContain("Loaded agent memory instructions file");
     expect(html).not.toContain("1 log");
+  });
+
+  it("hides developer diagnostics by default and restores them when enabled", () => {
+    const entries = [
+      {
+        kind: "init" as const,
+        ts: "2026-03-12T00:00:00.000Z",
+        model: "codex",
+        sessionId: "session-1",
+      },
+      {
+        kind: "system" as const,
+        ts: "2026-03-12T00:00:01.000Z",
+        text: "turn started",
+      },
+      {
+        kind: "stdout" as const,
+        ts: "2026-03-12T00:00:02.000Z",
+        text:
+          "[rudder] Shared 6 local CLI credential entries into managed HOME /Users/zeeland/.rudder/instances/dev/organizations/org/claude-home:\n"
+          + ".config/gh, .config/configstore, .docker, .kube, .npmrc, .ssh\n"
+          + "[rudder] Prepared local CLI credential shim for: gh\n"
+          + "[rudder] Agent workspace \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/vera\" is now the canonical run workspace. Attempting to resume session \"019dfc\" that was previously saved in \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces\".\n"
+          + "[rudder] Codex session \"019dfc\" was saved for cwd \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/vera\" and will not be resumed in \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces\".\n"
+          + "[rudder] Using Rudder-managed Claude home \"/tmp/claude-home\" (seeded from \"/Users/zeeland/.claude\").\n"
+          + "[rudder] Using Rudder-managed Cursor home \"/tmp/cursor-home\" (seeded from \"/Users/zeeland/.cursor\").\n"
+          + "[rudder] Using Rudder-managed Gemini home \"/tmp/gemini-home\" (seeded from \"/Users/zeeland/.gemini\").\n"
+          + "[rudder] Using Rudder-managed OpenCode home \"/tmp/opencode-home\" (seeded from \"/Users/zeeland/.opencode\").\n"
+          + "[rudder] Using Rudder-managed Pi home \"/tmp/pi-home\" (seeded from \"/Users/zeeland/.pi\").\n"
+          + "Checked the repository status",
+      },
+      {
+        kind: "stderr" as const,
+        ts: "2026-03-12T00:00:03.000Z",
+        text: "[rudder] Failed to post workspace-ready comment: unavailable\nRecoverable adapter warning",
+      },
+    ];
+    const hiddenHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView density="compact" presentation="detail" entries={entries} />
+      </ThemeProvider>,
+    );
+    const visibleHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="detail"
+          entries={entries}
+          showDeveloperDiagnostics
+        />
+      </ThemeProvider>,
+    );
+
+    expect(hiddenHtml).not.toContain("model codex");
+    expect(hiddenHtml).not.toContain("Shared 6 local CLI credential entries");
+    expect(hiddenHtml).not.toContain(".config/gh");
+    expect(hiddenHtml).not.toContain("Prepared local CLI credential shim");
+    expect(hiddenHtml).not.toContain("canonical run workspace");
+    expect(hiddenHtml).not.toContain("will not be resumed");
+    expect(hiddenHtml).not.toContain("Rudder-managed Claude home");
+    expect(hiddenHtml).not.toContain("Rudder-managed Cursor home");
+    expect(hiddenHtml).not.toContain("Rudder-managed Gemini home");
+    expect(hiddenHtml).not.toContain("Rudder-managed OpenCode home");
+    expect(hiddenHtml).not.toContain("Rudder-managed Pi home");
+    expect(hiddenHtml).not.toContain("Failed to post workspace-ready comment");
+    expect(hiddenHtml).toContain("Checked the repository status");
+    expect(hiddenHtml).toContain("Recoverable adapter warning");
+
+    expect(visibleHtml).toContain("model codex");
+    expect(visibleHtml).toContain("Shared 6 local CLI credential entries");
+    expect(visibleHtml).toContain(".config/gh");
+    expect(visibleHtml).toContain("Prepared local CLI credential shim");
+    expect(visibleHtml).toContain("canonical run workspace");
+    expect(visibleHtml).toContain("will not be resumed");
+    expect(visibleHtml).toContain("Rudder-managed Claude home");
+    expect(visibleHtml).toContain("Rudder-managed Cursor home");
+    expect(visibleHtml).toContain("Rudder-managed Gemini home");
+    expect(visibleHtml).toContain("Rudder-managed OpenCode home");
+    expect(visibleHtml).toContain("Rudder-managed Pi home");
+    expect(visibleHtml).toContain("Failed to post workspace-ready comment");
+    expect(visibleHtml).toContain("Checked the repository status");
+    expect(visibleHtml).toContain("Recoverable adapter warning");
+  });
+
+  it("normalizes agent memory file changes into dedicated memory update blocks", () => {
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "system",
+        ts: "2026-03-12T00:00:00.000Z",
+        text:
+          "file changes: update /Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/gabriel--abc/instructions/MEMORY.md",
+      },
+      {
+        kind: "system",
+        ts: "2026-03-12T00:00:01.000Z",
+        text: "file changes: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
+      },
+    ];
+
+    const blocks = normalizeTranscript(entries, false);
+
+    expect(blocks[0]).toMatchObject({
+      type: "memory_update",
+      status: "completed",
+      agentName: "Gabriel",
+      scope: "stable_instructions",
+      summary: "Gabriel updated stable memory instructions.",
+      effect: "Effective next run",
+    });
+    expect(blocks[1]).toMatchObject({
+      type: "event",
+      label: "system",
+      text: "file changes: update /Users/zeeland/project/ui/src/pages/AgentDetail.tsx",
+    });
+  });
+
+  it("renders memory updates without exposing raw paths until details are expanded", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="detail"
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "file changes: update $AGENT_HOME/instructions/MEMORY.md",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Agent memory updated");
+    expect(html).not.toContain(">Updated<");
+    expect(html).toContain("Agent updated stable memory instructions.");
+    expect(html).toContain("Stable instructions");
+    expect(html).toContain("Effective next run");
+    expect(html).toContain('data-transcript-action-icon="memory"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain("$AGENT_HOME/instructions/MEMORY.md");
+    expect(html).not.toContain("file changes: update");
+  });
+
+  it("renders failed memory updates as failure rows with expanded technical details", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="detail"
+          entries={[
+            {
+              kind: "system",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "memory update failed: update $AGENT_HOME/memory/2026-03-12.md permission denied",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Memory update failed");
+    expect(html).toContain("Daily note");
+    expect(html).not.toContain(">Failed<");
+    expect(html).toContain("permission denied");
+    expect(html).toContain("$AGENT_HOME/memory/2026-03-12.md");
+    expect(html).toContain("Raw event");
+    expect(html).toContain('aria-expanded="true"');
   });
 
   it("renders a single detail-turn log inline instead of behind a log-count disclosure", () => {
@@ -553,7 +967,113 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Explored 2 files, 1 search, ran 1 command");
+    expect(html).toContain('data-transcript-action-group-icon-slot="true"');
     expect(html).not.toContain("Executed 4 commands");
+  });
+
+  it("keeps mixed-success chat tool groups neutral and collapsed", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "Checking a few commands.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-ok-1",
+              input: { command: "pwd" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "cmd-ok-1",
+              content: "command: pwd\nstatus: completed\nexit_code: 0\n\n/workspace/rudder",
+              isError: false,
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:03.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-fail-1",
+              input: { command: "pnpm missing-script" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:04.000Z",
+              toolUseId: "cmd-fail-1",
+              content: "command: pnpm missing-script\nstatus: failed\nexit_code: 1\n\nCommand failed",
+              isError: true,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Expand tool activity");
+    expect(html).toContain("aria-expanded=\"false\"");
+    expect(html).not.toContain("hover:bg-red-500/[0.05]");
+    expect(html).not.toContain("bg-red-500/[0.08]");
+    expect(html).not.toContain("Command failed");
+  });
+
+  it("highlights chat tool groups only when every tool call fails", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "Trying two commands.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-fail-1",
+              input: { command: "pnpm missing-script" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "cmd-fail-1",
+              content: "command: pnpm missing-script\nstatus: failed\nexit_code: 1\n\nFirst command failed",
+              isError: true,
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:03.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-fail-2",
+              input: { command: "pnpm another-missing-script" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:04.000Z",
+              toolUseId: "cmd-fail-2",
+              content: "command: pnpm another-missing-script\nstatus: failed\nexit_code: 1\n\nSecond command failed",
+              isError: true,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Collapse tool activity");
+    expect(html).toContain("aria-expanded=\"true\"");
+    expect(html).toContain("hover:bg-red-500/[0.05]");
+    expect(html).toContain("bg-red-500/[0.08]");
+    expect(html).toContain("First command failed");
+    expect(html).toContain("Second command failed");
   });
 
   it("keeps errored tool details collapsed by default in detail presentation", () => {
@@ -561,7 +1081,7 @@ describe("RunTranscriptView", () => {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
-      hour12: false,
+      hourCycle: "h23",
     });
     const html = renderToStaticMarkup(
       <ThemeProvider>
@@ -771,12 +1291,360 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("Searched 1 location");
   });
 
+  it("summarizes SKILL.md file reads as skill use", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "read_file",
+              toolUseId: "tool-1",
+              input: { path: "/Users/zeeland/.codex/skills/flomo-local-api/SKILL.md" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "tool-1",
+              content: "skill instructions",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Use flomo-local-api skill");
+    expect(html).toContain('data-transcript-action-icon="skill"');
+    expect(html).not.toContain("Read /Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
+  });
+
+  it("summarizes shell reads of SKILL.md as skill use", () => {
+    const html = renderCommandSummary("sed -n '1,220p' /Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
+
+    expect(html).toContain("Use flomo-local-api skill");
+    expect(html).not.toContain("Read /Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
+  });
+
+  it("decodes shell-escaped search queries in chat activity summaries", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "Searching skill analytics labels.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-1",
+              input: {
+                command:
+                  'zsh -lc "rg \\"Skill Use Distribution|Skill Use Timeline|Skill Invocation Funnel\\" ui/src/fixtures/runTranscriptFixtures.ts ui/src/components/transcript/RunTranscriptView.tsx tests/e2e/run-transcript-detail.spec.ts"',
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "cmd-1",
+              content: "match",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain(
+      "Searched &quot;Skill Use Distribution|Skill Use Timeline|Skill…&quot; in 3 locations",
+    );
+    expect(html).not.toContain("\\&quot;Skill");
+  });
+
+  it("renders web search keywords in transcript tool summaries", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "web_search",
+              toolUseId: "web-1",
+              input: {
+                action: { type: "search", query: "codex transcript web search keywords" },
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "web-1",
+              content: "2 results",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Web searched &quot;codex transcript web search keywords&quot;");
+  });
+
+  it("renders MCP server, tool, and argument details in transcript summaries", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "mcp__github__fetch_pr",
+              toolUseId: "mcp-1",
+              input: {
+                repo_full_name: "openai/codex",
+                pr_number: 123,
+              },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "mcp-1",
+              content: "PR title: transcript UI",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Called fetch_pr via github");
+    expect(html).toContain("repo_full_name openai/codex");
+    expect(html).toContain("pr_number 123");
+  });
+
+  it("uses semantic action icons for representative transcript categories", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          presentation="chat"
+          entries={[
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:00.000Z",
+              text: "Reading the design doc.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "read_file",
+              toolUseId: "read-1",
+              input: { path: "doc/DESIGN.md" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "read-1",
+              content: "design",
+              isError: false,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:03.000Z",
+              text: "Searching transcript code.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:04.000Z",
+              name: "command_execution",
+              toolUseId: "search-1",
+              input: { command: "rg transcript ui/src/components/transcript" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:05.000Z",
+              toolUseId: "search-1",
+              content: "match",
+              isError: false,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:06.000Z",
+              text: "Editing the renderer.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:07.000Z",
+              name: "command_execution",
+              toolUseId: "edit-1",
+              input: { command: "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: ui/src/components/transcript/RunTranscriptView.tsx\n*** End Patch\nPATCH" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:08.000Z",
+              toolUseId: "edit-1",
+              content: "patch applied",
+              isError: false,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:09.000Z",
+              text: "Inspecting repository state.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:10.000Z",
+              name: "command_execution",
+              toolUseId: "inspect-1",
+              input: { command: "git status --short" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:11.000Z",
+              toolUseId: "inspect-1",
+              content: "M ui/src/components/transcript/RunTranscriptView.tsx",
+              isError: false,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:12.000Z",
+              text: "Checking current docs online.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:13.000Z",
+              name: "web_search",
+              toolUseId: "web-1",
+              input: { query: "transcript icon semantics" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:14.000Z",
+              toolUseId: "web-1",
+              content: "results",
+              isError: false,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:15.000Z",
+              text: "Fetching GitHub context.",
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:16.000Z",
+              name: "mcp__github__fetch_issue",
+              toolUseId: "mcp-1",
+              input: { repo_full_name: "rudder/rudder", issue_number: 126 },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:17.000Z",
+              toolUseId: "mcp-1",
+              content: "issue",
+              isError: false,
+            },
+            {
+              kind: "assistant",
+              ts: "2026-03-12T00:00:18.000Z",
+              text: "Reviewing output.",
+            },
+            {
+              kind: "stdout",
+              ts: "2026-03-12T00:00:19.000Z",
+              text: "standalone output",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('data-transcript-action-icon="read"');
+    expect(html).toContain('data-transcript-action-icon="search"');
+    expect(html).toContain('data-transcript-action-icon="edit"');
+    expect(html).toContain('data-transcript-action-icon="inspect"');
+    expect(html).toContain('data-transcript-action-icon="web_search"');
+    expect(html).toContain('data-transcript-action-icon="mcp"');
+    expect(html).toContain('data-transcript-action-icon="stdout"');
+    expect(countOccurrences(html, 'data-transcript-action-icon="command"')).toBe(0);
+  });
+
+  it("shows mixed grouped activity with category-specific icons", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          density="compact"
+          entries={[
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:01.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-read-1",
+              input: { command: "sed -n '1,120p' README.md" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:02.000Z",
+              toolUseId: "cmd-read-1",
+              content: "read",
+              isError: false,
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:03.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-search-1",
+              input: { command: "rg transcript ui/src" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:04.000Z",
+              toolUseId: "cmd-search-1",
+              content: "match",
+              isError: false,
+            },
+            {
+              kind: "tool_call",
+              ts: "2026-03-12T00:00:05.000Z",
+              name: "command_execution",
+              toolUseId: "cmd-edit-1",
+              input: { command: "tee notes.txt > /dev/null" },
+            },
+            {
+              kind: "tool_result",
+              ts: "2026-03-12T00:00:06.000Z",
+              toolUseId: "cmd-edit-1",
+              content: "wrote notes",
+              isError: false,
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Explored 1 file, 1 search, edited 1 file");
+    expect(html).toContain('data-transcript-action-icon="read"');
+    expect(html).toContain('data-transcript-action-icon="search"');
+    expect(html).toContain('data-transcript-action-icon="edit"');
+  });
+
   it("groups detail transcripts so repeated reads stay collapsed behind one summary", () => {
     const hiddenHeaderTime = new Date("2026-03-12T00:00:02.000Z").toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
-      hour12: false,
+      hourCycle: "h23",
     });
     const html = renderToStaticMarkup(
       <ThemeProvider>
@@ -836,7 +1704,7 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("Model turn");
     expect(html).not.toContain(`>${hiddenHeaderTime}<`);
     expect(html).toContain("Reviewing the bundled skills before deciding what to change.");
-    expect(html).toContain("Explored 2 files");
+    expect(html).toContain("Used 2 skills");
     expect(html).not.toContain("para-memory-files/SKILL.md");
     expect(html).not.toContain("rudder-create-agent/SKILL.md");
   });

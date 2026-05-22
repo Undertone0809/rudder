@@ -93,17 +93,34 @@ export function createExecutionScoreId(rootExecutionId: string, scoreName: strin
   return createStableUuid(`langfuse-score:${rootExecutionId}:${scoreName}`);
 }
 
+const REDACTED_LANGFUSE_VALUE = "***REDACTED***";
+
+const SECRET_LIKE_VALUE_RE = /(^|[^A-Za-z0-9_-])(sk-(?:proj-)?[A-Za-z0-9_-]{20,})(?=$|[^A-Za-z0-9_-])/g;
+const BEARER_TOKEN_VALUE_RE = /\b(Bearer\s+)([A-Za-z0-9._~+/=-]{16,})(?=$|[^A-Za-z0-9._~+/=-])/gi;
+const INLINE_SECRET_ASSIGNMENT_RE =
+  /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|password|secret)\b(\s*[:=]\s*)(["']?)([^"'\s,;]{8,})(\3?)/gi;
+
 function coerceString(value: unknown) {
   if (typeof value === "string" && value.trim().length > 0) return value.trim();
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return null;
 }
 
+function redactLangfuseStringValue(value: string) {
+  return value
+    .replace(SECRET_LIKE_VALUE_RE, (_match, prefix) => `${prefix}${REDACTED_LANGFUSE_VALUE}`)
+    .replace(BEARER_TOKEN_VALUE_RE, (_match, prefix) => `${prefix}${REDACTED_LANGFUSE_VALUE}`)
+    .replace(
+      INLINE_SECRET_ASSIGNMENT_RE,
+      (_match, key, separator, quote, _secret, closingQuote) =>
+        `${key}${separator}${quote}${REDACTED_LANGFUSE_VALUE}${closingQuote}`,
+    );
+}
+
 export function redactLangfuseValue(value: unknown): unknown {
   if (value == null) return value;
   if (typeof value === "string") {
-    if (/sk-[a-z0-9]/i.test(value) || /api[_-]?key/i.test(value)) return "***REDACTED***";
-    return value;
+    return redactLangfuseStringValue(value);
   }
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (Array.isArray(value)) return value.map((item) => redactLangfuseValue(item));
@@ -121,7 +138,7 @@ export function redactLangfuseValue(value: unknown): unknown {
           if (typeof nested === "number" || typeof nested === "boolean" || nested == null) {
             return [key, nested];
           }
-          return [key, "***REDACTED***"];
+          return [key, REDACTED_LANGFUSE_VALUE];
         }
         return [key, redactLangfuseValue(nested)];
       }),

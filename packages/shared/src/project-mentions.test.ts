@@ -48,4 +48,13 @@ describe("project-mentions", () => {
     });
     expect(extractIssueMentionIds(`[@PAP-123](${href})`)).toEqual(["issue-123"]);
   });
+
+  it("ignores mention-looking links inside markdown code", () => {
+    expect(extractProjectMentionIds("`[@Project](project://id)` [@Real](project://project-123)"))
+      .toEqual(["project-123"]);
+    expect(extractAgentMentionIds("```md\n[@Agent](agent://id)\n```\n[@Real](agent://agent-123)"))
+      .toEqual(["agent-123"]);
+    expect(extractIssueMentionIds("`[@PAP-1](issue://id?r=PAP-1)` [@PAP-2](issue://issue-123?r=PAP-2)"))
+      .toEqual(["issue-123"]);
+  });
 });

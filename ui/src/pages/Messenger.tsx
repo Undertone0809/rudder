@@ -1,9 +1,10 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  CircleCheckBig,
   CircleAlert,
   MessageSquare,
   RefreshCcw,
@@ -11,14 +12,33 @@ import {
   ShieldCheck,
   UserPlus,
 } from "lucide-react";
-import type { MessengerApprovalThreadItem, MessengerEvent, MessengerIssueThreadItem } from "@rudderhq/shared";
+import type {
+  Agent,
+  ChatConversation,
+  MessengerApprovalThreadItem,
+  MessengerEvent,
+  MessengerIssueThreadItem,
+  IssueLabel,
+  Project,
+} from "@rudderhq/shared";
 import { accessApi } from "@/api/access";
+import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
+import { chatsApi } from "@/api/chats";
 import { heartbeatsApi } from "@/api/heartbeats";
 import { issuesApi } from "@/api/issues";
+import { projectsApi } from "@/api/projects";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { ApprovalDetailDialog } from "@/components/ApprovalDetailDialog";
+import {
+  ChatIssueApprovalLabelPicker,
+  approvalPayloadWithChatIssueLabelIds,
+  chatConversationIdFromApprovalPayload,
+  chatIssueApprovalLabelIds,
+  chatIssueApprovalNeedsLabelSelection,
+} from "@/components/ApprovalPayload";
 import { MarkdownBody } from "@/components/MarkdownBody";
+import { formatPriorityLabel } from "@/lib/priorities";
 import { Button } from "@/components/ui/button";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,6 +50,7 @@ import {
   resolveMessengerRoute,
   useMessengerModel,
 } from "@/hooks/useMessenger";
+import { createIssueDetailLocationState } from "@/lib/issueDetailBreadcrumb";
 import { queryKeys } from "@/lib/queryKeys";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { getRememberedMessengerPath, rememberMessengerPath, resolveRememberedMessengerEntry } from "@/lib/messenger-memory";
@@ -122,12 +143,69 @@ function issueContextLabel(item: MessengerIssueThreadItem) {
   return labels.join(" · ");
 }
 
+function sourceCommentLabel(item: MessengerIssueThreadItem) {
+  const metadata = item.metadata as {
+    sourceCommentAuthorKind?: unknown;
+    sourceCommentByMe?: unknown;
+    sourceCommentAuthorLabel?: unknown;
+  };
+  const authorLabel = typeof metadata.sourceCommentAuthorLabel === "string"
+    ? metadata.sourceCommentAuthorLabel.trim()
+    : item.sourceCommentAuthorLabel?.trim();
+
+  if (metadata.sourceCommentByMe === true) return "Your comment";
+  if (authorLabel) return `${authorLabel} comment`;
+  if (metadata.sourceCommentAuthorKind === "agent") return "Agent comment";
+  if (metadata.sourceCommentAuthorKind === "user" && metadata.sourceCommentByMe === false) {
+    return "Comment from someone else";
+  }
+  return "Issue comment";
+}
+
+function issueStatusLabel(status: string) {
+  return status.replace(/_/g, " ");
+}
+
+function readIssueStatusChange(metadata: Record<string, unknown>) {
+  const value = metadata.statusChange;
+  if (!value || typeof value !== "object") return null;
+  const change = value as Record<string, unknown>;
+  const to = typeof change.to === "string" ? change.to : null;
+  if (!to) return null;
+
+  const from = typeof change.from === "string" ? change.from : null;
+  return { from, to };
+}
+
+function IssueStatusTransition({ change }: { change: { from: string | null; to: string } }) {
+  if (!change.from) return <StatusBadge status={change.to} />;
+
+  return (
+    <div
+      className="inline-flex shrink-0 items-center gap-1.5"
+      aria-label={`Status changed from ${issueStatusLabel(change.from)} to ${issueStatusLabel(change.to)}`}
+    >
+      <StatusBadge status={change.from} />
+      <span className="text-xs font-medium text-muted-foreground" aria-hidden="true">→</span>
+      <StatusBadge status={change.to} />
+    </div>
+  );
+}
+
 function failedRunIssueTitle(metadata: Record<string, unknown>) {
   if (!metadata.contextSnapshot || typeof metadata.contextSnapshot !== "object") return null;
   const snapshot = metadata.contextSnapshot as Record<string, unknown>;
   if (!snapshot.issue || typeof snapshot.issue !== "object") return null;
   const issue = snapshot.issue as Record<string, unknown>;
   return typeof issue.title === "string" && issue.title.trim().length > 0 ? issue.title.trim() : null;
+}
+
+function failedRunIssueStatus(metadata: Record<string, unknown>) {
+  if (!metadata.contextSnapshot || typeof metadata.contextSnapshot !== "object") return null;
+  const snapshot = metadata.contextSnapshot as Record<string, unknown>;
+  if (!snapshot.issue || typeof snapshot.issue !== "object") return null;
+  const issue = snapshot.issue as Record<string, unknown>;
+  return typeof issue.status === "string" && issue.status.trim().length > 0 ? issue.status.trim() : null;
 }
 
 function TimelineDivider({ date }: { date: Date }) {
@@ -150,7 +228,7 @@ function ThreadMessage({
   testId,
 }: {
   icon: ReactNode;
-  label: string;
+  label?: string | null;
   timestamp?: Date | string | null;
   children: ReactNode;
   testId?: string;
@@ -161,17 +239,19 @@ function ThreadMessage({
         {icon}
       </div>
       <div className="min-w-0 max-w-4xl flex-1">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium text-foreground">{label}</span>
-          {timestamp ? (
-            <HoverTimestampLabel
-              date={timestamp}
-              label={relativeTime(new Date(timestamp))}
-              className="text-[11px] leading-none text-muted-foreground"
-              testId={testId ? `${testId}-timestamp` : undefined}
-            />
-          ) : null}
-        </div>
+        {label || timestamp ? (
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            {label ? <span className="text-sm font-medium text-foreground">{label}</span> : null}
+            {timestamp ? (
+              <HoverTimestampLabel
+                date={timestamp}
+                label={relativeTime(new Date(timestamp))}
+                className="text-[11px] leading-none text-muted-foreground"
+                testId={testId ? `${testId}-timestamp` : undefined}
+              />
+            ) : null}
+          </div>
+        ) : null}
         {children}
       </div>
     </div>
@@ -200,7 +280,7 @@ function ObjectMessageCard({
       data-testid={testId}
       className="overflow-hidden rounded-[var(--radius-md)] border border-border/70 bg-background shadow-[var(--shadow-sm)]"
     >
-      <div className="flex flex-wrap items-center gap-2 border-b border-border/60 bg-[color:color-mix(in_oklab,var(--surface-inset)_78%,white)] px-4 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border/60 bg-[color:color-mix(in_oklab,var(--surface-inset)_88%,transparent)] px-4 py-2">
         <span className="rounded-[calc(var(--radius-sm)-1px)] bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
           {eyebrow}
         </span>
@@ -222,9 +302,11 @@ function ObjectMessageCard({
 
 function MessengerIssueCommentPreview({
   body,
+  authorLabel,
   testId,
 }: {
   body: string;
+  authorLabel: string | null;
   testId: string;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -247,9 +329,19 @@ function MessengerIssueCommentPreview({
   }, [body]);
 
   const collapsed = !expanded;
+  const sourceLabel = authorLabel?.trim()
+    ? `${authorLabel.trim()} comment`
+    : "Issue comment";
+  const previewSurface = "color-mix(in oklab, var(--surface-inset) 88%, transparent)";
 
   return (
-    <div data-testid={testId} className="space-y-2">
+    <div data-testid={testId} className="space-y-2 rounded-[calc(var(--radius-sm)-1px)] border border-[color:color-mix(in_oklab,var(--border-soft)_78%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-inset)_88%,transparent)] px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+          <MessageSquare className="h-3 w-3" />
+          {sourceLabel}
+        </span>
+      </div>
       <div className="relative">
         <div
           ref={contentRef}
@@ -260,7 +352,10 @@ function MessengerIssueCommentPreview({
           <MarkdownBody className="text-sm leading-5 text-foreground/90">{body}</MarkdownBody>
         </div>
         {overflowing && collapsed ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-background" />
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-8"
+            style={{ background: `linear-gradient(to bottom, transparent, ${previewSurface})` }}
+          />
         ) : null}
       </div>
       {overflowing ? (
@@ -354,15 +449,22 @@ function MessengerIssueCard({
   orgId: string;
 }) {
   const queryClient = useQueryClient();
+  const location = useLocation();
   const { pushToast } = useToast();
   const [quickCommentOpen, setQuickCommentOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const metadata = item.metadata as {
     status?: string;
+    statusChange?: unknown;
     priority?: string;
   };
+  const statusChange = readIssueStatusChange(metadata);
   const contextLabel = issueContextLabel(item);
   const sourceCommentBody = item.sourceCommentBody?.trim() ? item.sourceCommentBody : null;
+  const sourceCommentBadge = sourceCommentBody ? sourceCommentLabel(item) : null;
+  const sourceCommentAuthorLabel = item.sourceCommentAuthorLabel?.trim() || null;
+  const IssueActivityIcon = sourceCommentBody ? MessageSquare : CircleCheckBig;
+  const sourceHref = toOrganizationRelativePath(`${location.pathname}${location.search}${location.hash}`);
 
   const invalidateIssueViews = async () => {
     await Promise.all([
@@ -391,31 +493,39 @@ function MessengerIssueCard({
 
   return (
     <ThreadMessage
-      icon={<MessageSquare className="h-5 w-5" />}
-      label="Issues assistant"
+      icon={<IssueActivityIcon className="h-5 w-5" />}
+      label={null}
       timestamp={new Date(item.latestActivityAt)}
       testId={`messenger-issue-message-${item.issueId}`}
     >
       <ObjectMessageCard
-        eyebrow="Issue update"
+        eyebrow={sourceCommentBadge ?? "Issue update"}
         title={issueDisplayTitle(item)}
         description={
           sourceCommentBody ? (
             <MessengerIssueCommentPreview
               body={sourceCommentBody}
+              authorLabel={sourceCommentAuthorLabel}
               testId={`messenger-issue-comment-preview-${item.issueId}`}
             />
           ) : (
             firstNonEmptyLine(item.body) ?? firstNonEmptyLine(item.preview) ?? "New issue activity in your watched scope."
           )
         }
-        status={typeof metadata.status === "string" ? <StatusBadge status={metadata.status} /> : undefined}
+        status={statusChange
+          ? <IssueStatusTransition change={statusChange} />
+          : typeof metadata.status === "string" ? <StatusBadge status={metadata.status} /> : undefined}
         testId={`messenger-issue-card-${item.issueId}`}
         footer={
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <Button asChild size="sm" variant="outline">
-                <Link to={issueOpenHref(item)}>Open issue</Link>
+                <Link
+                  to={issueOpenHref(item)}
+                  state={createIssueDetailLocationState("Messenger", sourceHref)}
+                >
+                  Open issue
+                </Link>
               </Button>
               <Button
                 size="sm"
@@ -459,7 +569,7 @@ function MessengerIssueCard({
           </span>
           {typeof metadata.priority === "string" ? (
             <span className="rounded-[calc(var(--radius-sm)-1px)] bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-              {metadata.priority.replaceAll("_", " ")}
+              {formatPriorityLabel(metadata.priority)}
             </span>
           ) : null}
           {contextLabel ? (
@@ -490,8 +600,8 @@ export function MessengerIssuesView() {
       />
       {!issueThreadDetail?.items.length ? (
         <ThreadEmptyStateMessage
-          icon={<MessageSquare className="h-5 w-5" />}
-          assistantLabel="Issues assistant"
+          icon={<CircleCheckBig className="h-5 w-5" />}
+          assistantLabel="Issues"
           eyebrow="Issues"
           title="No tracked issues"
           description="Once you create an issue, follow it, or it gets assigned to you, it will show up here as an object thread."
@@ -504,13 +614,38 @@ export function MessengerIssuesView() {
 function MessengerApprovalCard({
   item,
   orgId,
+  agents,
+  projects,
+  labels,
+  chatConversations,
+  currentUserId,
 }: {
   item: MessengerApprovalThreadItem;
   orgId: string;
+  agents?: Agent[] | null;
+  projects?: Project[] | null;
+  labels?: IssueLabel[] | null;
+  chatConversations?: Pick<ChatConversation, "id" | "title">[] | null;
+  currentUserId?: string | null;
 }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
-  const pending = item.approval.status === "pending" || item.approval.status === "revision_requested";
+  const pending = item.approval.status === "pending";
+  const approvalPayload = item.approval.payload as Record<string, unknown>;
+  const initialChatIssueLabelIds = chatIssueApprovalLabelIds(approvalPayload);
+  const initialChatIssueLabelKey = initialChatIssueLabelIds.join("\u0000");
+  const [selectedChatIssueLabelIds, setSelectedChatIssueLabelIds] = useState<string[]>(initialChatIssueLabelIds);
+  useEffect(() => {
+    setSelectedChatIssueLabelIds(initialChatIssueLabelIds);
+  }, [item.approval.id, initialChatIssueLabelKey]);
+  const chatIssueLabelsRequired =
+    item.approval.type === "chat_issue_creation"
+    && chatIssueApprovalNeedsLabelSelection(approvalPayload, labels, selectedChatIssueLabelIds);
+  const chatIssueLabelOptionsLoading = item.approval.type === "chat_issue_creation" && labels === undefined;
+  const chatConversationId = chatConversationIdFromApprovalPayload(approvalPayload);
+  const chatConversation = chatConversationId
+    ? chatConversations?.find((conversation) => conversation.id === chatConversationId) ?? null
+    : null;
 
   const invalidateApprovalViews = async () => {
     await Promise.all([
@@ -522,7 +657,13 @@ function MessengerApprovalCard({
 
   const decisionMutation = useMutation({
     mutationFn: async (decision: "approve" | "reject" | "requestRevision") => {
-      if (decision === "approve") return approvalsApi.approve(item.approval.id);
+      if (decision === "approve") {
+        const nextPayload =
+          item.approval.type === "chat_issue_creation"
+            ? approvalPayloadWithChatIssueLabelIds(approvalPayload, selectedChatIssueLabelIds)
+            : undefined;
+        return approvalsApi.approve(item.approval.id, undefined, nextPayload);
+      }
       if (decision === "reject") return approvalsApi.reject(item.approval.id);
       return approvalsApi.requestRevision(item.approval.id);
     },
@@ -553,7 +694,29 @@ function MessengerApprovalCard({
           detailLink={`/messenger/approvals/${item.approval.id}`}
           detailLabel="Open full approval"
           supportingText={item.subtitle ?? "Approval update"}
+          payloadContext={{
+            agents,
+            projects,
+            labels,
+            selectedLabelIds: selectedChatIssueLabelIds,
+            chatConversation,
+            currentUserId,
+          }}
+          extraActions={
+            item.approval.type === "chat_issue_creation" && pending ? (
+              <div className="basis-full">
+                <ChatIssueApprovalLabelPicker
+                  labels={labels}
+                  selectedLabelIds={selectedChatIssueLabelIds}
+                  onChange={setSelectedChatIssueLabelIds}
+                  required={Boolean(chatIssueLabelsRequired)}
+                  disabled={decisionMutation.isPending || chatIssueLabelOptionsLoading}
+                />
+              </div>
+            ) : null
+          }
           allowBudgetActions
+          approveDisabled={Boolean(chatIssueLabelsRequired) || chatIssueLabelOptionsLoading}
           isPending={decisionMutation.isPending}
         />
       </div>
@@ -562,9 +725,29 @@ function MessengerApprovalCard({
 }
 
 export function MessengerApprovalsView() {
-  const { selectedOrganizationId, approvalThreadDetail } = useMessengerModel();
+  const { selectedOrganizationId, approvalThreadDetail, currentUserId } = useMessengerModel();
   const { approvalId } = useParams<{ approvalId?: string }>();
   const navigate = useNavigate();
+  const { data: agents } = useQuery({
+    queryKey: queryKeys.agents.list(selectedOrganizationId ?? ""),
+    queryFn: () => agentsApi.list(selectedOrganizationId ?? ""),
+    enabled: Boolean(selectedOrganizationId),
+  });
+  const { data: projects } = useQuery({
+    queryKey: queryKeys.projects.list(selectedOrganizationId ?? ""),
+    queryFn: () => projectsApi.list(selectedOrganizationId ?? ""),
+    enabled: Boolean(selectedOrganizationId),
+  });
+  const { data: labels } = useQuery({
+    queryKey: queryKeys.issues.labels(selectedOrganizationId ?? ""),
+    queryFn: () => issuesApi.listLabels(selectedOrganizationId ?? ""),
+    enabled: Boolean(selectedOrganizationId),
+  });
+  const { data: chatConversations } = useQuery({
+    queryKey: queryKeys.chats.list(selectedOrganizationId ?? "", "all"),
+    queryFn: () => chatsApi.list(selectedOrganizationId ?? "", "all"),
+    enabled: Boolean(selectedOrganizationId),
+  });
 
   if (!selectedOrganizationId) return null;
 
@@ -576,7 +759,18 @@ export function MessengerApprovalsView() {
       />
       <TimelineStream
         items={approvalThreadDetail?.items ?? []}
-        renderItem={(item) => <MessengerApprovalCard key={item.id} item={item} orgId={selectedOrganizationId} />}
+        renderItem={(item) => (
+          <MessengerApprovalCard
+            key={item.id}
+            item={item}
+            orgId={selectedOrganizationId}
+            agents={agents}
+            projects={projects}
+            labels={labels}
+            chatConversations={chatConversations}
+            currentUserId={currentUserId}
+          />
+        )}
       />
       {!approvalThreadDetail?.items.length ? (
         <ThreadEmptyStateMessage
@@ -669,6 +863,7 @@ function MessengerSystemCard({
       ? ((metadata.contextSnapshot as Record<string, unknown>).issueId as string)
       : null;
   const relatedIssueTitle = item.kind === "failed-runs" ? failedRunIssueTitle(metadata) : null;
+  const relatedIssueStatus = item.kind === "failed-runs" ? failedRunIssueStatus(metadata) : null;
 
   const actionMutation = useMutation({
     mutationFn: async (action: MessengerEvent["actions"][number]) => runSystemAction(action),
@@ -737,7 +932,7 @@ function MessengerSystemCard({
       >
         <div className="flex flex-col gap-2 text-xs">
           {relatedIssueTitle && relatedIssueId ? (
-            <div className="text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               Issue{" "}
               <Link
                 to={`/issues/${relatedIssueId}`}
@@ -746,6 +941,11 @@ function MessengerSystemCard({
               >
                 {relatedIssueTitle}
               </Link>
+              {relatedIssueStatus ? (
+                <span data-testid={`messenger-failed-run-issue-status-${item.id}`}>
+                  <StatusBadge status={relatedIssueStatus} />
+                </span>
+              ) : null}
             </div>
           ) : null}
           <div className="flex flex-wrap gap-2">

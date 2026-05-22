@@ -38,6 +38,8 @@ export const createIssueSchema = z.object({
   priority: z.enum(ISSUE_PRIORITIES).optional().default("medium"),
   assigneeAgentId: z.string().uuid().optional().nullable(),
   assigneeUserId: z.string().optional().nullable(),
+  reviewerAgentId: z.string().uuid().optional().nullable(),
+  reviewerUserId: z.string().optional().nullable(),
   requestDepth: z.number().int().nonnegative().optional().default(0),
   billingCode: z.string().optional().nullable(),
   assigneeAgentRuntimeOverrides: issueAssigneeAdapterOverridesSchema.optional().nullable(),
@@ -76,6 +78,7 @@ export const updateIssueSchema = createIssueSchema.partial().extend({
   comment: z.string().min(1).optional(),
   reopen: z.boolean().optional(),
   hiddenAt: z.string().datetime().nullable().optional(),
+  reviewDecision: z.enum(["approve", "request_changes", "needs_followup", "blocked"]).optional(),
 });
 
 export type UpdateIssue = z.infer<typeof updateIssueSchema>;
@@ -113,6 +116,17 @@ export const addIssueCommentSchema = z.object({
 
 export type AddIssueComment = z.infer<typeof addIssueCommentSchema>;
 
+export const reportIssueCommitSchema = z.object({
+  sha: z.string().trim().regex(/^[0-9a-f]{7,64}$/i, "Commit SHA must be 7 to 64 hexadecimal characters"),
+  message: z.string().trim().min(1).max(500),
+  branch: z.string().trim().min(1).max(255).optional().nullable(),
+  repoPath: z.string().trim().min(1).max(2048).optional().nullable(),
+  workspacePath: z.string().trim().min(1).max(2048).optional().nullable(),
+  commitCount: z.number().int().positive().max(1000).optional(),
+});
+
+export type ReportIssueCommit = z.infer<typeof reportIssueCommitSchema>;
+
 export const linkIssueApprovalSchema = z.object({
   approvalId: z.string().uuid(),
 });
@@ -125,6 +139,12 @@ export const createIssueAttachmentMetadataSchema = z.object({
 });
 
 export type CreateIssueAttachmentMetadata = z.infer<typeof createIssueAttachmentMetadataSchema>;
+
+export const createIssueWorkspaceAttachmentSchema = z.object({
+  path: z.string().trim().min(1).max(2048),
+});
+
+export type CreateIssueWorkspaceAttachment = z.infer<typeof createIssueWorkspaceAttachmentSchema>;
 
 export const ISSUE_DOCUMENT_FORMATS = ["markdown"] as const;
 

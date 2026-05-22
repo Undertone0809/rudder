@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { createE2EChatAgent } from "./support/chat-agent";
 
 const ORG_NAME = `Issue-Detail-Toolbar-${Date.now()}`;
 
@@ -30,6 +31,48 @@ test.describe("Issue detail toolbar actions", () => {
     await expect(page.getByRole("button", { name: "Chat" })).toHaveCount(1);
     await expect(page.getByRole("button", { name: "More issue actions" })).toHaveCount(1);
     await expect(page.getByText("Properties", { exact: true })).toBeVisible();
+  });
+
+  test("opens issue chat in Messenger new-chat composer with issue context", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.goto("/");
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: { name: `${ORG_NAME}-Issue-Chat` },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Issue Chat Agent",
+    });
+
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Issue chat should open as context",
+        description: "Clicking Chat should open the contextual composer instead of creating an empty conversation.",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: chatAgent.id,
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json();
+
+    await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat(?:\\?.*)?$`));
+    const redirectedUrl = new URL(page.url());
+    expect(redirectedUrl.searchParams.get("issueId")).toBe(issue.id);
+    expect(redirectedUrl.searchParams.has("prefill")).toBe(false);
+    await expect(page.locator('[contenteditable="true"]').first()).toHaveText("");
+    await expect(page.getByText(`Ask about ${issue.identifier ?? issue.title}`, { exact: true })).toBeVisible();
+    await expect(page.getByTestId("chat-agent-selector")).toContainText("Issue Chat Agent");
+
+    const chatsRes = await page.request.get(`/api/orgs/${organization.id}/chats?status=all`);
+    expect(chatsRes.ok()).toBe(true);
+    const chats = await chatsRes.json();
+    expect(chats).toHaveLength(0);
   });
 
   test("shows default labels for issues in newly created organizations", async ({ page }) => {

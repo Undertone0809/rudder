@@ -46,10 +46,43 @@ export type DesktopUpdateCheckResult = {
   checkedAt: string;
 };
 
+export type DesktopUpdateChannel = DesktopUpdateCheckResult["channel"];
+
 export type DesktopUpdateInstallResult =
-  | { status: "started"; version: string }
+  | { status: "started"; version: string; updateId?: string }
+  | { status: "waiting"; version: string; updateId?: string; totalRuns: number; message: string }
   | { status: "unavailable"; message: string }
   | { status: "blocked"; totalRuns: number; message: string }
+  | { status: "failed"; message: string };
+
+export type DesktopUpdateProgressPhase =
+  | "starting"
+  | "resolving_release"
+  | "downloading_checksums"
+  | "downloading_asset"
+  | "verifying_checksum"
+  | "ready_to_install"
+  | "waiting_for_active_runs"
+  | "preparing_restart"
+  | "closing"
+  | "failed";
+
+export type DesktopUpdateProgressEvent = {
+  updateId: string;
+  version: string;
+  phase: DesktopUpdateProgressPhase;
+  message: string;
+  percent?: number;
+  transferredBytes?: number;
+  totalBytes?: number;
+  totalRuns?: number;
+  error?: string;
+  at: string;
+};
+
+export type DesktopUpdateApplyResult =
+  | { status: "started"; updateId: string; version: string }
+  | { status: "unavailable"; message: string }
   | { status: "failed"; message: string };
 
 export type OpenNotificationSettingsResult = {
@@ -74,6 +107,12 @@ export type DesktopPathPickResult = {
   path: string | null;
 };
 
+export type DesktopImageDataPayload = {
+  filename?: string | null;
+  contentType: string;
+  base64: string;
+};
+
 export type DesktopIdeTarget = {
   id: "cursor" | "vscode" | "windsurf" | "zed" | "webstorm" | "intellij";
   label: string;
@@ -95,11 +134,19 @@ export type DesktopShellApi = {
   openWorkspace?(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
   openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
   copyText(value: string): Promise<void>;
+  copyImage?(payload: DesktopImageDataPayload): Promise<void>;
+  showImageInFolder?(payload: DesktopImageDataPayload): Promise<void>;
   setAppearance(theme: "light" | "dark" | "system"): Promise<void>;
+  getUpdateChannel?(): Promise<DesktopUpdateChannel>;
+  setUpdateChannel?(channel: DesktopUpdateChannel): Promise<DesktopUpdateChannel>;
+  reloadApp?(): Promise<void>;
   restart(): Promise<void>;
   getAppVersion(): Promise<string>;
   checkForUpdates(): Promise<DesktopUpdateCheckResult>;
   installUpdate(version: string): Promise<DesktopUpdateInstallResult>;
+  applyUpdate?(updateId: string): Promise<DesktopUpdateApplyResult>;
+  getUpdateProgress?(): Promise<DesktopUpdateProgressEvent | null>;
+  onUpdateProgress?(listener: (event: DesktopUpdateProgressEvent) => void): () => void;
   getSystemPermissions?(): Promise<DesktopSystemPermissions>;
   sendFeedback(): Promise<void>;
   openExternal(target: string): Promise<void>;

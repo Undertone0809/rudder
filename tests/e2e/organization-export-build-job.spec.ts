@@ -37,6 +37,6 @@ test.describe("Organization export build job", () => {
 
     await expect(page.getByText(/Building export package|Export ready/)).toBeVisible();
     await expect(page.getByText("Export ready")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("button", { name: "Download .zip" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Download .zip" })).toHaveCount(1);
   });
 });

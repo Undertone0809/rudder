@@ -3,6 +3,7 @@ export const queryKeys = {
     all: ["organizations"] as const,
     detail: (id: string) => ["organizations", id] as const,
     stats: ["organizations", "stats"] as const,
+    intelligenceProfiles: (orgId: string) => ["organizations", orgId, "intelligence-profiles"] as const,
     resources: (orgId: string) => ["organizations", orgId, "resources"] as const,
     workspaceFiles: (orgId: string, directoryPath: string) =>
       ["organizations", orgId, "workspace-files", directoryPath] as const,
@@ -63,6 +64,7 @@ export const queryKeys = {
       ["issues", orgId, "project", projectId] as const,
     detail: (id: string) => ["issues", "detail", id] as const,
     comments: (issueId: string) => ["issues", "comments", issueId] as const,
+    comment: (issueId: string, commentId: string) => ["issues", "comments", issueId, commentId] as const,
     attachments: (issueId: string) => ["issues", "attachments", issueId] as const,
     documents: (issueId: string) => ["issues", "documents", issueId] as const,
     documentRevisions: (issueId: string, key: string) => ["issues", "document-revisions", issueId, key] as const,
@@ -76,6 +78,8 @@ export const queryKeys = {
   chats: {
     list: (orgId: string, status: "active" | "resolved" | "archived" | "all" = "active") =>
       ["chats", orgId, status] as const,
+    search: (orgId: string, q: string, status: "active" | "resolved" | "archived" | "all" = "all") =>
+      ["chats", orgId, status, "search", q] as const,
     detail: (chatId: string) => ["chats", "detail", chatId] as const,
     messages: (chatId: string) => ["chats", "messages", chatId] as const,
   },
@@ -164,9 +168,11 @@ export const queryKeys = {
   dashboard: (orgId: string) => ["dashboard", orgId] as const,
   dashboardSkillsAnalytics: (orgId: string) => ["dashboard", orgId, "skills-analytics"] as const,
   sidebarBadges: (orgId: string) => ["sidebar-badges", orgId] as const,
-  activity: (orgId: string) => ["activity", orgId] as const,
+  activity: (orgId: string, filtersKey: string = "all") => ["activity", orgId, filtersKey] as const,
   costs: (orgId: string, from?: string, to?: string) =>
     ["costs", orgId, from, to] as const,
+  costTrend: (orgId: string, from?: string, to?: string, scopeKind: string = "all", scopeId: string = "") =>
+    ["costs", "trend", orgId, from, to, scopeKind, scopeId] as const,
   usageByProvider: (orgId: string, from?: string, to?: string) =>
     ["usage-by-provider", orgId, from, to] as const,
   usageByBiller: (orgId: string, from?: string, to?: string) =>

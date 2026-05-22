@@ -8,6 +8,34 @@
   --motion-ease-exit: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.motion-new-issue-dialog {
+  view-transition-name: new-issue-dialog;
+  transition:
+    opacity var(--motion-duration-standard) var(--motion-ease-standard),
+    scale var(--motion-duration-standard) var(--motion-ease-enter),
+    box-shadow var(--motion-duration-standard) var(--motion-ease-standard);
+  will-change: opacity, scale, box-shadow;
+}
+
+.motion-new-issue-dialog--created {
+  opacity: 0.92;
+  scale: 0.985;
+  box-shadow:
+    0 22px 64px -46px color-mix(in oklab, var(--accent-base) 64%, transparent),
+    inset 0 0 0 1px color-mix(in oklab, var(--accent-base) 34%, transparent);
+}
+
+.motion-new-issue-created-banner {
+  animation: rudder-new-issue-created-banner var(--motion-duration-emphasis) var(--motion-ease-enter) both;
+  will-change: opacity, transform;
+}
+
+::view-transition-old(new-issue-dialog),
+::view-transition-new(new-issue-dialog) {
+  animation-duration: var(--motion-duration-standard);
+  animation-timing-function: var(--motion-ease-enter);
+}
+
 .motion-focus-ring {
   transition:
     border-color var(--motion-duration-fast) var(--motion-ease-standard),
@@ -17,6 +45,29 @@
 
 .motion-list-enter {
   animation: rudder-list-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
+}
+
+.motion-draft-issue-card {
+  overflow: hidden;
+  max-height: 18rem;
+  transform-origin: center top;
+  transition:
+    max-height var(--motion-duration-standard) var(--motion-ease-exit),
+    opacity var(--motion-duration-standard) var(--motion-ease-exit),
+    transform var(--motion-duration-standard) var(--motion-ease-exit),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+  will-change: max-height, opacity, transform;
+}
+
+.motion-draft-issue-card[data-deleting="true"] {
+  min-height: 0;
+  max-height: 0;
+  pointer-events: none;
+  opacity: 0;
+  border-color: color-mix(in oklab, var(--destructive) 44%, var(--border-soft));
+  background-color: color-mix(in oklab, var(--destructive) 8%, transparent);
+  transform: translateY(8px) scale(0.985);
 }
 
 .motion-state-flash {
@@ -110,6 +161,11 @@
 
 .motion-org-card:hover {
   transform: translateY(-1px);
+}
+
+.motion-org-edge {
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .motion-org-card[data-active="true"] {
@@ -242,6 +298,11 @@
   animation-delay: 178ms;
 }
 
+.motion-chat-empty-heading {
+  animation: rudder-chat-empty-heading-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
+  will-change: opacity, transform, filter;
+}
+
 .motion-organization-menu-pop {
   transform-origin: var(--radix-dropdown-menu-content-transform-origin, left top);
   will-change: opacity, transform, clip-path;
@@ -260,6 +321,96 @@
   transform: translateY(4px) scale(0.992);
   animation: rudder-organization-menu-item-enter 190ms var(--motion-ease-enter) both;
   animation-delay: var(--motion-org-menu-item-delay, 54ms);
+}
+
+.motion-inline-selector-pop {
+  will-change: opacity, transform, clip-path, box-shadow;
+}
+
+.motion-inline-selector-pop[data-state="open"] {
+  animation: rudder-inline-selector-pop var(--motion-duration-standard) var(--motion-ease-enter) both;
+}
+
+.motion-inline-selector-pop[data-state="closed"] {
+  animation: rudder-inline-selector-close var(--motion-duration-fast) var(--motion-ease-exit) both;
+}
+
+.motion-inline-selector-pop[data-state="open"] [data-inline-entity-option] {
+  opacity: 0;
+  transform: translateY(4px) scale(0.99);
+  animation: rudder-inline-selector-option-enter 180ms var(--motion-ease-enter) both;
+}
+
+.motion-inline-selector-pop[data-state="open"] [data-inline-entity-option]:nth-of-type(2) {
+  animation-delay: 28ms;
+}
+
+.motion-inline-selector-pop[data-state="open"] [data-inline-entity-option]:nth-of-type(3) {
+  animation-delay: 56ms;
+}
+
+.motion-inline-selector-pop[data-state="open"] [data-inline-entity-option]:nth-of-type(4) {
+  animation-delay: 84ms;
+}
+
+.motion-disclosure-enter {
+  transform-origin: top;
+  animation: rudder-disclosure-enter var(--motion-duration-standard) var(--motion-ease-enter) both;
+  will-change: opacity, transform, clip-path;
+}
+
+.motion-disclosure-icon {
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+  will-change: transform;
+}
+
+.motion-disclosure-icon[data-state="open"] {
+  transform: rotate(90deg);
+}
+
+.rudder-text-dots {
+  --rudder-text-dots-duration: 1.2s;
+  --rudder-text-dots-step: 160ms;
+}
+
+.rudder-text-dots__dots {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 0.34em);
+  width: 1.02em;
+  color: currentColor;
+}
+
+.rudder-text-dots__dot {
+  opacity: 0.28;
+  animation: rudder-text-dots-pulse var(--rudder-text-dots-duration) ease-in-out infinite;
+  animation-delay: calc(var(--rudder-text-dot-index) * var(--rudder-text-dots-step));
+  will-change: opacity;
+}
+
+@keyframes rudder-text-dots-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.28;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+@keyframes rudder-new-issue-created-banner {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px) scale(0.96);
+  }
+  64% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(2px) scale(1.012);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
 }
 
 @keyframes rudder-list-enter {
@@ -414,6 +565,19 @@
   }
 }
 
+@keyframes rudder-chat-empty-heading-enter {
+  0% {
+    opacity: 0;
+    filter: blur(3px);
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
 @keyframes rudder-organization-menu-pop {
   0% {
     opacity: 0;
@@ -444,6 +608,40 @@
   }
 }
 
+@keyframes rudder-inline-selector-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(7px) scale(0.97);
+    clip-path: inset(8% 8% 12% 8% round var(--radius-md));
+    box-shadow: 0 10px 24px -24px color-mix(in oklab, var(--accent-base) 44%, transparent);
+  }
+  62% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.008);
+    clip-path: inset(0 0 0 0 round var(--radius-md));
+    box-shadow: 0 20px 48px -32px color-mix(in oklab, var(--accent-base) 44%, transparent);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    clip-path: inset(0 0 0 0 round var(--radius-md));
+  }
+}
+
+@keyframes rudder-inline-selector-close {
+  to {
+    opacity: 0;
+    transform: translateY(3px) scale(0.985);
+  }
+}
+
+@keyframes rudder-inline-selector-option-enter {
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @keyframes rudder-organization-menu-item-enter {
   to {
     opacity: 1;
@@ -451,8 +649,22 @@
   }
 }
 
+@keyframes rudder-disclosure-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px) scaleY(0.985);
+    clip-path: inset(0 0 100% 0 round var(--radius-md));
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+    clip-path: inset(0 0 0 0 round var(--radius-md));
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .motion-list-enter,
+  .motion-new-issue-created-banner,
   .motion-state-flash,
   .motion-live-surface::before,
   .motion-live-dot::after,
@@ -464,18 +676,28 @@
   .motion-chat-options-pop [data-chat-option],
   .motion-chat-composer-menu-pop,
   .motion-chat-composer-menu-pop [data-chat-composer-menu-item],
+  .motion-chat-empty-heading,
   .motion-organization-menu-pop,
-  .motion-organization-menu-pop [data-org-menu-item] {
+  .motion-organization-menu-pop [data-org-menu-item],
+  .motion-disclosure-enter,
+  .rudder-text-dots__dot {
     animation: none !important;
   }
 
+  .rudder-text-dots__dot {
+    opacity: 1;
+  }
+
   .motion-focus-ring,
+  .motion-new-issue-dialog,
   .motion-kanban-lane,
   .motion-kanban-card,
+  .motion-draft-issue-card,
   .motion-org-layer,
   .motion-org-card,
   .motion-rail-active-indicator,
-  .motion-context-active-indicator {
+  .motion-context-active-indicator,
+  .motion-disclosure-icon {
     transition: none !important;
   }
 
@@ -483,14 +705,33 @@
     opacity: 0.48;
   }
 
+  .motion-draft-issue-card[data-deleting="true"] {
+    max-height: 0 !important;
+    transform: none !important;
+  }
+
+  .motion-new-issue-dialog--created {
+    opacity: 1 !important;
+    scale: 1 !important;
+  }
+
+  ::view-transition-old(new-issue-dialog),
+  ::view-transition-new(new-issue-dialog) {
+    animation: none !important;
+  }
+
   .motion-chat-options-pop,
   .motion-chat-options-pop [data-chat-option],
+  .motion-new-issue-created-banner,
   .motion-chat-composer-menu-pop,
   .motion-chat-composer-menu-pop [data-chat-composer-menu-item],
+  .motion-chat-empty-heading,
   .motion-organization-menu-pop,
-  .motion-organization-menu-pop [data-org-menu-item] {
+  .motion-organization-menu-pop [data-org-menu-item],
+  .motion-disclosure-enter {
     opacity: 1 !important;
     transform: none !important;
+    scale: 1 !important;
     clip-path: none !important;
   }
 }

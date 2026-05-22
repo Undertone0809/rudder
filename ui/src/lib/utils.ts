@@ -50,15 +50,36 @@ export function formatDateTime(date: Date | string): string {
         day: "numeric",
         hour: "2-digit",
         minute: "2-digit",
-        hour12: false,
+        hourCycle: "h23",
       }
     : {
         month: "short",
         day: "numeric",
         year: "numeric",
-        hour: "numeric",
+        hour: "2-digit",
         minute: "2-digit",
+        hourCycle: "h23",
       }).format(new Date(date));
+}
+
+export function formatTime(date: Date | string, options: { seconds?: boolean; timeZoneName?: "short" } = {}): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(options.seconds ? { second: "2-digit" } : {}),
+    ...(options.timeZoneName ? { timeZoneName: options.timeZoneName } : {}),
+    hourCycle: "h23",
+  }).format(new Date(date));
+}
+
+export function formatDateTimeSeconds(date: Date | string): string {
+  const timestamp = new Date(date);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return [
+    timestamp.getFullYear(),
+    pad(timestamp.getMonth() + 1),
+    pad(timestamp.getDate()),
+  ].join("-") + ` ${pad(timestamp.getHours())}:${pad(timestamp.getMinutes())}:${pad(timestamp.getSeconds())}`;
 }
 
 export function relativeTime(date: Date | string): string {
@@ -105,6 +126,7 @@ export function formatRunElapsedDuration(
 }
 
 export function formatTokens(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);

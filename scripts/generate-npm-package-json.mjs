@@ -23,22 +23,25 @@ function readPkg(relativePath) {
   return JSON.parse(readFileSync(resolve(repoRoot, relativePath, "package.json"), "utf8"));
 }
 
-// Read all workspace packages that are BUNDLED into the CLI.
-// Note: "server" is excluded — it's published separately as a dependency.
+// Read all workspace packages that are bundled into the thin bootstrap CLI.
+// Heavy runtime packages are installed into the versioned runtime cache by
+// `rudder start` / `rudder run` and must not appear in the CLI dependency tree.
 const workspacePaths = [
   "cli",
-  "packages/db",
   "packages/shared",
   "packages/agent-runtime-utils",
-  "packages/agent-runtimes/claude-local",
-  "packages/agent-runtimes/codex-local",
-  "packages/agent-runtimes/opencode-local",
-  "packages/agent-runtimes/openclaw-gateway",
 ];
 
-// Workspace packages that are NOT bundled and must stay as npm dependencies.
-// These get published separately and resolved at runtime.
-const externalWorkspacePackages = new Set([
+const runtimeWorkspacePackages = new Set([
+  "@rudderhq/agent-runtime-claude-local",
+  "@rudderhq/agent-runtime-codex-local",
+  "@rudderhq/agent-runtime-cursor-local",
+  "@rudderhq/agent-runtime-gemini-local",
+  "@rudderhq/agent-runtime-openclaw-gateway",
+  "@rudderhq/agent-runtime-opencode-local",
+  "@rudderhq/agent-runtime-pi-local",
+  "@rudderhq/db",
+  "@rudderhq/run-intelligence-core",
   "@rudderhq/server",
 ]);
 
@@ -52,14 +55,8 @@ for (const pkgPath of workspacePaths) {
   const optDeps = pkg.optionalDependencies || {};
 
   for (const [name, version] of Object.entries(deps)) {
-    if (name.startsWith("@rudderhq/") && !externalWorkspacePackages.has(name)) continue;
-    // For external workspace packages, read their version directly
-    if (externalWorkspacePackages.has(name)) {
-      const pkgDirMap = { "@rudderhq/server": "server" };
-      const wsPkg = readPkg(pkgDirMap[name]);
-      allDeps[name] = wsPkg.version;
-      continue;
-    }
+    if (runtimeWorkspacePackages.has(name)) continue;
+    if (name.startsWith("@rudderhq/")) continue;
     // Keep the more specific (pinned) version if conflict
     if (!allDeps[name] || !version.startsWith("^")) {
       allDeps[name] = version;

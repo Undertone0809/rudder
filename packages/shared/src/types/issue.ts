@@ -31,6 +31,8 @@ export interface IssueAncestor {
   priority: string;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
+  reviewerAgentId: string | null;
+  reviewerUserId: string | null;
   projectId: string | null;
   goalId: string | null;
   project: IssueAncestorProject | null;
@@ -49,6 +51,12 @@ export interface IssueLabel {
 export interface IssueAssigneeAgentRuntimeOverrides {
   agentRuntimeConfig?: Record<string, unknown>;
   useProjectWorkspace?: boolean;
+}
+
+export interface IssueSearchMatch {
+  field: "identifier" | "title" | "description" | "comment";
+  snippet: string;
+  commentId?: string | null;
 }
 
 export type DocumentFormat = "markdown";
@@ -109,6 +117,8 @@ export interface Issue {
   boardOrder: number;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
+  reviewerAgentId: string | null;
+  reviewerUserId: string | null;
   checkoutRunId: string | null;
   executionRunId: string | null;
   executionAgentNameKey: string | null;
@@ -140,6 +150,7 @@ export interface Issue {
   currentExecutionWorkspace?: ExecutionWorkspace | null;
   workProducts?: IssueWorkProduct[];
   mentionedProjects?: Project[];
+  searchMatch?: IssueSearchMatch | null;
   myLastTouchAt?: Date | null;
   lastExternalCommentAt?: Date | null;
   isUnreadForMe?: boolean;
@@ -156,6 +167,16 @@ export interface IssueComment {
   body: string;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface IssueCommitReport {
+  ok: true;
+  issueId: string;
+  sha: string;
+  shortSha: string;
+  message: string;
+  subject: string;
+  runId: string | null;
 }
 
 export type IssueAttachmentUsage =

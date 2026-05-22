@@ -1,9 +1,22 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
+import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
+import {
+  activityLog,
+  chatConversationUserStates,
+  chatConversations,
+  chatMessages,
+  createDb,
+  heartbeatRuns,
+  issues,
+} from "../../packages/db/src/index.ts";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
+const ONE_BY_ONE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X5p1sAAAAASUVORK5CYII=",
+  "base64",
+);
 
 async function createOrganization(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
@@ -17,15 +30,24 @@ async function createConfiguredOrganization(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
     data: {
       name,
-      defaultChatAgentRuntimeType: "codex_local",
-      defaultChatAgentRuntimeConfig: {
+    },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json();
+  const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+    data: {
+      name: "Messenger Chat Agent",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {
         model: "gpt-5.4",
         command: E2E_CODEX_STUB,
       },
     },
   });
-  expect(orgRes.ok()).toBe(true);
-  return orgRes.json();
+  expect(agentRes.ok()).toBe(true);
+  const chatAgent = await agentRes.json();
+  return { ...organization, chatAgent };
 }
 
 function threadTestId(threadKey: string) {
@@ -34,6 +56,18 @@ function threadTestId(threadKey: string) {
 
 function chatUnreadBadgeTestId(chatId: string) {
   return `${`chat:${chatId}`.replace(/[^a-zA-Z0-9_-]/g, "-")}-unread-badge`;
+}
+
+async function isInElementViewport(page: Page, containerTestId: string, rowTestId: string) {
+  return page.evaluate(({ containerTestId, rowTestId }) => {
+    const container = document.querySelector(`[data-testid="${containerTestId}"] nav`);
+    const row = document.querySelector(`[data-testid="${rowTestId}"]`);
+    if (!container || !row) return false;
+
+    const containerRect = container.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    return rowRect.top >= containerRect.top && rowRect.bottom <= containerRect.bottom;
+  }, { containerTestId, rowTestId });
 }
 
 function exactTimestampPattern() {
@@ -55,6 +89,84 @@ async function expectMessengerThreadStartsAtBottom(page: Page, heading: string) 
 }
 
 test.describe("Messenger unified threads contract", () => {
+  test("double-clicking primary rail Messenger scrolls the sidebar to unread threads", async ({ page }) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Unread-Scroll-${Date.now()}`);
+    const targetChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Unread thread below the fold",
+        summary: "Double-clicking Messenger should reveal this unread thread.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(targetChatRes.ok()).toBe(true);
+    const targetChat = await targetChatRes.json();
+
+    const readAt = new Date("2026-01-01T00:00:00.000Z");
+    const messageAt = new Date("2026-01-01T00:01:00.000Z");
+    await e2eDb.insert(chatConversationUserStates).values({
+      orgId: organization.id,
+      conversationId: targetChat.id,
+      userId: currentUserId,
+      lastReadAt: readAt,
+      updatedAt: readAt,
+    });
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: targetChat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Unread assistant reply",
+      createdAt: messageAt,
+      updatedAt: messageAt,
+    });
+    await e2eDb
+      .update(chatConversations)
+      .set({ lastMessageAt: messageAt, updatedAt: messageAt })
+      .where(eq(chatConversations.id, targetChat.id));
+
+    for (let index = 0; index < 18; index += 1) {
+      const fillerRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title: `Read filler chat ${String(index + 1).padStart(2, "0")}`,
+          summary: "This read chat keeps the unread target below the visible sidebar area.",
+          issueCreationMode: "manual_approval",
+          planMode: false,
+        },
+      });
+      expect(fillerRes.ok()).toBe(true);
+    }
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat`, { waitUntil: "commit" });
+
+    const targetThreadTestId = threadTestId(`chat:${targetChat.id}`);
+    await expect(page.getByTestId(targetThreadTestId)).toContainText("Unread thread below the fold", { timeout: 15_000 });
+    await expect(page.getByTestId(chatUnreadBadgeTestId(targetChat.id))).toHaveText("1");
+    await expect(page.getByTestId("rail-badge-messenger")).toHaveText("1");
+
+    const sidebarNav = page.getByTestId("workspace-sidebar").locator("nav").first();
+    await sidebarNav.evaluate((node) => {
+      node.scrollTop = 0;
+    });
+    await expect.poll(() => isInElementViewport(page, "workspace-sidebar", targetThreadTestId)).toBe(false);
+
+    await page.getByTestId("primary-rail").getByRole("link", { name: "Messenger" }).dblclick();
+
+    await expect.poll(() => isInElementViewport(page, "workspace-sidebar", targetThreadTestId)).toBe(true);
+  });
+
   test("archives a Messenger chat from the sidebar and removes it from the thread list", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Archive-${Date.now()}`);
 
@@ -155,6 +267,62 @@ test.describe("Messenger unified threads contract", () => {
     ]);
   });
 
+  test("renders pinned Messenger chats from thread summaries before the full chat list responds", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Pin-Cold-${Date.now()}`);
+
+    const olderChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Pinned summary chat",
+        summary: "Pinned should render from the Messenger thread summary payload.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(olderChatRes.ok()).toBe(true);
+    const olderChat = await olderChatRes.json();
+    await page.waitForTimeout(25);
+
+    const newerChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Recent unpinned summary chat",
+        summary: "This chat is newer but should stay in Recent.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(newerChatRes.ok()).toBe(true);
+    const newerChat = await newerChatRes.json();
+
+    const pinRes = await page.request.post(`/api/chats/${olderChat.id}/user-state`, {
+      data: { pinned: true },
+    });
+    expect(pinRes.ok()).toBe(true);
+
+    let releaseFullChatList!: () => void;
+    const fullChatListBlocked = new Promise<void>((resolve) => {
+      releaseFullChatList = resolve;
+    });
+    await page.route((url) => {
+      return url.pathname === `/api/orgs/${organization.id}/chats` && url.searchParams.get("status") === "all";
+    }, async (route) => {
+      await fullChatListBlocked;
+      await route.continue();
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${newerChat.id}`, { waitUntil: "commit" });
+
+    await expect(page.getByTestId("messenger-thread-section-pinned")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId(threadTestId(`chat:${olderChat.id}`))).toContainText("Pinned summary chat");
+    await expect(page.getByTestId(threadTestId(`chat:${newerChat.id}`))).toContainText("Recent unpinned summary chat");
+
+    releaseFullChatList();
+  });
+
   test("renders the mixed Messenger directory and supports issue + approval actions", async ({ page }, testInfo) => {
     const sessionRes = await page.request.get("/api/auth/get-session");
     expect(sessionRes.ok()).toBe(true);
@@ -200,13 +368,38 @@ test.describe("Messenger unified threads contract", () => {
     const followRes = await page.request.post(`/api/issues/${issue.id}/follow`);
     expect(followRes.ok()).toBe(true);
 
+    const approvalImageRes = await page.request.post(`/api/orgs/${organization.id}/assets/images`, {
+      multipart: {
+        namespace: "approval-test",
+        file: {
+          name: "approval-screenshot.png",
+          mimeType: "image/png",
+          buffer: ONE_BY_ONE_PNG,
+        },
+      },
+    });
+    expect(approvalImageRes.ok()).toBe(true);
+    const approvalImage = await approvalImageRes.json() as { contentPath: string };
+
     const approvalRes = await page.request.post(`/api/orgs/${organization.id}/approvals`, {
       data: {
-        type: "budget_override_required",
+        type: "chat_issue_creation",
         payload: {
-          scopeName: "Messenger contract test",
-          budgetAmount: 1200,
-          observedAmount: 1800,
+          chatConversationId: chat.id,
+          proposedIssue: {
+            title: "Messenger contract test",
+            description: [
+              "## Approval Markdown",
+              "",
+              "- Render **markdown** in the approval preview.",
+              "- Preserve inline images.",
+              "",
+              `![](${approvalImage.contentPath})`,
+            ].join("\n"),
+            priority: "medium",
+            projectId: project.id,
+            assigneeUserId: currentUserId,
+          },
         },
         issueIds: [issue.id],
       },
@@ -226,10 +419,10 @@ test.describe("Messenger unified threads contract", () => {
     await expect(mainContent.locator(".chat-composer")).toBeVisible({ timeout: 15_000 });
     const organizationPrefix = organization.issuePrefix;
 
-    const sidebarThreads = page.locator('[data-testid="workspace-sidebar"] [data-testid^="messenger-thread-"]');
+    const sidebarThreads = page.locator('[data-testid="workspace-sidebar"] [data-testid^="messenger-thread-"]:not([data-testid="messenger-thread-organization-trigger"])');
     await expect(sidebarThreads).toHaveCount(3, { timeout: 15_000 });
     await expect(page.getByTestId(threadTestId("approvals"))).toContainText("Approvals");
-    await expect(page.getByTestId(threadTestId("issues"))).toContainText("Cross-issue activity feed");
+    await expect(page.getByTestId(threadTestId("issues"))).toContainText("Messenger issue follow");
     await expect(page.getByTestId(threadTestId(`chat:${chat.id}`))).toContainText("Messenger intake");
     await expect(sidebarThreads.nth(0)).toContainText("Approvals");
     await expect(sidebarThreads.nth(1)).toContainText("Issues");
@@ -270,7 +463,7 @@ test.describe("Messenger unified threads contract", () => {
 
     await issueCard.getByRole("button", { name: "Quick comment" }).click();
     await issueCard.getByPlaceholder("Add a quick comment").fill(longIssueComment);
-    await issueCard.getByRole("button", { name: "Comment" }).click();
+    await issueCard.getByTestId(`messenger-quick-comment-submit-${issue.id}`).click();
 
     let createdCommentId = "";
     await expect.poll(async () => {
@@ -315,10 +508,33 @@ test.describe("Messenger unified threads contract", () => {
     await page.goto(`/${organizationPrefix}/messenger/approvals`, { waitUntil: "commit" });
     await expect(mainContent.getByRole("heading", { name: "Approvals" })).toBeVisible({ timeout: 15_000 });
     await expect(mainContent.getByTestId("messenger-panel-header")).not.toContainText(/\b\d+\s+(?:pending|total)\b/i);
+    const approvalCard = page.locator('[data-testid^="messenger-approval-card-"]').first();
+    await expect(approvalCard).toContainText("Messenger contract test");
+    await expect(approvalCard).toContainText("Agent proposed a new issue from chat");
+    await expect(approvalCard).toContainText("Messenger intake");
+    await expect(approvalCard).toContainText("Project Atlas");
+    await expect(approvalCard).toContainText("Me");
+    await expect(approvalCard.locator("h2", { hasText: "Approval Markdown" })).toBeVisible();
+    await expect(approvalCard.locator("strong", { hasText: "markdown" })).toBeVisible();
+    await expect(approvalCard.locator(`img[src="${approvalImage.contentPath}"]`)).toBeVisible();
+    await expect(approvalCard).not.toContainText(chat.id);
+    await expect(approvalCard).not.toContainText(project.id);
+    await expect(approvalCard).not.toContainText(currentUserId);
     await page.getByRole("link", { name: "Open full approval" }).click();
     await expect(page).toHaveURL(new RegExp(`/${organizationPrefix}/messenger/approvals/${approval.id}(?:\\?[^#]*)?$`));
-    await expect(page.getByTestId("approval-detail-dialog")).toBeVisible();
-    await expect(page.getByTestId("approval-detail-dialog")).toContainText("Messenger contract test");
+    const approvalDialog = page.getByTestId("approval-detail-dialog");
+    await expect(approvalDialog).toBeVisible();
+    await expect(approvalDialog).toContainText("Messenger contract test");
+    await expect(approvalDialog).toContainText("Agent proposed a new issue from chat");
+    await expect(approvalDialog).toContainText("Messenger intake");
+    await expect(approvalDialog).toContainText("Project Atlas");
+    await expect(approvalDialog).toContainText("Me");
+    await expect(approvalDialog.locator("h2", { hasText: "Approval Markdown" })).toBeVisible();
+    await expect(approvalDialog.locator("strong", { hasText: "markdown" })).toBeVisible();
+    await expect(approvalDialog.locator(`img[src="${approvalImage.contentPath}"]`)).toBeVisible();
+    await expect(approvalDialog).not.toContainText(chat.id);
+    await expect(approvalDialog).not.toContainText(project.id);
+    await expect(approvalDialog).not.toContainText(currentUserId);
     await page.getByRole("button", { name: "Close" }).click();
     await expect(page).toHaveURL(new RegExp(`/${organizationPrefix}/messenger/approvals(?:\\?[^#]*)?$`));
 
@@ -334,6 +550,78 @@ test.describe("Messenger unified threads contract", () => {
       path: testInfo.outputPath("messenger-shell.png"),
       fullPage: true,
     });
+  });
+
+  test("lets operators label agent-proposed chat issue approvals before approval", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Approval-Labels-${Date.now()}`);
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Labeling Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json();
+
+    const labels = [];
+    for (const name of ["Engineering", "Design", "Support", "Docs", "Ops"]) {
+      const labelRes = await page.request.post(`/api/orgs/${organization.id}/labels`, {
+        data: { name, color: "#2563eb" },
+      });
+      expect(labelRes.ok()).toBe(true);
+      labels.push(await labelRes.json());
+    }
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Label approval intake",
+        issueCreationMode: "manual_approval",
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+
+    const approvalRes = await page.request.post(`/api/orgs/${organization.id}/approvals`, {
+      data: {
+        type: "chat_issue_creation",
+        payload: {
+          chatConversationId: chat.id,
+          proposedByAgentId: agent.id,
+          proposedIssue: {
+            title: "Classify proposed work",
+            description: "This agent-created issue needs an operator-selected label.",
+            priority: "medium",
+          },
+        },
+      },
+    });
+    expect(approvalRes.ok()).toBe(true);
+    const approval = await approvalRes.json();
+
+    await page.goto(`/${organization.issuePrefix}/messenger/approvals`, { waitUntil: "commit" });
+    const approvalCard = page.getByTestId(`messenger-approval-card-${approval.id}`);
+    await expect(approvalCard).toContainText("Classify proposed work");
+    await expect(approvalCard).toContainText("Required before approval");
+    await expect(approvalCard.getByRole("button", { name: "Approve" })).toBeDisabled();
+
+    await approvalCard.getByRole("button", { name: "Engineering" }).click();
+    await expect(approvalCard).toContainText("Engineering");
+    await expect(approvalCard.getByRole("button", { name: "Approve" })).toBeEnabled();
+    await approvalCard.getByRole("button", { name: "Approve" }).click();
+
+    await expect.poll(async () => {
+      const approvalStateRes = await page.request.get(`/api/approvals/${approval.id}`);
+      const approvalState = await approvalStateRes.json();
+      return approvalState.status;
+    }).toBe("approved");
+
+    await expect.poll(async () => {
+      const linkedRes = await page.request.get(`/api/approvals/${approval.id}/issues`);
+      const linkedIssues = await linkedRes.json();
+      return linkedIssues[0]?.labelIds ?? [];
+    }).toContain(labels[0].id);
   });
 
   test("keeps approval decision note in the modal review flow and scrolls long approval threads", async ({ page }, testInfo) => {
@@ -584,6 +872,61 @@ test.describe("Messenger unified threads contract", () => {
     await expect(issueCard).toContainText("created by me");
     await expect(issueCard).not.toContainText("assigned to me");
     await expect(issueCard).toContainText("Status changed to blocked");
+    await expect(issueCard.locator('[aria-label="Status changed from todo to blocked"]')).toBeVisible();
+  });
+
+  test("shows the completed issue title in Messenger issue previews", async ({ page }) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Completed-Preview-${Date.now()}`);
+    const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Clarify completed notification",
+        description: "The issue notification should name the completed task.",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: currentUserId,
+      },
+    });
+    expect(issueRes.ok()).toBe(true);
+    const issue = await issueRes.json();
+    const completedAt = new Date();
+
+    await e2eDb
+      .update(issues)
+      .set({ status: "done", updatedAt: completedAt, completedAt })
+      .where(eq(issues.id, issue.id));
+    await e2eDb.insert(activityLog).values({
+      orgId: organization.id,
+      actorType: "agent",
+      actorId: randomUUID(),
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: issue.id,
+      details: { status: "done", identifier: issue.identifier, _previous: { status: "todo" } },
+      createdAt: completedAt,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+
+    const issuesThread = page.getByTestId(threadTestId("issues"));
+    await expect(issuesThread).toBeVisible({ timeout: 15_000 });
+    await expect(issuesThread).toContainText("Clarify completed notification");
+    await expect(issuesThread).toContainText("Completed");
+
+    await page.goto(`/${organization.issuePrefix}/messenger/issues`, { waitUntil: "commit" });
+    const issueCard = page.locator(`[data-testid="messenger-issue-card-${issue.id}"]`);
+    await expect(issueCard).toContainText("Clarify completed notification");
+    await expect(issueCard).toContainText("Completed");
   });
 
   test("renders failed-run issue titles as links without exposing raw issue ids", async ({ page }, testInfo) => {
@@ -813,6 +1156,7 @@ test.describe("Messenger unified threads contract", () => {
       data: {
         title: "Unread chat",
         summary: "Unread badge regression check",
+        preferredAgentId: organization.chatAgent.id,
         issueCreationMode: "manual_approval",
         planMode: false,
       },
@@ -888,6 +1232,7 @@ test.describe("Messenger unified threads contract", () => {
       data: {
         title: "Preview thread",
         summary: "Fallback preview text that should be replaced by the assistant reply.",
+        preferredAgentId: organization.chatAgent.id,
         issueCreationMode: "manual_approval",
         planMode: false,
       },

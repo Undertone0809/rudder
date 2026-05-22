@@ -5,8 +5,8 @@ description: >
   wrong but the user cannot yet express the right product, design, engineering,
   or evaluation critique. Use before more implementation to turn vague
   dissatisfaction, weak AI-built results, traces, benchmarks, or eval evidence
-  into a grounded diagnosis, explicit criteria, realistic options, and a
-  recommended next move.
+  into a grounded first-principles scenario analysis, explicit criteria,
+  realistic options, corner-case coverage, and a recommended next move.
 ---
 
 # Build Advisor
@@ -20,6 +20,7 @@ Use it when the user needs an expert advisor to turn fuzzy discomfort into:
 
 - a clearer problem statement
 - a professional diagnosis
+- a first-principles map of user scenarios, needs, non-needs, and corner cases
 - explicit evaluation criteria
 - 2-3 realistic options
 - one decision-ready proposal for the recommended option
@@ -59,6 +60,8 @@ It should not:
 - pretend every problem is a UI styling issue
 - replace specialized execution skills when the right next step is obvious
 - produce vague "looks better / feels cleaner" advice without criteria
+- start from the visible implementation detail when the user is asking about
+  the underlying scenario, job-to-be-done, or workflow pressure
 
 If the correct outcome is to invoke or recommend a more specialized skill, say so clearly.
 
@@ -77,6 +80,30 @@ Use `build-advisor` when the user is blocked on judgment, articulation, or decid
 ## Default Workflow
 
 Follow this sequence unless the user explicitly narrows the task.
+
+### 0. Mode Gate
+
+Before doing a full advisor pass, classify the user's immediate intent:
+
+- `quick_take`: the user asks for a fast sanity check or says not to write a
+  long plan. Keep the answer short and name the main risk plus next move.
+- `understanding_check`: the user asks "你懂吗" / "先说说". Do a small evidence
+  pass, then reframe the need. Do not implement or write a full proposal yet.
+- `proposal`: the user asks for a proposal, options, plan, or first-principles
+  analysis. Stay in advisor mode and produce the requested decision artifact.
+- `visual_options`: the user is reacting to screenshots or asks for UI schemes.
+  Produce concrete visual alternatives such as ASCII wireframes, low-fidelity
+  HTML, or screenshot-backed inspection criteria before recommending code.
+- `implementation_handoff`: the user approves an option with phrases like
+  "可以，开始推进", "按方案 A 改", or "follow 你的思路，优化一下". Switch out of
+  advisor-only mode and execute normally with repository validation rules.
+- `reviewer_loop`: the user asks for reviewer rounds, acceptance gates, or
+  independent review. Route to the reviewer-loop workflow instead of acting as
+  a single advisor.
+
+State the mode only when it clarifies the response. The purpose of the gate is
+to prevent two failures: writing a long proposal when the user wants a quick
+decision, and starting implementation when the user asked only for judgment.
 
 ### Plan Template Reference
 
@@ -111,6 +138,26 @@ by default.
 
 If enough context is not yet available, say so directly and list the exact
 evidence needed. Do not fill the gap with confident interpretation.
+
+#### UI Evidence Mode
+
+When the input includes screenshots, browser state, visible UI, or visual
+complaints, treat visual evidence as part of the diagnosis, not as an optional
+polish step.
+
+Use the smallest concrete artifact that makes the choice inspectable:
+
+- ASCII wireframe for layout and hierarchy questions.
+- Single-file low-fidelity HTML when comparing multiple UI directions.
+- Browser/Desktop screenshot when judging an existing rendered state or after
+  implementation.
+- A compact state checklist when the surface depends on dark/light theme,
+  narrow width, long text, hover/menu/dialog behavior, loading, empty, or error
+  states.
+
+Do not jump from a screenshot complaint straight to CSS or component edits
+unless the user has already approved the direction or the request is clearly a
+minor implementation handoff.
 
 ### 2. Reframe The Ask
 
@@ -186,7 +233,85 @@ When the user mentions Langfuse, or when the available evidence lives in Langfus
 
 Do not guess if you can verify quickly.
 
-### 5. Build An Evaluation Frame
+#### External Product Reference Mode
+
+When the user names an external product as a strong reference or says it is
+"most like Rudder's ideal shape", treat the product as evidence, not decoration.
+Do a source-backed pass before proposing Rudder changes:
+
+- inspect the named product's public site, docs, screenshots, or user-provided
+  artifact when available
+- separate observed product behavior from the user's interpretation of why it
+  matters
+- map the insight through both Rudder operator workflow and agent workflow
+- identify which existing Rudder concepts should converge, split, or disappear
+  instead of adding another synonym
+- distinguish product principle from implementation imitation; do not copy a
+  surface pattern unless it solves the same Rudder job
+- turn the conclusion into a decision artifact with source of truth,
+  user/agent flow, implementation surface, and validation bar
+
+If live external access is blocked, say what evidence was available and avoid
+claiming a complete competitor analysis.
+
+### 5. Scenario And First-Principles Pass
+
+Make this pass explicit before judging solutions. This is the default posture
+for `build-advisor`, not a special mode triggered only by keywords.
+
+Skip or compress this pass only when the user explicitly asks for a quick take,
+a narrow bug check, or a tightly scoped local answer. Even then, preserve the
+underlying discipline: identify the actor, intent, lifecycle state, and failure
+mode before recommending a fix.
+
+Start from the durable job and actors, not from the current UI widget, code
+path, metric, or proposed patch. The implementation evidence is downstream
+evidence, not the root framing.
+
+Cover the relevant subset:
+
+- actors and roles: who initiates, receives, observes, approves, reviews, or is
+  interrupted
+- lifecycle states: before work starts, while work is active, waiting,
+  completed, reopened, failed, blocked, reviewed, or archived
+- intent levels: passive note, clarification, question, instruction, approval,
+  rejection, escalation, override, and irreversible action
+- success definition: what should happen, what must not happen, and what signal
+  proves the loop is complete
+- failure modes: ambiguity, accidental action, stale context, duplicate work,
+  missing authority, silent non-action, runaway automation, and unclear recovery
+- corner cases: concurrency, permissions, reassignment, cancellation, retries,
+  external system failure, stale plans, empty states, partial completion,
+  backward compatibility, and auditability
+- non-goals: cases the product or workflow should intentionally not solve in
+  this layer
+
+Then collapse the list into a small number of requirement classes. Use language
+like "This yields four requirements..." rather than leaving a raw brainstorm.
+If a scenario is unlikely or out of scope, say so and explain why.
+
+Do not claim "100% coverage" literally. Instead, say what has been covered,
+what assumptions bound the analysis, and what evidence would change the answer.
+
+#### Depth Budget
+
+Match the analysis depth to the task:
+
+- Small UI copy/layout tweaks: use a narrow evidence pass, concrete criteria,
+  and one recommended next move. Do not force plan taxonomy or full scenario
+  mapping.
+- Screenshot-driven UI redesign: inspect the surface and produce visual options
+  or a rendered comparison before code.
+- Workflow, object-model, runtime, schema, release, or architecture questions:
+  use the full first-principles/scenario pass and explicitly cover state,
+  ownership, failure, compatibility, and validation.
+- Existing implementation with user dissatisfaction: first decide `accept
+  as-is`, `accept with gaps`, or `redesign`; then explain the gap.
+
+If the user changes mode mid-thread, obey the latest mode. A common sequence is
+advisor diagnosis, visual options, user approval, then implementation handoff.
+
+### 6. Build An Evaluation Frame
 
 Create a short decision rubric tailored to the problem.
 
@@ -204,7 +329,10 @@ Good rubrics usually have 4-8 dimensions, for example:
 Do not stay abstract.
 Say what good and bad look like in this context.
 
-### 6. Produce Options
+If the scenario pass was used, every evaluation criterion should trace back to
+at least one user scenario, requirement class, or failure mode.
+
+### 7. Produce Options
 
 Always provide at least 2 options:
 
@@ -221,7 +349,7 @@ For each option include:
 
 If traces, scores, or evals are in play, say whether the option fixes the product, the instrumentation, the benchmark design, or only the interpretation layer.
 
-### 7. Expand The Recommended Proposal
+### 8. Expand The Recommended Proposal
 
 After listing options, expand the recommended option into a decision-ready
 proposal.
@@ -252,6 +380,10 @@ For user-facing product or workflow requests, the user interaction flow is
 mandatory. For engineering or platform requests, the technical architecture is
 mandatory. When both are relevant, include both.
 
+If a scenario pass was requested or clearly needed, the recommended proposal
+must explicitly say how it handles the major scenario classes and corner cases.
+Do not bury that coverage inside generic "edge cases" language.
+
 Keep this as a proposal, not a full implementation plan, unless the user
 explicitly asks to proceed. If repo rules require a plan document before
 implementation, the proposal should make that plan easy to write after
@@ -277,7 +409,7 @@ mostly implemented." Produce one of: accept as-is, accept with gaps, or
 redesign. Include a gap assessment covering evidence, missing behavior, risk,
 and acceptance signal.
 
-### 8. Recommend The Next Move
+### 9. Recommend The Next Move
 
 Choose one option.
 Say why.
@@ -292,7 +424,7 @@ Possible next moves:
 
 The recommendation should be explicit, not "it depends" by default.
 
-### 9. Write Plan doc before run
+### 10. Write Plan doc before run
 
 Before you run, write your detail plan in `doc/plans`, then start your work.
 - DO NOT write your plan before user confirm.
@@ -346,6 +478,17 @@ When relevant, also include:
 
 3-6 bullets defining how to judge the next iteration.
 
+### Scenario And Requirements Map
+
+Default to including this section. Omit it only for explicit quick takes or
+tightly scoped local checks where the scenario map would add noise.
+
+- actors and lifecycle states considered
+- requirement classes derived from the scenarios
+- non-goals and boundaries
+- important corner cases and failure modes
+- assumptions or evidence that would change the conclusion
+
 ### Options
 
 - Option A
@@ -365,6 +508,7 @@ subsections instead of a compact paragraph:
 - Technical Architecture
 - Execution And State Transitions
 - Edge Cases And Recovery
+- Scenario Coverage, when the user requested scenario/corner-case analysis
 - Implementation Surface
 - Validation Bar
 - Open Decisions
@@ -493,6 +637,84 @@ The response stays concise, calls out the main risk, and names the next move.
 Must not:
 Force the full proposal template when the user explicitly asked for a quick
 take.
+
+### Case: Scenario-First Workflow Semantics
+
+Input:
+"现在 issue follow-up, reviewer 等机制，会强制加速 issue 偏向收敛，但还有一个 case：TODO 状态时，在 issue 里讨论的情况。我们从场景和需求出发，这件事会有哪些需求和场景，第一性原理，深度分析各种可能的情况，corner cases，直到你 100% 确认自己的分析都考虑到了。"
+
+Expected behavior:
+The response starts from the user/operator/agent/reviewer scenarios and
+distinguishes discussion, clarification, question, work request, review
+feedback, reopen, and escalation intents before proposing mechanics. It maps
+requirements and corner cases across issue lifecycle states, then recommends
+an explicit intent model or equivalent structural fix.
+
+Must not:
+Jump directly to one UI checkbox, one route handler, or one follow-up rule as
+the whole answer. Must not claim literal perfect coverage; it should state the
+coverage boundary and remaining assumptions.
+
+### Case: Screenshot-Driven Visual Options
+
+Input:
+"这个 UI 感觉不对，先给我几个差异明显的方案做成一个 HTML 对比。" plus
+screenshots of the current surface.
+
+Expected behavior:
+The response inspects the screenshot and relevant design/component context, then
+creates a concrete comparison artifact such as a single HTML file or clear
+wireframes. Each option states its hierarchy, density, tone, and tradeoff.
+
+Must not:
+Skip directly to editing the component, or return only abstract advice like
+"make it cleaner" without an inspectable visual artifact.
+
+### Case: External Product Reference Research
+
+Input:
+"https://moxt.ai/ 这个产品很像 Rudder 理想中的样子。深度调研一下，从用户视角和 Agent 视角看 docs/workspaces/resources 应该怎么收敛。"
+
+Expected behavior:
+The response treats the external product and the user's interpretation as
+evidence, inspects available source material, separates product principle from
+surface imitation, maps implications through both operator and agent workflows,
+and produces a decision-ready Rudder proposal with source of truth,
+concept/naming convergence, implementation surface, and validation bar.
+
+Must not:
+Give a generic competitor summary, add another top-level concept without
+collapsing existing terminology, or copy the reference product's UI pattern
+without proving it solves the same Rudder workflow.
+
+### Case: Approved Implementation Handoff
+
+Input:
+"可以，就按照你的方案 A 来改好了."
+
+Expected behavior:
+The skill stops producing advisor-only analysis and switches to normal
+implementation mode. It edits the relevant files, verifies the user-visible
+surface when applicable, and reports validation results.
+
+Must not:
+Write another long proposal, ask for confirmation again, or keep the work in
+analysis-only mode.
+
+### Case: Small UI Fix With Explicit Scope
+
+Input:
+"这里 title 和 description 颜色不对，优化一下." plus a screenshot.
+
+Expected behavior:
+The response performs a narrow evidence check, identifies the exact visual state
+and likely component, then either makes the small fix or asks for only the
+missing evidence needed to make it. It keeps the validation bar focused on the
+affected state.
+
+Must not:
+Run the full scenario map, create a plan document, or broaden the work into an
+unrequested redesign.
 
 ## Completion Standard
 

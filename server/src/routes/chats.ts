@@ -24,7 +24,7 @@ import {
 import type { StorageService } from "../storage/types.js";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { HttpError } from "../errors.js";
+import { forbidden, HttpError, unauthorized } from "../errors.js";
 import {
   observeExecutionEvent,
   updateExecutionObservation,
@@ -38,9 +38,11 @@ import {
   ChatAssistantStreamError,
   chatAssistantService,
   type ChatAssistantResult,
+  type ChatGeneratedAttachment,
 } from "../services/chat-assistant.js";
-import { cancelActiveChatGeneration, claimChatGeneration } from "../services/chat-generation-locks.js";
+import { cancelActiveChatGeneration, claimChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
 import {
+  accessService,
   agentService,
   chatService,
   operatorProfileService,
@@ -52,6 +54,7 @@ import {
 } from "../services/index.js";
 import { summarizeRuntimeSkillsForTrace } from "../services/runtime-trace-metadata.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { registerChatStreamRoutes } from "./chats.stream-routes.js";
 
 export function chatRoutes(db: Db, storage: StorageService) {
   const router = Router();
@@ -61,7 +64,8 @@ export function chatRoutes(db: Db, storage: StorageService) {
   const projectsSvc = projectService(db);
   const agentsSvc = agentService(db);
   const goalsSvc = goalService(db);
-  const assistantSvc = chatAssistantService(db);
+  const access = accessService(db);
+  const assistantSvc = chatAssistantService(db, storage);
   const operatorProfiles = operatorProfileService(db);
 
   const upload = multer({
@@ -128,6 +132,31 @@ export function chatRoutes(db: Db, storage: StorageService) {
   function boardUserId(req: Request) {
     assertBoard(req);
     return req.actor.userId ?? "local-board";
+  }
+
+  function canCreateAgentsLegacy(agent: { permissions: Record<string, unknown> | null | undefined; role: string }) {
+    if (agent.role === "ceo") return true;
+    if (!agent.permissions || typeof agent.permissions !== "object") return false;
+    return Boolean((agent.permissions as Record<string, unknown>).canCreateAgents);
+  }
+
+  async function assertCanAssignTasks(req: Request, orgId: string) {
+    assertCompanyAccess(req, orgId);
+    if (req.actor.type === "board") {
+      if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return;
+      const allowed = await access.canUser(orgId, req.actor.userId, "tasks:assign");
+      if (!allowed) throw forbidden("Missing permission: tasks:assign");
+      return;
+    }
+    if (req.actor.type === "agent") {
+      if (!req.actor.agentId) throw forbidden("Agent authentication required");
+      const allowedByGrant = await access.hasPermission(orgId, "agent", req.actor.agentId, "tasks:assign");
+      if (allowedByGrant) return;
+      const actorAgent = await agentsSvc.getById(req.actor.agentId);
+      if (actorAgent && actorAgent.orgId === orgId && canCreateAgentsLegacy(actorAgent)) return;
+      throw forbidden("Missing permission: tasks:assign");
+    }
+    throw unauthorized();
   }
 
   function buildChatObservabilityContext(
@@ -231,6 +260,12 @@ export function chatRoutes(db: Db, storage: StorageService) {
       issueIdentifier: typeof systemPayload?.issueIdentifier === "string" ? systemPayload.issueIdentifier : null,
       eventType: typeof systemPayload?.eventType === "string" ? systemPayload.eventType : null,
     };
+  }
+
+  function modelTurnInputFromInvocationMeta(invocationMeta: AgentRuntimeInvocationMeta) {
+    return typeof invocationMeta.prompt === "string" && invocationMeta.prompt.trim().length > 0
+      ? invocationMeta.prompt
+      : undefined;
   }
 
   function buildChatTraceInput(
@@ -442,11 +477,13 @@ export function chatRoutes(db: Db, storage: StorageService) {
       actor.actorType === "user"
         ? await operatorProfiles.get(actor.actorId)
         : null;
+    const issueLabels = await issuesSvc.listLabels(conversation.orgId);
 
     return {
       conversation: hydratedConversation,
       messages: freshMessages as ChatMessage[],
       contextLinks: (hydratedConversation.contextLinks ?? conversation.contextLinks) as ChatContextLink[],
+      issueLabels,
       operatorProfile,
     };
   }
@@ -455,35 +492,192 @@ export function chatRoutes(db: Db, storage: StorageService) {
     return conversation?.chatRuntime?.runtimeAgentId ?? conversation?.preferredAgentId ?? null;
   }
 
+  function proposedIssuePayload(structuredPayload: Record<string, unknown> | null | undefined) {
+    if (!structuredPayload) return structuredPayload ?? null;
+    return structuredPayload.issueProposal
+      && typeof structuredPayload.issueProposal === "object"
+      && !Array.isArray(structuredPayload.issueProposal)
+      && structuredPayload.issueProposal !== null
+        ? structuredPayload.issueProposal as Record<string, unknown>
+        : structuredPayload;
+  }
+
+  function proposalAssignsOrReviewsIssue(proposal: Record<string, unknown> | null | undefined) {
+    if (!proposal) return false;
+    return Boolean(
+      (typeof proposal.assigneeAgentId === "string" && proposal.assigneeAgentId.trim().length > 0)
+      || (typeof proposal.assigneeUserId === "string" && proposal.assigneeUserId.trim().length > 0)
+      || (typeof proposal.reviewerAgentId === "string" && proposal.reviewerAgentId.trim().length > 0)
+      || (typeof proposal.reviewerUserId === "string" && proposal.reviewerUserId.trim().length > 0),
+    );
+  }
+
+  async function proposedIssuePayloadForConversion(
+    conversationId: string,
+    input: {
+      messageId?: string | null;
+      proposal?: Record<string, unknown> | null;
+    },
+  ) {
+    if (input.proposal) return proposedIssuePayload(input.proposal);
+    if (input.messageId) {
+      const message = await svc.getMessage(conversationId, input.messageId);
+      return proposedIssuePayload(message?.structuredPayload ?? null);
+    }
+    const messages = await svc.listMessages(conversationId);
+    const message = [...messages].reverse().find((entry) => entry.kind === "issue_proposal");
+    return proposedIssuePayload(message?.structuredPayload ?? null);
+  }
+
+  async function assertCanConvertIssueProposal(
+    req: Request,
+    conversation: ChatConversation,
+    input: {
+      messageId?: string | null;
+      proposal?: Record<string, unknown> | null;
+    },
+  ) {
+    const proposal = await proposedIssuePayloadForConversion(conversation.id, input);
+    if (proposalAssignsOrReviewsIssue(proposal)) {
+      await assertCanAssignTasks(req, conversation.orgId);
+    }
+  }
+
+  async function chatIssueProposalNeedsOperatorLabelSelection(
+    orgId: string,
+    proposedByAgentId: string | null | undefined,
+    proposal: Record<string, unknown> | null | undefined,
+  ) {
+    if (!proposedByAgentId) return false;
+    const labelIds = Array.isArray(proposal?.labelIds)
+      ? proposal.labelIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    if (labelIds.length > 0) return false;
+    const labels = await issuesSvc.listLabels(orgId);
+    return labels.length >= 5;
+  }
+
+  function proposedPlanDocumentPayload(structuredPayload: Record<string, unknown> | null | undefined) {
+    if (!structuredPayload) return null;
+    const rawDocument =
+      structuredPayload.planDocument
+      && typeof structuredPayload.planDocument === "object"
+      && !Array.isArray(structuredPayload.planDocument)
+        ? structuredPayload.planDocument
+        : structuredPayload.plan && typeof structuredPayload.plan === "object" && !Array.isArray(structuredPayload.plan)
+          ? structuredPayload.plan
+          : null;
+    return rawDocument ? rawDocument as Record<string, unknown> : null;
+  }
+
   async function persistAssistantReply(
+    req: Request,
     conversation: ChatConversation,
     actor: ActorInfo,
     assistantReply: ChatAssistantResult,
     turnContext: ChatTurnContext,
     transcript: TranscriptEntry[] = [],
     replyingAgentId = assistantReply.replyingAgentId ?? chatReplyingAgentId(conversation),
+    existingMessageId?: string | null,
   ) {
     const createdMessages: ChatMessage[] = [];
     const { chatTurnId, turnVariant } = turnContext;
+    const attachGeneratedFiles = async (message: ChatMessage, generatedAttachments: ChatGeneratedAttachment[] | undefined) => {
+      if (!generatedAttachments || generatedAttachments.length === 0) return message;
+      const attachments: ChatAttachment[] = [];
+      for (const generated of generatedAttachments) {
+        if (generated.body.length > MAX_ATTACHMENT_BYTES) {
+          throw new ChatAssistantStreamError(
+            `Generated attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes`,
+            assistantReply.body,
+            generatedAttachments,
+          );
+        }
+        const stored = await storage.putFile({
+          orgId: conversation.orgId,
+          namespace: `chats/${conversation.id}/generated`,
+          originalFilename: generated.originalFilename,
+          contentType: generated.contentType,
+          body: generated.body,
+        });
+        const attachment = await svc.createAttachment({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          messageId: message.id,
+          provider: stored.provider,
+          objectKey: stored.objectKey,
+          contentType: stored.contentType,
+          byteSize: stored.byteSize,
+          sha256: stored.sha256,
+          originalFilename: stored.originalFilename,
+          createdByAgentId: replyingAgentId,
+          createdByUserId: null,
+        });
+        attachments.push(attachment as ChatAttachment);
+      }
+      return {
+        ...message,
+        attachments: [...(message.attachments ?? []), ...attachments],
+      } as ChatMessage;
+    };
+    const saveAssistantMessage = async (input: {
+      kind: "message" | "ask_user" | "issue_proposal" | "operation_proposal";
+      body: string;
+      structuredPayload?: Record<string, unknown> | null;
+      approvalId?: string | null;
+    }) => {
+      if (existingMessageId) {
+        const updated = await svc.updateMessage(conversation.id, existingMessageId, {
+          kind: input.kind,
+          status: "completed",
+          body: input.body,
+          structuredPayload: input.structuredPayload ?? null,
+          transcript,
+          approvalId: input.approvalId ?? null,
+          replyingAgentId,
+        });
+        if (updated) return updated as ChatMessage;
+      }
+      return svc.addMessage(conversation.id, {
+        orgId: conversation.orgId,
+        role: "assistant",
+        kind: input.kind,
+        body: input.body,
+        structuredPayload: input.structuredPayload ?? null,
+        transcript,
+        approvalId: input.approvalId ?? null,
+        replyingAgentId,
+        chatTurnId,
+        turnVariant,
+      }) as Promise<ChatMessage>;
+    };
 
     if (assistantReply.kind === "issue_proposal") {
-      const shouldAutoCreateIssue = conversation.planMode || conversation.issueCreationMode === "auto_create";
+      const issueProposalStructuredPayload = assistantReply.structuredPayload ?? null;
+      const proposalPayload = proposedIssuePayload(issueProposalStructuredPayload);
+      const needsOperatorLabelSelection = await chatIssueProposalNeedsOperatorLabelSelection(
+        conversation.orgId,
+        replyingAgentId,
+        proposalPayload,
+      );
+      const shouldAutoCreateIssue =
+        !needsOperatorLabelSelection
+        && !conversation.planMode
+        && conversation.issueCreationMode === "auto_create";
       if (shouldAutoCreateIssue) {
-        const proposalMessage = await svc.addMessage(conversation.id, {
-          orgId: conversation.orgId,
-          role: "assistant",
+        const proposalMessage = await saveAssistantMessage({
           kind: "issue_proposal",
           body: assistantReply.body,
-          structuredPayload: assistantReply.structuredPayload,
-          transcript,
-          replyingAgentId,
-          chatTurnId,
-          turnVariant,
+          structuredPayload: issueProposalStructuredPayload,
         });
-        createdMessages.push(proposalMessage as ChatMessage);
+        createdMessages.push(await attachGeneratedFiles(proposalMessage as ChatMessage, assistantReply.generatedAttachments));
 
+        await assertCanConvertIssueProposal(req, conversation, {
+          proposal: issueProposalStructuredPayload,
+        });
         const issue = await svc.convertToIssue(conversation.id, {
           actorUserId: actor.actorType === "user" ? actor.actorId : null,
+          createdByAgentId: replyingAgentId,
           messageId: proposalMessage.id,
         });
         const systemMessage = await svc.addMessage(conversation.id, {
@@ -510,39 +704,31 @@ export function chatRoutes(db: Db, storage: StorageService) {
           details: {
             issueId: issue.id,
             issueIdentifier: issue.identifier,
-            source: conversation.planMode ? "plan_mode" : "auto_create",
+            source: "auto_create",
           },
         });
         return createdMessages;
       }
 
+      const planDocument = proposedPlanDocumentPayload(issueProposalStructuredPayload);
       const approval = await svc.createProposalApproval(conversation.orgId, {
         type: "chat_issue_creation",
         requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
         payload: {
           chatConversationId: conversation.id,
-          proposedIssue:
-            assistantReply.structuredPayload &&
-            typeof assistantReply.structuredPayload.issueProposal === "object" &&
-            assistantReply.structuredPayload.issueProposal !== null
-              ? assistantReply.structuredPayload.issueProposal
-              : assistantReply.structuredPayload,
+          proposedByAgentId: replyingAgentId,
+          proposedIssue: proposalPayload,
+          ...(planDocument ? { planDocument } : {}),
         },
       });
 
-      const proposalMessage = await svc.addMessage(conversation.id, {
-        orgId: conversation.orgId,
-        role: "assistant",
+      const proposalMessage = await saveAssistantMessage({
         kind: "issue_proposal",
         body: assistantReply.body,
-        structuredPayload: assistantReply.structuredPayload,
-        transcript,
+        structuredPayload: issueProposalStructuredPayload,
         approvalId: approval.id,
-        replyingAgentId,
-        chatTurnId,
-        turnVariant,
       });
-      createdMessages.push(proposalMessage as ChatMessage);
+      createdMessages.push(await attachGeneratedFiles(proposalMessage as ChatMessage, assistantReply.generatedAttachments));
       return createdMessages;
     }
 
@@ -560,9 +746,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
               : assistantReply.structuredPayload,
         },
       });
-      const proposalMessage = await svc.addMessage(conversation.id, {
-        orgId: conversation.orgId,
-        role: "assistant",
+      const proposalMessage = await saveAssistantMessage({
         kind: "operation_proposal",
         body: assistantReply.body,
         structuredPayload: {
@@ -574,29 +758,67 @@ export function chatRoutes(db: Db, storage: StorageService) {
             decidedAt: null,
           },
         },
-        transcript,
         approvalId: approval.id,
-        replyingAgentId,
-        chatTurnId,
-        turnVariant,
       });
-      createdMessages.push(proposalMessage as ChatMessage);
+      createdMessages.push(await attachGeneratedFiles(proposalMessage as ChatMessage, assistantReply.generatedAttachments));
       return createdMessages;
     }
 
-    const assistantMessage = await svc.addMessage(conversation.id, {
-      orgId: conversation.orgId,
-      role: "assistant",
-      kind: assistantReply.kind === "routing_suggestion" ? "routing_suggestion" : "message",
+    if (assistantReply.kind === "ask_user") {
+      const assistantMessage = await saveAssistantMessage({
+        kind: "ask_user",
+        body: assistantReply.body,
+        structuredPayload: assistantReply.structuredPayload,
+      });
+      createdMessages.push(await attachGeneratedFiles(assistantMessage as ChatMessage, assistantReply.generatedAttachments));
+      return createdMessages;
+    }
+
+    const assistantMessage = await saveAssistantMessage({
+      kind: "message",
       body: assistantReply.body,
       structuredPayload: assistantReply.structuredPayload,
-      transcript,
-      replyingAgentId,
-      chatTurnId,
-      turnVariant,
     });
-    createdMessages.push(assistantMessage as ChatMessage);
+    createdMessages.push(await attachGeneratedFiles(assistantMessage as ChatMessage, assistantReply.generatedAttachments));
     return createdMessages;
+  }
+
+  async function attachGeneratedFilesToPartialMessage(
+    conversation: ChatConversation,
+    message: ChatMessage | null,
+    generatedAttachments: ChatGeneratedAttachment[] | undefined,
+    replyingAgentId: string | null,
+  ) {
+    if (!message || !generatedAttachments || generatedAttachments.length === 0) return message;
+    const attachments: ChatAttachment[] = [];
+    for (const generated of generatedAttachments) {
+      if (generated.body.length > MAX_ATTACHMENT_BYTES) continue;
+      const stored = await storage.putFile({
+        orgId: conversation.orgId,
+        namespace: `chats/${conversation.id}/generated`,
+        originalFilename: generated.originalFilename,
+        contentType: generated.contentType,
+        body: generated.body,
+      });
+      const attachment = await svc.createAttachment({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        messageId: message.id,
+        provider: stored.provider,
+        objectKey: stored.objectKey,
+        contentType: stored.contentType,
+        byteSize: stored.byteSize,
+        sha256: stored.sha256,
+        originalFilename: stored.originalFilename,
+        createdByAgentId: replyingAgentId,
+        createdByUserId: null,
+      });
+      attachments.push(attachment as ChatAttachment);
+    }
+    return {
+      ...message,
+      attachments: [...(message.attachments ?? []), ...attachments],
+    } as ChatMessage;
   }
 
   async function persistPartialAssistantMessage(
@@ -606,17 +828,32 @@ export function chatRoutes(db: Db, storage: StorageService) {
     turnContext: ChatTurnContext | null,
     transcript: TranscriptEntry[] = [],
     replyingAgentId = chatReplyingAgentId(conversation),
+    existingMessageId?: string | null,
   ) {
     const trimmed = body.trim();
-    if (!trimmed) return null;
+    const fallbackBody = status === "stopped"
+      ? "Chat run stopped before a final reply. Continue the conversation to resume from the preserved context."
+      : "Chat run failed before a final reply. Continue the conversation to resume from the preserved context.";
+    const durableBody = trimmed || (transcript.length > 0 ? fallbackBody : "");
+    if (!durableBody) return null;
     const chatTurnId = turnContext?.chatTurnId ?? randomUUID();
     const turnVariant = turnContext?.turnVariant ?? 0;
+    if (existingMessageId) {
+      const updated = await svc.updateMessage(conversation.id, existingMessageId, {
+        kind: "message",
+        status,
+        body: durableBody,
+        transcript,
+        replyingAgentId,
+      });
+      if (updated) return updated as ChatMessage;
+    }
     const message = await svc.addMessage(conversation.id, {
       orgId: conversation.orgId,
       role: "assistant",
       kind: "message",
       status,
-      body: trimmed,
+      body: durableBody,
       transcript,
       replyingAgentId,
       chatTurnId,
@@ -642,8 +879,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
       statusParam === "resolved" || statusParam === "archived" || statusParam === "all"
         ? statusParam
         : "active";
+    const q = typeof req.query.q === "string" ? req.query.q : undefined;
     const userId = req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null;
-    const conversations = await svc.list(orgId, { status }, userId);
+    const conversations = await svc.list(orgId, { status, q }, userId);
     res.json(await assistantSvc.enrichConversations(conversations as ChatConversation[]));
   });
 
@@ -658,6 +896,13 @@ export function chatRoutes(db: Db, storage: StorageService) {
 
     const contextLinks = req.body.contextLinks ?? [];
     await assertContextLinksBelongToCompany(orgId, contextLinks);
+    if (req.body.preferredAgentId) {
+      const agent = await agentsSvc.getById(req.body.preferredAgentId);
+      if (!agent || agent.orgId !== orgId) {
+        res.status(422).json({ error: "Preferred agent must belong to the same organization" });
+        return;
+      }
+    }
 
     const actor = getActorInfo(req);
     const conversation = await svc.create(orgId, {
@@ -756,6 +1001,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;
     }
+    if (!hasActiveChatGeneration(conversation.id)) {
+      await svc.markInterruptedStreamingMessages(conversation.id);
+    }
     const messages = await svc.listMessages(conversation.id);
     res.json(messages);
   });
@@ -817,6 +1065,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
           const assistantInput = await loadAssistantInput(conversation as ChatConversation, actor);
           const transcript: TranscriptEntry[] = [];
           const observedTranscript: TranscriptEntry[] = [];
+          let modelTurnInput: unknown;
           let fallbackOutput: string | null = null;
           let finalChatOutput: string | null = null;
           let finalChatStatus: "completed" | "failed" = "completed";
@@ -824,6 +1073,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
             const streamed = await assistantSvc.streamChatAssistantReply({
               ...assistantInput,
               onInvocationMeta: async (meta) => {
+                modelTurnInput = modelTurnInputFromInvocationMeta(meta);
                 currentChatTraceInput = buildChatTraceInput(traceInputBase, meta);
                 mergeChatInvocationTraceMetadata(chatObservation!, meta);
                 updateExecutionObservation(observation, chatObservation!, {
@@ -844,6 +1094,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
               throw new Error("Chat assistant reply was stopped before completion");
             }
             const created = await persistAssistantReply(
+              req,
               assistantInput.conversation,
               actor,
               streamed.reply,
@@ -879,6 +1130,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
                 context: chatObservation!,
                 parentObservation: observation,
                 transcript: observedTranscript,
+                initialTurnInput: modelTurnInput,
                 fallbackResult: fallbackOutput
                   ? {
                     output: fallbackOutput,
@@ -925,6 +1177,9 @@ export function chatRoutes(db: Db, storage: StorageService) {
         });
       }
       logger.warn({ err, conversationId: conversation.id }, "chat assistant reply failed");
+      if (err instanceof HttpError) {
+        throw err;
+      }
       res.status(502).json({
         error: err instanceof Error ? err.message : "Chat assistant failed to respond",
       });
@@ -933,659 +1188,45 @@ export function chatRoutes(db: Db, storage: StorageService) {
     }
   });
 
-  router.post("/chats/:id/messages/stream", async (req, res) => {
-    if (isMultipartRequest(req)) {
-      try {
-        await runMessageFileUpload(req, res);
-      } catch (err) {
-        if (err instanceof multer.MulterError) {
-          if (err.code === "LIMIT_FILE_SIZE") {
-            res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
-            return;
-          }
-          res.status(400).json({ error: err.message });
-          return;
-        }
-        throw err;
-      }
-    }
-
-    const parsedBody = addChatMessageSchema.safeParse(req.body ?? {});
-    if (!parsedBody.success) {
-      res.status(400).json({ error: "Invalid chat message", details: parsedBody.error.issues });
-      return;
-    }
-    const messageFiles = uploadedMessageFiles(req);
-    const attachmentValidationError = validateUploadedMessageFiles(messageFiles);
-    if (attachmentValidationError) {
-      res.status(422).json({ error: attachmentValidationError });
-      return;
-    }
-
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-
-    const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
-    if (!assistantAvailability.available) {
-      res.status(503).json({ error: assistantAvailability.error });
-      return;
-    }
-
-    const abortController = new AbortController();
-    const releaseGeneration = claimChatGeneration(conversation.id, abortController);
-    if (!releaseGeneration) {
-      res.status(409).json({ error: "A chat reply is already being generated for this conversation" });
-      return;
-    }
-
-    const actor = getActorInfo(req);
-    let assistantConversationForPartial: ChatConversation | null = null;
-    let turnContextForPartial: ChatTurnContext | null = null;
-    let chatObservation: ExecutionObservabilityContext | null = null;
-    const transcript: TranscriptEntry[] = [];
-    const observedTranscript: TranscriptEntry[] = [];
-    let clientClosed = false;
-    const handleClosed = () => {
-      if (clientClosed || res.writableEnded) return;
-      clientClosed = true;
-    };
-    req.on("aborted", handleClosed);
-    res.on("close", handleClosed);
-
-    res.status(201);
-    res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders();
-
-    try {
-      const userMessage = await addUserMessage(
-        conversation as ChatConversation,
-        parsedBody.data.body,
-        actor,
-        parsedBody.data.editUserMessageId ?? null,
-      );
-      const userAttachments = await attachFilesToUserMessage(
-        conversation as ChatConversation,
-        userMessage.id,
-        messageFiles,
-        actor,
-      );
-      const hydratedUserMessage = {
-        ...userMessage,
-        attachments: userAttachments,
-      } as ChatMessage;
-      turnContextForPartial = turnContextFromUserMessage(userMessage);
-      chatObservation = buildChatObservabilityContext(conversation as ChatConversation, {
-        surface: "chat_turn",
-        rootExecutionId: turnContextForPartial.chatTurnId,
-        trigger: "assistant_reply_stream",
-        runtime: assistantAvailability.agentRuntimeType ?? null,
-        metadata: {
-          stream: true,
-          userMessageId: userMessage.id,
-          editUserMessageId: parsedBody.data.editUserMessageId ?? null,
-          attachmentCount: userAttachments.length,
-        },
-      });
-      const traceInputBase = {
-        conversationId: conversation.id,
-        body: parsedBody.data.body,
-        userMessageId: userMessage.id,
-      };
-      let currentChatTraceInput = buildChatTraceInput(traceInputBase);
-      writeStreamEvent(res, {
-        type: "ack",
-        userMessage: hydratedUserMessage,
-      });
-
-      await withChatObservation(
-        chatObservation,
-        {
-          name: "chat_turn",
-          asType: "agent",
-          input: currentChatTraceInput,
-        },
-        async (observation) => {
-          const assistantInput = await loadAssistantInput(conversation as ChatConversation, actor);
-          assistantConversationForPartial = assistantInput.conversation;
-          let finalChatOutput: string | null = null;
-          let finalChatStatus: "completed" | "stopped" | "failed" = "completed";
-          try {
-            const streamed = await assistantSvc.streamChatAssistantReply({
-              ...assistantInput,
-              abortSignal: abortController.signal,
-              onInvocationMeta: async (meta) => {
-                currentChatTraceInput = buildChatTraceInput(traceInputBase, meta);
-                mergeChatInvocationTraceMetadata(chatObservation!, meta);
-                updateExecutionObservation(observation, chatObservation!, {
-                  input: currentChatTraceInput,
-                });
-                updateExecutionTraceIO(observation, { input: currentChatTraceInput });
-              },
-              onAssistantDelta: async (delta) => {
-                writeStreamEvent(res, {
-                  type: "assistant_delta",
-                  delta,
-                });
-              },
-              onAssistantState: async (state) => {
-                if (clientClosed) return;
-                writeStreamEvent(res, {
-                  type: "assistant_state",
-                  state,
-                });
-              },
-              onTranscriptEntry: async (entry) => {
-                transcript.push(entry);
-                if (clientClosed) return;
-                writeStreamEvent(res, {
-                  type: "transcript_entry",
-                  entry,
-                });
-              },
-              onObservedTranscriptEntry: async (entry) => {
-                observedTranscript.push(entry);
-              },
-            });
-
-            if (streamed.outcome === "stopped") {
-              finalChatStatus = "stopped";
-              finalChatOutput = streamed.partialBody;
-              const stoppedMessage = await persistPartialAssistantMessage(
-                assistantInput.conversation,
-                streamed.partialBody,
-                "stopped",
-                turnContextForPartial!,
-                transcript,
-                streamed.replyingAgentId,
-              );
-              if (stoppedMessage) {
-                await logChatMessagesAdded(assistantInput.conversation, [stoppedMessage], {
-                  actorType: "system",
-                  actorId: "chat-assistant",
-                  agentId: streamed.replyingAgentId,
-                });
-              }
-              await emitChatObservationEvent(chatObservation!, {
-                name: "chat.reply.stopped",
-                level: "WARNING",
-                metadata: {
-                  stoppedMessageId: stoppedMessage?.id ?? null,
-                  transcriptEntries: transcript.length,
-                  observedTranscriptEntries: observedTranscript.length,
-                },
-              });
-              if (!clientClosed) {
-                writeStreamEvent(res, {
-                  type: "final",
-                  messages: stoppedMessage ? [stoppedMessage] : [],
-                });
-                res.end();
-              }
-              return;
-            }
-
-            const createdMessages = await persistAssistantReply(
-              assistantInput.conversation,
-              actor,
-              streamed.reply,
-              turnContextForPartial!,
-              transcript,
-              streamed.replyingAgentId,
-            );
-            finalChatOutput = streamed.reply.body;
-            await logChatMessagesAdded(assistantInput.conversation, createdMessages, {
-              actorType: "system",
-              actorId: "chat-assistant",
-              agentId: streamed.replyingAgentId,
-            });
-            await emitChatObservationEvent(chatObservation!, {
-              name: "chat.reply.persisted",
-              metadata: {
-                transcriptEntries: transcript.length,
-                observedTranscriptEntries: observedTranscript.length,
-                ...summarizeChatObservationMessages(createdMessages),
-              },
-            });
-            if (!clientClosed) {
-              writeStreamEvent(res, {
-                type: "final",
-                messages: createdMessages,
-              });
-              res.end();
-            }
-          } catch (error) {
-            finalChatStatus = "failed";
-            if (error instanceof ChatAssistantStreamError) {
-              finalChatOutput = error.partialBody;
-            }
-            throw error;
-          } finally {
-            try {
-              const transcriptStats = emitExecutionTranscriptTree({
-                context: chatObservation!,
-                parentObservation: observation,
-                transcript: observedTranscript,
-              });
-              finalChatOutput = finalChatOutput ?? transcriptStats.finalOutput ?? null;
-            } catch (error) {
-              logger.warn(
-                {
-                  rootExecutionId: chatObservation!.rootExecutionId,
-                  err: error instanceof Error ? error.message : String(error),
-                },
-                "Failed to export chat transcript tree to Langfuse",
-              );
-            }
-            updateExecutionObservation(observation, {
-              ...chatObservation!,
-              status: finalChatStatus,
-            }, {
-              input: currentChatTraceInput,
-              output: finalChatOutput,
-              level: finalChatStatus === "failed" ? "ERROR" : "DEFAULT",
-              statusMessage: finalChatStatus,
-            });
-            updateExecutionTraceIO(observation, {
-              input: currentChatTraceInput,
-              output: finalChatOutput,
-            });
-          }
-        },
-      );
-    } catch (err) {
-      const partialBody = err instanceof ChatAssistantStreamError ? err.partialBody : "";
-      const failedReplyingAgentId = chatReplyingAgentId(assistantConversationForPartial);
-      const failedMessage = await persistPartialAssistantMessage(
-        assistantConversationForPartial ?? (conversation as ChatConversation),
-        partialBody,
-        "failed",
-        turnContextForPartial!,
-        transcript,
-        failedReplyingAgentId,
-      ).catch(() => null);
-      if (failedMessage && assistantConversationForPartial) {
-        await logChatMessagesAdded(assistantConversationForPartial, [failedMessage], {
-          actorType: "system",
-          actorId: "chat-assistant",
-          agentId: failedReplyingAgentId,
-        }).catch(() => {});
-      }
-
-      if (chatObservation) {
-        await emitChatObservationEvent(chatObservation, {
-          name: "chat.reply.failed",
-          level: "ERROR",
-          metadata: {
-            failedMessageId: failedMessage?.id ?? null,
-            transcriptEntries: transcript.length,
-            observedTranscriptEntries: observedTranscript.length,
-            error: err instanceof Error ? err.message : String(err),
-          },
-          statusMessage: err instanceof Error ? err.message : "chat_reply_failed",
-        });
-      }
-
-      logger.warn({ err, conversationId: conversation.id }, "chat assistant stream failed");
-      if (!clientClosed) {
-        writeStreamEvent(res, {
-          type: "error",
-          error: err instanceof Error ? err.message : "Chat assistant failed to respond",
-          messageId: failedMessage?.id ?? null,
-        });
-        res.end();
-      }
-    } finally {
-      req.off("aborted", handleClosed);
-      res.off("close", handleClosed);
-      releaseGeneration();
-    }
+  registerChatStreamRoutes({
+    router,
+    db,
+    storage,
+    svc,
+    assistantSvc,
+    agentsSvc,
+    issuesSvc,
+    projectsSvc,
+    goalsSvc,
+    access,
+    operatorProfiles,
+    assertConversationAccess,
+    boardUserId,
+    assertCanAssignTasks,
+    runSingleFileUpload,
+    runMessageFileUpload,
+    isMultipartRequest,
+    uploadedMessageFiles,
+    validateUploadedMessageFiles,
+    buildChatObservabilityContext,
+    withChatObservation,
+    emitChatObservationEvent,
+    summarizeChatObservationMessages,
+    modelTurnInputFromInvocationMeta,
+    buildChatTraceInput,
+    mergeChatInvocationTraceMetadata,
+    logChatMessagesAdded,
+    assertContextLinksBelongToCompany,
+    turnContextFromUserMessage,
+    addUserMessage,
+    attachFilesToUserMessage,
+    loadAssistantInput,
+    chatReplyingAgentId,
+    assertCanConvertIssueProposal,
+    persistAssistantReply,
+    attachGeneratedFilesToPartialMessage,
+    persistPartialAssistantMessage,
+    writeStreamEvent,
   });
-
-  router.post("/chats/:id/messages/stream/stop", async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-
-    res.json({ stopped: cancelActiveChatGeneration(conversation.id) });
-  });
-
-  router.post("/orgs/:orgId/chats/:chatId/attachments", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    const chatId = req.params.chatId as string;
-    assertCompanyAccess(req, orgId);
-
-    const conversation = await svc.getById(chatId);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    if (conversation.orgId !== orgId) {
-      res.status(422).json({ error: "Chat conversation does not belong to organization" });
-      return;
-    }
-
-    try {
-      await runSingleFileUpload(req, res);
-    } catch (err) {
-      if (err instanceof multer.MulterError) {
-        if (err.code === "LIMIT_FILE_SIZE") {
-          res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
-          return;
-        }
-        res.status(400).json({ error: err.message });
-        return;
-      }
-      throw err;
-    }
-
-    const file = (req as Request & { file?: { mimetype: string; buffer: Buffer; originalname: string } }).file;
-    if (!file) {
-      res.status(400).json({ error: "Missing file field 'file'" });
-      return;
-    }
-    const contentType = (file.mimetype || "").toLowerCase();
-    if (!isAllowedContentType(contentType)) {
-      res.status(422).json({ error: `Unsupported attachment type: ${contentType || "unknown"}` });
-      return;
-    }
-    if (file.buffer.length <= 0) {
-      res.status(422).json({ error: "Attachment is empty" });
-      return;
-    }
-
-    const parsedMeta = createChatAttachmentMetadataSchema.safeParse(req.body ?? {});
-    if (!parsedMeta.success) {
-      res.status(400).json({ error: "Invalid attachment metadata", details: parsedMeta.error.issues });
-      return;
-    }
-
-    const actor = getActorInfo(req);
-    const stored = await storage.putFile({
-      orgId,
-      namespace: `chats/${chatId}`,
-      originalFilename: file.originalname || null,
-      contentType,
-      body: file.buffer,
-    });
-
-    const attachment = await svc.createAttachment({
-      orgId,
-      conversationId: chatId,
-      messageId: parsedMeta.data.messageId,
-      provider: stored.provider,
-      objectKey: stored.objectKey,
-      contentType: stored.contentType,
-      byteSize: stored.byteSize,
-      sha256: stored.sha256,
-      originalFilename: stored.originalFilename,
-      createdByAgentId: actor.agentId,
-      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
-    });
-
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.attachment_added",
-      entityType: "chat",
-      entityId: chatId,
-      details: {
-        attachmentId: attachment.id,
-        messageId: attachment.messageId,
-        originalFilename: attachment.originalFilename,
-        contentType: attachment.contentType,
-      },
-    });
-
-    res.status(201).json(attachment);
-  });
-
-  router.post("/chats/:id/context-links", validate(createChatContextLinkSchema), async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    await assertContextLinksBelongToCompany(conversation.orgId, [req.body]);
-    const linked = await svc.addContextLink(conversation.id, conversation.orgId, req.body);
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: conversation.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.context_linked",
-      entityType: "chat",
-      entityId: conversation.id,
-      details: req.body,
-    });
-    res.status(201).json(linked);
-  });
-
-  router.post("/chats/:id/project-context", validate(setChatProjectContextSchema), async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const projectId = req.body.projectId ?? null;
-    if (projectId) {
-      await assertContextLinksBelongToCompany(conversation.orgId, [{
-        entityType: "project",
-        entityId: projectId,
-      }]);
-    }
-
-    const updated = await svc.setProjectContextLink(conversation.id, conversation.orgId, projectId);
-    if (!updated) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: conversation.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.project_context_updated",
-      entityType: "chat",
-      entityId: conversation.id,
-      details: { projectId },
-    });
-    res.json(updated);
-  });
-
-  router.post("/chats/:id/convert-to-issue", validate(convertChatToIssueSchema), async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const actor = getActorInfo(req);
-    if (req.body.proposal?.goalId) {
-      const goal = await goalsSvc.getById(req.body.proposal.goalId);
-      if (!goal || goal.orgId !== conversation.orgId) {
-        res.status(422).json({ error: "Goal must belong to the same organization" });
-        return;
-      }
-    }
-    const chatObservation = buildChatObservabilityContext(conversation as ChatConversation, {
-      rootExecutionId: req.body.messageId ?? `chat-convert:${conversation.id}`,
-      trigger: "convert_to_issue",
-      metadata: {
-        source: "chat_route",
-        messageId: req.body.messageId ?? null,
-      },
-    });
-    const result = await withChatObservation(
-      chatObservation,
-      {
-        name: "chat:convert_to_issue",
-        asType: "tool",
-        input: {
-          conversationId: conversation.id,
-          messageId: req.body.messageId ?? null,
-          proposal: req.body.proposal ?? null,
-        },
-      },
-      async () => {
-        const issue = await svc.convertToIssue(conversation.id, {
-          actorUserId: actor.actorType === "user" ? actor.actorId : null,
-          messageId: req.body.messageId ?? null,
-          proposal: req.body.proposal ?? null,
-        });
-        const systemMessage = await svc.addMessage(conversation.id, {
-          orgId: conversation.orgId,
-          role: "system",
-          kind: "system_event",
-          body: `Created issue ${issue.identifier ?? issue.id} from this chat conversation.`,
-          structuredPayload: {
-            eventType: "issue_created",
-            issueId: issue.id,
-            issueIdentifier: issue.identifier,
-          },
-        });
-        await logActivity(db, {
-          orgId: conversation.orgId,
-          actorType: actor.actorType,
-          actorId: actor.actorId,
-          agentId: actor.agentId,
-          runId: actor.runId,
-          action: "chat.issue_converted",
-          entityType: "chat",
-          entityId: conversation.id,
-          details: {
-            issueId: issue.id,
-            issueIdentifier: issue.identifier,
-            messageId: req.body.messageId ?? null,
-            systemMessageId: systemMessage.id,
-          },
-        });
-        await emitChatObservationEvent(chatObservation, {
-          name: "chat.issue.created",
-          metadata: {
-            issueId: issue.id,
-            issueIdentifier: issue.identifier,
-            systemMessageId: systemMessage.id,
-          },
-        });
-        return { issue, systemMessage };
-      },
-    );
-    res.status(201).json(result);
-  });
-
-  router.post(
-    "/chats/:id/messages/:messageId/operation-proposal/resolve",
-    validate(resolveChatOperationProposalSchema),
-    async (req, res) => {
-      const conversation = await assertConversationAccess(req, req.params.id as string);
-      if (!conversation) {
-        res.status(404).json({ error: "Chat conversation not found" });
-        return;
-      }
-
-      const actor = getActorInfo(req);
-      const messageId = req.params.messageId as string;
-      const chatObservation = buildChatObservabilityContext(conversation as ChatConversation, {
-        rootExecutionId: messageId,
-        trigger: "resolve_operation_proposal",
-        metadata: {
-          action: req.body.action,
-          decisionNote: req.body.decisionNote ?? null,
-        },
-      });
-      const result = await withChatObservation(
-        chatObservation,
-        {
-          name: "chat:resolve_operation_proposal",
-          asType: "tool",
-          input: {
-            conversationId: conversation.id,
-            messageId,
-            action: req.body.action,
-          },
-        },
-        async () => {
-          const resolved = await svc.resolveOperationProposal(conversation.id, messageId, {
-            action: req.body.action,
-            actorUserId: actor.actorType === "user" ? actor.actorId : null,
-            decisionNote: req.body.decisionNote ?? null,
-          });
-          await emitChatObservationEvent(chatObservation, {
-            name: "chat.operation_proposal.resolved",
-            metadata: {
-              action: req.body.action,
-              messageId: resolved.message.id,
-              systemMessageId: resolved.systemMessage.id,
-            },
-          });
-          return resolved;
-        },
-      );
-      res.status(201).json(result);
-    },
-  );
-
-  router.post("/chats/:id/resolve", async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const resolved = await svc.resolve(conversation.id);
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: conversation.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.resolved",
-      entityType: "chat",
-      entityId: conversation.id,
-    });
-    res.json(resolved ? await assistantSvc.enrichConversation(resolved as ChatConversation) : null);
-  });
-
-  router.post("/chats/:id/read", async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const userId = boardUserId(req);
-    const state = await svc.markRead(conversation.id, conversation.orgId, userId);
-    res.status(201).json({
-      conversationId: conversation.id,
-      lastReadAt: state.lastReadAt,
-    });
-  });
-
-  router.post("/chats/:id/user-state", validate(updateChatConversationUserStateSchema), async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const userId = boardUserId(req);
-    if (typeof req.body.pinned === "boolean") {
-      await svc.setPinned(conversation.id, conversation.orgId, userId, req.body.pinned);
-    }
-    const refreshed = await svc.getById(conversation.id, userId);
-    res.json(await assistantSvc.enrichConversation(refreshed as ChatConversation));
-  });
-
   return router;
 }

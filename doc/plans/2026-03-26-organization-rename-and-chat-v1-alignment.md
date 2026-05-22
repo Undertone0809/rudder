@@ -71,7 +71,7 @@ Update the V1 spec set so Chat is a shipped V1 feature with the already-implemen
 - Treat Chat as a first-class V1 surface for:
   - request intake
   - clarification
-  - routing suggestion
+  - agent or assignee recommendations in normal replies
   - issue proposal
   - approval-gated lightweight operations
 - Keep these constraints explicit in the spec:

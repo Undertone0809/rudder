@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Archive,
-  CircleDot,
+  CircleCheckBig,
   Copy,
   DollarSign,
   ListFilter,
   Loader2,
+  Mail,
+  MailOpen,
   MessageSquare,
   MoreHorizontal,
   PanelLeftClose,
@@ -19,15 +21,17 @@ import {
   UserPlus,
   XCircle,
 } from "lucide-react";
-import { formatMessengerPreview, type ChatConversation } from "@rudderhq/shared";
+import { formatMessengerPreview, formatMessengerTitle, type ChatConversation } from "@rudderhq/shared";
 import { chatsApi } from "@/api/chats";
 import { messengerApi } from "@/api/messenger";
 import { Link, useLocation, useNavigate } from "@/lib/router";
+import { displayChatTitle } from "@/lib/chat-title";
 import { cn, relativeTime } from "@/lib/utils";
 import { useSidebar } from "@/context/SidebarContext";
 import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { messengerThreadKindLabel, resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
+import { getMessengerUnreadScrollRequestId, MESSENGER_SCROLL_TO_UNREAD_EVENT } from "@/lib/messenger-unread-scroll";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
 import {
@@ -90,7 +94,7 @@ function threadIcon(kind: string) {
     case "chat":
       return MessageSquare;
     case "issues":
-      return CircleDot;
+      return CircleCheckBig;
     case "approvals":
       return ShieldCheck;
     case "failed-runs":
@@ -149,6 +153,14 @@ function conversationSubtitle(conversation: ChatConversation) {
       : null) ||
     "Start the conversation"
   );
+}
+
+function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestReplyPreview">) {
+  return displayChatTitle(conversation);
+}
+
+function threadDisplayTitle(title: string) {
+  return formatMessengerTitle(title, { max: 80 }) ?? title;
 }
 
 function chatProjectGroupLabel(conversation: ChatConversation | null) {
@@ -245,6 +257,7 @@ function ChatThreadRow({
   onStartRename,
   onArchive,
   onTogglePin,
+  onToggleUnread,
   onCopyConversationId,
   onSelect,
 }: {
@@ -259,6 +272,7 @@ function ChatThreadRow({
   onStartRename: () => void;
   onArchive: () => void;
   onTogglePin: () => void;
+  onToggleUnread: () => void;
   onCopyConversationId: () => void;
   onSelect: (href: string) => void;
 }) {
@@ -272,6 +286,7 @@ function ChatThreadRow({
   return (
     <div
       data-testid={`messenger-thread-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
+      data-messenger-thread-key={`chat:${conversation.id}`}
       className={cn(
         "group relative mx-1.5 flex items-start gap-3 rounded-[calc(var(--radius-md)-2px)] border px-3 py-2.5 transition-[background-color,border-color,color]",
         active
@@ -318,7 +333,7 @@ function ChatThreadRow({
                     conversation.isUnread ? "font-semibold text-foreground" : "font-medium text-foreground/92",
                   )}
                 >
-                  <span className="truncate">{conversation.title}</span>
+                  <span className="truncate">{conversationDisplayTitle(conversation)}</span>
                   {conversation.isPinned ? (
                     <Pin className="h-3 w-3 shrink-0 text-muted-foreground" />
                   ) : null}
@@ -348,55 +363,69 @@ function ChatThreadRow({
             <span
               data-testid={`messenger-generating-${sanitizeThreadKey(`chat:${conversation.id}`)}`}
               aria-label="Chat reply in progress"
-              className="absolute right-2 top-1/2 z-10 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground"
+              className={cn(
+                "pointer-events-none absolute right-2 top-1/2 z-10 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0",
+                actionsOpen && "opacity-0",
+              )}
             >
               <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2.25} aria-hidden />
             </span>
           ) : null}
 
-          {!generating ? (
-            <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className={cn(
-                    "absolute right-2 top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-                    actionsOpen ? "opacity-100" : "opacity-0",
-                  )}
-                  aria-label="Chat actions"
-                >
-                  <MoreHorizontal className="h-3.5 w-3.5" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="surface-overlay text-foreground">
-                <DropdownMenuItem onClick={onStartRename}>
-                  <PencilLine className="h-4 w-4" />
-                  Rename
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onTogglePin}>
-                  {conversation.isPinned ? (
-                    <>
-                      <PinOff className="h-4 w-4" />
-                      Unpin
-                    </>
-                  ) : (
-                    <>
-                      <Pin className="h-4 w-4" />
-                      Pin
-                    </>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onCopyConversationId}>
-                  <Copy className="h-4 w-4" />
-                  Copy chat ID
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onArchive}>
-                  <Archive className="h-4 w-4" />
-                  Archive
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
+          <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  "absolute right-2 top-1/2 z-10 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-[color:var(--surface-page)] hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+                  actionsOpen ? "opacity-100" : "opacity-0",
+                )}
+                aria-label="Chat actions"
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="surface-overlay text-foreground">
+              <DropdownMenuItem onClick={onStartRename}>
+                <PencilLine className="h-4 w-4" />
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onTogglePin}>
+                {conversation.isPinned ? (
+                  <>
+                    <PinOff className="h-4 w-4" />
+                    Unpin
+                  </>
+                ) : (
+                  <>
+                    <Pin className="h-4 w-4" />
+                    Pin
+                  </>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onToggleUnread}>
+                {conversation.isUnread ? (
+                  <>
+                    <MailOpen className="h-4 w-4" />
+                    Mark as Read
+                  </>
+                ) : (
+                  <>
+                    <Mail className="h-4 w-4" />
+                    Mark as Unread
+                  </>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onCopyConversationId}>
+                <Copy className="h-4 w-4" />
+                Copy chat ID
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onArchive}>
+                <Archive className="h-4 w-4" />
+                Archive
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </>
       )}
     </div>
@@ -419,6 +448,7 @@ function ThreadRow({
       to={thread.href}
       onClick={() => onSelect(thread.href)}
       data-testid={`messenger-thread-${sanitizeThreadKey(thread.threadKey)}`}
+      data-messenger-thread-key={thread.threadKey}
       className={cn(
         "mx-1.5 flex items-start gap-3 rounded-[calc(var(--radius-md)-2px)] border px-3 py-2.5 transition-[background-color,border-color,color]",
         active
@@ -440,7 +470,7 @@ function ThreadRow({
               thread.unreadCount > 0 ? "font-semibold text-foreground" : "font-medium text-foreground/92",
             )}
           >
-            {thread.title}
+            {threadDisplayTitle(thread.title)}
           </span>
           <span
             data-testid={`messenger-time-${sanitizeThreadKey(thread.threadKey)}`}
@@ -466,6 +496,65 @@ function ThreadRow({
 
 type MessengerThreadSummaryItem = ReturnType<typeof useMessengerModel>["threadSummaries"][number];
 
+function chatConversationForThreadSummary(
+  thread: MessengerThreadSummaryItem,
+  orgId: string,
+  conversation: ChatConversation | null | undefined,
+): ChatConversation | null {
+  if (thread.kind !== "chat") return null;
+  const conversationId = threadConversationId(thread.threadKey);
+  if (!conversationId) return null;
+
+  const isPinned = typeof thread.isPinned === "boolean" ? thread.isPinned : Boolean(conversation?.isPinned);
+  if (conversation) {
+    return {
+      ...conversation,
+      lastReadAt: thread.lastReadAt ?? conversation.lastReadAt,
+      unreadCount: thread.unreadCount,
+      isUnread: thread.unreadCount > 0,
+      needsAttention: thread.needsAttention,
+      isPinned,
+    };
+  }
+
+  const activityAt = thread.latestActivityAt ? new Date(thread.latestActivityAt) : new Date();
+  const preview = thread.preview ?? thread.subtitle ?? null;
+  return {
+    id: conversationId,
+    orgId,
+    status: "active",
+    title: thread.title,
+    summary: preview,
+    latestReplyPreview: preview,
+    preferredAgentId: null,
+    routedAgentId: null,
+    primaryIssueId: null,
+    primaryIssue: null,
+    issueCreationMode: "manual_approval",
+    planMode: false,
+    createdByUserId: null,
+    lastMessageAt: activityAt,
+    lastReadAt: thread.lastReadAt,
+    isPinned,
+    isUnread: thread.unreadCount > 0,
+    unreadCount: thread.unreadCount,
+    needsAttention: thread.needsAttention,
+    resolvedAt: null,
+    contextLinks: [],
+    chatRuntime: {
+      sourceType: "unconfigured",
+      sourceLabel: "No agent selected",
+      runtimeAgentId: null,
+      agentRuntimeType: null,
+      model: null,
+      available: false,
+      error: null,
+    },
+    createdAt: activityAt,
+    updatedAt: activityAt,
+  };
+}
+
 interface OrganizedThreadEntry {
   thread: MessengerThreadSummaryItem;
   conversation: ChatConversation | null;
@@ -478,13 +567,12 @@ interface OrganizedThreadSection {
 }
 
 function isPinnedEntry(entry: OrganizedThreadEntry) {
-  return Boolean(entry.conversation?.isPinned);
+  if (entry.thread.kind !== "chat") return false;
+  return typeof entry.thread.isPinned === "boolean" ? entry.thread.isPinned : Boolean(entry.conversation?.isPinned);
 }
 
 function entryActivityTime(entry: OrganizedThreadEntry) {
-  const value = entry.thread.kind === "chat" && entry.conversation
-    ? entry.conversation.lastMessageAt ?? entry.conversation.updatedAt
-    : entry.thread.latestActivityAt;
+  const value = entry.thread.latestActivityAt ?? (entry.conversation?.lastMessageAt ?? entry.conversation?.updatedAt ?? null);
   return value ? new Date(value).getTime() : Number.NEGATIVE_INFINITY;
 }
 
@@ -554,9 +642,11 @@ export function MessengerContextSidebar() {
   const queryClient = useQueryClient();
   const route = resolveMessengerRoute(relativePath);
   const markedThreadRef = useRef<string | null>(null);
-  const sidebarScrollRef = useScrollbarActivityRef("rudder:sidebar-scroll:messenger");
+  const sidebarScrollbarActivityRef = useScrollbarActivityRef("rudder:sidebar-scroll:messenger");
+  const sidebarScrollElementRef = useRef<HTMLElement | null>(null);
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [unreadScrollRequestId, setUnreadScrollRequestId] = useState(() => getMessengerUnreadScrollRequestId());
   const [threadOrganizationRule, setThreadOrganizationRule] = useState<ThreadOrganizationRule>(() =>
     readThreadOrganizationRule(model.selectedOrganizationId),
   );
@@ -565,10 +655,12 @@ export function MessengerContextSidebar() {
     setThreadOrganizationRule(readThreadOrganizationRule(model.selectedOrganizationId));
   }, [model.selectedOrganizationId]);
 
+  const shouldLoadSidebarConversations = threadOrganizationRule === "project";
+
   const chatsQuery = useQuery({
     queryKey: queryKeys.chats.list(model.selectedOrganizationId ?? "__none__", "all"),
     queryFn: () => chatsApi.list(model.selectedOrganizationId!, "all"),
-    enabled: !!model.selectedOrganizationId,
+    enabled: !!model.selectedOrganizationId && shouldLoadSidebarConversations,
   });
 
   const conversationsById = useMemo(() => {
@@ -582,13 +674,28 @@ export function MessengerContextSidebar() {
   const organizedThreadSections = useMemo(() => {
     const entries = model.threadSummaries.map((thread) => {
       const conversationId = threadConversationId(thread.threadKey);
+      const loadedConversation = conversationId ? conversationsById.get(conversationId) ?? null : null;
       return {
         thread,
-        conversation: conversationId ? conversationsById.get(conversationId) ?? null : null,
+        conversation: model.selectedOrganizationId
+          ? chatConversationForThreadSummary(thread, model.selectedOrganizationId, loadedConversation)
+          : null,
       };
     });
     return organizeThreadEntries(entries, threadOrganizationRule);
-  }, [conversationsById, model.threadSummaries, threadOrganizationRule]);
+  }, [conversationsById, model.selectedOrganizationId, model.threadSummaries, threadOrganizationRule]);
+  const firstUnreadThreadKey = useMemo(() => {
+    for (const section of organizedThreadSections) {
+      for (const entry of section.entries) {
+        if (entry.thread.unreadCount > 0) return entry.thread.threadKey;
+      }
+    }
+    return null;
+  }, [organizedThreadSections]);
+  const setSidebarScrollRef = useCallback((element: HTMLElement | null) => {
+    sidebarScrollElementRef.current = element;
+    sidebarScrollbarActivityRef(element);
+  }, [sidebarScrollbarActivityRef]);
 
   const activeThreadKey = useMemo(() => {
     if (route.kind === "chat" && route.conversationId) return `chat:${route.conversationId}`;
@@ -666,8 +773,16 @@ export function MessengerContextSidebar() {
   });
 
   const updateConversationUserStateMutation = useMutation({
-    mutationFn: ({ chatId, pinned }: { chatId: string; pinned: boolean }) =>
-      chatsApi.updateUserState(chatId, { pinned }),
+    mutationFn: ({
+      chatId,
+      pinned,
+      unread,
+    }: {
+      chatId: string;
+      pinned?: boolean;
+      unread?: boolean;
+    }) =>
+      chatsApi.updateUserState(chatId, { pinned, unread }),
     onSuccess: async (conversation) => {
       await refreshChatViews(conversation.id);
     },
@@ -728,6 +843,39 @@ export function MessengerContextSidebar() {
     });
   }, [activeThread, activeThreadDetailReady, activeThreadKey, activeThreadReadAt, model.selectedOrganizationId, queryClient, route]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const handleUnreadScrollRequest = () => {
+      setUnreadScrollRequestId(getMessengerUnreadScrollRequestId());
+    };
+
+    document.addEventListener(MESSENGER_SCROLL_TO_UNREAD_EVENT, handleUnreadScrollRequest);
+    return () => {
+      document.removeEventListener(MESSENGER_SCROLL_TO_UNREAD_EVENT, handleUnreadScrollRequest);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!firstUnreadThreadKey) return;
+    if (unreadScrollRequestId <= 0) return;
+
+    const scrollFirstUnreadThreadIntoView = () => {
+      const container = sidebarScrollElementRef.current;
+      if (!container) return;
+
+      const unreadRow = Array.from(container.querySelectorAll<HTMLElement>("[data-messenger-thread-key]"))
+        .find((row) => row.dataset.messengerThreadKey === firstUnreadThreadKey);
+
+      unreadRow?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
+
+    const frame = requestAnimationFrame(scrollFirstUnreadThreadIntoView);
+    return () => {
+      cancelAnimationFrame(frame);
+    };
+  }, [firstUnreadThreadKey, unreadScrollRequestId]);
+
   if (!model.selectedOrganizationId) return null;
 
   return (
@@ -746,7 +894,7 @@ export function MessengerContextSidebar() {
         onRuleChange={handleThreadOrganizationRuleChange}
       />
       <nav
-        ref={sidebarScrollRef}
+        ref={setSidebarScrollRef}
         className="scrollbar-auto-hide mt-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pb-3.5"
       >
         <Link
@@ -812,6 +960,12 @@ export function MessengerContextSidebar() {
                       updateConversationUserStateMutation.mutate({
                         chatId: conversation.id,
                         pinned: !conversation.isPinned,
+                      });
+                    }}
+                    onToggleUnread={() => {
+                      updateConversationUserStateMutation.mutate({
+                        chatId: conversation.id,
+                        unread: !conversation.isUnread,
                       });
                     }}
                     onCopyConversationId={() => void copyConversationId(conversation.id)}

@@ -23,6 +23,12 @@ const mockUpdateConfigFile = vi.hoisted(() => vi.fn());
 vi.mock("../services/index.js", () => ({
   boardAuthService: () => mockBoardAuthService,
   instanceSettingsService: () => mockInstanceSettingsService,
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: mockLogActivity,
   operatorProfileService: () => mockOperatorProfileService,
 }));
@@ -68,6 +74,7 @@ describe("instance settings routes", () => {
     vi.clearAllMocks();
     mockInstanceSettingsService.getGeneral.mockResolvedValue({
       censorUsernameInLogs: false,
+      showDeveloperDiagnostics: false,
       locale: "en",
     });
     mockInstanceSettingsService.getNotifications.mockResolvedValue({
@@ -80,6 +87,7 @@ describe("instance settings routes", () => {
       id: "instance-settings-1",
       general: {
         censorUsernameInLogs: true,
+        showDeveloperDiagnostics: true,
         locale: "zh-CN",
       },
     });
@@ -146,15 +154,16 @@ describe("instance settings routes", () => {
 
     const getRes = await request(app).get("/api/instance/settings/general");
     expect(getRes.status).toBe(200);
-    expect(getRes.body).toEqual({ censorUsernameInLogs: false, locale: "en" });
+    expect(getRes.body).toEqual({ censorUsernameInLogs: false, showDeveloperDiagnostics: false, locale: "en" });
 
     const patchRes = await request(app)
       .patch("/api/instance/settings/general")
-      .send({ censorUsernameInLogs: true, locale: "zh-CN" });
+      .send({ censorUsernameInLogs: true, showDeveloperDiagnostics: true, locale: "zh-CN" });
 
     expect(patchRes.status).toBe(200);
     expect(mockInstanceSettingsService.updateGeneral).toHaveBeenCalledWith({
       censorUsernameInLogs: true,
+      showDeveloperDiagnostics: true,
       locale: "zh-CN",
     });
     expect(mockLogActivity).toHaveBeenCalledTimes(2);
@@ -187,6 +196,7 @@ describe("instance settings routes", () => {
     });
     expect(mockLogActivity).toHaveBeenCalledTimes(2);
   });
+
 
   it("returns sanitized local langfuse settings", async () => {
     const app = await createApp({

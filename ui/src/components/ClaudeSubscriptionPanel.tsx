@@ -30,6 +30,7 @@ function detailText(window: QuotaWindow): string | null {
       hour: "numeric",
       minute: "2-digit",
       timeZoneName: "short",
+      hourCycle: "h23",
     });
     return `Resets ${formatted}`;
   }

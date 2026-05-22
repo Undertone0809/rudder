@@ -54,16 +54,27 @@ export interface AgentSkillSyncRequest {
   desiredSkills: string[];
 }
 
+export type AgentSkillTelemetryEvidence = "used" | "requested" | "loaded";
+
+export interface AgentSkillTelemetryEvidenceCounts {
+  used: number;
+  requested: number;
+  loaded: number;
+}
+
 export interface AgentSkillAnalyticsSkillTotal {
   key: string;
   label: string;
   count: number;
+  evidence: AgentSkillTelemetryEvidence;
+  evidenceCounts: AgentSkillTelemetryEvidenceCounts;
 }
 
 export interface AgentSkillAnalyticsDay {
   date: string;
   totalCount: number;
   runCount: number;
+  evidenceCounts: AgentSkillTelemetryEvidenceCounts;
   skills: AgentSkillAnalyticsSkillTotal[];
 }
 
@@ -75,6 +86,7 @@ export interface AgentSkillAnalytics {
   endDate: string;
   totalCount: number;
   totalRunsWithSkills: number;
+  evidenceCounts: AgentSkillTelemetryEvidenceCounts;
   skills: AgentSkillAnalyticsSkillTotal[];
   days: AgentSkillAnalyticsDay[];
 }

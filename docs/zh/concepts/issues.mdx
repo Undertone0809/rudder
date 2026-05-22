@@ -1,0 +1,84 @@
+---
+title: "任务"
+description: "agent 工作的持久执行对象。"
+---
+
+任务在 Rudder 里对应 `issue`。它让真实工作保持清晰，把意图、归属、状态、上下文、执行记录、评论、阻塞、评审和输出连接起来。
+
+![任务工作流界面](../../images/issue-flow.png)
+
+![任务详情界面](../../images/issue-detail.png)
+
+## 为什么任务重要
+
+长时间运行的 agent 工作需要一个持久对象。否则，决策、上下文、产物和评审证据会散落在聊天 transcript 和终端输出里。
+
+每项工作都能落到一个固定位置。
+
+## 常见使用场景
+
+当你需要下面这些能力时，就应该使用任务：
+
+- 给一个具体结果指定唯一 owner
+- 让 agent checkout 工作，避免重复执行
+- 把评论、计划、截图、PR 和验证结果放在一起
+- 把输出路由给 reviewer
+- 从失败或阻塞的 run 中恢复上下文
+
+## 状态模型
+
+常见任务状态包括：
+
+- `backlog`：已捕获，但范围、优先级、负责人或验收标准仍需讨论
+- `todo`：已经准备好由 assignee 接手
+- `in_progress`：已被 assignee checkout
+- `blocked`：正在等待人、reviewer、依赖或外部条件
+- `in_review`：实现已经足够完整，可以交给 reviewer 判断
+- `done`：已接受并关闭
+
+## Backlog 与 TODO
+
+`todo` 用于已经足够明确、可以执行的工作。一个 `todo` 任务应该说明期望结果，包含 assignee 需要的上下文，并且有不需要再次产品讨论就能开始的下一步。
+
+`backlog` 用于仍在塑形的工作。Backlog 任务可以描述真实问题或机会，但应停留在 backlog，直到团队解决开放问题：范围、负责人、优先级、验收标准，或是否应该做。
+
+## Checkout 语义
+
+Agent 开始实现前应先 checkout 任务。Checkout 会建立清晰的执行负责人，并避免同一个任务上出现重复的活跃工作。
+
+## 关闭信号
+
+每次活跃工作运行结束时都应该留下一个清晰信号：
+
+- 工作仍未完成时，留下进展评论
+- 下一步属于其他人时，留下阻塞评论
+- 任务完成时，留下完成评论
+- 作为 reviewer 时，留下结构化评审决定
+
+## Follow-up 和 reviewer
+
+Follow-up 的作用是避免工作在运行、评审、阻塞或用户评论之后停住。以下情况应触发 follow-up：任务缺少清晰关闭信号、reviewer 要求修改、阻塞需要指定下一负责人，或新信息改变了预期结果。
+
+当前 assignee 负责实现、证据和按要求修改。Reviewer 在任务进入 review 或需要独立质量控制时负责下一步判断。需要产品、法律、预算、权限或客户上下文的决定由对应的人类负责人负责。
+
+Reviewer 结论应结构化：通过、要求修改、需要跟进或阻塞。这样可以把“应该差不多完成了”变成持久的关闭路径，因为看板能看到谁负责下一步，以及哪些证据被接受或拒绝。
+
+## 输出
+
+最有力的关闭评论会包含证据：变更文件、验证命令、预览链接、截图、提交、部署状态和剩余风险。
+
+如果读者不能从任务里检查结果，这个关闭评论就太弱。标记完成之前，应补上产物、链接、截图或剩余风险说明。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="任务生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
+    学习什么时候分配、评审、阻塞和关闭工作。
+  </Card>
+  <Card title="Messenger" icon="message-square" href="/zh/concepts/messenger">
+    在工作进入 Todo 前，路由不明确入口和决策关口。
+  </Card>
+  <Card title="目标、项目和任务" icon="list-tree" href="/zh/concepts/goals-projects-issues">
+    了解策略如何变成持久执行工作。
+  </Card>
+</CardGroup>

@@ -3,7 +3,13 @@ import { Link } from "@/lib/router";
 import { Button } from "@/components/ui/button";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
-import { approvalLabel, typeIcon, defaultTypeIcon, ApprovalPayloadRenderer } from "./ApprovalPayload";
+import {
+  approvalLabel,
+  typeIcon,
+  defaultTypeIcon,
+  ApprovalPayloadRenderer,
+  type ApprovalPayloadContext,
+} from "./ApprovalPayload";
 import { ApprovalInset, ApprovalPanel } from "./approval-ui";
 import { StatusBadge } from "./StatusBadge";
 import { timeAgo } from "../lib/timeAgo";
@@ -19,9 +25,11 @@ export function ApprovalCard({
   detailLink,
   detailLabel = "View details",
   supportingText,
+  payloadContext,
   extraActions,
   allowBudgetActions = false,
   isPending,
+  approveDisabled = false,
 }: {
   approval: Approval;
   requesterAgent: Agent | null;
@@ -32,13 +40,15 @@ export function ApprovalCard({
   detailLink?: string;
   detailLabel?: string;
   supportingText?: ReactNode;
+  payloadContext?: ApprovalPayloadContext;
   extraActions?: ReactNode;
   allowBudgetActions?: boolean;
   isPending: boolean;
+  approveDisabled?: boolean;
 }) {
   const Icon = typeIcon[approval.type] ?? defaultTypeIcon;
   const label = approvalLabel(approval.type, approval.payload as Record<string, unknown> | null);
-  const isActionable = approval.status === "pending" || approval.status === "revision_requested";
+  const isActionable = approval.status === "pending";
   const showResolutionButtons = (allowBudgetActions || approval.type !== "budget_override_required") && isActionable;
   const showRequestRevision = Boolean(onRequestRevision) && approval.status === "pending";
   const showActions = showResolutionButtons || showRequestRevision || Boolean(extraActions) || Boolean(detailLink || onOpen);
@@ -68,7 +78,7 @@ export function ApprovalCard({
       {supportingText ? <p className="text-xs text-muted-foreground">{supportingText}</p> : null}
 
       <ApprovalInset className="px-3 py-3">
-        <ApprovalPayloadRenderer type={approval.type} payload={approval.payload} />
+        <ApprovalPayloadRenderer type={approval.type} payload={approval.payload} context={payloadContext} />
       </ApprovalInset>
 
       {approval.decisionNote && (
@@ -85,7 +95,7 @@ export function ApprovalCard({
                 size="sm"
                 className="bg-green-700 hover:bg-green-600 text-white"
                 onClick={onApprove}
-                disabled={isPending}
+                disabled={isPending || approveDisabled}
               >
                 Approve
               </Button>
@@ -106,7 +116,7 @@ export function ApprovalCard({
               onClick={onRequestRevision}
               disabled={isPending}
             >
-              Request revision
+              Request changes
             </Button>
           ) : null}
           {extraActions}

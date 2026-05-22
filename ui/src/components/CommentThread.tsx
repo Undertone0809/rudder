@@ -1,21 +1,21 @@
-import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { IssueComment, Agent } from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
-import { Check, Copy, Paperclip } from "lucide-react";
+import { Check, Copy, Paperclip, TerminalSquare } from "lucide-react";
 import type { LiveRunForIssue } from "../api/heartbeats";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
-import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { MarkdownBody } from "./MarkdownBody";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
+import type { MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 import { formatChatAgentLabel } from "../lib/agent-labels";
 import { StatusBadge } from "./StatusBadge";
-import { AgentIcon } from "./AgentIconPicker";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
 import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
 import { formatDateTime } from "../lib/utils";
+import { resolveOperatorDisplayName } from "../lib/operator-display";
 import { PluginSlotOutlet } from "@/plugins/slots";
 
 const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
@@ -36,17 +36,19 @@ interface LinkedRunItem {
   contextSnapshot?: Record<string, unknown> | null;
 }
 
-interface CommentReassignment {
-  assigneeAgentId: string | null;
-  assigneeUserId: string | null;
+export interface CommentThreadActivityItem {
+  id: string;
+  createdAt: Date | string;
+  node: ReactNode;
 }
 
 interface CommentThreadProps {
   comments: CommentWithRunMeta[];
   linkedRuns?: LinkedRunItem[];
+  activityItems?: CommentThreadActivityItem[];
   orgId?: string | null;
   projectId?: string | null;
-  onAdd: (body: string, reopen?: boolean, reassignment?: CommentReassignment) => Promise<void>;
+  onAdd: (body: string, reopen?: boolean) => Promise<void>;
   issueStatus?: string;
   agentMap?: Map<string, Agent>;
   imageUploadHandler?: (file: File) => Promise<string>;
@@ -54,11 +56,12 @@ interface CommentThreadProps {
   onAttachImage?: (file: File) => Promise<void>;
   draftKey?: string;
   liveRunSlot?: React.ReactNode;
-  enableReassign?: boolean;
-  reassignOptions?: InlineEntityOption[];
-  currentAssigneeValue?: string;
-  suggestedAssigneeValue?: string;
   mentions?: MentionOption[];
+  operatorDisplayName?: string | null;
+  heading?: ReactNode;
+  hideHeading?: boolean;
+  emptyMessage?: string;
+  escapeBackWhenEmpty?: boolean;
 }
 
 const DRAFT_DEBOUNCE_MS = 800;
@@ -109,21 +112,6 @@ function passiveFollowupLabel(contextSnapshot: Record<string, unknown> | null | 
   return attempt && maxAttempts ? `Passive follow-up ${attempt}/${maxAttempts}` : "Passive follow-up";
 }
 
-function parseReassignment(target: string): CommentReassignment | null {
-  if (!target || target === "__none__") {
-    return { assigneeAgentId: null, assigneeUserId: null };
-  }
-  if (target.startsWith("agent:")) {
-    const assigneeAgentId = target.slice("agent:".length);
-    return assigneeAgentId ? { assigneeAgentId, assigneeUserId: null } : null;
-  }
-  if (target.startsWith("user:")) {
-    const assigneeUserId = target.slice("user:".length);
-    return assigneeUserId ? { assigneeAgentId: null, assigneeUserId } : null;
-  }
-  return null;
-}
-
 function CopyMarkdownButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -145,7 +133,8 @@ function CopyMarkdownButton({ text }: { text: string }) {
 
 type TimelineItem =
   | { kind: "comment"; id: string; createdAtMs: number; comment: CommentWithRunMeta }
-  | { kind: "run"; id: string; createdAtMs: number; run: LinkedRunItem };
+  | { kind: "run"; id: string; createdAtMs: number; run: LinkedRunItem }
+  | { kind: "activity"; id: string; createdAtMs: number; activity: CommentThreadActivityItem };
 
 const TimelineList = memo(function TimelineList({
   timeline,
@@ -155,6 +144,9 @@ const TimelineList = memo(function TimelineList({
   highlightCommentId,
   runTranscriptById,
   runHasOutput,
+  operatorDisplayName,
+  skillReferences,
+  emptyMessage,
 }: {
   timeline: TimelineItem[];
   agentMap?: Map<string, Agent>;
@@ -163,14 +155,25 @@ const TimelineList = memo(function TimelineList({
   highlightCommentId?: string | null;
   runTranscriptById: Map<string, TranscriptEntry[]>;
   runHasOutput: (runId: string) => boolean;
+  operatorDisplayName?: string | null;
+  skillReferences?: MarkdownSkillReferencePreview[];
+  emptyMessage: string;
 }) {
   if (timeline.length === 0) {
-    return <p className="text-sm text-muted-foreground">No comments or runs yet.</p>;
+    return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
   }
 
   return (
     <div className="space-y-3">
       {timeline.map((item) => {
+        if (item.kind === "activity") {
+          return (
+            <div key={`activity:${item.id}`}>
+              {item.activity.node}
+            </div>
+          );
+        }
+
         if (item.kind === "run") {
           const run = item.run;
           const isActive = run.status === "queued" || run.status === "running";
@@ -178,7 +181,11 @@ const TimelineList = memo(function TimelineList({
           const hasOutput = runHasOutput(run.runId);
           const passiveLabel = passiveFollowupLabel(run.contextSnapshot);
           return (
-            <div key={`run:${run.runId}`} className="overflow-hidden rounded-sm border border-border bg-accent/20 p-3">
+            <div
+              key={`run:${run.runId}`}
+              aria-label="Agent run output"
+              className="overflow-hidden rounded-sm border border-dashed border-border bg-muted/35 p-3"
+            >
               <div className="mb-3 flex items-start justify-between gap-3">
                 <Link to={`/agents/${run.agentId}`} className="hover:underline">
                   <AgentIdentity
@@ -195,7 +202,10 @@ const TimelineList = memo(function TimelineList({
                 </div>
               </div>
               <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-                <span className="text-muted-foreground">Execution</span>
+                <span className="inline-flex items-center gap-1 font-medium text-muted-foreground">
+                  <TerminalSquare className="h-3.5 w-3.5" />
+                  Run output
+                </span>
                 <Link
                   to={`/agents/${run.agentId}/runs/${run.runId}`}
                   className="inline-flex items-center rounded-md border border-border bg-accent/40 px-2 py-1 font-mono text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
@@ -248,7 +258,7 @@ const TimelineList = memo(function TimelineList({
                   />
                 </Link>
               ) : (
-                <Identity name="You" size="sm" />
+                <Identity name={resolveOperatorDisplayName(operatorDisplayName)} size="sm" />
               )}
               <span className="flex items-center gap-1.5">
                 {orgId ? (
@@ -276,7 +286,7 @@ const TimelineList = memo(function TimelineList({
                 <CopyMarkdownButton text={comment.body} />
               </span>
             </div>
-            <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
+            <MarkdownBody className="text-sm" skillReferences={skillReferences}>{comment.body}</MarkdownBody>
             {orgId ? (
               <div className="mt-2 space-y-2">
                 <PluginSlotOutlet
@@ -321,6 +331,7 @@ const TimelineList = memo(function TimelineList({
 export function CommentThread({
   comments,
   linkedRuns = [],
+  activityItems = [],
   orgId,
   projectId,
   onAdd,
@@ -330,19 +341,18 @@ export function CommentThread({
   onAttachImage,
   draftKey,
   liveRunSlot,
-  enableReassign = false,
-  reassignOptions = [],
-  currentAssigneeValue = "",
-  suggestedAssigneeValue,
   mentions: providedMentions,
+  operatorDisplayName,
+  heading,
+  hideHeading = false,
+  emptyMessage = "No comments or runs yet.",
+  escapeBackWhenEmpty = false,
 }: CommentThreadProps) {
   const [body, setBody] = useState("");
   const canReopen = shouldOfferReopen(issueStatus);
   const [reopen, setReopen] = useState(canReopen);
   const [submitting, setSubmitting] = useState(false);
   const [attaching, setAttaching] = useState(false);
-  const effectiveSuggestedAssigneeValue = suggestedAssigneeValue ?? currentAssigneeValue;
-  const [reassignTarget, setReassignTarget] = useState(effectiveSuggestedAssigneeValue);
   const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
@@ -365,12 +375,24 @@ export function CommentThread({
       createdAtMs: new Date(run.startedAt ?? run.createdAt).getTime(),
       run,
     }));
-    return [...commentItems, ...runItems].sort((a, b) => {
+    const activityTimelineItems: TimelineItem[] = activityItems.map((activity) => ({
+      kind: "activity",
+      id: activity.id,
+      createdAtMs: new Date(activity.createdAt).getTime(),
+      activity,
+    }));
+    const kindOrder: Record<TimelineItem["kind"], number> = {
+      activity: 0,
+      comment: 1,
+      run: 2,
+    };
+    return [...commentItems, ...runItems, ...activityTimelineItems].sort((a, b) => {
       if (a.createdAtMs !== b.createdAtMs) return a.createdAtMs - b.createdAtMs;
+      if (a.kind !== b.kind) return kindOrder[a.kind] - kindOrder[b.kind];
       if (a.kind === b.kind) return a.id.localeCompare(b.id);
-      return a.kind === "comment" ? -1 : 1;
+      return 0;
     });
-  }, [comments, linkedRuns]);
+  }, [activityItems, comments, linkedRuns]);
 
   const transcriptRuns = useMemo<LiveRunForIssue[]>(() => {
     return linkedRuns.map((run) => {
@@ -413,6 +435,20 @@ export function CommentThread({
       }));
   }, [agentMap, providedMentions]);
 
+  const skillReferences = useMemo<MarkdownSkillReferencePreview[]>(() => (
+    mentions
+      .filter((mention) => mention.kind === "skill" && mention.skillMarkdownTarget)
+      .map((mention) => ({
+        href: mention.skillMarkdownTarget!,
+        label: mention.skillRefLabel ?? mention.name,
+        displayName: mention.skillDisplayName ?? mention.name,
+        description: mention.skillDescription,
+        categoryLabel: mention.skillCategoryLabel,
+        locationLabel: mention.skillLocationLabel,
+        detailsHref: mention.skillDetailsHref,
+      }))
+  ), [mentions]);
+
   useEffect(() => {
     if (!draftKey) return;
     setBody(loadDraft(draftKey));
@@ -432,10 +468,6 @@ export function CommentThread({
       if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     };
   }, []);
-
-  useEffect(() => {
-    setReassignTarget(effectiveSuggestedAssigneeValue);
-  }, [effectiveSuggestedAssigneeValue]);
 
   useEffect(() => {
     setReopen(canReopen);
@@ -464,17 +496,14 @@ export function CommentThread({
   async function handleSubmit() {
     const trimmed = body.trim();
     if (!trimmed) return;
-    const hasReassignment = enableReassign && reassignTarget !== currentAssigneeValue;
-    const reassignment = hasReassignment ? parseReassignment(reassignTarget) : null;
     const reopenRequested = canReopen && reopen ? true : undefined;
 
     setSubmitting(true);
     try {
-      await onAdd(trimmed, reopenRequested, reassignment ?? undefined);
+      await onAdd(trimmed, reopenRequested);
       setBody("");
       if (draftKey) clearDraft(draftKey);
       setReopen(canReopen);
-      setReassignTarget(effectiveSuggestedAssigneeValue);
     } finally {
       setSubmitting(false);
     }
@@ -505,7 +534,9 @@ export function CommentThread({
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-semibold">Comments &amp; Runs ({timeline.length})</h3>
+      {!hideHeading && (
+        heading ?? <h3 className="text-sm font-semibold">Comments &amp; Runs ({timeline.length})</h3>
+      )}
 
       <TimelineList
         timeline={timeline}
@@ -515,11 +546,18 @@ export function CommentThread({
         highlightCommentId={highlightCommentId}
         runTranscriptById={transcriptByRun}
         runHasOutput={hasOutputForRun}
+        operatorDisplayName={operatorDisplayName}
+        skillReferences={skillReferences}
+        emptyMessage={emptyMessage}
       />
 
       {liveRunSlot}
 
-      <div ref={composerSurfaceRef} className="space-y-2">
+      <div
+        ref={composerSurfaceRef}
+        className="chat-composer rounded-[var(--radius-lg)] p-3"
+        data-issue-detail-escape-back={escapeBackWhenEmpty ? (body.trim() ? "dirty" : "empty") : undefined}
+      >
         <MarkdownEditor
           ref={editorRef}
           value={body}
@@ -530,9 +568,11 @@ export function CommentThread({
           mentionMenuPlacement="container"
           onSubmit={handleSubmit}
           imageUploadHandler={imageUploadHandler}
-          contentClassName="min-h-[60px] text-sm"
+          className="rounded-[var(--radius-md)] bg-transparent"
+          contentClassName="min-h-[64px] bg-transparent text-sm leading-6 text-foreground"
+          bordered={false}
         />
-        <div className="flex items-center justify-end gap-3">
+        <div className="mt-3 flex items-center justify-end gap-3">
           {(imageUploadHandler || onAttachImage) && (
             <div className="mr-auto flex items-center gap-3">
               <input
@@ -564,44 +604,6 @@ export function CommentThread({
               Re-open
             </label>
           ) : null}
-          {enableReassign && reassignOptions.length > 0 && (
-            <InlineEntitySelector
-              value={reassignTarget}
-              options={reassignOptions}
-              placeholder="Assignee"
-              noneLabel="No assignee"
-              searchPlaceholder="Search assignees..."
-              emptyMessage="No assignees found."
-              onChange={setReassignTarget}
-              className="text-xs h-8"
-              renderTriggerValue={(option) => {
-                if (!option) return <span className="text-muted-foreground">Assignee</span>;
-                const agentId = option.id.startsWith("agent:") ? option.id.slice("agent:".length) : null;
-                const agent = agentId ? agentMap?.get(agentId) : null;
-                return (
-                  <>
-                    {agent ? (
-                      <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    ) : null}
-                    <span className="truncate">{option.label}</span>
-                  </>
-                );
-              }}
-              renderOption={(option) => {
-                if (!option.id) return <span className="truncate">{option.label}</span>;
-                const agentId = option.id.startsWith("agent:") ? option.id.slice("agent:".length) : null;
-                const agent = agentId ? agentMap?.get(agentId) : null;
-                return (
-                  <>
-                    {agent ? (
-                      <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    ) : null}
-                    <span className="truncate">{option.label}</span>
-                  </>
-                );
-              }}
-            />
-          )}
           <Button size="sm" disabled={!canSubmit} onClick={handleSubmit}>
             {submitting ? "Posting..." : "Comment"}
           </Button>

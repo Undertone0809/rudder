@@ -1,4 +1,4 @@
-import type { AgentRole, AgentRuntimeType, OrganizationStatus, PauseReason } from "../constants.js";
+import type { AgentRole, OrganizationStatus, PauseReason } from "../constants.js";
 import type { ChatIssueCreationMode } from "../constants.js";
 import type { ProjectWorkspaceSourceType } from "./project.js";
 
@@ -43,6 +43,9 @@ export interface OrganizationWorkspaceFileDetail {
   filePath: string;
   rootExists: boolean;
   content: string | null;
+  contentType: string | null;
+  previewKind: "text" | "image" | "binary";
+  contentPath: string | null;
   message: string | null;
   truncated: boolean;
 }
@@ -65,8 +68,6 @@ export interface Organization {
   spentMonthlyCents: number;
   requireBoardApprovalForNewAgents: boolean;
   defaultChatIssueCreationMode: ChatIssueCreationMode;
-  defaultChatAgentRuntimeType: AgentRuntimeType | null;
-  defaultChatAgentRuntimeConfig: Record<string, unknown> | null;
   workspace: OrganizationWorkspace | null;
   brandColor: string | null;
   logoAssetId: string | null;

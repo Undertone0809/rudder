@@ -1,6 +1,12 @@
 export const ORGANIZATION_STATUSES = ["active", "paused", "archived"] as const;
 export type OrganizationStatus = (typeof ORGANIZATION_STATUSES)[number];
 
+export const ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES = ["lightweight", "reasoning"] as const;
+export type OrganizationIntelligenceProfilePurpose = (typeof ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES)[number];
+
+export const ORGANIZATION_INTELLIGENCE_PROFILE_STATUSES = ["configured", "disabled", "invalid"] as const;
+export type OrganizationIntelligenceProfileStatus = (typeof ORGANIZATION_INTELLIGENCE_PROFILE_STATUSES)[number];
+
 export const DEPLOYMENT_MODES = ["local_trusted", "authenticated"] as const;
 export type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
 
@@ -113,6 +119,18 @@ export const AGENT_ICON_NAMES = [
 ] as const;
 export type AgentIconName = (typeof AGENT_ICON_NAMES)[number];
 
+export const AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX = "dicebear:notionists:" as const;
+
+export const AGENT_AVATAR_BACKGROUND_PRESET_IDS = [
+  "mist",
+  "slate",
+  "sky",
+  "mint",
+  "peach",
+  "violet",
+] as const;
+export type AgentAvatarBackgroundPresetId = (typeof AGENT_AVATAR_BACKGROUND_PRESET_IDS)[number];
+
 export const ISSUE_STATUSES = [
   "backlog",
   "todo",
@@ -162,14 +180,14 @@ export type ChatMessageRole = (typeof CHAT_MESSAGE_ROLES)[number];
 
 export const CHAT_MESSAGE_KINDS = [
   "message",
+  "ask_user",
   "issue_proposal",
   "operation_proposal",
-  "routing_suggestion",
   "system_event",
 ] as const;
 export type ChatMessageKind = (typeof CHAT_MESSAGE_KINDS)[number];
 
-export const CHAT_MESSAGE_STATUSES = ["completed", "stopped", "failed"] as const;
+export const CHAT_MESSAGE_STATUSES = ["streaming", "completed", "stopped", "failed", "interrupted"] as const;
 export type ChatMessageStatus = (typeof CHAT_MESSAGE_STATUSES)[number];
 
 export const CHAT_CONTEXT_ENTITY_TYPES = ["issue", "project", "agent"] as const;
@@ -224,7 +242,7 @@ export const PROJECT_RESOURCE_ATTACHMENT_ROLES = [
 ] as const;
 export type ProjectResourceAttachmentRole = (typeof PROJECT_RESOURCE_ATTACHMENT_ROLES)[number];
 
-export const AUTOMATION_STATUSES = ["active", "paused", "archived"] as const;
+export const AUTOMATION_STATUSES = ["active", "paused"] as const;
 export type AutomationStatus = (typeof AUTOMATION_STATUSES)[number];
 
 export const AUTOMATION_CONCURRENCY_POLICIES = ["coalesce_if_active", "always_enqueue", "skip_if_active"] as const;
@@ -232,6 +250,9 @@ export type AutomationConcurrencyPolicy = (typeof AUTOMATION_CONCURRENCY_POLICIE
 
 export const AUTOMATION_CATCH_UP_POLICIES = ["skip_missed", "enqueue_missed_with_cap"] as const;
 export type AutomationCatchUpPolicy = (typeof AUTOMATION_CATCH_UP_POLICIES)[number];
+
+export const AUTOMATION_OUTPUT_MODES = ["track_issue", "chat_output"] as const;
+export type AutomationOutputMode = (typeof AUTOMATION_OUTPUT_MODES)[number];
 
 export const AUTOMATION_TRIGGER_KINDS = ["schedule", "webhook", "api"] as const;
 export type AutomationTriggerKind = (typeof AUTOMATION_TRIGGER_KINDS)[number];
@@ -375,6 +396,7 @@ export type BudgetIncidentResolutionAction = (typeof BUDGET_INCIDENT_RESOLUTION_
 export const HEARTBEAT_INVOCATION_SOURCES = [
   "timer",
   "assignment",
+  "review",
   "on_demand",
   "automation",
 ] as const;

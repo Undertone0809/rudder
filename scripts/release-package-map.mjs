@@ -91,14 +91,51 @@ function sortTopologically(packages) {
   return ordered;
 }
 
-function replaceWorkspaceDeps(deps, version) {
+function rewriteInternalDeps(deps, internalPackageNames, value) {
   if (!deps) return deps;
   const next = { ...deps };
 
-  for (const [name, value] of Object.entries(next)) {
-    if (!name.startsWith("@rudderhq/")) continue;
-    if (typeof value !== "string" || !value.startsWith("workspace:")) continue;
-    next[name] = version;
+  for (const name of Object.keys(next)) {
+    if (!internalPackageNames.has(name)) continue;
+    next[name] = value;
+  }
+
+  return next;
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function addDefaultExportCondition(exportsObj) {
+  if (typeof exportsObj !== "object" || exportsObj === null || Array.isArray(exportsObj)) {
+    return;
+  }
+
+  for (const key of Object.keys(exportsObj)) {
+    const entry = exportsObj[key];
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      if (entry.import && !entry.default) {
+        entry.default = entry.import;
+      }
+      addDefaultExportCondition(entry);
+    }
+  }
+}
+
+function applyPublishConfigFields(pkg) {
+  if (!pkg.publishConfig) return pkg;
+
+  const next = { ...pkg };
+  if (pkg.publishConfig.exports) {
+    next.exports = cloneJson(pkg.publishConfig.exports);
+    addDefaultExportCondition(next.exports);
+  }
+  if (pkg.publishConfig.main) {
+    next.main = pkg.publishConfig.main;
+  }
+  if (pkg.publishConfig.types) {
+    next.types = pkg.publishConfig.types;
   }
 
   return next;
@@ -113,20 +150,22 @@ function setPackageManifestVersion(packagePath, version) {
   });
 }
 
-function setVersion(version) {
+function setVersion(version, { publish = false } = {}) {
   const packages = sortTopologically(discoverPublicPackages());
+  const internalPackageNames = new Set(packages.map((pkg) => pkg.name));
+  const internalDependencyValue = publish ? version : "workspace:*";
 
   for (const pkg of packages) {
     const nextPkg = {
       ...pkg.pkg,
       version,
-      dependencies: replaceWorkspaceDeps(pkg.pkg.dependencies, version),
-      optionalDependencies: replaceWorkspaceDeps(pkg.pkg.optionalDependencies, version),
-      peerDependencies: replaceWorkspaceDeps(pkg.pkg.peerDependencies, version),
-      devDependencies: replaceWorkspaceDeps(pkg.pkg.devDependencies, version),
+      dependencies: rewriteInternalDeps(pkg.pkg.dependencies, internalPackageNames, internalDependencyValue),
+      optionalDependencies: rewriteInternalDeps(pkg.pkg.optionalDependencies, internalPackageNames, internalDependencyValue),
+      peerDependencies: rewriteInternalDeps(pkg.pkg.peerDependencies, internalPackageNames, internalDependencyValue),
+      devDependencies: rewriteInternalDeps(pkg.pkg.devDependencies, internalPackageNames, internalDependencyValue),
     };
 
-    writeJson(pkg.pkgPath, nextPkg);
+    writeJson(pkg.pkgPath, publish ? applyPublishConfigFields(nextPkg) : nextPkg);
   }
 
   setPackageManifestVersion(join(repoRoot, "desktop", "package.json"), version);
@@ -158,6 +197,7 @@ function usage() {
       "Usage:",
       "  node scripts/release-package-map.mjs list",
       "  node scripts/release-package-map.mjs set-version <version>",
+      "  node scripts/release-package-map.mjs set-publish-version <version>",
       "",
     ].join("\n"),
   );
@@ -176,6 +216,15 @@ if (command === "set-version") {
     process.exit(1);
   }
   setVersion(arg);
+  process.exit(0);
+}
+
+if (command === "set-publish-version") {
+  if (!arg) {
+    usage();
+    process.exit(1);
+  }
+  setVersion(arg, { publish: true });
   process.exit(0);
 }
 

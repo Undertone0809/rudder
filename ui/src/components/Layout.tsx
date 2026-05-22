@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, Settings, X } from "lucide-react";
-import { Link, Outlet, useLocation, useNavigate, useParams } from "@/lib/router";
+import { Link, Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { SettingsSidebar } from "./SettingsSidebar";
 import { PrimaryRail } from "./PrimaryRail";
 import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
 import { BreadcrumbBar } from "./BreadcrumbBar";
 import { CommandPalette } from "./CommandPalette";
+import { hasCompletedProductTour, hasPendingProductTour } from "./ProductTourOverlay";
 import { NewIssueDialog } from "./NewIssueDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { NewGoalDialog } from "./NewGoalDialog";
@@ -18,6 +19,7 @@ import { DevRestartBanner } from "./DevRestartBanner";
 import { useDialog } from "../context/DialogContext";
 import { usePanel } from "../context/PanelContext";
 import { useOrganization } from "../context/OrganizationContext";
+import { NavigationBackProvider } from "../context/NavigationBackContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useOrganizationPageMemory } from "../hooks/useOrganizationPageMemory";
@@ -107,20 +109,14 @@ function readRememberedWorkspacePath(): string {
   }
 }
 
-function hasInAppBackStack(): boolean {
-  if (typeof window === "undefined") return false;
-  const historyState = window.history.state as { idx?: unknown } | null;
-  if (typeof historyState?.idx === "number") {
-    return historyState.idx > 0;
-  }
+function getLocationPath(location: { pathname: string; search: string; hash: string }): string {
+  return `${location.pathname}${location.search}${location.hash}`;
+}
 
-  try {
-    return window.history.length > 1
-      && Boolean(document.referrer)
-      && new URL(document.referrer).origin === window.location.origin;
-  } catch {
-    return false;
-  }
+function hasBrowserBackStackEntry() {
+  if (typeof window === "undefined") return false;
+  const index = (window.history.state as { idx?: unknown } | null)?.idx;
+  return typeof index === "number" && index > 0;
 }
 
 export function DesktopSettingsModalFrame({
@@ -227,7 +223,13 @@ export function Layout() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const { sidebarOpen, setSidebarOpen, toggleSidebar, isMobile } = useSidebar();
-  const { openNewIssue, openOnboarding } = useDialog();
+  const {
+    openNewIssue,
+    openOnboarding,
+    onboardingOpen,
+    productTourOpen,
+    openProductTour,
+  } = useDialog();
   const { togglePanelVisible } = usePanel();
   const {
     organizations,
@@ -240,6 +242,8 @@ export function Layout() {
   const { orgPrefix } = useParams<{ orgPrefix: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const navigationType = useNavigationType();
+  const inAppBackStackRef = useRef<string[]>([]);
   const macDesktopShell = useMemo(() => isMacDesktopShell(), []);
   const isInstanceSettingsRoute = location.pathname.startsWith("/instance/");
   const relativeBoardPath = useMemo(
@@ -279,6 +283,7 @@ export function Layout() {
   );
   const isSettingsRoute = isInstanceSettingsRoute || isOrganizationSettingsRoute;
   const onboardingTriggered = useRef(false);
+  const productTourTriggered = useRef(false);
   const lastMainScrollTop = useRef(0);
   const [mobileNavVisible, setMobileNavVisible] = useState(true);
   const [contextColumnWidth, setContextColumnWidth] = useState<number>(() =>
@@ -348,6 +353,24 @@ export function Layout() {
       openOnboarding();
     }
   }, [organizations, organizationsLoading, openOnboarding, health?.deploymentMode]);
+
+  useEffect(() => {
+    if (productTourTriggered.current || productTourOpen || onboardingOpen) return;
+    if (organizationsLoading || organizations.length === 0) return;
+    if (isSettingsRoute || relativeBoardPath === "/onboarding") return;
+    if (hasCompletedProductTour() || !hasPendingProductTour()) return;
+
+    productTourTriggered.current = true;
+    openProductTour({ source: "auto" });
+  }, [
+    isSettingsRoute,
+    onboardingOpen,
+    openProductTour,
+    organizations.length,
+    organizationsLoading,
+    productTourOpen,
+    relativeBoardPath,
+  ]);
 
   useEffect(() => {
     if (!orgPrefix || organizationsLoading || organizations.length === 0) return;
@@ -577,9 +600,47 @@ export function Layout() {
     settingsTarget,
   ]);
 
+  useEffect(() => {
+    const currentPath = getLocationPath(location);
+    const stack = inAppBackStackRef.current;
+    if (stack.length === 0) {
+      stack.push(currentPath);
+      return;
+    }
+
+    const currentIndex = stack.lastIndexOf(currentPath);
+    if (navigationType === "POP") {
+      if (currentIndex >= 0) {
+        stack.splice(currentIndex + 1);
+      } else {
+        stack.push(currentPath);
+      }
+      return;
+    }
+
+    if (navigationType === "REPLACE") {
+      stack[stack.length - 1] = currentPath;
+      return;
+    }
+
+    if (stack[stack.length - 1] !== currentPath) {
+      stack.push(currentPath);
+    }
+    if (stack.length > 50) stack.splice(0, stack.length - 50);
+  }, [location, navigationType]);
+
   const navigateBack = useCallback(() => {
-    if (!hasInAppBackStack()) return;
-    navigate(-1);
+    const stack = inAppBackStackRef.current;
+    if (stack.length < 2) {
+      if (!hasBrowserBackStackEntry()) return false;
+      navigate(-1);
+      return true;
+    }
+    const previousPath = stack[stack.length - 2];
+    if (!previousPath) return false;
+    stack.pop();
+    navigate(previousPath);
+    return true;
   }, [navigate]);
 
   useKeyboardShortcuts({
@@ -591,7 +652,7 @@ export function Layout() {
   });
 
   const desktopContentShellInsetClass = macDesktopShell
-    ? "h-full flex-1 pl-2.5 pb-1 pr-1 pt-0.5 md:pl-3 md:pb-1.5 md:pr-1.5 md:pt-1"
+    ? "h-full flex-1 pl-2.5 pb-1 pr-1 pt-0.5 md:pl-3 md:pb-1.5 md:pr-1.5 md:pt-0.5"
     : "h-full flex-1 pl-0 pb-1 pr-1 pt-0.5 md:pb-1.5 md:pr-1.5 md:pt-1";
   function closeSettingsModal() {
     clearStoredSettingsOverlayBackgroundPath();
@@ -631,6 +692,7 @@ export function Layout() {
   }, [contextColumnWidth, isMobile, workspaceColumnFamily]);
 
   return (
+    <NavigationBackProvider navigateBack={navigateBack}>
     <div
       className={cn(
         "app-shell-backdrop text-foreground pt-[env(safe-area-inset-top)]",
@@ -736,7 +798,7 @@ export function Layout() {
             isMobile ? "w-full" : desktopContentShellInsetClass,
           )}
         >
-          {!isMobile && macDesktopShell ? <div className="desktop-window-drag h-3 shrink-0" /> : null}
+          {!isMobile && macDesktopShell ? <div className="desktop-window-drag h-[var(--desktop-content-top-gap)] shrink-0" /> : null}
           {showDesktopSettingsModal ? (
             <DesktopSettingsModalFrame onClose={closeSettingsModal}>
               {hasUnknownOrganizationPrefix ? (
@@ -767,7 +829,7 @@ export function Layout() {
               ) : null}
               <div className={cn(isMobile ? "block" : "flex min-h-0 min-w-0 flex-1")}>
                 {showDesktopWorkspaceShell ? (
-                  <div className="flex min-h-0 min-w-0 flex-1 px-[3px] pb-[3px] pt-[2px] md:px-1 md:pb-1 md:pt-[3px]">
+                  <div className="flex min-h-0 min-w-0 flex-1 px-[3px] pb-[3px] pt-[1px] md:px-1 md:pb-1 md:pt-0.5">
                     {showIntegratedShellSidebar ? (
                       <>
                         <div
@@ -802,6 +864,7 @@ export function Layout() {
                     ) : null}
                     <div
                       data-testid="workspace-main-card"
+                      data-tour-target="workspace-main"
                       className="workspace-main-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[5px]"
                     >
                       <div data-testid="workspace-main-header" className="shrink-0">
@@ -831,6 +894,7 @@ export function Layout() {
                 ) : (
                   <main
                     id="main-content"
+                    data-tour-target="workspace-main"
                     tabIndex={-1}
                     ref={mainScrollRef}
                     className={cn(
@@ -862,5 +926,6 @@ export function Layout() {
       <NewAgentDialog />
       </CalendarWorkspaceProvider>
     </div>
+    </NavigationBackProvider>
   );
 }

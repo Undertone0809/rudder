@@ -1,4 +1,6 @@
 export { organizationService } from "./orgs.js";
+export { organizationIntelligenceProfileService } from "./organization-intelligence-profiles.js";
+export { productIntelligenceService } from "./product-intelligence.js";
 export { resourceCatalogService } from "./resource-catalog.js";
 export { organizationSkillService, organizationSkillFacade } from "./organization-skills.js";
 export { agentEnabledSkillsService } from "./agent-enabled-skills.js";

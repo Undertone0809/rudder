@@ -115,6 +115,20 @@ export function automationRoutes(db: Db) {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
     });
+    res.json(updated);
+  });
+
+  router.delete("/automations/:id", async (req, res) => {
+    const automation = await assertCanManageExistingAutomation(req, req.params.id as string);
+    if (!automation) {
+      res.status(404).json({ error: "Automation not found" });
+      return;
+    }
+    const deleted = await svc.delete(automation.id);
+    if (!deleted) {
+      res.status(404).json({ error: "Automation not found" });
+      return;
+    }
     const actor = getActorInfo(req);
     await logActivity(db, {
       orgId: automation.orgId,
@@ -122,12 +136,12 @@ export function automationRoutes(db: Db) {
       actorId: actor.actorId,
       agentId: actor.agentId,
       runId: actor.runId,
-      action: "automation.updated",
+      action: "automation.deleted",
       entityType: "automation",
       entityId: automation.id,
-      details: { title: updated?.title ?? automation.title },
+      details: { title: automation.title },
     });
-    res.json(updated);
+    res.status(204).end();
   });
 
   router.get("/automations/:id/runs", async (req, res) => {

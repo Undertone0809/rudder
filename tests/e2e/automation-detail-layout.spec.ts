@@ -64,7 +64,7 @@ async function createAutomationFixture(page: Page) {
 }
 
 test.describe("Automation detail layout", () => {
-  test("keeps page actions in the header and moves editing context into the overview strip", async ({ page }, testInfo) => {
+  test("keeps page actions in the header and moves editing context into the configuration rail", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1200 });
     const { organization, automation } = await createAutomationFixture(page);
 
@@ -74,8 +74,12 @@ test.describe("Automation detail layout", () => {
     const headerActions = page.getByTestId("workspace-main-header-actions");
     const shell = page.getByTestId("automation-detail-shell");
     const overviewStrip = page.getByTestId("automation-overview-strip");
-    const addTriggerCard = page.getByTestId("automation-add-trigger-card");
+    const configurationCard = page.getByTestId("automation-configuration-card");
+    const agentControl = page.getByTestId("automation-detail-agent-control");
+    const projectControl = page.getByTestId("automation-detail-project-control");
+    const addTriggerButton = page.getByTestId("automation-add-trigger-button");
     const triggersList = page.getByTestId("automation-triggers-list");
+    const triggerEditorBody = page.getByTestId("automation-trigger-editor-body");
     const statusButton = headerActions.getByRole("button", { name: "Pause automation" });
     const deleteButton = headerActions.getByRole("button", { name: "Delete automation" });
     const runButton = headerActions.getByRole("button", { name: "Run now" });
@@ -83,8 +87,13 @@ test.describe("Automation detail layout", () => {
     await expect(headerActions).toBeVisible();
     await expect(shell).toBeVisible();
     await expect(overviewStrip).toBeVisible();
-    await expect(addTriggerCard).toBeVisible();
+    await expect(configurationCard).toBeVisible();
+    await expect(agentControl).toBeVisible();
+    await expect(projectControl).toBeVisible();
+    await expect(addTriggerButton).toBeVisible();
+    await expect(page.getByTestId("automation-add-trigger-card")).toHaveCount(0);
     await expect(triggersList).toBeVisible();
+    await expect(triggerEditorBody).toBeHidden();
     await expect(statusButton).toBeVisible();
     await expect(deleteButton).toBeVisible();
     await expect(runButton).toBeVisible();
@@ -94,14 +103,28 @@ test.describe("Automation detail layout", () => {
     await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
     await expect(page.getByText(/Automatic triggers/)).toHaveCount(0);
     await expect(page.getByText(/Changes save automatically/)).toHaveCount(0);
+    await expect(page.getByText("Configuration")).toBeVisible();
+    await expect(page.getByText("Run output")).toBeVisible();
+    await expect(page.getByText("Track as issue")).toBeVisible();
     await expect(page.getByText("Run status")).toBeVisible();
+    await expect(configurationCard.getByText("Triggers")).toBeVisible();
     await expect(page.getByText("Details")).toHaveCount(0);
-    await expect(addTriggerCard.getByRole("button", { name: "Add trigger" })).toBeVisible();
+    await expect(addTriggerButton).toHaveText("Add trigger");
+    await addTriggerButton.click();
+    const addTriggerCard = page.getByTestId("automation-add-trigger-card");
+    await expect(addTriggerCard).toBeVisible();
+    await expect(addTriggerCard.getByRole("button", { name: "Create trigger" })).toBeVisible();
+    const addTriggerBox = await addTriggerCard.boundingBox();
+    expect(addTriggerBox).not.toBeNull();
+    await triggersList.getByRole("button", { name: "Edit trigger" }).click();
+    await expect(triggerEditorBody).toBeVisible();
 
-    const assigneeSelector = overviewStrip.getByRole("button", { name: /Automation Layout Agent/ });
-    const projectSelector = overviewStrip.getByRole("button", { name: /Onboarding/ });
-    await expect(assigneeSelector).toHaveCSS("border-top-width", "1px");
-    await expect(projectSelector).toHaveCSS("border-top-width", "1px");
+    const assigneeSelector = agentControl.getByRole("button", { name: /Automation Layout Agent/ });
+    const projectSelector = projectControl.getByRole("button", { name: /Onboarding/ });
+    await expect(agentControl).toHaveCSS("border-top-width", "1px");
+    await expect(projectControl).toHaveCSS("border-top-width", "1px");
+    await expect(assigneeSelector).toBeVisible();
+    await expect(projectSelector).toBeVisible();
 
     const titleInput = page.getByPlaceholder("Automation title");
     const patchPromise = page.waitForResponse((response) =>
@@ -113,11 +136,13 @@ test.describe("Automation detail layout", () => {
     expect(patchResponse.ok()).toBe(true);
     await expect(page.getByText("In sync")).toBeVisible({ timeout: 10_000 });
 
-    page.once("dialog", async (dialog) => {
-      expect(dialog.message()).toContain("Delete");
-      await dialog.dismiss();
-    });
     await deleteButton.click();
+    const deleteDialog = page.getByRole("dialog", { name: /Delete/ });
+    await expect(deleteDialog).toBeVisible();
+    await expect(deleteDialog).toContainText("This will permanently remove the automation and stop future runs.");
+    await expect(deleteDialog).not.toContainText("archived");
+    await deleteDialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(deleteDialog).toBeHidden();
 
     const viewport = page.viewportSize();
     const shellBox = await shell.boundingBox();
@@ -126,7 +151,8 @@ test.describe("Automation detail layout", () => {
     const deleteButtonBox = await deleteButton.boundingBox();
     const runButtonBox = await runButton.boundingBox();
     const overviewBox = await overviewStrip.boundingBox();
-    const addTriggerBox = await addTriggerCard.boundingBox();
+    const configurationCardBox = await configurationCard.boundingBox();
+    const addTriggerButtonBox = await addTriggerButton.boundingBox();
     const triggersListBox = await triggersList.boundingBox();
 
     expect(viewport).not.toBeNull();
@@ -136,7 +162,8 @@ test.describe("Automation detail layout", () => {
     expect(deleteButtonBox).not.toBeNull();
     expect(runButtonBox).not.toBeNull();
     expect(overviewBox).not.toBeNull();
-    expect(addTriggerBox).not.toBeNull();
+    expect(configurationCardBox).not.toBeNull();
+    expect(addTriggerButtonBox).not.toBeNull();
     expect(triggersListBox).not.toBeNull();
 
     expect(statusButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
@@ -144,14 +171,47 @@ test.describe("Automation detail layout", () => {
     expect(runButtonBox!.y).toBeGreaterThanOrEqual(headerActionsBox!.y - 2);
     expect(runButtonBox!.x).toBeGreaterThan(deleteButtonBox!.x);
     expect(overviewBox!.y).toBeGreaterThan(shellBox!.y);
-    expect(overviewBox!.y + overviewBox!.height).toBeLessThan(addTriggerBox!.y + 8);
-    expect(addTriggerBox!.y + addTriggerBox!.height).toBeLessThan(triggersListBox!.y + 8);
-    expect(addTriggerBox!.x).toBeGreaterThanOrEqual(shellBox!.x - 2);
+    expect(configurationCardBox!.x).toBeGreaterThan(overviewBox!.x + overviewBox!.width);
+    expect(addTriggerButtonBox!.y).toBeLessThan(triggersListBox!.y + 8);
+    expect(addTriggerButtonBox!.x).toBeGreaterThanOrEqual(configurationCardBox!.x - 2);
+    expect(addTriggerBox!.x + addTriggerBox!.width).toBeLessThanOrEqual(configurationCardBox!.x + 16);
+    expect(addTriggerBox!.y).toBeLessThanOrEqual(addTriggerButtonBox!.y + addTriggerButtonBox!.height + 8);
 
     await page.screenshot({
       path: testInfo.outputPath("automation-detail-layout.png"),
       fullPage: true,
     });
+  });
+
+  test("deletes an automation from detail and returns to the list", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const { organization, automation } = await createAutomationFixture(page);
+
+    await selectOrganization(page, organization.id);
+    await page.goto(`/automations/${automation.id}`);
+
+    await page.getByTestId("workspace-main-header-actions").getByRole("button", { name: "Delete automation" }).click();
+    const deleteDialog = page.getByRole("dialog", { name: /Delete/ });
+    await expect(deleteDialog).toBeVisible();
+    await expect(deleteDialog).toContainText("This will permanently remove the automation and stop future runs.");
+    await expect(page.getByText("It will be archived")).toHaveCount(0);
+
+    const deleteResponsePromise = page.waitForResponse((response) =>
+      response.request().method() === "DELETE" &&
+      response.url().includes(`/api/automations/${automation.id}`),
+    );
+    await deleteDialog.getByRole("button", { name: "Delete" }).click();
+    const deleteResponse = await deleteResponsePromise;
+    expect(deleteResponse.ok()).toBe(true);
+
+    await expect(page).toHaveURL(/\/automations$/);
+    await expect(page.getByText("Every morning summarize onboarding blockers")).toHaveCount(0);
+    await expect(page.getByText("Archive")).toHaveCount(0);
+    await expect(page.getByText("Restore")).toHaveCount(0);
+    await expect(page.getByText("Archived")).toHaveCount(0);
+
+    const detailRes = await page.request.get(`/api/automations/${automation.id}`);
+    expect(detailRes.status()).toBe(404);
   });
 
   test("stacks activity metadata cleanly on narrow viewports", async ({ page }, testInfo) => {
@@ -169,7 +229,10 @@ test.describe("Automation detail layout", () => {
 
     await expect(activityList).toBeVisible();
     await expect(firstRow).toBeVisible();
-    await expect(firstDetails).toContainText("kind: schedule");
+    await expect(firstSummary).toContainText("Trigger added");
+    await expect(firstDetails).toContainText("Schedule trigger");
+    await expect(firstDetails).not.toContainText("automationId");
+    await expect(firstDetails).not.toContainText("kind: schedule");
 
     const [rowBox, summaryBox, timestampBox] = await Promise.all([
       firstRow.boundingBox(),

@@ -16,6 +16,7 @@ const mutate = vi.fn();
 let messengerModel: any;
 
 vi.mock("@tanstack/react-query", () => ({
+  useQuery: () => ({ data: [], isLoading: false, error: null }),
   useMutation: () => ({ mutate, isPending: false }),
   useQueryClient: () => ({ invalidateQueries }),
 }));
@@ -144,6 +145,7 @@ describe("Messenger page headers", () => {
           issueId: "issue-4",
           issueIdentifier: "RUD-4",
           sourceCommentId: "comment-4",
+          sourceCommentAuthorLabel: "Alex",
           sourceCommentBody: "## Review Summary\n\n- **Rendered** from markdown",
           title: "RUD-4 · Render markdown comments",
           subtitle: "commented",
@@ -158,6 +160,9 @@ describe("Messenger page headers", () => {
             followed: true,
             createdByMe: false,
             assignedToMe: false,
+            sourceCommentAuthorKind: "user",
+            sourceCommentByMe: false,
+            sourceCommentAuthorLabel: "Alex",
           },
         },
       ],
@@ -167,7 +172,50 @@ describe("Messenger page headers", () => {
 
     expect(html).toContain("<h2>Review Summary</h2>");
     expect(html).toContain("<strong>Rendered</strong>");
+    expect(html).toContain("Alex comment");
+    expect(html).not.toContain("Source comment by Alex");
     expect(html).toContain('href="/issues/RUD-4#comment-comment-4"');
+    expect(html).not.toContain("Issues assistant");
+  });
+
+  it("renders issue update cards with from and to status badges", () => {
+    messengerModel.issueThreadDetail = {
+      title: "Issues",
+      description: "Followed issues, issues I created, and issues assigned to me.",
+      unreadCount: 1,
+      items: [
+        {
+          id: "issue-item-status-change",
+          issueId: "issue-status-change",
+          issueIdentifier: "RUD-5",
+          sourceCommentId: null,
+          sourceCommentAuthorLabel: null,
+          sourceCommentBody: "Ready for review.",
+          title: "RUD-5 · Review status handoff",
+          subtitle: "Status changed from todo to in review",
+          body: "Ready for review.",
+          preview: "Ready for review.",
+          href: "/issues/RUD-5",
+          latestActivityAt: "2026-04-19T04:00:00.000Z",
+          actions: [],
+          metadata: {
+            status: "in_review",
+            statusChange: { from: "todo", to: "in_review" },
+            priority: "medium",
+            followed: true,
+            createdByMe: false,
+            assignedToMe: false,
+          },
+        },
+      ],
+    };
+
+    const html = renderIssueThread();
+
+    expect(html).toContain('aria-label="Status changed from todo to in review"');
+    expect(html).toContain("todo");
+    expect(html).toContain("in review");
+    expect(html).toContain("→");
   });
 
   it("suppresses the self-assigned label when the issue was also created by me", () => {
@@ -296,7 +344,7 @@ describe("Messenger page headers", () => {
           metadata: {
             contextSnapshot: {
               issueId: "issue-1",
-              issue: { title: "Recover the failed workspace bootstrap" },
+              issue: { title: "Recover the failed workspace bootstrap", status: "blocked" },
             },
           },
         },
@@ -309,6 +357,8 @@ describe("Messenger page headers", () => {
     expect(html).toContain("Recent failed heartbeat runs");
     expect(html).toContain("Run failed for Messenger worker");
     expect(html).toContain("Recover the failed workspace bootstrap");
+    expect(html).toContain('data-testid="messenger-failed-run-issue-status-run-1"');
+    expect(html).toContain("blocked");
     expect(html).toContain('href="/issues/issue-1"');
     expect(html).toContain('data-variant="outline"');
     expect(html).not.toContain("Open issue");

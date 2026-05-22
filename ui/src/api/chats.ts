@@ -10,8 +10,15 @@ import type {
 import { ApiError, api } from "./client";
 
 export const chatsApi = {
-  list: (orgId: string, status: "active" | "resolved" | "archived" | "all" = "active") =>
-    api.get<ChatConversation[]>(`/orgs/${orgId}/chats?status=${status}`),
+  list: (
+    orgId: string,
+    status: "active" | "resolved" | "archived" | "all" = "active",
+    filters?: { q?: string },
+  ) => {
+    const params = new URLSearchParams({ status });
+    if (filters?.q) params.set("q", filters.q);
+    return api.get<ChatConversation[]>(`/orgs/${orgId}/chats?${params.toString()}`);
+  },
   create: (
     orgId: string,
     data: {
@@ -171,6 +178,7 @@ export const chatsApi = {
     chatId: string,
     data: {
       pinned?: boolean;
+      unread?: boolean;
     },
   ) => api.post<ChatConversation>(`/chats/${chatId}/user-state`, data),
 };

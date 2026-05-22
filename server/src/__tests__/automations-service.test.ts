@@ -20,10 +20,14 @@ import {
   automationRuns,
   automations,
   automationTriggers,
+  chatContextLinks,
+  chatConversations,
+  chatMessages,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { issueService } from "../services/issues.ts";
 import { automationService } from "../services/automations.ts";
+import { publishAutomationRunOutputToChat } from "../services/automation-chat-output.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -68,6 +72,16 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function startTempDatabase() {
+  const externalConnectionString = process.env.RUDDER_AUTOMATIONS_SERVICE_TEST_DATABASE_URL?.trim();
+  if (externalConnectionString) {
+    const parsed = new URL(externalConnectionString);
+    const dbName = parsed.pathname.replace(/^\//, "");
+    parsed.pathname = "/postgres";
+    await ensurePostgresDatabase(parsed.toString(), dbName);
+    await applyPendingMigrations(externalConnectionString);
+    return { connectionString: externalConnectionString, dataDir: "", instance: null };
+  }
+
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-automations-service-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
@@ -108,6 +122,9 @@ describe("automation service live-execution coalescing", () => {
     await db.delete(automationRuns);
     await db.delete(automationTriggers);
     await db.delete(automations);
+    await db.delete(chatContextLinks);
+    await db.delete(chatMessages);
+    await db.delete(chatConversations);
     await db.delete(organizationSecretVersions);
     await db.delete(organizationSecrets);
     await db.delete(heartbeatRuns);
@@ -223,6 +240,8 @@ describe("automation service live-execution coalescing", () => {
         title: "ascii frog",
         description: "Run the frog automation",
         assigneeAgentId: agentId,
+        outputMode: "track_issue",
+        chatConversationId: null,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -310,6 +329,371 @@ describe("automation service live-execution coalescing", () => {
         },
       },
     ]);
+  });
+
+  it("rejects arbitrary existing chat output destinations", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture();
+    const [chat] = await db
+      .insert(chatConversations)
+      .values({
+        orgId,
+        title: "Daily standup",
+        preferredAgentId: agentId,
+        status: "active",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      })
+      .returning();
+    expect(chat).toBeTruthy();
+
+    await expect(
+      svc.create(
+        orgId,
+        {
+          projectId,
+          goalId: null,
+          parentIssueId: null,
+          title: "Daily standup",
+          description: "Summarize active work.",
+          assigneeAgentId: agentId,
+          outputMode: "chat_output",
+          chatConversationId: chat!.id,
+          priority: "medium",
+          status: "active",
+          concurrencyPolicy: "coalesce_if_active",
+          catchUpPolicy: "skip_missed",
+        },
+        {},
+      ),
+    ).rejects.toThrow("Chat output creates an automation-owned conversation");
+  });
+
+  it("posts chat output final results while preserving issue-backed execution", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture();
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Daily standup",
+        description: "Summarize active work.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(run.status).toBe("issue_created");
+    expect(run.linkedIssueId).toBeTruthy();
+    expect(run.linkedChatConversationId).toBeTruthy();
+    expect(run.startedChatMessageId).toBeTruthy();
+    expect(run.lastChatMessageId).toBe(run.startedChatMessageId);
+
+    const startedMessage = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, run.startedChatMessageId!))
+      .then((rows) => rows[0] ?? null);
+    expect(startedMessage?.kind).toBe("system_event");
+    expect(startedMessage?.body).toBe("From automation Daily standup.");
+    expect(startedMessage?.structuredPayload).toMatchObject({
+      eventType: "automation_source",
+      automationId: automation.id,
+      runId: run.id,
+      issueId: run.linkedIssueId,
+      status: "issue_created",
+    });
+
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, run.linkedIssueId!));
+    const completed = await svc.syncRunStatusForIssue(run.linkedIssueId!);
+
+    expect(completed?.status).toBe("completed");
+    expect(completed?.terminalChatMessageId).toBeNull();
+    const outputMessage = await publishAutomationRunOutputToChat(db, {
+      issueId: run.linkedIssueId,
+      output: "Final daily standup summary.",
+      status: "succeeded",
+      transcript: [{ type: "message", message: "Checked active work" } as any],
+    });
+    expect(outputMessage?.role).toBe("assistant");
+    expect(outputMessage?.kind).toBe("message");
+    expect(outputMessage?.body).toBe("Final daily standup summary.");
+    const withOutput = await db
+      .select()
+      .from(automationRuns)
+      .where(eq(automationRuns.id, run.id))
+      .then((rows) => rows[0] ?? null);
+    expect(withOutput?.terminalChatMessageId).toBe(outputMessage?.id);
+    expect(withOutput?.lastChatMessageId).toBe(outputMessage?.id);
+    const terminalMessage = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, outputMessage!.id))
+      .then((rows) => rows[0] ?? null);
+    expect(terminalMessage?.structuredPayload).toMatchObject({
+      eventType: "automation_run_result",
+      automationId: automation.id,
+      runId: run.id,
+      issueId: run.linkedIssueId,
+      status: "succeeded",
+    });
+    expect((terminalMessage?.structuredPayload as Record<string, unknown>).__chatTranscript).toHaveLength(1);
+    const duplicateOutputMessage = await publishAutomationRunOutputToChat(db, {
+      issueId: run.linkedIssueId,
+      output: "Duplicate result should not post.",
+      status: "succeeded",
+      transcript: [],
+    });
+    expect(duplicateOutputMessage?.id).toBe(outputMessage?.id);
+    const resultMessages = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, outputMessage!.conversationId));
+    expect(resultMessages.filter((message) =>
+      (message.structuredPayload as Record<string, unknown> | null)?.eventType === "automation_run_result" &&
+      (message.structuredPayload as Record<string, unknown> | null)?.runId === run.id,
+    )).toHaveLength(1);
+  });
+
+  it("creates a new chat output destination when no conversation is selected", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture();
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Daily digest",
+        description: "Post a fresh digest.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(run.status).toBe("issue_created");
+    expect(run.linkedChatConversationId).toBeTruthy();
+    expect(run.startedChatMessageId).toBeTruthy();
+    const updatedAutomation = await db
+      .select({ chatConversationId: automations.chatConversationId })
+      .from(automations)
+      .where(eq(automations.id, automation.id))
+      .then((rows) => rows[0] ?? null);
+    expect(updatedAutomation?.chatConversationId).toBe(run.linkedChatConversationId);
+
+    const createdChat = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.id, run.linkedChatConversationId!))
+      .then((rows) => rows[0] ?? null);
+    expect(createdChat).toMatchObject({
+      orgId,
+      title: "Daily digest",
+      preferredAgentId: agentId,
+      status: "active",
+    });
+    const projectContext = await db
+      .select()
+      .from(chatContextLinks)
+      .where(eq(chatContextLinks.conversationId, run.linkedChatConversationId!))
+      .then((rows) => rows[0] ?? null);
+    expect(projectContext).toMatchObject({
+      orgId,
+      entityType: "project",
+      entityId: projectId,
+    });
+
+    const startedMessage = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, run.startedChatMessageId!))
+      .then((rows) => rows[0] ?? null);
+    expect(startedMessage?.conversationId).toBe(run.linkedChatConversationId);
+
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, run.linkedIssueId!));
+    const completed = await svc.syncRunStatusForIssue(run.linkedIssueId!);
+
+    expect(completed?.linkedChatConversationId).toBe(run.linkedChatConversationId);
+    expect(completed?.terminalChatMessageId).toBeNull();
+    const outputMessage = await publishAutomationRunOutputToChat(db, {
+      issueId: run.linkedIssueId,
+      output: "Fresh digest result.",
+      status: "succeeded",
+      transcript: [],
+    });
+    expect(outputMessage?.conversationId).toBe(run.linkedChatConversationId);
+    const terminalMessage = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.id, outputMessage!.id))
+      .then((rows) => rows[0] ?? null);
+    expect(terminalMessage?.conversationId).toBe(run.linkedChatConversationId);
+  });
+
+  it("does not create an empty new chat for coalesced chat-output runs", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture();
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Say hello",
+        description: "Say hello to me.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+
+    const firstRun = await svc.runAutomation(automation.id, { source: "manual" });
+    const secondRun = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(firstRun.status).toBe("issue_created");
+    expect(firstRun.linkedChatConversationId).toBeTruthy();
+    expect(secondRun.status).toBe("coalesced");
+    expect(secondRun.linkedChatConversationId).toBe(firstRun.linkedChatConversationId);
+
+    const chats = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.orgId, orgId));
+    expect(chats).toHaveLength(1);
+    const messages = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.orgId, orgId));
+    expect(messages.map((message) => message.body)).toContain(
+      "Say hello coalesced into an active automation run.",
+    );
+  });
+
+  it("rejects chat output destination updates to arbitrary existing chats", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture();
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Digest",
+        description: "Post a digest.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+    const [chat] = await db
+      .insert(chatConversations)
+      .values({
+        orgId,
+        title: "Unrelated digest",
+        preferredAgentId: agentId,
+        status: "active",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      })
+      .returning();
+
+    await expect(
+      svc.update(
+        automation.id,
+        {
+          outputMode: "chat_output",
+          chatConversationId: chat!.id,
+        },
+        {},
+      ),
+    ).rejects.toThrow("Chat output creates an automation-owned conversation");
+  });
+
+  it("creates and runs automations without a project", async () => {
+    const { agentId, orgId, svc } = await seedFixture();
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId: null,
+        goalId: null,
+        parentIssueId: null,
+        title: "Inbox sweep",
+        description: "Review projectless intake.",
+        assigneeAgentId: agentId,
+        outputMode: "track_issue",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+
+    expect(automation.projectId).toBeNull();
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+    expect(run.status).toBe("issue_created");
+    expect(run.linkedIssueId).toBeTruthy();
+
+    const linkedIssue = await db
+      .select({ projectId: issues.projectId })
+      .from(issues)
+      .where(eq(issues.id, run.linkedIssueId!))
+      .then((rows) => rows[0] ?? null);
+    expect(linkedIssue?.projectId).toBeNull();
+  });
+
+  it("hard-deletes automations and cascades triggers, runs, and webhook secrets", async () => {
+    const { automation, svc } = await seedFixture();
+    const triggerResult = await svc.createTrigger(
+      automation.id,
+      {
+        kind: "webhook",
+        label: "incoming",
+        enabled: true,
+        signingMode: "bearer",
+        replayWindowSec: 300,
+      },
+      {},
+    );
+    expect(triggerResult.trigger.secretId).toBeTruthy();
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+    expect(run.id).toBeTruthy();
+
+    const deleted = await svc.delete(automation.id);
+    expect(deleted?.id).toBe(automation.id);
+
+    await expect(db.select().from(automations).where(eq(automations.id, automation.id))).resolves.toHaveLength(0);
+    await expect(db.select().from(automationTriggers).where(eq(automationTriggers.automationId, automation.id))).resolves.toHaveLength(0);
+    await expect(db.select().from(automationRuns).where(eq(automationRuns.automationId, automation.id))).resolves.toHaveLength(0);
+    await expect(db.select().from(organizationSecrets).where(eq(organizationSecrets.id, triggerResult.trigger.secretId!))).resolves.toHaveLength(0);
+    await expect(db.select().from(organizationSecretVersions).where(eq(organizationSecretVersions.secretId, triggerResult.trigger.secretId!))).resolves.toHaveLength(0);
+    await expect(svc.getDetail(automation.id)).resolves.toBeNull();
   });
 
   it("waits for the assignee wakeup to be queued before returning the automation run", async () => {

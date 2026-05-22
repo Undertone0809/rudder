@@ -65,6 +65,8 @@ It includes:
   - launch support engineer hiring review
 - 1 chat conversation for launch intake and chat-created issue proof
 - heartbeat runs for active agents
+- persisted run logs and run events so Agent Detail and Dashboard output panes are not empty
+- Calendar work-history blocks derived from heartbeat runs plus a few human checkpoints
 - issue comments and issue documents
 - cost events and finance events across multiple providers
 - activity log timestamps distributed across one launch-week timeline
@@ -75,12 +77,19 @@ The org is preparing a desktop-first public beta. The board is coordinating
 launch pages, desktop reliability, onboarding, enterprise readiness, release
 operations, and messenger workflows through agent work loops.
 
+The story should feel like sanitized Rudder production work, not a generic
+project-management sample. Use synthetic names and content, but keep the
+scenario grounded in real Rudder-shaped work: Desktop packaging failures,
+release smoke checks, agent transcript review, operator approvals, growth
+launch follow-through, support coverage, and budget visibility.
+
 The data should communicate:
 
 - Rudder is a control plane for agent teams
 - issues are actively moving through execution and review
 - approvals and budgets matter for governed work
 - chat can turn operator requests into durable issues
+- Calendar is a view over actual agent work history, not a decorative schedule
 - costs and heartbeat runs are visible operational signals
 - work spans multiple projects, not a single toy checklist
 
@@ -96,6 +105,25 @@ Use this dataset when the user asks for:
 
 If the user asks for screenshot capture, seed with this dataset and then use
 `landing-proof-shots-maintainer` to capture full-page app-style screenshots.
+Prefer Desktop-shell captures when the screenshot is meant to prove the
+installed local operator experience. Browser captures are acceptable for
+targeted web-route inspection, but they should not replace Desktop-shell
+evidence for Desktop product claims.
+
+## Screenshot Validation
+
+Capture scripts and manual screenshot runs should prove the page is showing the
+intended scenario before saving artifacts.
+
+- Dashboard captures should assert a concrete issue or run-output summary is
+  visible, not just that `#main-content` loaded.
+- Calendar captures should assert an agent work-history block derived from a
+  heartbeat run is visible.
+- Agent run captures should assert transcript/output content is present.
+- Chat and approval captures should assert the deterministic proposal or
+  approval text is visible.
+- If a page is empty, stale, or showing generic seed data, report the blocker
+  and do not present the screenshot as finished.
 
 ## Routes Worth Opening
 
@@ -108,6 +136,7 @@ After the script prints `baseUrl` and the org prefix, useful routes include:
 - `/<org-prefix>/messenger/approvals/<approval-id>`
 - `/<org-prefix>/heartbeats`
 - `/<org-prefix>/costs`
+- `/<org-prefix>/calendar`
 - `/<org-prefix>/org`
 
 Prefer `127.0.0.1` if browser automation has trouble with `localhost`.
@@ -118,4 +147,7 @@ Prefer `127.0.0.1` if browser automation has trouble with `localhost`.
 - Add new issues only if they strengthen a specific screenshot or test surface.
 - Preserve cross-project density for issue-list views.
 - Keep chat issue creation deterministic through the stub runtime.
+- Keep persisted run logs populated for every screenshot-targeted heartbeat run.
+- Keep Calendar data downstream of issue and run records, with human checkpoints used sparingly.
+- Keep the installation proof shot aligned with the public command: `npx @rudderhq/cli@latest start`.
 - Keep all generated files and screenshots outside the repo tree.

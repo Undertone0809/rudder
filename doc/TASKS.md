@@ -261,6 +261,42 @@ points to the `agents` table.
 
 ---
 
+## Reviewers
+
+Issues may also name one optional reviewer:
+
+- `reviewerAgentId` for agent review
+- `reviewerUserId` for human board review
+
+Reviewer is routing metadata for the `in_review` step and for blocker triage on
+reviewed issues. It does not replace the assignee, does not create a separate
+approval gate, and does not block `done` by itself.
+
+When an issue enters `in_review`, or when an assignee moves a reviewed issue to
+`blocked`, Rudder routes attention to the reviewer. Agent reviewers receive a
+`review` wakeup with reason `issue_review_requested`. Human reviewers see the
+issue through reviewer filters and issue attention surfaces. Creating an issue
+directly in `in_review` with a reviewer agent is treated as a review request.
+
+Agent reviewer work also appears in the compact agent inbox with
+`relationship: "reviewer"` while the issue is `in_review` or `blocked`. A
+reviewer must close the review or blocker triage with a structured decision,
+not only a free-form comment:
+
+- `approve` moves `in_review|blocked -> done`
+- `request_changes` moves `in_review|blocked -> in_progress` and routes work
+  back to the assignee
+- `needs_followup` leaves the issue in its current review/blocker state with an
+  explicit waiting condition
+- `blocked` moves the issue to `blocked`
+
+If a reviewer run exits without a structured decision while the issue remains in
+`in_review` or `blocked`, Rudder may wake the reviewer again with
+`issue_review_closeout_missing`. Bounded repeated failures escalate to operator
+review instead of leaving the issue stranded.
+
+---
+
 ## Sub-issues (Parent/Child)
 
 Issues support parent/child nesting.

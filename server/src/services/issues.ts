@@ -21,7 +21,13 @@ import {
   projectWorkspaces,
   projects,
 } from "@rudderhq/db";
-import { extractAgentMentionIds, extractProjectMentionIds, type ReorderIssue } from "@rudderhq/shared";
+import {
+  extractAgentMentionIds,
+  extractProjectMentionIds,
+  isUuidLike,
+  type IssueSearchMatch,
+  type ReorderIssue,
+} from "@rudderhq/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
@@ -32,325 +38,42 @@ import { redactCurrentUserText } from "../log-redaction.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
 import { getDefaultCompanyGoal } from "./goals.js";
 
-const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
-const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
-const BOARD_ORDER_STEP = 1000;
-
-function isUniqueConstraintConflict(error: unknown, constraintName: string) {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "23505" &&
-    "constraint" in error &&
-    (error as { constraint?: unknown }).constraint === constraintName
-  );
-}
-
-function assertTransition(from: string, to: string) {
-  if (from === to) return;
-  if (!ALL_ISSUE_STATUSES.includes(to)) {
-    throw conflict(`Unknown issue status: ${to}`);
-  }
-}
-
-function applyStatusSideEffects(
-  status: string | undefined,
-  patch: Partial<typeof issues.$inferInsert>,
-): Partial<typeof issues.$inferInsert> {
-  if (!status) return patch;
-
-  if (status === "in_progress" && !patch.startedAt) {
-    patch.startedAt = new Date();
-  }
-  if (status === "done") {
-    patch.completedAt = new Date();
-  }
-  if (status === "cancelled") {
-    patch.cancelledAt = new Date();
-  }
-  return patch;
-}
-
-export interface IssueFilters {
-  status?: string;
-  assigneeAgentId?: string;
-  participantAgentId?: string;
-  assigneeUserId?: string;
-  touchedByUserId?: string;
-  unreadForUserId?: string;
-  projectId?: string;
-  parentId?: string;
-  labelId?: string;
-  originKind?: string;
-  originId?: string;
-  includeAutomationExecutions?: boolean;
-  q?: string;
-}
-
-type IssueRow = typeof issues.$inferSelect;
-type IssueLabelRow = typeof labels.$inferSelect;
-type IssueActiveRunRow = {
-  id: string;
-  status: string;
-  agentId: string;
-  invocationSource: string;
-  triggerDetail: string | null;
-  startedAt: Date | null;
-  finishedAt: Date | null;
-  createdAt: Date;
-};
-type IssueWithLabels = IssueRow & { labels: IssueLabelRow[]; labelIds: string[] };
-type IssueWithLabelsAndRun = IssueWithLabels & { activeRun: IssueActiveRunRow | null };
-type IssueUserCommentStats = {
-  issueId: string;
-  myLastCommentAt: Date | null;
-  lastExternalCommentAt: Date | null;
-};
-type IssueUserContextInput = {
-  createdByUserId: string | null;
-  assigneeUserId: string | null;
-  createdAt: Date | string;
-  updatedAt: Date | string;
-};
-
-function sameRunLock(checkoutRunId: string | null, actorRunId: string | null) {
-  if (actorRunId) return checkoutRunId === actorRunId;
-  return checkoutRunId == null;
-}
-
-const TERMINAL_HEARTBEAT_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
-
-function escapeLikePattern(value: string): string {
-  return value.replace(/[\\%_]/g, "\\$&");
-}
-
-function touchedByUserCondition(orgId: string, userId: string) {
-  return sql<boolean>`
-    (
-      ${issues.createdByUserId} = ${userId}
-      OR ${issues.assigneeUserId} = ${userId}
-      OR EXISTS (
-        SELECT 1
-        FROM ${issueReadStates}
-        WHERE ${issueReadStates.issueId} = ${issues.id}
-          AND ${issueReadStates.orgId} = ${orgId}
-          AND ${issueReadStates.userId} = ${userId}
-      )
-      OR EXISTS (
-        SELECT 1
-        FROM ${issueComments}
-        WHERE ${issueComments.issueId} = ${issues.id}
-          AND ${issueComments.orgId} = ${orgId}
-          AND ${issueComments.authorUserId} = ${userId}
-      )
-    )
-  `;
-}
-
-function participatedByAgentCondition(orgId: string, agentId: string) {
-  return sql<boolean>`
-    (
-      ${issues.createdByAgentId} = ${agentId}
-      OR ${issues.assigneeAgentId} = ${agentId}
-      OR EXISTS (
-        SELECT 1
-        FROM ${issueComments}
-        WHERE ${issueComments.issueId} = ${issues.id}
-          AND ${issueComments.orgId} = ${orgId}
-          AND ${issueComments.authorAgentId} = ${agentId}
-      )
-      OR EXISTS (
-        SELECT 1
-        FROM ${activityLog}
-        WHERE ${activityLog.orgId} = ${orgId}
-          AND ${activityLog.entityType} = 'issue'
-          AND ${activityLog.entityId} = ${issues.id}::text
-          AND ${activityLog.agentId} = ${agentId}
-      )
-    )
-  `;
-}
-
-function myLastCommentAtExpr(orgId: string, userId: string) {
-  return sql<Date | null>`
-    (
-      SELECT MAX(${issueComments.createdAt})
-      FROM ${issueComments}
-      WHERE ${issueComments.issueId} = ${issues.id}
-        AND ${issueComments.orgId} = ${orgId}
-        AND ${issueComments.authorUserId} = ${userId}
-    )
-  `;
-}
-
-function myLastReadAtExpr(orgId: string, userId: string) {
-  return sql<Date | null>`
-    (
-      SELECT MAX(${issueReadStates.lastReadAt})
-      FROM ${issueReadStates}
-      WHERE ${issueReadStates.issueId} = ${issues.id}
-        AND ${issueReadStates.orgId} = ${orgId}
-        AND ${issueReadStates.userId} = ${userId}
-    )
-  `;
-}
-
-function myLastTouchAtExpr(orgId: string, userId: string) {
-  const myLastCommentAt = myLastCommentAtExpr(orgId, userId);
-  const myLastReadAt = myLastReadAtExpr(orgId, userId);
-  return sql<Date | null>`
-    GREATEST(
-      COALESCE(${myLastCommentAt}, to_timestamp(0)),
-      COALESCE(${myLastReadAt}, to_timestamp(0)),
-      COALESCE(CASE WHEN ${issues.createdByUserId} = ${userId} THEN ${issues.createdAt} ELSE NULL END, to_timestamp(0)),
-      COALESCE(CASE WHEN ${issues.assigneeUserId} = ${userId} THEN ${issues.updatedAt} ELSE NULL END, to_timestamp(0))
-    )
-  `;
-}
-
-function unreadForUserCondition(orgId: string, userId: string) {
-  const touchedCondition = touchedByUserCondition(orgId, userId);
-  const myLastTouchAt = myLastTouchAtExpr(orgId, userId);
-  return sql<boolean>`
-    (
-      ${touchedCondition}
-      AND EXISTS (
-        SELECT 1
-        FROM ${issueComments}
-        WHERE ${issueComments.issueId} = ${issues.id}
-          AND ${issueComments.orgId} = ${orgId}
-          AND (
-            ${issueComments.authorUserId} IS NULL
-            OR ${issueComments.authorUserId} <> ${userId}
-          )
-          AND ${issueComments.createdAt} > ${myLastTouchAt}
-      )
-    )
-  `;
-}
-
-export function deriveIssueUserContext(
-  issue: IssueUserContextInput,
-  userId: string,
-  stats:
-    | {
-      myLastCommentAt: Date | string | null;
-      myLastReadAt: Date | string | null;
-      lastExternalCommentAt: Date | string | null;
-    }
-    | null
-    | undefined,
-) {
-  const normalizeDate = (value: Date | string | null | undefined) => {
-    if (!value) return null;
-    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  };
-
-  const myLastCommentAt = normalizeDate(stats?.myLastCommentAt);
-  const myLastReadAt = normalizeDate(stats?.myLastReadAt);
-  const createdTouchAt = issue.createdByUserId === userId ? normalizeDate(issue.createdAt) : null;
-  const assignedTouchAt = issue.assigneeUserId === userId ? normalizeDate(issue.updatedAt) : null;
-  const myLastTouchAt = [myLastCommentAt, myLastReadAt, createdTouchAt, assignedTouchAt]
-    .filter((value): value is Date => value instanceof Date)
-    .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
-  const lastExternalCommentAt = normalizeDate(stats?.lastExternalCommentAt);
-  const isUnreadForMe = Boolean(
-    myLastTouchAt &&
-    lastExternalCommentAt &&
-    lastExternalCommentAt.getTime() > myLastTouchAt.getTime(),
-  );
-
-  return {
-    myLastTouchAt,
-    lastExternalCommentAt,
-    isUnreadForMe,
-  };
-}
-
-async function labelMapForIssues(dbOrTx: any, issueIds: string[]): Promise<Map<string, IssueLabelRow[]>> {
-  const map = new Map<string, IssueLabelRow[]>();
-  if (issueIds.length === 0) return map;
-  const rows = await dbOrTx
-    .select({
-      issueId: issueLabels.issueId,
-      label: labels,
-    })
-    .from(issueLabels)
-    .innerJoin(labels, eq(issueLabels.labelId, labels.id))
-    .where(inArray(issueLabels.issueId, issueIds))
-    .orderBy(asc(labels.name), asc(labels.id));
-
-  for (const row of rows) {
-    const existing = map.get(row.issueId);
-    if (existing) existing.push(row.label);
-    else map.set(row.issueId, [row.label]);
-  }
-  return map;
-}
-
-async function withIssueLabels(dbOrTx: any, rows: IssueRow[]): Promise<IssueWithLabels[]> {
-  if (rows.length === 0) return [];
-  const labelsByIssueId = await labelMapForIssues(dbOrTx, rows.map((row) => row.id));
-  return rows.map((row) => {
-    const issueLabels = labelsByIssueId.get(row.id) ?? [];
-    return {
-      ...row,
-      labels: issueLabels,
-      labelIds: issueLabels.map((label) => label.id),
-    };
-  });
-}
-
-const ACTIVE_RUN_STATUSES = ["queued", "running"];
-
-async function activeRunMapForIssues(
-  dbOrTx: any,
-  issueRows: IssueWithLabels[],
-): Promise<Map<string, IssueActiveRunRow>> {
-  const map = new Map<string, IssueActiveRunRow>();
-  const runIds = issueRows
-    .map((row) => row.executionRunId)
-    .filter((id): id is string => id != null);
-  if (runIds.length === 0) return map;
-
-  const rows = await dbOrTx
-    .select({
-      id: heartbeatRuns.id,
-      status: heartbeatRuns.status,
-      agentId: heartbeatRuns.agentId,
-      invocationSource: heartbeatRuns.invocationSource,
-      triggerDetail: heartbeatRuns.triggerDetail,
-      startedAt: heartbeatRuns.startedAt,
-      finishedAt: heartbeatRuns.finishedAt,
-      createdAt: heartbeatRuns.createdAt,
-    })
-    .from(heartbeatRuns)
-    .where(
-      and(
-        inArray(heartbeatRuns.id, runIds),
-        inArray(heartbeatRuns.status, ACTIVE_RUN_STATUSES),
-      ),
-    );
-
-  for (const row of rows) {
-    map.set(row.id, row);
-  }
-  return map;
-}
-
-function withActiveRuns(
-  issueRows: IssueWithLabels[],
-  runMap: Map<string, IssueActiveRunRow>,
-): IssueWithLabelsAndRun[] {
-  return issueRows.map((row) => ({
-    ...row,
-    activeRun: row.executionRunId ? (runMap.get(row.executionRunId) ?? null) : null,
-  }));
-}
-
+import {
+  ALL_ISSUE_STATUSES,
+  MAX_ISSUE_COMMENT_PAGE_LIMIT,
+  BOARD_ORDER_STEP,
+  isUniqueConstraintConflict,
+  assertTransition,
+  applyStatusSideEffects,
+  sameRunLock,
+  TERMINAL_HEARTBEAT_RUN_STATUSES,
+  escapeLikePattern,
+  textContains,
+  buildSearchSnippet,
+  fieldSearchMatch,
+  touchedByUserCondition,
+  participatedByAgentCondition,
+  myLastCommentAtExpr,
+  myLastReadAtExpr,
+  myLastTouchAtExpr,
+  unreadForUserCondition,
+  deriveIssueUserContext,
+  labelMapForIssues,
+  withIssueLabels,
+  ACTIVE_RUN_STATUSES,
+  activeRunMapForIssues,
+  withActiveRuns,
+  type IssueRow,
+  type IssueLabelRow,
+  type IssueWithLabels,
+  type IssueWithLabelsAndRun,
+  type IssueActiveRunRow,
+  type IssueFilters,
+  type IssueWithSearchMatch,
+} from "./issues.helpers.js";
+import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
+export type { IssueFilters } from "./issues.helpers.js";
+export { deriveIssueUserContext } from "./issues.helpers.js";
 export function issueService(db: Db) {
   const instanceSettings = instanceSettingsService(db);
 
@@ -361,8 +84,8 @@ export function issueService(db: Db) {
     };
   }
 
-  async function assertAssignableAgent(orgId: string, agentId: string) {
-    const assignee = await db
+  async function assertIssueAgentPrincipal(orgId: string, agentId: string, label: "Assignee" | "Reviewer") {
+    const principal = await db
       .select({
         id: agents.id,
         orgId: agents.orgId,
@@ -372,19 +95,19 @@ export function issueService(db: Db) {
       .where(eq(agents.id, agentId))
       .then((rows) => rows[0] ?? null);
 
-    if (!assignee) throw notFound("Assignee agent not found");
-    if (assignee.orgId !== orgId) {
-      throw unprocessable("Assignee must belong to same organization");
+    if (!principal) throw notFound(`${label} agent not found`);
+    if (principal.orgId !== orgId) {
+      throw unprocessable(`${label} must belong to same organization`);
     }
-    if (assignee.status === "pending_approval") {
-      throw conflict("Cannot assign work to pending approval agents");
+    if (principal.status === "pending_approval") {
+      throw conflict(`Cannot ${label === "Assignee" ? "assign work to" : "select"} pending approval agents`);
     }
-    if (assignee.status === "terminated") {
-      throw conflict("Cannot assign work to terminated agents");
+    if (principal.status === "terminated") {
+      throw conflict(`Cannot ${label === "Assignee" ? "assign work to" : "select"} terminated agents`);
     }
   }
 
-  async function assertAssignableUser(orgId: string, userId: string) {
+  async function assertIssueUserPrincipal(orgId: string, userId: string, label: "Assignee" | "Reviewer") {
     const membership = await db
       .select({ id: organizationMemberships.id })
       .from(organizationMemberships)
@@ -398,8 +121,24 @@ export function issueService(db: Db) {
       )
       .then((rows) => rows[0] ?? null);
     if (!membership) {
-      throw notFound("Assignee user not found");
+      throw notFound(`${label} user not found`);
     }
+  }
+
+  async function assertAssignableAgent(orgId: string, agentId: string) {
+    await assertIssueAgentPrincipal(orgId, agentId, "Assignee");
+  }
+
+  async function assertAssignableUser(orgId: string, userId: string) {
+    await assertIssueUserPrincipal(orgId, userId, "Assignee");
+  }
+
+  async function assertReviewerAgent(orgId: string, agentId: string) {
+    await assertIssueAgentPrincipal(orgId, agentId, "Reviewer");
+  }
+
+  async function assertReviewerUser(orgId: string, userId: string) {
+    await assertIssueUserPrincipal(orgId, userId, "Reviewer");
   }
 
   async function assertValidProjectWorkspace(orgId: string, projectId: string | null | undefined, projectWorkspaceId: string) {
@@ -466,6 +205,87 @@ export function issueService(db: Db) {
     );
   }
 
+  async function resolveCreateLabelIds(
+    orgId: string,
+    data: Pick<typeof issues.$inferInsert, "createdByAgentId" | "parentId">,
+    inputLabelIds: string[] | undefined,
+    dbOrTx: any,
+  ) {
+    if (inputLabelIds && inputLabelIds.length > 0) return inputLabelIds;
+
+    if (data.parentId) {
+      const parentLabelRows = await dbOrTx
+        .select({ labelId: issueLabels.labelId })
+        .from(issueLabels)
+        .innerJoin(issues, eq(issueLabels.issueId, issues.id))
+        .where(and(eq(issues.id, data.parentId), eq(issues.orgId, orgId), eq(issueLabels.orgId, orgId)))
+        .orderBy(asc(issueLabels.labelId));
+      if (parentLabelRows.length > 0) {
+        return parentLabelRows.map((row: { labelId: string }) => row.labelId);
+      }
+    }
+
+    if (!data.createdByAgentId) return inputLabelIds;
+
+    const [labelCountRow] = await dbOrTx
+      .select({ count: sql<number>`count(*)` })
+      .from(labels)
+      .where(eq(labels.orgId, orgId));
+    const labelCount = Number(labelCountRow?.count ?? 0);
+    if (labelCount < 5) return inputLabelIds;
+
+    throw unprocessable(
+      `当前组织有 ${labelCount} 个 labels，agent 创建 issue 需要选择至少一个 label`,
+      {
+        code: "agent_issue_label_required",
+        labelCount,
+      },
+    );
+  }
+
+  async function assertValidParentIssue(
+    orgId: string,
+    issueId: string | null,
+    parentId: string | null | undefined,
+    dbOrTx: any = db,
+  ) {
+    if (!parentId) return;
+    if (issueId && parentId === issueId) {
+      throw unprocessable("Issue cannot be its own parent");
+    }
+
+    const parent = await dbOrTx
+      .select({ id: issues.id, orgId: issues.orgId, parentId: issues.parentId })
+      .from(issues)
+      .where(eq(issues.id, parentId))
+      .then((rows: Array<{ id: string; orgId: string; parentId: string | null }>) => rows[0] ?? null);
+
+    if (!parent || parent.orgId !== orgId) {
+      throw unprocessable("Parent issue must belong to the same organization");
+    }
+
+    if (!issueId) return;
+
+    const visited = new Set<string>();
+    let currentParentId: string | null = parent.parentId ?? null;
+    while (currentParentId) {
+      if (currentParentId === issueId) {
+        throw unprocessable("Issue parent cannot be one of its descendants");
+      }
+      if (visited.has(currentParentId)) {
+        throw unprocessable("Issue parent chain contains a cycle");
+      }
+      visited.add(currentParentId);
+
+      const next = await dbOrTx
+        .select({ parentId: issues.parentId })
+        .from(issues)
+        .where(and(eq(issues.id, currentParentId), eq(issues.orgId, orgId)))
+        .then((rows: Array<{ parentId: string | null }>) => rows[0] ?? null);
+      currentParentId = next?.parentId ?? null;
+    }
+  }
+
   async function isTerminalOrMissingHeartbeatRun(runId: string) {
     const run = await db
       .select({ status: heartbeatRuns.status })
@@ -514,6 +334,56 @@ export function issueService(db: Db) {
     return adopted;
   }
 
+  async function attachSearchMatches(
+    orgId: string,
+    rows: IssueWithLabelsAndRun[],
+    query: string,
+    containsPattern: string,
+  ): Promise<IssueWithSearchMatch[]> {
+    if (rows.length === 0) return [];
+
+    const matchesByIssueId = new Map<string, IssueSearchMatch>();
+    for (const row of rows) {
+      const match = fieldSearchMatch(row, query);
+      if (match) matchesByIssueId.set(row.id, match);
+    }
+
+    const commentMatchedIssueIds = rows
+      .map((row) => row.id)
+      .filter((id) => !matchesByIssueId.has(id));
+    if (commentMatchedIssueIds.length > 0) {
+      const commentRows = await db
+        .select({
+          id: issueComments.id,
+          issueId: issueComments.issueId,
+          body: issueComments.body,
+        })
+        .from(issueComments)
+        .where(
+          and(
+            eq(issueComments.orgId, orgId),
+            inArray(issueComments.issueId, commentMatchedIssueIds),
+            sql<boolean>`${issueComments.body} ILIKE ${containsPattern} ESCAPE '\\'`,
+          ),
+        )
+        .orderBy(asc(issueComments.createdAt));
+
+      for (const comment of commentRows) {
+        if (matchesByIssueId.has(comment.issueId)) continue;
+        matchesByIssueId.set(comment.issueId, {
+          field: "comment",
+          snippet: buildSearchSnippet(comment.body, query),
+          commentId: comment.id,
+        });
+      }
+    }
+
+    return rows.map((row) => ({
+      ...row,
+      searchMatch: matchesByIssueId.get(row.id) ?? null,
+    }));
+  }
+
   return {
     listFollows: async (orgId: string, userId: string) => {
       const rows = await db
@@ -531,6 +401,7 @@ export function issueService(db: Db) {
             priority: issues.priority,
             assigneeAgentId: issues.assigneeAgentId,
             assigneeUserId: issues.assigneeUserId,
+            reviewerUserId: issues.reviewerUserId,
             createdByUserId: issues.createdByUserId,
             updatedAt: issues.updatedAt,
           },
@@ -609,7 +480,7 @@ export function issueService(db: Db) {
         )
       `;
       if (filters?.status) {
-        const statuses = filters.status.split(",").map((s) => s.trim());
+        const statuses = filters.status.split(",").map((s: string) => s.trim());
         conditions.push(statuses.length === 1 ? eq(issues.status, statuses[0]) : inArray(issues.status, statuses));
       }
       if (filters?.assigneeAgentId) {
@@ -620,6 +491,64 @@ export function issueService(db: Db) {
       }
       if (filters?.assigneeUserId) {
         conditions.push(eq(issues.assigneeUserId, filters.assigneeUserId));
+      }
+      if (filters?.reviewerAgentId) {
+        conditions.push(eq(issues.reviewerAgentId, filters.reviewerAgentId));
+      }
+      if (filters?.excludeReviewerConfirmedBlockedHandoff && filters?.reviewerAgentId) {
+        conditions.push(sql<boolean>`
+          NOT (
+            ${issues.status} = 'blocked'
+            AND EXISTS (
+              SELECT 1
+              FROM activity_log confirmed_blocked_review
+              WHERE confirmed_blocked_review.org_id = ${orgId}
+                AND confirmed_blocked_review.entity_type = 'issue'
+                AND confirmed_blocked_review.entity_id = ${issues.id}::text
+                AND confirmed_blocked_review.action = 'issue.review_decision_recorded'
+                AND confirmed_blocked_review.actor_type = 'agent'
+                AND confirmed_blocked_review.actor_id = ${filters.reviewerAgentId}::text
+                AND confirmed_blocked_review.details ->> 'decision' = 'blocked'
+                AND confirmed_blocked_review.created_at >= COALESCE((
+                  SELECT MAX(material_activity.created_at)
+                  FROM activity_log material_activity
+                  WHERE material_activity.org_id = ${orgId}
+                    AND material_activity.entity_type = 'issue'
+                    AND material_activity.entity_id = ${issues.id}::text
+                    AND (
+                      (
+                        material_activity.action = 'issue.updated'
+                        AND jsonb_typeof(material_activity.details) = 'object'
+                        AND EXISTS (
+                          SELECT 1
+                          FROM jsonb_object_keys(material_activity.details) AS detail_key(key)
+                          WHERE detail_key.key NOT IN (
+                            'identifier',
+                            'issueIdentifier',
+                            '_previous',
+                            'source',
+                            'reopened',
+                            'reopenedFrom',
+                            'normalizedFromStatus',
+                            'normalizedReason'
+                          )
+                        )
+                      )
+                      OR (
+                        material_activity.action = 'issue.comment_added'
+                        AND NOT (
+                          material_activity.actor_type = 'agent'
+                          AND material_activity.actor_id = ${filters.reviewerAgentId}::text
+                        )
+                      )
+                    )
+                ), to_timestamp(0))
+            )
+          )
+        `);
+      }
+      if (filters?.reviewerUserId) {
+        conditions.push(eq(issues.reviewerUserId, filters.reviewerUserId));
       }
       if (touchedByUserId) {
         conditions.push(touchedByUserCondition(orgId, touchedByUserId));
@@ -674,11 +603,14 @@ export function issueService(db: Db) {
       const withLabels = await withIssueLabels(db, rows);
       const runMap = await activeRunMapForIssues(db, withLabels);
       const withRuns = withActiveRuns(withLabels, runMap);
-      if (!contextUserId || withRuns.length === 0) {
-        return withRuns;
+      const withSearchMatches = hasSearch
+        ? await attachSearchMatches(orgId, withRuns, rawSearch, containsPattern)
+        : withRuns;
+      if (!contextUserId || withSearchMatches.length === 0) {
+        return withSearchMatches;
       }
 
-      const issueIds = withRuns.map((row) => row.id);
+      const issueIds = withSearchMatches.map((row) => row.id);
       const statsRows = await db
         .select({
           issueId: issueComments.issueId,
@@ -718,7 +650,7 @@ export function issueService(db: Db) {
       const statsByIssueId = new Map(statsRows.map((row) => [row.issueId, row]));
       const readByIssueId = new Map(readRows.map((row) => [row.issueId, row.myLastReadAt]));
 
-      return withRuns.map((row) => ({
+      return withSearchMatches.map((row) => ({
         ...row,
         ...deriveIssueUserContext(row, contextUserId, {
           myLastCommentAt: statsByIssueId.get(row.id)?.myLastCommentAt ?? null,
@@ -808,6 +740,15 @@ export function issueService(db: Db) {
       if (data.assigneeUserId) {
         await assertAssignableUser(orgId, data.assigneeUserId);
       }
+      if (data.reviewerAgentId && data.reviewerUserId) {
+        throw unprocessable("Issue can only have one reviewer");
+      }
+      if (data.reviewerAgentId) {
+        await assertReviewerAgent(orgId, data.reviewerAgentId);
+      }
+      if (data.reviewerUserId) {
+        await assertReviewerUser(orgId, data.reviewerUserId);
+      }
       if (data.projectWorkspaceId) {
         await assertValidProjectWorkspace(orgId, data.projectId, data.projectWorkspaceId);
       }
@@ -817,6 +758,7 @@ export function issueService(db: Db) {
       if (data.status === "in_progress" && !data.assigneeAgentId && !data.assigneeUserId) {
         throw unprocessable("in_progress issues require an assignee");
       }
+      await assertValidParentIssue(orgId, null, data.parentId);
       return db.transaction(async (tx) => {
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, orgId);
         let executionWorkspaceSettings =
@@ -894,9 +836,10 @@ export function issueService(db: Db) {
           values.boardOrder = currentMax + BOARD_ORDER_STEP;
         }
 
+        const resolvedLabelIds = await resolveCreateLabelIds(orgId, issueData, inputLabelIds, tx);
         const [issue] = await tx.insert(issues).values(values).returning();
-        if (inputLabelIds) {
-          await syncIssueLabels(issue.id, orgId, inputLabelIds, tx);
+        if (resolvedLabelIds) {
+          await syncIssueLabels(issue.id, orgId, resolvedLabelIds, tx);
         }
         const [enriched] = await withIssueLabels(tx, [issue]);
         return enriched;
@@ -926,9 +869,16 @@ export function issueService(db: Db) {
         issueData.assigneeAgentId !== undefined ? issueData.assigneeAgentId : existing.assigneeAgentId;
       const nextAssigneeUserId =
         issueData.assigneeUserId !== undefined ? issueData.assigneeUserId : existing.assigneeUserId;
+      const nextReviewerAgentId =
+        issueData.reviewerAgentId !== undefined ? issueData.reviewerAgentId : existing.reviewerAgentId;
+      const nextReviewerUserId =
+        issueData.reviewerUserId !== undefined ? issueData.reviewerUserId : existing.reviewerUserId;
 
       if (nextAssigneeAgentId && nextAssigneeUserId) {
         throw unprocessable("Issue can only have one assignee");
+      }
+      if (nextReviewerAgentId && nextReviewerUserId) {
+        throw unprocessable("Issue can only have one reviewer");
       }
       if (patch.status === "in_progress" && !nextAssigneeAgentId && !nextAssigneeUserId) {
         throw unprocessable("in_progress issues require an assignee");
@@ -938,6 +888,12 @@ export function issueService(db: Db) {
       }
       if (issueData.assigneeUserId) {
         await assertAssignableUser(existing.orgId, issueData.assigneeUserId);
+      }
+      if (issueData.reviewerAgentId) {
+        await assertReviewerAgent(existing.orgId, issueData.reviewerAgentId);
+      }
+      if (issueData.reviewerUserId) {
+        await assertReviewerUser(existing.orgId, issueData.reviewerUserId);
       }
       const nextProjectId = issueData.projectId !== undefined ? issueData.projectId : existing.projectId;
       const nextProjectWorkspaceId =
@@ -949,6 +905,9 @@ export function issueService(db: Db) {
       }
       if (nextExecutionWorkspaceId) {
         await assertValidExecutionWorkspace(existing.orgId, nextProjectId, nextExecutionWorkspaceId);
+      }
+      if (issueData.parentId !== undefined) {
+        await assertValidParentIssue(existing.orgId, existing.id, issueData.parentId);
       }
 
       applyStatusSideEffects(issueData.status, patch);
@@ -1431,364 +1390,15 @@ export function issueService(db: Db) {
         .returning()
         .then((rows) => rows[0] ?? null),
 
-    listComments: async (
-      issueId: string,
-      opts?: {
-        afterCommentId?: string | null;
-        order?: "asc" | "desc";
-        limit?: number | null;
-      },
-    ) => {
-      const order = opts?.order === "asc" ? "asc" : "desc";
-      const afterCommentId = opts?.afterCommentId?.trim() || null;
-      const limit =
-        opts?.limit && opts.limit > 0
-          ? Math.min(Math.floor(opts.limit), MAX_ISSUE_COMMENT_PAGE_LIMIT)
-          : null;
-
-      const conditions = [eq(issueComments.issueId, issueId)];
-      if (afterCommentId) {
-        const anchor = await db
-          .select({
-            id: issueComments.id,
-            createdAt: issueComments.createdAt,
-          })
-          .from(issueComments)
-          .where(and(eq(issueComments.issueId, issueId), eq(issueComments.id, afterCommentId)))
-          .then((rows) => rows[0] ?? null);
-
-        if (!anchor) return [];
-        const anchorCreatedAt = anchor.createdAt instanceof Date
-          ? anchor.createdAt.toISOString()
-          : new Date(anchor.createdAt).toISOString();
-        conditions.push(
-          order === "asc"
-            ? sql<boolean>`(
-                ${issueComments.createdAt} > ${anchorCreatedAt}
-                OR (${issueComments.createdAt} = ${anchorCreatedAt} AND ${issueComments.id} > ${anchor.id})
-              )`
-            : sql<boolean>`(
-                ${issueComments.createdAt} < ${anchorCreatedAt}
-                OR (${issueComments.createdAt} = ${anchorCreatedAt} AND ${issueComments.id} < ${anchor.id})
-              )`,
-        );
-      }
-
-      const query = db
-        .select()
-        .from(issueComments)
-        .where(and(...conditions))
-        .orderBy(
-          order === "asc" ? asc(issueComments.createdAt) : desc(issueComments.createdAt),
-          order === "asc" ? asc(issueComments.id) : desc(issueComments.id),
-        );
-
-      const comments = limit ? await query.limit(limit) : await query;
-      const { censorUsernameInLogs } = await instanceSettings.getGeneral();
-      return comments.map((comment) => redactIssueComment(comment, censorUsernameInLogs));
-    },
-
-    getCommentCursor: async (issueId: string) => {
-      const [latest, countRow] = await Promise.all([
-        db
-          .select({
-            latestCommentId: issueComments.id,
-            latestCommentAt: issueComments.createdAt,
-          })
-          .from(issueComments)
-          .where(eq(issueComments.issueId, issueId))
-          .orderBy(desc(issueComments.createdAt), desc(issueComments.id))
-          .limit(1)
-          .then((rows) => rows[0] ?? null),
-        db
-          .select({
-            totalComments: sql<number>`count(*)::int`,
-          })
-          .from(issueComments)
-          .where(eq(issueComments.issueId, issueId))
-          .then((rows) => rows[0] ?? null),
-      ]);
-
-      return {
-        totalComments: Number(countRow?.totalComments ?? 0),
-        latestCommentId: latest?.latestCommentId ?? null,
-        latestCommentAt: latest?.latestCommentAt ?? null,
-      };
-    },
-
-    getComment: (commentId: string) =>
-      instanceSettings.getGeneral().then(({ censorUsernameInLogs }) =>
-        db
-        .select()
-        .from(issueComments)
-        .where(eq(issueComments.id, commentId))
-        .then((rows) => {
-          const comment = rows[0] ?? null;
-          return comment ? redactIssueComment(comment, censorUsernameInLogs) : null;
-        })),
-
-    addComment: async (issueId: string, body: string, actor: { agentId?: string; userId?: string }) => {
-      const issue = await db
-        .select({ orgId: issues.orgId })
-        .from(issues)
-        .where(eq(issues.id, issueId))
-        .then((rows) => rows[0] ?? null);
-
-      if (!issue) throw notFound("Issue not found");
-
-      const currentUserRedactionOptions = {
-        enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
-      };
-      const redactedBody = redactCurrentUserText(body, currentUserRedactionOptions);
-      const [comment] = await db
-        .insert(issueComments)
-        .values({
-          orgId: issue.orgId,
-          issueId,
-          authorAgentId: actor.agentId ?? null,
-          authorUserId: actor.userId ?? null,
-          body: redactedBody,
-        })
-        .returning();
-
-      // Update issue's updatedAt so comment activity is reflected in recency sorting
-      await db
-        .update(issues)
-        .set({ updatedAt: new Date() })
-        .where(eq(issues.id, issueId));
-
-      return redactIssueComment(comment, currentUserRedactionOptions.enabled);
-    },
-
-    createAttachment: async (input: {
-      issueId: string;
-      issueCommentId?: string | null;
-      usage?: string;
-      provider: string;
-      objectKey: string;
-      contentType: string;
-      byteSize: number;
-      sha256: string;
-      originalFilename?: string | null;
-      createdByAgentId?: string | null;
-      createdByUserId?: string | null;
-    }) => {
-      const issue = await db
-        .select({ id: issues.id, orgId: issues.orgId })
-        .from(issues)
-        .where(eq(issues.id, input.issueId))
-        .then((rows) => rows[0] ?? null);
-      if (!issue) throw notFound("Issue not found");
-
-      if (input.issueCommentId) {
-        const comment = await db
-          .select({ id: issueComments.id, orgId: issueComments.orgId, issueId: issueComments.issueId })
-          .from(issueComments)
-          .where(eq(issueComments.id, input.issueCommentId))
-          .then((rows) => rows[0] ?? null);
-        if (!comment) throw notFound("Issue comment not found");
-        if (comment.orgId !== issue.orgId || comment.issueId !== issue.id) {
-          throw unprocessable("Attachment comment must belong to same issue and organization");
-        }
-      }
-
-      return db.transaction(async (tx) => {
-        const [asset] = await tx
-          .insert(assets)
-          .values({
-            orgId: issue.orgId,
-            provider: input.provider,
-            objectKey: input.objectKey,
-            contentType: input.contentType,
-            byteSize: input.byteSize,
-            sha256: input.sha256,
-            originalFilename: input.originalFilename ?? null,
-            createdByAgentId: input.createdByAgentId ?? null,
-            createdByUserId: input.createdByUserId ?? null,
-          })
-          .returning();
-
-        const [attachment] = await tx
-          .insert(issueAttachments)
-          .values({
-            orgId: issue.orgId,
-            issueId: issue.id,
-            assetId: asset.id,
-            issueCommentId: input.issueCommentId ?? null,
-            usage: input.usage ?? "issue",
-          })
-          .returning();
-
-        return {
-          id: attachment.id,
-          orgId: attachment.orgId,
-          issueId: attachment.issueId,
-          issueCommentId: attachment.issueCommentId,
-          assetId: attachment.assetId,
-          usage: attachment.usage,
-          provider: asset.provider,
-          objectKey: asset.objectKey,
-          contentType: asset.contentType,
-          byteSize: asset.byteSize,
-          sha256: asset.sha256,
-          originalFilename: asset.originalFilename,
-          createdByAgentId: asset.createdByAgentId,
-          createdByUserId: asset.createdByUserId,
-          createdAt: attachment.createdAt,
-          updatedAt: attachment.updatedAt,
-        };
-      });
-    },
-
-    listAttachments: async (issueId: string) =>
-      db
-        .select({
-          id: issueAttachments.id,
-          orgId: issueAttachments.orgId,
-          issueId: issueAttachments.issueId,
-          issueCommentId: issueAttachments.issueCommentId,
-          assetId: issueAttachments.assetId,
-          usage: issueAttachments.usage,
-          provider: assets.provider,
-          objectKey: assets.objectKey,
-          contentType: assets.contentType,
-          byteSize: assets.byteSize,
-          sha256: assets.sha256,
-          originalFilename: assets.originalFilename,
-          createdByAgentId: assets.createdByAgentId,
-          createdByUserId: assets.createdByUserId,
-          createdAt: issueAttachments.createdAt,
-          updatedAt: issueAttachments.updatedAt,
-        })
-        .from(issueAttachments)
-        .innerJoin(assets, eq(issueAttachments.assetId, assets.id))
-        .where(and(eq(issueAttachments.issueId, issueId), eq(issueAttachments.usage, "issue")))
-        .orderBy(desc(issueAttachments.createdAt)),
-
-    getAttachmentById: async (id: string) =>
-      db
-        .select({
-          id: issueAttachments.id,
-          orgId: issueAttachments.orgId,
-          issueId: issueAttachments.issueId,
-          issueCommentId: issueAttachments.issueCommentId,
-          assetId: issueAttachments.assetId,
-          usage: issueAttachments.usage,
-          provider: assets.provider,
-          objectKey: assets.objectKey,
-          contentType: assets.contentType,
-          byteSize: assets.byteSize,
-          sha256: assets.sha256,
-          originalFilename: assets.originalFilename,
-          createdByAgentId: assets.createdByAgentId,
-          createdByUserId: assets.createdByUserId,
-          createdAt: issueAttachments.createdAt,
-          updatedAt: issueAttachments.updatedAt,
-        })
-        .from(issueAttachments)
-        .innerJoin(assets, eq(issueAttachments.assetId, assets.id))
-        .where(eq(issueAttachments.id, id))
-        .then((rows) => rows[0] ?? null),
-
-    removeAttachment: async (id: string) =>
-      db.transaction(async (tx) => {
-        const existing = await tx
-          .select({
-            id: issueAttachments.id,
-            orgId: issueAttachments.orgId,
-            issueId: issueAttachments.issueId,
-            issueCommentId: issueAttachments.issueCommentId,
-            assetId: issueAttachments.assetId,
-            usage: issueAttachments.usage,
-            provider: assets.provider,
-            objectKey: assets.objectKey,
-            contentType: assets.contentType,
-            byteSize: assets.byteSize,
-            sha256: assets.sha256,
-            originalFilename: assets.originalFilename,
-            createdByAgentId: assets.createdByAgentId,
-            createdByUserId: assets.createdByUserId,
-            createdAt: issueAttachments.createdAt,
-            updatedAt: issueAttachments.updatedAt,
-          })
-          .from(issueAttachments)
-          .innerJoin(assets, eq(issueAttachments.assetId, assets.id))
-          .where(eq(issueAttachments.id, id))
-          .then((rows) => rows[0] ?? null);
-        if (!existing) return null;
-
-        await tx.delete(issueAttachments).where(eq(issueAttachments.id, id));
-        await tx.delete(assets).where(eq(assets.id, existing.assetId));
-        return existing;
-      }),
-
-    findMentionedAgents: async (orgId: string, body: string) => {
-      const re = /\B@([^\s@,!?.]+)/g;
-      const tokens = new Set<string>();
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(body)) !== null) tokens.add(m[1].toLowerCase());
-
-      const explicitAgentMentionIds = extractAgentMentionIds(body);
-      if (tokens.size === 0 && explicitAgentMentionIds.length === 0) return [];
-
-      const rows = await db.select({ id: agents.id, name: agents.name })
-        .from(agents).where(eq(agents.orgId, orgId));
-      const resolved = new Set<string>(explicitAgentMentionIds);
-      for (const agent of rows) {
-        if (tokens.has(agent.name.toLowerCase())) {
-          resolved.add(agent.id);
-        }
-      }
-      return [...resolved];
-    },
-
-    findMentionedProjectIds: async (issueId: string) => {
-      const issue = await db
-        .select({
-          orgId: issues.orgId,
-          title: issues.title,
-          description: issues.description,
-        })
-        .from(issues)
-        .where(eq(issues.id, issueId))
-        .then((rows) => rows[0] ?? null);
-      if (!issue) return [];
-
-      const comments = await db
-        .select({ body: issueComments.body })
-        .from(issueComments)
-        .where(eq(issueComments.issueId, issueId));
-
-      const mentionedIds = new Set<string>();
-      for (const source of [
-        issue.title,
-        issue.description ?? "",
-        ...comments.map((comment) => comment.body),
-      ]) {
-        for (const projectId of extractProjectMentionIds(source)) {
-          mentionedIds.add(projectId);
-        }
-      }
-      if (mentionedIds.size === 0) return [];
-
-      const rows = await db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(
-          and(
-            eq(projects.orgId, issue.orgId),
-            inArray(projects.id, [...mentionedIds]),
-          ),
-        );
-      const valid = new Set(rows.map((row) => row.id));
-      return [...mentionedIds].filter((projectId) => valid.has(projectId));
-    },
+    ...createIssueCommentAttachmentMethods({ db, instanceSettings, redactIssueComment }),
 
     getAncestors: async (issueId: string) => {
       const raw: Array<{
         id: string; identifier: string | null; title: string; description: string | null;
         status: string; priority: string;
-        assigneeAgentId: string | null; projectId: string | null; goalId: string | null;
+        assigneeAgentId: string | null; assigneeUserId: string | null;
+        reviewerAgentId: string | null; reviewerUserId: string | null;
+        projectId: string | null; goalId: string | null;
       }> = [];
       const visited = new Set<string>([issueId]);
       const start = await db.select().from(issues).where(eq(issues.id, issueId)).then(r => r[0] ?? null);
@@ -1798,7 +1408,9 @@ export function issueService(db: Db) {
         const parent = await db.select({
           id: issues.id, identifier: issues.identifier, title: issues.title, description: issues.description,
           status: issues.status, priority: issues.priority,
-          assigneeAgentId: issues.assigneeAgentId, projectId: issues.projectId,
+          assigneeAgentId: issues.assigneeAgentId, assigneeUserId: issues.assigneeUserId,
+          reviewerAgentId: issues.reviewerAgentId, reviewerUserId: issues.reviewerUserId,
+          projectId: issues.projectId,
           goalId: issues.goalId, parentId: issues.parentId,
         }).from(issues).where(eq(issues.id, currentId)).then(r => r[0] ?? null);
         if (!parent) break;
@@ -1806,6 +1418,9 @@ export function issueService(db: Db) {
           id: parent.id, identifier: parent.identifier ?? null, title: parent.title, description: parent.description ?? null,
           status: parent.status, priority: parent.priority,
           assigneeAgentId: parent.assigneeAgentId ?? null,
+          assigneeUserId: parent.assigneeUserId ?? null,
+          reviewerAgentId: parent.reviewerAgentId ?? null,
+          reviewerUserId: parent.reviewerUserId ?? null,
           projectId: parent.projectId ?? null, goalId: parent.goalId ?? null,
         });
         currentId = parent.parentId ?? null;

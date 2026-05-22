@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type {
-  BudgetPolicySummary,
-  CostByAgentModel,
-  CostByBiller,
-  CostByProviderModel,
-  CostWindowSpendRow,
-  FinanceEvent,
-  QuotaWindow,
+import {
+  hasTokenUsage,
+  summarizeTokenUsage,
+  type CostByAgent,
+  type BudgetPolicySummary,
+  type CostByAgentModel,
+  type CostByBiller,
+  type CostByProject,
+  type CostByProviderModel,
+  type CostTrendPoint,
+  type CostWindowSpendRow,
+  type FinanceEvent,
+  type QuotaWindow,
 } from "@rudderhq/shared";
 import { ArrowDownLeft, ArrowUpRight, ChevronDown, ChevronRight, Coins, DollarSign, ReceiptText } from "lucide-react";
 import { budgetsApi } from "../api/budgets";
@@ -19,7 +24,7 @@ import { EmptyState } from "../components/EmptyState";
 import { FinanceBillerCard } from "../components/FinanceBillerCard";
 import { FinanceKindCard } from "../components/FinanceKindCard";
 import { FinanceTimelineCard } from "../components/FinanceTimelineCard";
-import { Identity } from "../components/Identity";
+import { AgentIdentity } from "../components/AgentAvatar";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
 import { ProviderQuotaCard } from "../components/ProviderQuotaCard";
@@ -31,9 +36,12 @@ import { queryKeys } from "../lib/queryKeys";
 import { billingTypeDisplayName, cn, formatCents, formatTokens, providerDisplayName } from "../lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 const NO_ORGANIZATION = "__none__";
+
+type CostTrendFilterKind = "all" | "agent" | "project";
 
 function currentWeekRange(): { from: string; to: string } {
   const now = new Date();
@@ -45,7 +53,7 @@ function currentWeekRange(): { from: string; to: string } {
 }
 
 function ProviderTabLabel({ provider, rows }: { provider: string; rows: CostByProviderModel[] }) {
-  const totalTokens = rows.reduce((sum, row) => sum + row.inputTokens + row.cachedInputTokens + row.outputTokens, 0);
+  const totalTokens = rows.reduce((sum, row) => sum + summarizeTokenUsage(row).totalTokens, 0);
   const totalCost = rows.reduce((sum, row) => sum + row.costCents, 0);
   return (
     <span className="flex items-center gap-1.5">
@@ -57,7 +65,7 @@ function ProviderTabLabel({ provider, rows }: { provider: string; rows: CostByPr
 }
 
 function BillerTabLabel({ biller, rows }: { biller: string; rows: CostByBiller[] }) {
-  const totalTokens = rows.reduce((sum, row) => sum + row.inputTokens + row.cachedInputTokens + row.outputTokens, 0);
+  const totalTokens = rows.reduce((sum, row) => sum + summarizeTokenUsage(row).totalTokens, 0);
   const totalCost = rows.reduce((sum, row) => sum + row.costCents, 0);
   return (
     <span className="flex items-center gap-1.5">
@@ -92,6 +100,266 @@ function MetricTile({
         </div>
       </div>
     </div>
+  );
+}
+
+function utcDayKey(value: string | Date): string {
+  const date = new Date(value);
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dayLabel(value: string): string {
+  const date = new Date(`${value}T12:00:00Z`);
+  return `${date.getUTCMonth() + 1}/${date.getUTCDate()}`;
+}
+
+function fullDayLabel(value: string): string {
+  return new Date(`${value}T12:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function emptyTrendPoint(date: string): CostTrendPoint {
+  return {
+    date,
+    costCents: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    eventCount: 0,
+  };
+}
+
+function buildTrendSeries(rows: CostTrendPoint[], from?: string, to?: string): CostTrendPoint[] {
+  if (!from || !to) return rows;
+
+  const start = new Date(from);
+  const end = new Date(to);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) return rows;
+
+  const startUtc = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+  const endUtc = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+  const dayCount = Math.floor((endUtc - startUtc) / 86_400_000) + 1;
+  if (dayCount <= 0 || dayCount > 62) return rows;
+
+  const rowsByDate = new Map(rows.map((row) => [row.date, row]));
+  return Array.from({ length: dayCount }, (_, index) => {
+    const date = utcDayKey(new Date(startUtc + index * 86_400_000));
+    return rowsByDate.get(date) ?? emptyTrendPoint(date);
+  });
+}
+
+function shouldShowDayLabel(index: number, count: number): boolean {
+  if (count <= 10) return true;
+  return index === 0 || index === count - 1 || index === Math.floor((count - 1) / 2);
+}
+
+function formatExactCount(value: number): string {
+  return Math.round(value).toLocaleString("en-US");
+}
+
+function trendAgentLabel(row: CostByAgent): string {
+  return row.agentName ?? row.agentId;
+}
+
+function trendProjectLabel(row: CostByProject): string {
+  return row.projectName ?? row.projectId ?? "Unattributed";
+}
+
+export function CostTrendChart({
+  rows,
+  from,
+  to,
+  agentOptions = [],
+  projectOptions = [],
+  filterKind = "all",
+  selectedAgentId = "",
+  selectedProjectId = "",
+  onFilterKindChange,
+  onAgentChange,
+  onProjectChange,
+  isLoading = false,
+}: {
+  rows: CostTrendPoint[];
+  from?: string;
+  to?: string;
+  agentOptions?: CostByAgent[];
+  projectOptions?: CostByProject[];
+  filterKind?: CostTrendFilterKind;
+  selectedAgentId?: string;
+  selectedProjectId?: string;
+  onFilterKindChange?: (kind: CostTrendFilterKind) => void;
+  onAgentChange?: (agentId: string) => void;
+  onProjectChange?: (projectId: string) => void;
+  isLoading?: boolean;
+}) {
+  const series = buildTrendSeries(rows, from, to);
+  const maxTokens = Math.max(...series.map((row) => row.totalTokens), 1);
+  const maxCost = Math.max(...series.map((row) => row.costCents), 1);
+  const totalTokens = series.reduce((sum, row) => sum + row.totalTokens, 0);
+  const totalCost = series.reduce((sum, row) => sum + row.costCents, 0);
+  const hasData = totalTokens > 0 || totalCost > 0;
+  const activeAgentId = agentOptions.some((row) => row.agentId === selectedAgentId)
+    ? selectedAgentId
+    : agentOptions[0]?.agentId ?? "";
+  const activeProjectId = projectOptions.some((row) => row.projectId === selectedProjectId)
+    ? selectedProjectId
+    : projectOptions[0]?.projectId ?? "";
+  const hasAgentOptions = agentOptions.length > 0;
+  const hasProjectOptions = projectOptions.length > 0;
+
+  return (
+    <Card data-testid="cost-trend-chart">
+      <CardHeader className="px-5 pt-5 pb-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle className="text-base">Inference trend</CardTitle>
+            <CardDescription>Daily token volume and estimated spend in the selected period.</CardDescription>
+          </div>
+          <div className="flex flex-col items-start gap-2 sm:items-end">
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground sm:justify-end">
+              <span className="rounded-[calc(var(--radius-sm)-1px)] border border-border px-2.5 py-1">
+                Tokens <span className="font-medium text-foreground tabular-nums">{formatTokens(totalTokens)}</span>
+              </span>
+              <span className="rounded-[calc(var(--radius-sm)-1px)] border border-border px-2.5 py-1">
+                Estimated spend <span className="font-medium text-foreground tabular-nums">{formatCents(totalCost)}</span>
+              </span>
+            </div>
+            {onFilterKindChange ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {(["all", "agent", "project"] as const).map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    disabled={(kind === "agent" && !hasAgentOptions) || (kind === "project" && !hasProjectOptions)}
+                    onClick={() => onFilterKindChange(kind)}
+                    className={cn(
+                      "rounded-[calc(var(--radius-sm)-1px)] border px-2.5 py-1 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                      filterKind === kind
+                        ? "border-foreground bg-foreground text-background"
+                        : "border-border text-muted-foreground hover:border-foreground/50 hover:text-foreground",
+                    )}
+                  >
+                    {kind === "all" ? "All" : kind === "agent" ? "Agent" : "Project"}
+                  </button>
+                ))}
+                {filterKind === "agent" && hasAgentOptions ? (
+                  <select
+                    aria-label="Filter trend by agent"
+                    value={activeAgentId}
+                    onChange={(event) => onAgentChange?.(event.target.value)}
+                    className="h-7 max-w-48 rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background px-2 text-xs text-foreground"
+                  >
+                    {agentOptions.map((row) => (
+                      <option key={row.agentId} value={row.agentId}>
+                        {trendAgentLabel(row)}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                {filterKind === "project" && hasProjectOptions ? (
+                  <select
+                    aria-label="Filter trend by project"
+                    value={activeProjectId ?? ""}
+                    onChange={(event) => onProjectChange?.(event.target.value)}
+                    className="h-7 max-w-48 rounded-[calc(var(--radius-sm)-1px)] border border-border bg-background px-2 text-xs text-foreground"
+                  >
+                    {projectOptions.map((row, index) => (
+                      <option key={row.projectId ?? `project-${index}`} value={row.projectId ?? ""}>
+                        {trendProjectLabel(row)}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="px-5 pb-5 pt-2">
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading trend…</p>
+        ) : !hasData ? (
+          <p className="text-sm text-muted-foreground">No cost trend yet.</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-sm bg-sky-500" /> Tokens
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" /> Estimated spend
+              </span>
+            </div>
+            <div className="overflow-x-auto pb-1">
+              <div className="flex h-40 min-w-[520px] items-end gap-2">
+                {series.map((row, index) => {
+                  const tokenHeight = Math.max(3, (row.totalTokens / maxTokens) * 100);
+                  const costBottom = Math.max(2, (row.costCents / maxCost) * 100);
+                  const dateLabel = fullDayLabel(row.date);
+                  const accessibleLabel = `${dateLabel}: ${formatExactCount(row.totalTokens)} tokens (${formatExactCount(row.inputTokens)} input, ${formatExactCount(row.cachedInputTokens)} cached, ${formatExactCount(row.outputTokens)} output), ${formatCents(row.costCents)} estimated spend, ${formatExactCount(row.eventCount)} events`;
+                  return (
+                    <TooltipProvider key={row.date}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label={accessibleLabel}
+                            className="group flex min-w-7 flex-1 flex-col justify-end gap-1 rounded-[calc(var(--radius-sm)-1px)] bg-transparent p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                          >
+                            <span className="relative h-32 w-full rounded-[calc(var(--radius-sm)-1px)] bg-muted/35">
+                              <span
+                                className="absolute inset-x-1 bottom-0 rounded-t-[calc(var(--radius-sm)-1px)] bg-sky-500/60 transition-colors group-hover:bg-sky-500 group-focus-visible:bg-sky-500"
+                                style={{ height: `${row.totalTokens > 0 ? tokenHeight : 0}%` }}
+                              />
+                              {row.costCents > 0 ? (
+                                <span
+                                  className="absolute left-1/2 h-2.5 w-2.5 -translate-x-1/2 rounded-full border border-background bg-emerald-500 shadow-sm"
+                                  style={{ bottom: `calc(${costBottom}% - 5px)` }}
+                                />
+                              ) : null}
+                            </span>
+                            <span className="h-3 w-full text-center text-[10px] tabular-nums text-muted-foreground">
+                              {shouldShowDayLabel(index, series.length) ? dayLabel(row.date) : null}
+                            </span>
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={8} className="w-56 p-3 text-xs">
+                          <div className="space-y-2">
+                            <div className="font-medium text-background">{dateLabel}</div>
+                            <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1.5">
+                              <dt className="text-background/70">Tokens</dt>
+                              <dd className="font-mono tabular-nums">{formatExactCount(row.totalTokens)}</dd>
+                              <dt className="text-background/70">Input</dt>
+                              <dd className="font-mono tabular-nums">{formatExactCount(row.inputTokens)}</dd>
+                              <dt className="text-background/70">Cached</dt>
+                              <dd className="font-mono tabular-nums">{formatExactCount(row.cachedInputTokens)}</dd>
+                              <dt className="text-background/70">Output</dt>
+                              <dd className="font-mono tabular-nums">{formatExactCount(row.outputTokens)}</dd>
+                              <dt className="text-background/70">Estimated spend</dt>
+                              <dd className="font-mono tabular-nums">{formatCents(row.costCents)}</dd>
+                              <dt className="text-background/70">Events</dt>
+                              <dd className="font-mono tabular-nums">{formatExactCount(row.eventCount)}</dd>
+                            </dl>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -154,6 +422,9 @@ export function Costs() {
   const [mainTab, setMainTab] = useState<"overview" | "budgets" | "providers" | "billers" | "finance">("overview");
   const [activeProvider, setActiveProvider] = useState("all");
   const [activeBiller, setActiveBiller] = useState("all");
+  const [trendFilterKind, setTrendFilterKind] = useState<CostTrendFilterKind>("all");
+  const [trendAgentId, setTrendAgentId] = useState("");
+  const [trendProjectId, setTrendProjectId] = useState("");
 
   const {
     preset,
@@ -288,6 +559,55 @@ export function Costs() {
     }
     return map;
   }, [spendData?.byAgentModel]);
+
+  const trendAgentOptions = useMemo(
+    () => (spendData?.byAgent ?? []).filter((row) => hasTokenUsage(row) || row.costCents > 0),
+    [spendData?.byAgent],
+  );
+  const trendProjectOptions = useMemo(
+    () => (spendData?.byProject ?? []).filter((row) => row.projectId && (hasTokenUsage(row) || row.costCents > 0)),
+    [spendData?.byProject],
+  );
+  const effectiveTrendAgentId = trendAgentOptions.some((row) => row.agentId === trendAgentId)
+    ? trendAgentId
+    : trendAgentOptions[0]?.agentId ?? "";
+  const effectiveTrendProjectId = trendProjectOptions.some((row) => row.projectId === trendProjectId)
+    ? trendProjectId
+    : trendProjectOptions[0]?.projectId ?? "";
+  const effectiveTrendFilterKind =
+    trendFilterKind === "agent" && effectiveTrendAgentId
+      ? "agent"
+      : trendFilterKind === "project" && effectiveTrendProjectId
+        ? "project"
+        : "all";
+  const trendFilterId =
+    effectiveTrendFilterKind === "agent"
+      ? effectiveTrendAgentId
+      : effectiveTrendFilterKind === "project"
+        ? effectiveTrendProjectId
+        : "";
+
+  const { data: trendData, isLoading: trendLoading, error: trendError } = useQuery({
+    queryKey: queryKeys.costTrend(
+      orgId,
+      from || undefined,
+      to || undefined,
+      effectiveTrendFilterKind,
+      trendFilterId,
+    ),
+    queryFn: () =>
+      costsApi.trend(
+        orgId,
+        from || undefined,
+        to || undefined,
+        effectiveTrendFilterKind === "agent"
+          ? { agentId: trendFilterId }
+          : effectiveTrendFilterKind === "project"
+            ? { projectId: trendFilterId }
+            : undefined,
+      ),
+    enabled: !!selectedOrganizationId && customReady,
+  });
 
   const { data: providerData } = useQuery({
     queryKey: queryKeys.usageByProvider(orgId, from || undefined, to || undefined),
@@ -452,7 +772,7 @@ export function Costs() {
   const providerTabItems = useMemo(() => {
     const providerKeys = Array.from(byProvider.keys());
     const allTokens = providerKeys.reduce(
-      (sum, provider) => sum + (byProvider.get(provider)?.reduce((acc, row) => acc + row.inputTokens + row.cachedInputTokens + row.outputTokens, 0) ?? 0),
+      (sum, provider) => sum + (byProvider.get(provider)?.reduce((acc, row) => acc + summarizeTokenUsage(row).totalTokens, 0) ?? 0),
       0,
     );
     const allCents = providerKeys.reduce(
@@ -484,7 +804,7 @@ export function Costs() {
   const billerTabItems = useMemo(() => {
     const billerKeys = Array.from(byBiller.keys());
     const allTokens = billerKeys.reduce(
-      (sum, biller) => sum + (byBiller.get(biller)?.reduce((acc, row) => acc + row.inputTokens + row.cachedInputTokens + row.outputTokens, 0) ?? 0),
+      (sum, biller) => sum + (byBiller.get(biller)?.reduce((acc, row) => acc + summarizeTokenUsage(row).totalTokens, 0) ?? 0),
       0,
     );
     const allCents = billerKeys.reduce(
@@ -515,7 +835,7 @@ export function Costs() {
 
   const inferenceTokenTotal =
     (spendData?.byAgent ?? []).reduce(
-      (sum, row) => sum + row.inputTokens + row.cachedInputTokens + row.outputTokens,
+      (sum, row) => sum + summarizeTokenUsage(row).totalTokens,
       0,
     );
 
@@ -534,7 +854,7 @@ export function Costs() {
 
   const showCustomPrompt = preset === "custom" && !customReady;
   const showOverviewLoading = (spendLoading || financeLoading) && customReady;
-  const overviewError = spendError ?? financeError;
+  const overviewError = spendError ?? financeError ?? trendError;
 
   return (
     <div className="space-y-6">
@@ -618,13 +938,18 @@ export function Costs() {
       </div>
 
       <Tabs value={mainTab} onValueChange={(value) => setMainTab(value as typeof mainTab)}>
-        <TabsList variant="line" className="justify-start">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="budgets">Budgets</TabsTrigger>
-          <TabsTrigger value="providers">Providers</TabsTrigger>
-          <TabsTrigger value="billers">Billers</TabsTrigger>
-          <TabsTrigger value="finance">Finance</TabsTrigger>
-        </TabsList>
+        <PageTabBar
+          items={[
+            { value: "overview", label: "Overview" },
+            { value: "budgets", label: "Budgets" },
+            { value: "providers", label: "Providers" },
+            { value: "billers", label: "Billers" },
+            { value: "finance", label: "Finance" },
+          ]}
+          value={mainTab}
+          onValueChange={(value) => setMainTab(value as typeof mainTab)}
+          align="start"
+        />
 
         <TabsContent value="overview" className="mt-4 space-y-4">
           {showCustomPrompt ? (
@@ -653,6 +978,31 @@ export function Costs() {
                   ))}
                 </div>
               ) : null}
+
+              <CostTrendChart
+                rows={trendData ?? []}
+                from={from || undefined}
+                to={to || undefined}
+                agentOptions={trendAgentOptions}
+                projectOptions={trendProjectOptions}
+                filterKind={effectiveTrendFilterKind}
+                selectedAgentId={effectiveTrendAgentId}
+                selectedProjectId={effectiveTrendProjectId}
+                onFilterKindChange={(kind) => {
+                  if (kind === "agent" && effectiveTrendAgentId) setTrendAgentId(effectiveTrendAgentId);
+                  if (kind === "project" && effectiveTrendProjectId) setTrendProjectId(effectiveTrendProjectId);
+                  setTrendFilterKind(kind);
+                }}
+                onAgentChange={(agentId) => {
+                  setTrendAgentId(agentId);
+                  setTrendFilterKind("agent");
+                }}
+                onProjectChange={(projectId) => {
+                  setTrendProjectId(projectId);
+                  setTrendFilterKind("project");
+                }}
+                isLoading={trendLoading}
+              />
 
               <div className="grid gap-4 xl:grid-cols-[1.3fr,1fr]">
                 <Card>
@@ -741,13 +1091,18 @@ export function Costs() {
                                 ) : (
                                   <span className="h-3 w-3 shrink-0" />
                                 )}
-                                <Identity name={row.agentName ?? row.agentId} size="sm" />
+                                <AgentIdentity
+                                  name={row.agentName ?? row.agentId}
+                                  icon={row.agentIcon}
+                                  role={row.agentRole}
+                                  size="sm"
+                                />
                                 {row.agentStatus === "terminated" ? <StatusBadge status="terminated" /> : null}
                               </div>
                               <div className="text-right text-sm tabular-nums">
                                 <div className="font-medium">{formatCents(row.costCents)}</div>
                                 <div className="text-xs text-muted-foreground">
-                                  in {formatTokens(row.inputTokens + row.cachedInputTokens)} · out {formatTokens(row.outputTokens)}
+                                  in {formatTokens(summarizeTokenUsage(row).promptTokens)} · out {formatTokens(row.outputTokens)}
                                 </div>
                                 {(row.apiRunCount > 0 || row.subscriptionRunCount > 0) ? (
                                   <div className="text-xs text-muted-foreground">
@@ -765,6 +1120,7 @@ export function Costs() {
                               <div className="mt-3 space-y-2 border-l border-border pl-4">
                                 {modelRows.map((modelRow) => {
                                   const sharePct = row.costCents > 0 ? Math.round((modelRow.costCents / row.costCents) * 100) : 0;
+                                  const modelTokenSummary = summarizeTokenUsage(modelRow);
                                   return (
                                     <div
                                       key={`${modelRow.provider}:${modelRow.model}:${modelRow.billingType}`}
@@ -786,7 +1142,7 @@ export function Costs() {
                                           <span className="ml-1 font-normal text-muted-foreground">({sharePct}%)</span>
                                         </div>
                                         <div className="text-muted-foreground">
-                                          {formatTokens(modelRow.inputTokens + modelRow.cachedInputTokens + modelRow.outputTokens)} tok
+                                          {formatTokens(modelTokenSummary.totalTokens)} tok
                                         </div>
                                       </div>
                                     </div>

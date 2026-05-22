@@ -17,10 +17,6 @@ test.describe("Dashboard date filter", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Dashboard-Date-Filter-${Date.now()}`,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          model: "gpt-5.4",
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -45,6 +41,19 @@ test.describe("Dashboard date filter", () => {
     expect(olderIssueRes.ok()).toBe(true);
     const olderIssue = await olderIssueRes.json() as { id: string };
 
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Dashboard Token Agent",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
     const now = new Date();
     const recentDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2, 11, 0, 0, 0);
     const olderDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 16, 11, 0, 0, 0);
@@ -57,6 +66,35 @@ test.describe("Dashboard date filter", () => {
       createdAt: olderDate,
       updatedAt: olderDate,
     }).where(eq(issues.id, olderIssue.id));
+
+    for (const event of [
+      {
+        inputTokens: 1_000,
+        cachedInputTokens: 200,
+        outputTokens: 300,
+        costCents: 10,
+        occurredAt: recentDate.toISOString(),
+      },
+      {
+        inputTokens: 700,
+        cachedInputTokens: 0,
+        outputTokens: 300,
+        costCents: 20,
+        occurredAt: olderDate.toISOString(),
+      },
+    ]) {
+      const eventRes = await page.request.post(`/api/orgs/${organization.id}/cost-events`, {
+        data: {
+          agentId: agent.id,
+          provider: "openai",
+          biller: "openai",
+          billingType: "metered_api",
+          model: "gpt-5.4",
+          ...event,
+        },
+      });
+      expect(eventRes.ok()).toBe(true);
+    }
 
     await page.addInitScript((orgId: string) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
@@ -71,13 +109,19 @@ test.describe("Dashboard date filter", () => {
     await expect(mainContent.getByRole("button", { name: "1M" })).toBeVisible();
     await expect(mainContent.getByRole("button", { name: /Custom/ })).toBeVisible();
 
-    await expect(mainContent.getByText("Recent dashboard task")).toBeVisible();
-    await expect(mainContent.getByText("Older dashboard task")).toHaveCount(0);
+    await expect(mainContent.getByRole("link", { name: /^Recent dashboard task DAS-/ })).toBeVisible();
+    await expect(mainContent.getByRole("link", { name: /^Older dashboard task DAS-/ })).toHaveCount(0);
     await expect(mainContent.getByText("Last 7 days · relative daily run volume · hover for details")).toBeVisible();
+    await expect(mainContent.getByText("Tokens Used")).toBeVisible();
+    await expect(mainContent.getByText("Input 1.2k · Output 300")).toBeVisible();
 
     await mainContent.getByRole("button", { name: "1M" }).click();
-    await expect(mainContent.getByText("Older dashboard task")).toBeVisible();
+    await expect(mainContent.getByRole("link", { name: /^Older dashboard task DAS-/ })).toBeVisible();
     await expect(mainContent.getByText("Last 30 days · relative daily run volume · hover for details")).toBeVisible();
+    await expect(mainContent.getByText("Input 1.9k · Output 600")).toBeVisible();
+    await expect(mainContent.locator('.metric-value-motion[aria-label="2.5k"][data-animated="true"]')).toBeVisible();
+    await expect(mainContent.locator(".dashboard-chart-motion").first()).toBeVisible();
+    await expect(mainContent.locator(".dashboard-chart-bar").first()).toBeVisible();
 
     await mainContent.getByRole("button", { name: /Custom/ }).click();
     const fromInput = page.getByLabel("From");
@@ -85,7 +129,8 @@ test.describe("Dashboard date filter", () => {
     await fromInput.fill(formatInput(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 20)));
     await toInput.fill(formatInput(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 14)));
 
-    await expect(mainContent.getByText("Older dashboard task")).toBeVisible();
-    await expect(mainContent.getByText("Recent dashboard task")).toHaveCount(0);
+    await expect(mainContent.getByRole("link", { name: /^Older dashboard task DAS-/ })).toBeVisible();
+    await expect(mainContent.getByRole("link", { name: /^Recent dashboard task DAS-/ })).toHaveCount(0);
+    await expect(mainContent.getByText("Input 700 · Output 300")).toBeVisible();
   });
 });

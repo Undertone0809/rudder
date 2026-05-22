@@ -15,6 +15,10 @@ const mdxEditorMocks = vi.hoisted(() => ({
   lastEditorProps: null as null | {
     translation?: (key: string, defaultValue: string, interpolations?: Record<string, unknown>) => string;
   },
+  focusCalls: [] as Array<{
+    defaultSelection?: "rootStart" | "rootEnd";
+    preventScroll?: boolean;
+  } | undefined>,
 }));
 
 (
@@ -76,6 +80,7 @@ vi.mock("../lib/mention-deletion", () => ({
 }));
 
 vi.mock("../lib/mention-token-node", () => ({
+  $createMentionTokenNode: (label: string) => ({ label }),
   mentionTokenPlugin: () => ({}),
 }));
 
@@ -91,6 +96,7 @@ vi.mock("../lib/skill-token-dom", () => ({
 }));
 
 vi.mock("../lib/skill-token-node", () => ({
+  $createSkillTokenNode: (label: string) => ({ label }),
   skillTokenPlugin: () => ({}),
 }));
 
@@ -105,23 +111,80 @@ vi.mock("@mdxeditor/editor", async () => {
       onBlur?: () => void;
       translation?: (key: string, defaultValue: string, interpolations?: Record<string, unknown>) => string;
     },
-    ref: React.ForwardedRef<{ focus: () => void; setMarkdown: (value: string) => void }>,
+    ref: React.ForwardedRef<{
+      focus: () => void;
+      insertMarkdown: (value: string) => void;
+      setMarkdown: (value: string) => void;
+    }>,
   ) {
     mdxEditorMocks.lastEditorProps = props;
-    const [, setMarkdown] = React.useState(props.markdown);
+    const [markdown, setMarkdown] = React.useState(props.markdown);
+    React.useEffect(() => {
+      setMarkdown(props.markdown);
+    }, [props.markdown]);
     React.useImperativeHandle(ref, () => ({
-      focus: () => undefined,
+      focus: (_callbackFn?: () => void, opts?: { defaultSelection?: "rootStart" | "rootEnd"; preventScroll?: boolean }) => {
+        mdxEditorMocks.focusCalls.push(opts);
+      },
+      insertMarkdown: (value: string) => {
+        const selection = window.getSelection();
+        const anchorNode = selection?.anchorNode;
+        if (anchorNode?.nodeType === Node.TEXT_NODE && typeof selection?.anchorOffset === "number") {
+          const offset = selection.anchorOffset;
+          const text = anchorNode.textContent ?? "";
+          let atPos = -1;
+          for (let i = offset - 1; i >= 0; i -= 1) {
+            if (text[i] === "@" || text[i] === "$") {
+              atPos = i;
+              break;
+            }
+            if (/\s/.test(text[i] ?? "")) break;
+          }
+          if (atPos !== -1) {
+            const replaceLength = value.endsWith(" ") && text[offset] === " "
+              ? offset - atPos + 1
+              : offset - atPos;
+            setMarkdown(text.slice(0, atPos) + value + text.slice(atPos + replaceLength));
+            return;
+          }
+        }
+        setMarkdown((current) => current + value);
+      },
       setMarkdown: (value: string) => {
         setMarkdown(value);
       },
     }));
 
-    const match = props.markdown.match(/!\[([^\]]*)\]\(([^)]+)\)/);
+    const imageMatch = markdown.match(/!\[([^\]]*)\]\(([^)]+)\)/);
+    const linkMatch = markdown.match(/\[([^\]]+)\]\(([^)]+)\)/);
+    const mentionLinkMatch = linkMatch && /^(agent|project|issue):\/\//.test(linkMatch[2])
+      ? linkMatch
+      : null;
 
     return (
       <div className={props.className}>
         <div contentEditable className={props.contentEditableClassName} onBlur={props.onBlur}>
-          {match ? <img src={match[2]} alt={match[1]} /> : props.markdown}
+          {imageMatch ? (
+            <img src={imageMatch[2]} alt={imageMatch[1]} />
+          ) : mentionLinkMatch ? (
+            <>
+              {markdown.slice(0, mentionLinkMatch.index)}
+              <span
+                contentEditable={false}
+                data-mention-href={mentionLinkMatch[2]}
+                data-mention-kind={mentionLinkMatch[2].split("://")[0]}
+              >
+                {mentionLinkMatch[1]}
+              </span>
+              {markdown.slice((mentionLinkMatch.index ?? 0) + mentionLinkMatch[0].length)}
+            </>
+          ) : linkMatch ? (
+            <>
+              {markdown.slice(0, linkMatch.index)}
+              <a href={linkMatch[2]}>{linkMatch[1]}</a>
+              {markdown.slice((linkMatch.index ?? 0) + linkMatch[0].length)}
+            </>
+          ) : markdown}
         </div>
       </div>
     );
@@ -139,6 +202,8 @@ vi.mock("@mdxeditor/editor", async () => {
     listsPlugin: () => ({}),
     markdownShortcutPlugin: () => ({}),
     quotePlugin: () => ({}),
+    createRootEditorSubscription$: Symbol("createRootEditorSubscription"),
+    realmPlugin: (plugin: unknown) => () => plugin,
     tablePlugin: () => ({}),
     thematicBreakPlugin: () => ({}),
   };
@@ -146,12 +211,65 @@ vi.mock("@mdxeditor/editor", async () => {
 
 let cleanupFn: (() => void) | null = null;
 
+function stubCaretRect() {
+  const originalGetBoundingClientRect = Range.prototype.getBoundingClientRect;
+  Range.prototype.getBoundingClientRect = () => ({
+    x: 120,
+    y: 240,
+    width: 1,
+    height: 18,
+    top: 240,
+    right: 121,
+    bottom: 258,
+    left: 120,
+    toJSON: () => undefined,
+  });
+  return () => {
+    Range.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+  };
+}
+
+async function placeCaretAndOpenMentionMenu(editable: Element, offset: number) {
+  const textNode = editable.firstChild;
+  expect(textNode?.nodeType).toBe(Node.TEXT_NODE);
+
+  await act(async () => {
+    const range = document.createRange();
+    range.setStart(textNode!, offset);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+}
+
+async function chooseMentionOption(optionId: string) {
+  const option = document.body.querySelector(`[data-testid="markdown-mention-option-${optionId}"]`);
+  expect(option).toBeTruthy();
+
+  await act(async () => {
+    option?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  });
+}
+
+async function flushAnimationFrames(count = 4) {
+  for (let i = 0; i < count; i += 1) {
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    });
+  }
+}
+
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
   mdxEditorMocks.imagePlugin.mockClear();
   mdxEditorMocks.linkDialogPlugin.mockClear();
   mdxEditorMocks.lastEditorProps = null;
+  mdxEditorMocks.focusCalls = [];
   document.body.innerHTML = "";
 });
 
@@ -169,9 +287,9 @@ describe("MarkdownEditor", () => {
 
     expect(position).toMatchObject({
       left: 540,
+      width: 520,
       bottom: 84,
       maxHeight: 200,
-      maxWidth: 1256,
     });
     expect("top" in position).toBe(false);
   });
@@ -188,10 +306,10 @@ describe("MarkdownEditor", () => {
     );
 
     expect(position).toMatchObject({
-      left: 1088,
+      left: 748,
+      width: 520,
       top: 222,
       maxHeight: 200,
-      maxWidth: 1256,
     });
     expect("bottom" in position).toBe(false);
   });
@@ -321,25 +439,480 @@ describe("MarkdownEditor", () => {
     expect(mdxEditorMocks.lastEditorProps?.translation?.("linkPreview.edit", "Edit link URL")).toBe("Edit");
   });
 
+  it("inserts a selected mention at the active mid-text caret position", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="before @rud after"
+          onChange={onChange}
+          mentions={[
+            {
+              id: "agent:agent-1",
+              name: "Rudder Bot",
+              kind: "agent",
+              agentId: "agent-1",
+              searchText: "rudder bot rud",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "before @rud".length);
+    await chooseMentionOption("agent:agent-1");
+
+    expect(onChange).toHaveBeenCalledWith("before [Rudder Bot](agent://agent-1) after");
+    await flushAnimationFrames();
+
+    const selection = window.getSelection();
+    expect(selection?.anchorNode?.textContent).toBe(" after");
+    expect(selection?.anchorOffset).toBe(1);
+    expect(mdxEditorMocks.focusCalls).toContainEqual({
+      defaultSelection: "rootEnd",
+      preventScroll: true,
+    });
+  });
+
+  it("keeps the caret on an editable boundary after a mention inserted at the end", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="hello @rud"
+          onChange={onChange}
+          mentions={[
+            {
+              id: "agent:agent-1",
+              name: "Rudder Bot",
+              kind: "agent",
+              agentId: "agent-1",
+              searchText: "rudder bot rud",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "hello @rud".length);
+    await chooseMentionOption("agent:agent-1");
+
+    expect(onChange).toHaveBeenCalledWith("hello [Rudder Bot](agent://agent-1) ");
+    await flushAnimationFrames();
+
+    const selection = window.getSelection();
+    expect(selection?.anchorNode?.nodeType).toBe(Node.TEXT_NODE);
+    expect(selection?.anchorNode?.textContent).toBe(" ");
+    expect(selection?.anchorOffset).toBe(1);
+
+    await act(async () => {
+      editable!.dispatchEvent(new KeyboardEvent("keydown", { key: "x", bubbles: true, cancelable: true }));
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith("hello [Rudder Bot](agent://agent-1) x");
+  });
+
+  it("keeps the caret after a mention selected with Tab in a plain text composer", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="asadsad. @ori"
+          onChange={onChange}
+          plainText
+          mentions={[
+            {
+              id: "agent:agent-1",
+              name: "Orion (Product Release Agent)",
+              kind: "agent",
+              agentId: "agent-1",
+              searchText: "orion product release agent ori",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "asadsad. @ori".length);
+
+    await act(async () => {
+      editable!.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledWith(
+      "asadsad. [Orion (Product Release Agent)](agent://agent-1) ",
+    );
+    await flushAnimationFrames();
+
+    const selection = window.getSelection();
+    expect(selection?.anchorNode?.nodeType).toBe(Node.TEXT_NODE);
+    expect(selection?.anchorNode?.textContent).toBe(" \u200B");
+    expect(selection?.anchorOffset).toBe(1);
+    expect(mdxEditorMocks.focusCalls).toContainEqual({
+      defaultSelection: "rootEnd",
+      preventScroll: true,
+    });
+
+    const copyData = {
+      setData: vi.fn(),
+    };
+    const range = document.createRange();
+    range.selectNodeContents(editable!);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const copyEvent = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copyEvent, "clipboardData", {
+      value: copyData,
+    });
+    editable!.dispatchEvent(copyEvent);
+
+    expect(copyData.setData).toHaveBeenCalled();
+    const copiedPlainText = copyData.setData.mock.calls.at(-1)?.[1] as string;
+    expect(copiedPlainText).toContain("asadsad. Orion (Product Release Agent) ");
+    expect(copiedPlainText).not.toContain("\u200B");
+  });
+
+  it("replaces only the active repeated mention query", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="@rud first and @rud second"
+          onChange={onChange}
+          mentions={[
+            {
+              id: "project:project-1",
+              name: "Rudder Project",
+              kind: "project",
+              projectId: "project-1",
+              searchText: "rudder project rud",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "@rud first and @rud".length);
+    await chooseMentionOption("project:project-1");
+
+    expect(onChange).toHaveBeenCalledWith("@rud first and [Rudder Project](project://project-1) second");
+  });
+
+  it("uses $ as the active range for skill mentions", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="ask $mem now"
+          onChange={onChange}
+          mentions={[
+            {
+              id: "skill:memory",
+              name: "Memory",
+              kind: "skill",
+              skillRefLabel: "memory",
+              skillMarkdownTarget: "skill://memory",
+              searchText: "memory mem",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "ask $mem".length);
+    await chooseMentionOption("skill:memory");
+
+    expect(onChange).toHaveBeenCalledWith("ask [memory](skill://memory) now");
+  });
+
+  it("supports keyboard selection and keeps the active mention option visible", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="@rud now"
+          onChange={onChange}
+          mentions={[
+            {
+              id: "agent:agent-1",
+              name: "Rudder One",
+              kind: "agent",
+              agentId: "agent-1",
+              searchText: "rudder one rud",
+            },
+            {
+              id: "agent:agent-2",
+              name: "Rudder Two",
+              kind: "agent",
+              agentId: "agent-2",
+              searchText: "rudder two rud",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "@rud".length);
+
+    const menu = document.body.querySelector('[data-testid="markdown-mention-menu"]');
+    expect(menu?.className).toContain("scrollbar-auto-hide");
+    expect(menu?.getAttribute("role")).toBe("listbox");
+
+    await act(async () => {
+      editable!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    });
+
+    const secondOption = document.body.querySelector('[data-testid="markdown-mention-option-agent:agent-2"]');
+    expect(secondOption?.getAttribute("aria-selected")).toBe("true");
+    expect(menu?.getAttribute("aria-activedescendant")).toBe("markdown-mention-option-agent:agent-2");
+    expect(scrollIntoView).toHaveBeenCalled();
+
+    await act(async () => {
+      editable!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledWith("[Rudder Two](agent://agent-2) now");
+  });
+
+  it("includes skill options in @ mention results", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="@build"
+          onChange={() => undefined}
+          mentions={[
+            {
+              id: "skill:build-advisor",
+              name: "build-advisor",
+              kind: "skill",
+              skillRefLabel: "build-advisor",
+              skillMarkdownTarget: "/skills/build-advisor/SKILL.md",
+              searchText: "build advisor",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "@build".length);
+
+    const menu = document.body.querySelector('[data-testid="markdown-mention-menu"]');
+    expect(menu?.textContent).toContain("build-advisor");
+    expect(document.body.querySelector('[data-testid="markdown-mention-option-skill:build-advisor"]')).not.toBeNull();
+  });
+
+  it("keeps entity options out of $ mention results", async () => {
+    const restoreCaretRect = stubCaretRect();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="$rud"
+          onChange={() => undefined}
+          mentions={[
+            {
+              id: "agent:agent-1",
+              name: "Rudder Bot",
+              kind: "agent",
+              agentId: "agent-1",
+              searchText: "rudder bot",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, "$rud".length);
+
+    expect(document.body.querySelector('[data-testid="markdown-mention-menu"]')).toBeNull();
+  });
+
+  it("renders container skill mentions with chat composer styling", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const restoreCaretRect = stubCaretRect();
+
+    cleanupFn = () => {
+      restoreCaretRect();
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <MarkdownEditor
+          value="$build"
+          onChange={() => undefined}
+          mentionMenuPlacement="container"
+          mentions={[
+            {
+              id: "skill:build-advisor",
+              name: "build-advisor",
+              kind: "skill",
+              skillRefLabel: "build-advisor",
+              skillMarkdownTarget: "/skills/build-advisor/SKILL.md",
+              skillDisplayName: "Build Advisor",
+              skillDescription: "Professional diagnosis for weak product or implementation results.",
+              skillCategoryLabel: "Org",
+              searchText: "build advisor product implementation",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const editable = container.querySelector('[contenteditable="true"]');
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, 6);
+
+    const menu = document.body.querySelector('[data-testid="markdown-mention-menu"]');
+    expect(menu?.className).toContain("chat-composer-context-menu");
+    expect(menu?.getAttribute("role")).toBe("menu");
+
+    const option = document.body.querySelector('[data-testid="markdown-mention-option-skill:build-advisor"]');
+    expect(option?.className).toContain("chat-composer-menu-row");
+    expect(option?.getAttribute("role")).toBe("menuitem");
+    expect(option?.getAttribute("data-chat-composer-menu-item")).toBe("true");
+    expect(option?.textContent).toContain("Build Advisor");
+    expect(option?.textContent).toContain("Org");
+    expect(option?.textContent).toContain("Professional diagnosis");
+    expect(option?.textContent).not.toContain("Skill");
+  });
+
   it("renders issue mention options with status, project, and assignee metadata", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
-    const originalGetBoundingClientRect = Range.prototype.getBoundingClientRect;
-    Range.prototype.getBoundingClientRect = () => ({
-      x: 120,
-      y: 240,
-      width: 1,
-      height: 18,
-      top: 240,
-      right: 121,
-      bottom: 258,
-      left: 120,
-      toJSON: () => undefined,
-    });
+    const restoreCaretRect = stubCaretRect();
 
     cleanupFn = () => {
-      Range.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      restoreCaretRect();
       act(() => {
         root.unmount();
       });
@@ -372,18 +945,8 @@ describe("MarkdownEditor", () => {
     });
 
     const editable = container.querySelector('[contenteditable="true"]');
-    const textNode = editable?.firstChild;
-    expect(textNode?.nodeType).toBe(Node.TEXT_NODE);
-
-    await act(async () => {
-      const range = document.createRange();
-      range.setStart(textNode!, 4);
-      range.collapse(true);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      document.dispatchEvent(new Event("selectionchange"));
-    });
+    expect(editable).toBeTruthy();
+    await placeCaretAndOpenMentionMenu(editable!, 4);
 
     const menu = document.body.querySelector('[data-testid="markdown-mention-menu"]');
     expect(menu?.textContent).toContain("RUD-28 Add icon for opening a file in IDE");

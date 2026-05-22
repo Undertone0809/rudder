@@ -28,6 +28,10 @@ import {
   thematicBreakPlugin,
   type Translation,
   type RealmPlugin,
+  type MdastImportVisitor,
+  realmPlugin,
+  addImportVisitor$,
+  createRootEditorSubscription$,
 } from "@mdxeditor/editor";
 import { Boxes } from "lucide-react";
 import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
@@ -36,11 +40,14 @@ import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
 import { AgentIcon } from "./AgentIconPicker";
 import {
+  $createParagraphNode,
   $createRangeSelection,
+  $createTextNode,
   $getRoot,
   $isElementNode,
   $isTextNode,
   $setSelection,
+  type LexicalEditor,
   type LexicalNode,
   type TextNode,
 } from "lexical";
@@ -52,7 +59,7 @@ import {
 } from "../lib/mention-chips";
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
 import { mentionDeletionPlugin } from "../lib/mention-deletion";
-import { mentionTokenPlugin } from "../lib/mention-token-node";
+import { $createMentionTokenNode, mentionTokenPlugin } from "../lib/mention-token-node";
 import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { projectColorBackgroundStyle } from "../lib/project-colors";
 import {
@@ -62,547 +69,25 @@ import {
 } from "../lib/skill-reference";
 import {
   findAdjacentAtomicInlineTokenElement,
+  readAtomicInlineTokenElement,
   removeAtomicInlineTokenFromMarkdown,
   type AtomicInlineTokenElement,
 } from "../lib/inline-token-dom";
-import { skillTokenPlugin } from "../lib/skill-token-node";
+import { $createSkillTokenNode, skillTokenPlugin } from "../lib/skill-token-node";
+import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { cn } from "../lib/utils";
+import { MentionOption, MarkdownEditorProps, MarkdownEditorRef, CaretTarget, INLINE_CARET_BOUNDARY, escapeRegExp, isSafeMarkdownLinkUrl, normalizePlainTextComposerMarkdown, findCanonicalReferenceCandidates, hasCanonicalRudderReference, getMdastSourceSlice, getMdastLinkLabel, appendPlainTextMarkdownNode, plainTextMarkdownImportPlugin, canonicalMarkdownFromFragment, getLastCaretTarget, placeCaretNearInlineToken, getVisibleTextOffsetBeforeNode, getVisibleTextOffsetAtPosition, findFirstTextNodeInSubtree, findFirstTextNodeAfterNode, placeCaretAfterAtomicInlineToken, placeCaretAtVisibleTextOffset, LexicalTextPosition, findLexicalTextPositionAtOffset, selectLexicalTextOffset, focusLexicalTextOffset, closestAtomicInlineToken, AtomicInlineTokenEvent, stopAtomicInlineTokenEvent, MentionState, MENTION_MENU_MIN_WIDTH, MENTION_MENU_DEFAULT_WIDTH, MENTION_MENU_MAX_HEIGHT, MENTION_PANEL_MAX_HEIGHT, MENTION_MENU_VIEWPORT_PADDING, MENTION_MENU_OFFSET, MENTION_PANEL_OFFSET, MentionMenuAnchor, MentionMenuContainerAnchor, CODE_BLOCK_LANGUAGES, FALLBACK_CODE_BLOCK_DESCRIPTOR, EmptyImageToolbar, mdxEditorTranslations, detectMention, clamp, getPreviewImageName, getMentionMenuPositionForViewport, getMentionPanelPositionForViewport, getMentionPanelPosition, getMentionMenuPosition, statusLabel, mentionMarkdown, mentionVisibleLabel, mentionTokenDetails, getAllSubstringIndexes, countSubstringOccurrences, commonSuffixLength, commonPrefixLength, getVisibleMentionOrdinal, findActiveMentionIndex, applyMention, replaceMentionInLexicalEditor, rootEditorCapturePlugin } from "./MarkdownEditor.parts";
+
+export type {
+  MentionOption,
+  MarkdownEditorRef,
+} from "./MarkdownEditor.parts";
+export {
+  getMentionMenuPositionForViewport,
+  getMentionPanelPositionForViewport,
+} from "./MarkdownEditor.parts";
 
 /* ---- Mention types ---- */
-
-export interface MentionOption {
-  id: string;
-  name: string;
-  kind?: "agent" | "project" | "issue" | "skill";
-  searchText?: string;
-  agentId?: string;
-  agentIcon?: string | null;
-  agentRole?: AgentRole | null;
-  projectId?: string;
-  projectColor?: string | null;
-  issueId?: string;
-  issueIdentifier?: string | null;
-  issueStatus?: string | null;
-  issueProjectName?: string | null;
-  issueProjectColor?: string | null;
-  issueAssigneeName?: string | null;
-  issueAssigneeIcon?: string | null;
-  issueAssigneeRole?: AgentRole | null;
-  skillRefLabel?: string | null;
-  skillMarkdownTarget?: string | null;
-  skillDisplayName?: string | null;
-  skillDescription?: string | null;
-}
-
-/* ---- Editor props ---- */
-
-interface MarkdownEditorProps {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  className?: string;
-  contentClassName?: string;
-  onBlur?: () => void;
-  imageUploadHandler?: (file: File) => Promise<string>;
-  bordered?: boolean;
-  /** List of mentionable entities. Enables @-mention autocomplete. */
-  mentions?: MentionOption[];
-  /** Optional surface used to align the mention menu for larger composer UIs. */
-  mentionMenuAnchorRef?: RefObject<HTMLElement | null>;
-  mentionMenuPlacement?: "caret" | "container";
-  /** Called according to submitShortcut. */
-  onSubmit?: () => void;
-  submitShortcut?: "mod-enter" | "enter";
-}
-
-export interface MarkdownEditorRef {
-  focus: () => void;
-}
-
-type CaretTarget =
-  | { kind: "text"; node: Text; offset: number }
-  | { kind: "after"; node: Node }
-  | { kind: "inside"; node: Node; offset: number };
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function isSafeMarkdownLinkUrl(url: string): boolean {
-  const trimmed = url.trim();
-  if (!trimmed) return true;
-  return !/^(javascript|data|vbscript):/i.test(trimmed);
-}
-
-function getLastCaretTarget(node: Node): CaretTarget {
-  if (node.nodeType === Node.TEXT_NODE) {
-    const textNode = node as Text;
-    return { kind: "text", node: textNode, offset: textNode.textContent?.length ?? 0 };
-  }
-
-  if (
-    node instanceof HTMLElement
-    && (node.dataset.skillToken === "true" || node.dataset.mentionKind)
-  ) {
-    return { kind: "after", node };
-  }
-
-  for (let index = node.childNodes.length - 1; index >= 0; index -= 1) {
-    const target = getLastCaretTarget(node.childNodes[index]!);
-    if (target) return target;
-  }
-
-  return { kind: "inside", node, offset: node.childNodes.length };
-}
-
-function placeCaretNearInlineToken(token: HTMLElement) {
-  const editable = token.closest('[contenteditable="true"]');
-  if (!(editable instanceof HTMLElement)) return;
-
-  editable.focus();
-
-  const selection = window.getSelection();
-  if (!selection) return;
-
-  const range = document.createRange();
-  // Contenteditable=false inline chips are a brittle selection boundary for
-  // Lexical. A click on the chip should leave the user in the useful editing
-  // position: after the chip, where Backspace can remove it and typing can
-  // continue normally.
-  range.setStartAfter(token);
-  range.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
-
-function getVisibleTextOffsetBeforeNode(editable: HTMLElement, node: Node) {
-  const range = document.createRange();
-  range.setStart(editable, 0);
-  range.setEndBefore(node);
-  return range.toString().length;
-}
-
-function placeCaretAtVisibleTextOffset(editable: HTMLElement, offset: number) {
-  editable.focus();
-
-  const selection = window.getSelection();
-  if (!selection) return;
-
-  const walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT);
-  let remaining = Math.max(0, offset);
-  let lastTextNode: Text | null = null;
-
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text;
-    lastTextNode = node;
-    const length = node.textContent?.length ?? 0;
-    if (remaining <= length) {
-      const range = document.createRange();
-      range.setStart(node, remaining);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      return;
-    }
-    remaining -= length;
-  }
-
-  const range = document.createRange();
-  if (lastTextNode) {
-    range.setStart(lastTextNode, lastTextNode.textContent?.length ?? 0);
-  } else {
-    range.setStart(editable, editable.childNodes.length);
-  }
-  range.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
-
-type LexicalTextPosition = {
-  node: TextNode;
-  offset: number;
-};
-
-function findLexicalTextPositionAtOffset(
-  node: LexicalNode,
-  remainingOffset: { value: number },
-  lastTextPosition: { value: LexicalTextPosition | null },
-): LexicalTextPosition | null {
-  if ($isTextNode(node)) {
-    const length = node.getTextContentSize();
-    lastTextPosition.value = { node, offset: length };
-    if (remainingOffset.value <= length) {
-      return { node, offset: Math.max(0, remainingOffset.value) };
-    }
-    remainingOffset.value -= length;
-    return null;
-  }
-
-  if (!$isElementNode(node)) return null;
-
-  for (const child of node.getChildren()) {
-    const match = findLexicalTextPositionAtOffset(child, remainingOffset, lastTextPosition);
-    if (match) return match;
-  }
-
-  return null;
-}
-
-function selectLexicalTextOffset(offset: number) {
-  const root = $getRoot();
-  const remainingOffset = { value: Math.max(0, offset) };
-  const lastTextPosition = { value: null as LexicalTextPosition | null };
-  const position = findLexicalTextPositionAtOffset(root, remainingOffset, lastTextPosition)
-    ?? lastTextPosition.value;
-
-  if (!position) {
-    root.selectEnd();
-    return;
-  }
-
-  const selection = $createRangeSelection();
-  selection.anchor.set(position.node.getKey(), position.offset, "text");
-  selection.focus.set(position.node.getKey(), position.offset, "text");
-  $setSelection(selection);
-}
-
-function closestAtomicInlineToken(target: EventTarget | null): HTMLElement | null {
-  const element = target instanceof HTMLElement
-    ? target
-    : target instanceof Node
-      ? target.parentElement
-      : null;
-  if (!element) return null;
-  const token = element.closest("[data-skill-token='true'], [data-mention-kind]");
-  return token instanceof HTMLElement ? token : null;
-}
-
-type AtomicInlineTokenEvent = {
-  target: EventTarget | null;
-  nativeEvent: Event & { stopImmediatePropagation?: () => void };
-  preventDefault: () => void;
-  stopPropagation: () => void;
-  clientX?: number;
-};
-
-function stopAtomicInlineTokenEvent(
-  event: AtomicInlineTokenEvent,
-  options: { placeCaret?: boolean } = {},
-) {
-  const token = closestAtomicInlineToken(event.target);
-  if (!token) return false;
-  event.preventDefault();
-  event.stopPropagation();
-  event.nativeEvent.stopImmediatePropagation?.();
-  if (options.placeCaret && typeof event.clientX === "number") {
-    placeCaretNearInlineToken(token);
-  }
-  return true;
-}
-
-/* ---- Mention detection helpers ---- */
-
-interface MentionState {
-  query: string;
-  top: number;
-  left: number;
-  viewportTop: number;
-  viewportBottom: number;
-  viewportLeft: number;
-  textNode: Text;
-  atPos: number;
-  endPos: number;
-}
-
-const MENTION_MENU_MIN_WIDTH = 180;
-const MENTION_MENU_MAX_HEIGHT = 200;
-const MENTION_PANEL_MAX_HEIGHT = 360;
-const MENTION_MENU_VIEWPORT_PADDING = 12;
-const MENTION_MENU_OFFSET = 4;
-const MENTION_PANEL_OFFSET = 10;
-
-export interface MentionMenuAnchor {
-  viewportTop: number;
-  viewportBottom: number;
-  viewportLeft: number;
-}
-
-export interface MentionMenuContainerAnchor {
-  viewportTop: number;
-  viewportBottom: number;
-  viewportLeft: number;
-  viewportRight: number;
-}
-
-const CODE_BLOCK_LANGUAGES: Record<string, string> = {
-  txt: "Text",
-  md: "Markdown",
-  js: "JavaScript",
-  jsx: "JavaScript (JSX)",
-  ts: "TypeScript",
-  tsx: "TypeScript (TSX)",
-  json: "JSON",
-  bash: "Bash",
-  sh: "Shell",
-  python: "Python",
-  go: "Go",
-  rust: "Rust",
-  sql: "SQL",
-  html: "HTML",
-  css: "CSS",
-  yaml: "YAML",
-  yml: "YAML",
-};
-
-const FALLBACK_CODE_BLOCK_DESCRIPTOR: CodeBlockEditorDescriptor = {
-  // Keep this lower than codeMirrorPlugin's descriptor priority so known languages
-  // still use the standard matching path; this catches malformed/unknown fences.
-  priority: 0,
-  match: () => true,
-  Editor: CodeMirrorEditor,
-};
-
-function EmptyImageToolbar() {
-  return null;
-}
-
-const mdxEditorTranslations: Translation = (key, defaultValue, interpolations) => {
-  const overrides: Record<string, string> = {
-    "createLink.url": "Page or URL",
-    "createLink.urlPlaceholder": "Paste a URL",
-    "createLink.text": "Link title",
-    "createLink.textTooltip": "The text shown for this link",
-    "createLink.saveTooltip": "Apply link changes",
-    "createLink.cancelTooltip": "Cancel",
-    "dialogControls.save": "Done",
-    "dialogControls.cancel": "Cancel",
-    "linkPreview.edit": "Edit",
-    "linkPreview.copyToClipboard": "Copy link",
-    "linkPreview.copied": "Copied",
-    "linkPreview.remove": "Remove Link",
-  };
-  const template = overrides[key] ?? defaultValue;
-  if (!interpolations) return template;
-  return Object.entries(interpolations).reduce(
-    (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
-    template,
-  );
-};
-
-function detectMention(container: HTMLElement): MentionState | null {
-  const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return null;
-
-  const range = sel.getRangeAt(0);
-  const textNode = range.startContainer;
-  if (textNode.nodeType !== Node.TEXT_NODE) return null;
-  if (!container.contains(textNode)) return null;
-
-  const text = textNode.textContent ?? "";
-  const offset = range.startOffset;
-
-  // Walk backwards from cursor to find @
-  let atPos = -1;
-  for (let i = offset - 1; i >= 0; i--) {
-    const ch = text[i];
-    if (ch === "@") {
-      if (i === 0 || /\s/.test(text[i - 1])) {
-        atPos = i;
-      }
-      break;
-    }
-    if (/\s/.test(ch)) break;
-  }
-
-  if (atPos === -1) return null;
-
-  const query = text.slice(atPos + 1, offset);
-
-  // Get position relative to container
-  const tempRange = document.createRange();
-  tempRange.setStart(textNode, atPos);
-  tempRange.setEnd(textNode, atPos + 1);
-  const rect = tempRange.getBoundingClientRect();
-  const containerRect = container.getBoundingClientRect();
-
-  return {
-    query,
-    top: rect.bottom - containerRect.top,
-    left: rect.left - containerRect.left,
-    viewportTop: rect.top,
-    viewportBottom: rect.bottom,
-    viewportLeft: rect.left,
-    textNode: textNode as Text,
-    atPos,
-    endPos: offset,
-  };
-}
-
-function clamp(value: number, min: number, max: number) {
-  if (max <= min) return min;
-  return Math.min(Math.max(value, min), max);
-}
-
-function getPreviewImageName(image: HTMLImageElement) {
-  const alt = image.getAttribute("alt")?.trim();
-  if (alt) return alt;
-  try {
-    const url = new URL(image.currentSrc || image.src, window.location.href);
-    const filename = url.pathname.split("/").pop()?.trim();
-    if (filename) return decodeURIComponent(filename);
-  } catch {
-    // Ignore malformed URLs and fall back to a generic label.
-  }
-  return "Image preview";
-}
-
-export function getMentionMenuPositionForViewport(
-  state: MentionMenuAnchor,
-  viewportWidth: number,
-  viewportHeight: number,
-) {
-  const maxWidth = Math.max(
-    MENTION_MENU_MIN_WIDTH,
-    viewportWidth - MENTION_MENU_VIEWPORT_PADDING * 2,
-  );
-  const availableBelow = Math.max(
-    0,
-    viewportHeight - state.viewportBottom - MENTION_MENU_VIEWPORT_PADDING - MENTION_MENU_OFFSET,
-  );
-  const availableAbove = Math.max(
-    0,
-    state.viewportTop - MENTION_MENU_VIEWPORT_PADDING - MENTION_MENU_OFFSET,
-  );
-  const openUpward = availableBelow < 140 && availableAbove > availableBelow;
-  const maxHeight = Math.max(
-    96,
-    Math.min(
-      MENTION_MENU_MAX_HEIGHT,
-      openUpward ? availableAbove : availableBelow,
-    ),
-  );
-  const left = clamp(
-    state.viewportLeft,
-    MENTION_MENU_VIEWPORT_PADDING,
-    viewportWidth - MENTION_MENU_VIEWPORT_PADDING - MENTION_MENU_MIN_WIDTH,
-  );
-
-  if (openUpward) {
-    return {
-      left,
-      bottom: viewportHeight - state.viewportTop + MENTION_MENU_OFFSET,
-      maxHeight,
-      maxWidth,
-    } as const;
-  }
-
-  return {
-    left,
-    top: state.viewportBottom + MENTION_MENU_OFFSET,
-    maxHeight,
-    maxWidth,
-  } as const;
-}
-
-export function getMentionPanelPositionForViewport(
-  state: MentionMenuContainerAnchor,
-  viewportWidth: number,
-  viewportHeight: number,
-) {
-  const availableWidth = Math.max(
-    MENTION_MENU_MIN_WIDTH,
-    viewportWidth - MENTION_MENU_VIEWPORT_PADDING * 2,
-  );
-  const desiredWidth = clamp(
-    state.viewportRight - state.viewportLeft,
-    MENTION_MENU_MIN_WIDTH,
-    availableWidth,
-  );
-  const left = clamp(
-    state.viewportLeft,
-    MENTION_MENU_VIEWPORT_PADDING,
-    viewportWidth - MENTION_MENU_VIEWPORT_PADDING - desiredWidth,
-  );
-  const availableBelow = Math.max(
-    0,
-    viewportHeight - state.viewportBottom - MENTION_MENU_VIEWPORT_PADDING - MENTION_PANEL_OFFSET,
-  );
-  const availableAbove = Math.max(
-    0,
-    state.viewportTop - MENTION_MENU_VIEWPORT_PADDING - MENTION_PANEL_OFFSET,
-  );
-  const openUpward = availableAbove >= 128 || availableAbove >= availableBelow;
-  const maxHeight = Math.max(
-    128,
-    Math.min(
-      MENTION_PANEL_MAX_HEIGHT,
-      openUpward ? availableAbove : availableBelow,
-    ),
-  );
-
-  if (openUpward) {
-    return {
-      left,
-      width: desiredWidth,
-      bottom: viewportHeight - state.viewportTop + MENTION_PANEL_OFFSET,
-      maxHeight,
-    } as const;
-  }
-
-  return {
-    left,
-    width: desiredWidth,
-    top: state.viewportBottom + MENTION_PANEL_OFFSET,
-    maxHeight,
-  } as const;
-}
-
-function getMentionPanelPosition(anchor: HTMLElement) {
-  const rect = anchor.getBoundingClientRect();
-  return getMentionPanelPositionForViewport(
-    {
-      viewportTop: rect.top,
-      viewportBottom: rect.bottom,
-      viewportLeft: rect.left,
-      viewportRight: rect.right,
-    },
-    window.innerWidth,
-    window.innerHeight,
-  );
-}
-
-function getMentionMenuPosition(state: MentionState) {
-  return getMentionMenuPositionForViewport(state, window.innerWidth, window.innerHeight);
-}
-
-function statusLabel(status: string): string {
-  return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function mentionMarkdown(option: MentionOption): string {
-  if (option.kind === "skill" && option.skillMarkdownTarget && option.skillRefLabel) {
-    return `[${option.skillRefLabel}](${option.skillMarkdownTarget}) `;
-  }
-  if (option.kind === "issue" && option.issueId) {
-    return `[${option.name}](${buildIssueMentionHref(option.issueId, option.issueIdentifier ?? null)}) `;
-  }
-  if (option.kind === "project" && option.projectId) {
-    return `[${option.name}](${buildProjectMentionHref(option.projectId, option.projectColor ?? null)}) `;
-  }
-  const agentId = option.agentId ?? option.id.replace(/^agent:/, "");
-  return `[${option.name}](${buildAgentMentionHref(agentId, option.agentIcon ?? null)}) `;
-}
-
-/** Replace `@<query>` in the markdown string with the selected mention token. */
-function applyMention(markdown: string, query: string, option: MentionOption): string {
-  const search = `@${query}`;
-  const replacement = mentionMarkdown(option);
-  const idx = markdown.lastIndexOf(search);
-  if (idx === -1) return markdown;
-  return markdown.slice(0, idx) + replacement + markdown.slice(idx + search.length);
-}
-
-/* ---- Component ---- */
 
 export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(function MarkdownEditor({
   value,
@@ -618,10 +103,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
   mentionMenuPlacement = "caret",
   onSubmit,
   submitShortcut = "mod-enter",
+  plainText = false,
 }: MarkdownEditorProps, forwardedRef) {
   const { locale } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const ref = useRef<MDXEditorMethods>(null);
+  const lexicalEditorRef = useRef<LexicalEditor | null>(null);
   const latestValueRef = useRef(value);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -635,7 +122,18 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
   // Mention state (ref kept in sync so callbacks always see the latest value)
   const [mentionState, setMentionState] = useState<MentionState | null>(null);
   const mentionStateRef = useRef<MentionState | null>(null);
+  const pendingMentionInputRef = useRef<{
+    markdownOffset: number;
+    visibleOffset: number;
+  } | null>(null);
+  const pendingMentionInputClearTimerRef = useRef<number | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionMenuElementRef = useRef<HTMLDivElement | null>(null);
+  const mentionMenuScrollbarRef = useScrollbarActivityRef();
+  const setMentionMenuElement = useCallback((element: HTMLDivElement | null) => {
+    mentionMenuElementRef.current = element;
+    mentionMenuScrollbarRef(element);
+  }, [mentionMenuScrollbarRef]);
   const mentionActive = mentionState !== null && mentions && mentions.length > 0;
   const mentionOptionByKey = useMemo(() => {
     const map = new Map<string, MentionOption>();
@@ -659,11 +157,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     const q = mentionState.query.toLowerCase();
     return mentions
       .filter((mention) => {
+        if (mentionState.trigger === "$") {
+          if (mention.kind !== "skill") return false;
+        }
         const searchText = (mention.searchText ?? mention.name).toLowerCase();
         return searchText.includes(q);
       })
       .slice(0, 8);
-  }, [mentionState?.query, mentions]);
+  }, [mentionState?.query, mentionState?.trigger, mentions]);
   const mentionMenuPosition = useMemo(
     () => {
       if (!mentionState) return null;
@@ -696,6 +197,16 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     return groups;
   }, [filteredMentions]);
 
+  useEffect(() => {
+    if (!mentionActive || filteredMentions.length === 0) return;
+    const menu = mentionMenuElementRef.current;
+    if (!menu) return;
+    const option = menu.querySelector(`[data-mention-option-index="${mentionIndex}"]`);
+    if (!(option instanceof HTMLElement)) return;
+    if (typeof option.scrollIntoView !== "function") return;
+    option.scrollIntoView({ block: "nearest" });
+  }, [filteredMentions.length, mentionActive, mentionIndex]);
+
   const focusEditorAtEnd = useCallback(() => {
     ref.current?.focus(undefined, { defaultSelection: "rootEnd" });
 
@@ -722,6 +233,55 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     });
   }, []);
 
+  const clearPendingMentionInputSoon = useCallback(() => {
+    if (pendingMentionInputClearTimerRef.current !== null) {
+      window.clearTimeout(pendingMentionInputClearTimerRef.current);
+    }
+    pendingMentionInputClearTimerRef.current = window.setTimeout(() => {
+      pendingMentionInputRef.current = null;
+      pendingMentionInputClearTimerRef.current = null;
+    }, 750);
+  }, []);
+
+  const clearPendingMentionInput = useCallback(() => {
+    if (pendingMentionInputClearTimerRef.current !== null) {
+      window.clearTimeout(pendingMentionInputClearTimerRef.current);
+      pendingMentionInputClearTimerRef.current = null;
+    }
+    pendingMentionInputRef.current = null;
+  }, []);
+
+  const insertPendingMentionText = useCallback((text: string) => {
+    const pendingMentionInput = pendingMentionInputRef.current;
+    if (!pendingMentionInput) return false;
+
+    const current = latestValueRef.current;
+    const next = current.slice(0, pendingMentionInput.markdownOffset)
+      + text
+      + current.slice(pendingMentionInput.markdownOffset);
+    pendingMentionInput.markdownOffset += text.length;
+    pendingMentionInput.visibleOffset += text.length;
+    latestValueRef.current = next;
+    ref.current?.setMarkdown(next);
+    onChange(next);
+    clearPendingMentionInputSoon();
+
+    requestAnimationFrame(() => {
+      const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+      if (!(editable instanceof HTMLElement)) return;
+      const lexicalEditor = lexicalEditorRef.current;
+      if (lexicalEditor) {
+        focusLexicalTextOffset(lexicalEditor, pendingMentionInput.visibleOffset);
+      } else {
+        ref.current?.focus(() => {
+          selectLexicalTextOffset(pendingMentionInput.visibleOffset);
+        }, { defaultSelection: "rootEnd", preventScroll: true });
+      }
+      placeCaretAtVisibleTextOffset(editable, pendingMentionInput.visibleOffset);
+    });
+    return true;
+  }, [clearPendingMentionInputSoon, onChange]);
+
   const removeAtomicToken = useCallback((token: AtomicInlineTokenElement) => {
     const current = latestValueRef.current;
     const next = removeAtomicInlineTokenFromMarkdown(current, token);
@@ -745,6 +305,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     };
 
     latestValueRef.current = next;
+    if (plainText && caretOffset !== null) {
+      const insertionOffset = Math.min(caretOffset, next.length);
+      pendingMentionInputRef.current = {
+        markdownOffset: insertionOffset,
+        visibleOffset: insertionOffset,
+      };
+      clearPendingMentionInputSoon();
+    }
     ref.current?.setMarkdown(next);
     onChange(next);
     restoreCaret();
@@ -753,7 +321,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       requestAnimationFrame(restoreCaret);
     });
     return true;
-  }, [focusEditorAtEnd, onChange]);
+  }, [clearPendingMentionInputSoon, focusEditorAtEnd, onChange, plainText]);
 
   const removeAdjacentAtomicToken = useCallback((direction: "backward" | "forward") => {
     const selection = window.getSelection();
@@ -811,28 +379,39 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         }
       : undefined;
     const all: RealmPlugin[] = [
-      headingsPlugin(),
-      listsPlugin(),
-      quotePlugin(),
-      tablePlugin(),
-      linkPlugin({ validateUrl: isSafeMarkdownLinkUrl }),
-      linkDialogPlugin({ showLinkTitleField: false }),
+      rootEditorCapturePlugin((editor) => {
+        lexicalEditorRef.current = editor;
+      }),
+      ...(plainText
+        ? [plainTextMarkdownImportPlugin(() => latestValueRef.current)]
+        : [
+            headingsPlugin(),
+            listsPlugin(),
+            quotePlugin(),
+            tablePlugin(),
+            linkPlugin({ validateUrl: isSafeMarkdownLinkUrl }),
+            linkDialogPlugin({ showLinkTitleField: false }),
+          ]),
       mentionTokenPlugin(),
       skillTokenPlugin(),
       mentionDeletionPlugin(),
-      thematicBreakPlugin(),
-      codeBlockPlugin({
-        defaultCodeBlockLanguage: "txt",
-        codeBlockEditorDescriptors: [FALLBACK_CODE_BLOCK_DESCRIPTOR],
-      }),
-      codeMirrorPlugin({ codeBlockLanguages: CODE_BLOCK_LANGUAGES }),
-      markdownShortcutPlugin(),
+      ...(plainText
+        ? []
+        : [
+            thematicBreakPlugin(),
+            codeBlockPlugin({
+              defaultCodeBlockLanguage: "txt",
+              codeBlockEditorDescriptors: [FALLBACK_CODE_BLOCK_DESCRIPTOR],
+            }),
+            codeMirrorPlugin({ codeBlockLanguages: CODE_BLOCK_LANGUAGES }),
+            markdownShortcutPlugin(),
+          ]),
     ];
     if (imageHandler) {
       all.push(imagePlugin({ imageUploadHandler: imageHandler, EditImageToolbar: EmptyImageToolbar }));
     }
     return all;
-  }, [focusEditorAtEnd, hasImageUpload]);
+  }, [focusEditorAtEnd, hasImageUpload, plainText]);
 
   useEffect(() => {
     if (value !== latestValueRef.current) {
@@ -840,6 +419,26 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       latestValueRef.current = value;
     }
   }, [value]);
+
+  useEffect(() => {
+    if (!plainText) return;
+
+    const handleCopy = (event: ClipboardEvent) => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+      const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+      if (!(editable instanceof HTMLElement)) return;
+      if (!editable.contains(selection.anchorNode) || !editable.contains(selection.focusNode)) return;
+
+      const canonicalText = canonicalMarkdownFromFragment(selection.getRangeAt(0).cloneContents());
+      if (!canonicalText) return;
+      event.clipboardData?.setData("text/plain", canonicalText);
+      event.preventDefault();
+    };
+
+    document.addEventListener("copy", handleCopy, true);
+    return () => document.removeEventListener("copy", handleCopy, true);
+  }, [plainText]);
 
   const decorateInlineTokens = useCallback(() => {
     const editable = containerRef.current?.querySelector('[contenteditable="true"]');
@@ -989,11 +588,43 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       const state = mentionStateRef.current;
       if (!state) return;
       const current = latestValueRef.current;
-      const next = applyMention(current, state.query, option);
+      const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+      const editableElement = editable instanceof HTMLElement ? editable : null;
+      const visibleMentionStart = editableElement && editableElement.contains(state.textNode)
+        ? getVisibleTextOffsetAtPosition(editableElement, state.textNode, state.atPos)
+        : null;
+      const replacement = mentionMarkdown(option);
+      const activeMarkdownIndex = findActiveMentionIndex(current, state, editableElement);
+      const next = applyMention(current, state, option, editableElement);
+      const editorNext = plainText && activeMarkdownIndex !== -1
+        ? next.slice(0, activeMarkdownIndex + replacement.length)
+          + INLINE_CARET_BOUNDARY
+          + next.slice(activeMarkdownIndex + replacement.length)
+        : next;
+      const fallbackCaretOffset = visibleMentionStart !== null
+        ? visibleMentionStart + mentionVisibleLabel(option).length + 1
+        : null;
+      let didReplaceInLexical = false;
       if (next !== current) {
         latestValueRef.current = next;
-        ref.current?.setMarkdown(next);
+        if (activeMarkdownIndex !== -1 && visibleMentionStart !== null) {
+          pendingMentionInputRef.current = {
+            markdownOffset: activeMarkdownIndex + replacement.length,
+            visibleOffset: visibleMentionStart + mentionVisibleLabel(option).length + 1,
+          };
+          clearPendingMentionInputSoon();
+        }
+        const lexicalEditor = lexicalEditorRef.current;
+        didReplaceInLexical = Boolean(lexicalEditor && editableElement
+          ? replaceMentionInLexicalEditor(lexicalEditor, state, option, editableElement)
+          : false);
+        if (!didReplaceInLexical) {
+          ref.current?.setMarkdown(editorNext);
+        }
         onChange(next);
+        if (didReplaceInLexical && editorNext !== next) {
+          ref.current?.setMarkdown(editorNext);
+        }
       }
 
       requestAnimationFrame(() => {
@@ -1003,11 +634,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           decorateInlineTokens();
           editable.focus();
 
-          const matchingTargets = option.kind === "skill"
-            ? Array.from(editable.querySelectorAll("[data-skill-token='true']"))
+          const findMatchingTargets = (editableRoot: HTMLElement) => option.kind === "skill"
+            ? Array.from(editableRoot.querySelectorAll("[data-skill-token='true']"))
               .filter((node): node is HTMLElement => node instanceof HTMLElement)
               .filter((node) => node.textContent?.trim() === (option.skillRefLabel ?? option.name))
             : (() => {
+                const visibleLabel = mentionVisibleLabel(option);
                 const mentionHref = option.kind === "project" && option.projectId
                   ? buildProjectMentionHref(option.projectId, option.projectColor ?? null)
                   : option.kind === "issue" && option.issueId
@@ -1016,15 +648,16 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                         option.agentId ?? option.id.replace(/^agent:/, ""),
                         option.agentIcon ?? null,
                       );
-                return Array.from(editable.querySelectorAll("a"))
-                  .filter((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement)
+                return Array.from(editableRoot.querySelectorAll("a, [data-mention-href]"))
+                  .filter((node): node is HTMLElement => node instanceof HTMLElement)
                   .filter((link) => {
-                    const href = link.getAttribute("href") ?? "";
-                    return href === mentionHref && stripMentionChipLabelPrefix(link.textContent ?? "") === option.name;
+                    const href = link.dataset.mentionHref ?? link.getAttribute("href") ?? "";
+                    return href === mentionHref && stripMentionChipLabelPrefix(link.textContent ?? "") === visibleLabel;
                   });
               })();
+          const matchingTargets = findMatchingTargets(editable);
           const containerRect = containerRef.current?.getBoundingClientRect();
-          const target = matchingTargets.sort((a, b) => {
+          const sortByMentionAnchorDistance = (targets: HTMLElement[]) => targets.sort((a, b) => {
             const rectA = a.getBoundingClientRect();
             const rectB = b.getBoundingClientRect();
             const leftA = containerRect ? rectA.left - containerRect.left : rectA.left;
@@ -1034,35 +667,48 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
             const distA = Math.hypot(leftA - state.left, topA - state.top);
             const distB = Math.hypot(leftB - state.left, topB - state.top);
             return distA - distB;
-          })[0] ?? null;
-          if (!target) return;
+          });
+          const target = sortByMentionAnchorDistance(matchingTargets)[0] ?? null;
 
-          const selection = window.getSelection();
-          if (!selection) return;
-          const range = document.createRange();
-          const nextSibling = target.nextSibling;
-          if (nextSibling?.nodeType === Node.TEXT_NODE) {
-            const text = nextSibling.textContent ?? "";
-            if (text.startsWith(" ")) {
-              range.setStart(nextSibling, 1);
-              range.collapse(true);
-              selection.removeAllRanges();
-              selection.addRange(range);
+          const caretOffset = target
+            ? getVisibleTextOffsetBeforeNode(editable, target) + mentionVisibleLabel(option).length + 1
+            : fallbackCaretOffset;
+          if (caretOffset === null) return;
+          const restoreFallbackCaretAfterMention = () => {
+            const currentEditable = containerRef.current?.querySelector('[contenteditable="true"]');
+            if (!(currentEditable instanceof HTMLElement)) return;
+            const lexicalEditor = lexicalEditorRef.current;
+            if (lexicalEditor) {
+              focusLexicalTextOffset(lexicalEditor, caretOffset);
+            } else {
+              ref.current?.focus(() => {
+                selectLexicalTextOffset(caretOffset);
+              }, { defaultSelection: "rootEnd", preventScroll: true });
+            }
+            const currentTarget = target && currentEditable.contains(target)
+              ? target
+              : sortByMentionAnchorDistance(findMatchingTargets(currentEditable))[0] ?? null;
+            if (currentTarget && closestAtomicInlineToken(currentTarget)) {
+              placeCaretAfterAtomicInlineToken(currentEditable, currentTarget);
               return;
             }
-          }
+            placeCaretAtVisibleTextOffset(currentEditable, caretOffset);
+          };
 
-          range.setStartAfter(target);
-          range.collapse(true);
-          selection.removeAllRanges();
-          selection.addRange(range);
+          restoreFallbackCaretAfterMention();
+          requestAnimationFrame(() => {
+            restoreFallbackCaretAfterMention();
+            requestAnimationFrame(() => {
+              restoreFallbackCaretAfterMention();
+            });
+          });
         });
       });
 
       mentionStateRef.current = null;
       setMentionState(null);
     },
-    [decorateInlineTokens, onChange],
+    [clearPendingMentionInputSoon, decorateInlineTokens, onChange],
   );
 
   function hasFilePayload(evt: DragEvent<HTMLDivElement>) {
@@ -1081,6 +727,43 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         className,
       )}
       onKeyDownCapture={(e) => {
+        if (plainText && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
+          const selection = window.getSelection();
+          const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+          if (
+            selection
+            && selection.rangeCount > 0
+            && !selection.isCollapsed
+            && editable instanceof HTMLElement
+            && editable.contains(selection.anchorNode)
+            && editable.contains(selection.focusNode)
+          ) {
+            const canonicalText = canonicalMarkdownFromFragment(selection.getRangeAt(0).cloneContents());
+            if (canonicalText) {
+              e.preventDefault();
+              e.stopPropagation();
+              void navigator.clipboard?.writeText(canonicalText);
+              return;
+            }
+          }
+        }
+
+        const hasPlainTextKey =
+          e.key.length === 1
+          && !e.altKey
+          && !e.ctrlKey
+          && !e.metaKey
+          && !e.nativeEvent.isComposing;
+        if (pendingMentionInputRef.current && hasPlainTextKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          insertPendingMentionText(e.key);
+          return;
+        }
+        if (pendingMentionInputRef.current && !hasPlainTextKey) {
+          clearPendingMentionInput();
+        }
+
         const shouldSubmitOnModEnter =
           submitShortcut === "mod-enter" && e.key === "Enter" && (e.metaKey || e.ctrlKey);
         const shouldSubmitOnEnter =
@@ -1140,6 +823,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
             if (e.key === "Enter" || e.key === "Tab") {
               e.preventDefault();
               e.stopPropagation();
+              const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+              const freshState = editable instanceof HTMLElement ? detectMention(editable) : null;
+              if (freshState && freshState.trigger === mentionStateRef.current?.trigger) {
+                mentionStateRef.current = freshState;
+                setMentionState(freshState);
+              }
               selectMention(filteredMentions[mentionIndex]);
               return;
             }
@@ -1185,6 +874,19 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       onClickCapture={(event) => {
         stopAtomicInlineTokenEvent(event);
       }}
+      onCopyCapture={(event) => {
+        if (!plainText) return;
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+        const editable = containerRef.current?.querySelector('[contenteditable="true"]');
+        if (!(editable instanceof HTMLElement)) return;
+        if (!editable.contains(selection.anchorNode) || !editable.contains(selection.focusNode)) return;
+
+        const canonicalText = canonicalMarkdownFromFragment(selection.getRangeAt(0).cloneContents());
+        if (!canonicalText) return;
+        event.clipboardData.setData("text/plain", canonicalText);
+        event.preventDefault();
+      }}
       onDoubleClickCapture={(event) => {
         const target = event.target;
         if (!(target instanceof HTMLElement)) return;
@@ -1222,8 +924,22 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         markdown={value}
         placeholder={translatedPlaceholder}
         onChange={(next) => {
-          latestValueRef.current = next;
-          onChange(next);
+          const normalizedNext = plainText ? normalizePlainTextComposerMarkdown(next) : next;
+          latestValueRef.current = normalizedNext;
+          onChange(normalizedNext);
+          const onlyRemovedCaretBoundary = plainText
+            && next.includes(INLINE_CARET_BOUNDARY)
+            && normalizedNext === next.replaceAll(INLINE_CARET_BOUNDARY, "");
+          if (
+            plainText
+            && normalizedNext !== next
+            && !onlyRemovedCaretBoundary
+            && hasCanonicalRudderReference(normalizedNext)
+          ) {
+            requestAnimationFrame(() => {
+              ref.current?.setMarkdown(normalizedNext);
+            });
+          }
         }}
         onBlur={() => onBlur?.()}
         className={cn("rudder-mdxeditor", !bordered && "rudder-mdxeditor--borderless")}
@@ -1240,12 +956,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       {mentionActive && filteredMentions.length > 0 && mentionMenuPosition && typeof document !== "undefined"
         ? createPortal(
             <div
+              ref={setMentionMenuElement}
               data-testid="markdown-mention-menu"
+              role={mentionMenuPlacement === "container" ? "menu" : "listbox"}
+              aria-activedescendant={`markdown-mention-option-${filteredMentions[mentionIndex]?.id ?? ""}`}
               className={cn(
-                "fixed z-50 overflow-y-auto border border-border bg-popover shadow-md",
                 mentionMenuPlacement === "container"
-                  ? "rounded-[var(--radius-lg)] p-1.5 shadow-[var(--shadow-lg)]"
-                  : "min-w-[180px] rounded-md",
+                  ? "chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay scrollbar-auto-hide fixed z-50 overflow-y-auto overscroll-contain rounded-[var(--radius-lg)] border p-1.5 text-foreground"
+                  : "scrollbar-auto-hide fixed z-50 min-w-[180px] overflow-y-auto overscroll-contain rounded-md border border-border bg-popover shadow-md",
               )}
               style={mentionMenuPosition}
             >
@@ -1262,16 +980,23 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                       const i = optionIndex;
                       optionIndex += 1;
                       const issueStatusLabel = option.issueStatus ? statusLabel(option.issueStatus) : "Issue";
+                      const isContainerMenu = mentionMenuPlacement === "container";
+                      const skillDescription = option.skillDescription ?? option.skillLocationLabel ?? option.skillDisplayName ?? option.name;
                       return (
                         <button
                           key={option.id}
+                          id={`markdown-mention-option-${option.id}`}
+                          type="button"
                           data-testid={`markdown-mention-option-${option.id}`}
+                          data-mention-option-index={i}
+                          data-chat-composer-menu-item={isContainerMenu ? true : undefined}
+                          role={isContainerMenu ? "menuitem" : "option"}
+                          aria-selected={isContainerMenu ? undefined : i === mentionIndex}
                           className={cn(
-                            "flex w-full items-center gap-2 text-left text-sm transition-colors hover:bg-accent/50",
-                            mentionMenuPlacement === "container"
-                              ? "rounded-[var(--radius-md)] px-3 py-2"
-                              : "px-3 py-1.5",
-                            i === mentionIndex && "bg-accent",
+                            isContainerMenu
+                              ? "chat-composer-menu-row"
+                              : "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/50",
+                            i === mentionIndex && (isContainerMenu ? "bg-[color:var(--surface-active)] text-foreground" : "bg-accent"),
                           )}
                           onMouseDown={(e) => {
                             e.preventDefault(); // prevent blur
@@ -1279,7 +1004,24 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                           }}
                           onMouseEnter={() => setMentionIndex(i)}
                         >
-                          {option.kind === "skill" ? (
+                          {option.kind === "skill" && isContainerMenu ? (
+                            <>
+                              <Boxes className="h-4 w-4 shrink-0 text-[#2f80ed]" />
+                              <span className="flex min-w-0 flex-1 items-center gap-2">
+                                <span className="min-w-0 shrink truncate font-medium text-foreground">
+                                  {option.skillDisplayName ?? option.name}
+                                </span>
+                                {option.skillCategoryLabel ? (
+                                  <span className="inline-flex shrink-0 items-center rounded-[var(--radius-sm)] border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
+                                    {option.skillCategoryLabel}
+                                  </span>
+                                ) : null}
+                                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                                  {skillDescription}
+                                </span>
+                              </span>
+                            </>
+                          ) : option.kind === "skill" ? (
                             <Boxes className="h-4 w-4 shrink-0 text-[#2f80ed]" />
                           ) : option.kind === "project" && option.projectId ? (
                             <span
@@ -1305,39 +1047,48 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                               className="h-4 w-4 shrink-0 text-muted-foreground"
                             />
                           )}
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate font-medium text-foreground">{option.name}</div>
-                            {option.kind === "issue" && option.issueId ? (
-                              <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-                                {option.issueStatus ? <span>{issueStatusLabel}</span> : null}
-                                {option.issueProjectName ? (
-                                  <span className="inline-flex min-w-0 items-center gap-1">
-                                    <span
-                                      className="h-2 w-2 shrink-0 rounded-full border border-border/50"
-                                      style={{ backgroundColor: option.issueProjectColor ?? "#64748b" }}
-                                      aria-hidden="true"
-                                    />
-                                    <span className="truncate">{option.issueProjectName}</span>
-                                  </span>
-                                ) : null}
-                                <span className="inline-flex min-w-0 items-center gap-1">
-                                  {option.issueAssigneeIcon ? (
-                                    <AgentIcon
-                                      icon={option.issueAssigneeIcon}
-                                      role={option.issueAssigneeRole}
-                                      className="h-3 w-3 shrink-0 text-muted-foreground"
-                                    />
+                          {!(option.kind === "skill" && isContainerMenu) ? (
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-medium text-foreground">{option.name}</div>
+                              {option.kind === "issue" && option.issueId ? (
+                                <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                                  {option.issueStatus ? <span>{issueStatusLabel}</span> : null}
+                                  {option.issueProjectName ? (
+                                    <span className="inline-flex min-w-0 items-center gap-1">
+                                      <span
+                                        className="h-2 w-2 shrink-0 rounded-full border border-border/50"
+                                        style={{ backgroundColor: option.issueProjectColor ?? "#64748b" }}
+                                        aria-hidden="true"
+                                      />
+                                      <span className="truncate">{option.issueProjectName}</span>
+                                    </span>
                                   ) : null}
-                                  <span className="truncate">{option.issueAssigneeName ?? "Unassigned"}</span>
-                                </span>
-                              </div>
-                            ) : null}
-                            {option.kind === "skill" ? (
-                              <div className="truncate text-[11px] text-muted-foreground">
-                                {option.skillDescription ?? option.skillDisplayName}
-                              </div>
-                            ) : null}
-                          </div>
+                                  <span className="inline-flex min-w-0 items-center gap-1">
+                                    {option.issueAssigneeIcon ? (
+                                      <AgentIcon
+                                        icon={option.issueAssigneeIcon}
+                                        role={option.issueAssigneeRole}
+                                        className="h-3 w-3 shrink-0 text-muted-foreground"
+                                      />
+                                    ) : null}
+                                    <span className="truncate">{option.issueAssigneeName ?? "Unassigned"}</span>
+                                  </span>
+                                </div>
+                              ) : null}
+                              {option.kind === "skill" ? (
+                                <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                                  {option.skillCategoryLabel ? (
+                                    <span className="inline-flex shrink-0 items-center rounded-[var(--radius-sm)] border border-border/70 bg-muted/50 px-1.5 py-0.5 leading-none">
+                                      {option.skillCategoryLabel}
+                                    </span>
+                                  ) : null}
+                                  <span className="min-w-0 truncate">
+                                    {option.skillDescription ?? option.skillLocationLabel ?? option.skillDisplayName}
+                                  </span>
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
                           {option.kind === "issue" && option.issueId && (
                             <span className="ml-auto text-[11px] text-muted-foreground">
                               Issue
@@ -1348,7 +1099,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                               Project
                             </span>
                           )}
-                          {option.kind === "skill" && (
+                          {option.kind === "skill" && !isContainerMenu && (
                             <span className="ml-auto text-[11px] text-muted-foreground">
                               Skill
                             </span>

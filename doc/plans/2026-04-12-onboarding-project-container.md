@@ -1,11 +1,12 @@
 # Onboarding Project Container
 
 Date: 2026-04-12
-Status: Implemented plan record
+Status: Superseded plan record
+Superseded by: 2026-05-08-onboarding-getting-started-dashboard.md
 
 ## Summary
 
-Onboarding keeps its issue-first success path while making the first work artifact feel structured. For a brand-new organization's first launch only, Rudder ensures there is a visible `onboarding` project and places the starter issue inside it.
+This plan records the previous issue-first onboarding behavior. It has been superseded by the Getting Started dashboard handoff plan, which keeps a starter project but no longer creates or opens a starter issue for brand-new organizations.
 
 ## Decisions
 

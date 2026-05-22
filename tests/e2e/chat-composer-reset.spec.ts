@@ -1,19 +1,20 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_CODEX_STUB } from "./support/e2e-env";
 
 async function createStreamingOrg(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
     data: {
       name,
-      defaultChatAgentRuntimeType: "codex_local",
-      defaultChatAgentRuntimeConfig: {
-        model: "gpt-5.4",
-        command: E2E_CODEX_STUB,
-      },
     },
   });
   expect(orgRes.ok()).toBe(true);
-  return orgRes.json();
+  const organization = await orgRes.json();
+  const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Chat Agent",
+    command: E2E_CODEX_STUB,
+  });
+  return { ...organization, chatAgent };
 }
 
 test("clears the composer as soon as a chat send starts", async ({ page }) => {
@@ -24,7 +25,7 @@ test("clears the composer as soon as a chat send starts", async ({ page }) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
   }, organization.id);
 
-  await page.goto("/chat");
+  await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
 
   const composer = page.locator(".rudder-mdxeditor-content").first();
   await expect(composer).toBeVisible({ timeout: 15_000 });

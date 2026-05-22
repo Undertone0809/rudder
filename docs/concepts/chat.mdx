@@ -1,0 +1,77 @@
+---
+title: "Chat"
+description: "Use conversation to clarify intent before creating durable work."
+---
+
+Chat is Rudder's intake surface for unclear requests. It lets a human explain a messy need, attach context, choose a preferred agent, and turn the conversation into an issue when the work becomes executable.
+
+![Chat issue proposal](../images/chat-create-issue-proposal.png)
+
+## What Chat is for
+
+Use Chat when the next step is still conversational:
+
+- clarify a vague request
+- ask which agent should handle it
+- attach issues, projects, agents, or files as context
+- draft an issue proposal from a conversation
+- ask for a small answer that does not need durable execution
+
+Chat should make the work clearer. It should not hide long-running execution.
+
+## When to convert Chat into an issue
+
+Convert a conversation into an issue when it needs any of these:
+
+| Signal | Why it should become an issue |
+| --- | --- |
+| Assignment | One owner needs to execute the next step |
+| Budget | Agent runtime cost should be tied to durable work |
+| Review | Someone must judge whether the output is good enough |
+| Recovery | Failed or blocked work needs a place to resume |
+| History | The team will need to inspect the decision later |
+
+If the request can be answered immediately and does not create follow-up work, keep it in Chat. If it becomes a task, create an issue.
+
+## Issue proposals
+
+When Chat drafts an issue proposal, review it like a work order:
+
+- Does the title name the outcome?
+- Does the description include enough context?
+- Are acceptance criteria clear?
+- Is the project correct?
+- Should it start in `backlog` or `todo`?
+- Does it need an assignee or reviewer now?
+
+Approving a proposal should create a durable issue that future runs, comments, artifacts, and review decisions can attach to.
+
+## Good use cases
+
+| Use case | Chat behavior |
+| --- | --- |
+| "I need to improve onboarding, but I am not sure where to start." | Ask clarifying questions, then propose one or more issues. |
+| "Use this screenshot and turn the complaint into work." | Attach the image, summarize the need, and draft an issue. |
+| "Which agent should own this release blocker?" | Compare agent capabilities and suggest an owner. |
+| "What happened in this issue?" | Summarize existing work without creating a new task. |
+
+## Anti-patterns
+
+Avoid using Chat as:
+
+- a hidden backlog
+- a replacement for issue status
+- a place to run multi-hour work without ownership
+- the only record of a review decision
+- a general-purpose chat app disconnected from Rudder work
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Issue Lifecycle Guide" icon="route" href="/how-to/issue-lifecycle">
+    Learn when a chat request is ready for assignment and review.
+  </Card>
+  <Card title="Messenger" icon="message-square" href="/concepts/messenger">
+    See where chat conversations sit inside the broader attention surface.
+  </Card>
+</CardGroup>

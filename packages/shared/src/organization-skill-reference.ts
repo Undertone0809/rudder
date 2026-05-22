@@ -51,6 +51,9 @@ export const RUDDER_BUNDLED_SKILL_SLUGS = [
   "rudder",
   "rudder-create-agent",
   "rudder-create-plugin",
+  "skill-creator",
+  "skill-optimizer",
+  "conversation-to-skill",
 ] as const;
 
 const RUDDER_BUNDLED_SKILL_KEYS = new Set(

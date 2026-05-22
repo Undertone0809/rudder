@@ -12,21 +12,26 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
 
-// Workspace packages whose code should be bundled into the CLI.
-// Note: "server" is excluded — it's published separately and resolved at runtime.
+// Workspace packages whose code should be bundled into the thin bootstrap CLI.
+// Heavy runtime packages are installed into the versioned runtime cache instead.
 const workspacePaths = [
   "cli",
-  "packages/db",
   "packages/shared",
   "packages/agent-runtime-utils",
-  "packages/agent-runtimes/claude-local",
-  "packages/agent-runtimes/codex-local",
-  "packages/agent-runtimes/openclaw-gateway",
 ];
 
-// Workspace packages that should NOT be bundled — they'll be published
-// to npm and resolved at runtime (e.g. @rudderhq/server uses dynamic import).
+// Workspace packages that should never be pulled into the bootstrap bundle.
+// Runtime setup installs these through @rudderhq/server when needed.
 const externalWorkspacePackages = new Set([
+  "@rudderhq/agent-runtime-claude-local",
+  "@rudderhq/agent-runtime-codex-local",
+  "@rudderhq/agent-runtime-cursor-local",
+  "@rudderhq/agent-runtime-gemini-local",
+  "@rudderhq/agent-runtime-openclaw-gateway",
+  "@rudderhq/agent-runtime-opencode-local",
+  "@rudderhq/agent-runtime-pi-local",
+  "@rudderhq/db",
+  "@rudderhq/run-intelligence-core",
   "@rudderhq/server",
 ]);
 

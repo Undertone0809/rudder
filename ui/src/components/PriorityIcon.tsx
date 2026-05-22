@@ -1,18 +1,77 @@
 import { useState } from "react";
-import { ArrowUp, ArrowDown, Minus, AlertTriangle } from "lucide-react";
+import { Check } from "lucide-react";
 import { cn } from "../lib/utils";
-import { priorityColor, priorityColorDefault } from "../lib/status-colors";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
 
-const priorityConfig: Record<string, { icon: typeof ArrowUp; color: string; label: string }> = {
-  critical: { icon: AlertTriangle, color: priorityColor.critical ?? priorityColorDefault, label: "Critical" },
-  high: { icon: ArrowUp, color: priorityColor.high ?? priorityColorDefault, label: "High" },
-  medium: { icon: Minus, color: priorityColor.medium ?? priorityColorDefault, label: "Medium" },
-  low: { icon: ArrowDown, color: priorityColor.low ?? priorityColorDefault, label: "Low" },
-};
+import { getPriorityConfig, priorityConfig, priorityValues, type PriorityValue } from "../lib/priorities";
+const barHeights = ["h-1", "h-1.5", "h-2.5", "h-3.5"];
 
-const allPriorities = ["critical", "high", "medium", "low"];
+export const priorityPickerContentClassName =
+  "w-48 rounded-lg border-[color:var(--border-base)] bg-[color:var(--surface-overlay)] p-1.5 shadow-[var(--shadow-md)]";
+
+export function PriorityBarsIcon({
+  priority,
+  className,
+}: {
+  priority: string;
+  className?: string;
+}) {
+  const config = getPriorityConfig(priority);
+
+  return (
+    <span
+      data-slot="priority-bars-icon"
+      className={cn("inline-flex h-3.5 w-4 items-end gap-[2px]", config.color, className)}
+      aria-hidden="true"
+    >
+      {barHeights.map((height, index) => (
+        <span
+          key={height}
+          className={cn(
+            "w-[3px] rounded-[1px] bg-current",
+            height,
+            index >= config.level && "opacity-25",
+          )}
+        />
+      ))}
+    </span>
+  );
+}
+
+export function PriorityPickerOption({
+  priority,
+  selected,
+  onSelect,
+}: {
+  priority: PriorityValue;
+  selected: boolean;
+  onSelect: (priority: PriorityValue) => void;
+}) {
+  const config = priorityConfig[priority];
+
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-checked={selected}
+      className={cn(
+        "group flex h-8 w-full items-center justify-between gap-3 rounded-md px-2 text-left text-sm transition-colors hover:bg-[color:var(--surface-active)] focus-visible:bg-[color:var(--surface-active)] focus-visible:outline-none",
+        selected && "bg-[color:color-mix(in_oklab,var(--surface-active)_72%,transparent)] text-foreground",
+      )}
+      onClick={() => onSelect(priority)}
+    >
+      <span className="inline-flex min-w-0 items-center gap-2">
+        <PriorityBarsIcon priority={priority} className="shrink-0" />
+        <span className={cn("truncate", config.menuLabelClassName)}>{config.label}</span>
+      </span>
+      {selected ? (
+        <Check data-slot="priority-menu-check" className="h-4 w-4 shrink-0 text-muted-foreground" />
+      ) : (
+        <span className="h-4 w-4 shrink-0" aria-hidden="true" />
+      )}
+    </button>
+  );
+}
 
 interface PriorityIconProps {
   priority: string;
@@ -23,26 +82,24 @@ interface PriorityIconProps {
 
 export function PriorityIcon({ priority, onChange, className, showLabel }: PriorityIconProps) {
   const [open, setOpen] = useState(false);
-  const config = priorityConfig[priority] ?? priorityConfig.medium!;
-  const Icon = config.icon;
+  const config = getPriorityConfig(priority);
 
   const icon = (
     <span
       className={cn(
         "inline-flex items-center justify-center shrink-0",
-        config.color,
         onChange && !showLabel && "cursor-pointer",
         className
       )}
     >
-      <Icon className="h-3.5 w-3.5" />
+      <PriorityBarsIcon priority={priority} />
     </span>
   );
 
   if (!onChange) return showLabel ? <span className="inline-flex items-center gap-1.5">{icon}<span className="text-sm">{config.label}</span></span> : icon;
 
   const trigger = showLabel ? (
-    <button className="inline-flex items-center gap-1.5 cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1 py-0.5 transition-colors">
+    <button type="button" className="-mx-1 inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-[color:var(--surface-active)]">
       {icon}
       <span className="text-sm">{config.label}</span>
     </button>
@@ -51,24 +108,19 @@ export function PriorityIcon({ priority, onChange, className, showLabel }: Prior
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent className="w-36 p-1" align="start">
-        {allPriorities.map((p) => {
-          const c = priorityConfig[p]!;
-          const PIcon = c.icon;
+      <PopoverContent className={priorityPickerContentClassName} align="start" role="menu" aria-label="Issue priority">
+        {priorityValues.map((p) => {
+          const selected = p === priority;
           return (
-            <Button
+            <PriorityPickerOption
               key={p}
-              variant="ghost"
-              size="sm"
-              className={cn("w-full justify-start gap-2 text-xs", p === priority && "bg-accent")}
-              onClick={() => {
-                onChange(p);
+              priority={p}
+              selected={selected}
+              onSelect={(nextPriority) => {
+                onChange(nextPriority);
                 setOpen(false);
               }}
-            >
-              <PIcon className={cn("h-3.5 w-3.5", c.color)} />
-              {c.label}
-            </Button>
+            />
           );
         })}
       </PopoverContent>

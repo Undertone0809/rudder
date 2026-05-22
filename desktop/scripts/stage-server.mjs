@@ -38,7 +38,8 @@ async function rewritePublishedManifest(packageDir) {
 
   const nextManifest = { ...manifest };
   if (manifest.publishConfig.exports) {
-    nextManifest.exports = manifest.publishConfig.exports;
+    nextManifest.exports = JSON.parse(JSON.stringify(manifest.publishConfig.exports));
+    addDefaultExportCondition(nextManifest.exports);
   }
   if (manifest.publishConfig.main) {
     nextManifest.main = manifest.publishConfig.main;
@@ -48,6 +49,21 @@ async function rewritePublishedManifest(packageDir) {
   }
 
   await fs.writeFile(manifestPath, `${JSON.stringify(nextManifest, null, 2)}\n`, "utf8");
+}
+
+function addDefaultExportCondition(exportsObj) {
+  if (typeof exportsObj !== "object" || exportsObj === null || Array.isArray(exportsObj)) {
+    return;
+  }
+  for (const key of Object.keys(exportsObj)) {
+    const entry = exportsObj[key];
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      if (entry.import && !entry.default) {
+        entry.default = entry.import;
+      }
+      addDefaultExportCondition(entry);
+    }
+  }
 }
 
 async function normalizeSelfReference(packageDir) {
@@ -61,12 +77,25 @@ async function normalizeSelfReference(packageDir) {
   await Promise.all(selfReferencePaths.map((selfReferencePath) => fs.rm(selfReferencePath, { force: true })));
 }
 
+async function rewriteInternalPackages(targetDir) {
+  const rudderDir = path.join(targetDir, "node_modules", "@rudderhq");
+  try {
+    const entries = await fs.readdir(rudderDir);
+    await Promise.all(
+      entries.map((entry) => rewritePublishedManifest(path.join(rudderDir, entry))),
+    );
+  } catch {
+    // @rudderhq scope may not exist
+  }
+}
+
 async function main() {
   await fs.rm(targetDir, { recursive: true, force: true });
   await fs.mkdir(path.dirname(targetDir), { recursive: true });
 
   await run(pnpmBin, ["--filter", "@rudderhq/server", "--prod", "deploy", targetDir], repoRoot);
   await rewritePublishedManifest(targetDir);
+  await rewriteInternalPackages(targetDir);
   await normalizeSelfReference(targetDir);
 
   const deployedEntry = path.join(targetDir, "dist", "index.js");

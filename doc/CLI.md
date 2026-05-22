@@ -150,14 +150,28 @@ Notes:
 ## Issue Commands
 
 ```sh
-pnpm rudder issue list --org-id <org-id> [--status todo,in_progress] [--assignee-agent-id <agent-id>] [--match text]
+pnpm rudder issue list --org-id <org-id> [--status todo,in_progress] [--assignee-agent-id <agent-id>] [--query text] [--match text]
+pnpm rudder issue search "keyword or phrase" --org-id <org-id>
 pnpm rudder issue get <issue-id-or-identifier>
 pnpm rudder issue create --org-id <org-id> --title "..." [--description "..."] [--status todo] [--priority high]
-pnpm rudder issue update <issue-id> [--status in_progress] [--comment "..."]
-pnpm rudder issue comment <issue-id> --body "..." [--reopen]
+pnpm rudder issue update <issue-id> [--status in_progress] [--comment "..."] [--image ./screenshot.png]
+pnpm rudder issue comment <issue-id> --body "..." [--image ./screenshot.png] [--reopen]
+pnpm rudder issue done <issue-id> --comment "..." [--image ./screenshot.png]
+pnpm rudder issue block <issue-id> --comment "..." [--image ./screenshot.png]
 pnpm rudder issue checkout <issue-id> --agent-id <agent-id> [--expected-statuses todo,backlog,blocked]
 pnpm rudder issue release <issue-id>
 ```
+
+`issue search` and `issue list --query` call the server-side `q` search on
+`GET /api/orgs/:orgId/issues`, covering identifier, title, description, and
+issue comments. Human output includes identifier, title, status, assignee,
+project, updated time, and a compact match snippet when the server provides one.
+`--match` remains a local filter over already returned rows for compatibility.
+
+`--image` may be repeated. The CLI uploads each local PNG/JPEG/WebP/GIF as an
+issue attachment and appends Markdown image links to the comment body.
+If a comment cites a screenshot path or visual validation artifact, attach that
+file with `--image <path>` instead of leaving only the local path in the text.
 
 ## Agent Commands
 
@@ -169,18 +183,28 @@ pnpm rudder agent config doc <agent-runtime-type>
 pnpm rudder agent config list --org-id <org-id>
 pnpm rudder agent config get <agent-id-or-shortname> [--org-id <org-id>]
 pnpm rudder agent icons
-pnpm rudder agent hire --org-id <org-id> --payload '{"role":"cto","title":"Chief Technology Officer","icon":"crown","agentRuntimeType":"codex_local","agentRuntimeConfig":{"cwd":"/abs/path"}}'
+pnpm rudder agent hire --org-id <org-id> --payload '{"role":"cto","title":"Chief Technology Officer","agentRuntimeType":"codex_local","agentRuntimeConfig":{"cwd":"/abs/path"}}'
+pnpm rudder agent skills create [agent-id] --name "Skill name" [--slug short-name] [--description "..."] [--markdown-file ./SKILL.md] [--enable]
+pnpm rudder agent skills enable <agent-id> <selection-ref...>
+pnpm rudder agent skills sync <agent-id> --desired-skills "<csv>"
 pnpm rudder agent local-cli <agent-id-or-shortname> --org-id <org-id>
 ```
 
 `agent config index`, `agent config doc`, and `agent icons` print plain-text reference docs by default.
 Pass `--json` if you want the raw text wrapped as a JSON string.
+`agent icons` is a legacy compatibility/debugging reference; normal hire and create payloads should omit `icon` so Rudder generates a DiceBear Notionists avatar.
+
+`agent skills create` creates an agent-private skill under `AGENT_HOME/skills` for the target agent. When `[agent-id]` is omitted it defaults to `RUDDER_AGENT_ID`. Pass `--enable` to add the new private skill to the agent's enabled skill set for future runs.
+
+`agent skills enable` is additive and preserves existing enabled skills.
+`agent skills sync` replaces the full optional enabled-skill set.
 
 `agent hire` is the canonical CLI wrapper for `POST /api/orgs/:orgId/agent-hires`:
 
 - creates the agent directly when the organization does not require approval
 - returns both `agent` and `approval` when board approval is required
 - accepts the same payload shape as the hire API, including `desiredSkills`, `sourceIssueId`, and `sourceIssueIds`
+- should omit `icon` for normal hires; only pass an explicit DiceBear reference or uploaded `asset:<uuid>` avatar reference supplied by the board/UI
 
 `agent local-cli` is the quickest way to run local Claude/Codex manually as a Rudder agent:
 

@@ -18,8 +18,6 @@ export const organizations = pgTable(
       .notNull()
       .default(true),
     defaultChatIssueCreationMode: text("default_chat_issue_creation_mode").notNull().default("manual_approval"),
-    defaultChatAgentRuntimeType: text("default_chat_agent_runtime_type"),
-    defaultChatAgentRuntimeConfig: jsonb("default_chat_agent_runtime_config").$type<Record<string, unknown>>(),
     workspaceConfig: jsonb("workspace_config").$type<Record<string, unknown>>(),
     brandColor: text("brand_color"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

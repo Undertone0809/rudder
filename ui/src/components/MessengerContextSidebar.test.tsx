@@ -11,13 +11,17 @@ const invalidateQueries = vi.fn();
 let messengerModel: any;
 let messengerRoute: any;
 let chatList: any[];
+let queryOptions: Array<{ queryKey?: unknown; enabled?: boolean }>;
 let localStorageValues: Record<string, string>;
 let activeGeneratingChatIds: Set<string>;
 
 vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useQueryClient: () => ({ invalidateQueries }),
-  useQuery: () => ({ data: chatList }),
+  useQuery: (options: { queryKey?: unknown; enabled?: boolean }) => {
+    queryOptions.push(options);
+    return { data: options.enabled === false ? undefined : chatList };
+  },
 }));
 
 vi.mock("@/lib/router", () => ({
@@ -58,8 +62,10 @@ function baseModel() {
         subtitle: null,
         href: "/messenger/chat/chat-1",
         latestActivityAt: "2026-04-11T09:40:00.000Z",
+        lastReadAt: null,
         unreadCount: 0,
         needsAttention: false,
+        isPinned: false,
       },
       {
         threadKey: "issues",
@@ -69,8 +75,10 @@ function baseModel() {
         subtitle: null,
         href: "/messenger/issues",
         latestActivityAt: "2026-04-11T09:40:00.000Z",
+        lastReadAt: null,
         unreadCount: 0,
         needsAttention: false,
+        isPinned: false,
       },
     ],
     issueThreadDetail: null,
@@ -85,6 +93,7 @@ describe("MessengerContextSidebar", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-11T10:00:00.000Z"));
+    queryOptions = [];
     localStorageValues = {};
     vi.stubGlobal("window", {
       localStorage: {
@@ -141,12 +150,38 @@ describe("MessengerContextSidebar", () => {
   });
 
   it("formats markdown heading previews as readable sidebar summaries", () => {
+    chatList = [];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [{
+        threadKey: "chat:chat-1",
+        kind: "chat",
+        title: "规定 Agent 的处理流程",
+        preview: "需求: 把 Agent 的处理流程规范化",
+        subtitle: "需求: 把 Agent 的处理流程规范化",
+        href: "/messenger/chat/chat-1",
+        latestActivityAt: "2026-04-11T09:40:00.000Z",
+        lastReadAt: null,
+        unreadCount: 0,
+        needsAttention: false,
+        isPinned: false,
+      }],
+    };
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain("需求: 把 Agent 的处理流程规范化");
+    expect(html).not.toContain("## 需求");
+  });
+
+  it("renders URL-heavy chat titles as readable compact titles", () => {
+    const rawTitle = "&#x20;[https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/] 看一下这个 总结下。";
     chatList = [
       {
         id: "chat-1",
-        title: "规定 Agent 的处理流程",
-        summary: null,
-        latestReplyPreview: "## 需求\n把 Agent 的处理流程规范化",
+        title: rawTitle,
+        summary: "Start conversation",
+        latestReplyPreview: null,
         updatedAt: "2026-04-11T09:40:00.000Z",
         lastMessageAt: "2026-04-11T09:40:00.000Z",
         unreadCount: 0,
@@ -154,13 +189,31 @@ describe("MessengerContextSidebar", () => {
         isUnread: false,
         isPinned: false,
         primaryIssue: null,
+        contextLinks: [],
       },
     ];
+    messengerModel = {
+      ...baseModel(),
+      threadSummaries: [{
+        threadKey: "chat:chat-1",
+        kind: "chat",
+        title: rawTitle,
+        preview: "Start conversation",
+        subtitle: null,
+        href: "/messenger/chat/chat-1",
+        latestActivityAt: "2026-04-11T09:40:00.000Z",
+        lastReadAt: null,
+        unreadCount: 0,
+        needsAttention: false,
+        isPinned: false,
+      }],
+    };
 
     const html = renderToStaticMarkup(<MessengerContextSidebar />);
 
-    expect(html).toContain("需求: 把 Agent 的处理流程规范化");
-    expect(html).not.toContain("## 需求");
+    expect(html).toContain("看一下这个 总结下。");
+    expect(html).not.toContain("&#x20;");
+    expect(html).not.toContain("github-readme-template-guide");
   });
 
   it("renders the thread organization control", () => {
@@ -170,37 +223,8 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain('aria-label="Organize threads"');
   });
 
-  it("promotes pinned Messenger chats above recent threads", () => {
-    chatList = [
-      {
-        id: "chat-1",
-        title: "Pinned older chat",
-        summary: "Pinned should stay visible.",
-        latestReplyPreview: "Pinned should stay visible.",
-        updatedAt: "2026-04-11T08:40:00.000Z",
-        lastMessageAt: "2026-04-11T08:40:00.000Z",
-        unreadCount: 0,
-        needsAttention: false,
-        isUnread: false,
-        isPinned: true,
-        primaryIssue: null,
-        contextLinks: [],
-      },
-      {
-        id: "chat-2",
-        title: "Recent unpinned chat",
-        summary: "Recent but not pinned.",
-        latestReplyPreview: "Recent but not pinned.",
-        updatedAt: "2026-04-11T09:55:00.000Z",
-        lastMessageAt: "2026-04-11T09:55:00.000Z",
-        unreadCount: 0,
-        needsAttention: false,
-        isUnread: false,
-        isPinned: false,
-        primaryIssue: null,
-        contextLinks: [],
-      },
-    ];
+  it("promotes pinned Messenger chats from thread summaries before chat list hydration", () => {
+    chatList = [];
     messengerModel = {
       ...baseModel(),
       threadSummaries: [
@@ -212,8 +236,10 @@ describe("MessengerContextSidebar", () => {
           subtitle: null,
           href: "/messenger/chat/chat-2",
           latestActivityAt: "2026-04-11T09:55:00.000Z",
+          lastReadAt: null,
           unreadCount: 0,
           needsAttention: false,
+          isPinned: false,
         },
         {
           threadKey: "issues",
@@ -223,8 +249,10 @@ describe("MessengerContextSidebar", () => {
           subtitle: null,
           href: "/messenger/issues",
           latestActivityAt: "2026-04-11T09:50:00.000Z",
+          lastReadAt: null,
           unreadCount: 0,
           needsAttention: false,
+          isPinned: false,
         },
         {
           threadKey: "chat:chat-1",
@@ -234,8 +262,10 @@ describe("MessengerContextSidebar", () => {
           subtitle: null,
           href: "/messenger/chat/chat-1",
           latestActivityAt: "2026-04-11T08:40:00.000Z",
+          lastReadAt: null,
           unreadCount: 0,
           needsAttention: false,
+          isPinned: true,
         },
       ],
     };
@@ -246,6 +276,10 @@ describe("MessengerContextSidebar", () => {
     expect(html.indexOf("Pinned older chat")).toBeLessThan(html.indexOf("Issues"));
     expect(html).toContain("Pinned");
     expect(html).toContain("Recent");
+    expect(queryOptions).toContainEqual(expect.objectContaining({
+      queryKey: ["chats", "org-1", "all"],
+      enabled: false,
+    }));
   });
 
   it("groups Messenger chats by project when the organization rule is project", () => {
@@ -279,6 +313,10 @@ describe("MessengerContextSidebar", () => {
     expect(html).toContain("Website launch");
     expect(html).toContain("System");
     expect(html.indexOf("Website launch")).toBeLessThan(html.indexOf("System"));
+    expect(queryOptions).toContainEqual(expect.objectContaining({
+      queryKey: ["chats", "org-1", "all"],
+      enabled: true,
+    }));
   });
 
   it("shows an animated progress icon for the chat that is currently generating", () => {
@@ -288,7 +326,17 @@ describe("MessengerContextSidebar", () => {
 
     expect(html).toContain('data-testid="messenger-generating-chat-chat-1"');
     expect(html).toContain('aria-label="Chat reply in progress"');
-    expect(html).toContain('class="absolute right-2 top-1/2');
+    expect(html).toContain("pointer-events-none absolute right-2 top-1/2");
     expect(html).toContain("20m ago");
+  });
+
+  it("keeps chat actions available while a chat is generating", () => {
+    activeGeneratingChatIds = new Set(["chat-1"]);
+
+    const html = renderToStaticMarkup(<MessengerContextSidebar />);
+
+    expect(html).toContain('aria-label="Chat actions"');
+    expect(html).toContain("group-hover:opacity-100");
+    expect(html).toContain("group-hover:opacity-0");
   });
 });

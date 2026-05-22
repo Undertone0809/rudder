@@ -3,10 +3,17 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execute } from "@rudderhq/agent-runtime-claude-local/server";
+import {
+  clearInheritedGitIdentityEnv,
+  expectPreparedGitConfigCapture,
+  gitIdentityCaptureSnippet,
+  type GitIdentityCapture,
+} from "./local-runtime-git-identity-helpers";
 
 async function writeFakeClaudeCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
+${gitIdentityCaptureSnippet}
 const path = require("node:path");
 
 const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
@@ -37,6 +44,7 @@ const payload = {
     addDirSkillsPath && fs.existsSync(addDirSkillsPath)
       ? fs.readdirSync(addDirSkillsPath).sort()
       : [],
+  gitIdentity: captureGitIdentityEnv(),
 };
 if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
@@ -113,12 +121,19 @@ describe("claude execute", () => {
           command: commandPath,
           cwd: workspace,
           env: {
+            ...clearInheritedGitIdentityEnv,
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
           instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
-        context: {},
+        context: {
+          rudderWorkspace: {
+            orgWorkspaceRoot: path.join(root, "org-workspace"),
+            orgSkillsDir: path.join(root, "org-workspace", "skills"),
+            orgPlansDir: path.join(root, "org-workspace", "plans"),
+          },
+        },
         authToken: "run-jwt-token",
         onLog: async (stream, chunk) => {
           logs.push({ stream, chunk });
@@ -130,7 +145,13 @@ describe("claude execute", () => {
       expect(logs).toContainEqual(
         expect.objectContaining({
           stream: "stdout",
-          chunk: expect.stringContaining(`[rudder] Loaded agent instructions file: ${instructionsPath}`),
+          chunk: expect.stringContaining("[rudder] Loaded agent instructions file: $AGENT_HOME/instructions/AGENTS.md"),
+        }),
+      );
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          stream: "stdout",
+          chunk: expect.stringContaining("[rudder] Loaded agent memory instructions file: $AGENT_HOME/instructions/MEMORY.md"),
         }),
       );
       expect(logs).toContainEqual(
@@ -142,14 +163,99 @@ describe("claude execute", () => {
       expect(logs).not.toContainEqual(
         expect.objectContaining({
           stream: "stderr",
-          chunk: expect.stringContaining(`[rudder] Loaded agent instructions file: ${instructionsPath}`),
+          chunk: expect.stringContaining("[rudder] Loaded agent instructions file: $AGENT_HOME/instructions/AGENTS.md"),
         }),
       );
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
         appendedSystemPrompt: string | null;
+        rudderEnvKeys: string[];
+        gitIdentity: GitIdentityCapture;
       };
+      expectPreparedGitConfigCapture(capture);
       expect(capture.appendedSystemPrompt).toContain("# Agent Instructions");
       expect(capture.appendedSystemPrompt).toContain("# Tacit Memory");
+      expect(capture.rudderEnvKeys).toEqual(
+        expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
+      );
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports runtime image media as local prompt paths for Claude Code", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-image-media-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "claude");
+    const capturePath = path.join(root, "capture.json");
+    const imagePath = path.join(root, "chat-image.png");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(imagePath, "png-bytes", "utf8");
+    await writeFakeClaudeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      let commandNotes: string[] = [];
+      const result = await execute({
+        runId: "run-claude-image",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Claude Coder",
+          agentRuntimeType: "claude_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Inspect {{context.chatAttachments}} before replying.",
+        },
+        context: {
+          chatAttachments: [{
+            attachmentId: "attachment-1",
+            localPath: imagePath,
+          }],
+        },
+        media: [{
+          source: "chat_attachment",
+          attachmentId: "attachment-1",
+          assetId: "asset-1",
+          name: "chat-image.png",
+          originalFilename: "chat-image.png",
+          contentType: "image/png",
+          byteSize: 9,
+          localPath: imagePath,
+        }],
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          commandNotes = meta.commandNotes ?? [];
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        argv: string[];
+        prompt: string;
+      };
+      expect(capture.argv).not.toContain("--image");
+      expect(capture.prompt).toContain(imagePath);
+      expect(commandNotes).toContain("Provided 1 local image attachment path in the prompt for Claude Code inspection.");
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;

@@ -157,6 +157,41 @@ describe("LiveUpdatesProvider notification preferences", () => {
     expect(toasts).toEqual([]);
   });
 
+  it("does not push issue toasts for description-only updates", () => {
+    const toasts: unknown[] = [];
+
+    __liveUpdatesTestUtils.handleLiveEvent(
+      createQueryClientStub() as never,
+      "organization-1",
+      "/ORG/dashboard",
+      {
+        type: "activity.logged",
+        orgId: "organization-1",
+        payload: {
+          entityType: "issue",
+          entityId: "issue-1",
+          action: "issue.updated",
+          actorType: "user",
+          actorId: "user-2",
+          details: {
+            identifier: "ORG-1",
+            description: "New description",
+            _previous: { description: "Old description" },
+          },
+        },
+      } as never,
+      (toast) => {
+        toasts.push(toast);
+        return "toast-1";
+      },
+      { cooldownHits: new Map(), suppressUntil: 0 },
+      { userId: "user-1", agentId: null },
+      { issueNotifications: true, chatNotifications: true },
+    );
+
+    expect(toasts).toEqual([]);
+  });
+
   it("does not push chat toasts when chat notifications are disabled", () => {
     const toasts: unknown[] = [];
 

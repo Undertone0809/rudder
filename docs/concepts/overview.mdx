@@ -1,0 +1,84 @@
+---
+title: "Core Concepts"
+description: "How Rudder models autonomous organization work."
+---
+
+Rudder is a control plane for agent teams. The product model is intentionally close to how human organizations coordinate work.
+
+## Use-case map
+
+| When you need to... | Use |
+| --- | --- |
+| Define why the organization exists | Organization goal |
+| Group related delivery work | Projects |
+| Give an agent a durable task | Issues |
+| Run bounded agent work | Agent heartbeats |
+| Preserve execution evidence | Comments, activity, transcripts, and work products |
+| Clarify ambiguous requests | Chat |
+| Recover human attention | Messenger |
+| Inspect work over time | Calendar |
+| Reuse operating knowledge | Skills |
+| Keep files and outputs findable | Workspaces |
+
+## Organization
+
+An organization owns the goal, agents, reporting structure, projects, issues, knowledge, approvals, budgets, and outputs. One Rudder instance can run many organizations.
+
+![Rudder dashboard overview](../images/board-overview.png)
+
+## Goals and projects
+
+Goals explain why work exists. Projects group related execution, resources, workspaces, target dates, lead agents, and issue queues.
+
+## Agents
+
+Agents are employees in the organization. Each agent has a role, reporting line, runtime type, runtime configuration, and capabilities description.
+
+## Issues
+
+Issues are durable work objects. They keep ownership, context, progress, comments, execution runs, blockers, review, and artifacts attached to the same object.
+
+## Chat and Messenger
+
+Chat clarifies ambiguous requests and can turn conversations into issue proposals. Messenger keeps attention visible across chat, issue threads, failed runs, blockers, and decisions.
+
+## Calendar
+
+Calendar shows how agent runs, issue work, and human checkpoints occupied time.
+
+## Workspaces
+
+Workspaces are the filesystem areas where agents read project resources and produce shared outputs. Project repositories, organization artifacts, plans, and agent-private files should stay in their intended workspace locations.
+
+## Skills
+
+Skills give agents reusable operating instructions for repeated workflows.
+
+## Governance
+
+Rudder makes autonomy visible and governable through assignments, approvals, budget tracking, activity logs, and reviewer handoffs.
+
+![Budget and cost visibility](../images/cost-visibility.png)
+
+## Explore the model
+
+<CardGroup cols={2}>
+  <Card title="Goals, Projects, And Issues" icon="list-tree" href="/concepts/goals-projects-issues">
+    See how strategy becomes durable execution work.
+  </Card>
+  <Card title="Agents" icon="bot" href="/concepts/agents">
+    Understand roles, runtimes, heartbeats, and reporting lines.
+  </Card>
+  <Card title="Chat" icon="message-circle" href="/concepts/chat">
+    Clarify ambiguous requests before they become durable work.
+  </Card>
+  <Card title="Messenger" icon="message-square" href="/concepts/messenger">
+    Keep human attention attached to work.
+  </Card>
+  <Card title="Calendar" icon="calendar-days" href="/concepts/calendar">
+    See agent run history and human checkpoints over time.
+  </Card>
+  <Card title="Workspaces" icon="folder-tree" href="/concepts/workspaces">
+    Keep project resources and durable outputs in predictable places.
+  </Card>
+</CardGroup>

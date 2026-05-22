@@ -117,6 +117,7 @@ describe("resolveCommandContext", () => {
     const resolved = resolveCommandContext({ context: contextPath, apiBase: "http://localhost:3100" });
 
     expect(resolved.agentId).toBe("agent-from-env");
+    expect(resolved.api.agentId).toBe("agent-from-env");
     expect(resolved.runId).toBe("run-from-env");
     expect(resolved.api.runId).toBe("run-from-env");
   });

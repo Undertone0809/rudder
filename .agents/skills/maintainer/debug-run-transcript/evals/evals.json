@@ -1,0 +1,38 @@
+{
+  "skill_name": "debug-run-transcript",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "Debug run `ade50c99` and explain why it failed. Show the first clear failure point and the evidence.",
+      "expected_output": "Identifies the run as failed, classifies it as a runtime process-loss style failure, and cites the event/log evidence that shows where the in-memory process handle was lost.",
+      "files": [],
+      "expectations": [
+        "The result identifies run `ade50c99` as failed rather than cancelled or succeeded.",
+        "The result identifies a process-loss or runtime-process-failure style root cause, not just a generic failure.",
+        "The result cites evidence beyond the final summary row, such as the late event stream or raw log reconstruction."
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "I only have run prefix `a5aa500e` for a CEO run. Tell me whether this was cancelled or a runtime failure, and summarize the execution story.",
+      "expected_output": "Correctly classifies the run as cancelled, explains what the agent was doing before cancellation, and avoids mislabeling the exit as a generic runtime failure.",
+      "files": [],
+      "expectations": [
+        "The result identifies run `a5aa500e` as cancelled rather than a generic runtime failure.",
+        "The result summarizes what the agent was doing before cancellation using transcript or raw-log evidence.",
+        "The result uses the prefix successfully without requiring the full UUID."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Investigate successful run `f59ec3fd`. Explain why the transcript outline is empty and what evidence still exists to validate the run.",
+      "expected_output": "Correctly identifies the run as succeeded, explains that the parsed trace outline has zero turns, and points to alternate evidence such as `stdout_excerpt`, `result_json`, or shallow events.",
+      "files": [],
+      "expectations": [
+        "The result identifies run `f59ec3fd` as succeeded rather than failed or cancelled.",
+        "The result explicitly explains that the parsed trace outline is empty or zero-turn.",
+        "The result points to alternate evidence that still validates the run, such as `stdout_excerpt`, `result_json`, or run events."
+      ]
+    }
+  ]
+}

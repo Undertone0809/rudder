@@ -100,6 +100,10 @@ Never start with opinion. Build the evidence packet first.
    - Use `git show`, `git diff`, plan docs, tests, and relevant source files
      when a commit or file path is mentioned.
    - Distinguish committed changes from unrelated dirty worktree changes.
+   - Compare the changed-file set with the user's actual request. Flag
+     unrelated files or commits mixed into the task, especially skill renames,
+     dependency/version churn, generated artifacts, release files, or broad
+     runtime changes inside a narrow product/UI fix.
 
 4. Read the relevant product context.
    - Start with `doc/GOAL.md`, `doc/PRODUCT.md`, `doc/SPEC-implementation.md`,
@@ -233,6 +237,8 @@ Do not bury the verdict after a long transcript summary.
 - Incomplete entry points: only list clicks record behavior, but direct detail,
   board cards, sidebar links, deep links, or mobile paths do not.
 - Validation mismatch: tests cover the new API but not the actual operator path.
+- Commit hygiene mismatch: the final commit claims to fix one product problem
+  but includes unrelated skill, dependency, generated, or release changes.
 - Edge-case theater: code handles a number limit but not whether that limit is
   the right product experience.
 - Over-scoped fix: the implementation adds management UI when a small recovery

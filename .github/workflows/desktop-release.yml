@@ -46,12 +46,12 @@ jobs:
             arch: x64
             runner: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ inputs.source_ref || inputs.release_tag || github.ref_name }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
 
@@ -72,6 +72,18 @@ jobs:
           version="${version#v}"
           node scripts/release-package-map.mjs set-version "${version}"
 
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            node - <<'NODE'
+          const fs = require("node:fs");
+          const packageJsonPath = "desktop/package.json";
+          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+          packageJson.build ??= {};
+          packageJson.build.win ??= {};
+          packageJson.build.win.signAndEditExecutable = false;
+          fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
+          NODE
+          fi
+
           if [ "$(uname -s)" = "Darwin" ]; then
             ulimit -n 65536 || ulimit -n 10240 || true
             echo "macOS open file limit: $(ulimit -n)"
@@ -91,7 +103,7 @@ jobs:
             --arch "${{ matrix.arch }}" \
             --out dist/desktop-assets
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: dist/desktop-assets/*
@@ -102,12 +114,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ inputs.source_ref || inputs.release_tag || github.ref_name }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist/desktop-assets
           merge-multiple: true

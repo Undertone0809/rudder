@@ -1,0 +1,52 @@
+---
+title: "工作区"
+description: "项目资源、agent 文件和持久输出所在的位置。"
+---
+
+Rudder 为共享项目工作、组织产物、计划、技能和 agent 私有状态提供可预测的文件系统位置。
+
+![工作区和资源](../../images/workspaces-resources.png)
+
+## 应该使用哪个工作区？
+
+| 场景 | 位置 |
+| --- | --- |
+| 源码或项目仓库工作 | 项目工作区 |
+| 持久报告、截图、导出和交接文件 | 组织产物目录 |
+| 为组织工作生成的计划 | 组织计划目录 |
+| Agent 私有说明、记忆和本地状态 | Agent home |
+| 临时验证草稿 | `/tmp` 或系统临时目录 |
+
+## 工作区边界
+
+使用托管工作区路径，而不是临时自建目录：
+
+- 项目仓库保存在其附加的项目资源位置
+- 组织产物应写入组织产物目录
+- 组织计划应写入组织计划目录
+- agent 私有记忆、说明和技能保存在该 agent 的 home 目录下
+
+## 持久输出
+
+截图、报告、生成文档、CSV、预览说明和其他用户可见工作产物，应在可用时写入组织产物目录。
+
+`/tmp` 只用于临时 scratch 文件和验证产物。
+
+## 项目资源
+
+当一次运行链接到项目时，Rudder 会把相关项目资源注入运行时上下文。Agent 应直接检查这些资源，而不是假设全局仓库布局。
+
+## 本地开发
+
+Rudder 仓库本身使用 `pnpm dev` 进行本地开发。Codex 管理的 worktree 会被 dev runner 自动隔离；手动创建的 worktree 在运行第二个本地 server 前，应初始化隔离的 worktree 实例。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="技能" icon="book-open" href="/zh/concepts/skills">
+    为 agent 打包可重复使用的操作知识。
+  </Card>
+  <Card title="任务" icon="circle-check" href="/zh/concepts/issues">
+    把执行、证据和评审保存在同一个工作对象上。
+  </Card>
+</CardGroup>

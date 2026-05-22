@@ -5,7 +5,7 @@ interface ShortcutHandlers {
   onToggleSidebar?: () => void;
   onTogglePanel?: () => void;
   onOpenSettings?: () => void;
-  onNavigateBack?: () => void;
+  onNavigateBack?: () => boolean;
 }
 
 function isEditableShortcutTarget(target: EventTarget | null): boolean {
@@ -54,8 +54,8 @@ export function useKeyboardShortcuts({
       // Escape → previous page. Existing layers get first claim on Escape.
       if (e.key === "Escape" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && onNavigateBack) {
         if (hasOpenEscapeLayer()) return;
+        if (!onNavigateBack()) return;
         e.preventDefault();
-        onNavigateBack();
         return;
       }
 

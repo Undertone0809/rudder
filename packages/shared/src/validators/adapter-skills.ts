@@ -66,4 +66,9 @@ export const agentSkillSyncSchema = z.object({
   desiredSkills: z.array(z.string().min(1)),
 });
 
+export const agentSkillEnableSchema = z.object({
+  skills: z.array(z.string().min(1)).min(1),
+});
+
 export type AgentSkillSync = z.infer<typeof agentSkillSyncSchema>;
+export type AgentSkillEnable = z.infer<typeof agentSkillEnableSchema>;

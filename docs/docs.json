@@ -1,0 +1,174 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Rudder",
+  "logo": "/logo.png",
+  "favicon": "/favicon.svg",
+  "icons": {
+    "library": "lucide"
+  },
+  "colors": {
+    "primary": "#0F766E",
+    "light": "#14B8A6",
+    "dark": "#0F172A"
+  },
+  "seo": {
+    "metatags": {
+      "canonical": "https://doc.rudder.zeeland.studio"
+    }
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "icon": "github",
+        "href": "https://github.com/Undertone0809/rudder"
+      }
+    ]
+  },
+  "navigation": {
+    "languages": [
+      {
+        "language": "en",
+        "default": true,
+        "tabs": [
+          {
+            "tab": "Get Started",
+            "pages": [
+              "index",
+              "get-started/installation",
+              "get-started/first-organization"
+            ]
+          },
+          {
+            "tab": "Concepts",
+            "groups": [
+              {
+                "group": "Rudder Model",
+                "pages": [
+                  "concepts/overview",
+                  "concepts/goals-projects-issues",
+                  "concepts/agents",
+                  "concepts/issues",
+                  "concepts/chat",
+                  "concepts/messenger",
+                  "concepts/calendar",
+                  "concepts/workspaces",
+                  "concepts/skills"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "How-to Guides",
+            "pages": [
+              "how-to/issue-lifecycle"
+            ]
+          }
+        ]
+      },
+      {
+        "language": "cn",
+        "tabs": [
+          {
+            "tab": "开始使用",
+            "pages": [
+              "zh/index",
+              "zh/get-started/installation",
+              "zh/get-started/first-organization"
+            ]
+          },
+          {
+            "tab": "核心概念",
+            "groups": [
+              {
+                "group": "Rudder 模型",
+                "pages": [
+                  "zh/concepts/overview",
+                  "zh/concepts/goals-projects-issues",
+                  "zh/concepts/agents",
+                  "zh/concepts/issues",
+                  "zh/concepts/chat",
+                  "zh/concepts/messenger",
+                  "zh/concepts/calendar",
+                  "zh/concepts/workspaces",
+                  "zh/concepts/skills"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "操作指南",
+            "pages": [
+              "zh/how-to/issue-lifecycle"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Undertone0809/rudder"
+    },
+    "links": [
+      {
+        "header": "Docs",
+        "items": [
+          {
+            "label": "Install Rudder",
+            "href": "/get-started/installation"
+          },
+          {
+            "label": "First organization",
+            "href": "/get-started/first-organization"
+          },
+          {
+            "label": "Issue lifecycle guide",
+            "href": "/how-to/issue-lifecycle"
+          }
+        ]
+      },
+      {
+        "header": "Product",
+        "items": [
+          {
+            "label": "Chat",
+            "href": "/concepts/chat"
+          },
+          {
+            "label": "Messenger",
+            "href": "/concepts/messenger"
+          },
+          {
+            "label": "Calendar",
+            "href": "/concepts/calendar"
+          }
+        ]
+      },
+      {
+        "header": "Project",
+        "items": [
+          {
+            "label": "GitHub",
+            "href": "https://github.com/Undertone0809/rudder"
+          },
+          {
+            "label": "Changelog",
+            "href": "https://github.com/Undertone0809/rudder/releases"
+          }
+        ]
+      }
+    ]
+  },
+  "redirects": [
+    {
+      "source": "/concepts/messenger-approvals",
+      "destination": "/concepts/messenger"
+    },
+    {
+      "source": "/zh/concepts/messenger-approvals",
+      "destination": "/zh/concepts/messenger"
+    }
+  ]
+}

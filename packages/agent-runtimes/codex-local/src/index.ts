@@ -7,6 +7,7 @@ export const DEFAULT_CODEX_LOCAL_SEARCH = true;
 export const models = [
   { id: DEFAULT_CODEX_LOCAL_MODEL, label: DEFAULT_CODEX_LOCAL_MODEL },
   { id: "gpt-5.4", label: "gpt-5.4" },
+  { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
   { id: "gpt-5.3-codex-spark", label: "gpt-5.3-codex-spark" },
   { id: "gpt-5", label: "gpt-5" },
   { id: "o3", label: "o3" },
@@ -47,6 +48,7 @@ Notes:
 - Agent enabled-skill state is controlled only by Rudder's bundled skills plus the selections saved on the agent's Skills page.
 - The codex_local adapter does not materialize skills into repo-scoped ".agents/skills"; it realizes selected skills by linking them into the Rudder-managed \`CODEX_HOME/skills\` directory that Codex discovers at runtime.
 - Unless explicitly overridden in adapter config, Rudder runs Codex with a per-agent managed CODEX_HOME under the active Rudder instance and seeds auth/config from the shared Codex home (the CODEX_HOME env var, when set, or ~/.codex).
-- Rudder also isolates the child process HOME/USERPROFILE away from the operator's real home so Codex does not auto-discover unrelated global skills from ~/.agents/skills during agent runs.
+- Rudder uses a managed runtime HOME so Codex does not auto-discover unrelated global skills from ~/.agents/skills during agent runs, but bridges common local CLI credential directories (for example gh/ssh/npm/cloud CLIs) into that managed HOME.
+- Rudder prepares a managed Git config for the run, forces user.useConfigOnly=true, and points Git at it with GIT_CONFIG_GLOBAL so commits use the normal repo-local or host Git identity and never fall back to hostname .local authors.
 - When Rudder realizes a workspace/runtime for a run, it injects RUDDER_WORKSPACE_* and RUDDER_RUNTIME_* env vars for agent-side tooling.
 `;

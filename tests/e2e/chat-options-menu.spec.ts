@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_CODEX_STUB } from "./support/e2e-env";
 
 const ORG_NAME = `Plan-Mode-Chat-${Date.now()}`;
@@ -14,18 +15,19 @@ test.describe("Chat options menu", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: ORG_NAME,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          model: "gpt-5.4",
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Planner",
+      command: E2E_CODEX_STUB,
+    });
 
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
         title: "Plan mode persistence",
+        preferredAgentId: chatAgent.id,
       },
     });
     expect(chatRes.ok()).toBe(true);
@@ -44,21 +46,54 @@ test.describe("Chat options menu", () => {
     await menuButton.click();
     const planModeToggle = page.getByRole("switch", { name: "Plan mode" });
     await expect(planModeToggle).toHaveAttribute("aria-checked", "false");
-    await expect(page.getByText("Read-only planning.", { exact: false })).toBeVisible();
-    const offTrackColor = await planModeToggle.evaluate((element) => getComputedStyle(element).backgroundColor);
+    await expect(page.locator('[title*="Read-only planning."]')).toBeVisible();
+    const planModeTrack = page.getByTestId("chat-plan-mode-track");
+    const planModeThumb = page.getByTestId("chat-plan-mode-thumb");
+    const offTrackColor = await planModeTrack.evaluate((element) => getComputedStyle(element).backgroundColor);
+
+    let planModePatchCount = 0;
+    let releasePlanModePatch: (() => void) | null = null;
+    let resolvePlanModePatchStarted: (() => void) | null = null;
+    const planModePatchStarted = new Promise<void>((resolve) => {
+      resolvePlanModePatchStarted = resolve;
+    });
+    await page.route(`**/api/chats/${chat.id}`, async (route) => {
+      if (route.request().method() !== "PATCH") {
+        await route.continue();
+        return;
+      }
+      planModePatchCount += 1;
+      if (planModePatchCount === 1) {
+        resolvePlanModePatchStarted?.();
+        await new Promise<void>((release) => {
+          releasePlanModePatch = release;
+        });
+      }
+      await route.continue();
+    });
+    const planModePatchResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes(`/api/chats/${chat.id}`),
+    );
 
     await planModeToggle.click();
+    await planModePatchStarted;
     await expect(planModeToggle).toHaveAttribute("aria-checked", "true");
-    const checkedColors = await planModeToggle.evaluate((element) => ({
-      track: getComputedStyle(element).backgroundColor,
-      thumb: getComputedStyle(element.firstElementChild as HTMLElement).backgroundColor,
-    }));
+    await expect(page.locator('button[aria-label="Turn off plan mode"]')).toBeVisible();
+    const checkedColors = {
+      track: await planModeTrack.evaluate((element) => getComputedStyle(element).backgroundColor),
+      thumb: await planModeThumb.evaluate((element) => getComputedStyle(element).backgroundColor),
+    };
+    releasePlanModePatch?.();
+    expect((await planModePatchResponse).ok()).toBe(true);
+    await expect.poll(() => planModePatchCount).toBe(1);
     expect(checkedColors.track).not.toBe(offTrackColor);
     expect(checkedColors.track).not.toBe(checkedColors.thumb);
 
     await page.keyboard.press("Escape");
     await page.reload();
 
+    await expect(page.locator('button[aria-label="Turn off plan mode"]')).toBeVisible();
     await menuButton.click();
     const reloadedToggle = page.getByRole("switch", { name: "Plan mode" });
     await expect(reloadedToggle).toHaveAttribute("aria-checked", "true");
@@ -74,15 +109,14 @@ test.describe("Chat options menu", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Project-Context-Chat-${Date.now()}`,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          model: "gpt-5.4",
-          command: E2E_CODEX_STUB,
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
     const organization = await orgRes.json();
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Project Agent",
+      command: E2E_CODEX_STUB,
+    });
 
     const projectRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
       data: {
@@ -97,6 +131,7 @@ test.describe("Chat options menu", () => {
     const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
       data: {
         title: "Project-backed chat",
+        preferredAgentId: chatAgent.id,
         contextLinks: [{ entityType: "project", entityId: project.id }],
       },
     });
@@ -111,15 +146,15 @@ test.describe("Chat options menu", () => {
     const selector = page.getByTestId("chat-project-selector");
     await expect(selector).toContainText("Launch Context", { timeout: 15_000 });
 
-    await page.goto("/chat");
+    await page.goto(`/chat?agentId=${chatAgent.id}`);
     await expect(selector).toContainText("Launch Context", { timeout: 15_000 });
     const toolbar = page.getByTestId("chat-composer-toolbar");
     await expect(toolbar.getByTestId("chat-project-selector")).toBeVisible();
-    await expect(toolbar.getByRole("button", { name: "Rudder Copilot", exact: true })).toBeVisible();
+    await expect(toolbar.getByRole("button", { name: /Project Agent/ })).toBeVisible();
 
     const composerBox = await page.locator(".rudder-mdxeditor-content").first().boundingBox();
     const selectorBox = await selector.boundingBox();
-    const agentBox = await toolbar.getByRole("button", { name: "Rudder Copilot", exact: true }).boundingBox();
+    const agentBox = await toolbar.getByRole("button", { name: /Project Agent/ }).boundingBox();
     expect(composerBox).not.toBeNull();
     expect(selectorBox).not.toBeNull();
     expect(agentBox).not.toBeNull();

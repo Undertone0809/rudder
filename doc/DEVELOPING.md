@@ -212,6 +212,30 @@ and CLI use the isolated `RUDDER_HOME`, instance id, server port, and database p
 If the server has to bind a fallback port because the configured port is busy, the dev runner follows the
 runtime descriptor instead of polling only the requested port.
 
+### Agent Git Identity
+
+Local agent runtimes isolate `HOME`, so Git must not rely on the host user's global `~/.gitconfig`.
+When Rudder prepares Codex local runs, it writes an isolated `$AGENT_HOME/.gitconfig` with
+`user.useConfigOnly=true` and includes the host global Git config when a safe identity can be
+resolved from explicit `GIT_AUTHOR_*` / `GIT_COMMITTER_*`, the workspace repo-local config, or the
+host global config. Runtime-created git worktrees also get repo-local `user.useConfigOnly=true`.
+Rudder does not store or inject a separate confirmed Git identity. If no safe identity is available,
+`git commit` fails with Git's auto-detection-disabled error instead of creating a `*@*.local`
+fallback commit.
+
+Local runtimes expose `RUDDER_OPERATOR_HOME` for host desktop and CLI state while keeping child
+`HOME` isolated. Runtime code, scripts, and skills that need operator-owned app state such as `gh`,
+`ssh`, `npm`, or desktop app config should read `RUDDER_OPERATOR_HOME` and only bridge approved
+paths into the managed home; they should not set child `HOME` back to the operator home.
+
+Before asking an agent to commit in a new local workspace, set a safe repo-local identity when possible:
+
+```sh
+git config user.name "Undertone0809"
+git config user.email "72488598+Undertone0809@users.noreply.github.com"
+git config user.useConfigOnly true
+```
+
 For a standalone Vite UI process, `pnpm dev:ui` reads the same worktree-local Rudder config and proxies
 `/api` to the running runtime descriptor when one exists, otherwise to the configured server port.
 Use `RUDDER_UI_PROXY_TARGET=http://127.0.0.1:<port>` or `RUDDER_UI_PORT=<port>` only when you need
@@ -219,6 +243,14 @@ an explicit override.
 
 Playwright E2E runs also isolate themselves under `CODEX_THREAD_ID` when Codex provides it. For manual
 parallel E2E runs, set `RUDDER_E2E_RUN_ID=<unique-name>` to get a distinct home directory and port pair.
+
+E2E tests should prove that the workflow survives realistic operating conditions, not only that the
+smallest happy-path fixture renders. When a workflow depends on database aggregation, date ranges,
+organization boundaries, permission checks, persisted state, async runtime state, or external process
+results, include representative corner cases in the E2E suite. If a production failure was caused by
+scale, boundary values, or a partial dependency failure, add a production-shaped regression case for
+that failure mode. Use lower-level tests only when the E2E version would be too expensive or
+impossible, and document that tradeoff in the hand-off.
 
 Useful variants:
 

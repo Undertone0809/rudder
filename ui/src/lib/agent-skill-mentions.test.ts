@@ -184,6 +184,7 @@ describe("buildAgentSkillMentionOptions", () => {
       skillRefLabel: "alpha-test",
       skillMarkdownTarget: "/workspace/skills/alpha-test/SKILL.md",
       skillDisplayName: "Alpha Test",
+      skillDetailsHref: "/skills/org-alpha-test",
     });
     expect(options.find((option) => option.name === "build-advisor")).toMatchObject({
       skillRefLabel: "build-advisor",
@@ -191,7 +192,20 @@ describe("buildAgentSkillMentionOptions", () => {
     });
     expect(options.find((option) => option.name === "agent-helper")).toMatchObject({
       skillMarkdownTarget: "/workspace/agents/ella/skills/agent-helper/SKILL.md",
-      skillDisplayName: "Agent skill · AGENT_HOME/skills",
+      skillDisplayName: "agent-helper",
+      skillCategoryLabel: "Agent skill",
+      skillLocationLabel: "AGENT_HOME/skills",
+      skillDetailsHref: null,
+    });
+    expect(options.find((option) => option.name === "global-helper")).toMatchObject({
+      skillDisplayName: "global-helper",
+      skillCategoryLabel: "Global skill",
+      skillLocationLabel: "~/.agents/skills",
+    });
+    expect(options.find((option) => option.name === "adapter-helper")).toMatchObject({
+      skillDisplayName: "adapter-helper",
+      skillCategoryLabel: "Adapter skill",
+      skillLocationLabel: "~/.codex/skills",
     });
     expect(options.find((option) => option.name === "global-helper")?.searchText).toContain("global skill");
     expect(options.find((option) => option.name === "adapter-helper")?.searchText).toContain("adapter:codex_local:adapter-helper");
@@ -233,6 +247,7 @@ describe("buildAgentSkillMentionOptions", () => {
       name: "alpha-test",
       skillRefLabel: "alpha-test",
       skillMarkdownTarget: "/workspace/skills/alpha-test/SKILL.md",
+      skillDetailsHref: null,
     });
   });
 });

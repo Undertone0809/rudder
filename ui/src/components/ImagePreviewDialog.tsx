@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { X } from "lucide-react";
+import { Copy, Download, Folder, X } from "lucide-react";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useToast } from "@/context/ToastContext";
 import {
   getContainedImagePreviewSize,
   getImagePreviewViewportBounds,
   isValidImageNaturalSize,
   type ImageNaturalSize,
 } from "@/lib/image-preview";
+import {
+  canShowImageInFolder,
+  copyImage,
+  downloadImage,
+  showImageInFolder,
+} from "@/lib/image-actions";
 
 export interface ImagePreviewState {
   alt: string;
@@ -22,6 +29,14 @@ function getViewportSize() {
   return { width: window.innerWidth, height: window.innerHeight };
 }
 
+function useMaybeToast() {
+  try {
+    return useToast();
+  } catch {
+    return null;
+  }
+}
+
 export function ImagePreviewDialog({
   preview,
   onOpenChange,
@@ -33,8 +48,10 @@ export function ImagePreviewDialog({
   testId: string;
   titleFallback: string;
 }) {
+  const toast = useMaybeToast();
   const [naturalSize, setNaturalSize] = useState<ImageNaturalSize | null>(preview?.naturalSize ?? null);
   const [viewportSize, setViewportSize] = useState(() => getViewportSize());
+  const canOpenInFinder = canShowImageInFolder();
 
   useEffect(() => {
     if (!preview) {
@@ -82,6 +99,25 @@ export function ImagePreviewDialog({
     () => getImagePreviewViewportBounds(viewportSize.width, viewportSize.height),
     [viewportSize.height, viewportSize.width],
   );
+  const runImageAction = async (
+    title: string,
+    action: () => Promise<void> | void,
+    successTitle?: string,
+  ) => {
+    if (!preview) return;
+    try {
+      await action();
+      if (successTitle) {
+        toast?.pushToast({ title: successTitle, tone: "success" });
+      }
+    } catch (error) {
+      toast?.pushToast({
+        title,
+        body: error instanceof Error ? error.message : String(error),
+        tone: "error",
+      });
+    }
+  };
 
   return (
     <Dialog open={preview !== null} onOpenChange={onOpenChange}>
@@ -108,6 +144,37 @@ export function ImagePreviewDialog({
               <X className="size-4" aria-hidden="true" />
               <span className="sr-only">Close image preview</span>
             </DialogClose>
+            <div className="absolute left-2 top-2 z-10 flex items-center gap-1 rounded-sm bg-black/55 p-1 text-white shadow-[0_6px_18px_rgb(0_0_0/0.28)]">
+              <button
+                type="button"
+                className="rudder-image-preview-action"
+                title="Copy Image"
+                onClick={() => runImageAction("Copy Image failed", () => copyImage(preview.src, preview.name), "Image copied")}
+              >
+                <Copy className="size-4" aria-hidden="true" />
+                <span className="sr-only">Copy Image</span>
+              </button>
+              <button
+                type="button"
+                className="rudder-image-preview-action"
+                title="Download Image"
+                onClick={() => runImageAction("Download Image failed", () => downloadImage(preview.src, preview.name))}
+              >
+                <Download className="size-4" aria-hidden="true" />
+                <span className="sr-only">Download Image</span>
+              </button>
+              {canOpenInFinder ? (
+                <button
+                  type="button"
+                  className="rudder-image-preview-action"
+                  title="Open in Finder"
+                  onClick={() => runImageAction("Open in Finder failed", () => showImageInFolder(preview.src, preview.name))}
+                >
+                  <Folder className="size-4" aria-hidden="true" />
+                  <span className="sr-only">Open in Finder</span>
+                </button>
+              ) : null}
+            </div>
             <img
               src={preview.src}
               alt={preview.alt}

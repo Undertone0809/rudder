@@ -27,6 +27,11 @@ Important constraints:
 - stable source commits must have one committed public package version
 - all public packages must share that same stable semver before release
 - canary publishes derive the next prerelease from the committed stable version
+- after publishing stable `X.Y.Z`, the next canary requires an explicit commit
+  that bumps the public package version to the next stable base, for example
+  `X.Y.Z -> X.Y.(Z+1)`
+- `./scripts/release.sh canary --print-version` fails if the committed canary
+  base already exists as stable npm package `X.Y.Z` or remote git tag `vX.Y.Z`
 
 ## Release Surfaces
 
@@ -99,11 +104,14 @@ Before running stable:
 2. confirm the committed public package version is the stable version you want to ship
 3. create or update `releases/vX.Y.Z.md` on that source ref
 4. run the stable workflow from that source ref
+5. after stable is published, merge a separate version-bump commit before
+   expecting later canaries to be detectable as updates for stable users
 
 Example:
 
 - `source_ref`: `main`
 - resulting stable version: `0.1.0`
+- follow-up version bump before the next canary line: `0.1.0 -> 0.1.1`
 
 The workflow:
 

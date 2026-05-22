@@ -862,6 +862,8 @@ export interface PluginIssuesClient {
     orgId: string;
     projectId?: string;
     assigneeAgentId?: string;
+    reviewerAgentId?: string;
+    reviewerUserId?: string;
     status?: Issue["status"];
     limit?: number;
     offset?: number;
@@ -877,12 +879,14 @@ export interface PluginIssuesClient {
     status?: Issue["status"];
     priority?: Issue["priority"];
     assigneeAgentId?: string;
+    reviewerAgentId?: string;
+    reviewerUserId?: string;
   }): Promise<Issue>;
   update(
     issueId: string,
     patch: Partial<Pick<
       Issue,
-      "title" | "description" | "status" | "priority" | "assigneeAgentId"
+      "title" | "description" | "status" | "priority" | "assigneeAgentId" | "reviewerAgentId" | "reviewerUserId"
     >>,
     orgId: string,
   ): Promise<Issue>;

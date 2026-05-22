@@ -15,6 +15,8 @@ import {
   installPersistentCli,
   resolvePersistentCliInstallSpec,
 } from "../install.js";
+import { resolveRudderHomeDir } from "../config/home.js";
+import { ensureRuntimeInstalled, RuntimeInstallError } from "../runtime/install.js";
 import { createByteProgress, type ByteProgressReporter } from "../utils/progress.js";
 import { resolveCliVersion } from "../version.js";
 
@@ -39,6 +41,7 @@ export interface DesktopInstallPaths {
 export interface GithubReleaseAsset {
   name: string;
   browser_download_url: string;
+  url?: string;
 }
 
 interface GithubRelease {
@@ -49,11 +52,16 @@ interface GithubRelease {
 interface StartCommandOptions {
   cli?: boolean;
   desktop?: boolean;
+  runtime?: boolean;
   version?: string;
+  targetVersion?: string;
   repo?: string;
   outputDir?: string;
   desktopInstallDir?: string;
   open?: boolean;
+  waitForActiveRuns?: boolean;
+  desktopProgressJson?: boolean;
+  desktopWaitForApply?: boolean;
   dryRun?: boolean;
   versionCheck?: boolean;
 }
@@ -67,18 +75,160 @@ export interface DesktopInstallMetadata {
 }
 
 type UpdateQuitResponse =
-  | { ok: true; status: "quitting" | "not_running" }
+  | { ok: true; status: "quitting"; pid?: number }
+  | { ok: true; status: "not_running" }
   | { ok: false; status: "active_runs"; totalRuns: number }
   | { ok: false; status: "failed"; message: string };
 
 export type ProgressReporterFactory = (label: string) => ByteProgressReporter;
 
+type DesktopUpdateProgressPhase =
+  | "starting"
+  | "resolving_release"
+  | "downloading_checksums"
+  | "downloading_asset"
+  | "verifying_checksum"
+  | "ready_to_install"
+  | "waiting_for_active_runs"
+  | "preparing_restart"
+  | "closing"
+  | "failed";
+
+type DesktopUpdateProgressEvent = {
+  source: "rudder-desktop-update";
+  phase: DesktopUpdateProgressPhase;
+  message: string;
+  percent?: number;
+  transferredBytes?: number;
+  totalBytes?: number;
+  error?: string;
+  at: string;
+};
+
 const STABLE_SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const CANARY_SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+-canary\.[0-9]+$/;
 const CLI_REGISTRY_LATEST_URL = "https://registry.npmjs.org/@rudderhq%2fcli/latest";
+const LEGACY_UPDATE_QUIT_GRACE_MS = 10_000;
+const UPDATE_QUIT_FORCE_DELAY_MS = 1_000;
 const DESKTOP_APP_NAME = "Rudder";
 const DESKTOP_METADATA_FILE = ".rudder-desktop-install.json";
 const DESKTOP_CHECKSUM_ASSET_NAME = "SHASUMS256.txt";
+const DESKTOP_ASSET_CACHE_DIR = "desktop-assets";
+const GITHUB_ASSET_DOWNLOAD_ACCEPT = "application/octet-stream";
+
+function normalizeProgressTotal(totalBytes: number | null | undefined): number | null {
+  return typeof totalBytes === "number" && Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : null;
+}
+
+function writeDesktopProgress(event: Omit<DesktopUpdateProgressEvent, "source" | "at">): void {
+  const payload: DesktopUpdateProgressEvent = {
+    source: "rudder-desktop-update",
+    ...event,
+    at: new Date().toISOString(),
+  };
+  try {
+    process.stdout.write(`${JSON.stringify(payload)}\n`);
+  } catch (error) {
+    const code = typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "";
+    if (code !== "EPIPE") throw error;
+  }
+}
+
+function desktopDownloadPhase(label: string): DesktopUpdateProgressPhase {
+  return label.toLowerCase().includes("shasums")
+    ? "downloading_checksums"
+    : "downloading_asset";
+}
+
+function createDesktopProgressFactory(): ProgressReporterFactory {
+  return (label: string) => {
+    const phase = desktopDownloadPhase(label);
+    let latestReceivedBytes = 0;
+    let latestTotalBytes: number | null | undefined = null;
+
+    function emitByteProgress(
+      message: string,
+      receivedBytes: number,
+      totalBytes: number | null | undefined,
+    ): void {
+      const total = normalizeProgressTotal(totalBytes);
+      writeDesktopProgress({
+        phase,
+        message,
+        transferredBytes: Math.max(0, receivedBytes),
+        ...(total === null
+          ? {}
+          : {
+            totalBytes: total,
+            percent: Math.max(0, Math.min(100, Math.floor((Math.max(0, receivedBytes) / total) * 100))),
+          }),
+      });
+    }
+
+    return {
+      start(totalBytes?: number | null) {
+        latestReceivedBytes = 0;
+        latestTotalBytes = totalBytes;
+        emitByteProgress(label, 0, totalBytes);
+      },
+      update(receivedBytes: number, totalBytes?: number | null) {
+        latestReceivedBytes = receivedBytes;
+        latestTotalBytes = totalBytes;
+        emitByteProgress(label, receivedBytes, totalBytes);
+      },
+      finish(receivedBytes = latestReceivedBytes, totalBytes = latestTotalBytes) {
+        latestReceivedBytes = receivedBytes;
+        latestTotalBytes = totalBytes;
+        emitByteProgress(`${label} complete`, receivedBytes, totalBytes);
+      },
+      fail() {
+        writeDesktopProgress({
+          phase,
+          message: `${label} failed`,
+          transferredBytes: Math.max(0, latestReceivedBytes),
+          error: `${label} failed`,
+        });
+      },
+    };
+  };
+}
+
+async function waitForDesktopApplySignal(): Promise<void> {
+  process.stdin.setEncoding("utf8");
+  process.stdin.resume();
+
+  await new Promise<void>((resolve, reject) => {
+    let buffer = "";
+    const cleanup = () => {
+      process.stdin.off("data", onData);
+      process.stdin.off("end", onEnd);
+      process.stdin.off("error", onError);
+    };
+    const onData = (chunk: string) => {
+      buffer += chunk;
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      if (lines.some((line) => line.trim() === "apply")) {
+        cleanup();
+        resolve();
+      }
+    };
+    const onEnd = () => {
+      cleanup();
+      reject(new Error("Desktop update apply signal ended before confirmation."));
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    process.stdin.on("data", onData);
+    process.stdin.on("end", onEnd);
+    process.stdin.on("error", onError);
+  });
+}
 
 export function resolveCurrentCliVersion(env: NodeJS.ProcessEnv = process.env): string {
   const version = resolveCliVersion(import.meta.url, env);
@@ -317,6 +467,31 @@ function buildGithubReleaseAsset(repo: string, tag: string, assetName: string): 
   };
 }
 
+function uniqueAssetDownloadUrls(asset: GithubReleaseAsset): string[] {
+  const urls = [asset.url, asset.browser_download_url].filter((url): url is string => Boolean(url));
+  return Array.from(new Set(urls));
+}
+
+function downloadHeadersForAssetUrl(asset: GithubReleaseAsset, url: string): HeadersInit {
+  return {
+    Accept: url === asset.url ? GITHUB_ASSET_DOWNLOAD_ACCEPT : "*/*",
+    "User-Agent": "rudder-cli-installer",
+  };
+}
+
+function formatFetchError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    const code = (cause as { code?: unknown }).code;
+    const suffix = typeof code === "string" ? ` [${code}]` : "";
+    return `${error.message}: ${cause.message}${suffix}`;
+  }
+
+  return error.message;
+}
+
 function contentLengthFromHeaders(headers: Headers): number | null {
   const raw = headers.get("content-length");
   if (!raw) return null;
@@ -331,11 +506,26 @@ export async function downloadAsset(
 ): Promise<string> {
   mkdirSync(outputDir, { recursive: true });
   const outputPath = path.join(outputDir, path.basename(asset.name));
-  const response = await fetch(asset.browser_download_url, {
-    headers: { "User-Agent": "rudder-cli-installer" },
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(`Failed to download ${asset.name} from ${asset.browser_download_url} (${response.status}).`);
+
+  let response: Response | null = null;
+  const failures: string[] = [];
+  for (const url of uniqueAssetDownloadUrls(asset)) {
+    try {
+      const candidate = await fetch(url, {
+        headers: downloadHeadersForAssetUrl(asset, url),
+      });
+      if (candidate.ok && candidate.body) {
+        response = candidate;
+        break;
+      }
+      failures.push(`Failed to download ${asset.name} from ${url} (${candidate.status}).`);
+    } catch (error) {
+      failures.push(`Failed to download ${asset.name} from ${url}: ${formatFetchError(error)}.`);
+    }
+  }
+
+  if (!response) {
+    throw new Error(failures.join("\n"));
   }
 
   const totalBytes = contentLengthFromHeaders(response.headers);
@@ -404,6 +594,65 @@ export async function downloadChecksums(
   return parseChecksumFile(readFileSync(checksumPath, "utf8"));
 }
 
+function normalizeDesktopAssetChecksum(checksum: string): string {
+  const normalized = checksum.trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalized)) {
+    throw new Error("Desktop asset cache requires a SHA-256 checksum.");
+  }
+  return normalized;
+}
+
+export function resolveDesktopAssetCacheDir(
+  assetChecksum: string,
+  homeDir: string = resolveRudderHomeDir(),
+): string {
+  return path.join(homeDir, DESKTOP_ASSET_CACHE_DIR, normalizeDesktopAssetChecksum(assetChecksum));
+}
+
+export function resolveDesktopCachedAssetPath(
+  assetName: string,
+  assetChecksum: string,
+  homeDir: string = resolveRudderHomeDir(),
+): string {
+  return path.join(resolveDesktopAssetCacheDir(assetChecksum, homeDir), path.basename(assetName));
+}
+
+export async function downloadDesktopAssetWithCache(
+  asset: GithubReleaseAsset,
+  expectedChecksum: string,
+  options: {
+    homeDir?: string;
+    outputDir?: string;
+    progressFactory?: ProgressReporterFactory;
+  } = {},
+): Promise<{ path: string; checksum: string; cacheStatus: "hit" | "miss" }> {
+  const normalizedChecksum = normalizeDesktopAssetChecksum(expectedChecksum);
+  const cachePath = resolveDesktopCachedAssetPath(asset.name, normalizedChecksum, options.homeDir);
+
+  if (await pathExists(cachePath)) {
+    try {
+      const checksum = assertChecksumMatch(cachePath, normalizedChecksum);
+      return { path: cachePath, checksum, cacheStatus: "hit" };
+    } catch {
+      await rm(cachePath, { force: true });
+    }
+  }
+
+  const outputDir = options.outputDir ?? await mkdtemp(path.join(tmpdir(), "rudder-desktop-installer."));
+  const removeOutputDir = options.outputDir ? false : true;
+  try {
+    const downloadedPath = await downloadAsset(asset, outputDir, options.progressFactory);
+    const checksum = assertChecksumMatch(downloadedPath, normalizedChecksum);
+    await mkdir(path.dirname(cachePath), { recursive: true });
+    if (path.resolve(downloadedPath) !== path.resolve(cachePath)) {
+      await copyFile(downloadedPath, cachePath);
+    }
+    return { path: cachePath, checksum, cacheStatus: "miss" };
+  } finally {
+    if (removeOutputDir) await rm(outputDir, { recursive: true, force: true });
+  }
+}
+
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await access(targetPath, fsConstants.F_OK);
@@ -428,8 +677,31 @@ function runChecked(command: string, args: string[], options: { cwd?: string; sh
   throw new Error(`${command} ${args.join(" ")} failed${output ? `: ${output}` : ""}`);
 }
 
+function formatCommandFailure(command: string, args: string[], stdout: unknown, stderr: unknown): string {
+  const output = [stdout, stderr]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join("\n")
+    .trim();
+  return `${command} ${args.join(" ")} failed${output ? `: ${output}` : ""}`;
+}
+
 function powershellQuote(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
+}
+
+export function buildWindowsZipExtractCommand(zipPath: string, outputDir: string): { command: string; args: string[] } {
+  return { command: "tar.exe", args: ["-xf", zipPath, "-C", outputDir] };
+}
+
+export function buildWindowsRobocopyMirrorCommand(sourcePath: string, destinationPath: string): { command: string; args: string[] } {
+  return {
+    command: "robocopy.exe",
+    args: [sourcePath, destinationPath, "/MIR", "/R:2", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NP"],
+  };
+}
+
+export function isSuccessfulRobocopyExitCode(status: number | null): boolean {
+  return typeof status === "number" && status >= 0 && status <= 7;
 }
 
 async function extractZip(zipPath: string, outputDir: string, target: DesktopAssetTarget): Promise<void> {
@@ -442,13 +714,8 @@ async function extractZip(zipPath: string, outputDir: string, target: DesktopAss
   }
 
   if (target.platform === "windows") {
-    runChecked("powershell.exe", [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      `Expand-Archive -LiteralPath ${powershellQuote(zipPath)} -DestinationPath ${powershellQuote(outputDir)} -Force`,
-    ]);
+    const command = buildWindowsZipExtractCommand(zipPath, outputDir);
+    runChecked(command.command, command.args);
     return;
   }
 
@@ -528,6 +795,19 @@ function forceQuitDesktopProcesses(target: DesktopAssetTarget): void {
   spawnSync(command.command, command.args, { stdio: "ignore" });
 }
 
+function forceQuitDesktopProcess(pid: number, target: DesktopAssetTarget): void {
+  if (target.platform === "windows") {
+    spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // The process may already have exited between the wait timeout and kill.
+  }
+}
+
 function isRunningInsideDesktopExecutable(): boolean {
   return path.basename(process.execPath).toLowerCase().startsWith(DESKTOP_APP_NAME.toLowerCase());
 }
@@ -561,6 +841,38 @@ async function requestDesktopQuit(executablePath: string, target: DesktopAssetTa
   }
 }
 
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "";
+    return code === "EPERM";
+  }
+}
+
+function readUpdateQuitPid(response: UpdateQuitResponse | null): number | null {
+  if (!response?.ok || response.status !== "quitting") return null;
+  return typeof response.pid === "number" && Number.isInteger(response.pid) && response.pid > 0
+    ? response.pid
+    : null;
+}
+
+function isLegacyUnconfirmedUpdateQuit(response: UpdateQuitResponse | null): boolean {
+  return Boolean(response?.ok && response.status === "quitting" && !readUpdateQuitPid(response));
+}
+
+export async function waitForProcessExit(pid: number, timeoutMs = 20_000, intervalMs = 250): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!processExists(pid)) return true;
+    await delay(intervalMs);
+  }
+  return !processExists(pid);
+}
+
 async function removePathWithRetry(targetPath: string, attempts = 5): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
@@ -574,25 +886,65 @@ async function removePathWithRetry(targetPath: string, attempts = 5): Promise<bo
   return false;
 }
 
-async function prepareForDesktopReplace(paths: DesktopInstallPaths, target: DesktopAssetTarget): Promise<void> {
+export async function prepareForDesktopReplace(
+  paths: DesktopInstallPaths,
+  target: DesktopAssetTarget,
+  options: {
+    waitForActiveRuns?: boolean;
+    activeRunPollIntervalMs?: number;
+    legacyUpdateQuitGraceMs?: number;
+    updateQuitForceDelayMs?: number;
+    forceQuitDesktopProcess?: (pid: number, target: DesktopAssetTarget) => void;
+    forceQuitDesktopProcesses?: (target: DesktopAssetTarget) => void;
+    waitForDesktopProcessExit?: (pid: number) => Promise<boolean>;
+  } = {},
+): Promise<void> {
+  const forceQuit = options.forceQuitDesktopProcesses ?? forceQuitDesktopProcesses;
+  const forceQuitPid = options.forceQuitDesktopProcess ?? forceQuitDesktopProcess;
+  const waitForExit = options.waitForDesktopProcessExit ?? waitForProcessExit;
   const hasManagedExecutable = await pathExists(paths.executablePath);
   if (hasManagedExecutable) {
-    const quitResponse = await requestDesktopQuit(paths.executablePath, target);
+    let quitResponse = await requestDesktopQuit(paths.executablePath, target);
+    while (quitResponse && !quitResponse.ok && quitResponse.status === "active_runs" && options.waitForActiveRuns) {
+      p.log.warn(
+        `Rudder Desktop has ${quitResponse.totalRuns} active run${quitResponse.totalRuns === 1 ? "" : "s"}; waiting before replacing Desktop.`,
+      );
+      await delay(options.activeRunPollIntervalMs ?? 15_000);
+      quitResponse = await requestDesktopQuit(paths.executablePath, target);
+    }
     if (quitResponse && !quitResponse.ok && quitResponse.status === "active_runs") {
       throw new Error(
         `Rudder Desktop has ${quitResponse.totalRuns} active run${quitResponse.totalRuns === 1 ? "" : "s"}. Stop active work, then rerun start.`,
       );
     }
-    await delay(1_000);
+    const quitPid = readUpdateQuitPid(quitResponse);
+    if (quitPid) {
+      p.log.info(`Waiting for existing Rudder Desktop process ${quitPid} to exit before replacing it.`);
+      if (!(await waitForExit(quitPid))) {
+        p.log.warn(`Rudder Desktop process ${quitPid} did not exit in time; attempting force-quit fallback.`);
+        forceQuitPid(quitPid, target);
+        await delay(options.updateQuitForceDelayMs ?? UPDATE_QUIT_FORCE_DELAY_MS);
+      }
+    } else if (isLegacyUnconfirmedUpdateQuit(quitResponse)) {
+      const graceMs = options.legacyUpdateQuitGraceMs ?? LEGACY_UPDATE_QUIT_GRACE_MS;
+      p.log.warn(
+        `Existing Rudder Desktop acknowledged update quit without a process id; waiting ${Math.ceil(graceMs / 1_000)}s before force-quit fallback.`,
+      );
+      await delay(graceMs);
+      forceQuit(target);
+      await delay(options.updateQuitForceDelayMs ?? UPDATE_QUIT_FORCE_DELAY_MS);
+    } else {
+      await delay(options.updateQuitForceDelayMs ?? UPDATE_QUIT_FORCE_DELAY_MS);
+    }
   } else if (!isRunningInsideDesktopExecutable()) {
-    forceQuitDesktopProcesses(target);
+    forceQuit(target);
   }
 
   const replacePath = target.platform === "windows" ? paths.installRoot : paths.appPath;
   if (await removePathWithRetry(replacePath)) return;
 
-  forceQuitDesktopProcesses(target);
-  await delay(1_000);
+  forceQuit(target);
+  await delay(options.updateQuitForceDelayMs ?? UPDATE_QUIT_FORCE_DELAY_MS);
   if (await removePathWithRetry(replacePath, 6)) return;
 
   throw new Error(`Failed to replace existing Rudder Desktop at ${replacePath}. Close Rudder and rerun start.`);
@@ -629,6 +981,17 @@ async function installPortableDesktop(
 }
 
 export async function copyPortableAppBundle(sourcePath: string, destinationPath: string): Promise<void> {
+  if (process.platform === "win32") {
+    await mkdir(destinationPath, { recursive: true });
+    const command = buildWindowsRobocopyMirrorCommand(sourcePath, destinationPath);
+    const result = spawnSync(command.command, command.args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (isSuccessfulRobocopyExitCode(result.status)) return;
+    throw new Error(formatCommandFailure(command.command, command.args, result.stdout, result.stderr));
+  }
+
   await cp(sourcePath, destinationPath, { recursive: true, verbatimSymlinks: true });
 }
 
@@ -732,15 +1095,29 @@ async function runStartPhase<T>(
   message: string,
   successMessage: string,
   task: () => Promise<T> | T,
+  progressPhase?: DesktopUpdateProgressPhase | null,
 ): Promise<T> {
+  if (progressPhase) {
+    writeDesktopProgress({ phase: progressPhase, message });
+  }
   const spinner = p.spinner();
   spinner.start(message);
   try {
     const result = await task();
     spinner.stop(successMessage);
+    if (progressPhase) {
+      writeDesktopProgress({ phase: progressPhase, message: successMessage });
+    }
     return result;
   } catch (error) {
     spinner.stop(pc.red(`${message} failed.`));
+    if (progressPhase) {
+      writeDesktopProgress({
+        phase: "failed",
+        message: `${message} failed.`,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     throw error;
   }
 }
@@ -748,12 +1125,20 @@ async function runStartPhase<T>(
 export async function startCommand(opts: StartCommandOptions): Promise<void> {
   const installCli = opts.cli !== false;
   const installDesktop = opts.desktop !== false;
+  const installRuntime = opts.runtime !== false;
   const repo = opts.repo?.trim() || DEFAULT_DESKTOP_RELEASE_REPO;
-  const version = opts.version?.trim() || resolveCurrentCliVersion();
+  const version = opts.targetVersion?.trim() || opts.version?.trim() || resolveCurrentCliVersion();
   const dryRun = opts.dryRun === true;
+  const desktopProgressJson = opts.desktopProgressJson === true;
 
-  if (!installCli && !installDesktop) {
-    throw new Error("Nothing to start. Remove --no-cli or --no-desktop.");
+  if (desktopProgressJson) {
+    process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EPIPE") throw error;
+    });
+  }
+
+  if (!installCli && !installDesktop && !installRuntime) {
+    throw new Error("Nothing to start. Remove --no-cli, --no-runtime, or --no-desktop.");
   }
 
   p.intro(pc.bgCyan(pc.black(" rudder start ")));
@@ -761,6 +1146,30 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
   if (opts.versionCheck !== false) {
     const updateNotice = await getCliUpdateNotice(version);
     if (updateNotice) p.log.warn(updateNotice);
+  }
+
+  if (installRuntime) {
+    p.log.step("Preparing Rudder runtime");
+    if (dryRun) {
+      p.log.message(`[dry-run] Would install or reuse ${pc.cyan(`@rudderhq/server@${version}`)} in the Rudder runtime cache.`);
+    } else {
+      const spinner = p.spinner();
+      spinner.start("Installing or reusing Rudder runtime...");
+      try {
+        const runtime = await ensureRuntimeInstalled({ version });
+        spinner.stop(
+          runtime.status === "hit"
+            ? `Rudder runtime cache hit at ${pc.cyan(runtime.cacheDir)}.`
+            : `Rudder runtime installed at ${pc.cyan(runtime.cacheDir)}.`,
+        );
+      } catch (error) {
+        spinner.stop(pc.red("Rudder runtime installation failed."));
+        if (error instanceof RuntimeInstallError && error.output) {
+          p.log.message(pc.dim(error.output));
+        }
+        throw error;
+      }
+    }
   }
 
   if (installCli) {
@@ -815,29 +1224,45 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
     }
 
     const directReleaseVersion = resolveDesktopReleaseVersion(tag);
-    const progressFactory: ProgressReporterFactory = createByteProgress;
-    const release = directReleaseVersion
-      ? null
-      : await runStartPhase(
+    const progressFactory: ProgressReporterFactory = desktopProgressJson
+      ? createDesktopProgressFactory()
+      : createByteProgress;
+    let release: GithubRelease | null = null;
+    try {
+      release = await runStartPhase(
         "Resolving Desktop release...",
         "Desktop release resolved.",
         () => fetchGithubRelease(repo, tag),
+        desktopProgressJson ? "resolving_release" : null,
       );
-    const releaseTag = directReleaseVersion ? tag : release?.tag_name;
+    } catch (error) {
+      if (!directReleaseVersion) throw error;
+      p.log.warn(
+        `Desktop release metadata could not be resolved; falling back to deterministic download URLs. ${formatFetchError(error)}`,
+      );
+    }
+
+    const releaseTag = release?.tag_name ?? (directReleaseVersion ? tag : null);
     if (!releaseTag) {
       throw new Error(`Unable to resolve Rudder Desktop release tag for ${repo}@${tag}.`);
     }
 
-    const asset = directReleaseVersion
-      ? buildGithubReleaseAsset(repo, tag, resolveDesktopAssetName(directReleaseVersion, target))
-      : selectDesktopAsset(release?.assets ?? [], target);
+    const asset = selectDesktopAsset(release?.assets ?? [], target)
+      ?? (
+        directReleaseVersion
+          ? buildGithubReleaseAsset(repo, tag, resolveDesktopAssetName(directReleaseVersion, target))
+          : null
+      );
     if (!asset) {
       throw new Error(`No Rudder Desktop portable asset found for ${target.platform}/${target.arch} in ${repo}@${releaseTag}.`);
     }
 
-    const checksumAsset = directReleaseVersion
-      ? buildGithubReleaseAsset(repo, tag, DESKTOP_CHECKSUM_ASSET_NAME)
-      : selectChecksumAsset(release?.assets ?? []);
+    const checksumAsset = selectChecksumAsset(release?.assets ?? [])
+      ?? (
+        directReleaseVersion
+          ? buildGithubReleaseAsset(repo, tag, DESKTOP_CHECKSUM_ASSET_NAME)
+          : null
+      );
     const checksums = await downloadChecksums(checksumAsset, outputDir, progressFactory);
     const expectedChecksum = resolveAssetChecksum(checksums, asset.name);
 
@@ -854,24 +1279,54 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
           await removeMacQuarantine(installPaths, target);
           await createPlatformLaunchers(installPaths, target);
         },
+        desktopProgressJson ? "preparing_restart" : null,
       );
     } else {
-      const installerPath = await downloadAsset(asset, outputDir, progressFactory);
+      const cachedAsset = await downloadDesktopAssetWithCache(asset, expectedChecksum, {
+        outputDir,
+        progressFactory,
+      });
+      if (cachedAsset.cacheStatus === "hit") {
+        p.log.success(`Desktop asset cache hit at ${pc.cyan(cachedAsset.path)}.`);
+        if (desktopProgressJson) {
+          writeDesktopProgress({
+            phase: "downloading_asset",
+            message: `Desktop asset cache hit for ${asset.name}.`,
+            percent: 100,
+          });
+        }
+      }
       const checksum = await runStartPhase(
         "Verifying Desktop checksum...",
-        `Verified ${pc.cyan(path.basename(installerPath))}.`,
-        () => assertChecksumMatch(installerPath, expectedChecksum),
+        `Verified ${pc.cyan(path.basename(cachedAsset.path))}.`,
+        () => assertChecksumMatch(cachedAsset.path, expectedChecksum),
+        desktopProgressJson ? "verifying_checksum" : null,
       );
+
+      if (desktopProgressJson && opts.desktopWaitForApply === true) {
+        writeDesktopProgress({
+          phase: "ready_to_install",
+          message: "Desktop update is downloaded and verified.",
+          percent: 100,
+        });
+        await waitForDesktopApplySignal();
+        writeDesktopProgress({
+          phase: "preparing_restart",
+          message: "Applying Desktop update...",
+        });
+      }
 
       await runStartPhase(
         "Replacing existing Rudder Desktop if needed...",
         "Existing Desktop install is ready for replacement.",
-        () => prepareForDesktopReplace(installPaths, target),
+        () => prepareForDesktopReplace(installPaths, target, { waitForActiveRuns: opts.waitForActiveRuns === true }),
+        desktopProgressJson ? (opts.waitForActiveRuns === true ? "waiting_for_active_runs" : "preparing_restart") : null,
       );
       await runStartPhase(
         "Installing portable Desktop app...",
         `Installed Rudder Desktop to ${pc.cyan(installPaths.appPath)}.`,
-        () => installPortableDesktop(installerPath, installPaths, target),
+        () => installPortableDesktop(cachedAsset.path, installPaths, target),
+        desktopProgressJson ? "preparing_restart" : null,
       );
       await runStartPhase(
         "Preparing Desktop launchers...",
@@ -880,6 +1335,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
           await removeMacQuarantine(installPaths, target);
           await createPlatformLaunchers(installPaths, target);
         },
+        desktopProgressJson ? "preparing_restart" : null,
       );
       await writeInstallMetadata(installPaths, releaseTag, asset.name, checksum);
     }
@@ -889,6 +1345,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         "Launching Rudder Desktop...",
         "Rudder Desktop launched.",
         () => launchDesktop(installPaths, target),
+        desktopProgressJson ? "closing" : null,
       );
     }
   }

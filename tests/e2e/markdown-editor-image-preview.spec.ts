@@ -64,6 +64,23 @@ test("keeps inline markdown image previews in landscape when opened from the edi
   const previewImage = previewDialog.getByAltText("Wide image");
   await expect(previewImage).toBeVisible();
 
+  const previewChrome = await previewDialog.evaluate((dialog) => {
+    const dialogStyle = window.getComputedStyle(dialog);
+    const image = dialog.querySelector("img");
+    if (!(image instanceof HTMLImageElement)) {
+      throw new Error("Expected image preview image");
+    }
+    const imageStyle = window.getComputedStyle(image);
+    return {
+      mediaAnimationName: dialogStyle.animationName,
+      mediaBorderRadius: Number.parseFloat(dialogStyle.borderTopLeftRadius),
+      imageBorderRadius: Number.parseFloat(imageStyle.borderTopLeftRadius),
+    };
+  });
+  expect(previewChrome.mediaAnimationName).toContain("rudder-image-preview-media-in");
+  expect(previewChrome.mediaBorderRadius).toBeGreaterThan(0);
+  expect(previewChrome.imageBorderRadius).toBeGreaterThan(0);
+
   const previewMetrics = await previewImage.evaluate((image) => {
     const element = image as HTMLImageElement;
     const rect = element.getBoundingClientRect();

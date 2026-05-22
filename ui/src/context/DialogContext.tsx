@@ -14,12 +14,19 @@ import { Label } from "@/components/ui/label";
 export interface NewIssueDefaults {
   draftId?: string;
   parentId?: string;
+  parentIssue?: {
+    id: string;
+    identifier?: string | null;
+    title?: string | null;
+  };
   status?: string;
   priority?: string;
   projectId?: string;
   labelIds?: string[];
   assigneeAgentId?: string;
   assigneeUserId?: string;
+  reviewerAgentId?: string;
+  reviewerUserId?: string;
   title?: string;
   description?: string;
 }
@@ -31,6 +38,10 @@ interface NewGoalDefaults {
 interface OnboardingOptions {
   initialStep?: 1 | 2 | 3 | 4;
   orgId?: string;
+}
+
+interface ProductTourOptions {
+  source?: "auto" | "settings";
 }
 
 export interface ConfirmDialogOptions {
@@ -80,6 +91,10 @@ interface DialogContextValue {
   onboardingOptions: OnboardingOptions;
   openOnboarding: (options?: OnboardingOptions) => void;
   closeOnboarding: () => void;
+  productTourOpen: boolean;
+  productTourOptions: ProductTourOptions;
+  openProductTour: (options?: ProductTourOptions) => void;
+  closeProductTour: () => void;
   confirm: (options: ConfirmDialogOptions) => Promise<boolean>;
   promptText: (options: PromptTextDialogOptions) => Promise<string | null>;
 }
@@ -95,6 +110,8 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   const [newAgentOpen, setNewAgentOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingOptions, setOnboardingOptions] = useState<OnboardingOptions>({});
+  const [productTourOpen, setProductTourOpen] = useState(false);
+  const [productTourOptions, setProductTourOptions] = useState<ProductTourOptions>({});
   const [confirmRequest, setConfirmRequest] = useState<ConfirmDialogRequest | null>(null);
   const [promptTextRequest, setPromptTextRequest] = useState<PromptTextDialogRequest | null>(null);
   const [promptTextValue, setPromptTextValue] = useState("");
@@ -146,6 +163,16 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   const closeOnboarding = useCallback(() => {
     setOnboardingOpen(false);
     setOnboardingOptions({});
+  }, []);
+
+  const openProductTour = useCallback((options: ProductTourOptions = {}) => {
+    setProductTourOptions(options);
+    setProductTourOpen(true);
+  }, []);
+
+  const closeProductTour = useCallback(() => {
+    setProductTourOpen(false);
+    setProductTourOptions({});
   }, []);
 
   const confirm = useCallback((options: ConfirmDialogOptions) => (
@@ -219,6 +246,10 @@ export function DialogProvider({ children }: { children: ReactNode }) {
         onboardingOptions,
         openOnboarding,
         closeOnboarding,
+        productTourOpen,
+        productTourOptions,
+        openProductTour,
+        closeProductTour,
         confirm,
         promptText,
       }}

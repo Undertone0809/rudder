@@ -1,8 +1,12 @@
-import { access, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Writable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
+import { runCli } from "../program.js";
 import {
   CLI_NPM_PACKAGE_NAME,
   detectPersistentCliState,
@@ -18,27 +22,45 @@ import {
   buildGithubReleaseAssetDownloadUrl,
   buildForceQuitCommand,
   buildLinuxDesktopEntry,
+  buildWindowsRobocopyMirrorCommand,
+  buildWindowsZipExtractCommand,
   compareStableSemver,
   copyPortableAppBundle,
   downloadAsset,
+  downloadDesktopAssetWithCache,
   downloadChecksums,
   getCliUpdateNotice,
   isInstalledDesktopCurrent,
   isPersistentCliVersionCurrent,
+  isSuccessfulRobocopyExitCode,
   parseChecksumFile,
+  prepareForDesktopReplace,
   resolveAssetChecksum,
   resolveCliInstallSpec,
   resolveCurrentCliVersion,
   resolveDesktopAssetTarget,
   resolveDefaultDesktopInstallRoot,
   resolveDesktopAssetName,
+  resolveDesktopAssetCacheDir,
   resolveDesktopInstallPaths,
   resolveDesktopReleaseVersion,
   resolveDesktopReleaseTag,
   selectChecksumAsset,
   selectDesktopAsset,
+  startCommand,
+  waitForProcessExit,
 } from "../commands/start.js";
+import {
+  ensureRuntimeInstalled,
+  pruneRuntimeCache,
+  readRuntimeInstallMetadata,
+  resolveRuntimeCacheDir,
+  RUNTIME_METADATA_FILE,
+  type RuntimeInstallError,
+} from "../runtime/install.js";
 import { createByteProgress, formatByteProgress } from "../utils/progress.js";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 const npmInstallCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const npmInstallSpawnOptions = {
@@ -46,6 +68,35 @@ const npmInstallSpawnOptions = {
   stdio: ["inherit", "pipe", "pipe"],
   ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
 };
+
+async function writeRuntimeCacheEntry(
+  homeDir: string,
+  version: string,
+  options: { installedAt: string; lastUsedAt?: string; payload?: string } = { installedAt: "2026-01-01T00:00:00.000Z" },
+): Promise<string> {
+  const cacheDir = resolveRuntimeCacheDir(version, homeDir);
+  const packageDir = path.join(cacheDir, "node_modules", "@rudderhq", "server");
+  await mkdir(packageDir, { recursive: true });
+  await writeFile(path.join(cacheDir, "package.json"), JSON.stringify({ private: true }), "utf8");
+  await writeFile(
+    path.join(cacheDir, RUNTIME_METADATA_FILE),
+    JSON.stringify({
+      version: 1,
+      packageName: "@rudderhq/server",
+      packageVersion: version,
+      installedAt: options.installedAt,
+      ...(options.lastUsedAt ? { lastUsedAt: options.lastUsedAt } : {}),
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(packageDir, "package.json"),
+    JSON.stringify({ name: "@rudderhq/server", version }),
+    "utf8",
+  );
+  await writeFile(path.join(cacheDir, "payload.txt"), options.payload ?? version, "utf8");
+  return cacheDir;
+}
 
 function responseFromChunks(chunks: string[], headers: Record<string, string> = {}): Response {
   return {
@@ -62,6 +113,10 @@ function responseFromChunks(chunks: string[], headers: Record<string, string> = 
       },
     }),
   } as Response;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 describe("persistent CLI install helpers", () => {
@@ -251,6 +306,75 @@ describe("persistent CLI install helpers", () => {
 });
 
 describe("desktop start command helpers", () => {
+  it("parses an explicit desktop target version without invoking the root CLI version flag", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await expect(runCli([
+        process.execPath,
+        "rudder",
+        "start",
+        "--no-cli",
+        "--target-version",
+        "0.3.1",
+        "--repo",
+        "example/rudder",
+        "--dry-run",
+        "--no-open",
+      ])).resolves.toBe(0);
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+
+    const output = [
+      ...stdout.mock.calls.map((call) => String(call[0])),
+      ...stderr.mock.calls.map((call) => String(call[0])),
+    ].join("");
+    expect(output).not.toBe("0.3.1\n");
+  });
+
+  it("parses deferred desktop replacement while active runs finish", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await expect(runCli([
+        process.execPath,
+        "rudder",
+        "start",
+        "--no-cli",
+        "--target-version",
+        "0.3.1",
+        "--repo",
+        "example/rudder",
+        "--wait-for-active-runs",
+        "--dry-run",
+        "--no-open",
+      ])).resolves.toBe(0);
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+
+  it("uses the explicit desktop target version before the legacy start version option", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await expect(startCommand({
+        cli: false,
+        targetVersion: "0.3.1",
+        version: "0.3.1-beta.1",
+        repo: "example/rudder",
+        dryRun: true,
+        open: false,
+      })).resolves.toBeUndefined();
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+
   it("copies portable app bundles without rewriting relative symlinks", async () => {
     if (process.platform === "win32") return;
 
@@ -272,6 +396,33 @@ describe("desktop start command helpers", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("uses Windows-native archive and mirror commands for portable app installs", () => {
+    expect(buildWindowsZipExtractCommand("C:\\Temp\\Rudder.zip", "C:\\Temp\\rudder-extract")).toEqual({
+      command: "tar.exe",
+      args: ["-xf", "C:\\Temp\\Rudder.zip", "-C", "C:\\Temp\\rudder-extract"],
+    });
+    expect(buildWindowsRobocopyMirrorCommand("C:\\Temp\\win-unpacked", "C:\\Users\\test\\AppData\\Local\\Programs\\Rudder")).toEqual({
+      command: "robocopy.exe",
+      args: [
+        "C:\\Temp\\win-unpacked",
+        "C:\\Users\\test\\AppData\\Local\\Programs\\Rudder",
+        "/MIR",
+        "/R:2",
+        "/W:1",
+        "/NFL",
+        "/NDL",
+        "/NJH",
+        "/NJS",
+        "/NP",
+      ],
+    });
+    expect(isSuccessfulRobocopyExitCode(0)).toBe(true);
+    expect(isSuccessfulRobocopyExitCode(1)).toBe(true);
+    expect(isSuccessfulRobocopyExitCode(7)).toBe(true);
+    expect(isSuccessfulRobocopyExitCode(8)).toBe(false);
+    expect(isSuccessfulRobocopyExitCode(null)).toBe(false);
   });
 
   it("resolves the current CLI version from npm execution metadata", () => {
@@ -492,6 +643,141 @@ describe("desktop start command helpers", () => {
     );
   });
 
+  it("prefers the GitHub release asset API URL when downloading assets", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-download-api-test."));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(responseFromChunks(["asset"])) as never;
+
+    try {
+      const assetPath = await downloadAsset(
+        {
+          name: "Rudder-0.3.1-linux-x64.AppImage",
+          url: "https://api.github.com/repos/example/rudder/releases/assets/123",
+          browser_download_url: "https://github.com/example/rudder/releases/download/v0.3.1/Rudder.AppImage",
+        },
+        dir,
+      );
+
+      expect(await readFile(assetPath, "utf8")).toBe("asset");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "https://api.github.com/repos/example/rudder/releases/assets/123",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Accept: "application/octet-stream",
+            "User-Agent": "rudder-cli-installer",
+          }),
+        }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the browser download URL when the asset API URL fails", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-download-fallback-test."));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("api timed out"))
+      .mockResolvedValueOnce(responseFromChunks(["asset"])) as never;
+
+    try {
+      const assetPath = await downloadAsset(
+        {
+          name: "Rudder-0.3.1-linux-x64.AppImage",
+          url: "https://api.github.com/repos/example/rudder/releases/assets/123",
+          browser_download_url: "https://github.com/example/rudder/releases/download/v0.3.1/Rudder.AppImage",
+        },
+        dir,
+      );
+
+      expect(await readFile(assetPath, "utf8")).toBe("asset");
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(
+        2,
+        "https://github.com/example/rudder/releases/download/v0.3.1/Rudder.AppImage",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Accept: "*/*",
+            "User-Agent": "rudder-cli-installer",
+          }),
+        }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses a checksum-matched cached desktop asset without downloading", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-asset-cache-hit-test."));
+    const originalFetch = globalThis.fetch;
+    const assetName = "Rudder-0.3.1-linux-x64.AppImage";
+    const assetBody = "cached-desktop-asset";
+    const checksum = sha256(assetBody);
+    const cacheDir = resolveDesktopAssetCacheDir(checksum, homeDir);
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(path.join(cacheDir, assetName), assetBody, "utf8");
+    globalThis.fetch = vi.fn(() => {
+      throw new Error("unexpected download");
+    }) as never;
+
+    try {
+      const result = await downloadDesktopAssetWithCache(
+        { name: assetName, browser_download_url: "https://example.test/asset" },
+        checksum,
+        { homeDir },
+      );
+
+      expect(result).toEqual({
+        path: path.join(cacheDir, assetName),
+        checksum,
+        cacheStatus: "hit",
+      });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("redownloads and replaces a cached desktop asset when the checksum is stale", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-asset-cache-miss-test."));
+    const outputDir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-asset-output-test."));
+    const originalFetch = globalThis.fetch;
+    const assetName = "Rudder-0.3.1-linux-x64.AppImage";
+    const assetBody = "fresh-desktop-asset";
+    const checksum = sha256(assetBody);
+    const cacheDir = resolveDesktopAssetCacheDir(checksum, homeDir);
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(path.join(cacheDir, assetName), "stale-desktop-asset", "utf8");
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      responseFromChunks([assetBody], {
+        "content-length": String(Buffer.byteLength(assetBody)),
+      }),
+    ) as never;
+
+    try {
+      const result = await downloadDesktopAssetWithCache(
+        { name: assetName, browser_download_url: "https://example.test/asset" },
+        checksum,
+        { homeDir, outputDir },
+      );
+
+      expect(result).toEqual({
+        path: path.join(cacheDir, assetName),
+        checksum,
+        cacheStatus: "miss",
+      });
+      expect(await readFile(result.path, "utf8")).toBe(assetBody);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(homeDir, { recursive: true, force: true });
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
   it("compares stable semver versions", () => {
     expect(compareStableSemver("0.3.2", "0.3.1")).toBeGreaterThan(0);
     expect(compareStableSemver("0.3.1", "0.3.1")).toBe(0);
@@ -575,6 +861,125 @@ describe("desktop start command helpers", () => {
     });
   });
 
+  it("waits for an existing Desktop process to exit before replacement", async () => {
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 25)"], { stdio: "ignore" });
+    try {
+      expect(child.pid).toBeGreaterThan(0);
+      await expect(waitForProcessExit(child.pid!, 1_000, 10)).resolves.toBe(true);
+    } finally {
+      if (!child.killed) child.kill();
+    }
+  });
+
+  it("stops waiting when the Desktop process does not exit in time", async () => {
+    await expect(waitForProcessExit(process.pid, 20, 5)).resolves.toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("does not replace immediately when legacy Desktop confirms quit without a pid", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-legacy-quit-test."));
+    const installRoot = path.join(dir, "Rudder");
+    const executablePath = path.join(installRoot, "Rudder.exe");
+    await mkdir(installRoot, { recursive: true });
+    await writeFile(
+      executablePath,
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        `const prefix = ${JSON.stringify("--rudder-update-quit=")};`,
+        "const arg = process.argv.find((value) => value.startsWith(prefix));",
+        [
+          "if (arg) fs.writeFileSync(",
+          "arg.slice(prefix.length),",
+          "JSON.stringify({ ok: true, status: 'quitting' }) + '\\n',",
+          "'utf8'",
+          ");",
+        ].join(" "),
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(executablePath, 0o755);
+
+    try {
+      const forceQuitDesktopProcesses = vi.fn();
+      const replace = prepareForDesktopReplace(
+        {
+          installRoot,
+          appPath: path.join(installRoot, "Rudder.app"),
+          executablePath,
+          metadataPath: path.join(installRoot, ".rudder-install.json"),
+        },
+        { platform: "windows", arch: "x64", extension: ".zip" },
+        {
+          legacyUpdateQuitGraceMs: 100,
+          updateQuitForceDelayMs: 0,
+          forceQuitDesktopProcesses,
+        },
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await expect(access(installRoot)).resolves.toBeUndefined();
+      expect(forceQuitDesktopProcesses).not.toHaveBeenCalled();
+
+      await replace;
+      expect(forceQuitDesktopProcesses).toHaveBeenCalledTimes(1);
+      await expect(access(installRoot)).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("force-quits only the reported Desktop pid after update quit timeout", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rudder-desktop-targeted-quit-test."));
+    const installRoot = path.join(dir, "Applications");
+    const appPath = path.join(installRoot, "Rudder.app");
+    const executablePath = path.join(appPath, "Contents", "MacOS", "Rudder");
+    await mkdir(path.dirname(executablePath), { recursive: true });
+    await writeFile(
+      executablePath,
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        `const prefix = ${JSON.stringify("--rudder-update-quit=")};`,
+        "const arg = process.argv.find((value) => value.startsWith(prefix));",
+        [
+          "if (arg) fs.writeFileSync(",
+          "arg.slice(prefix.length),",
+          "JSON.stringify({ ok: true, status: 'quitting', pid: 4242 }) + '\\n',",
+          "'utf8'",
+          ");",
+        ].join(" "),
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(executablePath, 0o755);
+
+    try {
+      const forceQuitDesktopProcess = vi.fn();
+      const forceQuitDesktopProcesses = vi.fn();
+      await prepareForDesktopReplace(
+        {
+          installRoot,
+          appPath,
+          executablePath,
+          metadataPath: path.join(installRoot, ".rudder-install.json"),
+        },
+        { platform: "macos", arch: "arm64", extension: ".zip" },
+        {
+          updateQuitForceDelayMs: 0,
+          forceQuitDesktopProcess,
+          forceQuitDesktopProcesses,
+          waitForDesktopProcessExit: vi.fn(async () => false),
+        },
+      );
+
+      expect(forceQuitDesktopProcess).toHaveBeenCalledWith(4242, { platform: "macos", arch: "arm64", extension: ".zip" });
+      expect(forceQuitDesktopProcesses).not.toHaveBeenCalled();
+      await expect(access(appPath)).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("builds Linux desktop entries for the AppImage", () => {
     expect(buildLinuxDesktopEntry("/home/test/.local/share/rudder/Rudder.AppImage")).toContain(
       'Exec="/home/test/.local/share/rudder/Rudder.AppImage"',
@@ -607,5 +1012,302 @@ describe("desktop start command helpers", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("runtime install helpers", () => {
+  it("uses the versioned runtime cache when metadata and package version match", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-cache-test."));
+    try {
+      const cacheDir = resolveRuntimeCacheDir("1.2.3", root);
+      const packageDir = path.join(cacheDir, "node_modules", "@rudderhq", "server");
+      await mkdir(packageDir, { recursive: true });
+      await writeFile(path.join(cacheDir, "package.json"), JSON.stringify({ private: true }), "utf8");
+      await writeFile(
+        path.join(cacheDir, RUNTIME_METADATA_FILE),
+        JSON.stringify({ version: 1, packageName: "@rudderhq/server", packageVersion: "1.2.3", installedAt: "now" }),
+        "utf8",
+      );
+      await writeFile(path.join(packageDir, "package.json"), JSON.stringify({ name: "@rudderhq/server", version: "1.2.3" }), "utf8");
+      const spawnSyncImpl = vi.fn();
+
+      await expect(ensureRuntimeInstalled({ version: "1.2.3", homeDir: root, spawnSyncImpl: spawnSyncImpl as never })).resolves.toMatchObject({
+        status: "hit",
+        cacheDir,
+        packageSpec: "@rudderhq/server@1.2.3",
+      });
+      expect(spawnSyncImpl).not.toHaveBeenCalled();
+      await expect(readRuntimeInstallMetadata(cacheDir)).resolves.toMatchObject({
+        packageVersion: "1.2.3",
+        lastUsedAt: expect.any(String),
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("includes npm output and retry command when runtime installation fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-fail-test."));
+    try {
+      const spawnSyncImpl = vi.fn(() => ({ status: 1, stdout: "", stderr: "registry unavailable" }));
+
+      await expect(
+        ensureRuntimeInstalled({ version: "1.2.3", homeDir: root, spawnSyncImpl: spawnSyncImpl as never }),
+      ).rejects.toMatchObject({
+        name: "RuntimeInstallError",
+        output: "registry unavailable",
+        command: expect.stringContaining("npm install --prefix"),
+      } satisfies Partial<RuntimeInstallError>);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to latest when the exact version is not found on npm", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-fallback-test."));
+    try {
+      const spawnSyncImpl = vi
+        .fn()
+        .mockReturnValueOnce({
+          status: 1,
+          stdout: "",
+          stderr: "npm error code ETARGET\nnpm error notarget No matching version found for @rudderhq/server@1.2.3.",
+        })
+        .mockReturnValueOnce({
+          status: 0,
+          stdout: "added 1 package",
+          stderr: "",
+        });
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+      });
+
+      expect(result.status).toBe("installed");
+      expect(result.packageSpec).toBe("@rudderhq/server@latest");
+      expect(result.cacheDir).toBe(resolveRuntimeCacheDir("latest", root));
+      expect(result.output).toBe("added 1 package");
+      expect(spawnSyncImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to latest cache hit when the exact version is not found on npm", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-fallback-hit-test."));
+    try {
+      const fallbackCacheDir = resolveRuntimeCacheDir("latest", root);
+      const packageDir = path.join(fallbackCacheDir, "node_modules", "@rudderhq", "server");
+      await mkdir(packageDir, { recursive: true });
+      await writeFile(path.join(fallbackCacheDir, "package.json"), JSON.stringify({ private: true }), "utf8");
+      await writeFile(
+        path.join(fallbackCacheDir, RUNTIME_METADATA_FILE),
+        JSON.stringify({ version: 1, packageName: "@rudderhq/server", packageVersion: "latest", installedAt: "now" }),
+        "utf8",
+      );
+      await writeFile(
+        path.join(packageDir, "package.json"),
+        JSON.stringify({ name: "@rudderhq/server", version: "1.0.0" }),
+        "utf8",
+      );
+
+      const spawnSyncImpl = vi.fn(() => ({
+        status: 1,
+        stdout: "",
+        stderr: "npm error code ETARGET\nnpm error notarget No matching version found for @rudderhq/server@1.2.3.",
+      }));
+
+      const result = await ensureRuntimeInstalled({
+        version: "1.2.3",
+        homeDir: root,
+        spawnSyncImpl: spawnSyncImpl as never,
+      });
+
+      expect(result.status).toBe("hit");
+      expect(result.packageSpec).toBe("@rudderhq/server@latest");
+      expect(result.cacheDir).toBe(fallbackCacheDir);
+      expect(spawnSyncImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes older canary runtime caches while retaining current, latest stable, and previous entries", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-prune-test."));
+    try {
+      const canary1 = await writeRuntimeCacheEntry(root, "1.0.0-canary.1", {
+        installedAt: "2026-01-01T00:00:00.000Z",
+        lastUsedAt: "2026-01-01T00:00:00.000Z",
+      });
+      const canary2 = await writeRuntimeCacheEntry(root, "1.0.0-canary.2", {
+        installedAt: "2026-01-02T00:00:00.000Z",
+        lastUsedAt: "2026-01-02T00:00:00.000Z",
+      });
+      const previousCanary = await writeRuntimeCacheEntry(root, "1.0.0-canary.3", {
+        installedAt: "2026-01-03T00:00:00.000Z",
+        lastUsedAt: "2026-01-03T00:00:00.000Z",
+      });
+      const stable = await writeRuntimeCacheEntry(root, "1.0.0", {
+        installedAt: "2026-01-04T00:00:00.000Z",
+        lastUsedAt: "2026-01-04T00:00:00.000Z",
+      });
+      const current = await writeRuntimeCacheEntry(root, "1.0.1-canary.1", {
+        installedAt: "2026-01-05T00:00:00.000Z",
+        lastUsedAt: "2026-01-05T00:00:00.000Z",
+      });
+
+      const result = await pruneRuntimeCache({
+        homeDir: root,
+        requestedVersion: "1.0.1-canary.1",
+        now: new Date("2026-01-06T00:00:00.000Z"),
+        maxEntries: 3,
+        maxAgeMs: 365 * 24 * 60 * 60 * 1000,
+        maxTotalBytes: Number.POSITIVE_INFINITY,
+        keepPreviousEntries: 1,
+      });
+
+      expect(result.deleted.map((entry) => entry.packageVersion).sort()).toEqual([
+        "1.0.0-canary.1",
+        "1.0.0-canary.2",
+      ]);
+      await expect(access(canary1)).rejects.toThrow();
+      await expect(access(canary2)).rejects.toThrow();
+      await expect(access(previousCanary)).resolves.toBeUndefined();
+      await expect(access(stable)).resolves.toBeUndefined();
+      await expect(access(current)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("protects runtime versions referenced by live instance descriptors", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-active-test."));
+    try {
+      const active = await writeRuntimeCacheEntry(root, "0.9.0", {
+        installedAt: "2026-01-01T00:00:00.000Z",
+        lastUsedAt: "2026-01-01T00:00:00.000Z",
+      });
+      const stale = await writeRuntimeCacheEntry(root, "1.0.0", {
+        installedAt: "2026-01-02T00:00:00.000Z",
+        lastUsedAt: "2026-01-02T00:00:00.000Z",
+      });
+      const current = await writeRuntimeCacheEntry(root, "1.0.1", {
+        installedAt: "2026-01-03T00:00:00.000Z",
+        lastUsedAt: "2026-01-03T00:00:00.000Z",
+      });
+      const descriptorDir = path.join(root, "instances", "default", "runtime");
+      await mkdir(descriptorDir, { recursive: true });
+      await writeFile(
+        path.join(descriptorDir, "server.json"),
+        JSON.stringify({
+          instanceId: "default",
+          localEnv: "prod_local",
+          pid: process.pid,
+          listenPort: 3100,
+          apiUrl: "http://127.0.0.1:3100",
+          version: "0.9.0",
+          ownerKind: "desktop",
+          startedAt: "2026-01-01T00:00:00.000Z",
+        }),
+        "utf8",
+      );
+
+      const result = await pruneRuntimeCache({
+        homeDir: root,
+        requestedVersion: "1.0.1",
+        now: new Date("2026-01-04T00:00:00.000Z"),
+        maxEntries: 1,
+        maxAgeMs: 0,
+        maxTotalBytes: 1,
+        keepPreviousEntries: 0,
+      });
+
+      expect(result.protectedVersions).toEqual(expect.arrayContaining(["0.9.0", "1.0.1"]));
+      expect(result.deleted.map((entry) => entry.packageVersion)).toContain("1.0.0");
+      await expect(access(active)).resolves.toBeUndefined();
+      await expect(access(stale)).rejects.toThrow();
+      await expect(access(current)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the total size cap to continue deleting unprotected runtime caches", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-size-test."));
+    try {
+      const oldStable = await writeRuntimeCacheEntry(root, "1.0.0", {
+        installedAt: "2026-01-01T00:00:00.000Z",
+        lastUsedAt: "2026-01-01T00:00:00.000Z",
+        payload: "x".repeat(100),
+      });
+      const middleStable = await writeRuntimeCacheEntry(root, "1.0.1", {
+        installedAt: "2026-01-02T00:00:00.000Z",
+        lastUsedAt: "2026-01-02T00:00:00.000Z",
+        payload: "x".repeat(100),
+      });
+      const current = await writeRuntimeCacheEntry(root, "1.0.2", {
+        installedAt: "2026-01-03T00:00:00.000Z",
+        lastUsedAt: "2026-01-03T00:00:00.000Z",
+        payload: "x".repeat(100),
+      });
+
+      const result = await pruneRuntimeCache({
+        homeDir: root,
+        requestedVersion: "1.0.2",
+        now: new Date("2026-01-04T00:00:00.000Z"),
+        maxEntries: 10,
+        maxAgeMs: 365 * 24 * 60 * 60 * 1000,
+        maxTotalBytes: 1,
+        keepPreviousEntries: 0,
+      });
+
+      expect(result.deleted.map((entry) => entry.packageVersion).sort()).toEqual(["1.0.0", "1.0.1"]);
+      await expect(access(oldStable)).rejects.toThrow();
+      await expect(access(middleStable)).rejects.toThrow();
+      await expect(access(current)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("thin CLI bootstrap contract", () => {
+  it("keeps heavy runtime packages out of production dependencies", async () => {
+    const pkg = JSON.parse(await readFile(path.join(repoRoot, "cli", "package.json"), "utf8")) as {
+      dependencies?: Record<string, string>;
+    };
+    const dependencies = Object.keys(pkg.dependencies ?? {});
+
+    expect(dependencies).not.toContain("@rudderhq/server");
+    expect(dependencies).not.toContain("@rudderhq/db");
+    expect(dependencies).not.toContain("embedded-postgres");
+    expect(dependencies).not.toContain("@rudderhq/agent-runtime-codex-local");
+    expect(dependencies).not.toContain("@rudderhq/agent-runtime-claude-local");
+  });
+
+  it("does not statically import heavy command modules during program registration", async () => {
+    const programSource = await readFile(path.join(repoRoot, "cli", "src", "program.ts"), "utf8");
+    const staticImports = programSource
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("import "))
+      .join("\n");
+
+    expect(staticImports).not.toContain("./commands/worktree.js");
+    expect(staticImports).not.toContain("./commands/db-backup.js");
+    expect(staticImports).not.toContain("./commands/benchmark-create-agent.js");
+  });
+
+  it("does not statically import local agent runtime packages", async () => {
+    const registrySource = await readFile(path.join(repoRoot, "cli", "src", "agent-runtimes", "registry.ts"), "utf8");
+    const staticImports = registrySource
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("import "))
+      .join("\n");
+
+    expect(staticImports).not.toContain("@rudderhq/agent-runtime-codex-local");
+    expect(staticImports).not.toContain("@rudderhq/agent-runtime-claude-local");
+    expect(staticImports).not.toContain("@rudderhq/agent-runtime-openclaw-gateway");
   });
 });

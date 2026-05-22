@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ISSUE_DRAFTS_STORAGE_KEY } from "@/lib/new-issue-dialog";
+import { ThemeProvider } from "@/context/ThemeContext";
 import { Issues } from "./Issues";
 
 (
@@ -128,7 +129,11 @@ function renderIssues() {
   cleanupFn = () => root.unmount();
 
   act(() => {
-    root.render(<Issues />);
+    root.render(
+      <ThemeProvider>
+        <Issues />
+      </ThemeProvider>,
+    );
   });
 }
 
@@ -141,6 +146,16 @@ beforeEach(() => {
   mockState.pushToast.mockReset();
   mockState.search = "?scope=drafts";
   vi.stubGlobal("confirm", mockState.confirm);
+  vi.stubGlobal("matchMedia", vi.fn(() => ({
+    matches: false,
+    media: "(prefers-color-scheme: dark)",
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })));
 });
 
 afterEach(() => {
@@ -180,22 +195,106 @@ describe("Issues draft scope", () => {
     expect(mockState.openNewIssue).toHaveBeenCalledWith({ draftId: "draft-1" });
   });
 
+  it("renders draft priority with the shared bar glyph and label", () => {
+    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([
+      { ...savedDraft, priority: "critical" },
+    ]));
+
+    renderIssues();
+
+    const card = document.querySelector("[data-testid='issue-draft-card']");
+    expect(card?.textContent).toContain("Urgent");
+    expect(card?.textContent).not.toContain("Critical");
+    expect(card?.querySelector('[data-slot="priority-bars-icon"]')?.children).toHaveLength(4);
+  });
+
+  it("renders markdown and images in the constrained draft card preview", () => {
+    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([
+      {
+        ...savedDraft,
+        description: "## Screenshot\n![](/api/assets/draft-image/content)\n- **Looks** better",
+      },
+    ]));
+
+    renderIssues();
+
+    const preview = document.querySelector("[data-testid='issue-draft-description-preview']");
+    expect(preview?.className).toContain("max-h-[4.5rem]");
+    expect(preview?.textContent).toContain("Screenshot");
+    expect(preview?.querySelector("strong")?.textContent).toBe("Looks");
+    expect(preview?.querySelector("img")?.getAttribute("src")).toBe("/api/assets/draft-image/content");
+  });
+
   it("deletes a draft issue from the main content after confirmation", async () => {
+    vi.useFakeTimers();
+    window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([savedDraft]));
+
+    try {
+      renderIssues();
+
+      const deleteButton = document.querySelector(
+        "[data-testid='issue-draft-delete-button']",
+      ) as HTMLButtonElement | null;
+      await act(async () => {
+        deleteButton?.click();
+      });
+
+      expect(mockState.confirm).toHaveBeenCalledWith({
+        title: 'Delete draft issue "Recovered draft issue"?',
+        description: "This cannot be undone.",
+        confirmLabel: "Delete",
+        tone: "destructive",
+      });
+      const deletingCard = document.querySelector("[data-testid='issue-draft-card']") as HTMLElement | null;
+      const openButton = document.querySelector(
+        "[aria-label='Open draft Recovered draft issue']",
+      ) as HTMLButtonElement | null;
+      expect(deletingCard?.getAttribute("data-deleting")).toBe("true");
+      expect(deleteButton?.disabled).toBe(true);
+      expect(openButton?.disabled).toBe(true);
+      expect(mockState.pushToast).not.toHaveBeenCalled();
+      const storedDraftIds = (JSON.parse(
+        window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY) ?? "[]",
+      ) as Array<{ id: string }>).map((draft) => draft.id);
+      expect(storedDraftIds).toEqual(["draft-1"]);
+
+      await act(async () => {
+        vi.advanceTimersByTime(250);
+      });
+
+      expect(mockState.pushToast).toHaveBeenCalledWith({ title: "Draft issue deleted", tone: "success" });
+      expect(JSON.parse(window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY) ?? "[]")).toEqual([]);
+      expect(document.querySelector("[data-testid='issue-draft-card']")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes a confirmed draft immediately for reduced-motion users", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query.includes("prefers-reduced-motion"),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
     window.localStorage.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify([savedDraft]));
 
     renderIssues();
 
-    const deleteButton = document.querySelector("[data-testid='issue-draft-delete-button']") as HTMLButtonElement | null;
+    const deleteButton = document.querySelector(
+      "[data-testid='issue-draft-delete-button']",
+    ) as HTMLButtonElement | null;
     await act(async () => {
       deleteButton?.click();
     });
 
-    expect(mockState.confirm).toHaveBeenCalledWith({
-      title: 'Delete draft issue "Recovered draft issue"?',
-      description: "This cannot be undone.",
-      confirmLabel: "Delete",
-      tone: "destructive",
-    });
     expect(mockState.pushToast).toHaveBeenCalledWith({ title: "Draft issue deleted", tone: "success" });
     expect(JSON.parse(window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY) ?? "[]")).toEqual([]);
     expect(document.querySelector("[data-testid='issue-draft-card']")).toBeNull();

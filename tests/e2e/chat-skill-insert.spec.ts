@@ -5,11 +5,6 @@ async function createStreamingOrg(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
     data: {
       name,
-      defaultChatAgentRuntimeType: "codex_local",
-      defaultChatAgentRuntimeConfig: {
-        model: "gpt-5.4",
-        command: E2E_CODEX_STUB,
-      },
     },
   });
   expect(orgRes.ok()).toBe(true);
@@ -25,7 +20,14 @@ async function createSkill(page: Page, orgId: string, name: string, slug: string
     },
   });
   expect(skillRes.ok()).toBe(true);
-  return skillRes.json();
+  return skillRes.json() as Promise<{ key: string }>;
+}
+
+async function syncAgentSkills(page: Page, agentId: string, orgId: string, desiredSkills: string[]) {
+  const syncRes = await page.request.post(`/api/agents/${agentId}/skills/sync?orgId=${encodeURIComponent(orgId)}`, {
+    data: { desiredSkills },
+  });
+  expect(syncRes.ok()).toBe(true);
 }
 
 test("inserts a skill immediately, keeps it stable on click, and allows continued typing", async ({ page }) => {
@@ -45,7 +47,8 @@ test("inserts a skill immediately, keeps it stable on click, and allows continue
   expect(agentRes.ok()).toBe(true);
   const agent = await agentRes.json();
 
-  await createSkill(page, organization.id, "Build Advisor", "build-advisor");
+  const skill = await createSkill(page, organization.id, "Build Advisor", "build-advisor");
+  await syncAgentSkills(page, agent.id, organization.id, [`org:${skill.key}`]);
 
   const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
     data: {
@@ -74,7 +77,7 @@ test("inserts a skill immediately, keeps it stable on click, and allows continue
   await expect(page.getByRole("menuitem", { name: "Insert selected skills" })).toHaveCount(0);
   await page
     .getByRole("menuitem")
-    .filter({ hasText: "build-advisor" })
+    .filter({ hasText: "Build Advisor" })
     .first()
     .click();
 
@@ -122,7 +125,8 @@ test("backspace removes the full inserted skill token from the composer", async 
   expect(agentRes.ok()).toBe(true);
   const agent = await agentRes.json();
 
-  await createSkill(page, organization.id, "Build Advisor", "build-advisor");
+  const skill = await createSkill(page, organization.id, "Build Advisor", "build-advisor");
+  await syncAgentSkills(page, agent.id, organization.id, [`org:${skill.key}`]);
 
   const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
     data: {
@@ -145,9 +149,10 @@ test("backspace removes the full inserted skill token from the composer", async 
   await composer.fill("Use this");
 
   await page.getByRole("button", { name: "Skills" }).click();
+  await page.getByPlaceholder("Search skills...").fill("build-advisor");
   await page
     .getByRole("menuitem")
-    .filter({ hasText: "build-advisor" })
+    .filter({ hasText: "Build Advisor" })
     .first()
     .click();
 

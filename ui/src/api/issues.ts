@@ -1,6 +1,6 @@
 import type {
-  Approval,
   DocumentRevision,
+  IssueLinkedApproval,
   IssueFollowEntry,
   Issue,
   IssueAttachment,
@@ -23,6 +23,8 @@ export const issuesApi = {
       assigneeAgentId?: string;
       participantAgentId?: string;
       assigneeUserId?: string;
+      reviewerAgentId?: string;
+      reviewerUserId?: string;
       touchedByUserId?: string;
       unreadForUserId?: string;
       labelId?: string;
@@ -39,6 +41,8 @@ export const issuesApi = {
     if (filters?.assigneeAgentId) params.set("assigneeAgentId", filters.assigneeAgentId);
     if (filters?.participantAgentId) params.set("participantAgentId", filters.participantAgentId);
     if (filters?.assigneeUserId) params.set("assigneeUserId", filters.assigneeUserId);
+    if (filters?.reviewerAgentId) params.set("reviewerAgentId", filters.reviewerAgentId);
+    if (filters?.reviewerUserId) params.set("reviewerUserId", filters.reviewerUserId);
     if (filters?.touchedByUserId) params.set("touchedByUserId", filters.touchedByUserId);
     if (filters?.unreadForUserId) params.set("unreadForUserId", filters.unreadForUserId);
     if (filters?.labelId) params.set("labelId", filters.labelId);
@@ -72,6 +76,8 @@ export const issuesApi = {
     }),
   release: (id: string) => api.post<Issue>(`/issues/${id}/release`, {}),
   listComments: (id: string) => api.get<IssueComment[]>(`/issues/${id}/comments`),
+  getComment: (id: string, commentId: string) =>
+    api.get<IssueComment>(`/issues/${id}/comments/${commentId}`),
   addComment: (id: string, body: string, reopen?: boolean, interrupt?: boolean) =>
     api.post<IssueComment>(
       `/issues/${id}/comments`,
@@ -109,10 +115,12 @@ export const issuesApi = {
     }
     return api.postForm<IssueAttachment>(`/orgs/${orgId}/issues/${issueId}/attachments`, form);
   },
+  attachWorkspaceFile: (orgId: string, issueId: string, path: string) =>
+    api.post<IssueAttachment>(`/orgs/${orgId}/issues/${issueId}/attachments/workspace-file`, { path }),
   deleteAttachment: (id: string) => api.delete<{ ok: true }>(`/attachments/${id}`),
-  listApprovals: (id: string) => api.get<Approval[]>(`/issues/${id}/approvals`),
+  listApprovals: (id: string) => api.get<IssueLinkedApproval[]>(`/issues/${id}/approvals`),
   linkApproval: (id: string, approvalId: string) =>
-    api.post<Approval[]>(`/issues/${id}/approvals`, { approvalId }),
+    api.post<IssueLinkedApproval[]>(`/issues/${id}/approvals`, { approvalId }),
   unlinkApproval: (id: string, approvalId: string) =>
     api.delete<{ ok: true }>(`/issues/${id}/approvals/${approvalId}`),
   listWorkProducts: (id: string) => api.get<IssueWorkProduct[]>(`/issues/${id}/work-products`),

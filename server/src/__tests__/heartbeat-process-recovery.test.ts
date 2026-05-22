@@ -444,6 +444,35 @@ describe("heartbeat orphaned process recovery", () => {
     expect(issue?.checkoutRunId).toBe(runId);
   });
 
+  it("allows a cancelled adapter run to be retried manually", async () => {
+    const { runId } = await seedRunFixture({
+      runStatus: "cancelled",
+      runErrorCode: "cancelled",
+      runError: "Adapter failed",
+    });
+    const heartbeat = heartbeatService(db);
+
+    const retriedRun = await heartbeat.retryRun(runId, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+      now: new Date("2026-03-19T00:06:00.000Z"),
+    });
+
+    expect(retriedRun.id).not.toBe(runId);
+    expect(retriedRun.retryOfRunId).toBe(runId);
+    expect(retriedRun.contextSnapshot).toMatchObject({
+      retryOfRunId: runId,
+      retryReason: "cancelled",
+      recovery: {
+        originalRunId: runId,
+        failureKind: "cancelled",
+        failureSummary: "Adapter failed",
+        recoveryTrigger: "manual",
+        recoveryMode: "continue_preferred",
+      },
+    });
+  });
+
   it("backfills recovery context from the retry chain when the source retry run is lossy", async () => {
     const { orgId, agentId, runId, issueId } = await seedRunFixture({
       runStatus: "failed",

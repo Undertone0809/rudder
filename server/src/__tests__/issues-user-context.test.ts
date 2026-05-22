@@ -4,12 +4,14 @@ import { deriveIssueUserContext } from "../services/issues.ts";
 function makeIssue(overrides?: Partial<{
   createdByUserId: string | null;
   assigneeUserId: string | null;
+  reviewerUserId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }>) {
   return {
     createdByUserId: null,
     assigneeUserId: null,
+    reviewerUserId: null,
     createdAt: new Date("2026-03-06T10:00:00.000Z"),
     updatedAt: new Date("2026-03-06T11:00:00.000Z"),
     ...overrides,
@@ -75,6 +77,21 @@ describe("deriveIssueUserContext", () => {
 
     expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T15:00:00.000Z");
     expect(context.isUnreadForMe).toBe(false);
+  });
+
+  it("uses issue updated time as fallback touch point for reviewer", () => {
+    const context = deriveIssueUserContext(
+      makeIssue({ reviewerUserId: "user-1", updatedAt: new Date("2026-03-06T15:00:00.000Z") }),
+      "user-1",
+      {
+        myLastCommentAt: null,
+        myLastReadAt: null,
+        lastExternalCommentAt: new Date("2026-03-06T15:01:00.000Z"),
+      },
+    );
+
+    expect(context.myLastTouchAt?.toISOString()).toBe("2026-03-06T15:00:00.000Z");
+    expect(context.isUnreadForMe).toBe(true);
   });
 
   it("uses latest read timestamp to clear unread without requiring a comment", () => {

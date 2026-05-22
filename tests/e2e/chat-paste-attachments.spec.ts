@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { createE2EChatAgent } from "./support/chat-agent";
 
 async function createStreamingOrg(
   page: Page,
@@ -11,12 +12,15 @@ async function createStreamingOrg(
   const orgRes = await page.request.post("/api/orgs", {
     data: {
       name,
-      defaultChatAgentRuntimeType: "codex_local",
-      defaultChatAgentRuntimeConfig: runtimeConfig,
     },
   });
   expect(orgRes.ok()).toBe(true);
-  return orgRes.json();
+  const organization = await orgRes.json();
+  const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Attachment Agent",
+    agentRuntimeConfig: runtimeConfig,
+  });
+  return { ...organization, chatAgent };
 }
 
 async function createAttachmentAwareCodexStub() {
@@ -38,7 +42,14 @@ process.stdin.on("end", async () => {
   const hasAttachmentSection = prompt.includes("Current user message attachments:");
   const hasImage = prompt.includes("clipboard-image.png");
   const hasTextFile = prompt.includes("notes.txt");
-  const body = hasAttachmentSection && hasImage && hasTextFile
+  const localPath = prompt.match(/localPath=([^;\\n]+)/)?.[1]?.trim();
+  const localImageReadable = localPath
+    ? await fs.access(localPath).then(() => true, () => false)
+    : false;
+  const hasInternalDownloadInstruction = prompt.includes("downloadCommand")
+    || prompt.includes("Authorization: Bearer")
+    || prompt.includes("curl -L");
+  const body = hasAttachmentSection && hasImage && hasTextFile && localImageReadable && !hasInternalDownloadInstruction
     ? "I found 2 attachments: clipboard-image.png and notes.txt."
     : "Attachment context missing.";
   const finalText = body + "\\n" + sentinel + JSON.stringify({
@@ -62,6 +73,26 @@ process.stdin.on("end", async () => {
   return { tempDir, stubPath, capturePath };
 }
 
+async function pasteTextAttachment(page: Page, fileName: string, contents: string) {
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.evaluate(
+    async (element, payload) => {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(
+        new File([payload.contents], payload.fileName, { type: "text/plain" }),
+      );
+
+      const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(pasteEvent, "clipboardData", {
+        value: dataTransfer,
+      });
+      element.dispatchEvent(pasteEvent);
+    },
+    { fileName, contents },
+  );
+}
+
 test("pastes clipboard images and files into chat as pending attachments and exposes them to the assistant", async ({ page }) => {
   const { tempDir, stubPath, capturePath } = await createAttachmentAwareCodexStub();
   try {
@@ -79,7 +110,7 @@ test("pastes clipboard images and files into chat as pending attachments and exp
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto("/chat");
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await expect(composer).toBeVisible({ timeout: 15_000 });
@@ -139,6 +170,29 @@ test("pastes clipboard images and files into chat as pending attachments and exp
     const sentImage = userBubble.getByTestId("chat-image-attachment");
     await expect(sentImage).toBeVisible({ timeout: 15_000 });
     await expect(sentImage.getByAltText("clipboard-image.png")).toBeVisible({ timeout: 15_000 });
+    const sentImageChrome = await sentImage.evaluate((element) => {
+      const button = element.querySelector("button");
+      const image = element.querySelector("img");
+      if (!(button instanceof HTMLButtonElement) || !(image instanceof HTMLImageElement)) {
+        throw new Error("Expected image attachment button and image");
+      }
+      const wrapperStyle = window.getComputedStyle(element);
+      const buttonStyle = window.getComputedStyle(button);
+      const imageStyle = window.getComputedStyle(image);
+
+      return {
+        wrapperBackgroundColor: wrapperStyle.backgroundColor,
+        wrapperBorderTopWidth: wrapperStyle.borderTopWidth,
+        wrapperPaddingTop: wrapperStyle.paddingTop,
+        buttonBorderTopWidth: buttonStyle.borderTopWidth,
+        imageBorderTopWidth: imageStyle.borderTopWidth,
+      };
+    });
+    expect(sentImageChrome.wrapperBackgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(sentImageChrome.wrapperBorderTopWidth).toBe("0px");
+    expect(sentImageChrome.wrapperPaddingTop).toBe("0px");
+    expect(sentImageChrome.buttonBorderTopWidth).toBe("1px");
+    expect(sentImageChrome.imageBorderTopWidth).toBe("0px");
     await expect(userBubble.getByRole("link", { name: "notes.txt" })).toBeVisible({ timeout: 15_000 });
 
     await sentImage.click();
@@ -212,10 +266,70 @@ test("pastes clipboard images and files into chat as pending attachments and exp
         prompt.includes("Current user message attachments:")
         && prompt.includes("clipboard-image.png")
         && prompt.includes("notes.txt")
-        && prompt.includes("$RUDDER_API_URL/api/assets/")
+        && prompt.includes("localPath=")
+        && !prompt.includes("downloadCommand")
+        && !prompt.includes("Authorization: Bearer")
+        && !prompt.includes("curl -L")
       );
     }).toBe(true);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
+});
+
+test("keeps pending pasted attachments scoped to the active chat conversation", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1100 });
+  const organization = await createStreamingOrg(page, `Paste-Scope-${Date.now()}`, {
+    model: "gpt-5.4",
+  });
+
+  const firstChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: "Attachment scope A",
+      preferredAgentId: organization.chatAgent.id,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    },
+  });
+  expect(firstChatRes.ok()).toBe(true);
+  const firstChat = await firstChatRes.json();
+
+  const secondChatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: "Attachment scope B",
+      preferredAgentId: organization.chatAgent.id,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    },
+  });
+  expect(secondChatRes.ok()).toBe(true);
+  const secondChat = await secondChatRes.json();
+
+  await page.goto("/");
+  await page.evaluate((orgId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+  }, organization.id);
+
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${firstChat.id}`);
+  await pasteTextAttachment(page, "scope-a.txt", "Attachment for the first chat only.");
+
+  const pendingAttachments = page.getByTestId("chat-pending-attachment");
+  await expect(pendingAttachments).toHaveCount(1);
+  await expect(pendingAttachments.filter({ hasText: "scope-a.txt" })).toBeVisible();
+  await expect(pendingAttachments.filter({ hasText: "scope-b.txt" })).toHaveCount(0);
+
+  await page.getByRole("link", { name: /Attachment scope B/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${secondChat.id}$`));
+  await expect(pendingAttachments).toHaveCount(0);
+
+  await pasteTextAttachment(page, "scope-b.txt", "Attachment for the second chat only.");
+  await expect(pendingAttachments).toHaveCount(1);
+  await expect(pendingAttachments.filter({ hasText: "scope-b.txt" })).toBeVisible();
+  await expect(pendingAttachments.filter({ hasText: "scope-a.txt" })).toHaveCount(0);
+
+  await page.getByRole("link", { name: /Attachment scope A/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${firstChat.id}$`));
+  await expect(pendingAttachments).toHaveCount(1);
+  await expect(pendingAttachments.filter({ hasText: "scope-a.txt" })).toBeVisible();
+  await expect(pendingAttachments.filter({ hasText: "scope-b.txt" })).toHaveCount(0);
 });

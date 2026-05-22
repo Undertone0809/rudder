@@ -42,6 +42,7 @@ vi.mock("@/lib/router", () => ({
 let cleanupFn: (() => void) | null = null;
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanupFn?.();
   cleanupFn = null;
   document.body.innerHTML = "";
@@ -77,6 +78,8 @@ const issue: Issue = {
   boardOrder: 1000,
   assigneeAgentId: "agent-1",
   assigneeUserId: null,
+  reviewerAgentId: null,
+  reviewerUserId: null,
   checkoutRunId: null,
   executionRunId: null,
   executionAgentNameKey: null,
@@ -146,6 +149,68 @@ describe("KanbanBoard", () => {
     });
 
     expect(onOpenIssue).toHaveBeenCalledWith(issue);
+  });
+
+  it("separates primary assignee and secondary reviewer project label metadata on a board card", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 4, 19, 12, 0, 0));
+
+    const container = render(
+      <KanbanBoard
+        issues={[{
+          ...issue,
+          projectId: "project-1",
+          assigneeAgentId: null,
+          assigneeUserId: "user-1",
+          reviewerUserId: "user-1",
+          labels: [
+            {
+              id: "label-1",
+              orgId: "org-1",
+              name: "UI",
+              color: "#06b6d4",
+              createdAt: new Date("2026-04-19T08:00:00.000Z"),
+              updatedAt: new Date("2026-04-19T08:00:00.000Z"),
+            },
+          ],
+          createdAt: new Date(2026, 4, 17, 9, 30),
+          updatedAt: new Date(2026, 4, 18, 9, 30),
+        }]}
+        currentUserId="user-1"
+        projects={[{ id: "project-1", name: "Rudder dev" }]}
+        displayProperties={["identifier", "priority", "assignee", "reviewer", "labels", "project", "updated", "created"]}
+        onUpdateIssue={() => undefined}
+      />,
+    );
+
+    const card = container.querySelector('[data-testid="kanban-card-RUD-1"]');
+    const primary = card?.querySelector('[data-slot="kanban-card-primary"]');
+    const primaryAssignee = card?.querySelector('[data-slot="kanban-card-primary-assignee"]');
+    const metadata = card?.querySelector('[data-slot="kanban-card-metadata"]');
+    const rows = Array.from(card?.querySelectorAll('[data-slot="kanban-card-metadata-row"]') ?? []);
+    const assignee = card?.querySelector('[data-slot="kanban-card-assignee"]');
+    const reviewer = card?.querySelector('[data-slot="kanban-card-reviewer"]');
+
+    expect(assignee).not.toBeNull();
+    expect(reviewer).not.toBeNull();
+    expect(primary?.textContent).toContain("RUD-1");
+    expect(primaryAssignee?.contains(assignee!)).toBe(true);
+    expect(metadata?.contains(reviewer!)).toBe(true);
+    expect(rows.every((row) => row.className.includes("items-center"))).toBe(true);
+    expect(rows.map((row) => row.textContent)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("ProjectRudder dev"),
+        expect.stringContaining("ReviewerMe"),
+        expect.stringContaining("LabelsUI"),
+        expect.stringContaining("UpdatedYesterday"),
+        expect.stringContaining("CreatedMay 17, 09:30"),
+      ]),
+    );
+    expect(assignee?.textContent).toContain("Me");
+    expect(assignee?.textContent).not.toContain("Assignee");
+    expect(assignee?.getAttribute("title")).toBe("Assignee: Me");
+    expect(reviewer?.textContent).toContain("Me");
+    expect(reviewer?.getAttribute("title")).toBe("Reviewer: Me");
   });
 
 });

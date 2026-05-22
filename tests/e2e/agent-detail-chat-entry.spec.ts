@@ -5,10 +5,6 @@ test.describe("Agent detail chat entry", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Agent-Chat-Entry-${Date.now()}`,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          model: "gpt-5.4",
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);

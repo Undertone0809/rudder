@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asString,
   asNumber,
@@ -14,9 +15,12 @@ import {
   redactEnvForLogs,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
+  ensureLocalCliCredentialShimsInPath,
   ensureRudderSkillSymlink,
   ensureRudderCliInPath,
   ensurePathInEnv,
+  resolveLocalOperatorHome,
+  syncLocalCliCredentialHomeEntries,
   readRudderRuntimeSkillEntries,
   resolveRudderDesiredSkillNames,
   removeMaintainerOnlySkillSymlinks,
@@ -235,6 +239,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const orgWorkspaceRoot = asString(workspaceContext.orgWorkspaceRoot, "");
   const orgSkillsDir = asString(workspaceContext.orgSkillsDir, "");
   const orgPlansDir = asString(workspaceContext.orgPlansDir, "");
+  const orgArtifactsDir = asString(
+    workspaceContext.orgArtifactsDir,
+    orgWorkspaceRoot ? path.join(orgWorkspaceRoot, "artifacts") : "",
+  );
   const workspaceHints = Array.isArray(context.rudderWorkspaces)
     ? context.rudderWorkspaces.filter(
         (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
@@ -246,18 +254,23 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   const envConfig = parseObject(config.env);
-  const managedHome = await prepareManagedPiHome(
-    {
-      ...process.env,
-      ...Object.fromEntries(
-        Object.entries(envConfig).filter(
-          (entry): entry is [string, string] => typeof entry[1] === "string",
-        ),
+  const sourceEnv = {
+    ...process.env,
+    ...Object.fromEntries(
+      Object.entries(envConfig).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
       ),
-    },
+    ),
+  };
+  const operatorHome = resolveLocalOperatorHome(sourceEnv);
+  const managedHome = await prepareManagedPiHome(sourceEnv, onLog, agent.orgId);
+  await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
+  const preparedGitIdentity = await ensureGitIdentityFileConfig({
+    cwd,
+    home: managedHome,
+    sourceEnv,
     onLog,
-    agent.orgId,
-  );
+  });
   const sessionsDir = resolvePiSessionsDir(managedHome);
   const skillsDir = resolvePiSkillsDir(managedHome);
   
@@ -321,6 +334,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (orgWorkspaceRoot) env.RUDDER_ORG_WORKSPACE_ROOT = orgWorkspaceRoot;
   if (orgSkillsDir) env.RUDDER_ORG_SKILLS_DIR = orgSkillsDir;
   if (orgPlansDir) env.RUDDER_ORG_PLANS_DIR = orgPlansDir;
+  if (orgArtifactsDir) env.RUDDER_ORG_ARTIFACTS_DIR = orgArtifactsDir;
   if (workspaceHints.length > 0) env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);
 
   for (const [key, value] of Object.entries(envConfig)) {
@@ -328,14 +342,21 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (typeof value === "string") env[key] = value;
   }
   env.HOME = managedHome;
+  env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
   }
+  applyGitIdentityPreparationEnv(env, preparedGitIdentity);
+  applyGitCredentialHelperPolicyEnv(env);
   
   const runtimeEnv = Object.fromEntries(
-    Object.entries(ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env }))).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ),
+    Object.entries(await ensureLocalCliCredentialShimsInPath({
+      operatorHome,
+      targetHome: managedHome,
+      cwd,
+      env: ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, { ...process.env, ...env })),
+      onLog,
+    })).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 

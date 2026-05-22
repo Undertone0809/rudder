@@ -23,6 +23,12 @@ vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
   organizationSkillService: () => mockCompanySkillService,
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: mockLogActivity,
 }));
 
@@ -40,7 +46,7 @@ function createApp(actor: Record<string, unknown>) {
 
 describe("organization skill mutation permissions", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockCompanySkillService.importFromSource.mockResolvedValue({
       imported: [],
       warnings: [],

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { CostByBiller, CostByProviderModel } from "@rudderhq/shared";
+import { summarizeTokenUsage, type CostByBiller, type CostByProviderModel } from "@rudderhq/shared";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { QuotaBar } from "./QuotaBar";
 import { billingTypeDisplayName, formatCents, formatTokens, providerDisplayName } from "@/lib/utils";
@@ -22,6 +22,7 @@ export function BillerSpendCard({
   const providerBreakdown = useMemo(() => {
     const map = new Map<string, { provider: string; costCents: number; inputTokens: number; outputTokens: number }>();
     for (const entry of providerRows) {
+      const tokenSummary = summarizeTokenUsage(entry);
       const current = map.get(entry.provider) ?? {
         provider: entry.provider,
         costCents: 0,
@@ -29,7 +30,7 @@ export function BillerSpendCard({
         outputTokens: 0,
       };
       current.costCents += entry.costCents;
-      current.inputTokens += entry.inputTokens + entry.cachedInputTokens;
+      current.inputTokens += tokenSummary.promptTokens;
       current.outputTokens += entry.outputTokens;
       map.set(entry.provider, current);
     }
@@ -62,7 +63,7 @@ export function BillerSpendCard({
               {providerDisplayName(row.biller)}
             </CardTitle>
             <CardDescription className="text-xs mt-0.5">
-              <span className="font-mono">{formatTokens(row.inputTokens + row.cachedInputTokens)}</span> in
+              <span className="font-mono">{formatTokens(summarizeTokenUsage(row).promptTokens)}</span> in
               {" · "}
               <span className="font-mono">{formatTokens(row.outputTokens)}</span> out
               {" · "}

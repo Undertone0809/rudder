@@ -164,6 +164,7 @@ test.describe("Primary rail create menu", () => {
     );
     await dialog.getByRole("button", { name: "Create project" }).click();
     const created = await (await createResponse).json() as {
+      id: string;
       workspaces: unknown[];
       primaryWorkspace: unknown | null;
       codebase: { scope: string; repoUrl: string | null; localFolder: string | null };
@@ -174,6 +175,10 @@ test.describe("Primary rail create menu", () => {
     expect(created.codebase.scope).toBe("organization");
     expect(created.codebase.repoUrl).toBeNull();
     expect(created.codebase.localFolder).toContain(`/organizations/${organization.id}/workspaces`);
+    await expect(page).toHaveURL(
+      new RegExp(`/${organization.issuePrefix}/issues\\?projectId=${created.id}$`),
+    );
+    await expect(page.getByRole("heading", { name: "Issue Tracker" })).toBeVisible();
   });
 
   test("keeps the new project status control single-framed while preserving status selection", async ({ page }) => {

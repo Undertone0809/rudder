@@ -151,12 +151,11 @@ Invariants:
 - agent and manager must be in same organization
 - no cycles in reporting tree
 - `terminated` agents cannot be resumed
-- Model-backed adapters may store `modelFallbacks` in `adapter_config` or
-  `default_chat_agent_runtime_config` as an ordered array of fallback attempt
-  objects: `{ agentRuntimeType, model, config? }`. On invocation failure,
-  Rudder retries each configured fallback in order, allowing either a different
-  model on the same runtime or a different runtime/provider with its own
-  advanced config.
+- Model-backed adapters may store `modelFallbacks` in `adapter_config` as an
+  ordered array of fallback attempt objects: `{ agentRuntimeType, model,
+  config? }`. On invocation failure, Rudder retries each configured fallback in
+  order, allowing either a different model on the same runtime or a different
+  runtime/provider with its own advanced config.
 
 ## 7.3 `agent_api_keys`
 
@@ -206,6 +205,9 @@ Invariant: at least one root `organization` level goal per organization.
 - `status` enum: `backlog | todo | in_progress | in_review | done | blocked | cancelled`
 - `priority` enum: `critical | high | medium | low`
 - `assignee_agent_id` uuid fk `agents.id` null
+- `assignee_user_id` text null
+- `reviewer_agent_id` uuid fk `agents.id` null
+- `reviewer_user_id` text null
 - `created_by_agent_id` uuid fk `agents.id` null
 - `created_by_user_id` uuid fk `users.id` null
 - `request_depth` int not null default 0
@@ -217,9 +219,23 @@ Invariant: at least one root `organization` level goal per organization.
 Invariants:
 
 - single assignee only
+- optional reviewer only; at most one of `reviewer_agent_id` or
+  `reviewer_user_id` may be set
+- reviewer principals must belong to the issue organization
 - task must trace to organization goal chain via `goal_id`, `parent_id`, or project-goal linkage
 - `in_progress` requires assignee
 - terminal states: `done | cancelled`
+
+Review routing:
+
+- `Reviewer` is issue-level routing metadata for checking output when work is
+  ready for review; it is not an approval gate.
+- Moving an issue into `in_review` routes attention to the reviewer.
+- Creating an issue directly in `in_review` with a reviewer agent queues a
+  review wakeup.
+- Reviewer agent wakeups use invocation source `review` and reason
+  `issue_review_requested`; assignment wakeups must not be reused for review.
+- Reviewer user issues are included in user issue attention surfaces.
 
 ## 7.7 `issue_comments`
 
@@ -306,6 +322,8 @@ Operational policy:
 - `agents(org_id, reports_to)`
 - `issues(org_id, status)`
 - `issues(org_id, assignee_agent_id, status)`
+- `issues(org_id, reviewer_agent_id, status)`
+- `issues(org_id, reviewer_user_id, status)`
 - `issues(org_id, parent_id)`
 - `issues(org_id, project_id)`
 - `cost_events(org_id, occurred_at)`
@@ -396,7 +414,7 @@ list.
   - `org_id` uuid fk not null
   - `conversation_id` uuid fk not null
   - `role` enum: `user | assistant | system`
-  - `kind` enum: `message | issue_proposal | operation_proposal | routing_suggestion | system_event`
+  - `kind` enum: `message | issue_proposal | operation_proposal | system_event`
   - `body` text not null
   - `structured_payload` jsonb null
   - `approval_id` uuid fk `approvals.id` null
@@ -624,12 +642,45 @@ Chat behavior requirements:
 
 - Chat is organization-scoped
 - Chat is rendered inside the broader `Messenger` board communication shell alongside inbox-style attention streams
-- the built-in assistant asks clarifying questions before proposing work when requirements are incomplete
+- the selected chat agent asks clarifying questions before proposing work when requirements are incomplete
 - a conversation can exist without any issue
 - a conversation can convert into at most one primary issue
 - chat-driven issue creation and lightweight operations reuse the approval system
+- automation runs may post status/result events into an explicit Messenger chat,
+  but durable automation execution remains issue-backed
 - board users can optionally store a personal chat profile with `nickname` and `more_about_you`
-- the built-in assistant may use that per-user profile as prompt context only when at least one profile field is non-empty
+- the selected chat agent may use that per-user profile as prompt context only when at least one profile field is non-empty
+- assistant turns require an explicit `preferred_agent_id`; the UI defaults editable conversations to the last selected available agent or first available agent, while conversations with no selected chat agent remain discussable/editable but cannot invoke a runtime until one is chosen
+
+## 10.9.1 Organization Intelligence Profiles
+
+Rudder product intelligence features that are not agent work use organization-level
+Intelligence profiles instead of a hidden agent identity.
+
+Initial profiles:
+
+- `lightweight` / Fast Intelligence: low-latency utilities such as chat title
+  generation, short summaries, and classification.
+- `reasoning` / Smart Intelligence: reasoning-heavy utilities such as issue AI
+  search, reranking, and complex summaries.
+
+Requirements:
+
+- profiles are organization-scoped
+- profiles are not agents and do not appear in the org chart
+- profiles must not create `replyingAgentId`, heartbeat runs, agent runtime
+  sessions, or hidden Copilot rows
+- profile config may use the same adapter model and `modelFallbacks` shape as
+  agent runtime config
+- profile execution must filter agent-only identity/workspace fields such as
+  instructions, prompt templates, enabled skills, and workspace strategy
+- product utility calls resolve Fast or Smart by purpose through a product
+  intelligence service that uses a synthetic product identity, no persisted
+  agent row, no heartbeat run, and no local agent API token
+- Organization Settings exposes Fast and Smart with the same horizontal primary
+  model plus fallback-chain card interaction used by agent config
+- chat assistant replies still require explicit `preferred_agent_id`; no chat
+  reply may fall back to an Intelligence profile
 
 ## 10.10 Error Semantics
 
@@ -722,8 +773,8 @@ Dynamic context inputs:
 - wake-source payloads such as assignment, mention/comment, recovery, and
   passive close-out metadata
 - selected chat project metadata when a conversation is project-linked
-- issue/project/goal summaries and compact heartbeat context fetched through
-  the CLI/API
+- issue/project/goal summaries, issue document prompts, and compact heartbeat
+  context fetched through the CLI/API
 - project resource attachments for the resolved `projectId`
 
 Resource loading contract:
@@ -1037,7 +1088,7 @@ Skill references shown to users are scope-aware and stable:
 Rules:
 
 - `organization.urlKey` is the stable public organization segment and does not change when the organization name changes
-- only Rudder-owned bundled skill directories are exposed through the bundled surface; community presets seed into the organization library as optional organization skills instead
+- only Rudder-owned bundled skill directories are exposed through the bundled surface; curated community presets seed into the organization library as optional organization skills instead
 - existing internal skill keys remain valid as compatibility input, but the UI should render the readable public form
 - markdown link text uses the readable public reference, while the link target still points at the real `SKILL.md` path
 - search and selection should work from installed organization skills only; agent snapshot internals are not part of the picker surface

@@ -1,5 +1,5 @@
 const CHAT_DRAFT_STORAGE_KEY = "rudder:chat-drafts";
-const NEW_CHAT_SCOPE_KEY = "__new__";
+export const NEW_CHAT_SCOPE_KEY = "__new__";
 
 type ChatDraftsByOrganization = Record<string, Record<string, string>>;
 
@@ -11,7 +11,7 @@ function chatDraftStorage(): Storage | null {
   }
 }
 
-function resolveChatDraftScopeKey(conversationId: string | null | undefined): string {
+export function resolveChatDraftScopeKey(conversationId: string | null | undefined): string {
   const trimmedConversationId = conversationId?.trim() ?? "";
   return trimmedConversationId || NEW_CHAT_SCOPE_KEY;
 }

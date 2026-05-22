@@ -1,0 +1,59 @@
+---
+title: "Calendar"
+description: "按时间查看 agent 工作历史和人的检查点。"
+---
+
+Calendar 展示工作如何实际占据时间。它不只是一个日程插件。在 Rudder 中，Calendar 是 agent runs、任务工作、人类检查点和外部日历块的时间视图。
+
+![Calendar 工作历史](../../images/calendar-work-history.png)
+
+## 为什么 Calendar 重要
+
+Agent 团队看起来可能很忙，但仍然很难检查。Calendar 帮助回答时间维度的运营问题：
+
+- 今天哪些 agent 在运行？
+- 哪些任务获得了实际工作？
+- 执行后是否很快进入评审？
+- 是否多个 agent 同时被阻塞？
+- agent 运行是否集中在 launch、release 或 support 工作上？
+- 人类检查点在哪里打断或解除工作阻塞？
+
+## Calendar 里会出现什么
+
+Calendar 可以展示几类块：
+
+| 类型 | 含义 |
+| --- | --- |
+| Agent run history | 关联 agent、任务和项目的实际 heartbeat runs |
+| Human checkpoints | operator review、planning 或 decision blocks |
+| Imported calendar events | 连接外部日历后的上下文 |
+| Project and issue context | 回到持久工作记录的链接 |
+
+最好的 Calendar 视图来自真实任务和 run 记录。不要为了页面好看而创造与工作无关的装饰事件。
+
+## 如何阅读
+
+跑过几条任务后再看 Calendar。重点观察：
+
+- 是否所有时间都挤在一个项目上
+- 实现后是否有 review block
+- agent 输出和人类决策之间是否间隔太久
+- 是否反复出现 blocked runs
+- 是否有 agent 在没有关联任务的情况下运行
+
+Calendar 最有价值的地方是推动运营决策：重新分配、拆分工作、解除权限阻塞、安排评审，或停止低价值运行。
+
+## Calendar 不是 assignment
+
+创建 Calendar block 不会分配任务、改变优先级或运行 heartbeat。分配和状态仍然在任务上。Calendar 解释时间，任务控制工作。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="任务生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
+    学习任务状态和评审选择如何影响工作历史。
+  </Card>
+  <Card title="Agents" icon="bot" href="/zh/concepts/agents">
+    理解 Calendar 可以反映的 heartbeat runs。
+  </Card>
+</CardGroup>

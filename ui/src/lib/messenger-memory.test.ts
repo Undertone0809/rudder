@@ -50,6 +50,7 @@ function makeThreadSummary(threadKey: string): MessengerThreadSummary {
     lastReadAt: null,
     unreadCount: 0,
     needsAttention: false,
+    isPinned: false,
   };
 }
 

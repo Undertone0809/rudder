@@ -109,7 +109,7 @@ notes, or the full organization resource catalog.
 Each run has a scene:
 
 - `heartbeat`: normal agent work loop
-- `chat`: Messenger/Copilot conversation loop
+- `chat`: Messenger selected-agent conversation loop
 
 Scene prompts hold invariant rules for that surface. For example, chat includes
 reply-envelope and same-language rules, while heartbeat includes work-loop
@@ -266,6 +266,18 @@ That means:
 - prompt instructions matter
 - configured credentials/env vars are sensitive
 - working directory permissions matter
+- managed local runtime homes must not break normal operator CLI login state;
+  when a runtime uses a managed HOME for skill/session isolation, Rudder bridges
+  common local CLI credential directories such as `gh`, `ssh`, `npm`, Docker,
+  Kubernetes, and cloud CLIs into that managed HOME
+- Git author identity is still protected separately: Rudder prepares a managed
+  Git config with `user.useConfigOnly=true` and points `GIT_CONFIG_GLOBAL` at it.
+  The managed config includes the host global Git config when a safe default
+  identity is available, but Rudder does not store or inject a separate confirmed
+  Git identity. Local runtimes resolve identity through normal Git precedence:
+  explicit runtime env, repo-local Git config, host global Git config, then
+  missing identity. Missing or unsafe identity must fail fast instead of
+  producing fallback commit authors.
 
 Start with least privilege where possible, and avoid exposing secrets in broad reusable prompts unless intentionally required.
 

@@ -5,11 +5,6 @@ async function createStreamingOrg(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
     data: {
       name,
-      defaultChatAgentRuntimeType: "codex_local",
-      defaultChatAgentRuntimeConfig: {
-        model: "gpt-5.4",
-        command: E2E_CODEX_STUB,
-      },
     },
   });
   expect(orgRes.ok()).toBe(true);
@@ -41,7 +36,14 @@ async function createSkill(page: Page, orgId: string, name: string, slug: string
     },
   });
   expect(skillRes.ok()).toBe(true);
-  return skillRes.json();
+  return skillRes.json() as Promise<{ key: string }>;
+}
+
+async function syncAgentSkills(page: Page, agentId: string, orgId: string, desiredSkills: string[]) {
+  const syncRes = await page.request.post(`/api/agents/${agentId}/skills/sync?orgId=${encodeURIComponent(orgId)}`, {
+    data: { desiredSkills },
+  });
+  expect(syncRes.ok()).toBe(true);
 }
 
 test("backspace deletes a clicked mention token and keeps the composer editable", async ({ page }) => {
@@ -84,7 +86,8 @@ test("backspace deletes a clicked mention token and keeps the composer editable"
 test("backspace deletes normal text after mixed skill tokens and an active @ query", async ({ page }) => {
   const organization = await createStreamingOrg(page, `Mixed-Backspace-${Date.now()}`);
   const agent = await createAgent(page, organization.id, "Advisor");
-  await createSkill(page, organization.id, "Build Advisor", "build-advisor");
+  const skill = await createSkill(page, organization.id, "Build Advisor", "build-advisor");
+  await syncAgentSkills(page, agent.id, organization.id, [`org:${skill.key}`]);
 
   const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
     data: {
@@ -107,9 +110,10 @@ test("backspace deletes normal text after mixed skill tokens and an active @ que
   await composer.fill("Use this");
 
   await page.getByRole("button", { name: "Skills" }).click();
+  await page.getByPlaceholder("Search skills...").fill("build-advisor");
   await page
     .getByRole("menuitem")
-    .filter({ hasText: "build-advisor" })
+    .filter({ hasText: "Build Advisor" })
     .first()
     .click();
 

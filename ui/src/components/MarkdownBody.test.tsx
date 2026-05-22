@@ -26,6 +26,31 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
+vi.mock("@/components/ui/dialog", () => ({
+  Dialog: ({
+    open,
+    children,
+  }: {
+    open: boolean;
+    children: ReactNode;
+  }) => (open ? <div data-testid="mock-dialog-root">{children}</div> : null),
+  DialogContent: ({
+    children,
+    showCloseButton: _showCloseButton,
+    ...props
+  }: {
+    children: ReactNode;
+    showCloseButton?: boolean;
+  }) => <div data-slot="dialog-content" {...props}>{children}</div>,
+  DialogClose: ({
+    children,
+    ...props
+  }: {
+    children: ReactNode;
+  }) => <button data-slot="dialog-close" {...props}>{children}</button>,
+  DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
 let cleanupFn: (() => void) | null = null;
 
 afterEach(() => {
@@ -72,6 +97,98 @@ describe("MarkdownBody", () => {
 
     expect(html).toContain('src="/resolved/images/org-chart.png"');
     expect(html).toContain('alt="Org chart"');
+  });
+
+  it("opens a markdown image preview dialog when an inline image is double-clicked", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"![Architecture diagram](/api/attachments/test/content)"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const image = container.querySelector("img");
+    expect(image).toBeTruthy();
+
+    act(() => {
+      image?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    });
+
+    const previewRoot = document.body.querySelector('[data-testid="markdown-body-image-preview-dialog"]');
+    const preview = previewRoot?.querySelector("img");
+    expect(preview).toBeTruthy();
+    expect(new URL(preview?.getAttribute("src") ?? "", "http://localhost:3000").pathname).toBe(
+      "/api/attachments/test/content",
+    );
+    expect(document.body.textContent).toContain("Architecture diagram");
+  });
+
+  it("opens a markdown image preview dialog when an inline image is clicked", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"![Build screenshot](/api/assets/test/content)"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const imageButton = container.querySelector(".rudder-inspectable-image-trigger");
+    expect(imageButton).toBeTruthy();
+
+    act(() => {
+      imageButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const previewRoot = document.body.querySelector('[data-testid="markdown-body-image-preview-dialog"]');
+    expect(previewRoot?.querySelector("img")?.getAttribute("alt")).toBe("Build screenshot");
+    expect(previewRoot?.textContent).not.toContain("Open Image");
+    expect(previewRoot?.textContent).toContain("Copy Image");
+  });
+
+  it("shows image actions from the custom markdown image context menu", () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"![Evidence](/api/attachments/test/content)"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const image = container.querySelector("img");
+    expect(image).toBeTruthy();
+
+    act(() => {
+      image?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 32,
+        clientY: 48,
+      }));
+    });
+
+    const contextMenu = document.body.querySelector('[data-testid="markdown-image-context-menu"]');
+    expect(contextMenu).toBeTruthy();
+    expect(contextMenu?.textContent).toContain("Open Image");
+    expect(contextMenu?.textContent).toContain("Copy Image");
+    expect(contextMenu?.textContent).toContain("Download Image");
+
+    const openItem = Array.from(contextMenu?.querySelectorAll("button") ?? [])
+      .find((button) => button.textContent?.includes("Open Image"));
+    act(() => {
+      openItem?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(openSpy).toHaveBeenCalledWith("/api/attachments/test/content", "_blank", "noopener,noreferrer");
+
+    openSpy.mockRestore();
+  });
+
+  it("leaves images non-interactive when preview is disabled", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody enableImagePreview={false}>
+          {"![Static diagram](/api/assets/static/content)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(container.querySelector("img")).toBeTruthy();
+    expect(container.querySelector(".rudder-inspectable-image-trigger")).toBeNull();
   });
 
   it("renders agent and project mentions as chips", () => {
@@ -126,6 +243,60 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain("/Users/zeeland/projects/rudder/.agents/skills/rudder-create-plugin/SKILL.md");
   });
 
+  it("renders skill reference hover card metadata when provided", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody
+          skillReferences={[
+            {
+              href: "/workspace/.agents/skills/build-advisor/SKILL.md",
+              label: "build-advisor",
+              displayName: "Build Advisor",
+              description: "Turn vague build feedback into expert diagnosis.",
+              categoryLabel: "Global skill",
+              locationLabel: "~/.agents/skills",
+              detailsHref: "/skills/skill-1",
+            },
+          ]}
+        >
+          {"Use [$rudder/build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('class="rudder-skill-hover-card"');
+    expect(html).toContain("Global skill");
+    expect(html).toContain("~/.agents/skills");
+    expect(html).toContain("Turn vague build feedback into expert diagnosis.");
+    expect(html).toContain('href="/skills/skill-1"');
+    expect(html).toContain(">build-advisor</span>");
+    expect(html).not.toContain("rudder/build-advisor");
+  });
+
+  it("renders markdown when agent comments contain escaped newline sequences", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"Plan complete.\\n\\n1. Confirm positioning\\n2. Run R-3 and R-4 first"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("<ol>");
+    expect(html).toContain("<li>Confirm positioning</li>");
+    expect(html).not.toContain("\\n");
+  });
+
+  it("leaves isolated escaped newline examples alone", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{"Use `\\n` for a newline escape."}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("\\n");
+  });
+
   it("lets callers intercept ordinary markdown links", () => {
     const onLinkClick = vi.fn(({ event }) => event.preventDefault());
     const container = render(
@@ -144,5 +315,47 @@ describe("MarkdownBody", () => {
       href: "/Users/zeeland/.rudder/notes/2026-04-30.md",
       label: "daily note",
     }));
+  });
+
+  it("renders external markdown links with safe new-window attributes", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {"Read [the guide](https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noreferrer noopener"');
+    expect(html).not.toContain('class="rudder-link-chip"');
+  });
+
+  it("renders bare long URLs with the complete URL as link text", () => {
+    const url = "https://gingiris.github.io/growth-tools/blog/2026/04/02/github-readme-template-guide/";
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{url}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain(`href="${url}"`);
+    expect(html).toContain(`title="${url}"`);
+    expect(html).toContain(`>${url}</a>`);
+    expect(html).not.toContain('class="rudder-link-chip"');
+    expect(html).not.toContain('github readme template guide');
+    expect(html).toContain('target="_blank"');
+  });
+
+  it("keeps app-relative markdown links in the current window", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>{"Open [the issue](/issues/ZST-9)"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/issues/ZST-9"');
+    expect(html).not.toContain('target="_blank"');
   });
 });

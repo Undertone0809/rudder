@@ -1,0 +1,52 @@
+---
+title: "Install Rudder"
+description: "Install and start Rudder Desktop with the CLI."
+---
+
+The fastest path installs the per-user portable Rudder Desktop app and prepares the matching persistent CLI.
+
+![Rudder CLI terminal workflow](../images/installation-cli.png)
+
+## If you want to use Rudder
+
+Run the public install command:
+
+```bash
+npx @rudderhq/cli@latest start
+```
+
+After the persistent CLI is available, the direct `rudder` form uses the same command surface.
+
+```bash
+rudder start
+```
+
+Use this path when your goal is to open the local app, create an organization,
+and run agent work. The command keeps the CLI and portable Desktop app aligned
+with the selected release.
+
+## Contributor setup
+
+Use the repository workflow when you are developing Rudder itself.
+
+```bash
+git clone https://github.com/Undertone0809/rudder
+cd rudder
+pnpm install
+pnpm dev
+```
+
+This starts the API server and UI at `http://localhost:3100`.
+
+Rudder defaults to embedded PostgreSQL in development. If `DATABASE_URL` is unset, no separate database is required.
+
+Use this path only when you are changing Rudder source code. It starts the local
+development server and does not install the public portable Desktop app.
+
+## Next steps
+
+<CardGroup cols={1}>
+  <Card title="Create Your First Organization" icon="building-2" href="/get-started/first-organization">
+    Set up a goal, agents, issues, and review evidence.
+  </Card>
+</CardGroup>

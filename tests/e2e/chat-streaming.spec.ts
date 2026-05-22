@@ -1,8 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { E2E_CODEX_STUB, E2E_ROOT } from "./support/e2e-env";
+import { chatMessages, createDb } from "../../packages/db/src/index.ts";
+import { createE2EChatAgent } from "./support/chat-agent";
+import { E2E_CODEX_STUB, E2E_DATABASE_URL, E2E_ROOT } from "./support/e2e-env";
 
 const E2E_CODEX_IGNORE_TERM_STUB = path.resolve(E2E_ROOT, "fixtures", "codex-ignore-term");
+const e2eDb = createDb(E2E_DATABASE_URL);
 
 async function expectTranscriptBetweenUserAndAssistant(page: Page) {
   const userBubble = page.getByTestId("chat-user-message-bubble").last();
@@ -30,31 +34,40 @@ async function createStreamingOrg(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
     data: {
       name,
-      defaultChatAgentRuntimeType: "codex_local",
-      defaultChatAgentRuntimeConfig: {
-        model: "gpt-5.4",
-        command: E2E_CODEX_STUB,
-      },
     },
   });
   expect(orgRes.ok()).toBe(true);
-  return orgRes.json();
+  const organization = await orgRes.json();
+  const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Chat Agent",
+    command: E2E_CODEX_STUB,
+  });
+  return { ...organization, chatAgent };
 }
 
 async function createStreamingOrgThatIgnoresStop(page: Page, name: string) {
   const orgRes = await page.request.post("/api/orgs", {
     data: {
       name,
-      defaultChatAgentRuntimeType: "codex_local",
-      defaultChatAgentRuntimeConfig: {
-        model: "gpt-5.4",
-        command: E2E_CODEX_IGNORE_TERM_STUB,
-        graceSec: 1,
-      },
     },
   });
   expect(orgRes.ok()).toBe(true);
-  return orgRes.json();
+  const organization = await orgRes.json();
+  const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Chat Agent",
+    agentRuntimeConfig: {
+      model: "gpt-5.4",
+      command: E2E_CODEX_IGNORE_TERM_STUB,
+      graceSec: 1,
+    },
+  });
+  return { ...organization, chatAgent };
+}
+
+function currentChatId(pageUrl: string) {
+  const chatId = new URL(pageUrl).pathname.split("/").pop();
+  expect(chatId).toBeTruthy();
+  return chatId!;
 }
 
 function currentChatId(pageUrl: string) {
@@ -64,6 +77,86 @@ function currentChatId(pageUrl: string) {
 }
 
 test.describe("Chat streaming", () => {
+  test("replays persisted assistant progress without duplicating the final answer in the process transcript", async ({ page }) => {
+    const organization = await createStreamingOrg(page, `Persisted-Chat-${Date.now()}`);
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Persisted transcript replay",
+        preferredAgentId: organization.chatAgent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+
+    await e2eDb.insert(chatMessages).values({
+      id: randomUUID(),
+      orgId: organization.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Final answer shown in the assistant message.",
+      structuredPayload: {
+        __chatTranscript: [
+          {
+            kind: "system",
+            ts: "2026-05-11T03:00:00.000Z",
+            text: "turn started",
+          },
+          {
+            kind: "assistant",
+            ts: "2026-05-11T03:00:01.000Z",
+            text: "I am checking the chat surface first.",
+          },
+          {
+            kind: "todo_list",
+            ts: "2026-05-11T03:00:02.000Z",
+            items: [
+              { text: "Inspect chat transcript", status: "completed" },
+              { text: "Replay progress", status: "in_progress" },
+            ],
+          },
+          {
+            kind: "assistant",
+            ts: "2026-05-11T03:00:03.000Z",
+            text: "Final answer shown ",
+            delta: true,
+          },
+          {
+            kind: "assistant",
+            ts: "2026-05-11T03:00:04.000Z",
+            text: "in the assistant message.",
+            delta: true,
+          },
+        ],
+      },
+      replyingAgentId: organization.chatAgent.id,
+      chatTurnId: randomUUID(),
+      turnVariant: 0,
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
+      "Final answer shown in the assistant message.",
+      { timeout: 15_000 },
+    );
+    const transcriptToggle = page.getByRole("button", { name: /Worked for/ }).last();
+    await expect(transcriptToggle).toBeVisible({ timeout: 15_000 });
+    await transcriptToggle.click();
+
+    const transcriptItem = page.getByTestId("chat-transcript-item").last();
+    await expect(transcriptItem.getByText("I am checking the chat surface first.", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(transcriptItem.getByText("Inspect chat transcript", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(transcriptItem.getByText("Final answer shown in the assistant message.", { exact: false })).toHaveCount(0);
+  });
+
   test("streams a codex reply through to completion", async ({ page }) => {
     const organization = await createStreamingOrg(page, `Str-Chat-${Date.now()}`);
 
@@ -72,7 +165,7 @@ test.describe("Chat streaming", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto("/chat");
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await expect(composer).toBeVisible({ timeout: 15_000 });
@@ -98,6 +191,7 @@ test.describe("Chat streaming", () => {
     const transcriptItem = page.getByTestId("chat-transcript-item").last();
     await expect(transcriptItem.getByText("Model turn", { exact: false })).toHaveCount(0);
     await expect(transcriptItem.getByText("Inspecting current chat state", { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(transcriptItem.getByText("Streaming reply for chat.", { exact: false })).toHaveCount(0);
     await expect(transcriptItem.locator('button[aria-label^="Expand tool activity"]')).toHaveCount(0);
     await expect(transcriptItem.getByText("Ran echo chat", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
     await expect(transcriptItem.getByText("Activity details", { exact: false })).toHaveCount(0);
@@ -117,7 +211,7 @@ test.describe("Chat streaming", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto("/chat");
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await expect(composer).toBeVisible({ timeout: 15_000 });
@@ -137,7 +231,7 @@ test.describe("Chat streaming", () => {
       return messages.find((message: { role: string }) => message.role === "assistant")?.status ?? null;
     }, { timeout: 15_000 }).toBe("completed");
 
-    await page.goto(`/messenger/chat/${chatId}`);
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chatId}`);
     await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Streaming reply for chat.", {
       timeout: 15_000,
     });
@@ -152,7 +246,7 @@ test.describe("Chat streaming", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto("/chat");
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await expect(composer).toBeVisible({ timeout: 15_000 });
@@ -182,6 +276,89 @@ test.describe("Chat streaming", () => {
     await expect(page.getByText(/"kind":"message"/)).toHaveCount(0);
   });
 
+  test("marks preserved streaming progress interrupted after restart and can continue", async ({ page }) => {
+    const organization = await createStreamingOrg(page, `Recover-Chat-${Date.now()}`);
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Interrupted progress recovery",
+        preferredAgentId: organization.chatAgent.id,
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+
+    const chatTurnId = randomUUID();
+    const userCreatedAt = new Date(Date.now() - 2_000);
+    const assistantCreatedAt = new Date(Date.now() - 1_000);
+    await e2eDb.insert(chatMessages).values([
+      {
+        id: randomUUID(),
+        orgId: organization.id,
+        conversationId: chat.id,
+        role: "user",
+        kind: "message",
+        status: "completed",
+        body: "Original interrupted request",
+        chatTurnId,
+        turnVariant: 0,
+        createdAt: userCreatedAt,
+        updatedAt: userCreatedAt,
+      },
+      {
+        id: randomUUID(),
+        orgId: organization.id,
+        conversationId: chat.id,
+        role: "assistant",
+        kind: "message",
+        status: "streaming",
+        body: "Partial preserved reply",
+        structuredPayload: {
+          __chatTranscript: [
+            {
+              kind: "thinking",
+              ts: assistantCreatedAt.toISOString(),
+              text: "Preserved recovery transcript",
+            },
+          ],
+        },
+        replyingAgentId: organization.chatAgent.id,
+        chatTurnId,
+        turnVariant: 0,
+        createdAt: assistantCreatedAt,
+        updatedAt: assistantCreatedAt,
+      },
+    ]);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+
+    await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "Partial preserved reply" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText("Interrupted", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "Continue" })).toBeVisible({ timeout: 15_000 });
+    const messagesRes = await page.request.get(`/api/chats/${chat.id}/messages`);
+    expect(messagesRes.ok()).toBe(true);
+    const messages = await messagesRes.json();
+    expect(messages.find((message: { role: string }) => message.role === "assistant")?.status).toBe("interrupted");
+
+    await page.getByRole("button", { name: "Continue" }).click();
+
+    await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: "Continue from the interrupted chat run." })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Streaming reply for chat.", {
+      timeout: 15_000,
+    });
+  });
+
   test("recovers the composer after stopping a stubborn chat run", async ({ page }) => {
     const organization = await createStreamingOrgThatIgnoresStop(page, `Stubborn-Chat-${Date.now()}`);
 
@@ -190,7 +367,7 @@ test.describe("Chat streaming", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
-    await page.goto("/chat");
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await expect(composer).toBeVisible({ timeout: 15_000 });

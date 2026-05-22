@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asString,
   asNumber,
@@ -12,8 +13,11 @@ import {
   redactEnvForLogs,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
+  ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
   ensurePathInEnv,
+  resolveLocalOperatorHome,
+  syncLocalCliCredentialHomeEntries,
   readRudderRuntimeSkillEntries,
   resolveRudderDesiredSkillNames,
   renderTemplate,
@@ -23,6 +27,7 @@ import {
   selectPromptTemplate,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import { parseCodexJsonl, isCodexUnknownSessionError } from "./parse.js";
+import { isCodexClosedStdinToolSessionError } from "../shared/tool-errors.js";
 import {
   prepareManagedCodexHome,
   realizeManagedCodexSkillEntries,
@@ -41,6 +46,7 @@ const CODEX_ANALYTICS_FORBIDDEN_HTML_START_RE =
   /^\d{4}-\d{2}-\d{2}T[^\s]+\s+WARN\s+codex_analytics::analytics_client:\s+events failed with status 403 Forbidden:\s+<html>$/i;
 
 function isBenignCodexStderrLine(line: string): boolean {
+  if (isCodexClosedStdinToolSessionError(line)) return true;
   return CODEX_BENIGN_STDERR_RES.some((pattern) => pattern.test(line.trim()));
 }
 
@@ -126,6 +132,13 @@ function hasCliArg(args: string[], flag: string): boolean {
   return args.includes(flag);
 }
 
+function runtimeImagePaths(media: AgentRuntimeExecutionContext["media"]): string[] {
+  return (media ?? [])
+    .filter((item) => item.source === "chat_attachment" && item.contentType.toLowerCase().startsWith("image/"))
+    .map((item) => item.localPath)
+    .filter((value) => value.trim().length > 0);
+}
+
 function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean {
   const raw = env[key];
   return typeof raw === "string" && raw.trim().length > 0;
@@ -177,6 +190,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const orgWorkspaceRoot = asString(workspaceContext.orgWorkspaceRoot, "");
   const orgSkillsDir = asString(workspaceContext.orgSkillsDir, "");
   const orgPlansDir = asString(workspaceContext.orgPlansDir, "");
+  const orgArtifactsDir = asString(
+    workspaceContext.orgArtifactsDir,
+    orgWorkspaceRoot ? path.join(orgWorkspaceRoot, "artifacts") : "",
+  );
   const workspaceHints = Array.isArray(context.rudderWorkspaces)
     ? context.rudderWorkspaces.filter(
         (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
@@ -212,6 +229,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ),
     ),
   };
+  const operatorHome = resolveLocalOperatorHome(sourceEnv);
   const preparedManagedCodexHome =
     configuredCodexHome ? null : await prepareManagedCodexHome(sourceEnv, onLog, agent.orgId, agent.id);
   const defaultCodexHome = resolveManagedCodexHomeDir(sourceEnv, agent.orgId, agent.id);
@@ -219,17 +237,34 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   await fs.mkdir(effectiveCodexHome, { recursive: true });
   const isolatedHome = agentHome || path.join(effectiveCodexHome, "home");
   await fs.mkdir(isolatedHome, { recursive: true });
+  await syncLocalCliCredentialHomeEntries({
+    sourceHome: operatorHome,
+    targetHome: isolatedHome,
+    onLog,
+  });
+  const preparedGitIdentity = await ensureGitIdentityFileConfig({
+    cwd,
+    home: isolatedHome,
+    sourceEnv,
+    onLog,
+  });
   const codexSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredCodexSkillNames = resolveRudderDesiredSkillNames(config, codexSkillEntries);
+  const selectedCodexSkillEntries = codexSkillEntries
+    .filter((entry) => desiredCodexSkillNames.includes(entry.key));
+  const loadedSkills = selectedCodexSkillEntries.map((entry) => ({
+    key: entry.key,
+    runtimeName: entry.runtimeName,
+    name: entry.name ?? null,
+    description: entry.description ?? null,
+  }));
   await realizeManagedCodexSkillEntries(
     {
       ...sourceEnv,
       CODEX_HOME: effectiveCodexHome,
     },
     effectiveCodexHome,
-    codexSkillEntries
-      .filter((entry) => desiredCodexSkillNames.includes(entry.key))
-      .map((entry) => entry.source),
+    selectedCodexSkillEntries.map((entry) => entry.source),
     onLog,
   );
   const hasExplicitApiKey =
@@ -326,6 +361,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (orgPlansDir) {
     env.RUDDER_ORG_PLANS_DIR = orgPlansDir;
   }
+  if (orgArtifactsDir) {
+    env.RUDDER_ORG_ARTIFACTS_DIR = orgArtifactsDir;
+  }
   if (workspaceHints.length > 0) {
     env.RUDDER_WORKSPACES_JSON = JSON.stringify(workspaceHints);
   }
@@ -341,16 +379,29 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v === "string") env[k] = v;
   }
+  env.HOME = isolatedHome;
+  env.USERPROFILE = isolatedHome;
+  env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
   }
+  applyGitIdentityPreparationEnv(env, preparedGitIdentity);
+  applyGitCredentialHelperPolicyEnv(env);
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
   const billingType = resolveCodexBillingType(effectiveEnv);
-  const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv));
+  const runtimeEnv = await ensureLocalCliCredentialShimsInPath({
+    operatorHome,
+    targetHome: isolatedHome,
+    cwd,
+    env: ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv)),
+    onLog,
+  });
+  if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
+  if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
   const timeoutSec = asNumber(config.timeoutSec, 0);
@@ -381,13 +432,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
   const instructionsPrefix = loadedInstructions.prefix;
   const instructionsDir = loadedInstructions.instructionsDir;
+  const imagePaths = runtimeImagePaths(ctx.media);
   const repoAgentsNote =
     "Codex exec automatically applies repo-scoped AGENTS.md instructions from the current workspace; Rudder does not currently suppress that discovery.";
+  const imageAttachmentNote =
+    imagePaths.length > 0
+      ? `Attached ${imagePaths.length} image attachment${imagePaths.length === 1 ? "" : "s"} to the initial Codex prompt via --image.`
+      : null;
   const commandNotes = (() => {
     if (!instructionsFilePath) {
       return [
         ...loadedInstructions.commandNotes,
         "Prepended Rudder operating contract to stdin prompt.",
+        ...(imageAttachmentNote ? [imageAttachmentNote] : []),
         repoAgentsNote,
       ];
     }
@@ -395,11 +452,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       return [
         ...loadedInstructions.commandNotes,
         `Prepended instructions + path directive to stdin prompt (relative references from ${instructionsDir}).`,
+        ...(imageAttachmentNote ? [imageAttachmentNote] : []),
         repoAgentsNote,
       ];
     }
     return [
       ...loadedInstructions.commandNotes,
+      ...(imageAttachmentNote ? [imageAttachmentNote] : []),
       repoAgentsNote,
     ];
   })();
@@ -471,6 +530,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (bypass) args.push("--dangerously-bypass-approvals-and-sandbox");
     if (model) args.push("--model", model);
     if (modelReasoningEffort) args.push("-c", `model_reasoning_effort=${JSON.stringify(modelReasoningEffort)}`);
+    for (const imagePath of imagePaths) {
+      args.push("--image", imagePath);
+    }
     if (runtimeScene === "chat" && !hasCliArg(extraArgs, "--skip-git-repo-check")) {
       args.push("--skip-git-repo-check");
     }
@@ -496,6 +558,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         env: redactEnvForLogs(env),
         prompt,
         promptMetrics,
+        loadedSkills,
         context,
       });
     }

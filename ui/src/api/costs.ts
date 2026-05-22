@@ -1,5 +1,6 @@
 import type {
   CostSummary,
+  CostTrendPoint,
   CostByAgent,
   CostByProviderModel,
   CostByBiller,
@@ -14,10 +15,13 @@ import type {
 } from "@rudderhq/shared";
 import { api } from "./client";
 
-function dateParams(from?: string, to?: string): string {
+function dateParams(from?: string, to?: string, extra?: Record<string, string | undefined>): string {
   const params = new URLSearchParams();
   if (from) params.set("from", from);
   if (to) params.set("to", to);
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    if (value) params.set(key, value);
+  }
   const qs = params.toString();
   return qs ? `?${qs}` : "";
 }
@@ -27,6 +31,8 @@ export const costsApi = {
     api.get<CostSummary>(`/orgs/${orgId}/costs/summary${dateParams(from, to)}`),
   byAgent: (orgId: string, from?: string, to?: string) =>
     api.get<CostByAgent[]>(`/orgs/${orgId}/costs/by-agent${dateParams(from, to)}`),
+  trend: (orgId: string, from?: string, to?: string, filter?: { agentId?: string; projectId?: string }) =>
+    api.get<CostTrendPoint[]>(`/orgs/${orgId}/costs/trend${dateParams(from, to, filter)}`),
   byAgentModel: (orgId: string, from?: string, to?: string) =>
     api.get<CostByAgentModel[]>(`/orgs/${orgId}/costs/by-agent-model${dateParams(from, to)}`),
   byProject: (orgId: string, from?: string, to?: string) =>

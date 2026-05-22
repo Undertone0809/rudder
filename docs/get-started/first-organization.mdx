@@ -1,0 +1,253 @@
+---
+title: "Create Your First Organization"
+description: "A detailed walkthrough of the first useful human-agent work loop in Rudder."
+---
+
+An organization is the first-order object in Rudder. It is where a human operator gives an agent team a goal, a structure, a workspace, and a durable way to execute work.
+
+This guide walks through the first useful loop: create the organization, hire an agent, turn a request into an issue, assign it, run the agent, review the output, and use Messenger and Calendar to understand what happened.
+
+![Organization work surface](../images/organization-work.png)
+
+## Before you start
+
+Start Rudder locally:
+
+```bash
+npx @rudderhq/cli@latest start
+```
+
+Open the local app and keep one real piece of work in mind. A good first example is not "test Rudder." Use a concrete outcome:
+
+- "Draft the launch announcement and produce a reviewable Markdown file."
+- "Inspect this repository and summarize the top three onboarding blockers."
+- "Create a small issue plan for improving our docs screenshots."
+- "Review this product page and list the changes needed before publishing."
+
+The point is to create an object that can be assigned, run, reviewed, and remembered.
+
+## 1. Create the organization around a real goal
+
+When Rudder asks for the organization, write the goal as an operating target, not a slogan.
+
+Good first goals:
+
+- "Ship a local-first agent work dashboard that can run one product loop end to end."
+- "Operate the public beta launch and keep agent work reviewable."
+- "Use agents to maintain release quality, docs, and user feedback every week."
+
+Weak first goals:
+
+- "Use AI."
+- "Make agents productive."
+- "Build something cool."
+
+The organization goal matters because issues, agents, projects, and review decisions should all point back to why the work exists.
+
+![Rudder dashboard overview](../images/board-overview.png)
+
+## 2. Hire the first agent
+
+Most first organizations start with one generalist operator or engineering agent. Do not over-optimize the org chart yet. The first agent only needs enough definition to own a real issue.
+
+Set four fields carefully:
+
+| Field | What to write |
+| --- | --- |
+| Role | The durable responsibility, such as "Founding Engineer" or "Launch Operator" |
+| Capabilities | The kinds of work this agent should accept |
+| Runtime | The execution backend Rudder should use for heartbeats |
+| Reporting line | Who the agent reports to when the org grows |
+
+Use capabilities to constrain work. For example:
+
+> Implements small product changes, writes issue close-out comments, runs local validation commands, and asks for human input when access or product judgment is missing.
+
+That sentence tells Rudder and future reviewers what this agent should do and what it should not silently decide.
+
+## 3. Create an issue before execution starts
+
+Issues are the durable execution surface in Rudder. Chat is useful for clarification, but the work should become an issue before it spends agent time.
+
+![Issue board](../images/issue-flow.png)
+
+A strong first issue has:
+
+- a clear title
+- the desired outcome
+- enough context to start
+- acceptance criteria
+- a single assignee when ready
+- a reviewer when independent judgment is needed
+
+Example:
+
+```md
+Title: Draft the public beta launch announcement
+
+Outcome:
+Create a reviewable Markdown announcement for the public beta.
+
+Context:
+The announcement should explain local-first setup, issue-based agent work,
+and why Rudder gives humans a control plane for agent teams.
+
+Acceptance:
+- includes a short headline
+- includes setup command
+- includes one concrete use case
+- leaves open questions as bullets
+```
+
+## 4. Use status to communicate readiness
+
+Status is not decoration. It tells humans and agents what kind of action is allowed next.
+
+| Status | Use it when |
+| --- | --- |
+| `backlog` | The request is real but still needs shaping, priority, or acceptance criteria |
+| `todo` | The work is clear enough for an assignee to start |
+| `in_progress` | An agent or human has checked it out and is actively working |
+| `blocked` | The next move depends on missing access, product judgment, external input, or another issue |
+| `in_review` | The assignee believes there is reviewable output |
+| `done` | The reviewer or owner accepts the result and evidence |
+
+For the first organization, keep the rule simple: move the issue to `todo` only when another person could start from the issue without asking what it means.
+
+## 5. Assign only when there is one clear owner
+
+Assign an issue when one agent should own the next execution step.
+
+Assign now if:
+
+- the outcome is concrete
+- the agent has enough context and runtime access
+- duplicate execution would be harmful
+- you want heartbeat to pick it up
+
+Do not assign yet if:
+
+- you are still exploring the problem
+- several agents need separate parts of the work
+- the task is really a decision, not execution
+- the acceptance criteria are missing
+
+Rudder uses a single-assignee model. If two agents need to collaborate, split the work into separate issues or sub-issues instead of assigning one issue to two owners.
+
+## 6. Add a reviewer when output quality matters
+
+Reviewer is not the same thing as approval. A reviewer checks whether the completed work is good enough.
+
+Add a reviewer when:
+
+- the work changes public docs, release notes, code, or customer-facing copy
+- the output needs product or technical judgment
+- the assignee is an agent and you want a second agent or human to inspect it
+- you need an explicit approve/request-changes decision before closing
+
+Skip reviewer for tiny, low-risk tasks where the issue comment itself is enough evidence.
+
+When work is ready, move the issue to `in_review`. The reviewer should leave a structured decision: approve, request changes, needs follow-up, or blocked.
+
+## 7. Run the agent and inspect the evidence
+
+An agent heartbeat wakes the agent to inspect assigned work, make progress, and report the outcome.
+
+![Agent run detail](../images/agent-run-detail.png)
+
+After the run, check for evidence:
+
+- transcript or run summary
+- issue comment
+- changed files or artifact links
+- validation commands
+- screenshots or preview URLs
+- remaining risks
+
+If the run finished without evidence, the work is not inspectable. Ask the agent to add a close-out comment or move the issue to `blocked` with a named next action.
+
+## 8. Use Chat for intake, not as the work record
+
+Use Chat when the request is still conversational. It is the right surface for explaining a vague request, attaching context, choosing an agent, and proposing an issue.
+
+![Chat issue proposal](../images/chat-create-issue-proposal.png)
+
+A good pattern is:
+
+1. Start in Chat with the messy request.
+2. Let the selected agent ask clarifying questions or draft an issue proposal.
+3. Approve or edit the proposal.
+4. Execute the resulting issue.
+5. Keep follow-up decisions on the issue.
+
+If the conversation becomes important enough to assign, spend budget on, review, or revisit later, convert it into an issue.
+
+## 9. Use Messenger to recover attention
+
+Messenger is the place to notice what needs human attention: replies, issue threads, failed runs, blockers, decision requests, and system prompts.
+
+![Messenger attention surface](../images/messenger-approvals.png)
+
+Use Messenger when:
+
+- an agent asks a question
+- a failed run needs attention
+- a blocker needs a human answer
+- an approval or review decision is waiting
+- a chat-created issue proposal needs to be accepted or edited
+
+Messenger should bring you back to the durable object. If the next action is real work, record it on the issue.
+
+## 10. Use Calendar to understand work history
+
+Calendar is not only a scheduling page. In Rudder, it is a way to see how agent runs and human checkpoints filled time.
+
+![Calendar work history](../images/calendar-work-history.png)
+
+Use Calendar to answer:
+
+- Which agents were active today?
+- Which issues consumed the most time?
+- Did review happen soon after execution?
+- Are agents running in parallel or piling up around one blocker?
+- Where did human meetings or checkpoints interrupt the work loop?
+
+The strongest Calendar data comes from real issues and heartbeat runs, not from manually creating decorative events.
+
+## 11. Promote repeated instructions into skills
+
+After the first few issues, you will see repeated operating patterns: release checks, preview setup, transcript debugging, docs review, or mock data capture. Move stable repeatable procedures into skills.
+
+![Skills library](../images/skills-library.png)
+
+Use issue instructions for one-off work. Use skills when the same workflow should be available to future agents without copying a long prompt each time.
+
+## The first useful loop
+
+Your first organization is working when you can trace this loop:
+
+1. A human states a goal.
+2. A request becomes an issue.
+3. One assignee owns the next step.
+4. The agent run leaves evidence.
+5. A reviewer or owner accepts, blocks, or requests changes.
+6. Messenger shows attention needs.
+7. Calendar shows the work history.
+8. The issue preserves the final record.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Issue Lifecycle Guide" icon="route" href="/how-to/issue-lifecycle">
+    Learn detailed assignment, reviewer, and status best practices.
+  </Card>
+  <Card title="Chat" icon="message-circle" href="/concepts/chat">
+    Understand how conversational intake becomes durable work.
+  </Card>
+  <Card title="Messenger" icon="message-square" href="/concepts/messenger">
+    See how attention and decisions stay visible.
+  </Card>
+  <Card title="Calendar" icon="calendar-days" href="/concepts/calendar">
+    Inspect agent work history over time.
+  </Card>
+</CardGroup>

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearChatDraft, readChatDraft, saveChatDraft } from "./chat-draft-storage";
+import { clearChatDraft, readChatDraft, resolveChatDraftScopeKey, saveChatDraft } from "./chat-draft-storage";
 
 function createLocalStorageMock() {
   const store = new Map<string, string>();
@@ -28,6 +28,12 @@ afterEach(() => {
 });
 
 describe("chat draft storage", () => {
+  it("resolves the shared new-chat scope key", () => {
+    expect(resolveChatDraftScopeKey(null)).toBe("__new__");
+    expect(resolveChatDraftScopeKey("  ")).toBe("__new__");
+    expect(resolveChatDraftScopeKey(" chat-1 ")).toBe("chat-1");
+  });
+
   it("stores drafts per organization and conversation", () => {
     saveChatDraft("org-1", "chat-1", "Draft for chat 1");
     saveChatDraft("org-1", "chat-2", "Draft for chat 2");

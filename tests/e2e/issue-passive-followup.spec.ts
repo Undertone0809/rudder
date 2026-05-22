@@ -120,7 +120,7 @@ test("surfaces passive issue follow-up lineage on issue and run detail", async (
   await page.goto(`/issues/${issue.identifier ?? issue.id}`);
   await expect(page.getByText("Passive follow-up 1/2")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Activity" }).click();
+  await expect(page.getByRole("region", { name: "Activity" })).toBeVisible();
   await expect(page.getByText(`queued passive follow-up (1/2) as run ${followupRunId.slice(0, 8)}`)).toBeVisible();
 
   await page.goto(`/agents/${agent.id}/runs/${followupRunId}`);

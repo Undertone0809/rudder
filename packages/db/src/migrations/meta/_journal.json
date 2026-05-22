@@ -467,36 +467,57 @@
     {
       "idx": 66,
       "version": "7",
-      "when": 1777695861958,
-      "tag": "0066_flimsy_wrecking_crew",
-      "breakpoints": true
-    },
-    {
-      "idx": 67,
-      "version": "7",
-      "when": 1777716855629,
-      "tag": "0067_dizzy_gauntlet",
-      "breakpoints": true
-    },
-    {
-      "idx": 68,
-      "version": "7",
       "when": 1777817069285,
       "tag": "0066_bumpy_electro",
       "breakpoints": true
     },
     {
-      "idx": 69,
+      "idx": 67,
       "version": "7",
       "when": 1777895868107,
       "tag": "0067_sloppy_wolfpack",
       "breakpoints": true
     },
     {
-      "idx": 70,
+      "idx": 68,
       "version": "7",
       "when": 1777978734190,
       "tag": "0068_lively_timeslip",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1778092607738,
+      "tag": "0069_calm_cargill",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1778146334281,
+      "tag": "0070_talented_infant_terrible",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1778820186149,
+      "tag": "0071_regular_lorna_dane",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1779207406019,
+      "tag": "0072_overjoyed_red_hulk",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1779440902448,
+      "tag": "0073_bizarre_calypso",
       "breakpoints": true
     }
   ]

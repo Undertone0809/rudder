@@ -1,5 +1,9 @@
+import { Readable } from "node:stream";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatContextLink, ChatConversation, ChatMessage } from "@rudderhq/shared";
+import type { ChatAttachment, ChatContextLink, ChatConversation, ChatMessage } from "@rudderhq/shared";
 
 const mockAdapter = vi.hoisted(() => ({
   type: "codex_local",
@@ -56,13 +60,8 @@ const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
 
-const mockOrganizationService = vi.hoisted(() => ({
-  getById: vi.fn(),
-}));
-
 const mockRunContextService = vi.hoisted(() => ({
   prepareRuntimeConfig: vi.fn(),
-  ensureChatCopilotAgent: vi.fn(),
   resolveWorkspaceForRun: vi.fn(),
   buildSceneContext: vi.fn(),
 }));
@@ -75,16 +74,39 @@ vi.mock("../services/agents.js", () => ({
   agentService: () => mockAgentService,
 }));
 
-vi.mock("../services/orgs.js", () => ({
-  organizationService: () => mockOrganizationService,
-}));
-
 vi.mock("../services/agent-run-context.js", () => ({
-  RUDDER_COPILOT_LABEL: "Rudder Copilot",
   agentRunContextService: () => mockRunContextService,
 }));
 
 const { chatAssistantService } = await import("../services/chat-assistant.js");
+
+let currentAgentHome = "";
+const cleanupDirs = new Set<string>();
+
+function makeManagedWorkspace(root = currentAgentHome) {
+  return {
+    agentHome: root,
+    agentRoot: root,
+    instructionsDir: path.join(root, "instructions"),
+    memoryDir: path.join(root, "memory"),
+    lifeDir: path.join(root, "life"),
+    agentSkillsDir: path.join(root, "skills"),
+  };
+}
+
+function makeSceneContext(rudderWorkspace: Record<string, unknown> = {}) {
+  const managedWorkspace = makeManagedWorkspace();
+  return {
+    rudderScene: "chat",
+    rudderWorkspace: {
+      cwd: process.cwd(),
+      source: "project_primary",
+      ...managedWorkspace,
+      ...rudderWorkspace,
+    },
+    rudderWorkspaces: [],
+  };
+}
 
 function makeConversation(overrides: Partial<ChatConversation> = {}): ChatConversation {
   const now = new Date("2026-03-29T08:00:00.000Z");
@@ -95,7 +117,7 @@ function makeConversation(overrides: Partial<ChatConversation> = {}): ChatConver
     title: "Profile prompt test",
     summary: null,
     latestReplyPreview: null,
-    preferredAgentId: null,
+    preferredAgentId: "agent-1",
     routedAgentId: null,
     primaryIssueId: null,
     primaryIssue: null,
@@ -110,9 +132,9 @@ function makeConversation(overrides: Partial<ChatConversation> = {}): ChatConver
     needsAttention: false,
     resolvedAt: null,
     chatRuntime: {
-      sourceType: "copilot",
-      sourceLabel: "Rudder Copilot",
-      runtimeAgentId: "copilot-agent",
+      sourceType: "agent",
+      sourceLabel: "Chat Specialist",
+      runtimeAgentId: "agent-1",
       agentRuntimeType: "codex_local",
       model: "gpt-5.4",
       available: true,
@@ -148,6 +170,45 @@ function makeMessages(): ChatMessage[] {
   }];
 }
 
+function makeAttachment(overrides: Partial<ChatAttachment> = {}): ChatAttachment {
+  const now = new Date("2026-03-29T08:01:00.000Z");
+  const id = overrides.id ?? "attachment-1";
+  const assetId = overrides.assetId ?? "asset-1";
+  return {
+    id,
+    orgId: "organization-1",
+    conversationId: "chat-1",
+    messageId: "message-1",
+    assetId,
+    provider: "local_disk",
+    objectKey: `chats/chat-1/${id}`,
+    contentType: "image/png",
+    byteSize: 1234,
+    sha256: "sha256",
+    originalFilename: `${id}.png`,
+    createdByAgentId: null,
+    createdByUserId: "user-1",
+    contentPath: `/api/assets/${assetId}/content`,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function makeStorageService(body = Buffer.from("image-bytes")) {
+  return {
+    provider: "local_disk",
+    getObject: vi.fn(async () => ({
+      stream: Readable.from(body),
+      contentType: "image/png",
+      contentLength: body.length,
+    })),
+    putFile: vi.fn(),
+    headObject: vi.fn(),
+    deleteObject: vi.fn(),
+  };
+}
+
 function makeProjectContextLink(): ChatContextLink {
   const now = new Date("2026-03-29T08:00:00.000Z");
   return {
@@ -171,23 +232,81 @@ function makeProjectContextLink(): ChatContextLink {
   };
 }
 
-describe("chatAssistantService operator profile prompt injection", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockFindServerAdapter.mockImplementation(() => mockAdapter);
-    mockOrganizationService.getById.mockResolvedValue({
-      id: "organization-1",
-      defaultChatAgentRuntimeType: "codex_local",
-      defaultChatAgentRuntimeConfig: {
-        model: "gpt-5.4",
+function makeIssueContextLink(): ChatContextLink {
+  const now = new Date("2026-03-29T08:00:00.000Z");
+  return {
+    id: "context-issue-1",
+    orgId: "organization-1",
+    conversationId: "chat-1",
+    entityType: "issue",
+    entityId: "issue-1",
+    metadata: null,
+    entity: {
+      type: "issue",
+      id: "issue-1",
+      label: "Fix issue chat handoff",
+      subtitle: "in_progress",
+      identifier: "ISS-42",
+      status: "in_progress",
+      description: "Clicking Chat from an issue should open a contextual new chat composer.",
+      priority: "medium",
+      href: "/issues/ISS-42",
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function sentinelFromContext(ctx: { context?: Record<string, unknown> }) {
+  const prompt = String(ctx.context?.chatPrompt ?? "");
+  return prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
+}
+
+function assistantSummary(ctx: { context?: Record<string, unknown> }, body: string) {
+  return `${sentinelFromContext(ctx)}${JSON.stringify({
+    kind: "message",
+    body,
+    structuredPayload: null,
+  })}`;
+}
+
+function askUserSummary(ctx: { context?: Record<string, unknown> }) {
+  return `${sentinelFromContext(ctx)}${JSON.stringify({
+    kind: "ask_user",
+    body: "I need one decision before continuing.",
+    structuredPayload: {
+      requestUserInput: {
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Which scope should I use?",
+            options: [
+              { id: "narrow", label: "Narrow", description: "Smallest shippable path", recommended: true },
+              { id: "broad", label: "Broad" },
+            ],
+            allowFreeform: true,
+          },
+        ],
       },
-    });
-    mockRunContextService.ensureChatCopilotAgent.mockResolvedValue({
-      id: "copilot-agent",
+    },
+  })}`;
+}
+
+describe("chatAssistantService operator profile prompt injection", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    currentAgentHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-agent-home-"));
+    cleanupDirs.add(currentAgentHome);
+    mockFindServerAdapter.mockImplementation(() => mockAdapter);
+    mockAgentService.getById.mockResolvedValue({
+      id: "agent-1",
       orgId: "organization-1",
+      name: "Chat Specialist",
       status: "idle",
       agentRuntimeType: "codex_local",
       agentRuntimeConfig: { model: "gpt-5.4" },
+      metadata: null,
     });
     mockRunContextService.prepareRuntimeConfig.mockResolvedValue({
       resolvedConfig: { model: "gpt-5.4" },
@@ -211,29 +330,76 @@ describe("chatAssistantService operator profile prompt injection", () => {
       workspaceHints: [],
       warnings: [],
     });
-    mockRunContextService.buildSceneContext.mockResolvedValue({
-      rudderScene: "chat",
-      rudderWorkspace: { cwd: process.cwd(), source: "project_primary" },
-      rudderWorkspaces: [],
-    });
-    mockAdapter.execute.mockResolvedValue({
-      summary: JSON.stringify({
-        kind: "message",
-        body: "Clarify the goal first.",
-        structuredPayload: null,
-      }),
+    mockRunContextService.buildSceneContext.mockResolvedValue(makeSceneContext());
+    mockAdapter.execute.mockImplementation(async (ctx) => ({
+      summary: assistantSummary(ctx, "Clarify the goal first."),
       resultJson: null,
       timedOut: false,
       exitCode: 0,
       errorMessage: null,
-    });
+    }));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.clearAllMocks();
+    await Promise.all(Array.from(cleanupDirs).map(async (dir) => {
+      await fs.rm(dir, { recursive: true, force: true });
+      cleanupDirs.delete(dir);
+    }));
   });
 
-  it("injects nickname and more-about-you into the Copilot chat prompt when present", async () => {
+  it("reports chat as unavailable until a preferred agent is selected", async () => {
+    const svc = chatAssistantService({} as any);
+
+    const availability = await svc.getChatAssistantAvailability(makeConversation({
+      preferredAgentId: null,
+      chatRuntime: {
+        sourceType: "unconfigured",
+        sourceLabel: "Choose an agent",
+        runtimeAgentId: null,
+        agentRuntimeType: null,
+        model: null,
+        available: false,
+        error: "Choose a chat agent before sending messages.",
+      },
+    }));
+
+    expect(availability).toEqual({
+      sourceType: "unconfigured",
+      sourceLabel: "Choose an agent",
+      runtimeAgentId: null,
+      agentRuntimeType: null,
+      model: null,
+      available: false,
+      error: "Choose a chat agent before sending messages.",
+    });
+    expect(mockAgentService.getById).not.toHaveBeenCalled();
+  });
+
+  it("refuses to generate a reply without a preferred agent", async () => {
+    const svc = chatAssistantService({} as any);
+
+    await expect(svc.generateChatAssistantReply({
+      conversation: makeConversation({
+        preferredAgentId: null,
+        chatRuntime: {
+          sourceType: "unconfigured",
+          sourceLabel: "Choose an agent",
+          runtimeAgentId: null,
+          agentRuntimeType: null,
+          model: null,
+          available: false,
+          error: "Choose a chat agent before sending messages.",
+        },
+      }),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toThrow("Choose a chat agent before sending messages.");
+    expect(mockAgentService.getById).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("injects nickname and more-about-you into the selected agent chat prompt when present", async () => {
     const svc = chatAssistantService({} as any);
 
     await svc.generateChatAssistantReply({
@@ -248,14 +414,18 @@ describe("chatAssistantService operator profile prompt injection", () => {
 
     const prompt = mockAdapter.execute.mock.calls[0]?.[0]?.context?.chatPrompt as string;
     expect(prompt).toContain("Always reply in the same language as the user's most recent substantive message unless they explicitly ask for a different language.");
-    expect(prompt).toContain("You are Rudder Copilot");
+    expect(prompt).toContain("You are Chat Specialist, replying inside Rudder's chat scene.");
+    expect(prompt).toContain("Before answering, classify the user's request depth:");
+    expect(prompt).toContain("Product, design, architecture, strategy, or workflow judgment: reason from scenarios, actors, needs, non-needs, constraints, failure modes, and corner cases before giving a decision-ready answer.");
+    expect(prompt).toContain("Do not claim certainty you do not have. State assumptions, confidence, and remaining unknowns when they matter.");
     expect(prompt).toContain("Current board operator profile:");
     expect(prompt).toContain("- Preferred form of address: Zee");
     expect(prompt).toContain("- Background about the operator: Prefers concise, implementation-first responses.");
   });
 
-  it("includes chat attachments in the runtime prompt and injects agent API auth", async () => {
-    const svc = chatAssistantService({} as any);
+  it("includes chat attachments in the runtime prompt as prepared local image paths without auth-bearing download commands", async () => {
+    const storage = makeStorageService();
+    const svc = chatAssistantService({} as any, storage as any);
     const [message] = makeMessages();
     const messageWithAttachment: ChatMessage = {
       ...message!,
@@ -290,15 +460,199 @@ describe("chatAssistantService operator profile prompt injection", () => {
     const prompt = executeInput?.context?.chatPrompt as string;
     expect(prompt).toContain("Treat message attachments as part of the user's message.");
     expect(prompt).toContain("Current user message attachments:");
-    expect(prompt).toContain("The latest user message includes 1 attachment(s). Inspect them before answering.");
+    expect(prompt).toContain("The latest user message includes 1 attachment(s). Inspect any listed localPath directly before answering.");
     expect(prompt).toContain('User message body: "Help me scope this work."');
     expect(prompt).toContain("- [1] name=image.png; contentType=image/png; byteSize=1234; contentPath=/api/assets/asset-1/content;");
+    expect(prompt).toMatch(/localPath=.*image\.png/);
+    expect(prompt).toContain("runtimeReference=local_image_file");
     expect(prompt).toContain("\"attachments\": [");
     expect(prompt).toContain("\"name\": \"image.png\"");
     expect(prompt).toContain("\"contentType\": \"image/png\"");
-    expect(prompt).toContain("\"fetchUrl\": \"$RUDDER_API_URL/api/assets/asset-1/content\"");
-    expect(prompt).toContain("Authorization: Bearer $RUDDER_API_KEY");
+    expect(prompt).toMatch(/"localPath": ".*image\.png"/);
+    expect(prompt).not.toContain("\"fetchUrl\"");
+    expect(prompt).not.toContain("downloadCommand");
+    expect(prompt).not.toContain("Authorization: Bearer $RUDDER_API_KEY");
+    expect(executeInput?.context?.chatAttachments).toEqual([
+      expect.objectContaining({
+        attachmentId: "attachment-1",
+        localPath: expect.stringMatching(/image\.png$/),
+      }),
+    ]);
+    expect(executeInput?.media).toEqual([
+      expect.objectContaining({
+        source: "chat_attachment",
+        attachmentId: "attachment-1",
+        assetId: "asset-1",
+        contentType: "image/png",
+        localPath: expect.stringMatching(/image\.png$/),
+      }),
+    ]);
+    expect(storage.getObject).toHaveBeenCalledWith("organization-1", "chats/chat-1/image.png");
     expect(executeInput?.authToken).toEqual(expect.any(String));
+  });
+
+  it("prepares multiple chat images in message order and does not pass non-images as runtime media", async () => {
+    const storage = makeStorageService();
+    const svc = chatAssistantService({} as any, storage as any);
+    const [message] = makeMessages();
+    const messageWithAttachments: ChatMessage = {
+      ...message!,
+      attachments: [
+        makeAttachment({
+          id: "attachment-image-1",
+          assetId: "asset-image-1",
+          objectKey: "chats/chat-1/first.png",
+          originalFilename: "first.png",
+          contentType: "image/png",
+          contentPath: "/api/assets/asset-image-1/content",
+        }),
+        makeAttachment({
+          id: "attachment-text-1",
+          assetId: "asset-text-1",
+          objectKey: "chats/chat-1/notes.txt",
+          originalFilename: "notes.txt",
+          contentType: "text/plain",
+          contentPath: "/api/assets/asset-text-1/content",
+        }),
+        makeAttachment({
+          id: "attachment-image-2",
+          assetId: "asset-image-2",
+          objectKey: "chats/chat-1/second.png",
+          originalFilename: "second.png",
+          contentType: "image/png",
+          contentPath: "/api/assets/asset-image-2/content",
+        }),
+      ],
+    };
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: [messageWithAttachments],
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
+    expect(executeInput?.media?.map((item) => item.attachmentId)).toEqual([
+      "attachment-image-1",
+      "attachment-image-2",
+    ]);
+    expect(executeInput?.context?.chatAttachments).toEqual([
+      expect.objectContaining({ attachmentId: "attachment-image-1", localPath: expect.stringMatching(/first\.png$/) }),
+      expect.objectContaining({ attachmentId: "attachment-image-2", localPath: expect.stringMatching(/second\.png$/) }),
+    ]);
+    expect(storage.getObject).toHaveBeenCalledTimes(2);
+    expect(storage.getObject).toHaveBeenNthCalledWith(1, "organization-1", "chats/chat-1/first.png");
+    expect(storage.getObject).toHaveBeenNthCalledWith(2, "organization-1", "chats/chat-1/second.png");
+    const prompt = executeInput?.context?.chatPrompt as string;
+    expect(prompt).toContain("name=notes.txt; contentType=text/plain");
+    expect(prompt).not.toMatch(/notes\.txt;.*runtimeReference=local_image_file/);
+  });
+
+  it("records image attachment materialization failures without passing broken media to the runtime", async () => {
+    const storage = makeStorageService();
+    storage.getObject.mockRejectedValueOnce(new Error("storage unavailable"));
+    const svc = chatAssistantService({} as any, storage as any);
+    const [message] = makeMessages();
+    const messageWithAttachment: ChatMessage = {
+      ...message!,
+      attachments: [makeAttachment({
+        id: "attachment-broken",
+        assetId: "asset-broken",
+        objectKey: "chats/chat-1/broken.png",
+        originalFilename: "broken.png",
+        contentPath: "/api/assets/asset-broken/content",
+      })],
+    };
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: [messageWithAttachment],
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
+    expect(executeInput?.media).toBeUndefined();
+    expect(executeInput?.context?.chatAttachments).toEqual([
+      expect.objectContaining({
+        attachmentId: "attachment-broken",
+        localPathError: "storage unavailable",
+      }),
+    ]);
+    const prompt = executeInput?.context?.chatPrompt as string;
+    expect(prompt).toContain("localPathError=storage unavailable");
+    expect(prompt).not.toContain("runtimeReference=local_image_file");
+  });
+
+  it("prepares chat image attachments for Claude chat agents too", async () => {
+    const storage = makeStorageService();
+    const svc = chatAssistantService({} as any, storage as any);
+    mockAgentService.getById.mockResolvedValueOnce({
+      id: "agent-1",
+      orgId: "organization-1",
+      name: "Claude Specialist",
+      status: "idle",
+      agentRuntimeType: "claude_local",
+      agentRuntimeConfig: { model: "claude-sonnet-4.5" },
+      metadata: null,
+    });
+    mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
+      resolvedConfig: { model: "claude-sonnet-4.5" },
+      runtimeConfig: {
+        model: "claude-sonnet-4.5",
+        rudderSkillSync: { desiredSkills: [] },
+        paperclipSkillSync: { desiredSkills: [] },
+        rudderRuntimeSkills: [],
+        paperclipRuntimeSkills: [],
+      },
+      runtimeSkillEntries: [],
+      secretKeys: new Set(),
+    });
+    const [message] = makeMessages();
+    const messageWithAttachment: ChatMessage = {
+      ...message!,
+      attachments: [{
+        id: "attachment-claude-1",
+        orgId: "organization-1",
+        conversationId: "chat-1",
+        messageId: "message-1",
+        assetId: "asset-claude-1",
+        provider: "local_disk",
+        objectKey: "chats/chat-1/claude-image.png",
+        contentType: "image/png",
+        byteSize: 1234,
+        sha256: "sha256",
+        originalFilename: "claude-image.png",
+        createdByAgentId: null,
+        createdByUserId: "user-1",
+        contentPath: "/api/assets/asset-claude-1/content",
+        createdAt: new Date("2026-03-29T08:01:00.000Z"),
+        updatedAt: new Date("2026-03-29T08:01:00.000Z"),
+      }],
+    };
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: [messageWithAttachment],
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
+    const prompt = executeInput?.context?.chatPrompt as string;
+    expect(prompt).toContain("localPath=");
+    expect(prompt).toContain("runtimeReference=local_image_file");
+    expect(executeInput?.media).toEqual([
+      expect.objectContaining({
+        source: "chat_attachment",
+        attachmentId: "attachment-claude-1",
+        assetId: "asset-claude-1",
+        contentType: "image/png",
+        localPath: expect.stringMatching(/claude-image\.png$/),
+      }),
+    ]);
+    expect(storage.getObject).toHaveBeenCalledWith("organization-1", "chats/chat-1/claude-image.png");
   });
 
   it("applies plan-mode prompt guidance and a read-only Codex runtime overlay", async () => {
@@ -339,6 +693,118 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("\"body\": \"optional markdown plan\"");
   });
 
+  it("parses ask_user final results and includes requestUserInput guidance in normal chat", async () => {
+    const svc = chatAssistantService({} as any);
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => ({
+      summary: askUserSummary(ctx),
+      resultJson: null,
+      timedOut: false,
+      exitCode: 0,
+      errorMessage: null,
+    }));
+
+    const result = await svc.generateChatAssistantReply({
+      conversation: makeConversation({ planMode: false }),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    expect(prompt).toContain("Use result kind 'ask_user'");
+    expect(prompt).toContain("requestUserInput");
+    expect(result).toEqual(expect.objectContaining({
+      kind: "ask_user",
+      body: "I need one decision before continuing.",
+      structuredPayload: expect.objectContaining({
+        requestUserInput: expect.objectContaining({
+          questions: [expect.objectContaining({ id: "scope" })],
+        }),
+      }),
+    }));
+  });
+
+  it("rejects ask_user final results without a valid requestUserInput payload", async () => {
+    const svc = chatAssistantService({} as any);
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => ({
+      summary: `${sentinelFromContext(ctx)}${JSON.stringify({
+        kind: "ask_user",
+        body: "I need input.",
+        structuredPayload: null,
+      })}`,
+      resultJson: null,
+      timedOut: false,
+      exitCode: 0,
+      errorMessage: null,
+    }));
+
+    await expect(svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    })).rejects.toThrow("ask_user assistant responses require structuredPayload.requestUserInput");
+  });
+
+  it.each([
+    ["question ids", {
+      requestUserInput: {
+        questions: [
+          {
+            id: "scope",
+            question: "Which scope should I use?",
+            options: [
+              { id: "narrow", label: "Narrow" },
+              { id: "broad", label: "Broad" },
+            ],
+          },
+          {
+            id: "scope",
+            question: "Which fallback should I use?",
+            options: [
+              { id: "wait", label: "Wait" },
+              { id: "ship", label: "Ship" },
+            ],
+          },
+        ],
+      },
+    }],
+    ["option ids", {
+      requestUserInput: {
+        questions: [
+          {
+            id: "scope",
+            question: "Which scope should I use?",
+            options: [
+              { id: "narrow", label: "Narrow" },
+              { id: "narrow", label: "Also narrow" },
+            ],
+          },
+        ],
+      },
+    }],
+  ])("rejects ask_user final results with duplicate requestUserInput %s", async (_label, structuredPayload) => {
+    const svc = chatAssistantService({} as any);
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => ({
+      summary: `${sentinelFromContext(ctx)}${JSON.stringify({
+        kind: "ask_user",
+        body: "I need one decision.",
+        structuredPayload,
+      })}`,
+      resultJson: null,
+      timedOut: false,
+      exitCode: 0,
+      errorMessage: null,
+    }));
+
+    await expect(svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    })).rejects.toThrow("ask_user assistant responses require structuredPayload.requestUserInput");
+  });
+
   it("omits the operator profile section when all profile fields are blank", async () => {
     const svc = chatAssistantService({} as any);
 
@@ -359,15 +825,11 @@ describe("chatAssistantService operator profile prompt injection", () => {
   });
 
   it("prepends the shared org resources section to chat prompts when present", async () => {
-    mockRunContextService.buildSceneContext.mockResolvedValueOnce({
-      rudderScene: "chat",
-      rudderWorkspace: {
+    mockRunContextService.buildSceneContext.mockResolvedValueOnce(makeSceneContext({
         cwd: process.cwd(),
         source: "project_primary",
         orgResourcesPrompt: "## Organization Resources\n\n- Main codebase: ~/projects/rudder",
-      },
-      rudderWorkspaces: [],
-    });
+    }));
 
     const svc = chatAssistantService({} as any);
 
@@ -383,18 +845,38 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("Main codebase: ~/projects/rudder");
   });
 
+  it("includes available issue labels and labelIds schema guidance for issue proposals", async () => {
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      issueLabels: [
+        { id: "11111111-1111-4111-8111-111111111111", orgId: "organization-1", name: "Engineering", color: "#0f766e", createdAt: new Date(), updatedAt: new Date() },
+        { id: "22222222-2222-4222-8222-222222222222", orgId: "organization-1", name: "Operations", color: "#2563eb", createdAt: new Date(), updatedAt: new Date() },
+        { id: "33333333-3333-4333-8333-333333333333", orgId: "organization-1", name: "Design", color: "#4338ca", createdAt: new Date(), updatedAt: new Date() },
+        { id: "44444444-4444-4444-8444-444444444444", orgId: "organization-1", name: "Growth", color: "#c2410c", createdAt: new Date(), updatedAt: new Date() },
+        { id: "55555555-5555-4555-8555-555555555555", orgId: "organization-1", name: "Support", color: "#a21caf", createdAt: new Date(), updatedAt: new Date() },
+      ],
+      operatorProfile: null,
+    });
+
+    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    expect(prompt).toContain("Organization issue labels:");
+    expect(prompt).toContain("- Engineering (11111111-1111-4111-8111-111111111111)");
+    expect(prompt).toContain("include labelIds with at least one best-fit label id");
+    expect(prompt).toContain('"labelIds": [');
+  });
+
   it("injects selected project context and project resources into chat prompts", async () => {
     const projectContextLink = makeProjectContextLink();
-    mockRunContextService.buildSceneContext.mockResolvedValueOnce({
-      rudderScene: "chat",
-      rudderWorkspace: {
+    mockRunContextService.buildSceneContext.mockResolvedValueOnce(makeSceneContext({
         cwd: process.cwd(),
         source: "project_primary",
         projectId: "project-1",
         orgResourcesPrompt: "## Project Resources\n\n- [primary] Launch playbook",
-      },
-      rudderWorkspaces: [],
-    });
+    }));
 
     const svc = chatAssistantService({} as any);
 
@@ -419,6 +901,62 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("[primary] Launch playbook");
   });
 
+  it("injects issue label choices and schema guidance for mature label taxonomies", async () => {
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      issueLabels: Array.from({ length: 5 }, (_, index) => ({
+        id: `label-${index + 1}`,
+        orgId: "organization-1",
+        name: index === 0 ? "Engineering" : `Label ${index + 1}`,
+        color: "#2563eb",
+        createdAt: new Date("2026-03-29T08:00:00.000Z"),
+        updatedAt: new Date("2026-03-29T08:00:00.000Z"),
+      })),
+      operatorProfile: null,
+    });
+
+    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    expect(prompt).toContain("Organization issue labels:");
+    expect(prompt).toContain("- Engineering (label-1)");
+    expect(prompt).toContain("include labelIds with at least one best-fit label id from this list");
+    expect(prompt).toContain('"labelIds": [');
+  });
+
+  it("injects selected issue context into chat prompts and runtime context", async () => {
+    const issueContextLink = makeIssueContextLink();
+    const svc = chatAssistantService({} as any);
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation({ contextLinks: [issueContextLink] }),
+      messages: makeMessages(),
+      contextLinks: [issueContextLink],
+      operatorProfile: null,
+    });
+
+    expect(mockRunContextService.resolveWorkspaceForRun).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ issueId: "issue-1" }),
+      null,
+    );
+    const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
+    const prompt = executeInput?.context?.chatPrompt as string;
+    expect(prompt).toContain("Selected issue context:");
+    expect(prompt).toContain("- Issue ID: issue-1");
+    expect(prompt).toContain("- Identifier: ISS-42");
+    expect(prompt).toContain("- Title: Fix issue chat handoff");
+    expect(prompt).toContain("- Status: in_progress");
+    expect(prompt).toContain("- Priority: medium");
+    expect(prompt).toContain("- Description: Clicking Chat from an issue should open a contextual new chat composer.");
+    expect(executeInput?.context).toMatchObject({
+      issueId: "issue-1",
+      issueIds: ["issue-1"],
+    });
+  });
+
   it("forwards adapter invocation metadata to the caller during streaming", async () => {
     const svc = chatAssistantService({} as any);
     const invocationMeta: unknown[] = [];
@@ -437,11 +975,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       });
 
       return {
-        summary: JSON.stringify({
-          kind: "message",
-          body: "Clarify the goal first.",
-          structuredPayload: null,
-        }),
+        summary: assistantSummary(ctx, "Clarify the goal first."),
         resultJson: null,
         timedOut: false,
         exitCode: 0,
@@ -471,17 +1005,13 @@ describe("chatAssistantService operator profile prompt injection", () => {
     }));
   });
 
-  it("uses provider-aware model fallbacks for the organization chat runtime", async () => {
+  it("uses provider-aware model fallbacks for the selected chat agent runtime", async () => {
     const fallbackAdapter = {
       type: "claude_local",
       supportsLocalAgentJwt: true,
       parseStdoutLine: vi.fn(() => []),
-      execute: vi.fn(async () => ({
-        summary: JSON.stringify({
-          kind: "message",
-          body: "Fallback handled the chat.",
-          structuredPayload: null,
-        }),
+      execute: vi.fn(async (ctx) => ({
+        summary: assistantSummary(ctx, "Fallback handled the chat."),
         resultJson: null,
         timedOut: false,
         exitCode: 0,
@@ -497,21 +1027,6 @@ describe("chatAssistantService operator profile prompt injection", () => {
     mockFindServerAdapter.mockImplementation((agentRuntimeType: string) =>
       agentRuntimeType === "claude_local" ? fallbackAdapter : mockAdapter,
     );
-    mockOrganizationService.getById.mockResolvedValueOnce({
-      id: "organization-1",
-      defaultChatAgentRuntimeType: "codex_local",
-      defaultChatAgentRuntimeConfig: {
-        model: "gpt-primary",
-        modelFallbacks,
-      },
-    });
-    mockRunContextService.ensureChatCopilotAgent.mockResolvedValueOnce({
-      id: "copilot-agent",
-      orgId: "organization-1",
-      status: "idle",
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: { model: "gpt-primary", modelFallbacks },
-    });
     mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
       resolvedConfig: { model: "gpt-primary", modelFallbacks },
       runtimeConfig: {
@@ -622,6 +1137,28 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(result.replyingAgentId).toBe("agent-1");
   });
 
+  it("runs preferred-agent chat after workspace preflight and parses the result sentinel", async () => {
+    const svc = chatAssistantService({} as any);
+
+    const result = await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
+    expect(executeInput?.context?.chatPrompt).toEqual(expect.stringContaining("You are Chat Specialist, replying inside Rudder's chat scene."));
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(expect.objectContaining({
+      kind: "message",
+      body: "Clarify the goal first.",
+      replyingAgentId: "agent-1",
+    }));
+    await expect(fs.stat(path.join(currentAgentHome, "life")).then((stat) => stat.isDirectory())).resolves.toBe(true);
+    await expect(fs.stat(path.join(currentAgentHome, "skills")).then((stat) => stat.isDirectory())).resolves.toBe(true);
+  });
+
   it("keeps Codex chat available when only an agent home workspace is available", async () => {
     mockRunContextService.resolveWorkspaceForRun.mockResolvedValueOnce({
       cwd: "/tmp/rudder-chat-agent-home",
@@ -708,12 +1245,12 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(result).toEqual({
       outcome: "completed",
       partialBody: "Clarify the success criteria first.",
-      replyingAgentId: "copilot-agent",
+      replyingAgentId: "agent-1",
       reply: {
         kind: "message",
         body: "Clarify the success criteria first.",
         structuredPayload: null,
-        replyingAgentId: "copilot-agent",
+        replyingAgentId: "agent-1",
       },
     });
     expect(entries).toEqual([
@@ -858,12 +1395,12 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(result).toEqual({
       outcome: "completed",
       partialBody: "Hello Zeeland! I'm here to help clarify and route work requests. How can I assist you today?",
-      replyingAgentId: "copilot-agent",
+      replyingAgentId: "agent-1",
       reply: {
         kind: "message",
         body: "Hello Zeeland! I'm here to help clarify and route work requests. How can I assist you today?",
         structuredPayload: null,
-        replyingAgentId: "copilot-agent",
+        replyingAgentId: "agent-1",
       },
     });
     expect(entries).toEqual([
@@ -882,6 +1419,85 @@ describe("chatAssistantService operator profile prompt injection", () => {
         text: "Preparing the final chat reply.",
       }),
     ]);
+  });
+
+  it("extracts Codex image generation output into generated chat attachments", async () => {
+    const svc = chatAssistantService({} as any);
+    const pngBase64 = Buffer.from("fake-png").toString("base64");
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      const finalText = assistantSummary(ctx, "Generated a mockup.");
+      const stdout = [
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            type: "image_generation_call",
+            id: "ig_test",
+            result: pngBase64,
+          },
+        }),
+        JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", text: finalText },
+        }),
+      ].join("\n");
+
+      return {
+        summary: finalText,
+        resultJson: { stdout },
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    const result = await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    });
+
+    expect(result.outcome).toBe("completed");
+    if (result.outcome !== "completed") throw new Error("expected completed");
+    expect(result.reply.generatedAttachments).toHaveLength(1);
+    expect(result.reply.generatedAttachments?.[0]).toMatchObject({
+      source: "codex_image_generation",
+      originalFilename: "ig_test.png",
+      contentType: "image/png",
+      toolCallId: "ig_test",
+    });
+    expect(result.reply.generatedAttachments?.[0]?.body.equals(Buffer.from("fake-png"))).toBe(true);
+  });
+
+  it("fails streaming chat completion when the adapter omits the required result sentinel", async () => {
+    const svc = chatAssistantService({} as any);
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", text: "I am still working." },
+        })}\n`,
+      );
+      return {
+        summary: "I am still working.",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({
+      name: "ChatAssistantStreamError",
+      message: "Chat adapter completed without the required Rudder result sentinel",
+      partialBody: "I am still working.",
+    });
   });
 
   it("returns a stopped partial reply when the runtime abort signal fires", async () => {
@@ -921,7 +1537,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(result).toEqual({
       outcome: "stopped",
       partialBody: "Partial streamed reply",
-      replyingAgentId: "copilot-agent",
+      replyingAgentId: "agent-1",
     });
     expect(states).toEqual(["streaming", "stopped"]);
   });

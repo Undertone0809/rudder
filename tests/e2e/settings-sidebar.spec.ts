@@ -81,6 +81,7 @@ test.describe("Settings sidebar", () => {
     await expect(modalSidebar.locator('a[href$="/instance/settings/profile"]')).toBeVisible();
     await expect(modalSidebar.locator('a[href$="/instance/settings/general"]')).toBeVisible();
     await expect(modalSidebar.locator('a[href$="/instance/settings/notifications"]')).toBeVisible();
+    await expect(modalSidebar.locator('a[href$="/instance/settings/organizations"]')).toHaveCount(0);
     await expect(modalSidebar.locator('a[href$="/instance/settings/about"]')).toBeVisible();
     await expect(modalSidebar.locator('a[href$="/instance/settings/experimental"]')).toHaveCount(0);
 
@@ -160,6 +161,43 @@ test.describe("Settings sidebar", () => {
     await expect(modal).toHaveCount(0);
   });
 
+  test("persists developer diagnostics from general settings", async ({ page }) => {
+    await page.request.patch("/api/instance/settings/general", {
+      data: { showDeveloperDiagnostics: false },
+    });
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Developer Diagnostics ${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { issuePrefix: string };
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByRole("button", { name: "System settings" }).click();
+    await page.locator('aside a[href$="/instance/settings/general"]').click();
+
+    const modal = page.getByTestId("settings-modal-shell");
+    const diagnosticsSwitch = modal.getByRole("switch", { name: "Toggle developer diagnostics" });
+    await expect(modal.getByText("Show developer diagnostics")).toBeVisible();
+    await expect(diagnosticsSwitch).toHaveAttribute("aria-checked", "false");
+
+    const updateResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH"
+      && response.url().includes("/api/instance/settings/general")
+      && response.ok(),
+    );
+    await diagnosticsSwitch.click();
+    await updateResponse;
+
+    await expect(diagnosticsSwitch).toHaveAttribute("aria-checked", "true");
+    const settingsResponse = await page.request.get("/api/instance/settings/general");
+    expect(settingsResponse.ok()).toBe(true);
+    expect(await settingsResponse.json()).toMatchObject({
+      showDeveloperDiagnostics: true,
+    });
+  });
+
   test("closes the settings modal on Escape", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -182,7 +220,7 @@ test.describe("Settings sidebar", () => {
     await expect(modal).toHaveCount(0);
   });
 
-  test("routes organization management through system settings", async ({ page }) => {
+  test("redirects legacy organizations routes to organization settings", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Settings Organizations ${Date.now()}`,
@@ -197,14 +235,11 @@ test.describe("Settings sidebar", () => {
     const modal = page.getByTestId("settings-modal-shell");
     const modalSidebar = modal.getByTestId("workspace-sidebar");
 
-    await modalSidebar.locator('a[href$="/instance/settings/organizations"]').click();
-    await expect(page).toHaveURL(/\/instance\/settings\/organizations$/);
-    await expect(modal.getByRole("heading", { name: "Organizations", exact: true })).toBeVisible();
-    await expect(modal.getByRole("button", { name: "New Organization" })).toBeVisible();
+    await expect(modalSidebar.locator('a[href$="/instance/settings/organizations"]')).toHaveCount(0);
 
     await page.goto(`/${organization.issuePrefix}/organizations`);
-    await expect(page).toHaveURL(/\/instance\/settings\/organizations$/);
-    await expect(page.getByRole("heading", { name: "Organizations", exact: true })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/organization/settings$`));
+    await expect(page.getByRole("heading", { name: "Organization Settings", exact: true })).toBeVisible();
   });
 
   test("plugin manager no longer lists the hello world example plugin", async ({ page }) => {
@@ -325,12 +360,123 @@ test.describe("Settings sidebar", () => {
     const modal = page.getByTestId("settings-modal-shell");
     await expect(page).toHaveURL(/\/instance\/settings\/about$/);
     await expect(modal.getByRole("heading", { name: "About" })).toBeVisible();
-    await expect(modal.getByText("App version")).toBeVisible();
+    await expect(modal.locator("div").filter({ hasText: /^Version$/ }).first()).toBeVisible();
     await expect(modal.locator("div").filter({ hasText: /^Environment$/ }).first()).toBeVisible();
     await expect(modal.locator("div").filter({ hasText: /^Instance ID$/ }).first()).toBeVisible();
     await expect(modal.getByRole("button", { name: "Check for updates" })).toBeVisible();
     await expect(modal.getByRole("button", { name: "Send Feedback" })).toBeVisible();
   });
+
+  test("shows a download-style toast when a desktop update is available", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {
+          getBootState: async () => ({
+            runtime: { version: "0.2.24", mode: "owned", ownerKind: "desktop" },
+            paths: { instanceRoot: "/tmp/rudder-e2e" },
+          }),
+          onBootState: () => () => {},
+          getAppVersion: async () => "0.2.24",
+          checkForUpdates: async () => ({
+            status: "update-available",
+            channel: "stable",
+            currentVersion: "0.2.24",
+            latestVersion: "0.2.25",
+            checkedAt: "2026-05-06T00:00:00.000Z",
+          }),
+          installUpdate: async (version: string) => {
+            (window as typeof window & { __rudderInstallUpdateCalls?: string[] }).__rudderInstallUpdateCalls = [
+              ...((window as typeof window & { __rudderInstallUpdateCalls?: string[] }).__rudderInstallUpdateCalls ?? []),
+              version,
+            ];
+            return { status: "started", version };
+          },
+          openExternal: async () => {},
+          sendFeedback: async () => {},
+        },
+      });
+    });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Desktop Update Toast ${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { issuePrefix: string };
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByRole("button", { name: "System settings" }).click();
+    await page.locator('a[href$="/instance/settings/about"]').click();
+
+    await page.getByRole("button", { name: "Check for updates" }).click();
+
+    const toast = page.locator("aside").filter({ hasText: "New version available" });
+    await expect(toast).toBeVisible();
+    await expect(toast).toContainText("v0.2.25 is ready to download.");
+    await expect(toast).toHaveClass(/bottom-4/);
+    await expect(toast).toHaveClass(/right-4/);
+
+    await toast.getByRole("button", { name: "Download update" }).click();
+
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __rudderInstallUpdateCalls?: string[] }).__rudderInstallUpdateCalls ?? []
+    ))).toEqual(["0.2.25"]);
+  });
+
+  test("shows a queued update toast when active runs defer installation", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "desktopShell", {
+        configurable: true,
+        value: {
+          getBootState: async () => ({
+            runtime: { version: "0.2.24", mode: "owned", ownerKind: "desktop" },
+            paths: { instanceRoot: "/tmp/rudder-e2e" },
+          }),
+          onBootState: () => () => {},
+          getAppVersion: async () => "0.2.24",
+          checkForUpdates: async () => ({
+            status: "update-available",
+            channel: "stable",
+            currentVersion: "0.2.24",
+            latestVersion: "0.2.25",
+            checkedAt: "2026-05-06T00:00:00.000Z",
+          }),
+          installUpdate: async () => ({
+            status: "waiting",
+            version: "0.2.25",
+            totalRuns: 2,
+            message: "Rudder is downloading v0.2.25 and will update after 2 active runs finish.",
+          }),
+          openExternal: async () => {},
+          sendFeedback: async () => {},
+        },
+      });
+    });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Desktop Deferred Update ${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { issuePrefix: string };
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.getByRole("button", { name: "System settings" }).click();
+    await page.locator('a[href$="/instance/settings/about"]').click();
+
+    await page.getByRole("button", { name: "Check for updates" }).click();
+    const availableToast = page.locator("aside").filter({ hasText: "New version available" });
+    await expect(availableToast).toBeVisible();
+    await availableToast.getByRole("button", { name: "Download update" }).click();
+
+    const queuedToast = page.locator("aside").filter({ hasText: "Update queued" });
+    await expect(queuedToast).toBeVisible();
+    await expect(queuedToast).toContainText("after 2 active run(s) finish");
+  });
+
 
   test("shows system permissions and keeps notification debug controls hidden", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
@@ -764,15 +910,10 @@ test.describe("Settings sidebar", () => {
     await expect(page.getByTestId("settings-modal-shell")).toHaveCount(0);
   });
 
-  test("hides the system-managed Rudder Copilot row from heartbeat settings", async ({ page }) => {
+  test("hides legacy system-managed chat agents from heartbeat settings", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
-        name: `Heartbeat Copilot Hidden ${Date.now()}`,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          model: "gpt-5.4",
-          command: E2E_CODEX_STUB,
-        },
+        name: `Heartbeat Hidden Chat Agent ${Date.now()}`,
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -795,19 +936,28 @@ test.describe("Settings sidebar", () => {
     });
     expect(agentRes.ok()).toBe(true);
 
+    const hiddenAgentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Rudder Copilot (system)",
+        title: "System-managed chat copilot",
+        role: "general",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          model: "gpt-5.4",
+          heartbeat: {
+            enabled: true,
+            intervalSec: 300,
+          },
+        },
+        metadata: { hidden: true, systemManaged: "rudder_copilot" },
+      },
+    });
+    expect(hiddenAgentRes.ok()).toBe(true);
+
     await page.goto("/");
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
-
-    await page.goto("/chat");
-    const composer = page.locator(".rudder-mdxeditor-content").first();
-    await expect(composer).toBeVisible();
-    await composer.fill("Wake up the default copilot once.");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Rudder Copilot", {
-      timeout: 15_000,
-    });
 
     await page.goto(`/${organization.issuePrefix}/dashboard`);
     await page.getByRole("button", { name: "System settings" }).click();
@@ -874,4 +1024,5 @@ test.describe("Settings sidebar", () => {
     await deleteResponse;
     await expect(modal.getByRole("textbox", { name: "Label name for Ops" })).toHaveCount(0);
   });
+
 });

@@ -6,6 +6,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
+import { chatsApi } from "../api/chats";
 import { queryKeys } from "../lib/queryKeys";
 import {
   CommandDialog,
@@ -26,6 +27,7 @@ import {
   DollarSign,
   History,
   Clock3,
+  MessagesSquare,
 } from "lucide-react";
 import { Identity } from "./Identity";
 import { AgentIdentity } from "./AgentAvatar";
@@ -34,6 +36,7 @@ import { agentUrl, projectUrl } from "../lib/utils";
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [launchSource, setLaunchSource] = useState<"shortcut" | "primary-rail">("shortcut");
   const navigate = useNavigate();
   const { selectedOrganizationId } = useOrganization();
   const { isMobile, setSidebarOpen } = useSidebar();
@@ -43,12 +46,27 @@ export function CommandPalette() {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
+        setLaunchSource("shortcut");
         setOpen(true);
         if (isMobile) setSidebarOpen(false);
       }
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isMobile, setSidebarOpen]);
+
+  useEffect(() => {
+    function handleOpenCommandPalette(event: Event) {
+      const source = event instanceof CustomEvent && event.detail?.source === "primary-rail"
+        ? "primary-rail"
+        : "shortcut";
+      setLaunchSource(source);
+      setOpen(true);
+      if (isMobile) setSidebarOpen(false);
+    }
+
+    document.addEventListener("rudder:open-command-palette", handleOpenCommandPalette);
+    return () => document.removeEventListener("rudder:open-command-palette", handleOpenCommandPalette);
   }, [isMobile, setSidebarOpen]);
 
   useEffect(() => {
@@ -64,6 +82,12 @@ export function CommandPalette() {
   const { data: searchedIssues = [] } = useQuery({
     queryKey: queryKeys.issues.search(selectedOrganizationId!, searchQuery),
     queryFn: () => issuesApi.list(selectedOrganizationId!, { q: searchQuery }),
+    enabled: !!selectedOrganizationId && open && searchQuery.length > 0,
+  });
+
+  const { data: searchedChats = [] } = useQuery({
+    queryKey: queryKeys.chats.search(selectedOrganizationId!, searchQuery),
+    queryFn: () => chatsApi.list(selectedOrganizationId!, "all", { q: searchQuery }),
     enabled: !!selectedOrganizationId && open && searchQuery.length > 0,
   });
 
@@ -103,9 +127,14 @@ export function CommandPalette() {
     <CommandDialog open={open} onOpenChange={(v) => {
         setOpen(v);
         if (v && isMobile) setSidebarOpen(false);
-      }} className="sm:max-w-2xl">
+      }}
+      contentStyle={isMobile ? undefined : { left: "50vw", top: "50vh" }}
+      className={launchSource === "primary-rail"
+        ? "command-palette-content command-palette-content--from-rail glass-popover command-palette-glass sm:max-w-2xl"
+        : "command-palette-content glass-popover command-palette-glass sm:max-w-2xl"
+      }>
       <CommandInput
-        placeholder="Search issues, agents, projects..."
+        placeholder="Search issues, chats, agents, projects..."
         value={query}
         onValueChange={setQuery}
         className="pr-8"
@@ -177,6 +206,35 @@ export function CommandPalette() {
                   })()}
                 </CommandItem>
               ))}
+            </CommandGroup>
+          </>
+        )}
+
+        {searchQuery.length > 0 && searchedChats.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Chats">
+              {searchedChats.slice(0, 10).map((chat) => {
+                const preview = chat.searchPreview ?? chat.latestReplyPreview ?? chat.summary;
+                return (
+                  <CommandItem
+                    key={chat.id}
+                    value={`${searchQuery} ${chat.title} ${preview ?? ""}`}
+                    onSelect={() => go(`/messenger/chat/${chat.id}`)}
+                  >
+                    <MessagesSquare className="mr-2 h-4 w-4" />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate">{chat.title}</span>
+                      {preview && (
+                        <span className="truncate text-xs text-muted-foreground">{preview}</span>
+                      )}
+                    </span>
+                    <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">
+                      {chat.status}
+                    </span>
+                  </CommandItem>
+                );
+              })}
             </CommandGroup>
           </>
         )}

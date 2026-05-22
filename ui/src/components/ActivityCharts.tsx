@@ -1,5 +1,7 @@
+import type { CSSProperties } from "react";
 import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { formatPriorityLabel } from "../lib/priorities";
 
 /* ---- Utilities ---- */
 
@@ -44,6 +46,10 @@ function formatDayTitle(dateStr: string): string {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function chartColumnMotionStyle(index: number): CSSProperties {
+  return { "--dashboard-chart-index": index } as CSSProperties;
 }
 
 /* ---- Sub-components ---- */
@@ -100,6 +106,10 @@ function TooltipMetricRow({
       <span className="font-medium text-background">{value}</span>
     </div>
   );
+}
+
+function formatSkillUseCount(count: number): string {
+  return `${count} skill use${count === 1 ? "" : "s"}`;
 }
 
 function ChartColumnTooltip({
@@ -171,6 +181,7 @@ const skillsPalette = [
 ];
 
 const otherSkillsColor = "#737373";
+const minimumRunsForSkillEvidenceChart = 2;
 
 export function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
@@ -258,7 +269,7 @@ function SkillDistributionPie({
       <TooltipTrigger asChild>
         <button
           type="button"
-          aria-label={`Skill use distribution: ${analytics.totalCount} skill uses across ${analytics.skills.length} skills`}
+          aria-label={`Skill usage distribution: ${formatSkillUseCount(analytics.totalCount)} across ${analytics.skills.length} skills`}
           className="mx-auto flex w-full max-w-[12rem] appearance-none items-center justify-center rounded-full bg-transparent p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           <span
@@ -277,9 +288,9 @@ function SkillDistributionPie({
       <TooltipContent side="top" className="min-w-[220px] px-3 py-2">
         <div className="space-y-2">
           <div className="border-b border-background/15 pb-2">
-            <div className="font-medium text-background">Skill use distribution</div>
+            <div className="font-medium text-background">Skill usage distribution</div>
             <div className="text-[11px] text-background/70">
-              {analytics.totalCount} skill uses across {analytics.totalRunsWithSkills} run{analytics.totalRunsWithSkills === 1 ? "" : "s"}
+              {formatSkillUseCount(analytics.totalCount)} across {analytics.totalRunsWithSkills} run{analytics.totalRunsWithSkills === 1 ? "" : "s"}
             </div>
           </div>
           <div className="space-y-1.5">
@@ -342,9 +353,9 @@ export function RunActivityChart({
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div>
+      <div className="dashboard-chart-motion">
         <div className="flex items-end gap-[3px] h-20">
-          {days.map(day => {
+          {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const total = entry.succeeded + entry.failed + entry.other;
             const heightPct = (total / maxValue) * 100;
@@ -365,13 +376,19 @@ export function RunActivityChart({
                 trigger={
                   <div className="flex h-full flex-col justify-end">
                     {total > 0 ? (
-                      <div className="flex flex-col-reverse gap-px overflow-hidden" style={{ height: `${heightPct}%`, minHeight: 2 }}>
+                      <div
+                        className="dashboard-chart-bar flex flex-col-reverse gap-px overflow-hidden"
+                        style={{ ...chartColumnMotionStyle(index), height: `${heightPct}%`, minHeight: 2 }}
+                      >
                         {entry.succeeded > 0 && <div className="bg-emerald-500" style={{ flex: entry.succeeded }} />}
                         {entry.failed > 0 && <div className="bg-red-500" style={{ flex: entry.failed }} />}
                         {entry.other > 0 && <div className="bg-neutral-500" style={{ flex: entry.other }} />}
                       </div>
                     ) : (
-                      <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+                      <div
+                        className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
+                        style={{ ...chartColumnMotionStyle(index), height: 2 }}
+                      />
                     )}
                   </div>
                 }
@@ -387,10 +404,10 @@ export function RunActivityChart({
 }
 
 const priorityColors: Record<string, string> = {
-  critical: "#ef4444",
+  critical: "#ea580c",
   high: "#f97316",
-  medium: "#eab308",
-  low: "#6b7280",
+  medium: "#fb923c",
+  low: "#fed7aa",
 };
 
 const priorityOrder = ["critical", "high", "medium", "low"] as const;
@@ -418,9 +435,9 @@ export function PriorityChart({
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div>
+      <div className="dashboard-chart-motion">
         <div className="flex items-end gap-[3px] h-20">
-          {days.map(day => {
+          {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const total = Object.values(entry).reduce((a, b) => a + b, 0);
             const heightPct = (total / maxValue) * 100;
@@ -436,7 +453,7 @@ export function PriorityChart({
                       <TooltipMetricRow
                         key={p}
                         color={priorityColors[p]}
-                        label={p.charAt(0).toUpperCase() + p.slice(1)}
+                        label={formatPriorityLabel(p)}
                         value={entry[p]}
                       />
                     ))}
@@ -446,13 +463,19 @@ export function PriorityChart({
                 trigger={
                   <div className="flex h-full flex-col justify-end">
                     {total > 0 ? (
-                      <div className="flex flex-col-reverse gap-px overflow-hidden" style={{ height: `${heightPct}%`, minHeight: 2 }}>
+                      <div
+                        className="dashboard-chart-bar flex flex-col-reverse gap-px overflow-hidden"
+                        style={{ ...chartColumnMotionStyle(index), height: `${heightPct}%`, minHeight: 2 }}
+                      >
                         {priorityOrder.map(p => entry[p] > 0 ? (
                           <div key={p} style={{ flex: entry[p], backgroundColor: priorityColors[p] }} />
                         ) : null)}
                       </div>
                     ) : (
-                      <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+                      <div
+                        className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
+                        style={{ ...chartColumnMotionStyle(index), height: 2 }}
+                      />
                     )}
                   </div>
                 }
@@ -461,7 +484,7 @@ export function PriorityChart({
           })}
         </div>
         <DateLabels days={days} />
-        <ChartLegend items={priorityOrder.map(p => ({ color: priorityColors[p], label: p.charAt(0).toUpperCase() + p.slice(1) }))} />
+        <ChartLegend items={priorityOrder.map(p => ({ color: priorityColors[p], label: formatPriorityLabel(p) }))} />
       </div>
     </TooltipProvider>
   );
@@ -513,9 +536,9 @@ export function IssueStatusChart({
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div>
+      <div className="dashboard-chart-motion">
         <div className="flex items-end gap-[3px] h-20">
-          {days.map(day => {
+          {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const total = Object.values(entry).reduce((a, b) => a + b, 0);
             const heightPct = (total / maxValue) * 100;
@@ -541,13 +564,19 @@ export function IssueStatusChart({
                 trigger={
                   <div className="flex h-full flex-col justify-end">
                     {total > 0 ? (
-                      <div className="flex flex-col-reverse gap-px overflow-hidden" style={{ height: `${heightPct}%`, minHeight: 2 }}>
+                      <div
+                        className="dashboard-chart-bar flex flex-col-reverse gap-px overflow-hidden"
+                        style={{ ...chartColumnMotionStyle(index), height: `${heightPct}%`, minHeight: 2 }}
+                      >
                         {statusOrder.map(s => (entry[s] ?? 0) > 0 ? (
                           <div key={s} style={{ flex: entry[s], backgroundColor: statusColors[s] ?? "#6b7280" }} />
                         ) : null)}
                       </div>
                     ) : (
-                      <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+                      <div
+                        className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
+                        style={{ ...chartColumnMotionStyle(index), height: 2 }}
+                      />
                     )}
                   </div>
                 }
@@ -584,9 +613,9 @@ export function SuccessRateChart({
 
   return (
     <TooltipProvider delayDuration={120}>
-      <div>
+      <div className="dashboard-chart-motion">
         <div className="flex items-end gap-[3px] h-20">
-          {days.map(day => {
+          {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const rate = entry.total > 0 ? entry.succeeded / entry.total : 0;
             const roundedRate = entry.total > 0 ? Math.round(rate * 100) : 0;
@@ -609,9 +638,15 @@ export function SuccessRateChart({
                 trigger={
                   <div className="flex h-full flex-col justify-end">
                     {entry.total > 0 ? (
-                      <div style={{ height: `${rate * 100}%`, minHeight: 2, backgroundColor: color }} />
+                      <div
+                        className="dashboard-chart-bar"
+                        style={{ ...chartColumnMotionStyle(index), height: `${rate * 100}%`, minHeight: 2, backgroundColor: color }}
+                      />
                     ) : (
-                      <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+                      <div
+                        className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
+                        style={{ ...chartColumnMotionStyle(index), height: 2 }}
+                      />
                     )}
                   </div>
                 }
@@ -636,7 +671,21 @@ export function SkillsUsageChart({
   const hasData = days.some((day) => day.totalCount > 0);
 
   if (!analytics || !hasData) {
-    return <p className="text-xs text-muted-foreground">No recent skill use.</p>;
+    return <p className="text-xs text-muted-foreground">No recent skill usage.</p>;
+  }
+
+  if (analytics.totalRunsWithSkills < minimumRunsForSkillEvidenceChart) {
+    return (
+      <div
+        data-testid="skill-evidence-low-sample"
+        className="rounded-lg border border-dashed border-border px-4 py-5 text-sm text-muted-foreground"
+      >
+        <p className="font-medium text-foreground">Not enough skill usage to chart yet.</p>
+        <p className="mt-1 text-xs leading-relaxed">
+          {formatSkillUseCount(analytics.totalCount)} across {analytics.totalRunsWithSkills} run{analytics.totalRunsWithSkills === 1 ? "" : "s"}. Charts appear after at least {minimumRunsForSkillEvidenceChart} runs with skill usage.
+        </p>
+      </div>
+    );
   }
 
   const colorBySkillKey = new Map(
@@ -646,21 +695,21 @@ export function SkillsUsageChart({
   return (
     <TooltipProvider delayDuration={120}>
       <div className="grid gap-3 lg:grid-cols-[minmax(12rem,0.7fr)_minmax(0,3fr)]">
-        <SkillChartPanel title="Skill Use Distribution" subtitle="Share of explicitly used skills in this window.">
+        <SkillChartPanel title="Skill Usage Distribution" subtitle="Which skills were used most in this window.">
           <SkillDistributionPanel analytics={analytics} colorBySkillKey={colorBySkillKey} />
         </SkillChartPanel>
 
-        <SkillChartPanel title="Skill Use Timeline" subtitle={`Daily explicit skill-use volume over the last ${analytics.windowDays} day${analytics.windowDays === 1 ? "" : "s"}.`}>
-          <div>
+        <SkillChartPanel title="Skill Usage Timeline" subtitle={`Daily skill usage over the last ${analytics.windowDays} day${analytics.windowDays === 1 ? "" : "s"}.`}>
+          <div className="dashboard-chart-motion">
             <div className="flex items-end gap-[3px] h-36">
-              {days.map((day) => {
+              {days.map((day, index) => {
                 const heightPct = (day.totalCount / maxValue) * 100;
                 const topSkills = day.skills.slice(0, 6);
                 const otherCount = day.skills.slice(6).reduce((sum, skill) => sum + skill.count, 0);
                 const title =
                   day.totalCount > 0
-                    ? `${day.totalCount} skill uses across ${day.runCount} run${day.runCount === 1 ? "" : "s"}`
-                    : "No skill use";
+                    ? `${formatSkillUseCount(day.totalCount)} across ${day.runCount} run${day.runCount === 1 ? "" : "s"}`
+                    : "No skill usage";
 
                 return (
                   <ChartColumnTooltip
@@ -670,7 +719,7 @@ export function SkillsUsageChart({
                     details={
                       <>
                         <TooltipMetricRow label="Skill uses" value={day.totalCount} />
-                        <TooltipMetricRow label="Runs with skills" value={day.runCount} />
+                        <TooltipMetricRow label="Runs with skill usage" value={day.runCount} />
                         {topSkills.map((skill) => (
                           <TooltipMetricRow
                             key={`${day.date}:${skill.key}`}
@@ -692,7 +741,10 @@ export function SkillsUsageChart({
                     trigger={
                       <div className="flex h-full flex-col justify-end">
                         {day.totalCount > 0 ? (
-                          <div className="flex flex-col-reverse gap-px overflow-hidden" style={{ height: `${heightPct}%`, minHeight: 2 }}>
+                          <div
+                            className="dashboard-chart-bar flex flex-col-reverse gap-px overflow-hidden"
+                            style={{ ...chartColumnMotionStyle(index), height: `${heightPct}%`, minHeight: 2 }}
+                          >
                             {day.skills.map((skill) => (
                               <div
                                 key={`${day.date}:${skill.key}`}
@@ -704,7 +756,10 @@ export function SkillsUsageChart({
                             ))}
                           </div>
                         ) : (
-                          <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+                          <div
+                            className="dashboard-chart-empty-bar bg-muted/30 rounded-sm"
+                            style={{ ...chartColumnMotionStyle(index), height: 2 }}
+                          />
                         )}
                       </div>
                     }

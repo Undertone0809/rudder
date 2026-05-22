@@ -3,10 +3,17 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execute, resetOpenCodeModelsCacheForTests } from "@rudderhq/agent-runtime-opencode-local/server";
+import {
+  clearInheritedGitIdentityEnv,
+  expectPreparedGitConfigCapture,
+  gitIdentityCaptureSnippet,
+  type GitIdentityCapture,
+} from "./local-runtime-git-identity-helpers";
 
 async function writeFakeOpenCodeCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
+${gitIdentityCaptureSnippet}
 
 if (process.argv[2] === "models") {
   console.log("openai/gpt-4.1-mini");
@@ -17,6 +24,10 @@ const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
 const payload = {
   argv: process.argv.slice(2),
   prompt: fs.readFileSync(0, "utf8"),
+  rudderEnvKeys: Object.keys(process.env)
+    .filter((key) => key.startsWith("RUDDER_"))
+    .sort(),
+  gitIdentity: captureGitIdentityEnv(),
 };
 if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
@@ -77,12 +88,19 @@ describe("opencode execute", () => {
           cwd: workspace,
           model: "openai/gpt-4.1-mini",
           env: {
+            ...clearInheritedGitIdentityEnv,
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
           instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
-        context: {},
+        context: {
+          rudderWorkspace: {
+            orgWorkspaceRoot: path.join(root, "org-workspace"),
+            orgSkillsDir: path.join(root, "org-workspace", "skills"),
+            orgPlansDir: path.join(root, "org-workspace", "plans"),
+          },
+        },
         authToken: "run-jwt-token",
         onLog: async () => {},
         onMeta: async (meta) => {
@@ -95,10 +113,16 @@ describe("opencode execute", () => {
       expect(result.errorMessage).toBeNull();
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
         prompt: string;
+        rudderEnvKeys: string[];
+        gitIdentity: GitIdentityCapture;
       };
+      expectPreparedGitConfigCapture(capture);
       expect(capture.prompt).toContain("# Agent Instructions");
       expect(capture.prompt).toContain("# Tacit Memory");
-      expect(commandNotes).toContain(`Loaded agent memory instructions from ${memoryPath}`);
+      expect(capture.rudderEnvKeys).toEqual(
+        expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
+      );
+      expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
     } finally {

@@ -1,0 +1,77 @@
+---
+title: "Chat"
+description: "用对话澄清意图，再把它变成持久工作。"
+---
+
+Chat 是 Rudder 接收请求和澄清意图的界面。它让人类解释一个还不清晰的请求、附加上下文、选择 agent，并在工作变得可执行时把对话转成 issue。
+
+![Chat issue 提案](../../images/chat-create-issue-proposal.png)
+
+## Chat 适合做什么
+
+当下一步仍然是对话时，使用 Chat：
+
+- 澄清模糊请求
+- 询问应该由哪个 agent 处理
+- 附加 issue、项目、agent 或文件作为上下文
+- 从对话生成 issue 提案
+- 回答不需要持久执行的小问题
+
+Chat 应该让工作变得更清楚，而不是把长时间执行藏在对话里。
+
+## 什么时候转成 issue
+
+当对话需要下面任何一项能力时，就应该转成 issue：
+
+| 信号 | 为什么应该成为 issue |
+| --- | --- |
+| Assignment | 下一步需要一个 owner 执行 |
+| Budget | agent 运行成本需要绑定到持久工作 |
+| Review | 需要有人判断输出是否足够好 |
+| Recovery | 失败或阻塞后需要恢复现场 |
+| History | 团队未来需要回看这个决定 |
+
+如果请求可以立即回答，而且不会产生后续工作，就留在 Chat。只要它变成一项需要执行、评审或回看的工作，就应该创建 issue。
+
+## Issue 提案
+
+当 Chat 生成 issue 提案时，把它当成 work order 来 review：
+
+- 标题是否说明结果？
+- 描述是否包含足够上下文？
+- 验收标准是否清楚？
+- 项目是否正确？
+- 初始状态应该是 `backlog` 还是 `todo`？
+- 现在是否需要 assignee 或 reviewer？
+
+批准提案后，应创建一个持久 issue，让未来 runs、评论、产物和评审决定都能挂在同一个对象上。
+
+## 好的使用场景
+
+| 场景 | Chat 应该怎么做 |
+| --- | --- |
+| “我想改善 onboarding，但不知道从哪里开始。” | 先追问，再生成一个或多个 issue 提案。 |
+| “看这张截图，把用户抱怨变成工作。” | 附加图片，总结需求，生成 issue。 |
+| “这个 release blocker 应该谁负责？” | 对比 agent 能力并建议 owner。 |
+| “这个 issue 发生了什么？” | 总结已有工作，不创建新 issue。 |
+
+## 反模式
+
+不要把 Chat 用作：
+
+- 隐藏 backlog
+- issue 状态的替代品
+- 没有 owner 的长时间执行入口
+- 评审决定的唯一记录
+- 与 Rudder 工作对象脱节的通用聊天工具
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="任务生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
+    学习什么时候可以分配、什么时候需要评审。
+  </Card>
+  <Card title="Messenger" icon="message-square" href="/zh/concepts/messenger">
+    理解 Chat 在线程和注意力界面里的位置。
+  </Card>
+</CardGroup>

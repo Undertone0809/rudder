@@ -16,6 +16,7 @@ const navigate = vi.fn();
 const setBreadcrumbs = vi.fn();
 
 vi.mock("@tanstack/react-query", () => ({
+  useQuery: () => ({ data: [], isLoading: false, error: null }),
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));

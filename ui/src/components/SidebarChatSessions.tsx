@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, MoreHorizontal, PencilLine, Pin, PinOff, Plus } from "lucide-react";
-import type { ChatConversation } from "@rudderhq/shared";
+import { formatMessengerPreview, type ChatConversation } from "@rudderhq/shared";
 import { useLocation, useNavigate } from "@/lib/router";
 import {
   DropdownMenu,
@@ -18,10 +18,15 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { chatsApi } from "@/api/chats";
 import { prefetchChatConversation } from "@/lib/chat-prefetch";
+import { displayChatTitle } from "@/lib/chat-title";
 import { queryKeys } from "@/lib/queryKeys";
 import { cn, relativeTime } from "@/lib/utils";
 import { SidebarSectionActionButton, SidebarSectionHeader } from "@/components/SidebarSectionHeader";
 import { sidebarItemVariants } from "@/components/sidebarItemStyles";
+
+function conversationDisplayTitle(conversation: Pick<ChatConversation, "title" | "summary" | "latestReplyPreview">): string {
+  return displayChatTitle(conversation);
+}
 
 function conversationSubtitle(conversation: ChatConversation): string {
   if (conversation.primaryIssue) {
@@ -30,7 +35,7 @@ function conversationSubtitle(conversation: ChatConversation): string {
   if (conversation.chatRuntime.model) {
     return `${conversation.chatRuntime.sourceLabel} · ${conversation.chatRuntime.model}`;
   }
-  return conversation.summary || "Clarify, route, or convert to issue";
+  return formatMessengerPreview(conversation.summary) || "Clarify, route, or convert to issue";
 }
 
 function ConversationRow({
@@ -98,7 +103,7 @@ function ConversationRow({
             title={subtitle}
           >
             <span className="flex items-center gap-2">
-              <span className="truncate">{conversation.title}</span>
+              <span className="truncate">{conversationDisplayTitle(conversation)}</span>
               {conversation.isUnread ? (
                 <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-red-500" aria-label="Unread chat" />
               ) : null}

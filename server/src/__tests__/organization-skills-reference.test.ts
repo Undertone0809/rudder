@@ -187,18 +187,23 @@ describe("organization skill references", () => {
 
     const skills = await skillSvc.list(orgId);
 
-    expect(skills.slice(0, 4).map((skill) => skill.key)).toEqual([
+    expect(skills.slice(0, 7).map((skill) => skill.key)).toEqual([
       "rudder/para-memory-files",
       "rudder/rudder",
       "rudder/rudder-create-agent",
       "rudder/rudder-create-plugin",
+      "rudder/skill-creator",
+      "rudder/skill-optimizer",
+      "rudder/conversation-to-skill",
     ]);
 
     expect(skills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
       "rudder/rudder",
       "rudder/rudder-create-agent",
+      "rudder/skill-creator",
+      "rudder/skill-optimizer",
+      "rudder/conversation-to-skill",
       `organization/${orgId}/deep-research`,
-      `organization/${orgId}/skill-creator`,
       `organization/${orgId}/software-product-advisor`,
     ]));
 
@@ -209,10 +214,9 @@ describe("organization skill references", () => {
     });
 
     expect(skills.find((skill) => skill.slug === "skill-creator")).toMatchObject({
-      sourceType: "github",
-      sourceLocator: "https://github.com/Undertone0809/skill-creator/tree/main/.agents/skills",
-      sourceBadge: "community",
-      sourceLabel: "Community preset",
+      key: "rudder/skill-creator",
+      sourceBadge: "rudder",
+      sourceLabel: "Bundled by Rudder",
       editable: false,
     });
   });
@@ -223,16 +227,12 @@ describe("organization skill references", () => {
       description: null,
       budgetMonthlyCents: 0,
       defaultChatIssueCreationMode: "manual_approval",
-      defaultChatAgentRuntimeType: null,
-      defaultChatAgentRuntimeConfig: null,
     });
     const second = await orgSvc.create({
       name: "Alpha Beta",
       description: "Second org",
       budgetMonthlyCents: 0,
       defaultChatIssueCreationMode: "manual_approval",
-      defaultChatAgentRuntimeType: null,
-      defaultChatAgentRuntimeConfig: null,
     });
 
     expect(first.urlKey).toBe("alpha-beta");

@@ -10,6 +10,13 @@ It should not feel random.
 - Include a mix of done, active, blocked, pending, failed, and future work.
 - Add comments, summaries, cost rows, or activity events when they make a page
   or workflow more understandable.
+- For Rudder data, start from real production-like operator scenarios:
+  release coordination, Desktop reliability, agent-run review, approval gates,
+  support follow-up, growth execution, and budget pressure. Use sanitized
+  patterns and synthetic details; do not copy private production records.
+- Prefer use-case-led docs and fixtures over feature-led lists. The mock data
+  should explain why an operator would use Rudder, not merely prove that a
+  widget can render rows.
 
 ## Determinism
 
@@ -42,6 +49,11 @@ For screenshots, empty pages are usually bad. Prefer:
 - one recent activity item
 - one older completed item
 - enough names and descriptions to show hierarchy
+- non-empty transcripts, stdout excerpts, run events, and closeout summaries
+  on any screenshot that shows an agent run, Dashboard run output, or work
+  history derived from agents
+- Calendar blocks that trace back to heartbeat runs, issues, projects, agents,
+  and costs, with only a small number of human checkpoints
 
 For tests, density should be purposeful. Include only enough records to cover
 the behavior and edge cases being asserted.
@@ -58,6 +70,22 @@ Start from the user activity that should make the screen meaningful.
   scenario, preserve that framing in the fixture source and docs.
 - Store durable scenario facts in small JSON files, and generate repetitive
   derived rows with a deterministic script.
+
+## Screenshot Verification
+
+Screenshot/demo runs should not blindly succeed after navigation.
+
+- Prefer Desktop-shell capture for installed-app, local-operator, landing, and
+  production-like demo evidence. Use browser capture for narrow web surfaces or
+  when Desktop shell is explicitly out of scope.
+- Before capture, assert the target selector is visible and contains the
+  scenario-specific text that proves the right data loaded.
+- Validate pages that historically looked complete while missing evidence:
+  Dashboard must show real run/output summaries, Calendar must show agent work
+  derived from runs, and agent run detail must show transcript/output content.
+- If a selector is missing, a transcript/output panel is empty, or the page
+  loaded generic/default data, fail the run or report the blocker instead of
+  saving a misleading screenshot.
 
 ## Output Hygiene
 

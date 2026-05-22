@@ -1,53 +1,30 @@
-import { useMemo, useRef, useState, type ChangeEvent } from "react";
-import {
-  ImageUp,
-  RotateCcw,
-  Smile,
-  type LucideIcon,
-} from "lucide-react";
-import { AGENT_ICON_NAMES, type AgentIconName, type AgentRole } from "@rudderhq/shared";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Input } from "@/components/ui/input";
+import { useRef, useState, type ChangeEvent, type CSSProperties } from "react";
+import { ImageUp, Shuffle } from "lucide-react";
+import { type AgentRole } from "@rudderhq/shared";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { AGENT_ICONS, getAgentIcon, getDefaultAgentIconForRole } from "../lib/agent-icons";
+import { getAgentIcon, getDefaultAgentIconForRole } from "../lib/agent-icons";
+import {
+  AGENT_AVATAR_BACKGROUND_PRESETS,
+  createRandomAgentDiceBearIcon,
+  getAgentAvatarBackgroundPreset,
+  getAgentAvatarBackgroundStyle,
+  getAgentAvatarImageSrc,
+  normalizeAgentAvatarIconValue,
+  withAgentAvatarBackground,
+} from "../lib/agent-avatar";
 
-const DEFAULT_ICON: AgentIconName = "bot";
-const AGENT_ASSET_ICON_RE =
-  /^asset:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
-const MAX_CUSTOM_ICON_LENGTH = 24;
-
-function normalizeIconValue(icon: string | null | undefined) {
-  const normalized = icon?.trim();
-  return normalized && normalized.length > 0 ? normalized : null;
-}
-
-export function getAgentAvatarImageSrc(icon: string | null | undefined): string | null {
-  const normalized = normalizeIconValue(icon);
-  const assetId = normalized?.match(AGENT_ASSET_ICON_RE)?.[1] ?? null;
-  return assetId ? `/api/assets/${assetId}/content` : null;
-}
-
-function isNamedAgentIcon(icon: string | null | undefined): icon is AgentIconName {
-  return Boolean(icon && AGENT_ICON_NAMES.includes(icon as AgentIconName));
-}
-
-function isCustomTextIcon(icon: string | null | undefined) {
-  const normalized = normalizeIconValue(icon);
-  return Boolean(normalized && !isNamedAgentIcon(normalized) && !getAgentAvatarImageSrc(normalized));
-}
+export { getAgentAvatarImageSrc } from "../lib/agent-avatar";
 
 interface AgentIconProps {
   icon: string | null | undefined;
   role?: AgentRole | null;
   className?: string;
+  style?: CSSProperties;
 }
 
-export function AgentIcon({ icon, role, className }: AgentIconProps) {
-  const normalized = normalizeIconValue(icon);
+export function AgentIcon({ icon, role, className, style }: AgentIconProps) {
+  const normalized = normalizeAgentAvatarIconValue(icon);
   const effectiveIcon = normalized ?? getDefaultAgentIconForRole(role);
   const imageSrc = getAgentAvatarImageSrc(effectiveIcon);
   if (imageSrc) {
@@ -56,15 +33,9 @@ export function AgentIcon({ icon, role, className }: AgentIconProps) {
         src={imageSrc}
         alt=""
         className={cn("inline-flex rounded-full object-cover", className)}
+        style={{ ...getAgentAvatarBackgroundStyle(effectiveIcon), ...style }}
         loading="lazy"
       />
-    );
-  }
-  if (effectiveIcon && !isNamedAgentIcon(effectiveIcon)) {
-    return (
-      <span className={cn("inline-flex items-center justify-center leading-none", className)}>
-        {effectiveIcon}
-      </span>
     );
   }
   const Icon = getAgentIcon(effectiveIcon);
@@ -89,16 +60,20 @@ export function AgentIconPicker({
   children,
 }: AgentIconPickerProps) {
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [emojiValue, setEmojiValue] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const currentBackground = getAgentAvatarBackgroundPreset(value);
 
-  const filtered = useMemo(() => {
-    const entries = AGENT_ICON_NAMES.map((name) => [name, AGENT_ICONS[name]] as const);
-    if (!search) return entries;
-    const q = search.toLowerCase();
-    return entries.filter(([name]) => name.includes(q));
-  }, [search]);
+  function selectIcon(icon: string | null) {
+    onChange(icon);
+    setOpen(false);
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0] ?? null;
+    event.currentTarget.value = "";
+    if (!file || !onUpload) return;
+    onUpload(file);
+  }
 
   const trimmedEmoji = emojiValue.trim();
   const emojiDisabled =
@@ -130,85 +105,44 @@ export function AgentIconPicker({
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen);
-        if (nextOpen) {
-          setEmojiValue(isCustomTextIcon(value) ? normalizeIconValue(value) ?? "" : "");
-        }
       }}
     >
       <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent className="w-80 p-3" align="start">
+      <PopoverContent className="w-72 p-3" align="start">
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="text-sm font-medium text-foreground">Avatar</div>
             <button
               type="button"
-              onClick={() => selectIcon(null)}
+              onClick={() => selectIcon(createRandomAgentDiceBearIcon(currentBackground.id))}
               className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
-              <RotateCcw className="h-3.5 w-3.5" />
-              Reset
+              <Shuffle className="h-3.5 w-3.5" />
+              Random
             </button>
           </div>
 
           <div className="space-y-2">
-            <Input
-              placeholder="Search icons..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-8 text-sm"
-              autoFocus
-            />
-            <div className="grid max-h-40 grid-cols-7 gap-1 overflow-y-auto">
-              {filtered.map(([name, Icon]: readonly [AgentIconName, LucideIcon]) => (
+            <div className="text-xs font-medium text-muted-foreground">Background</div>
+            <div className="grid grid-cols-3 gap-2">
+              {AGENT_AVATAR_BACKGROUND_PRESETS.map((preset) => (
                 <button
-                  key={name}
+                  key={preset.id}
                   type="button"
-                  onClick={() => selectIcon(name)}
+                  onClick={() => onChange(withAgentAvatarBackground(value, preset.id))}
                   className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-accent",
-                    (value ?? DEFAULT_ICON) === name && "bg-accent ring-1 ring-primary",
+                    "flex h-9 items-center gap-2 rounded-md border border-border px-2 text-xs text-foreground transition-colors hover:bg-accent",
+                    currentBackground.id === preset.id && "border-primary ring-1 ring-primary",
                   )}
-                  title={name}
+                  title={preset.label}
                 >
-                  <Icon className="h-4 w-4" />
+                  <span
+                    className="h-4 w-4 shrink-0 rounded-full border border-border"
+                    style={{ background: preset.background }}
+                  />
+                  <span className="truncate">{preset.label}</span>
                 </button>
               ))}
-              {filtered.length === 0 && (
-                <p className="col-span-7 py-2 text-center text-xs text-muted-foreground">No icons match</p>
-              )}
-            </div>
-          </div>
-
-          <div className="grid gap-2 border-t border-border pt-3">
-            <label htmlFor="agent-avatar-emoji" className="text-xs font-medium text-muted-foreground">
-              Emoji
-            </label>
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="relative min-w-0 flex-1">
-                <Smile className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="agent-avatar-emoji"
-                  value={emojiValue}
-                  onChange={(event) => setEmojiValue(event.target.value)}
-                  maxLength={MAX_CUSTOM_ICON_LENGTH}
-                  className="h-8 pl-7 text-sm"
-                  placeholder="😀"
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      handleEmojiApply();
-                    }
-                  }}
-                />
-              </div>
-              <button
-                type="button"
-                onClick={handleEmojiApply}
-                disabled={emojiDisabled}
-                className="h-8 rounded-md border border-border px-2 text-xs text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Apply
-              </button>
             </div>
           </div>
 

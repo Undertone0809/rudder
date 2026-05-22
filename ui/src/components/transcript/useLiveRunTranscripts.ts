@@ -24,6 +24,21 @@ function readString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+function readResultSummary(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  return readString((value as { summary?: unknown }).summary);
+}
+
+function fallbackTranscriptForRun(run: LiveRunForIssue): TranscriptEntry[] {
+  const text = readString(run.stdoutExcerpt) ?? readResultSummary(run.resultJson);
+  if (!text) return [];
+  return [{
+    kind: "assistant",
+    ts: run.finishedAt ?? run.startedAt ?? run.createdAt,
+    text,
+  }];
+}
+
 function isTerminalStatus(status: string): boolean {
   return status === "failed" || status === "timed_out" || status === "cancelled" || status === "succeeded";
 }
@@ -288,11 +303,12 @@ export function useLiveRunTranscripts({
     const censorUsernameInLogs = generalSettings?.censorUsernameInLogs === true;
     for (const run of runs) {
       const adapter = getUIAdapter(run.agentRuntimeType);
+      const chunks = chunksByRun.get(run.id) ?? [];
       next.set(
         run.id,
-        buildTranscript(chunksByRun.get(run.id) ?? [], adapter.parseStdoutLine, {
-          censorUsernameInLogs,
-        }),
+        chunks.length > 0
+          ? buildTranscript(chunks, adapter.parseStdoutLine, { censorUsernameInLogs })
+          : fallbackTranscriptForRun(run),
       );
     }
     return next;
@@ -301,7 +317,8 @@ export function useLiveRunTranscripts({
   return {
     transcriptByRun,
     hasOutputForRun(runId: string) {
-      return (chunksByRun.get(runId)?.length ?? 0) > 0;
+      const run = runById.get(runId);
+      return (chunksByRun.get(runId)?.length ?? 0) > 0 || (run ? fallbackTranscriptForRun(run).length > 0 : false);
     },
   };
 }

@@ -13,6 +13,10 @@ describe("agent config defaults", () => {
     expect(defaultCreateValues.maxConcurrentRuns).toBe(3);
   });
 
+  it("defaults timer heartbeat preflight on for new agents", () => {
+    expect(defaultCreateValues.preflightEnabled).toBe(true);
+  });
+
   it("does not configure fallback models unless the operator opts in", () => {
     expect(defaultCreateValues.modelFallbacks).toEqual([]);
   });

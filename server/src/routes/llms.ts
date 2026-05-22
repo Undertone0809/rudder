@@ -40,11 +40,12 @@ export function llmRoutes(db: Db) {
       "- POST /api/orgs/:orgId/agent-hires",
       "",
       "Agent identity references:",
-      "- GET /llms/agent-icons.txt",
+      "- GET /llms/agent-icons.txt (legacy named icons for compatibility/debugging)",
       "",
       "Notes:",
       "- Sensitive values are redacted in configuration read APIs.",
       "- New hires may be created in pending_approval state depending on organization settings.",
+      "- Omit `icon` for normal hires and creates; Rudder generates a DiceBear Notionists avatar.",
       "",
     ];
     res.type("text/plain").send(lines.join("\n"));
@@ -53,13 +54,17 @@ export function llmRoutes(db: Db) {
   router.get("/llms/agent-icons.txt", async (req, res) => {
     await assertCanRead(req);
     const lines = [
-      "# Rudder Agent Icon Names",
+      "# Rudder Legacy Agent Icon Names",
       "",
-      "Set the `icon` field on hire/create payloads to one of:",
+      "Do not set `icon` on normal hire/create payloads. Rudder generates a DiceBear Notionists avatar automatically.",
+      "",
+      "Only set `icon` when preserving an explicit DiceBear Notionists reference or an uploaded `asset:<uuid>` avatar reference supplied by the board/UI.",
+      "",
+      "The following named icons remain accepted only for legacy compatibility and debugging:",
       ...AGENT_ICON_NAMES.map((name) => `- ${name}`),
       "",
-      "Example:",
-      '{ "name": "SearchOps", "role": "researcher", "icon": "search" }',
+      "Normal hire example:",
+      '{ "name": "SearchOps", "role": "researcher" }',
       "",
     ];
     res.type("text/plain").send(lines.join("\n"));

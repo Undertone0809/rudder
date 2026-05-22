@@ -1,6 +1,4 @@
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { bootstrapCeoInvite } from "./auth-bootstrap-ceo.js";
@@ -16,28 +14,14 @@ import {
   resolveRudderHomeDir,
   resolveRudderInstanceId,
 } from "../config/home.js";
+import { startManagedServerFromRuntime, type StartedServer } from "../runtime/server-entry.js";
+import { resolveCliVersion } from "../version.js";
 
 interface RunOptions {
   config?: string;
   instance?: string;
   repair?: boolean;
   yes?: boolean;
-}
-
-interface StartedServer {
-  apiUrl: string;
-  databaseUrl: string | null;
-  host: string;
-  listenPort: number;
-  runtime: {
-    mode: "owned" | "attached";
-    instanceId: string;
-    localEnv: string | null;
-    ownerKind: string | null;
-    version: string;
-  };
-  stop(): Promise<void>;
-  dispose(): Promise<void>;
 }
 
 export async function runCommand(opts: RunOptions): Promise<void> {
@@ -96,7 +80,7 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   }
 
   p.log.step("Starting Rudder server...");
-  const startedServer = await importServerEntry();
+  const startedServer = await startManagedServerFromRuntime({ version: resolveRunRuntimeVersion() });
   if (startedServer.runtime.mode === "attached") {
     p.log.message(
       pc.dim(
@@ -154,90 +138,11 @@ function resolveBootstrapInviteBaseUrl(
   return startedServer.apiUrl.replace(/\/api$/, "");
 }
 
-function formatError(err: unknown): string {
-  if (err instanceof Error) {
-    if (err.message && err.message.trim().length > 0) return err.message;
-    return err.name;
-  }
-  if (typeof err === "string") return err;
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return String(err);
-  }
-}
-
-function isModuleNotFoundError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const code = (err as { code?: unknown }).code;
-  if (code === "ERR_MODULE_NOT_FOUND") return true;
-  return err.message.includes("Cannot find module");
-}
-
-function getMissingModuleSpecifier(err: unknown): string | null {
-  if (!(err instanceof Error)) return null;
-  const packageMatch = err.message.match(/Cannot find package '([^']+)' imported from/);
-  if (packageMatch?.[1]) return packageMatch[1];
-  const moduleMatch = err.message.match(/Cannot find module '([^']+)'/);
-  if (moduleMatch?.[1]) return moduleMatch[1];
-  return null;
-}
-
-function maybeEnableUiDevMiddleware(entrypoint: string): void {
-  if (process.env.RUDDER_UI_DEV_MIDDLEWARE !== undefined) return;
-  const normalized = entrypoint.replaceAll("\\", "/");
-  if (normalized.endsWith("/server/src/index.ts") || normalized.endsWith("@rudderhq/server/src/index.ts")) {
-    process.env.RUDDER_UI_DEV_MIDDLEWARE = "true";
-  }
-}
-
-async function importServerEntry(): Promise<StartedServer> {
-  // Dev mode: try local workspace path (monorepo with tsx)
-  const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-  const devEntry = path.resolve(projectRoot, "server/src/index.ts");
-  if (fs.existsSync(devEntry)) {
-    maybeEnableUiDevMiddleware(devEntry);
-    const mod = await import(pathToFileURL(devEntry).href);
-    return await startServerFromModule(mod, devEntry);
-  }
-
-  // Production mode: import the published @rudderhq/server package
-  try {
-    const mod = await import("@rudderhq/server");
-    return await startServerFromModule(mod, "@rudderhq/server");
-  } catch (err) {
-    const missingSpecifier = getMissingModuleSpecifier(err);
-    const missingServerEntrypoint = !missingSpecifier || missingSpecifier === "@rudderhq/server";
-    if (isModuleNotFoundError(err) && missingServerEntrypoint) {
-      throw new Error(
-        `Could not locate a Rudder server entrypoint.\n` +
-          `Tried: ${devEntry}, @rudderhq/server\n` +
-          `${formatError(err)}`,
-      );
-    }
-    throw new Error(
-      `Rudder server failed to start.\n` +
-        `${formatError(err)}`,
-    );
-  }
-}
-
 function shouldGenerateBootstrapInviteAfterStart(config: RudderConfig): boolean {
   return config.server.deploymentMode === "authenticated" && config.database.mode === "embedded-postgres";
 }
 
-async function startServerFromModule(mod: unknown, label: string): Promise<StartedServer> {
-  const startManagedLocalServer = (mod as {
-    startManagedLocalServer?: (options: {
-      ownerKind: "cli";
-      takeoverOnVersionMismatch?: boolean;
-    }) => Promise<StartedServer>;
-  }).startManagedLocalServer;
-  if (typeof startManagedLocalServer !== "function") {
-    throw new Error(`Rudder server entrypoint did not export startManagedLocalServer(): ${label}`);
-  }
-  return await startManagedLocalServer({
-    ownerKind: "cli",
-    takeoverOnVersionMismatch: true,
-  });
+function resolveRunRuntimeVersion(): string {
+  const version = resolveCliVersion(import.meta.url);
+  return version === "0.0.0" ? "latest" : version;
 }

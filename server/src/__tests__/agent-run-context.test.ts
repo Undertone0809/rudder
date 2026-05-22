@@ -8,6 +8,7 @@ vi.mock("../home-paths.js", async (importOriginal) => {
       root: "/tmp/agent-home",
       instructionsDir: "/tmp/agent-home/instructions",
       memoryDir: "/tmp/agent-home/memory",
+      lifeDir: "/tmp/agent-home/life",
       skillsDir: "/tmp/agent-home/skills",
     })),
     ensureOrganizationWorkspaceLayout: vi.fn(async () => ({
@@ -15,6 +16,7 @@ vi.mock("../home-paths.js", async (importOriginal) => {
       agentsDir: "/tmp/org-home/agents",
       skillsDir: "/tmp/org-home/skills",
       plansDir: "/tmp/org-home/plans",
+      artifactsDir: "/tmp/org-home/artifacts",
     })),
   };
 });
@@ -78,10 +80,14 @@ describe("agentRunContextService buildSceneContext", () => {
       source: "project_primary",
       agentHome: "/tmp/agent-home",
       agentRoot: "/tmp/agent-home",
+      instructionsDir: "/tmp/agent-home/instructions",
+      memoryDir: "/tmp/agent-home/memory",
+      lifeDir: "/tmp/agent-home/life",
       agentSkillsDir: "/tmp/agent-home/skills",
       orgAgentsDir: "/tmp/org-home/agents",
       orgSkillsDir: "/tmp/org-home/skills",
       orgPlansDir: "/tmp/org-home/plans",
+      orgArtifactsDir: "/tmp/org-home/artifacts",
     }));
   });
 

@@ -39,15 +39,20 @@ function expectedExtension(platform) {
 
 function walkFiles(dir) {
   const files = [];
-  if (!existsSync(dir)) return files;
+  const pending = [dir];
 
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...walkFiles(fullPath));
-      continue;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || !existsSync(current)) continue;
+
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(fullPath);
+        continue;
+      }
+      if (entry.isFile()) files.push(fullPath);
     }
-    if (entry.isFile()) files.push(fullPath);
   }
 
   return files;

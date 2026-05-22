@@ -14,8 +14,9 @@ export function formatExactTimestamp(date: Date | string): string {
     month: "short",
     day: "numeric",
     ...(includeYear ? { year: "numeric" } : {}),
-    hour: "numeric",
+    hour: "2-digit",
     minute: "2-digit",
+    hourCycle: "h23",
   });
 }
 

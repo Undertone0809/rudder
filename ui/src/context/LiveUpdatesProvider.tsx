@@ -13,6 +13,8 @@ import { queryKeys } from "../lib/queryKeys";
 import { toOrganizationRelativePath } from "../lib/organization-routes";
 import { useLocation } from "../lib/router";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
+import { useOperatorDisplayName } from "@/hooks/useOperatorDisplayName";
+import { formatPriorityLabel } from "@/lib/priorities";
 
 const TOAST_COOLDOWN_WINDOW_MS = 10_000;
 const TOAST_COOLDOWN_MAX = 3;
@@ -102,11 +104,12 @@ function resolveActorLabel(
   actorType: string | null,
   actorId: string | null,
   currentBoardUserId?: string | null,
+  operatorDisplayName?: string | null,
 ): string {
   if (actorType === "agent" && actorId) {
     return resolveAgentName(queryClient, orgId, actorId) ?? `Agent ${shortId(actorId)}`;
   }
-  return resolveBoardActorLabel(actorType, actorId, currentBoardUserId) || "Someone";
+  return resolveBoardActorLabel(actorType, actorId, currentBoardUserId, operatorDisplayName) || "Someone";
 }
 
 interface IssueToastContext {
@@ -322,18 +325,44 @@ function shouldSuppressAgentStatusToastForVisibleIssue(
 }
 
 const ISSUE_TOAST_ACTIONS = new Set(["issue.created", "issue.updated", "issue.comment_added"]);
+const ISSUE_UPDATE_METADATA_KEYS = new Set([
+  "identifier",
+  "issueIdentifier",
+  "_previous",
+  "source",
+  "reopened",
+  "reopenedFrom",
+  "normalizedFromStatus",
+  "normalizedReason",
+]);
 const AGENT_TOAST_STATUSES = new Set(["running", "error"]);
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "timed_out", "cancelled"]);
+
+function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
+  if (!details) return [];
+  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
+}
+
+function isDescriptionOnlyIssueUpdate(action: string, details: Record<string, unknown> | null): boolean {
+  if (action !== "issue.updated") return false;
+  const changedKeys = issueUpdatedChangedKeys(details);
+  return changedKeys.length === 1 && changedKeys[0] === "description";
+}
 
 function describeIssueUpdate(details: Record<string, unknown> | null): string | null {
   if (!details) return null;
   const changes: string[] = [];
   if (typeof details.status === "string") changes.push(`status -> ${details.status.replace(/_/g, " ")}`);
-  if (typeof details.priority === "string") changes.push(`priority -> ${details.priority}`);
+  if (typeof details.priority === "string") changes.push(`priority -> ${formatPriorityLabel(details.priority)}`);
   if (typeof details.assigneeAgentId === "string" || typeof details.assigneeUserId === "string") {
     changes.push("reassigned");
   } else if (details.assigneeAgentId === null || details.assigneeUserId === null) {
     changes.push("unassigned");
+  }
+  if (typeof details.reviewerAgentId === "string" || typeof details.reviewerUserId === "string") {
+    changes.push("reviewer changed");
+  } else if (details.reviewerAgentId === null || details.reviewerUserId === null) {
+    changes.push("reviewer cleared");
   }
   if (details.reopened === true) {
     const from = readString(details.reopenedFrom);
@@ -350,6 +379,7 @@ function buildActivityToast(
   orgId: string,
   payload: Record<string, unknown>,
   currentActor: { userId: string | null; agentId: string | null },
+  operatorDisplayName?: string | null,
 ): ToastInput | null {
   const entityType = readString(payload.entityType);
   const entityId = readString(payload.entityId);
@@ -361,9 +391,12 @@ function buildActivityToast(
   if (entityType !== "issue" || !entityId || !action || !ISSUE_TOAST_ACTIONS.has(action)) {
     return null;
   }
+  if (isDescriptionOnlyIssueUpdate(action, details)) {
+    return null;
+  }
 
   const issue = resolveIssueToastContext(queryClient, orgId, entityId, details);
-  const actor = resolveActorLabel(queryClient, orgId, actorType, actorId, currentActor.userId);
+  const actor = resolveActorLabel(queryClient, orgId, actorType, actorId, currentActor.userId, operatorDisplayName);
   const isSelfActivity =
     (actorType === "user" && !!currentActor.userId && actorId === currentActor.userId) ||
     (actorType === "agent" && !!currentActor.agentId && actorId === currentActor.agentId);
@@ -715,6 +748,7 @@ function handleLiveEvent(
   gate: ToastGate,
   currentActor: { userId: string | null; agentId: string | null },
   notificationPreferences: LiveNotificationPreferences,
+  operatorDisplayName?: string | null,
 ) {
   if (event.orgId !== expectedCompanyId) return;
 
@@ -765,7 +799,7 @@ function handleLiveEvent(
     const action = readString(payload.action);
     const toast =
       (notificationPreferences.issueNotifications
-        ? buildActivityToast(queryClient, expectedCompanyId, payload, currentActor)
+        ? buildActivityToast(queryClient, expectedCompanyId, payload, currentActor, operatorDisplayName)
         : null) ??
       (notificationPreferences.chatNotifications ? buildChatToast(payload) : null) ??
       buildJoinRequestToast(payload);
@@ -795,6 +829,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const location = useLocation();
+  const operatorDisplayName = useOperatorDisplayName();
   const gateRef = useRef<ToastGate>({ cooldownHits: new Map(), suppressUntil: 0 });
   const pathnameRef = useRef(location.pathname);
   const { data: session } = useQuery({
@@ -867,7 +902,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
           handleLiveEvent(queryClient, selectedOrganizationId, pathnameRef.current, parsed, pushToast, gateRef.current, {
             userId: currentUserId,
             agentId: null,
-          }, notificationPreferences);
+          }, notificationPreferences, operatorDisplayName);
         } catch {
           // Ignore non-JSON payloads.
         }
@@ -901,6 +936,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     selectedOrganizationId,
     pushToast,
     currentUserId,
+    operatorDisplayName,
     notificationPreferences.issueNotifications,
     notificationPreferences.chatNotifications,
   ]);

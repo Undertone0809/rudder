@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
+  agents,
   applyPendingMigrations,
   chatContextLinks,
   chatConversations,
@@ -60,6 +61,12 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function startTempDatabase() {
+  const externalConnectionString = process.env.RUDDER_ACTIVITY_SERVICE_TEST_DATABASE_URL?.trim();
+  if (externalConnectionString) {
+    await applyPendingMigrations(externalConnectionString);
+    return { connectionString: externalConnectionString, dataDir: "", instance: null };
+  }
+
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-activity-service-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
@@ -101,6 +108,7 @@ describe("activityService.forIssue", () => {
     await db.delete(chatContextLinks);
     await db.delete(chatConversations);
     await db.delete(activityLog);
+    await db.delete(agents);
     await db.delete(issues);
     await db.delete(organizations);
   });
@@ -265,5 +273,96 @@ describe("activityService.forIssue", () => {
       conversationTitle: "Discuss the issue",
     });
     expect(result.some((event) => event.entityId === unrelatedConversationId)).toBe(false);
+  });
+
+  it("filters organization activity by user and agent principals", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RST",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Wesley",
+      role: "engineer",
+    });
+
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorType: "user",
+        actorId: "user-1",
+        action: "project.updated",
+        entityType: "project",
+        entityId: "project-user",
+        details: { title: "User event" },
+        createdAt: new Date("2026-04-01T10:00:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "agent",
+        actorId: agentId,
+        agentId,
+        action: "issue.comment_added",
+        entityType: "issue",
+        entityId: "issue-agent",
+        details: { title: "Agent event" },
+        createdAt: new Date("2026-04-01T10:01:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "system",
+        actorId: "heartbeat",
+        agentId,
+        action: "heartbeat.invoked",
+        entityType: "heartbeat_run",
+        entityId: "run-agent",
+        details: { title: "Agent-associated system event" },
+        createdAt: new Date("2026-04-01T10:02:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "agent",
+        actorId: agentId,
+        action: "agent.updated",
+        entityType: "agent",
+        entityId: agentId,
+        details: { title: "Agent actor event without association column" },
+        createdAt: new Date("2026-04-01T10:03:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "user",
+        actorId: "user-2",
+        action: "project.updated",
+        entityType: "project",
+        entityId: "project-other",
+        details: { title: "Other user event" },
+        createdAt: new Date("2026-04-01T10:04:00.000Z"),
+      },
+    ]);
+
+    await expect(svc.list({ orgId, userId: "user-1" })).resolves.toMatchObject([
+      {
+        actorType: "user",
+        actorId: "user-1",
+        entityId: "project-user",
+      },
+    ]);
+
+    const agentEvents = await svc.list({ orgId, agentId });
+
+    expect(agentEvents.map((event) => event.entityId)).toEqual([
+      agentId,
+      "run-agent",
+      "issue-agent",
+    ]);
   });
 });

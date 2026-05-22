@@ -3,10 +3,17 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execute } from "@rudderhq/agent-runtime-gemini-local/server";
+import {
+  clearInheritedGitIdentityEnv,
+  expectPreparedGitConfigCapture,
+  gitIdentityCaptureSnippet,
+  type GitIdentityCapture,
+} from "./local-runtime-git-identity-helpers";
 
 async function writeFakeGeminiCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
+${gitIdentityCaptureSnippet}
 
 const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
 const payload = {
@@ -14,6 +21,7 @@ const payload = {
   rudderEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("RUDDER_"))
     .sort(),
+  gitIdentity: captureGitIdentityEnv(),
 };
 if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
@@ -42,6 +50,7 @@ console.log(JSON.stringify({
 type CapturePayload = {
   argv: string[];
   rudderEnvKeys: string[];
+  gitIdentity: GitIdentityCapture;
 };
 
 describe("gemini execute", () => {
@@ -83,12 +92,19 @@ describe("gemini execute", () => {
           cwd: workspace,
           model: "gemini-2.5-pro",
           env: {
+            ...clearInheritedGitIdentityEnv,
             RUDDER_TEST_CAPTURE_PATH: capturePath,
           },
           instructionsFilePath: instructionsPath,
           promptTemplate: "Follow the rudder heartbeat.",
         },
-        context: {},
+        context: {
+          rudderWorkspace: {
+            orgWorkspaceRoot: path.join(root, "org-workspace"),
+            orgSkillsDir: path.join(root, "org-workspace", "skills"),
+            orgPlansDir: path.join(root, "org-workspace", "plans"),
+          },
+        },
         authToken: "run-jwt-token",
         onLog: async () => {},
         onMeta: async (meta) => {
@@ -100,6 +116,7 @@ describe("gemini execute", () => {
       expect(result.errorMessage).toBeNull();
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expectPreparedGitConfigCapture(capture);
       expect(capture.argv).toContain("--output-format");
       expect(capture.argv).toContain("stream-json");
       expect(capture.argv).toContain("--prompt");
@@ -116,6 +133,7 @@ describe("gemini execute", () => {
           "RUDDER_AGENT_ID",
           "RUDDER_API_KEY",
           "RUDDER_API_URL",
+          "RUDDER_ORG_ARTIFACTS_DIR",
           "RUDDER_ORG_ID",
           "RUDDER_RUN_ID",
         ]),

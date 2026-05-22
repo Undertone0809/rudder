@@ -1,5 +1,7 @@
 import { z } from "zod";
 import {
+  AGENT_AVATAR_BACKGROUND_PRESET_IDS,
+  AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX,
   AGENT_RUNTIME_TYPES,
   AGENT_ICON_NAMES,
   AGENT_ROLES,
@@ -57,16 +59,23 @@ const optionalAgentNameSchema = z.preprocess(
 );
 
 export const uploadedAgentIconSchema = z.string().regex(
-  /^asset:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+  new RegExp(
+    "^asset:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+      + `(?:\\?bg=(?:${AGENT_AVATAR_BACKGROUND_PRESET_IDS.join("|")}))?$`,
+    "i",
+  ),
   "Invalid uploaded avatar reference",
 );
 
-export const customAgentIconSchema = z.string()
-  .trim()
-  .min(1)
-  .max(24)
-  .refine((value) => !value.toLowerCase().startsWith("asset:"), "Invalid uploaded avatar reference")
-  .refine((value) => !/[<>\u0000-\u001f\u007f]/u.test(value), "Icon cannot contain markup or control characters");
+export const diceBearNotionistsAgentIconSchema = z.string().regex(
+  new RegExp(
+    `^${AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX}`
+      + "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+      + `(?:\\?bg=(?:${AGENT_AVATAR_BACKGROUND_PRESET_IDS.join("|")}))?$`,
+    "i",
+  ),
+  "Invalid DiceBear avatar reference",
+);
 
 export const agentIconSchema = z.preprocess(
   (value) => {
@@ -77,7 +86,7 @@ export const agentIconSchema = z.preprocess(
   z.union([
     z.enum(AGENT_ICON_NAMES),
     uploadedAgentIconSchema,
-    customAgentIconSchema,
+    diceBearNotionistsAgentIconSchema,
   ]).nullable(),
 );
 
@@ -132,7 +141,7 @@ export const createAgentKeySchema = z.object({
 export type CreateAgentKey = z.infer<typeof createAgentKeySchema>;
 
 export const wakeAgentSchema = z.object({
-  source: z.enum(["timer", "assignment", "on_demand", "automation"]).optional().default("on_demand"),
+  source: z.enum(["timer", "assignment", "review", "on_demand", "automation"]).optional().default("on_demand"),
   triggerDetail: z.enum(["manual", "ping", "callback", "system"]).optional(),
   reason: z.string().optional().nullable(),
   payload: z.record(z.unknown()).optional().nullable(),

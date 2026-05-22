@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { formatMessengerPreview, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
+import { formatMessengerPreview, formatMessengerTitle, sanitizeChatStructuredPayload, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import {
   agents,
   approvals,
@@ -30,164 +30,28 @@ type MessageRow = typeof chatMessages.$inferSelect;
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 type ApprovalRow = typeof approvals.$inferSelect;
 
-const CHAT_TRANSCRIPT_KEY = "__chatTranscript";
-
-function contentPath(assetId: string) {
-  return `/api/assets/${assetId}/content`;
-}
-
-function safeTrim(value: string | null | undefined) {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
-}
-
-function truncatePreview(value: string | null | undefined, max = 140) {
-  return formatMessengerPreview(value, { max });
-}
-
-function chatTranscriptFromPayload(
-  payload: Record<string, unknown> | null | undefined,
-): ChatStreamTranscriptEntry[] {
-  const transcript = payload?.[CHAT_TRANSCRIPT_KEY];
-  return Array.isArray(transcript) ? (transcript as ChatStreamTranscriptEntry[]) : [];
-}
-
-function stripChatMetadataFromPayload(payload: Record<string, unknown> | null | undefined) {
-  if (!payload) return null;
-  if (!(CHAT_TRANSCRIPT_KEY in payload)) return payload;
-  const { [CHAT_TRANSCRIPT_KEY]: _ignored, ...rest } = payload;
-  return Object.keys(rest).length > 0 ? rest : null;
-}
-
-function withPersistedTranscript(
-  payload: Record<string, unknown> | null | undefined,
-  transcript: ChatStreamTranscriptEntry[] | null | undefined,
-) {
-  const cleanPayload = stripChatMetadataFromPayload(payload);
-  if (!transcript || transcript.length === 0) {
-    return cleanPayload;
-  }
-  return {
-    ...(cleanPayload ?? {}),
-    [CHAT_TRANSCRIPT_KEY]: transcript,
-  };
-}
-
-function issueProposalFromPayload(payload: Record<string, unknown> | null | undefined) {
-  const root = payload ?? {};
-  const proposal =
-    root.issueProposal && typeof root.issueProposal === "object" && !Array.isArray(root.issueProposal)
-      ? (root.issueProposal as Record<string, unknown>)
-      : root;
-
-  const title = safeTrim(typeof proposal.title === "string" ? proposal.title : null);
-  const description = safeTrim(typeof proposal.description === "string" ? proposal.description : null);
-  if (!title || !description) return null;
-
-  return {
-    title,
-    description,
-    priority:
-      typeof proposal.priority === "string" &&
-      ["critical", "high", "medium", "low"].includes(proposal.priority)
-        ? proposal.priority
-        : "medium",
-    projectId: safeTrim(typeof proposal.projectId === "string" ? proposal.projectId : null),
-    goalId: safeTrim(typeof proposal.goalId === "string" ? proposal.goalId : null),
-    parentId: safeTrim(typeof proposal.parentId === "string" ? proposal.parentId : null),
-    assigneeAgentId: safeTrim(typeof proposal.assigneeAgentId === "string" ? proposal.assigneeAgentId : null),
-    assigneeUserId: safeTrim(typeof proposal.assigneeUserId === "string" ? proposal.assigneeUserId : null),
-  };
-}
-
-function planDocumentFromPayload(
-  payload: Record<string, unknown> | null | undefined,
-  fallbackBody?: string | null,
-) {
-  const root = payload ?? {};
-  const rawDocument =
-    root.planDocument && typeof root.planDocument === "object" && !Array.isArray(root.planDocument)
-      ? (root.planDocument as Record<string, unknown>)
-      : root.plan && typeof root.plan === "object" && !Array.isArray(root.plan)
-        ? (root.plan as Record<string, unknown>)
-        : null;
-
-  const title = safeTrim(typeof rawDocument?.title === "string" ? rawDocument.title : null) ?? "Plan";
-  const body =
-    safeTrim(typeof rawDocument?.body === "string" ? rawDocument.body : null)
-    ?? safeTrim(fallbackBody);
-  if (!body) return null;
-
-  return {
-    title,
-    body,
-    changeSummary:
-      safeTrim(typeof rawDocument?.changeSummary === "string" ? rawDocument.changeSummary : null)
-      ?? "Created from chat plan mode",
-  };
-}
-
-function operationProposalFromPayload(payload: Record<string, unknown> | null | undefined) {
-  const root = payload ?? {};
-  const proposal =
-    root.operationProposal && typeof root.operationProposal === "object" && !Array.isArray(root.operationProposal)
-      ? (root.operationProposal as Record<string, unknown>)
-      : root;
-
-  const targetType = typeof proposal.targetType === "string" ? proposal.targetType : null;
-  const targetId = safeTrim(typeof proposal.targetId === "string" ? proposal.targetId : null);
-  const summary = safeTrim(typeof proposal.summary === "string" ? proposal.summary : null);
-  const patch =
-    proposal.patch && typeof proposal.patch === "object" && !Array.isArray(proposal.patch)
-      ? (proposal.patch as Record<string, unknown>)
-      : null;
-
-  if ((targetType !== "organization" && targetType !== "agent") || !targetId || !summary || !patch) {
-    return null;
-  }
-
-  return {
-    targetType,
-    targetId,
-    summary,
-    patch,
-  };
-}
-
-function operationProposalDecisionStatusFromPayload(payload: Record<string, unknown> | null | undefined) {
-  const root = payload ?? {};
-  const rawState =
-    root.operationProposalState && typeof root.operationProposalState === "object" && !Array.isArray(root.operationProposalState)
-      ? (root.operationProposalState as Record<string, unknown>)
-      : null;
-
-  const status = typeof rawState?.status === "string"
-    && ["pending", "approved", "rejected", "revision_requested"].includes(rawState.status)
-    ? rawState.status
-    : "pending";
-
-  return {
-    status,
-    decisionNote: safeTrim(typeof rawState?.decisionNote === "string" ? rawState.decisionNote : null),
-    decidedByUserId: safeTrim(typeof rawState?.decidedByUserId === "string" ? rawState.decidedByUserId : null),
-    decidedAt: safeTrim(typeof rawState?.decidedAt === "string" ? rawState.decidedAt : null),
-  } as const;
-}
-
-function withOperationProposalDecisionState(
-  payload: Record<string, unknown> | null | undefined,
-  state: {
-    status: "pending" | "approved" | "rejected" | "revision_requested";
-    decisionNote: string | null;
-    decidedByUserId: string | null;
-    decidedAt: string | null;
-  },
-) {
-  return {
-    ...(payload ?? {}),
-    operationProposalState: state,
-  };
-}
+import {
+  safeTrim,
+  contentPath,
+  isVisibleIncomingChatMessage,
+  visibleIncomingMessageSql,
+  incomingMessagePreviewSql,
+  truncatePreview,
+  escapeLikePattern,
+  textContains,
+  buildSearchSnippet,
+  resolveContextEntities,
+  listContextLinksForConversationIds,
+  listPrimaryIssues,
+  chatTranscriptFromPayload,
+  stripChatMetadataFromPayload,
+  withPersistedTranscript,
+  issueProposalFromPayload,
+  planDocumentFromPayload,
+  operationProposalFromPayload,
+  operationProposalDecisionStatusFromPayload,
+  withOperationProposalDecisionState,
+} from "./chats.helpers.js";
 
 export function chatService(db: Db) {
   const issuesSvc = issueService(db);
@@ -196,139 +60,6 @@ export function chatService(db: Db) {
   const organizationsSvc = organizationService(db);
   const agentsSvc = agentService(db);
   const documentsSvc = documentService(db);
-
-  async function resolveContextEntities(rows: ContextLinkRow[]) {
-    const issueIds = rows.filter((row) => row.entityType === "issue").map((row) => row.entityId);
-    const projectIds = rows.filter((row) => row.entityType === "project").map((row) => row.entityId);
-    const agentIds = rows.filter((row) => row.entityType === "agent").map((row) => row.entityId);
-
-    const [issueRows, projectRows, agentRows] = await Promise.all([
-      issueIds.length
-        ? db
-          .select({
-            id: issues.id,
-            identifier: issues.identifier,
-            title: issues.title,
-            status: issues.status,
-          })
-          .from(issues)
-          .where(inArray(issues.id, issueIds))
-        : Promise.resolve([]),
-      projectIds.length
-        ? db
-          .select({
-            id: projects.id,
-            name: projects.name,
-            description: projects.description,
-            status: projects.status,
-          })
-          .from(projects)
-          .where(inArray(projects.id, projectIds))
-        : Promise.resolve([]),
-      agentIds.length
-        ? db
-          .select({
-            id: agents.id,
-            name: agents.name,
-            title: agents.title,
-            status: agents.status,
-          })
-          .from(agents)
-          .where(inArray(agents.id, agentIds))
-        : Promise.resolve([]),
-    ]);
-
-    const entityMap = new Map<string, {
-      type: "issue" | "project" | "agent";
-      id: string;
-      label: string;
-      subtitle: string | null;
-      identifier: string | null;
-      status: string | null;
-      href: string;
-    }>();
-
-    for (const row of issueRows) {
-      entityMap.set(`issue:${row.id}`, {
-        type: "issue",
-        id: row.id,
-        label: row.title,
-        subtitle: row.status,
-        identifier: row.identifier,
-        status: row.status,
-        href: `/issues/${row.identifier ?? row.id}`,
-      });
-    }
-    for (const row of projectRows) {
-      entityMap.set(`project:${row.id}`, {
-        type: "project",
-        id: row.id,
-        label: row.name,
-        subtitle: row.description,
-        identifier: null,
-        status: row.status,
-        href: `/projects/${row.id}`,
-      });
-    }
-    for (const row of agentRows) {
-      entityMap.set(`agent:${row.id}`, {
-        type: "agent",
-        id: row.id,
-        label: row.name,
-        subtitle: row.title,
-        identifier: null,
-        status: row.status,
-        href: `/agents/${row.id}`,
-      });
-    }
-
-    return rows.map((row) => ({
-      ...row,
-      entity: entityMap.get(`${row.entityType}:${row.entityId}`) ?? null,
-    }));
-  }
-
-  async function listContextLinksForConversationIds(conversationIds: string[]) {
-    if (conversationIds.length === 0) return new Map<string, Awaited<ReturnType<typeof resolveContextEntities>>>();
-    const rows = await db
-      .select()
-      .from(chatContextLinks)
-      .where(inArray(chatContextLinks.conversationId, conversationIds))
-      .orderBy(chatContextLinks.createdAt);
-    const resolved = await resolveContextEntities(rows);
-    const map = new Map<string, typeof resolved>();
-    for (const row of resolved) {
-      const list = map.get(row.conversationId);
-      if (list) list.push(row);
-      else map.set(row.conversationId, [row]);
-    }
-    return map;
-  }
-
-  async function listPrimaryIssues(conversationRows: ConversationRow[]) {
-    const primaryIssueIds = conversationRows
-      .map((row) => row.primaryIssueId)
-      .filter((id): id is string => Boolean(id));
-    if (primaryIssueIds.length === 0) return new Map<string, {
-      id: string;
-      identifier: string | null;
-      title: string;
-      status: string;
-      priority: string;
-    }>();
-
-    const rows = await db
-      .select({
-        id: issues.id,
-        identifier: issues.identifier,
-        title: issues.title,
-        status: issues.status,
-        priority: issues.priority,
-      })
-      .from(issues)
-      .where(inArray(issues.id, primaryIssueIds));
-    return new Map(rows.map((row) => [row.id, row]));
-  }
 
   async function ensureConversationUserStates(rows: ConversationRow[], userId: string) {
     if (rows.length === 0) return;
@@ -387,7 +118,7 @@ export function chatService(db: Db) {
           eq(chatMessages.orgId, orgId),
           inArray(chatMessages.conversationId, conversationIds),
           isNull(chatMessages.supersededAt),
-          sql`${chatMessages.role} <> 'user'`,
+          visibleIncomingMessageSql(),
           gt(chatMessages.createdAt, chatConversationUserStates.lastReadAt),
         ),
       )
@@ -408,7 +139,7 @@ export function chatService(db: Db) {
           eq(chatMessages.orgId, orgId),
           inArray(chatMessages.conversationId, conversationIds),
           isNull(chatMessages.supersededAt),
-          inArray(approvals.status, ["pending", "revision_requested"]),
+          eq(approvals.status, "pending"),
         ),
       )
       .groupBy(chatMessages.conversationId);
@@ -429,7 +160,7 @@ export function chatService(db: Db) {
           eq(chatMessages.orgId, orgId),
           inArray(chatMessages.conversationId, conversationIds),
           isNull(chatMessages.supersededAt),
-          sql`${chatMessages.role} <> 'user'`,
+          incomingMessagePreviewSql(),
         ),
       )
       .groupBy(chatMessages.conversationId)
@@ -453,7 +184,7 @@ export function chatService(db: Db) {
           eq(chatMessages.orgId, orgId),
           inArray(chatMessages.conversationId, conversationIds),
           isNull(chatMessages.supersededAt),
-          sql`${chatMessages.role} <> 'user'`,
+          incomingMessagePreviewSql(),
         ),
       )
       .orderBy(desc(chatMessages.createdAt));
@@ -465,6 +196,51 @@ export function chatService(db: Db) {
       }
     }
     return map;
+  }
+
+  async function listSearchPreviews(
+    orgId: string,
+    rows: ConversationRow[],
+    query: string,
+    containsPattern: string,
+  ) {
+    if (rows.length === 0) return new Map<string, string | null>();
+
+    const previews = new Map<string, string | null>();
+    for (const row of rows) {
+      if (textContains(row.title, query)) {
+        previews.set(row.id, buildSearchSnippet(row.title, query));
+      } else if (textContains(row.summary, query)) {
+        previews.set(row.id, buildSearchSnippet(row.summary, query));
+      }
+    }
+
+    const messageSearchIds = rows
+      .map((row) => row.id)
+      .filter((id) => !previews.has(id));
+    if (messageSearchIds.length === 0) return previews;
+
+    const messageRows = await db
+      .select({
+        conversationId: chatMessages.conversationId,
+        body: chatMessages.body,
+      })
+      .from(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.orgId, orgId),
+          inArray(chatMessages.conversationId, messageSearchIds),
+          isNull(chatMessages.supersededAt),
+          sql<boolean>`${chatMessages.body} ILIKE ${containsPattern} ESCAPE '\\'`,
+        ),
+      )
+      .orderBy(desc(chatMessages.createdAt));
+
+    for (const message of messageRows) {
+      if (previews.has(message.conversationId)) continue;
+      previews.set(message.conversationId, buildSearchSnippet(message.body, query));
+    }
+    return previews;
   }
 
   async function hydrateConversations(rows: ConversationRow[], userId?: string | null) {
@@ -483,8 +259,8 @@ export function chatService(db: Db) {
       pendingProposalConversationIds,
       latestReplyPreviewsByConversationId,
     ] = await Promise.all([
-      listContextLinksForConversationIds(rows.map((row) => row.id)),
-      listPrimaryIssues(rows),
+      listContextLinksForConversationIds(db, rows.map((row) => row.id)),
+      listPrimaryIssues(db, rows),
       userId && orgId
         ? listConversationUserStates(orgId, userId, conversationIds)
         : Promise.resolve(new Map<string, ConversationUserStateRow>()),
@@ -600,7 +376,7 @@ export function chatService(db: Db) {
     const conversation = await getConversationOrThrow(conversationId);
     const title = conversation.title.trim();
     if (title !== "New chat") return;
-    const nextTitle = body.split(/\r?\n/, 1)[0]?.trim().slice(0, 80);
+    const nextTitle = formatMessengerTitle(body, { max: 80 });
     if (!nextTitle) return;
     await db
       .update(chatConversations)
@@ -610,20 +386,43 @@ export function chatService(db: Db) {
 
   async function list(
       orgId: string,
-      options?: { status?: "active" | "resolved" | "archived" | "all" },
+      options?: { status?: "active" | "resolved" | "archived" | "all"; q?: string },
       userId?: string | null,
     ) {
       const status = options?.status ?? "active";
-      const where =
-        status === "all"
-          ? eq(chatConversations.orgId, orgId)
-          : and(eq(chatConversations.orgId, orgId), eq(chatConversations.status, status));
+      const rawSearch = options?.q?.trim() ?? "";
+      const hasSearch = rawSearch.length > 0;
+      const containsPattern = `%${escapeLikePattern(rawSearch)}%`;
+      const conditions = [eq(chatConversations.orgId, orgId)];
+      if (status !== "all") {
+        conditions.push(eq(chatConversations.status, status));
+      }
+      if (hasSearch) {
+        conditions.push(sql<boolean>`(
+          ${chatConversations.title} ILIKE ${containsPattern} ESCAPE '\\'
+          OR ${chatConversations.summary} ILIKE ${containsPattern} ESCAPE '\\'
+          OR EXISTS (
+            SELECT 1
+            FROM ${chatMessages}
+            WHERE ${chatMessages.conversationId} = ${chatConversations.id}
+              AND ${chatMessages.orgId} = ${orgId}
+              AND ${chatMessages.supersededAt} IS NULL
+              AND ${chatMessages.body} ILIKE ${containsPattern} ESCAPE '\\'
+          )
+        )`);
+      }
       const rows = await db
         .select()
         .from(chatConversations)
-        .where(where)
+        .where(and(...conditions))
         .orderBy(desc(sql`coalesce(${chatConversations.lastMessageAt}, ${chatConversations.updatedAt})`));
-      return hydrateConversations(rows, userId);
+      const conversations = await hydrateConversations(rows, userId);
+      if (!hasSearch) return conversations;
+      const searchPreviews = await listSearchPreviews(orgId, rows, rawSearch, containsPattern);
+      return conversations.map((conversation) => ({
+        ...conversation,
+        searchPreview: searchPreviews.get(conversation.id) ?? null,
+      }));
   }
 
   async function getById(id: string, userId?: string | null) {
@@ -733,6 +532,34 @@ export function chatService(db: Db) {
       })
       .returning();
     return row;
+  }
+
+  async function markUnread(conversationId: string, orgId: string, userId: string) {
+    const latestIncomingMessage = await db
+      .select({ createdAt: chatMessages.createdAt })
+      .from(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.orgId, orgId),
+          eq(chatMessages.conversationId, conversationId),
+          isNull(chatMessages.supersededAt),
+          visibleIncomingMessageSql(),
+        ),
+      )
+      .orderBy(desc(chatMessages.createdAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+
+    if (!latestIncomingMessage) {
+      return markRead(conversationId, orgId, userId, new Date(0));
+    }
+
+    return markRead(
+      conversationId,
+      orgId,
+      userId,
+      new Date(latestIncomingMessage.createdAt.getTime() - 1),
+    );
   }
 
   async function setPinned(conversationId: string, orgId: string, userId: string, pinned: boolean) {
@@ -903,8 +730,8 @@ export function chatService(db: Db) {
       input: {
         orgId: string;
         role: "user" | "assistant" | "system";
-        kind: "message" | "issue_proposal" | "operation_proposal" | "routing_suggestion" | "system_event";
-        status?: "completed" | "stopped" | "failed";
+        kind: "message" | "ask_user" | "issue_proposal" | "operation_proposal" | "system_event";
+        status?: "streaming" | "completed" | "stopped" | "failed" | "interrupted";
         body: string;
         structuredPayload?: Record<string, unknown> | null;
         transcript?: ChatStreamTranscriptEntry[];
@@ -923,7 +750,10 @@ export function chatService(db: Db) {
           kind: input.kind,
           status: input.status ?? "completed",
           body: input.body,
-          structuredPayload: withPersistedTranscript(input.structuredPayload ?? null, input.transcript ?? []),
+          structuredPayload: withPersistedTranscript(
+            sanitizeChatStructuredPayload(input.structuredPayload ?? null),
+            input.transcript ?? [],
+          ),
           approvalId: input.approvalId ?? null,
           replyingAgentId: input.replyingAgentId ?? null,
           chatTurnId: input.chatTurnId ?? null,
@@ -931,12 +761,111 @@ export function chatService(db: Db) {
         })
         .returning();
       if (!message) throw new Error("Failed to create chat message");
-      await refreshConversationTouch(conversationId, message.createdAt);
+      if (input.role === "user" || isVisibleIncomingChatMessage(message)) {
+        await refreshConversationTouch(conversationId, message.createdAt);
+      }
       if (input.role === "user") {
         await maybePromoteConversationTitle(conversationId, input.body);
       }
       const [hydrated] = await hydrateMessages([message]);
       return hydrated;
+  }
+
+  async function updateMessage(
+      conversationId: string,
+      messageId: string,
+      input: {
+        kind?: "message" | "ask_user" | "issue_proposal" | "operation_proposal" | "system_event";
+        status?: "streaming" | "completed" | "stopped" | "failed" | "interrupted";
+        body?: string;
+        structuredPayload?: Record<string, unknown> | null;
+        transcript?: ChatStreamTranscriptEntry[];
+        approvalId?: string | null;
+        replyingAgentId?: string | null;
+      },
+    ) {
+      const existing = await db
+        .select()
+        .from(chatMessages)
+        .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
+        .then((rows) => rows[0] ?? null);
+      if (!existing) return null;
+
+      const now = new Date();
+      const wasVisibleIncoming = isVisibleIncomingChatMessage(existing);
+      const nextMessage = {
+        role: existing.role,
+        kind: input.kind ?? existing.kind,
+        body: input.body ?? existing.body,
+        approvalId: input.approvalId !== undefined ? input.approvalId : existing.approvalId,
+      } satisfies Pick<MessageRow, "role" | "kind" | "body" | "approvalId">;
+      const isVisibleIncoming = isVisibleIncomingChatMessage(nextMessage);
+      const becameVisibleIncoming = !wasVisibleIncoming && isVisibleIncoming;
+      const visibleContentChanged =
+        (input.body !== undefined && safeTrim(input.body) !== safeTrim(existing.body)) ||
+        (input.kind !== undefined && input.kind !== existing.kind) ||
+        (input.approvalId !== undefined && input.approvalId !== existing.approvalId);
+
+      const [updated] = await db
+        .update(chatMessages)
+        .set({
+          ...(becameVisibleIncoming ? { createdAt: now } : {}),
+          ...(input.kind !== undefined ? { kind: input.kind } : {}),
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.body !== undefined ? { body: input.body } : {}),
+          ...(input.structuredPayload !== undefined || input.transcript !== undefined
+            ? {
+              structuredPayload: withPersistedTranscript(
+                input.structuredPayload !== undefined
+                  ? sanitizeChatStructuredPayload(input.structuredPayload)
+                  : sanitizeChatStructuredPayload(stripChatMetadataFromPayload(existing.structuredPayload)),
+                input.transcript !== undefined
+                  ? input.transcript
+                  : chatTranscriptFromPayload(existing.structuredPayload),
+              ),
+            }
+            : {}),
+          ...(input.approvalId !== undefined ? { approvalId: input.approvalId } : {}),
+          ...(input.replyingAgentId !== undefined ? { replyingAgentId: input.replyingAgentId } : {}),
+          updatedAt: now,
+        })
+        .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
+        .returning();
+      if (!updated) return null;
+      if (
+        (existing.role === "user" && input.body !== undefined) ||
+        (isVisibleIncoming && (becameVisibleIncoming || visibleContentChanged))
+      ) {
+        await refreshConversationTouch(conversationId, becameVisibleIncoming ? updated.createdAt : updated.updatedAt);
+      }
+      const [hydrated] = await hydrateMessages([updated]);
+      return hydrated ?? null;
+  }
+
+  async function markInterruptedStreamingMessages(conversationId: string) {
+      const rows = await db
+        .select()
+        .from(chatMessages)
+        .where(
+          and(
+            eq(chatMessages.conversationId, conversationId),
+            eq(chatMessages.role, "assistant"),
+            eq(chatMessages.status, "streaming"),
+            isNull(chatMessages.supersededAt),
+          ),
+        );
+      const updatedMessages = [];
+      for (const row of rows) {
+        const body = row.body.trim().length > 0
+          ? row.body
+          : "Chat run interrupted before a final reply. Continue the conversation to resume from the preserved context.";
+        const updated = await updateMessage(conversationId, row.id, {
+          status: "interrupted",
+          body,
+        });
+        if (updated) updatedMessages.push(updated);
+      }
+      return updatedMessages;
   }
 
   async function updateMessageStructuredPayload(
@@ -954,7 +883,7 @@ export function chatService(db: Db) {
         .update(chatMessages)
         .set({
           structuredPayload: withPersistedTranscript(
-            structuredPayload,
+            sanitizeChatStructuredPayload(structuredPayload),
             chatTranscriptFromPayload(existing.structuredPayload),
           ),
           updatedAt: new Date(),
@@ -985,7 +914,7 @@ export function chatService(db: Db) {
         .from(chatContextLinks)
         .where(eq(chatContextLinks.conversationId, conversationId))
         .orderBy(chatContextLinks.createdAt);
-      const resolved = await resolveContextEntities(links);
+      const resolved = await resolveContextEntities(db, links);
       return resolved.find((row) => row.entityType === input.entityType && row.entityId === input.entityId) ?? null;
   }
 
@@ -1091,10 +1020,11 @@ export function chatService(db: Db) {
       });
   }
 
-  async function convertToIssue(
+    async function convertToIssue(
       conversationId: string,
       input: {
         actorUserId: string | null;
+        createdByAgentId?: string | null;
         messageId?: string | null;
         proposal?: Record<string, unknown> | null;
       },
@@ -1106,17 +1036,20 @@ export function chatService(db: Db) {
         if (issue) return issue;
       }
 
-      let issueProposal = input.proposal ? issueProposalFromPayload(input.proposal) : null;
       let sourceMessage: MessageRow | null = null;
+      if (input.messageId) {
+        sourceMessage = await db
+          .select()
+          .from(chatMessages)
+          .where(and(eq(chatMessages.id, input.messageId), eq(chatMessages.conversationId, conversationId)))
+          .then((rows) => rows[0] ?? null);
+      }
+
+      let issueProposal = input.proposal ? issueProposalFromPayload(input.proposal) : null;
 
       if (!issueProposal) {
-        const message = input.messageId
-          ? await db
-            .select()
-            .from(chatMessages)
-            .where(and(eq(chatMessages.id, input.messageId), eq(chatMessages.conversationId, conversationId)))
-            .then((rows) => rows[0] ?? null)
-          : await db
+        const message = sourceMessage
+          ?? await db
             .select()
             .from(chatMessages)
             .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.kind, "issue_proposal")))
@@ -1133,6 +1066,7 @@ export function chatService(db: Db) {
 
       const issue = await issuesSvc.create(conversation.orgId, {
         ...issueProposal,
+        createdByAgentId: input.createdByAgentId ?? sourceMessage?.replyingAgentId ?? null,
         createdByUserId: input.actorUserId,
       });
       const planDocument = planDocumentFromPayload(
@@ -1376,15 +1310,34 @@ export function chatService(db: Db) {
           payload.proposedIssue && typeof payload.proposedIssue === "object" && !Array.isArray(payload.proposedIssue)
             ? (payload.proposedIssue as Record<string, unknown>)
             : null;
+        const planDocument =
+          payload.planDocument && typeof payload.planDocument === "object" && !Array.isArray(payload.planDocument)
+            ? (payload.planDocument as Record<string, unknown>)
+            : null;
         const issue = await convertToIssue(conversationId, {
           actorUserId,
+          createdByAgentId: safeTrim(typeof payload.proposedByAgentId === "string" ? payload.proposedByAgentId : null),
           messageId,
-          proposal: proposedIssue,
+          proposal: planDocument ? { issueProposal: proposedIssue, planDocument } : proposedIssue,
         });
-        await issueApprovalsSvc.linkManyForApproval(approval.id, [issue.id], {
+        const links = await issueApprovalsSvc.linkManyForApproval(approval.id, [issue.id], {
           agentId: null,
           userId: actorUserId ?? "board",
         });
+        for (const link of links) {
+          await logActivity(db, {
+            orgId: approval.orgId,
+            actorType: "user",
+            actorId: actorUserId ?? "board",
+            action: "issue.approval_linked",
+            entityType: "issue",
+            entityId: link.issueId,
+            details: {
+              approvalId: approval.id,
+              linkCreatedAt: link.createdAt.toISOString(),
+            },
+          });
+        }
         await addMessage(conversationId, {
           orgId: approval.orgId,
           role: "system",
@@ -1517,9 +1470,12 @@ export function chatService(db: Db) {
     update,
     resolve,
     markRead,
+    markUnread,
     setPinned,
     listMessages,
     addMessage,
+    updateMessage,
+    markInterruptedStreamingMessages,
     addUserChatMessage,
     addContextLink,
     setProjectContextLink,

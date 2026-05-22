@@ -42,7 +42,6 @@ This pass stays chat-only. It does not broaden the redesign to the rest of Rudde
     - `message`
     - `issue_proposal`
     - `operation_proposal`
-    - `routing_suggestion`
 - Do not invent a separate “chat agent” entity.
 - Reuse adapter execution where possible by creating an ephemeral chat execution context:
   - no issue/task checkout

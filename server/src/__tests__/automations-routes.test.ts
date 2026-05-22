@@ -64,6 +64,7 @@ const mockAutomationService = vi.hoisted(() => ({
   get: vi.fn(),
   getDetail: vi.fn(),
   update: vi.fn(),
+  delete: vi.fn(),
   create: vi.fn(),
   listRuns: vi.fn(),
   createTrigger: vi.fn(),
@@ -85,6 +86,12 @@ async function createApp(actor: Record<string, unknown>) {
   vi.resetModules();
   vi.doMock("../services/index.js", () => ({
     accessService: () => mockAccessService,
+    organizationIntelligenceProfileService: () => ({
+      list: vi.fn(),
+      getByPurpose: vi.fn(),
+      upsert: vi.fn(),
+      ensureDefaultsFromRuntime: vi.fn(),
+    }),
     logActivity: mockLogActivity,
     automationService: () => mockAutomationService,
   }));
@@ -108,6 +115,7 @@ describe("automation routes", () => {
     mockAutomationService.get.mockResolvedValue(automation);
     mockAutomationService.getTrigger.mockResolvedValue(trigger);
     mockAutomationService.update.mockResolvedValue({ ...automation, assigneeAgentId: otherAgentId });
+    mockAutomationService.delete.mockResolvedValue(automation);
     mockAutomationService.runAutomation.mockResolvedValue({
       id: "run-1",
       source: "manual",
@@ -240,6 +248,30 @@ describe("automation routes", () => {
     expect(mockAutomationService.runAutomation).not.toHaveBeenCalled();
   });
 
+  it("deletes an automation through the destructive delete route", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      orgIds: [orgId],
+    });
+
+    const res = await request(app)
+      .delete(`/api/automations/${automationId}`)
+      .send();
+
+    expect(res.status).toBe(204);
+    expect(mockAutomationService.delete).toHaveBeenCalledWith(automationId);
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      orgId,
+      action: "automation.deleted",
+      entityType: "automation",
+      entityId: automationId,
+      details: { title: automation.title },
+    }));
+  });
+
   it("allows automation creation when the board user has tasks:assign", async () => {
     mockAccessService.canUser.mockResolvedValue(true);
     const app = await createApp({
@@ -262,6 +294,35 @@ describe("automation routes", () => {
     expect(mockAutomationService.create).toHaveBeenCalledWith(orgId, expect.objectContaining({
       projectId,
       title: "Daily automation",
+      assigneeAgentId: agentId,
+    }), {
+      agentId: null,
+      userId: "board-user",
+    });
+  });
+
+  it("allows automation creation without a project", async () => {
+    mockAccessService.canUser.mockResolvedValue(true);
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: [orgId],
+    });
+
+    const res = await request(app)
+      .post(`/api/orgs/${orgId}/automations`)
+      .send({
+        projectId: null,
+        title: "Inbox sweep",
+        assigneeAgentId: agentId,
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockAutomationService.create).toHaveBeenCalledWith(orgId, expect.objectContaining({
+      projectId: null,
+      title: "Inbox sweep",
       assigneeAgentId: agentId,
     }), {
       agentId: null,

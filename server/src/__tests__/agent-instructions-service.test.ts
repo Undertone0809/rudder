@@ -431,6 +431,35 @@ describe("agent instructions service", () => {
     expect(result.bundle.warnings).toEqual([]);
   });
 
+  it("materializes incomplete managed metadata from a legacy prompt template", async () => {
+    const paperclipHome = await makeTempDir("rudder-agent-instructions-incomplete-managed-");
+    cleanupDirs.add(paperclipHome);
+    process.env.RUDDER_HOME = paperclipHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const managedRoot = managedInstructionsRoot(paperclipHome);
+    const svc = agentInstructionsService();
+    const agent = makeAgent({
+      instructionsBundleMode: "managed",
+      instructionsEntryFile: "SOUL.md",
+      promptTemplate: "# SOUL.md -- CMO Persona\n\nYou are the CMO.",
+    });
+
+    const result = await svc.reconcileBundle(agent);
+
+    expect(result.changed).toBe(true);
+    expect(result.agentRuntimeConfig).toMatchObject({
+      instructionsBundleMode: "managed",
+      instructionsRootPath: managedRoot,
+      instructionsEntryFile: "SOUL.md",
+      instructionsFilePath: path.join(managedRoot, "SOUL.md"),
+    });
+    expect(result.agentRuntimeConfig).not.toHaveProperty("promptTemplate");
+    expect(result.bundle.files.map((file) => file.path)).toEqual(["SOUL.md"]);
+    expect(result.bundle.legacyPromptTemplateActive).toBe(false);
+    await expect(fs.readFile(path.join(managedRoot, "SOUL.md"), "utf8")).resolves.toBe("# SOUL.md -- CMO Persona\n\nYou are the CMO.");
+  });
+
   it("recovers the managed bundle when stale root metadata is present but mode is missing", async () => {
     const paperclipHome = await makeTempDir("rudder-agent-instructions-partial-managed-");
     const staleRoot = await makeTempDir("rudder-agent-instructions-partial-root-");

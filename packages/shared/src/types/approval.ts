@@ -15,6 +15,16 @@ export interface Approval {
   updatedAt: Date;
 }
 
+export interface IssueLinkedApproval extends Approval {
+  link: {
+    issueId: string;
+    approvalId: string;
+    linkedByAgentId: string | null;
+    linkedByUserId: string | null;
+    createdAt: Date;
+  };
+}
+
 export interface ApprovalComment {
   id: string;
   orgId: string;

@@ -12,7 +12,10 @@ const mockIssueService = vi.hoisted(() => ({
   create: vi.fn(),
   createAttachment: vi.fn(),
   findMentionedAgents: vi.fn(),
+  getAncestors: vi.fn(),
   getById: vi.fn(),
+  getComment: vi.fn(),
+  getCommentCursor: vi.fn(),
   reorder: vi.fn(),
   update: vi.fn(),
 }));
@@ -23,6 +26,7 @@ const mockAccessService = vi.hoisted(() => ({
 }));
 
 const mockHeartbeatService = vi.hoisted(() => ({
+  getRun: vi.fn(),
   reportRunActivity: vi.fn(async () => undefined),
   wakeup: vi.fn(async () => undefined),
 }));
@@ -32,25 +36,46 @@ const mockAgentService = vi.hoisted(() => ({
 }));
 
 const mockDocumentService = vi.hoisted(() => ({
+  getIssueDocumentPayload: vi.fn(),
   upsertIssueDocument: vi.fn(),
+}));
+
+const mockGoalService = vi.hoisted(() => ({
+  getById: vi.fn(),
+  getDefaultCompanyGoal: vi.fn(),
+}));
+
+const mockProjectService = vi.hoisted(() => ({
+  getById: vi.fn(),
+  listByIds: vi.fn(),
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 
 const ASSIGNEE_AGENT_ID = "22222222-2222-4222-8222-222222222222";
-const RUN_ID = "run-1";
+const REVIEWER_AGENT_ID = "33333333-3333-4333-8333-333333333333";
+const PEER_AGENT_ID = "44444444-4444-4444-8444-444444444444";
+const RUN_ID = "55555555-5555-4555-8555-555555555555";
+const PEER_RUN_ID = "66666666-6666-4666-8666-666666666666";
+const UNBOUND_RUN_ID = "77777777-7777-4777-8777-777777777777";
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
   documentService: () => mockDocumentService,
   executionWorkspaceService: () => ({}),
-  goalService: () => ({}),
+  goalService: () => mockGoalService,
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => ({}),
   issueService: () => mockIssueService,
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: mockLogActivity,
-  projectService: () => ({}),
+  projectService: () => mockProjectService,
   automationService: () => ({
     syncRunStatusForIssue: vi.fn(async () => undefined),
   }),
@@ -67,13 +92,13 @@ function createBoardActor() {
   };
 }
 
-function createAgentActor() {
+function createAgentActor(agentId = ASSIGNEE_AGENT_ID, runId: string | null = RUN_ID) {
   return {
     type: "agent" as const,
-    agentId: ASSIGNEE_AGENT_ID,
+    agentId,
     orgId: "organization-1",
     orgIds: ["organization-1"],
-    runId: RUN_ID,
+    runId: runId ?? undefined,
   };
 }
 
@@ -92,26 +117,38 @@ function createApp(actor = createBoardActor()) {
 function makeIssue(overrides?: Partial<{
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
+  reviewerAgentId: string | null;
+  reviewerUserId: string | null;
+  createdByAgentId: string | null;
   createdByUserId: string | null;
+  checkoutRunId: string | null;
   executionRunId: string | null;
   identifier: string;
   projectId: string | null;
   boardOrder: number;
-  status: "backlog" | "todo" | "in_progress" | "done";
+  status: "backlog" | "todo" | "in_progress" | "in_review" | "blocked" | "done";
   title: string;
+  description: string | null;
+  priority: string;
 }>) {
   return {
     id: "11111111-1111-4111-8111-111111111111",
     orgId: "organization-1",
     assigneeAgentId: null,
     assigneeUserId: null,
+    reviewerAgentId: null,
+    reviewerUserId: null,
+    createdByAgentId: null,
     createdByUserId: "local-board",
+    checkoutRunId: null,
     executionRunId: null,
     identifier: "RUD-5",
     projectId: null,
     boardOrder: 1000,
     status: "todo" as const,
     title: "Lifecycle hardening",
+    description: null,
+    priority: "medium",
     ...overrides,
   };
 }
@@ -123,17 +160,498 @@ async function flushAsyncWork() {
 describe("issue lifecycle routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIssueService.assertCheckoutOwner.mockResolvedValue({ adoptedFromRunId: null });
+    mockHeartbeatService.getRun.mockImplementation(async (runId: string) =>
+      runId === RUN_ID
+        ? {
+          id: RUN_ID,
+          orgId: "organization-1",
+          agentId: ASSIGNEE_AGENT_ID,
+          status: "running",
+          contextSnapshot: { issueId: "11111111-1111-4111-8111-111111111111" },
+        }
+        : null,
+    );
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
-    mockIssueService.addComment.mockResolvedValue({
+    mockIssueService.getAncestors.mockResolvedValue([]);
+    mockIssueService.getComment.mockResolvedValue(null);
+    mockIssueService.getCommentCursor.mockResolvedValue({
+      totalComments: 0,
+      latestCommentId: null,
+      latestCommentAt: null,
+    });
+    mockDocumentService.getIssueDocumentPayload.mockResolvedValue({
+      planDocument: null,
+      documentSummaries: [],
+      legacyPlanDocument: null,
+    });
+    mockGoalService.getById.mockResolvedValue(null);
+    mockGoalService.getDefaultCompanyGoal.mockResolvedValue(null);
+    mockProjectService.getById.mockResolvedValue(null);
+    mockProjectService.listByIds.mockResolvedValue([]);
+    mockIssueService.addComment.mockImplementation(async (_issueId: string, body: string, author: { agentId?: string; userId?: string }) => ({
       id: "comment-1",
       issueId: "11111111-1111-4111-8111-111111111111",
       orgId: "organization-1",
-      body: "hello",
+      body,
       createdAt: new Date(),
       updatedAt: new Date(),
-      authorAgentId: null,
-      authorUserId: "local-board",
+      authorAgentId: author.agentId ?? null,
+      authorUserId: author.userId ?? "local-board",
+    }));
+  });
+
+  it("does not log activity for unchanged document saves", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+    mockDocumentService.upsertIssueDocument.mockResolvedValue({
+      created: false,
+      unchanged: true,
+      document: {
+        id: "document-1",
+        orgId: "organization-1",
+        issueId: "11111111-1111-4111-8111-111111111111",
+        key: "plan",
+        title: null,
+        format: "markdown",
+        body: "# Plan",
+        latestRevisionId: "33333333-3333-4333-8333-333333333333",
+        latestRevisionNumber: 1,
+        createdByAgentId: null,
+        createdByUserId: "local-board",
+        updatedByAgentId: null,
+        updatedByUserId: "local-board",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
     });
+
+    const res = await request(createApp())
+      .put("/api/issues/11111111-1111-4111-8111-111111111111/documents/plan")
+      .send({
+        title: null,
+        format: "markdown",
+        body: "# Plan",
+        baseRevisionId: "33333333-3333-4333-8333-333333333333",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockDocumentService.upsertIssueDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId: "11111111-1111-4111-8111-111111111111",
+        key: "plan",
+        body: "# Plan",
+        baseRevisionId: "33333333-3333-4333-8333-333333333333",
+      }),
+    );
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("includes issue documents in heartbeat context", async () => {
+    const issue = makeIssue({
+      description: "Short issue summary",
+      priority: "high",
+    });
+    const documentUpdatedAt = new Date("2026-05-07T00:00:00.000Z");
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockDocumentService.getIssueDocumentPayload.mockResolvedValue({
+      planDocument: {
+        id: "44444444-4444-4444-8444-444444444444",
+        orgId: "organization-1",
+        issueId: issue.id,
+        key: "plan",
+        title: "Investigation Plan",
+        format: "markdown",
+        body: "# Plan\n\nConfirm whether agents can see issue docs.",
+        latestRevisionId: "55555555-5555-4555-8555-555555555555",
+        latestRevisionNumber: 1,
+        createdByAgentId: null,
+        createdByUserId: "local-board",
+        updatedByAgentId: null,
+        updatedByUserId: "local-board",
+        createdAt: documentUpdatedAt,
+        updatedAt: documentUpdatedAt,
+      },
+      documentSummaries: [
+        {
+          id: "44444444-4444-4444-8444-444444444444",
+          orgId: "organization-1",
+          issueId: issue.id,
+          key: "plan",
+          title: "Investigation Plan",
+          format: "markdown",
+          latestRevisionId: "55555555-5555-4555-8555-555555555555",
+          latestRevisionNumber: 1,
+          createdByAgentId: null,
+          createdByUserId: "local-board",
+          updatedByAgentId: null,
+          updatedByUserId: "local-board",
+          createdAt: documentUpdatedAt,
+          updatedAt: documentUpdatedAt,
+        },
+      ],
+      legacyPlanDocument: null,
+    });
+
+    const res = await request(createApp())
+      .get("/api/issues/11111111-1111-4111-8111-111111111111/heartbeat-context");
+
+    expect(res.status).toBe(200);
+    expect(mockDocumentService.getIssueDocumentPayload).toHaveBeenCalledWith(
+      expect.objectContaining({ id: issue.id }),
+    );
+    expect(res.body.planDocument).toMatchObject({
+      key: "plan",
+      title: "Investigation Plan",
+      body: "# Plan\n\nConfirm whether agents can see issue docs.",
+    });
+    expect(res.body.documentSummaries).toHaveLength(1);
+    expect(res.body.issueDocumentsPrompt).toContain("## Issue Documents");
+    expect(res.body.issueDocumentsPrompt).toContain("Confirm whether agents can see issue docs.");
+  });
+
+  it("records agent-reported commit activity with the authenticated agent and run", async () => {
+    const issue = makeIssue({
+      status: "in_progress",
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      checkoutRunId: RUN_ID,
+      title: "Add commit activity",
+    });
+    mockIssueService.getById.mockResolvedValue(issue);
+
+    const res = await request(createApp(createAgentActor()))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
+      .send({
+        sha: "ABC1234def5678",
+        message: "fix: record commit activity",
+        branch: "feature/commit-activity",
+        repoPath: "/repo/rudder",
+        workspacePath: "/workspace/rudder",
+        commitCount: 2,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      ok: true,
+      issueId: issue.id,
+      sha: "abc1234def5678",
+      shortSha: "abc1234",
+      subject: "fix: record commit activity",
+      runId: RUN_ID,
+    });
+    expect(mockIssueService.assertCheckoutOwner).toHaveBeenCalledWith(issue.id, ASSIGNEE_AGENT_ID, RUN_ID);
+    expect(mockHeartbeatService.reportRunActivity).toHaveBeenCalledWith(RUN_ID);
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        orgId: issue.orgId,
+        actorType: "agent",
+        actorId: ASSIGNEE_AGENT_ID,
+        agentId: ASSIGNEE_AGENT_ID,
+        runId: RUN_ID,
+        action: "issue.code_committed",
+        entityType: "issue",
+        entityId: issue.id,
+        details: expect.objectContaining({
+          sha: "abc1234def5678",
+          shortSha: "abc1234",
+          subject: "fix: record commit activity",
+          branch: "feature/commit-activity",
+          repoPath: "/repo/rudder",
+          workspacePath: "/workspace/rudder",
+          commitCount: 2,
+        }),
+      }),
+    );
+  });
+
+  it("rejects agent-reported commit activity when the run belongs to another agent", async () => {
+    const issue = makeIssue({
+      status: "todo",
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      title: "Add commit activity",
+    });
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockHeartbeatService.getRun.mockResolvedValueOnce({
+      id: RUN_ID,
+      orgId: issue.orgId,
+      agentId: PEER_AGENT_ID,
+      status: "running",
+      contextSnapshot: { issueId: issue.id },
+    });
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
+      .send({
+        sha: "abc1234def5678",
+        message: "fix: forged run attribution",
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "issue.code_committed" }),
+    );
+    expect(mockHeartbeatService.reportRunActivity).not.toHaveBeenCalled();
+  });
+
+  it("rejects agent-reported commit activity when the run is not bound to the issue", async () => {
+    const issue = makeIssue({
+      status: "todo",
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      title: "Add commit activity",
+    });
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockHeartbeatService.getRun.mockResolvedValueOnce({
+      id: UNBOUND_RUN_ID,
+      orgId: issue.orgId,
+      agentId: ASSIGNEE_AGENT_ID,
+      status: "running",
+      contextSnapshot: { issueId: "99999999-9999-4999-8999-999999999999" },
+    });
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, UNBOUND_RUN_ID)))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
+      .send({
+        sha: "abc1234def5678",
+        message: "fix: arbitrary run attribution",
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "issue.code_committed" }),
+    );
+    expect(mockHeartbeatService.reportRunActivity).not.toHaveBeenCalled();
+  });
+
+  it("records allowed agent-reported commit activity without run attribution", async () => {
+    const issue = makeIssue({
+      status: "todo",
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+      title: "Add commit activity",
+    });
+    mockIssueService.getById.mockResolvedValue(issue);
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, null)))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
+      .send({
+        sha: "abc1234def5678",
+        message: "fix: report without run",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      ok: true,
+      issueId: issue.id,
+      runId: null,
+    });
+    expect(mockHeartbeatService.getRun).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.reportRunActivity).not.toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorType: "agent",
+        actorId: ASSIGNEE_AGENT_ID,
+        agentId: ASSIGNEE_AGENT_ID,
+        runId: null,
+        action: "issue.code_committed",
+      }),
+    );
+  });
+
+  it("records separate commit activity rows for multiple reporting agents", async () => {
+    const issue = makeIssue({
+      status: "todo",
+      assigneeAgentId: null,
+      title: "Add commit activity",
+    });
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockHeartbeatService.getRun.mockImplementation(async (runId: string) => {
+      if (runId === RUN_ID) {
+        return {
+          id: RUN_ID,
+          orgId: issue.orgId,
+          agentId: ASSIGNEE_AGENT_ID,
+          status: "running",
+          contextSnapshot: { issueId: issue.id },
+        };
+      }
+      if (runId === PEER_RUN_ID) {
+        return {
+          id: PEER_RUN_ID,
+          orgId: issue.orgId,
+          agentId: PEER_AGENT_ID,
+          status: "running",
+          contextSnapshot: { issueId: issue.id },
+        };
+      }
+      return null;
+    });
+
+    const [first, second] = await Promise.all([
+      request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+        .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
+        .send({
+          sha: "abc1234def5678",
+          message: "fix: first agent commit",
+        }),
+      request(createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
+        .post("/api/issues/11111111-1111-4111-8111-111111111111/commit")
+        .send({
+          sha: "def5678abc1234",
+          message: "fix: peer agent commit",
+        }),
+    ]);
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorId: ASSIGNEE_AGENT_ID,
+        agentId: ASSIGNEE_AGENT_ID,
+        runId: RUN_ID,
+        action: "issue.code_committed",
+        details: expect.objectContaining({ shortSha: "abc1234" }),
+      }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorId: PEER_AGENT_ID,
+        agentId: PEER_AGENT_ID,
+        runId: PEER_RUN_ID,
+        action: "issue.code_committed",
+        details: expect.objectContaining({ shortSha: "def5678" }),
+      }),
+    );
+    expect(mockHeartbeatService.reportRunActivity).toHaveBeenCalledWith(RUN_ID);
+    expect(mockHeartbeatService.reportRunActivity).toHaveBeenCalledWith(PEER_RUN_ID);
+  });
+
+  it("reorders an issue within an organization lane and logs activity", async () => {
+    const issue = makeIssue({
+      boardOrder: 2000,
+      status: "todo",
+    });
+    mockIssueService.reorder.mockResolvedValue({
+      issue,
+      previousStatus: "todo",
+      previousBoardOrder: 3000,
+    });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/issues/reorder")
+      .send({
+        issueId: "11111111-1111-4111-8111-111111111111",
+        targetStatus: "todo",
+        previousIssueId: "22222222-2222-4222-8222-222222222222",
+        nextIssueId: "33333333-3333-4333-8333-333333333333",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.reorder).toHaveBeenCalledWith("organization-1", {
+      issueId: "11111111-1111-4111-8111-111111111111",
+      targetStatus: "todo",
+      previousIssueId: "22222222-2222-4222-8222-222222222222",
+      nextIssueId: "33333333-3333-4333-8333-333333333333",
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.reordered",
+        entityType: "issue",
+        entityId: issue.id,
+        details: expect.objectContaining({
+          identifier: "RUD-5",
+          status: "todo",
+          boardOrder: 2000,
+          _previous: {
+            status: "todo",
+            boardOrder: 3000,
+          },
+        }),
+      }),
+    );
+  });
+
+  it("requires board access to reorder issue board lanes", async () => {
+    const res = await request(createApp(createAgentActor()))
+      .post("/api/orgs/organization-1/issues/reorder")
+      .send({
+        issueId: "11111111-1111-4111-8111-111111111111",
+        targetStatus: "todo",
+        position: "end",
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockIssueService.reorder).not.toHaveBeenCalled();
+  });
+
+  it("stores inline comment uploads without logging them as issue attachments", async () => {
+    const app = express();
+    const storage = {
+      provider: "local_disk" as const,
+      putFile: vi.fn(async (input: {
+        orgId: string;
+        namespace: string;
+        originalFilename: string | null;
+        contentType: string;
+        body: Buffer;
+      }) => ({
+        provider: "local_disk" as const,
+        objectKey: `${input.namespace}/${input.originalFilename ?? "upload"}`,
+        contentType: input.contentType,
+        byteSize: input.body.length,
+        sha256: "sha256-sample",
+        originalFilename: input.originalFilename,
+      })),
+      getObject: vi.fn(),
+      headObject: vi.fn(),
+      deleteObject: vi.fn(),
+    };
+    app.use((req, _res, next) => {
+      (req as any).actor = createBoardActor();
+      next();
+    });
+    app.use("/api", issueRoutes({} as any, storage));
+    app.use(errorHandler);
+
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+    mockIssueService.createAttachment.mockResolvedValue({
+      id: "attachment-1",
+      orgId: "organization-1",
+      issueId: "11111111-1111-4111-8111-111111111111",
+      issueCommentId: null,
+      assetId: "asset-1",
+      usage: "comment_inline",
+      provider: "local_disk",
+      objectKey: "issues/11111111-1111-4111-8111-111111111111/note.txt",
+      contentType: "text/plain",
+      byteSize: 5,
+      sha256: "sha256-sample",
+      originalFilename: "note.txt",
+      createdByAgentId: null,
+      createdByUserId: "local-board",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const res = await request(app)
+      .post("/api/orgs/organization-1/issues/11111111-1111-4111-8111-111111111111/attachments")
+      .field("usage", "comment_inline")
+      .attach("file", Buffer.from("hello"), { filename: "note.txt", contentType: "text/plain" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.createAttachment).toHaveBeenCalledWith(expect.objectContaining({
+      issueId: "11111111-1111-4111-8111-111111111111",
+      usage: "comment_inline",
+      contentType: "text/plain",
+      originalFilename: "note.txt",
+    }));
+    expect(mockLogActivity).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "issue.attachment_added",
+    }));
   });
 
   it("does not log activity for unchanged document saves", async () => {
@@ -343,6 +861,723 @@ describe("issue lifecycle routes", () => {
     );
   });
 
+  it("defaults agent-created issues without an assignee to the creating agent", async () => {
+    mockIssueService.create.mockImplementation(async (_orgId: string, data: Record<string, unknown>) =>
+      makeIssue({
+        assigneeAgentId: data.assigneeAgentId as string | null,
+        assigneeUserId: (data.assigneeUserId as string | null | undefined) ?? null,
+        createdByAgentId: data.createdByAgentId as string | null,
+        createdByUserId: data.createdByUserId as string | null,
+        status: data.status as "todo",
+        title: data.title as string,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+      .post("/api/orgs/organization-1/issues")
+      .send({
+        title: "Agent-created issue",
+        status: "todo",
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        title: "Agent-created issue",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        createdByAgentId: ASSIGNEE_AGENT_ID,
+        createdByUserId: null,
+      }),
+    );
+    expect(res.body.assigneeAgentId).toBe(ASSIGNEE_AGENT_ID);
+    expect(res.body.createdByAgentId).toBe(ASSIGNEE_AGENT_ID);
+  });
+
+  it("preserves explicit assignee and explicit null on agent-created issues", async () => {
+    mockAccessService.hasPermission.mockResolvedValue(true);
+    mockIssueService.create.mockImplementation(async (_orgId: string, data: Record<string, unknown>) =>
+      makeIssue({
+        assigneeAgentId: (data.assigneeAgentId as string | null | undefined) ?? null,
+        assigneeUserId: (data.assigneeUserId as string | null | undefined) ?? null,
+        createdByAgentId: data.createdByAgentId as string | null,
+        createdByUserId: data.createdByUserId as string | null,
+        status: data.status as "backlog" | "todo",
+        title: data.title as string,
+      }),
+    );
+
+    const explicitAssignee = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+      .post("/api/orgs/organization-1/issues")
+      .send({
+        title: "Explicit assignee",
+        status: "todo",
+        assigneeAgentId: REVIEWER_AGENT_ID,
+      });
+
+    expect(explicitAssignee.status).toBe(201);
+    expect(mockIssueService.create).toHaveBeenLastCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        assigneeAgentId: REVIEWER_AGENT_ID,
+        createdByAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+    expect(explicitAssignee.body.assigneeAgentId).toBe(REVIEWER_AGENT_ID);
+
+    const explicitNull = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+      .post("/api/orgs/organization-1/issues")
+      .send({
+        title: "Explicit null assignee",
+        status: "backlog",
+        assigneeAgentId: null,
+        assigneeUserId: null,
+      });
+
+    expect(explicitNull.status).toBe(201);
+    expect(mockIssueService.create).toHaveBeenLastCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        assigneeAgentId: null,
+        assigneeUserId: null,
+        createdByAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+    expect(explicitNull.body.assigneeAgentId).toBeNull();
+    expect(explicitNull.body.assigneeUserId).toBeNull();
+  });
+
+  it("leaves board-created issues unassigned when no assignee is supplied", async () => {
+    mockIssueService.create.mockImplementation(async (_orgId: string, data: Record<string, unknown>) =>
+      makeIssue({
+        assigneeAgentId: (data.assigneeAgentId as string | null | undefined) ?? null,
+        assigneeUserId: (data.assigneeUserId as string | null | undefined) ?? null,
+        createdByAgentId: data.createdByAgentId as string | null,
+        createdByUserId: data.createdByUserId as string | null,
+        status: data.status as "backlog",
+        title: data.title as string,
+      }),
+    );
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/issues")
+      .send({
+        title: "Board-created issue",
+        status: "backlog",
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        title: "Board-created issue",
+        createdByAgentId: null,
+        createdByUserId: "local-board",
+      }),
+    );
+    expect(mockIssueService.create.mock.calls[0]?.[1]).not.toHaveProperty("assigneeAgentId");
+    expect(mockIssueService.create.mock.calls[0]?.[1]).not.toHaveProperty("assigneeUserId");
+    expect(res.body.assigneeAgentId).toBeNull();
+  });
+
+  it("queues a review wakeup when a reviewer issue is created directly in review", async () => {
+    mockIssueService.create.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        reviewerAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp()).post("/api/orgs/organization-1/issues").send({
+      title: "Lifecycle hardening",
+      status: "in_review",
+      priority: "high",
+      reviewerAgentId: ASSIGNEE_AGENT_ID,
+    });
+
+    expect(res.status).toBe(201);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        source: "review",
+        reason: "issue_review_requested",
+        payload: { issueId: "11111111-1111-4111-8111-111111111111", mutation: "create_in_review" },
+        contextSnapshot: expect.objectContaining({
+          source: "issue.create",
+          wakeSource: "review",
+          wakeReason: "issue_review_requested",
+          role: "reviewer",
+          reviewInstructions: expect.stringContaining("structured reviewer decision"),
+        }),
+      }),
+    );
+  });
+
+  it("queues a review wakeup when an issue enters review", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_progress",
+        reviewerAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "in_review",
+        reviewerAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "in_review" });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        source: "review",
+        reason: "issue_review_requested",
+        payload: { issueId: "11111111-1111-4111-8111-111111111111", mutation: "status_to_in_review" },
+        contextSnapshot: expect.objectContaining({
+          source: "issue.status_change",
+          wakeSource: "review",
+          wakeReason: "issue_review_requested",
+          role: "reviewer",
+        }),
+      }),
+    );
+  });
+
+  it("queues a reviewer wakeup when an assignee blocks a reviewed issue", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_progress",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "blocked",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "blocked", comment: "Blocked by missing credentials." });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      REVIEWER_AGENT_ID,
+      expect.objectContaining({
+        source: "review",
+        reason: "issue_review_requested",
+        payload: { issueId: "11111111-1111-4111-8111-111111111111", mutation: "status_to_blocked" },
+        contextSnapshot: expect.objectContaining({
+          source: "issue.status_change",
+          wakeSource: "review",
+          wakeReason: "issue_review_requested",
+          role: "reviewer",
+          issue: expect.objectContaining({ status: "blocked" }),
+          reviewInstructions: expect.stringContaining("human/external blocker"),
+        }),
+      }),
+    );
+  });
+
+  it("normalizes assignee done on a reviewed issue into review and wakes the reviewer", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_progress",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "done" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "in_review" }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.updated",
+        details: expect.objectContaining({
+          status: "in_review",
+          normalizedFromStatus: "done",
+          normalizedReason: "reviewed_issue_assignee_completion",
+        }),
+      }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        source: "review",
+        reason: "issue_review_requested",
+        contextSnapshot: expect.objectContaining({
+          source: "issue.status_change",
+          wakeReason: "issue_review_requested",
+          role: "reviewer",
+        }),
+      }),
+    );
+  });
+
+  it("allows the reviewer agent to mark an in-review issue done without another review wakeup", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "done",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "done" });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "done" }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("wakes the assignee with reviewer comment context when a reviewer requests changes", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "in_progress",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "in_progress", comment: "Please tighten the lifecycle tests." });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        source: "assignment",
+        reason: "issue_changes_requested",
+        payload: {
+          issueId: "11111111-1111-4111-8111-111111111111",
+          mutation: "review_changes_requested",
+          commentId: "comment-1",
+        },
+        contextSnapshot: expect.objectContaining({
+          issueId: "11111111-1111-4111-8111-111111111111",
+          taskId: "11111111-1111-4111-8111-111111111111",
+          commentId: "comment-1",
+          wakeCommentId: "comment-1",
+          source: "issue.review_changes_requested",
+          wakeSource: "assignment",
+          wakeReason: "issue_changes_requested",
+          issue: expect.objectContaining({ status: "in_progress" }),
+          comment: expect.objectContaining({
+            id: "comment-1",
+            body: "Please tighten the lifecycle tests.",
+            authorAgentId: REVIEWER_AGENT_ID,
+          }),
+        }),
+      }),
+    );
+
+    const changesRequestedWakeup = mockHeartbeatService.wakeup.mock.calls.find(
+      (call) => call[0] === ASSIGNEE_AGENT_ID,
+    )?.[1];
+    expect(changesRequestedWakeup).toBeDefined();
+    const context = changesRequestedWakeup?.contextSnapshot as Record<string, unknown>;
+    const promptTemplate = selectPromptTemplate(undefined, context);
+    const renderedPrompt = renderTemplate(promptTemplate, {
+      agent: { id: ASSIGNEE_AGENT_ID, name: "Assigned Agent" },
+      context,
+      issue: context.issue,
+      comment: context.comment,
+    });
+    expect(renderedPrompt).toContain("A reviewer requested changes on an issue you own.");
+    expect(renderedPrompt).toContain("Please tighten the lifecycle tests.");
+  });
+
+  it("wakes the assignee with reviewer comment context when a reviewer returns an issue to todo", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "todo",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "todo", comment: "Please rework the handoff payload." });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        reason: "issue_changes_requested",
+        payload: expect.objectContaining({
+          mutation: "review_changes_requested",
+          commentId: "comment-1",
+        }),
+        contextSnapshot: expect.objectContaining({
+          commentId: "comment-1",
+          wakeCommentId: "comment-1",
+          issue: expect.objectContaining({ status: "todo" }),
+          comment: expect.objectContaining({ body: "Please rework the handoff payload." }),
+        }),
+      }),
+    );
+  });
+
+  it("does not attach comment wake context when review return has no comment", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "in_progress",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "in_progress" });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    const changesRequestedWakeup = mockHeartbeatService.wakeup.mock.calls.find(
+      (call) => call[0] === ASSIGNEE_AGENT_ID,
+    )?.[1];
+    expect(changesRequestedWakeup).toEqual(
+      expect.objectContaining({
+        reason: "issue_changes_requested",
+        payload: expect.not.objectContaining({ commentId: expect.anything() }),
+        contextSnapshot: expect.not.objectContaining({
+          commentId: expect.anything(),
+          wakeCommentId: expect.anything(),
+          comment: expect.anything(),
+        }),
+      }),
+    );
+  });
+
+  it("records a structured reviewer request-changes decision", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "in_progress",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        reviewDecision: "request_changes",
+        comment: "Please add the missing E2E proof.",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "in_progress" }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.review_decision_recorded",
+        runId: RUN_ID,
+        details: expect.objectContaining({
+          decision: "request_changes",
+          status: "in_progress",
+          commentId: "comment-1",
+        }),
+      }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({
+        reason: "issue_changes_requested",
+        payload: expect.objectContaining({ commentId: "comment-1" }),
+        contextSnapshot: expect.objectContaining({
+          commentId: "comment-1",
+          wakeCommentId: "comment-1",
+          comment: expect.objectContaining({
+            body: "Please add the missing E2E proof.",
+            authorAgentId: REVIEWER_AGENT_ID,
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("records a structured reviewer request-changes decision from blocked", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "blocked",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "in_progress",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        reviewDecision: "request_changes",
+        comment: "Credentials are available; retry with the updated setup.",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "in_progress" }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.review_decision_recorded",
+        details: expect.objectContaining({
+          decision: "request_changes",
+          status: "in_progress",
+        }),
+      }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      ASSIGNEE_AGENT_ID,
+      expect.objectContaining({ reason: "issue_changes_requested" }),
+    );
+  });
+
+  it("records a structured reviewer approve decision from blocked as done", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "blocked",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "done",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        reviewDecision: "approve",
+        comment: "Blocker is resolved and the existing work is acceptable.",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "done" }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.review_decision_recorded",
+        details: expect.objectContaining({
+          decision: "approve",
+          status: "done",
+        }),
+      }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("records a blocked reviewer decision as a human handoff outcome", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "blocked",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: patch.status as "blocked",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        reviewDecision: "blocked",
+        comment: "Confirmed: this needs operator input before the assignee can continue.",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ status: "blocked" }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.review_decision_recorded",
+        details: expect.objectContaining({
+          decision: "blocked",
+          outcome: "human_handoff",
+          operatorActionRequired: true,
+          status: "blocked",
+        }),
+      }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.human_intervention_required",
+        details: expect.objectContaining({
+          decision: "blocked",
+          status: "blocked",
+          commentId: "comment-1",
+          previousReviewerAgentId: REVIEWER_AGENT_ID,
+          nextAction: "Human/operator intervention is required before agent review can continue.",
+        }),
+      }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("records a structured needs-followup reviewer decision without changing status", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        status: (patch.status as "in_review" | undefined) ?? "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(REVIEWER_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        reviewDecision: "needs_followup",
+        comment: "Waiting for the preview URL before final review.",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.not.objectContaining({ status: expect.anything() }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.review_decision_recorded",
+        details: expect.objectContaining({
+          decision: "needs_followup",
+          status: "in_review",
+        }),
+      }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("rejects reviewer decisions from a non-reviewer agent", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        status: "in_review",
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        reviewerAgentId: REVIEWER_AGENT_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        reviewDecision: "approve",
+        comment: "Looks good.",
+      });
+
+    expect(res.status).toBe(403);
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
+
   it("wakes the assignee when a backlog issue is moved back into the active queue", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({
@@ -484,6 +1719,90 @@ describe("issue lifecycle routes", () => {
     expect(renderedPrompt).toContain("@worker please check this");
   });
 
+  it("records agent issue comments with the current run id", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "in_progress",
+        checkoutRunId: RUN_ID,
+        executionRunId: RUN_ID,
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, RUN_ID)))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "Close-out evidence." });
+
+    expect(res.status).toBe(201);
+    expect(mockHeartbeatService.reportRunActivity).toHaveBeenCalledWith(RUN_ID);
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.comment_added",
+        entityId: "11111111-1111-4111-8111-111111111111",
+        agentId: ASSIGNEE_AGENT_ID,
+        runId: RUN_ID,
+        details: expect.objectContaining({
+          commentId: "comment-1",
+          bodySnippet: "Close-out evidence.",
+        }),
+      }),
+    );
+  });
+
+  it("does not update assignee when a comment mentions another agent", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({
+        body: "@Peer Agent can you check the interaction copy?",
+        assigneeAgentId: PEER_AGENT_ID,
+        assigneeUserId: null,
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.addComment).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "@Peer Agent can you check the interaction copy?",
+      { userId: "local-board" },
+    );
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      PEER_AGENT_ID,
+      expect.objectContaining({
+        reason: "issue_comment_mentioned",
+      }),
+    );
+  });
+
+  it("rejects agent issue comments with invalid run context before persisting", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "todo",
+      }),
+    );
+
+    const res = await request(createApp(createAgentActor(ASSIGNEE_AGENT_ID, "chat-run-not-a-uuid")))
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "This should not persist." });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Run context is not valid for this issue" });
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "issue.comment_added" }),
+    );
+  });
+
   it("includes issue and comment context when assignee wakeup is queued from comment endpoint", async () => {
     mockIssueService.getById.mockResolvedValue(
       makeIssue({
@@ -547,6 +1866,152 @@ describe("issue lifecycle routes", () => {
     expect(renderedPrompt).toContain("There is a new comment on an issue you own.");
     expect(renderedPrompt).toContain("Lifecycle hardening");
     expect(renderedPrompt).toContain("please check the retry path");
+  });
+
+  it("does not wake the assignee for ordinary comments on backlog issues", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "backlog",
+      }),
+    );
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "parking this for later" });
+
+    expect(res.status).toBe(201);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+  });
+
+  it("wakes only mentioned agents for comments on backlog issues", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "backlog",
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "@Peer Agent can you look at the UX?" });
+
+    expect(res.status).toBe(201);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      PEER_AGENT_ID,
+      expect.objectContaining({
+        source: "automation",
+        reason: "issue_comment_mentioned",
+      }),
+    );
+  });
+
+  it("keeps ordinary comment mentions as notification-only without reassigning user-owned issues", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: null,
+        assigneeUserId: "local-board",
+        status: "todo",
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
+
+    const res = await request(createApp())
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "@Peer Agent can you take a look?" });
+
+    expect(res.status).toBe(201);
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      PEER_AGENT_ID,
+      expect.objectContaining({
+        source: "automation",
+        reason: "issue_comment_mentioned",
+        contextSnapshot: expect.objectContaining({
+          wakeSource: "comment.mention",
+          wakeReason: "issue_comment_mentioned",
+        }),
+      }),
+    );
+  });
+
+  it("treats comment plus explicit assignee change as an ownership handoff instead of a mention wake", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: null,
+        assigneeUserId: "local-board",
+        status: "todo",
+      }),
+    );
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) =>
+      makeIssue({
+        assigneeAgentId: patch.assigneeAgentId as string,
+        assigneeUserId: null,
+        status: "todo",
+      }),
+    );
+    mockIssueService.findMentionedAgents.mockResolvedValue([PEER_AGENT_ID]);
+
+    const res = await request(createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({
+        comment: "@Peer Agent please own this one.",
+        assigneeAgentId: PEER_AGENT_ID,
+        assigneeUserId: null,
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({
+        assigneeAgentId: PEER_AGENT_ID,
+        assigneeUserId: null,
+      }),
+    );
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+      PEER_AGENT_ID,
+      expect.objectContaining({
+        source: "assignment",
+        reason: "issue_assigned",
+        contextSnapshot: expect.objectContaining({
+          wakeSource: "assignment",
+          wakeReason: "issue_assigned",
+        }),
+      }),
+    );
+  });
+
+  it("rejects issue completion from a mention-only agent run that does not own the issue", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: null,
+        assigneeUserId: "local-board",
+        status: "todo",
+      }),
+    );
+    mockHeartbeatService.getRun.mockResolvedValue({
+      id: PEER_RUN_ID,
+      orgId: "organization-1",
+      agentId: PEER_AGENT_ID,
+      status: "running",
+      contextSnapshot: { issueId: "11111111-1111-4111-8111-111111111111", wakeSource: "comment.mention" },
+    });
+
+    const res = await request(createApp(createAgentActor(PEER_AGENT_ID, PEER_RUN_ID)))
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "done" });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Only the checked-out assignee or reviewer can complete issue" });
+    expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 
   it("does not enqueue a duplicate wakeup when an agent checks out its own issue in-run", async () => {

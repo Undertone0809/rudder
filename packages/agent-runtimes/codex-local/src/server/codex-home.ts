@@ -129,6 +129,7 @@ function sanitizeCodexConfigToml(content: string): {
   content: string;
   removedSkillEntries: number;
   removedManagedTables: number;
+  removedNotifyHooks: number;
 } {
   const newline = content.includes("\r\n") ? "\r\n" : "\n";
   const lines = content.split(/\r?\n/);
@@ -138,6 +139,7 @@ function sanitizeCodexConfigToml(content: string): {
   let blockShouldBeRemoved = false;
   let removedSkillEntries = 0;
   let removedManagedTables = 0;
+  let removedNotifyHooks = 0;
 
   const flushBlock = () => {
     if (!blockLines) return;
@@ -164,6 +166,10 @@ function sanitizeCodexConfigToml(content: string): {
     }
 
     if (!blockLines) {
+      if (/^\s*notify\s*=/.test(trimmedLine)) {
+        removedNotifyHooks += 1;
+        continue;
+      }
       output.push(line);
       continue;
     }
@@ -176,6 +182,7 @@ function sanitizeCodexConfigToml(content: string): {
     content: output.join(newline),
     removedSkillEntries,
     removedManagedTables,
+    removedNotifyHooks,
   };
 }
 
@@ -422,6 +429,13 @@ async function syncManagedCodexConfigToml(
     await onLog(
       "stdout",
       `[rudder] Removed ${sanitized.removedManagedTables} inherited Codex plugin/MCP configuration tabl${sanitized.removedManagedTables === 1 ? "e" : "es"} from ${target}\n`,
+    );
+  }
+
+  if (sanitized.removedNotifyHooks > 0) {
+    await onLog(
+      "stdout",
+      `[rudder] Removed ${sanitized.removedNotifyHooks} inherited Codex notify hook${sanitized.removedNotifyHooks === 1 ? "" : "s"} from ${target}\n`,
     );
   }
 

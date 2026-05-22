@@ -33,6 +33,7 @@ import {
 } from "../config/home.js";
 import { bootstrapCeoInvite } from "./auth-bootstrap-ceo.js";
 import { detectPersistentCliState, installPersistentCli } from "../install.js";
+import { checkPostgresConnection } from "../runtime/database.js";
 import { printRudderCliBanner } from "../utils/banner.js";
 
 type SetupMode = "quickstart" | "advanced";
@@ -309,9 +310,7 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
       const s = p.spinner();
       s.start("Testing database connection...");
       try {
-        const { createDb } = await import("@rudderhq/db");
-        const db = createDb(database.connectionString);
-        await db.execute("SELECT 1");
+        await checkPostgresConnection(database.connectionString);
         s.stop("Database connection successful");
       } catch {
         s.stop(pc.yellow("Could not connect to database — you can fix this later with `rudder doctor`"));

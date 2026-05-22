@@ -8,17 +8,28 @@ export type {
   OrganizationWorkspaceFileUpdateRequest,
 } from "./organization.js";
 export type {
+  OrganizationIntelligenceProfile,
+  UpsertOrganizationIntelligenceProfile,
+} from "./organization-intelligence-profile.js";
+export type {
   ChatConversation,
   ChatMessage,
   ChatAttachment,
   ChatContextLink,
   ChatLinkedEntity,
   ChatPrimaryIssueSummary,
+  ChatAskUserOption,
+  ChatAskUserQuestion,
+  ChatAskUserRequest,
+  ChatRichReference,
+  ChatRichReferenceDisplay,
   ChatRuntimeDescriptor,
   ChatOperationProposalDecision,
   ChatOperationProposalDecisionAction,
   ChatOperationProposalDecisionStatus,
   ChatStreamTranscriptEntry,
+  ChatStreamTranscriptTodoItem,
+  ChatStreamTranscriptTodoItemStatus,
   ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent,
   ChatStreamAssistantStateEvent,
@@ -72,6 +83,8 @@ export type {
   AgentSkillEntry,
   AgentSkillSnapshot,
   AgentSkillSyncRequest,
+  AgentSkillTelemetryEvidence,
+  AgentSkillTelemetryEvidenceCounts,
   AgentSkillAnalyticsSkillTotal,
   AgentSkillAnalyticsDay,
   AgentSkillAnalytics,
@@ -156,7 +169,9 @@ export type {
 export type {
   Issue,
   IssueAssigneeAgentRuntimeOverrides,
+  IssueSearchMatch,
   IssueComment,
+  IssueCommitReport,
   IssueDocument,
   IssueDocumentSummary,
   DocumentRevision,
@@ -169,7 +184,7 @@ export type {
   IssueLabel,
 } from "./issue.js";
 export type { Goal, GoalDependencies, GoalDependencyPreview } from "./goal.js";
-export type { Approval, ApprovalComment } from "./approval.js";
+export type { Approval, ApprovalComment, IssueLinkedApproval } from "./approval.js";
 export type {
   MessengerThreadUserState,
   IssueFollow,
@@ -225,7 +240,7 @@ export type {
   GoogleCalendarSyncResponse,
   GoogleCalendarOAuthConfig,
 } from "./calendar.js";
-export type { CostEvent, CostSummary, CostByAgent, CostByProviderModel, CostByBiller, CostByAgentModel, CostWindowSpendRow, CostByProject } from "./cost.js";
+export type { CostEvent, CostSummary, CostTrendPoint, CostByAgent, CostByProviderModel, CostByBiller, CostByAgentModel, CostWindowSpendRow, CostByProject } from "./cost.js";
 export type { FinanceEvent, FinanceSummary, FinanceByBiller, FinanceByKind } from "./finance.js";
 export type {
   HeartbeatRun,

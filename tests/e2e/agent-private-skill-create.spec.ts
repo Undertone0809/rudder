@@ -31,11 +31,6 @@ test.describe("Agent private skill creation", () => {
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: organizationName,
-        defaultChatAgentRuntimeType: "codex_local",
-        defaultChatAgentRuntimeConfig: {
-          model: "gpt-5.4",
-          command: E2E_CODEX_STUB,
-        },
       },
     });
     expect(orgRes.ok()).toBe(true);
@@ -83,6 +78,7 @@ test.describe("Agent private skill creation", () => {
     await expect(agentMain.getByText("Agent skills", { exact: true })).toBeVisible();
     await expect(agentMain.getByText("agent-helper")).toBeVisible();
     await expect(agentMain.getByText("Private agent helper skill.")).toBeVisible();
+    await expect(agentMain.getByText("Installed, not enabled").first()).toBeVisible();
 
     const agentWorkspaceRoot = await resolveSingleAgentWorkspaceRoot(organization.id);
     const skillFilePath = path.join(agentWorkspaceRoot, "skills", "agent-helper", "SKILL.md");

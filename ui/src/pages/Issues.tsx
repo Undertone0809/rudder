@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useCallback, useRef, useState } from "react";
+import { useEffect, useMemo, useCallback, useRef, useState, type ReactElement } from "react";
 import { useLocation, useSearchParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Agent, Project, ReorderIssue } from "@rudderhq/shared";
@@ -24,11 +24,20 @@ import {
   summarizeIssueDrafts,
 } from "../lib/new-issue-dialog";
 import { relativeTime } from "../lib/utils";
+import { formatPriorityLabel } from "../lib/priorities";
 import { EmptyState } from "../components/EmptyState";
 import { IssuesList } from "../components/IssuesList";
 import { LinearIssueSourceBoard } from "../components/LinearIssueSourceBoard";
-import { CircleDot, Clock3, Flag, FolderKanban, PencilLine, Trash2, UserRound } from "lucide-react";
+import { MarkdownBody } from "../components/MarkdownBody";
+import { PriorityBarsIcon } from "../components/PriorityIcon";
+import { CircleDot, Clock3, FolderKanban, PencilLine, Trash2, UserRound } from "lucide-react";
 import { useIssueFollows } from "@/hooks/useIssueFollows";
+
+type DraftMetadataItem = {
+  key: string;
+  icon: ReactElement;
+  label: string;
+};
 
 function formatDraftMetadataValue(value: string) {
   return value.replace(/[-_]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
@@ -54,11 +63,37 @@ function resolveDraftAssigneeLabel(
   return null;
 }
 
+const DRAFT_ISSUE_DELETE_EXIT_MS = 220;
+
+function prefersReducedMotion() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+}
+
+function DraftDescriptionPreview({ description }: { description: string }) {
+  if (!description) {
+    return (
+      <p className="mt-5 text-sm leading-6 text-muted-foreground">
+        Add description...
+      </p>
+    );
+  }
+
+  return (
+    <div data-testid="issue-draft-description-preview" className="mt-5 max-h-[4.5rem] w-full min-w-0 overflow-hidden">
+      <MarkdownBody className="text-sm leading-6 text-muted-foreground [&_blockquote]:my-0 [&_h1]:my-0 [&_h1]:text-sm [&_h1]:leading-6 [&_h2]:my-0 [&_h2]:text-sm [&_h2]:leading-6 [&_h3]:my-0 [&_h3]:text-sm [&_h3]:leading-6 [&_img]:my-0 [&_img]:max-h-[4.5rem] [&_img]:w-full [&_img]:rounded-[calc(var(--radius-sm)-2px)] [&_img]:object-cover [&_ol]:my-0 [&_p]:my-0 [&_pre]:my-0 [&_ul]:my-0">
+        {description}
+      </MarkdownBody>
+    </div>
+  );
+}
+
 function DraftIssuesView({
   drafts,
   agents,
   projects,
   currentUserId,
+  deletingDraftIds,
   onOpenDraft,
   onDeleteDraft,
 }: {
@@ -66,6 +101,7 @@ function DraftIssuesView({
   agents?: Agent[];
   projects?: Project[];
   currentUserId?: string | null;
+  deletingDraftIds?: Set<string>;
   onOpenDraft: (draft: IssueDraftSummary) => void;
   onDeleteDraft: (draft: IssueDraftSummary) => void;
 }) {
@@ -88,37 +124,50 @@ function DraftIssuesView({
 
       <section aria-label="Draft issues" className="grid max-w-5xl grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {drafts.map((draft) => {
+          const isDeleting = deletingDraftIds?.has(draft.id) ?? false;
           const projectName = resolveDraftProjectName(draft, projects);
           const assigneeLabel = resolveDraftAssigneeLabel(draft, agents, currentUserId);
           const metadataItems = [
-            draft.status ? { icon: CircleDot, label: formatDraftMetadataValue(draft.status) } : null,
-            draft.priority ? { icon: Flag, label: formatDraftMetadataValue(draft.priority) } : null,
-            projectName ? { icon: FolderKanban, label: projectName } : null,
-            assigneeLabel ? { icon: UserRound, label: assigneeLabel } : null,
-            { icon: Clock3, label: relativeTime(draft.updatedAt) },
-          ].filter((item): item is { icon: typeof CircleDot; label: string } => Boolean(item));
+            draft.status
+              ? { key: "status", icon: <CircleDot className="h-3 w-3 shrink-0" />, label: formatDraftMetadataValue(draft.status) }
+              : null,
+            draft.priority
+              ? {
+                  key: "priority",
+                  icon: <PriorityBarsIcon priority={draft.priority} className="h-3.5 w-4 shrink-0" />,
+                  label: formatPriorityLabel(draft.priority),
+                }
+              : null,
+            projectName ? { key: "project", icon: <FolderKanban className="h-3 w-3 shrink-0" />, label: projectName } : null,
+            assigneeLabel ? { key: "assignee", icon: <UserRound className="h-3 w-3 shrink-0" />, label: assigneeLabel } : null,
+            { key: "updated", icon: <Clock3 className="h-3 w-3 shrink-0" />, label: relativeTime(draft.updatedAt) },
+          ].filter((item): item is DraftMetadataItem => Boolean(item));
 
           return (
             <article
               key={draft.id}
               data-testid="issue-draft-card"
-              className="group relative min-h-36 rounded-[var(--radius-sm)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_88%,transparent)] transition-[background-color,border-color] hover:border-[color:var(--border-strong)] hover:bg-[color:var(--surface-elevated)]"
+              data-deleting={isDeleting ? "true" : undefined}
+              aria-busy={isDeleting ? "true" : undefined}
+              className="motion-draft-issue-card group relative min-h-36 rounded-[var(--radius-sm)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_88%,transparent)] hover:border-[color:var(--border-strong)] hover:bg-[color:var(--surface-elevated)]"
             >
               <button
                 type="button"
-                className="flex h-full min-h-36 w-full flex-col items-start px-4 py-3 text-left"
+                disabled={isDeleting}
+                aria-label={`Open draft ${draft.title}`}
+                className="absolute inset-0 z-10 rounded-[var(--radius-sm)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 onClick={() => onOpenDraft(draft)}
-              >
+              />
+              <div className="pointer-events-none flex h-full min-h-36 w-full flex-col items-start px-4 py-3 text-left">
                 <div className="flex w-full min-w-0 items-start gap-2 pr-9">
                   <PencilLine className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-foreground">{draft.title}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                       {metadataItems.map((item) => {
-                        const Icon = item.icon;
                         return (
-                          <span key={`${draft.id}-${item.label}`} className="inline-flex min-w-0 items-center gap-1">
-                            <Icon className="h-3 w-3 shrink-0" />
+                          <span key={`${draft.id}-${item.key}`} className="inline-flex min-w-0 items-center gap-1">
+                            {item.icon}
                             <span className="max-w-[11rem] truncate">{item.label}</span>
                           </span>
                         );
@@ -126,20 +175,19 @@ function DraftIssuesView({
                     </div>
                   </div>
                 </div>
-                <p className="mt-5 line-clamp-3 text-sm leading-6 text-muted-foreground">
-                  {draft.description || "Add description..."}
-                </p>
-              </button>
+                <DraftDescriptionPreview description={draft.description} />
+              </div>
               <button
                 type="button"
                 data-testid="issue-draft-delete-button"
+                disabled={isDeleting}
                 aria-label={`Delete draft ${draft.title}`}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
                   onDeleteDraft(draft);
                 }}
-                className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-100 transition-colors hover:bg-[color:color-mix(in_oklab,var(--destructive)_16%,transparent)] hover:text-destructive"
+                className="absolute right-3 top-3 z-20 inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-100 transition-colors hover:bg-[color:color-mix(in_oklab,var(--destructive)_16%,transparent)] hover:text-destructive"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -236,7 +284,20 @@ export function Issues() {
   const [issueDraftSummaries, setIssueDraftSummaries] = useState<IssueDraftSummary[]>(() =>
     summarizeIssueDrafts(selectedOrganizationId),
   );
+  const [deletingDraftIds, setDeletingDraftIds] = useState<Set<string>>(() => new Set());
+  const deletingDraftIdsRef = useRef<Set<string>>(new Set());
   const { followedIssueIds, toggleFollowIssue } = useIssueFollows(selectedOrganizationId);
+
+  const setDraftDeleting = useCallback((draftId: string, isDeleting: boolean) => {
+    const nextDeletingDraftIds = new Set(deletingDraftIdsRef.current);
+    if (isDeleting) {
+      nextDeletingDraftIds.add(draftId);
+    } else {
+      nextDeletingDraftIds.delete(draftId);
+    }
+    deletingDraftIdsRef.current = nextDeletingDraftIds;
+    setDeletingDraftIds(nextDeletingDraftIds);
+  }, []);
 
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(selectedOrganizationId!),
@@ -352,6 +413,7 @@ export function Issues() {
         agents={agents}
         projects={projects}
         currentUserId={currentUserId}
+        deletingDraftIds={deletingDraftIds}
         onOpenDraft={(draft) => {
           openNewIssue({ draftId: draft.id });
         }}
@@ -363,8 +425,21 @@ export function Issues() {
             tone: "destructive",
           });
           if (!confirmed) return;
-          deleteIssueDraft(draft.id);
-          pushToast({ title: "Draft issue deleted", tone: "success" });
+          if (deletingDraftIdsRef.current.has(draft.id)) return;
+          setDraftDeleting(draft.id, true);
+
+          const completeDeletion = () => {
+            deleteIssueDraft(draft.id);
+            setDraftDeleting(draft.id, false);
+            pushToast({ title: "Draft issue deleted", tone: "success" });
+          };
+
+          if (prefersReducedMotion()) {
+            completeDeletion();
+            return;
+          }
+
+          window.setTimeout(completeDeletion, DRAFT_ISSUE_DELETE_EXIT_MS);
         }}
       />
     );

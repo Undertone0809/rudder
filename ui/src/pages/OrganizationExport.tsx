@@ -581,7 +581,6 @@ function ExportBuildPanel({
   cancelPending,
   onCancel,
   onRetry,
-  onDownload,
 }: {
   job: OrganizationExportJob | null;
   ready: boolean;
@@ -589,7 +588,6 @@ function ExportBuildPanel({
   cancelPending: boolean;
   onCancel: () => void;
   onRetry: () => void;
-  onDownload: () => void;
 }) {
   if (!job) return null;
 
@@ -650,24 +648,21 @@ function ExportBuildPanel({
             {job.progress.fileCount !== null ? <span>{job.progress.fileCount} files</span> : null}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {active ? (
-            <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={cancelPending}>
-              <X className="h-3.5 w-3.5" />
-              Cancel
-            </Button>
-          ) : failed || canceled || stale ? (
-            <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-              <RefreshCw className="h-3.5 w-3.5" />
-              Retry
-            </Button>
-          ) : ready ? (
-            <Button type="button" size="sm" onClick={onDownload}>
-              <Download className="h-3.5 w-3.5" />
-              Download .zip
-            </Button>
-          ) : null}
-        </div>
+        {(active || failed || canceled || stale) && (
+          <div className="flex shrink-0 items-center gap-2">
+            {active ? (
+              <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={cancelPending}>
+                <X className="h-3.5 w-3.5" />
+                Cancel
+              </Button>
+            ) : failed || canceled || stale ? (
+              <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Retry
+              </Button>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1166,7 +1161,6 @@ export function OrganizationExport() {
         cancelPending={cancelExportMutation.isPending}
         onCancel={handleCancelExport}
         onRetry={handleBuildExport}
-        onDownload={handleDownloadBuiltExport}
       />
 
       {/* Warnings */}

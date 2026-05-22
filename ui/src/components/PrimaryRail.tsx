@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  useCallback,
   useEffect,
   useRef,
 } from "react";
@@ -33,9 +34,11 @@ import {
   requestDesktopNotificationPermission,
 } from "@/lib/desktop-notification-permission";
 import { queryKeys } from "@/lib/queryKeys";
+import { requestMessengerUnreadScroll } from "@/lib/messenger-unread-scroll";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { useI18n } from "@/context/I18nContext";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import { useSidebar } from "@/context/SidebarContext";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -78,23 +81,30 @@ function RailNavItem({
   to,
   label,
   icon: Icon,
+  tourTarget,
   badge,
   badgeTone = "default",
   badgeTestId,
   active,
+  onDoubleClick,
 }: {
   to: string;
   label: string;
   icon: typeof Inbox;
+  tourTarget?: string;
   badge?: number;
   badgeTone?: "default" | "danger";
   badgeTestId?: string;
   active?: boolean;
+  onDoubleClick?: () => void;
 }) {
   return (
     <NavLink
       to={to}
       aria-current={active ? "page" : undefined}
+      data-tour-target={tourTarget}
+      data-tour-spotlight={tourTarget ? "compact-rail" : undefined}
+      onDoubleClick={onDoubleClick}
       className={({ isActive }) =>
         cn(
           "relative z-10 flex min-h-[56px] w-[66px] translate-x-1 flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
@@ -139,6 +149,7 @@ export function PrimaryRail({
 }) {
   const { t } = useI18n();
   const { openNewIssue, openNewAgent, openNewProject } = useDialog();
+  const { setSidebarOpen } = useSidebar();
   const { selectedOrganizationId } = useOrganization();
   const inboxBadge = useInboxBadge(selectedOrganizationId);
   const notificationsSettingsQuery = useQuery({
@@ -213,6 +224,11 @@ export function PrimaryRail({
   const activeRailStyle = activeRailIndex >= 0
     ? ({ "--motion-rail-active-index": activeRailIndex } as CSSProperties)
     : undefined;
+  const handleMessengerDoubleClick = useCallback(() => {
+    if ((inboxBadge.inbox ?? 0) <= 0) return;
+    setSidebarOpen(true);
+    requestMessengerUnreadScroll();
+  }, [inboxBadge.inbox, setSidebarOpen]);
 
   useEffect(() => {
     if (notificationsSettingsQuery.isLoading) return;
@@ -290,12 +306,17 @@ export function PrimaryRail({
   ]);
 
   function openSearch() {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
+    document.dispatchEvent(
+      new CustomEvent("rudder:open-command-palette", {
+        detail: { source: "primary-rail" },
+      }),
+    );
   }
 
   return (
     <aside
       data-testid="primary-rail"
+      data-tour-target="primary-rail"
       className={cn(
         "my-2 flex h-[calc(100%-1rem)] shrink-0 flex-col items-center py-1.5 text-[color:color-mix(in_oklab,var(--foreground)_78%,white)]",
         isDesktopShell ? "ml-3 mr-1 w-[40px]" : "ml-2 mr-3 px-5 w-[50px]",
@@ -321,13 +342,18 @@ export function PrimaryRail({
               variant="ghost"
               size="icon-sm"
               className={railUtilityButtonClass}
+              data-tour-target="create-menu"
               title={t("common.create")}
               aria-label={t("common.create")}
             >
               <Plus className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent side="right" align="start" className="surface-overlay w-48 text-foreground">
+          <DropdownMenuContent
+            side="right"
+            align="start"
+            className="rail-create-menu-content glass-popover w-48 text-foreground"
+          >
             <DropdownMenuItem onClick={() => navigate("/messenger/chat")}>
               <MessageCirclePlus className="h-4 w-4" />
               Create new chat
@@ -367,10 +393,12 @@ export function PrimaryRail({
             to={item.to}
             label={item.label}
             icon={item.icon}
+            tourTarget={item.key === "issues" ? "issues-nav" : undefined}
             badge={item.badge}
             badgeTone={item.badgeTone}
             badgeTestId={item.badgeTestId}
             active={item.active}
+            onDoubleClick={item.key === "messenger" ? handleMessengerDoubleClick : undefined}
           />
         ))}
       </nav>

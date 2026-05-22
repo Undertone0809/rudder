@@ -42,10 +42,43 @@ type DesktopUpdateCheckResult = {
   checkedAt: string;
 };
 
+type DesktopUpdateChannel = DesktopUpdateCheckResult["channel"];
+
 type DesktopUpdateInstallResult =
-  | { status: "started"; version: string }
+  | { status: "started"; version: string; updateId?: string }
+  | { status: "waiting"; version: string; updateId?: string; totalRuns: number; message: string }
   | { status: "unavailable"; message: string }
   | { status: "blocked"; totalRuns: number; message: string }
+  | { status: "failed"; message: string };
+
+type DesktopUpdateProgressPhase =
+  | "starting"
+  | "resolving_release"
+  | "downloading_checksums"
+  | "downloading_asset"
+  | "verifying_checksum"
+  | "ready_to_install"
+  | "waiting_for_active_runs"
+  | "preparing_restart"
+  | "closing"
+  | "failed";
+
+type DesktopUpdateProgressEvent = {
+  updateId: string;
+  version: string;
+  phase: DesktopUpdateProgressPhase;
+  message: string;
+  percent?: number;
+  transferredBytes?: number;
+  totalBytes?: number;
+  totalRuns?: number;
+  error?: string;
+  at: string;
+};
+
+type DesktopUpdateApplyResult =
+  | { status: "started"; updateId: string; version: string }
+  | { status: "unavailable"; message: string }
   | { status: "failed"; message: string };
 
 type OpenNotificationSettingsResult = {
@@ -68,6 +101,12 @@ type DesktopPathPickOptions = {
 type DesktopPathPickResult = {
   canceled: boolean;
   path: string | null;
+};
+
+type DesktopImageDataPayload = {
+  filename?: string | null;
+  contentType: string;
+  base64: string;
 };
 
 type DesktopIdeTarget = {
@@ -126,12 +165,31 @@ contextBridge.exposeInMainWorld("desktopShell", {
   openWorkspaceFileInIde: (rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]) =>
     ipcRenderer.invoke("desktop:open-workspace-file-in-ide", { rootPath, filePath, ideId }) as Promise<void>,
   copyText: (value: string) => ipcRenderer.invoke("desktop:copy-text", value),
+  copyImage: (payload: DesktopImageDataPayload) => ipcRenderer.invoke("desktop:copy-image", payload),
+  showImageInFolder: (payload: DesktopImageDataPayload) => ipcRenderer.invoke("desktop:show-image-in-folder", payload),
   setAppearance: (theme: "light" | "dark" | "system") => ipcRenderer.invoke("desktop:set-appearance", theme),
+  getUpdateChannel: () => ipcRenderer.invoke("desktop:get-update-channel") as Promise<DesktopUpdateChannel>,
+  setUpdateChannel: (channel: DesktopUpdateChannel) =>
+    ipcRenderer.invoke("desktop:set-update-channel", channel) as Promise<DesktopUpdateChannel>,
+  reloadApp: () => ipcRenderer.invoke("desktop:reload-app"),
   restart: () => ipcRenderer.invoke("desktop:restart"),
   getAppVersion: () => ipcRenderer.invoke("desktop:get-app-version") as Promise<string>,
   checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates") as Promise<DesktopUpdateCheckResult>,
   installUpdate: (version: string) =>
     ipcRenderer.invoke("desktop:install-update", version) as Promise<DesktopUpdateInstallResult>,
+  applyUpdate: (updateId: string) =>
+    ipcRenderer.invoke("desktop:apply-update", updateId) as Promise<DesktopUpdateApplyResult>,
+  getUpdateProgress: () =>
+    ipcRenderer.invoke("desktop:get-update-progress") as Promise<DesktopUpdateProgressEvent | null>,
+  onUpdateProgress: (listener: (event: DesktopUpdateProgressEvent) => void) => {
+    const wrapped = (_event: IpcRendererEvent, payload: DesktopUpdateProgressEvent) => {
+      listener(payload);
+    };
+    ipcRenderer.on("desktop:update-progress", wrapped);
+    return () => {
+      ipcRenderer.removeListener("desktop:update-progress", wrapped);
+    };
+  },
   getSystemPermissions: () =>
     ipcRenderer.invoke("desktop:get-system-permissions") as Promise<DesktopSystemPermissions>,
   sendFeedback: () => ipcRenderer.invoke("desktop:send-feedback") as Promise<void>,
@@ -156,11 +214,19 @@ declare global {
       openWorkspace(rootPath: string, targetId?: DesktopWorkspaceLaunchTarget["id"]): Promise<void>;
       openWorkspaceFileInIde(rootPath: string, filePath: string, ideId?: DesktopIdeTarget["id"]): Promise<void>;
       copyText(value: string): Promise<void>;
+      copyImage(payload: DesktopImageDataPayload): Promise<void>;
+      showImageInFolder(payload: DesktopImageDataPayload): Promise<void>;
       setAppearance(theme: "light" | "dark" | "system"): Promise<void>;
+      getUpdateChannel(): Promise<DesktopUpdateChannel>;
+      setUpdateChannel(channel: DesktopUpdateChannel): Promise<DesktopUpdateChannel>;
+      reloadApp(): Promise<void>;
       restart(): Promise<void>;
       getAppVersion(): Promise<string>;
       checkForUpdates(): Promise<DesktopUpdateCheckResult>;
       installUpdate(version: string): Promise<DesktopUpdateInstallResult>;
+      applyUpdate(updateId: string): Promise<DesktopUpdateApplyResult>;
+      getUpdateProgress(): Promise<DesktopUpdateProgressEvent | null>;
+      onUpdateProgress(listener: (event: DesktopUpdateProgressEvent) => void): () => void;
       getSystemPermissions(): Promise<DesktopSystemPermissions>;
       sendFeedback(): Promise<void>;
       openExternal(target: string): Promise<void>;

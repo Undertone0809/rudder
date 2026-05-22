@@ -19,7 +19,8 @@ describe("desktop update checks", () => {
   it("normalizes canary release tags for canary builds", () => {
     expect(normalizeReleaseVersion("canary/v0.1.0-canary.4", "canary")).toBe("0.1.0");
     expect(normalizeReleaseVersion("canary%2Fv0.1.0-canary.4", "canary")).toBe("0.1.0");
-    expect(normalizeReleaseVersion("v0.1.0", "canary")).toBeNull();
+    expect(normalizeReleaseVersion("v0.1.0", "canary")).toBe("0.1.0");
+    expect(normalizeReleaseVersion("v0.1.0-beta.1", "canary")).toBeNull();
   });
 
   it("treats stable releases as newer than prereleases with the same base version", () => {
@@ -50,18 +51,18 @@ describe("desktop update checks", () => {
     });
   });
 
-  it("chooses the highest canary release for canary builds", () => {
+  it("chooses the highest release across stable and canary when canary is selected", () => {
     expect(chooseLatestRelease([
       { tag_name: "canary/v0.1.0-canary.9", prerelease: true, html_url: "canary-old" },
-      { tag_name: "canary/v0.1.0-canary.32", prerelease: true, html_url: "canary-new" },
-      { tag_name: "v0.2.0", prerelease: false, html_url: "stable" },
+      { tag_name: "canary/v0.2.0-canary.32", prerelease: true, html_url: "canary-new" },
+      { tag_name: "v0.2.1", prerelease: false, html_url: "stable" },
     ], "canary")).toEqual({
-      version: "0.1.0-canary.32",
-      releaseUrl: "canary-new",
+      version: "0.2.1",
+      releaseUrl: "stable",
     });
   });
 
-  it("reports update availability against the latest canary release for canary builds", async () => {
+  it("defaults update checks to stable even when the running version is canary", async () => {
     const result = await checkForRudderDesktopUpdates({
       currentVersion: "0.1.0-canary.14",
       appName: "Rudder",
@@ -74,9 +75,28 @@ describe("desktop update checks", () => {
     });
 
     expect(result.status).toBe("update-available");
+    expect(result.channel).toBe("stable");
+    expect(result.latestVersion).toBe("0.1.0");
+    expect(result.releaseUrl).toBe("stable");
+  });
+
+  it("reports update availability against the latest stable or canary release when canary is selected", async () => {
+    const result = await checkForRudderDesktopUpdates({
+      currentVersion: "0.2.0-canary.41",
+      appName: "Rudder",
+      repo: "example/rudder",
+      releasesUrl: "https://example.test/releases",
+      channel: "canary",
+      fetchImpl: async () => new Response(JSON.stringify([
+        { tag_name: "canary/v0.2.0-canary.41", prerelease: true, html_url: "canary" },
+        { tag_name: "v0.2.1", prerelease: false, html_url: "stable" },
+      ])),
+    });
+
+    expect(result.status).toBe("update-available");
     expect(result.channel).toBe("canary");
-    expect(result.latestVersion).toBe("0.1.1-canary.1");
-    expect(result.releaseUrl).toBe("canary");
+    expect(result.latestVersion).toBe("0.2.1");
+    expect(result.releaseUrl).toBe("stable");
   });
 
   it("falls back to the releases page when the GitHub API is rate-limited", async () => {
@@ -87,11 +107,13 @@ describe("desktop update checks", () => {
         appName: "Rudder",
         repo: "example/rudder",
         releasesUrl: "https://github.com/example/rudder/releases",
+        channel: "canary",
         fetchImpl: async (url) => {
           if (String(url).includes("api.github.com")) {
             return new Response("rate limited", { status: 403 });
           }
           return new Response(`
+            <a href="/example/rudder/releases/tag/v0.1.1">stable 0.1.1</a>
             <a href="/example/rudder/releases/tag/canary%2Fv0.1.0-canary.31">canary 31</a>
             <a href="/example/rudder/releases/tag/canary%2Fv0.1.0-canary.32">canary 32</a>
           `);
@@ -99,8 +121,8 @@ describe("desktop update checks", () => {
       });
 
       expect(result.status).toBe("update-available");
-      expect(result.latestVersion).toBe("0.1.0-canary.32");
-      expect(result.releaseUrl).toBe("https://github.com/example/rudder/releases/tag/canary%2Fv0.1.0-canary.32");
+      expect(result.latestVersion).toBe("0.1.1");
+      expect(result.releaseUrl).toBe("https://github.com/example/rudder/releases/tag/v0.1.1");
     } finally {
       warn.mockRestore();
     }

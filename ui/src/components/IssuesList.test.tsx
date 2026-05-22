@@ -21,6 +21,13 @@ vi.mock("@tanstack/react-query", () => ({
         error: null,
       };
     }
+    if (queryKey[0] === "issues" && queryKey[2] === "labels") {
+      return {
+        data: [label],
+        isLoading: false,
+        error: null,
+      };
+    }
     return {
       data: [],
       isLoading: false,
@@ -95,6 +102,8 @@ const baseIssue: Issue = {
   boardOrder: 1000,
   assigneeAgentId: null,
   assigneeUserId: null,
+  reviewerAgentId: null,
+  reviewerUserId: null,
   checkoutRunId: null,
   executionRunId: null,
   executionAgentNameKey: null,
@@ -176,7 +185,20 @@ function renderIssuesList(
 }
 
 describe("IssuesList", () => {
+  it("defaults to board mode when no saved issue view preference exists", () => {
+    const onUpdateIssue = vi.fn();
+    const container = renderIssuesList(onUpdateIssue);
+
+    expect(container.querySelector('[data-testid="kanban-column-todo"]')).toBeTruthy();
+    expect(container.textContent).toContain("Hidden columns");
+  });
+
   it("opens the assignee picker for an unassigned issue and applies the selected assignee", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({ viewMode: "list" }),
+    );
+
     const onUpdateIssue = vi.fn();
     const container = renderIssuesList(onUpdateIssue);
 
@@ -210,6 +232,70 @@ describe("IssuesList", () => {
       assigneeAgentId: "agent-1",
       assigneeUserId: null,
     });
+  });
+
+  it("uses auto-hiding scrollbars in issue filter and assignee popovers", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({ viewMode: "list" }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[baseIssue]}
+          agents={[
+            { id: "agent-1", name: "Alice", role: "engineer", title: null },
+            { id: "agent-2", name: "Bob", role: "engineer", title: null },
+          ]}
+          projects={[
+            { id: "project-1", name: "Rudder dev" },
+            { id: "project-2", name: "Rudder Release" },
+          ]}
+          viewStateKey="test:issues"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    const filterButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Filter"),
+    );
+    expect(filterButton).toBeTruthy();
+
+    act(() => {
+      filterButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    for (const testId of [
+      "issues-filter-assignee-scroll",
+      "issues-filter-labels-scroll",
+      "issues-filter-projects-scroll",
+    ]) {
+      expect(document.body.querySelector(`[data-testid="${testId}"]`)?.classList.contains("scrollbar-auto-hide")).toBe(true);
+    }
+
+    const assigneeTrigger = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Assignee",
+    );
+    expect(assigneeTrigger).toBeTruthy();
+
+    act(() => {
+      assigneeTrigger?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(document.body.querySelector('[data-testid="issue-row-assignee-picker-scroll"]')?.classList.contains("scrollbar-auto-hide")).toBe(true);
   });
 
   it("renders project groups when the saved view groups issues by project", () => {
@@ -366,16 +452,15 @@ describe("IssuesList", () => {
     });
 
     const card = container.querySelector('[data-testid="kanban-card-RUD-1"]');
-    const metadata = card?.querySelector('[data-slot="kanban-card-metadata"]');
-    const assignee = Array.from(metadata?.children ?? []).find((child) =>
-      child.textContent?.includes("Ella"),
-    );
+    const primaryAssignee = card?.querySelector('[data-slot="kanban-card-primary-assignee"]');
+    const assignee = primaryAssignee?.querySelector('[data-slot="kanban-card-assignee"]');
 
     expect(card?.classList.contains("overflow-hidden")).toBe(true);
-    expect(metadata?.classList.contains("min-w-0")).toBe(true);
-    expect(metadata?.classList.contains("overflow-hidden")).toBe(true);
+    expect(primaryAssignee?.classList.contains("min-w-0")).toBe(true);
+    expect(primaryAssignee?.classList.contains("overflow-hidden")).toBe(true);
+    expect(assignee?.textContent).toContain("Ella");
     expect(assignee?.classList.contains("min-w-0")).toBe(true);
-    expect(assignee?.classList.contains("flex-1")).toBe(true);
+    expect(assignee?.classList.contains("overflow-hidden")).toBe(true);
   });
 
   it("opens the new issue dialog from an empty board lane with scoped project and status defaults", () => {
@@ -497,6 +582,7 @@ describe("IssuesList", () => {
         <IssuesList
           issues={[{
             ...baseIssue,
+            reviewerAgentId: "agent-1",
             labels: [label],
             labelIds: [label.id],
             projectId: "project-1",
@@ -513,7 +599,55 @@ describe("IssuesList", () => {
     expect(container.textContent).toContain("Backend");
     expect(container.textContent).toContain("Operator console");
     expect(container.textContent).toContain("Updated");
+    expect(container.textContent).not.toContain("Alice");
     expect(container.textContent).not.toContain("RUD-1");
+  });
+
+  it("shows the default board card metadata for new views", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({ viewMode: "board" }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[{
+            ...baseIssue,
+            reviewerAgentId: "agent-2",
+            labels: [label],
+            labelIds: [label.id],
+            projectId: "project-1",
+          }]}
+          agents={[
+            { id: "agent-1", name: "Alice", role: "engineer", title: null },
+            { id: "agent-2", name: "Review Bot", role: "qa", title: null },
+          ]}
+          projects={[{ id: "project-1", name: "Operator console" }]}
+          viewStateKey="test:issues"
+          toolbarMode="hidden"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("RUD-1");
+    expect(container.textContent).toContain("Review Bot");
+    expect(container.textContent).toContain("Backend");
+    expect(container.textContent).toContain("Operator console");
+    expect(container.textContent).toContain("Created");
+    expect(container.textContent).not.toContain("Updated");
   });
 
   it("toggles board display properties from the toolbar and persists them", () => {
@@ -539,7 +673,7 @@ describe("IssuesList", () => {
     act(() => {
       root.render(
         <IssuesList
-          issues={[{ ...baseIssue, projectId: "project-1" }]}
+          issues={[{ ...baseIssue, projectId: "project-1", reviewerAgentId: "agent-1" }]}
           agents={[{ id: "agent-1", name: "Alice", role: "engineer", title: null }]}
           projects={[{ id: "project-1", name: "Operator console" }]}
           viewStateKey="test:issues"
@@ -550,6 +684,7 @@ describe("IssuesList", () => {
     });
 
     expect(container.textContent).not.toContain("Operator console");
+    expect(container.textContent).not.toContain("Alice");
 
     const displayButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("Display"),
@@ -565,13 +700,133 @@ describe("IssuesList", () => {
     );
     expect(projectLabel).toBeTruthy();
 
+    const reviewerLabel = Array.from(document.body.querySelectorAll("label")).find(
+      (entry) => entry.textContent?.trim() === "Reviewer",
+    );
+    expect(reviewerLabel).toBeTruthy();
+
+    act(() => {
+      reviewerLabel?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain("Alice");
+
     act(() => {
       projectLabel?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
 
     expect(container.textContent).toContain("Operator console");
     expect(JSON.parse(window.localStorage.getItem("test:issues:org-1") ?? "{}")).toMatchObject({
-      displayProperties: ["identifier", "project"],
+      displayProperties: ["identifier", "reviewer", "project"],
+    });
+  });
+
+  it("sorts each board status lane using the saved sort order", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({
+        viewMode: "board",
+        sortField: "priority",
+        sortDir: "asc",
+      }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[
+            issueFixture({ id: "todo-low", identifier: "RUD-10", title: "Todo low", status: "todo", priority: "low" }),
+            issueFixture({ id: "todo-critical", identifier: "RUD-11", title: "Todo critical", status: "todo", priority: "critical" }),
+            issueFixture({ id: "todo-high", identifier: "RUD-12", title: "Todo high", status: "todo", priority: "high" }),
+            issueFixture({ id: "done-low", identifier: "RUD-13", title: "Done low", status: "done", priority: "low" }),
+            issueFixture({ id: "done-high", identifier: "RUD-14", title: "Done high", status: "done", priority: "high" }),
+          ]}
+          viewStateKey="test:issues"
+          toolbarMode="hidden"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    const todoCards = Array.from(
+      container.querySelectorAll('[data-testid="kanban-column-todo"] [data-testid^="kanban-card-"]'),
+    ).map((card) => card.textContent);
+    const doneCards = Array.from(
+      container.querySelectorAll('[data-testid="kanban-column-done"] [data-testid^="kanban-card-"]'),
+    ).map((card) => card.textContent);
+
+    expect(todoCards[0]).toContain("Todo critical");
+    expect(todoCards[1]).toContain("Todo high");
+    expect(todoCards[2]).toContain("Todo low");
+    expect(doneCards[0]).toContain("Done high");
+    expect(doneCards[1]).toContain("Done low");
+  });
+
+  it("shows the sort control in board mode and persists board card sorting", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({
+        viewMode: "board",
+        sortField: "updated",
+        sortDir: "desc",
+      }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[baseIssue]}
+          viewStateKey="test:issues"
+          toolbarMode="controls-only"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    const sortButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Sort"),
+    );
+    expect(sortButton).toBeTruthy();
+
+    act(() => {
+      sortButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const priorityButton = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Priority"),
+    );
+    expect(priorityButton).toBeTruthy();
+
+    act(() => {
+      priorityButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(JSON.parse(window.localStorage.getItem("test:issues:org-1") ?? "{}")).toMatchObject({
+      viewMode: "board",
+      sortField: "priority",
+      sortDir: "asc",
     });
   });
 

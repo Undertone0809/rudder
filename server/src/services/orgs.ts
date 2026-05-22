@@ -74,8 +74,6 @@ export function organizationService(db: Db) {
     spentMonthlyCents: organizations.spentMonthlyCents,
     requireBoardApprovalForNewAgents: organizations.requireBoardApprovalForNewAgents,
     defaultChatIssueCreationMode: organizations.defaultChatIssueCreationMode,
-    defaultChatAgentRuntimeType: organizations.defaultChatAgentRuntimeType,
-    defaultChatAgentRuntimeConfig: organizations.defaultChatAgentRuntimeConfig,
     brandColor: organizations.brandColor,
     logoAssetId: organizationLogos.assetId,
     createdAt: organizations.createdAt,

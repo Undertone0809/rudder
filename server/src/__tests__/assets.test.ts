@@ -16,6 +16,12 @@ vi.mock("../services/index.js", () => ({
     create: createAssetMock,
     getById: getAssetByIdMock,
   })),
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: logActivityMock,
 }));
 

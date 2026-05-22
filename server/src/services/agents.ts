@@ -12,10 +12,12 @@ import {
   costEvents,
   heartbeatRunEvents,
   heartbeatRuns,
-  organizations,
 } from "@rudderhq/db";
-import type { AgentRuntimeType } from "@rudderhq/shared";
-import { isUuidLike, normalizeAgentUrlKey } from "@rudderhq/shared";
+import {
+  AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX,
+  isUuidLike,
+  normalizeAgentUrlKey,
+} from "@rudderhq/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { resolveHomeAwarePath, resolveOrganizationAgentsDir } from "../home-paths.js";
 import { normalizeAgentPermissions } from "./agent-permissions.js";
@@ -43,30 +45,6 @@ const CONFIG_REVISION_FIELDS = [
   "budgetMonthlyCents",
   "metadata",
 ] as const;
-
-const ORGANIZATION_DEFAULT_CHAT_RUNTIME_TYPES = new Set<AgentRuntimeType>([
-  "claude_local",
-  "codex_local",
-  "cursor",
-  "gemini_local",
-  "opencode_local",
-  "pi_local",
-  "openclaw_gateway",
-]);
-
-const ORGANIZATION_DEFAULT_CHAT_CONFIG_KEYS_TO_STRIP = new Set([
-  "promptTemplate",
-  "bootstrapPromptTemplate",
-  "instructionsFilePath",
-  "instructionsBundleMode",
-  "instructionsRootPath",
-  "instructionsEntryFile",
-  "agentsMdPath",
-  "rudderSkillSync",
-  "paperclipSkillSync",
-  "rudderRuntimeSkills",
-  "paperclipRuntimeSkills",
-]);
 
 type ConfigRevisionField = (typeof CONFIG_REVISION_FIELDS)[number];
 type AgentConfigSnapshot = Pick<typeof agents.$inferSelect, ConfigRevisionField>;
@@ -104,14 +82,6 @@ function isHiddenSystemAgentMetadata(metadata: unknown) {
 
 function jsonEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function sanitizeOrganizationDefaultChatConfig(agentRuntimeConfig: unknown): Record<string, unknown> {
-  const sanitized = sanitizeRecord(isPlainRecord(agentRuntimeConfig) ? agentRuntimeConfig : {});
-  for (const key of ORGANIZATION_DEFAULT_CHAT_CONFIG_KEYS_TO_STRIP) {
-    delete sanitized[key];
-  }
-  return sanitized;
 }
 
 function buildConfigSnapshot(
@@ -156,6 +126,22 @@ function hasConfigPatchFields(data: Partial<typeof agents.$inferInsert>) {
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+export function createDefaultAgentAvatarIcon() {
+  return `${AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX}${randomUUID()}`;
+}
+
+export function normalizeCreatedAgentAvatarIcon(icon: unknown) {
+  if (typeof icon !== "string") return createDefaultAgentAvatarIcon();
+  const trimmed = icon.trim();
+  if (
+    trimmed.startsWith(AGENT_DICEBEAR_NOTIONISTS_ICON_PREFIX)
+    || trimmed.startsWith("asset:")
+  ) {
+    return trimmed;
+  }
+  return createDefaultAgentAvatarIcon();
 }
 
 function extractWorkspaceKeyFromManagedInstructionsConfig(
@@ -572,7 +558,6 @@ export function agentService(db: Db) {
         })
         .from(agents)
         .where(eq(agents.orgId, orgId));
-      const hasVisibleExistingAgents = existingAgents.some((agent) => isVisibleAgentRow(agent));
       const requestedName = typeof data.name === "string" ? data.name.trim() : "";
       const baseName =
         requestedName.length > 0 ? requestedName : pickUniqueAgentName(existingAgents);
@@ -588,6 +573,7 @@ export function agentService(db: Db) {
 
       const role = data.role ?? "general";
       const normalizedPermissions = normalizeAgentPermissions(data.permissions, role);
+      const icon = normalizeCreatedAgentAvatarIcon(data.icon);
       const created = await db
         .insert(agents)
         .values({
@@ -596,25 +582,12 @@ export function agentService(db: Db) {
           name: uniqueName,
           orgId,
           role,
+          icon,
           permissions: normalizedPermissions,
           workspaceKey,
         })
         .returning()
         .then((rows) => rows[0]);
-
-      if (
-        !hasVisibleExistingAgents
-        && ORGANIZATION_DEFAULT_CHAT_RUNTIME_TYPES.has(created.agentRuntimeType as AgentRuntimeType)
-      ) {
-        await db
-          .update(organizations)
-          .set({
-            defaultChatAgentRuntimeType: created.agentRuntimeType,
-            defaultChatAgentRuntimeConfig: sanitizeOrganizationDefaultChatConfig(created.agentRuntimeConfig),
-            updatedAt: new Date(),
-          })
-          .where(and(eq(organizations.id, orgId), isNull(organizations.defaultChatAgentRuntimeType)));
-      }
 
       return normalizeAgentRow(created);
     },

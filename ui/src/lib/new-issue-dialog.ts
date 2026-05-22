@@ -5,6 +5,7 @@ export const LEGACY_ISSUE_DRAFT_STORAGE_KEY = "rudder:issue-draft";
 export const ISSUE_AUTOSAVE_STORAGE_KEY = "rudder:issue-autosave";
 export const ISSUE_DRAFTS_STORAGE_KEY = "rudder:issue-drafts";
 export const ISSUE_DRAFT_CHANGED_EVENT = "rudder:issue-draft-changed";
+export const NEW_ISSUE_PREFERENCES_STORAGE_KEY = "rudder:new-issue-preferences";
 
 export interface IssueDraft {
   orgId?: string | null;
@@ -15,6 +16,7 @@ export interface IssueDraft {
   labelIds?: string[];
   assigneeValue: string;
   assigneeId?: string;
+  reviewerValue?: string;
   projectId: string;
   projectWorkspaceId?: string;
   assigneeModelOverride: string;
@@ -42,6 +44,13 @@ export interface SavedIssueDraft extends IssueDraft {
   updatedAt: string;
 }
 
+export interface NewIssuePreferences {
+  assigneeValue: string;
+  reviewerValue: string;
+  projectId: string;
+  updatedAt: string;
+}
+
 export interface BuildNewIssueCreateRequestInput {
   title: string;
   description: string;
@@ -50,6 +59,8 @@ export interface BuildNewIssueCreateRequestInput {
   priority: string;
   assigneeAgentId?: string | null;
   assigneeUserId?: string | null;
+  reviewerAgentId?: string | null;
+  reviewerUserId?: string | null;
   projectId: string;
   labelIds: string[];
   projectWorkspaceId: string;
@@ -69,6 +80,236 @@ export interface ResolvedNewIssueDraftInput {
   labelIds?: string[];
   assigneeValue?: string;
   assigneeId?: string;
+  reviewerValue?: string;
+}
+
+function issueDraftStorage(): Storage | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function emitIssueDraftChanged() {
+  try {
+    globalThis.dispatchEvent?.(new Event(ISSUE_DRAFT_CHANGED_EVENT));
+  } catch {
+    // Some SSR/test environments do not expose Event.
+  }
+}
+
+function safeTrim(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function hasMeaningfulIssueDraft(draft: Partial<IssueDraft> | null | undefined): boolean {
+  if (!draft) return false;
+  return Boolean(
+    safeTrim(draft.title) ||
+      safeTrim(draft.description) ||
+      safeTrim(draft.projectId) ||
+      safeTrim(draft.assigneeValue) ||
+      safeTrim(draft.assigneeId) ||
+      safeTrim(draft.reviewerValue) ||
+      (safeTrim(draft.priority) && safeTrim(draft.priority) !== "medium") ||
+      (safeTrim(draft.status) && safeTrim(draft.status) !== "todo") ||
+      (Array.isArray(draft.labelIds) && draft.labelIds.length > 0) ||
+      safeTrim(draft.projectWorkspaceId) ||
+      safeTrim(draft.assigneeModelOverride) ||
+      safeTrim(draft.assigneeThinkingEffort) ||
+      Boolean(draft.assigneeChrome),
+  );
+}
+
+function issueDraftId() {
+  try {
+    return globalThis.crypto?.randomUUID?.() ?? `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  } catch {
+    return `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+
+export function readIssueAutosave(orgId?: string | null): IssueDraft | null {
+  try {
+    const storage = issueDraftStorage();
+    const raw = storage?.getItem(ISSUE_AUTOSAVE_STORAGE_KEY)
+      ?? storage?.getItem(LEGACY_ISSUE_DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const draft = JSON.parse(raw) as IssueDraft;
+    if (orgId && draft.orgId && draft.orgId !== orgId) return null;
+    return hasMeaningfulIssueDraft(draft) ? draft : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveIssueAutosave(draft: IssueDraft) {
+  if (!hasMeaningfulIssueDraft(draft)) return;
+  const storage = issueDraftStorage();
+  storage?.setItem(ISSUE_AUTOSAVE_STORAGE_KEY, JSON.stringify(draft));
+  storage?.removeItem(LEGACY_ISSUE_DRAFT_STORAGE_KEY);
+  emitIssueDraftChanged();
+}
+
+export function clearIssueAutosave() {
+  const storage = issueDraftStorage();
+  storage?.removeItem(ISSUE_AUTOSAVE_STORAGE_KEY);
+  storage?.removeItem(LEGACY_ISSUE_DRAFT_STORAGE_KEY);
+  emitIssueDraftChanged();
+}
+
+function readAllNewIssuePreferences(): Record<string, NewIssuePreferences> {
+  try {
+    const raw = issueDraftStorage()?.getItem(NEW_ISSUE_PREFERENCES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const preferences: Record<string, NewIssuePreferences> = {};
+    for (const [orgId, value] of Object.entries(parsed)) {
+      if (!orgId || !value || typeof value !== "object" || Array.isArray(value)) continue;
+      const record = value as Partial<NewIssuePreferences>;
+      preferences[orgId] = {
+        assigneeValue: safeTrim(record.assigneeValue),
+        reviewerValue: safeTrim(record.reviewerValue),
+        projectId: safeTrim(record.projectId),
+        updatedAt: safeTrim(record.updatedAt) || new Date(0).toISOString(),
+      };
+    }
+    return preferences;
+  } catch {
+    return {};
+  }
+}
+
+export function readNewIssuePreferences(orgId?: string | null): NewIssuePreferences | null {
+  if (!orgId) return null;
+  return readAllNewIssuePreferences()[orgId] ?? null;
+}
+
+export function saveNewIssuePreferences(
+  orgId: string | null | undefined,
+  values: Pick<NewIssuePreferences, "assigneeValue" | "reviewerValue" | "projectId">,
+) {
+  if (!orgId) return;
+  const storage = issueDraftStorage();
+  if (!storage) return;
+  const next = {
+    ...readAllNewIssuePreferences(),
+    [orgId]: {
+      assigneeValue: safeTrim(values.assigneeValue),
+      reviewerValue: safeTrim(values.reviewerValue),
+      projectId: safeTrim(values.projectId),
+      updatedAt: new Date().toISOString(),
+    },
+  };
+  storage.setItem(NEW_ISSUE_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
+}
+
+function readAllIssueDrafts(): SavedIssueDraft[] {
+  try {
+    const raw = issueDraftStorage()?.getItem(ISSUE_DRAFTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(hasMeaningfulIssueDraft) as SavedIssueDraft[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeAllIssueDrafts(drafts: SavedIssueDraft[]) {
+  issueDraftStorage()?.setItem(ISSUE_DRAFTS_STORAGE_KEY, JSON.stringify(drafts));
+  emitIssueDraftChanged();
+}
+
+function issueDraftContentKey(draft: IssueDraft): string {
+  return JSON.stringify({
+    orgId: draft.orgId ?? null,
+    title: draft.title,
+    description: draft.description,
+    status: draft.status,
+    priority: draft.priority,
+    labelIds: draft.labelIds ?? [],
+    assigneeValue: draft.assigneeValue ?? "",
+    assigneeId: draft.assigneeId ?? "",
+    reviewerValue: draft.reviewerValue ?? "",
+    projectId: draft.projectId ?? "",
+    projectWorkspaceId: draft.projectWorkspaceId ?? "",
+    assigneeModelOverride: draft.assigneeModelOverride ?? "",
+    assigneeThinkingEffort: draft.assigneeThinkingEffort ?? "",
+    assigneeChrome: Boolean(draft.assigneeChrome),
+    useIsolatedExecutionWorkspace: Boolean(draft.useIsolatedExecutionWorkspace),
+  });
+}
+
+export function listIssueDrafts(orgId?: string | null): SavedIssueDraft[] {
+  return readAllIssueDrafts()
+    .filter((draft) => !orgId || !draft.orgId || draft.orgId === orgId)
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
+export function readSavedIssueDraft(id: string | null | undefined, orgId?: string | null): SavedIssueDraft | null {
+  if (!id) return null;
+  return listIssueDrafts(orgId).find((draft) => draft.id === id) ?? null;
+}
+
+export function createIssueDraft(draft: IssueDraft): SavedIssueDraft | null {
+  if (!hasMeaningfulIssueDraft(draft)) return null;
+  const now = new Date().toISOString();
+  const savedDraft: SavedIssueDraft = {
+    ...draft,
+    id: issueDraftId(),
+    createdAt: now,
+    updatedAt: now,
+  };
+  writeAllIssueDrafts([savedDraft, ...readAllIssueDrafts()]);
+  return savedDraft;
+}
+
+export function updateIssueDraft(id: string | null | undefined, draft: IssueDraft): SavedIssueDraft | null {
+  if (!id || !hasMeaningfulIssueDraft(draft)) return null;
+  const drafts = readAllIssueDrafts();
+  const draftIndex = drafts.findIndex((savedDraft) => savedDraft.id === id);
+  if (draftIndex === -1) return null;
+
+  const existingDraft = drafts[draftIndex];
+  if (issueDraftContentKey(existingDraft) === issueDraftContentKey(draft)) return existingDraft;
+
+  const updatedDraft: SavedIssueDraft = {
+    ...draft,
+    id,
+    createdAt: existingDraft.createdAt,
+    updatedAt: new Date().toISOString(),
+  };
+  const nextDrafts = [...drafts];
+  nextDrafts[draftIndex] = updatedDraft;
+  writeAllIssueDrafts(nextDrafts);
+  return updatedDraft;
+}
+
+export function deleteIssueDraft(id: string | null | undefined) {
+  if (!id) return;
+  writeAllIssueDrafts(readAllIssueDrafts().filter((draft) => draft.id !== id));
+}
+
+export function summarizeIssueDraft(draft: SavedIssueDraft): IssueDraftSummary {
+  const title = draft.title.trim() || "Untitled issue draft";
+  return {
+    id: draft.id,
+    title,
+    description: draft.description.trim(),
+    assigneeValue: draft.assigneeValue,
+    assigneeId: draft.assigneeId,
+    projectId: draft.projectId,
+    status: draft.status || "todo",
+    priority: draft.priority,
+    createdAt: draft.createdAt,
+    updatedAt: draft.updatedAt,
+  };
+}
+
+export function summarizeIssueDrafts(orgId?: string | null): IssueDraftSummary[] {
+  return listIssueDrafts(orgId).map(summarizeIssueDraft);
 }
 
 function issueDraftStorage(): Storage | null {
@@ -218,6 +459,8 @@ export interface ResolvedNewIssueDefaultsInput {
   labelIds?: string[];
   assigneeAgentId?: string;
   assigneeUserId?: string;
+  reviewerAgentId?: string;
+  reviewerUserId?: string;
 }
 
 export function resolveDraftBackedNewIssueValues(input: {
@@ -225,14 +468,17 @@ export function resolveDraftBackedNewIssueValues(input: {
   draft: ResolvedNewIssueDraftInput;
   defaultProjectId: string;
   defaultAssigneeValue: string;
+  defaultReviewerValue: string;
 }): {
   status: string;
   priority: string;
   projectId: string;
   labelIds: string[];
   assigneeValue: string;
+  reviewerValue: string;
 } {
   const hasExplicitAssignee = Boolean(input.defaults.assigneeAgentId || input.defaults.assigneeUserId);
+  const hasExplicitReviewer = Boolean(input.defaults.reviewerAgentId || input.defaults.reviewerUserId);
   return {
     status: input.defaults.status ?? input.draft.status ?? "todo",
     priority: input.defaults.priority ?? input.draft.priority ?? "",
@@ -241,6 +487,9 @@ export function resolveDraftBackedNewIssueValues(input: {
     assigneeValue: hasExplicitAssignee
       ? input.defaultAssigneeValue
       : (input.draft.assigneeValue ?? input.draft.assigneeId ?? ""),
+    reviewerValue: hasExplicitReviewer
+      ? input.defaultReviewerValue
+      : (input.draft.reviewerValue ?? ""),
   };
 }
 
@@ -277,6 +526,8 @@ export function buildNewIssueCreateRequest(input: BuildNewIssueCreateRequestInpu
     priority: input.priority || "medium",
     ...(input.assigneeAgentId ? { assigneeAgentId: input.assigneeAgentId } : {}),
     ...(input.assigneeUserId ? { assigneeUserId: input.assigneeUserId } : {}),
+    ...(input.reviewerAgentId ? { reviewerAgentId: input.reviewerAgentId } : {}),
+    ...(input.reviewerUserId ? { reviewerUserId: input.reviewerUserId } : {}),
     ...(input.projectId ? { projectId: input.projectId } : {}),
     ...(input.labelIds.length > 0 ? { labelIds: input.labelIds } : {}),
     ...(input.projectWorkspaceId ? { projectWorkspaceId: input.projectWorkspaceId } : {}),

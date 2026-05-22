@@ -113,14 +113,40 @@ test.describe("Issues recently viewed sidebar", () => {
     await expect(page).toHaveURL(/\/issues(?:\?|$)/);
     await expect(page).not.toHaveURL(/scope=recent/);
     await expect(page.getByRole("link", { name: /Recently Viewed/ })).toHaveCount(0);
-    await expect(page.getByTestId("issue-recent-section")).toContainText("Recently Viewed");
-    await expect(page.getByText("Recently viewed first issue", { exact: true })).toBeVisible();
-    await expect(page.getByText("Recently viewed second issue", { exact: true })).toBeVisible();
-    await expect(page.getByText("Recently viewed third issue", { exact: true })).toBeVisible();
-    await expect(page.getByText("Other organization recent issue", { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("issue-recent-section")).toContainText("Recently Viewed (3)");
+    await expect(page.getByTestId(`issue-recent-row-${firstIssue.id}`)).toContainText("Recently viewed first issue");
+    await expect(page.getByTestId(`issue-recent-row-${secondIssue.id}`)).toContainText("Recently viewed second issue");
+    await expect(page.getByTestId(`issue-recent-row-${thirdIssue.id}`)).toContainText("Recently viewed third issue");
+    await expect(page.getByTestId(`issue-recent-row-${otherOrgIssue.id}`)).toHaveCount(0);
 
-    const recentHref = `/issues/${firstIssue.identifier ?? firstIssue.id}`;
-    await expect(page.getByTestId(`issue-recent-row-${firstIssue.id}`)).toHaveAttribute("href", recentHref);
+    const recentHrefPattern = new RegExp(`/issues/${firstIssue.identifier ?? firstIssue.id}$`);
+    await expect(page.getByTestId(`issue-recent-row-${firstIssue.id}`)).toHaveAttribute("href", recentHrefPattern);
+  });
+
+  test("shows starred issues in the sidebar after clicking star", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Starred-Sidebar");
+    const issue = await createIssue(page, organization.id, "Sidebar starred issue");
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto("/issues");
+
+    await expect(page.getByTestId("issue-starred-section")).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /Starred/ })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "List view" }).click();
+    await expect(page.getByText("Sidebar starred issue", { exact: true })).toBeVisible();
+    await page.getByTitle("Star issue").first().click();
+
+    await expect(page.getByTestId("issue-starred-section")).toContainText("Starred (1)");
+    await expect(page.getByTestId(`issue-starred-row-${issue.id}`)).toContainText("Sidebar starred issue");
+    await expect(page.getByTestId(`issue-starred-row-${issue.id}`)).toHaveAttribute(
+      "href",
+      new RegExp(`/issues/${issue.identifier ?? issue.id}$`),
+    );
   });
 
   test("records direct detail views and promotes sidebar recent clicks", async ({ page }) => {
@@ -191,8 +217,8 @@ test.describe("Issues recently viewed sidebar", () => {
 
     await page.goto("/issues");
 
-    await expect(page.getByTestId("issue-recent-section")).toContainText("Recently Viewed");
-    await expect(page.getByText("Org one recent issue", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("issue-recent-section")).toContainText("Recently Viewed (1)");
+    await expect(page.getByTestId(`issue-recent-row-${firstOrgIssue.id}`)).toContainText("Org one recent issue");
 
     await page.evaluate((orgId) => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
@@ -200,10 +226,105 @@ test.describe("Issues recently viewed sidebar", () => {
 
     await page.goto("/issues");
 
-    await expect(page.getByTestId("issue-recent-section")).toContainText("Recently Viewed");
-    await expect(page.getByText("Org two first recent issue", { exact: true })).toBeVisible();
-    await expect(page.getByText("Org two second recent issue", { exact: true })).toBeVisible();
-    await expect(page.getByText("Org one recent issue", { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("issue-recent-section")).toContainText("Recently Viewed (2)");
+    await expect(page.getByTestId(`issue-recent-row-${secondOrgIssueA.id}`)).toContainText("Org two first recent issue");
+    await expect(page.getByTestId(`issue-recent-row-${secondOrgIssueB.id}`)).toContainText("Org two second recent issue");
+    await expect(page.getByTestId(`issue-recent-row-${firstOrgIssue.id}`)).toHaveCount(0);
+  });
+
+  test("bounds long recent issue lists without hiding projects", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Recent-Overflow");
+    const project = await createProject(page, organization.id, "Sidebar Project");
+    const issues = [];
+    for (let index = 1; index <= 49; index += 1) {
+      issues.push(await createIssue(page, organization.id, `Recent overflow issue ${String(index).padStart(2, "0")}`));
+    }
+
+    await page.goto("/");
+    await page.evaluate(
+      ({ orgId, recentKey, issueIds }) => {
+        window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+        window.localStorage.setItem(recentKey, JSON.stringify(issueIds));
+      },
+      {
+        orgId: organization.id,
+        recentKey: recentIssuesStorageKey(organization.id),
+        issueIds: issues.map((issue) => issue.id),
+      },
+    );
+
+    await page.goto("/issues");
+
+    await expect(page.getByTestId(`issue-recent-row-${issues[0].id}`)).toBeVisible();
+    await expect(page.getByTestId(`issue-recent-row-${issues[4].id}`)).toBeVisible();
+    await expect(page.getByTestId(`issue-recent-row-${issues[5].id}`)).toHaveCount(0);
+    await expect(page.getByTestId("workspace-projects-section")).toContainText("Projects");
+    await expect(page.getByRole("link", { name: project.name })).toBeVisible();
+
+    await expect(page.getByTestId("issue-recent-section")).toContainText("Recently Viewed (49)");
+    await expect(page.getByTestId("issue-recent-toggle")).toContainText("Show all");
+    await page.getByTestId("issue-recent-toggle").click();
+
+    await expect(page.getByTestId(`issue-recent-row-${issues[11].id}`)).toBeVisible();
+    await expect(page.getByTestId(`issue-recent-row-${issues[12].id}`)).toHaveCount(1);
+    await expect(page.getByText(/Showing latest/)).toHaveCount(0);
+    await expect(page.getByRole("link", { name: project.name })).toBeVisible();
+
+    await page.getByTestId("issue-recent-list").evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(page.getByTestId(`issue-recent-row-${issues[48].id}`)).toBeVisible();
+  });
+
+  test("shows live run counts on issue project slices", async ({ page }) => {
+    const organization = await createOrganization(page, "Issues-Project-Live");
+    const project = await createProject(page, organization.id, "Sidebar Live Project");
+    const firstIssue = await createIssue(page, organization.id, "Project live issue 1", { projectId: project.id });
+    const secondIssue = await createIssue(page, organization.id, "Project live issue 2", { projectId: project.id });
+
+    await page.route(`**/api/orgs/${organization.id}/live-runs`, async (route) => {
+      await route.fulfill({
+        json: [
+          {
+            id: "run-live-1",
+            status: "running",
+            invocationSource: "manual",
+            triggerDetail: "Manual wakeup",
+            startedAt: "2026-04-30T10:00:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-04-30T10:00:00.000Z",
+            agentId: "agent-1",
+            agentName: "Live Agent",
+            agentRuntimeType: "codex_local",
+            issueId: firstIssue.id,
+          },
+          {
+            id: "run-live-2",
+            status: "running",
+            invocationSource: "manual",
+            triggerDetail: "Manual wakeup",
+            startedAt: "2026-04-30T10:01:00.000Z",
+            finishedAt: null,
+            createdAt: "2026-04-30T10:01:00.000Z",
+            agentId: "agent-2",
+            agentName: "Live Agent Two",
+            agentRuntimeType: "codex_local",
+            issueId: secondIssue.id,
+          },
+        ],
+      });
+    });
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto("/issues");
+
+    const projectRow = page.getByTestId(`issue-project-row-${project.id}`);
+    await expect(projectRow).toContainText("Sidebar Live Project");
+    await expect(projectRow).toContainText("2 live");
   });
 
   test("bounds long recent issue lists without hiding projects", async ({ page }) => {

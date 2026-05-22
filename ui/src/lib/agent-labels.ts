@@ -19,14 +19,22 @@ export function agentCompactLabel(agent: Pick<Agent, "role" | "title">) {
   return AGENT_ROLE_LABELS[agent.role] ?? agent.role;
 }
 
+export function agentTitleBadgeLabel(agent: Pick<Agent, "name" | "role" | "title">) {
+  const titleLabel = agentSupportingLabel(agent);
+  if (normalizeAgentLabelPart(agent.name) === normalizeAgentLabelPart(titleLabel)) {
+    return null;
+  }
+  return titleLabel;
+}
+
 export function formatSidebarAgentLabel(agent: Pick<Agent, "name" | "role" | "title">) {
   const titleLabel = agentSupportingLabel(agent);
   return `${agent.name} (${titleLabel})`;
 }
 
 export function formatChatAgentLabel(agent: Pick<Agent, "name" | "role" | "title">) {
-  const titleLabel = agentSupportingLabel(agent);
-  if (normalizeAgentLabelPart(agent.name) === normalizeAgentLabelPart(titleLabel)) {
+  const titleLabel = agentTitleBadgeLabel(agent);
+  if (!titleLabel) {
     return agent.name;
   }
   return `${agent.name} (${titleLabel})`;

@@ -11,19 +11,25 @@ import {
   agentApiKeys,
   agents,
   applyPendingMigrations,
+  activityLog,
   createDb,
   ensurePostgresDatabase,
+  issueAttachments,
   issueComments,
   issues,
+  labels,
   organizations,
 } from "@rudderhq/db";
 import type {
   AgentDetail,
+  AgentSkillEntry,
   AgentSkillSnapshot,
   Approval,
   ApprovalComment,
   Issue,
   IssueComment,
+  IssueCommitReport,
+  IssueLabel,
   OrganizationSkillDetail,
   OrganizationSkillFileDetail,
   OrganizationSkillListItem,
@@ -77,6 +83,7 @@ type AgentHireResult = {
 };
 
 let latestServerOutput = { stdout: [] as string[], stderr: [] as string[] };
+const tinyPngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -112,6 +119,12 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function startTempDatabase() {
+  const externalConnectionString = process.env.RUDDER_E2E_DATABASE_URL?.trim();
+  if (externalConnectionString) {
+    await applyPendingMigrations(externalConnectionString);
+    return { connectionString: externalConnectionString, dataDir: "", instance: null };
+  }
+
   const dataDir = mkdtempSync(path.join(os.tmpdir(), "rudder-agent-cli-db-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
@@ -362,6 +375,7 @@ describe("agent CLI e2e", () => {
 
   let orgId = "";
   let agentId = "";
+  let peerAgentId = "";
   let agentKey = "";
   let issueId = "";
   let firstCommentId = "";
@@ -414,9 +428,7 @@ describe("agent CLI e2e", () => {
         budget_monthly_cents,
         spent_monthly_cents,
         require_board_approval_for_new_agents,
-        default_chat_issue_creation_mode,
-        default_chat_agent_runtime_type,
-        default_chat_agent_runtime_config
+        default_chat_issue_creation_mode
       ) values (
         ${orgId},
         ${"cli-migration-org"},
@@ -428,9 +440,7 @@ describe("agent CLI e2e", () => {
         ${0},
         ${0},
         ${false},
-        ${"manual_approval"},
-        ${null},
-        ${null}
+        ${"manual_approval"}
       )
     `);
 
@@ -446,6 +456,18 @@ describe("agent CLI e2e", () => {
       agentRuntimeConfig: { cwd: tempRoot },
       runtimeConfig: {},
       permissions: { canCreateAgents: true },
+    });
+    peerAgentId = randomUUID();
+    await db.insert(agents).values({
+      id: peerAgentId,
+      orgId,
+      name: "CLI Peer",
+      role: "engineer",
+      title: "CLI Peer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { cwd: tempRoot },
+      runtimeConfig: {},
     });
 
     agentKey = createApiKeyToken();
@@ -589,12 +611,418 @@ describe("agent CLI e2e", () => {
     expect(comments.map((comment) => comment.id)).toContain(secondCommentId);
     expect(comments.length).toBeGreaterThanOrEqual(1);
 
+    const commentSearch = await runCliJson<Issue[]>(["issue", "search", "New requirement landed"], {
+      apiBase,
+      configPath,
+      env,
+    });
+    expect(commentSearch.map((issue) => issue.id)).toContain(issueId);
+
+    const commit = await runCliJson<IssueCommitReport>(
+      [
+        "issue",
+        "commit",
+        issueId,
+        "--sha",
+        "ABC1234def5678",
+        "--message",
+        "fix: report code commit",
+        "--branch",
+        "feature/commit-activity",
+        "--repo-path",
+        tempRoot,
+        "--count",
+        "2",
+      ],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(commit).toMatchObject({
+      ok: true,
+      issueId,
+      sha: "abc1234def5678",
+      shortSha: "abc1234",
+      subject: "fix: report code commit",
+      runId,
+    });
+
+    const db = createDb(connectionString);
+    const commitActivities = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "issue.code_committed"));
+    const commitActivity = commitActivities.find((row) => row.entityId === issueId);
+    expect(commitActivity).toBeTruthy();
+    expect(commitActivity).toMatchObject({
+      actorType: "agent",
+      actorId: agentId,
+      agentId,
+      runId,
+      entityType: "issue",
+      entityId: issueId,
+    });
+    expect(commitActivity?.details).toMatchObject({
+      sha: "abc1234def5678",
+      shortSha: "abc1234",
+      subject: "fix: report code commit",
+      branch: "feature/commit-activity",
+      repoPath: tempRoot,
+      commitCount: 2,
+    });
+
     const done = await runCliJson<Issue>(["issue", "done", issueId, "--comment", "Completed via CLI."], {
       apiBase,
       configPath,
       env,
     });
     expect(done.status).toBe("done");
+  });
+
+  it("defaults agent-created issues to the creating agent", { timeout: 60_000 }, async () => {
+    const env = {
+      RUDDER_API_KEY: agentKey,
+      RUDDER_ORG_ID: orgId,
+      RUDDER_AGENT_ID: agentId,
+      RUDDER_RUN_ID: runId,
+    };
+
+    const createdByCli = await runCliJson<Issue>(
+      ["issue", "create", "--title", "Agent default assignee", "--status", "todo"],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(createdByCli.createdByAgentId).toBe(agentId);
+    expect(createdByCli.assigneeAgentId).toBe(agentId);
+    expect(createdByCli.assigneeUserId).toBeNull();
+
+    const explicitAssignee = await runCliJson<Issue>(
+      [
+        "issue",
+        "create",
+        "--title",
+        "Agent explicit assignee",
+        "--status",
+        "todo",
+        "--assignee-agent-id",
+        peerAgentId,
+      ],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(explicitAssignee.createdByAgentId).toBe(agentId);
+    expect(explicitAssignee.assigneeAgentId).toBe(peerAgentId);
+
+    const explicitNullRes = await fetch(`${apiBase}/api/orgs/${orgId}/issues`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${agentKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        title: "Agent explicit null assignee",
+        status: "backlog",
+        assigneeAgentId: null,
+        assigneeUserId: null,
+      }),
+    });
+    expect(explicitNullRes.ok).toBe(true);
+    const explicitNull = (await explicitNullRes.json()) as Issue;
+    expect(explicitNull.createdByAgentId).toBe(agentId);
+    expect(explicitNull.assigneeAgentId).toBeNull();
+    expect(explicitNull.assigneeUserId).toBeNull();
+
+    const boardRes = await fetch(`${apiBase}/api/orgs/${orgId}/issues`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        title: "Board unassigned issue",
+        status: "backlog",
+      }),
+    });
+    expect(boardRes.ok).toBe(true);
+    const boardIssue = (await boardRes.json()) as Issue;
+    expect(boardIssue.createdByAgentId).toBeNull();
+    expect(boardIssue.assigneeAgentId).toBeNull();
+    expect(boardIssue.assigneeUserId).toBeNull();
+  });
+
+  it("lists issue labels and requires agent-created issues to choose one once the label taxonomy is mature", { timeout: 60_000 }, async () => {
+    const db = createDb(connectionString);
+    const labelRows = ["Operations", "Research", "Engineering", "Design", "Customer"].map((name) => ({
+      id: randomUUID(),
+      orgId,
+      name,
+      color: "#2563eb",
+    }));
+    await db.insert(labels).values(labelRows);
+
+    const env = {
+      RUDDER_API_KEY: agentKey,
+      RUDDER_ORG_ID: orgId,
+      RUDDER_AGENT_ID: agentId,
+      RUDDER_RUN_ID: runId,
+    };
+
+    const listed = await runCliJson<IssueLabel[]>(["issue", "labels", "list"], {
+      apiBase,
+      configPath,
+      env,
+    });
+    expect(listed.map((label) => label.name)).toEqual(expect.arrayContaining(labelRows.map((label) => label.name)));
+
+    await expect(
+      runCliJson<Issue>(["issue", "create", "--title", "Agent issue without label", "--status", "todo"], {
+        apiBase,
+        configPath,
+        env,
+      }),
+    ).rejects.toThrow("Choose at least one with --label-id <id> or --label <name>");
+
+    const byName = await runCliJson<Issue>(
+      ["issue", "create", "--title", "Agent issue with label name", "--status", "todo", "--label", "Operations"],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(byName.labelIds).toEqual([labelRows[0]!.id]);
+
+    const byId = await runCliJson<Issue>(
+      ["issue", "create", "--title", "Agent issue with label id", "--status", "todo", "--label-id", labelRows[1]!.id],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(byId.labelIds).toEqual([labelRows[1]!.id]);
+
+    const child = await runCliJson<Issue>(
+      ["issue", "create", "--title", "Agent sub-issue inherits parent label", "--status", "todo", "--parent-id", byId.id],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(child.parentId).toBe(byId.id);
+    expect(child.labelIds).toEqual([labelRows[1]!.id]);
+  });
+
+  it("uploads images into issue comments from the CLI", { timeout: 60_000 }, async () => {
+    const db = createDb(connectionString);
+    const imageIssueId = randomUUID();
+    await db.insert(issues).values({
+      id: imageIssueId,
+      orgId,
+      title: "Comment with uploaded image",
+      description: "Validate CLI image uploads into issue comments.",
+      status: "todo",
+      priority: "high",
+      assigneeAgentId: agentId,
+      createdByUserId: "local-board",
+    });
+
+    const env = {
+      RUDDER_API_KEY: agentKey,
+      RUDDER_ORG_ID: orgId,
+      RUDDER_AGENT_ID: agentId,
+      RUDDER_RUN_ID: runId,
+    };
+    await runCliJson<Issue>(["issue", "checkout", imageIssueId], {
+      apiBase,
+      configPath,
+      env,
+    });
+
+    const imagePath = path.join(tempRoot, "comment-proof.png");
+    writeFileSync(imagePath, Buffer.from(tinyPngBase64, "base64"));
+
+    const comment = await runCliJson<IssueComment>(
+      ["issue", "comment", imageIssueId, "--body", "Progress with image.", "--image", imagePath],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+
+    expect(comment.body).toContain("Progress with image.");
+    expect(comment.body).toContain("![comment-proof.png](/api/attachments/");
+    expect(comment.body).toContain("/content)");
+
+    const attachments = await db
+      .select()
+      .from(issueAttachments)
+      .where(eq(issueAttachments.issueId, imageIssueId));
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]?.usage).toBe("comment_inline");
+
+    const commentActivities = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "issue.comment_added"));
+    const commentActivity = commentActivities.find((row) => row.details?.commentId === comment.id);
+    expect(commentActivity).toMatchObject({
+      actorType: "agent",
+      actorId: agentId,
+      agentId,
+      runId,
+      entityType: "issue",
+      entityId: imageIssueId,
+    });
+  });
+
+  it("uploads images for generic update comments", { timeout: 60_000 }, async () => {
+    const db = createDb(connectionString);
+    const updateIssueId = randomUUID();
+    await db.insert(issues).values({
+      id: updateIssueId,
+      orgId,
+      title: "Update with uploaded image",
+      description: "Validate CLI image uploads into update comments.",
+      status: "todo",
+      priority: "high",
+      assigneeAgentId: agentId,
+      createdByUserId: "local-board",
+    });
+
+    const env = {
+      RUDDER_API_KEY: agentKey,
+      RUDDER_ORG_ID: orgId,
+      RUDDER_AGENT_ID: agentId,
+      RUDDER_RUN_ID: runId,
+    };
+    await runCliJson<Issue>(["issue", "checkout", updateIssueId], {
+      apiBase,
+      configPath,
+      env,
+    });
+
+    const imagePath = path.join(tempRoot, "update-proof.png");
+    writeFileSync(imagePath, Buffer.from(tinyPngBase64, "base64"));
+
+    const updated = await runCliJson<Issue & { comment?: IssueComment | null }>(
+      ["issue", "update", updateIssueId, "--comment", "Update with image.", "--image", imagePath],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+
+    expect(updated.status).toBe("in_progress");
+    expect(updated.comment?.body).toContain("Update with image.");
+    expect(updated.comment?.body).toContain("![update-proof.png](/api/attachments/");
+
+    const attachments = await db
+      .select()
+      .from(issueAttachments)
+      .where(eq(issueAttachments.issueId, updateIssueId));
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]?.usage).toBe("comment_inline");
+  });
+
+  it("uploads images for close-out comments", { timeout: 60_000 }, async () => {
+    const db = createDb(connectionString);
+    const closeoutIssueId = randomUUID();
+    await db.insert(issues).values({
+      id: closeoutIssueId,
+      orgId,
+      title: "Close out with uploaded image",
+      description: "Validate CLI image uploads into done comments.",
+      status: "todo",
+      priority: "high",
+      assigneeAgentId: agentId,
+      createdByUserId: "local-board",
+    });
+
+    const env = {
+      RUDDER_API_KEY: agentKey,
+      RUDDER_ORG_ID: orgId,
+      RUDDER_AGENT_ID: agentId,
+      RUDDER_RUN_ID: runId,
+    };
+    await runCliJson<Issue>(["issue", "checkout", closeoutIssueId], {
+      apiBase,
+      configPath,
+      env,
+    });
+
+    const imagePath = path.join(tempRoot, "done-proof.png");
+    writeFileSync(imagePath, Buffer.from(tinyPngBase64, "base64"));
+
+    const done = await runCliJson<Issue & { comment?: IssueComment | null }>(
+      ["issue", "done", closeoutIssueId, "--comment", "Done with image.", "--image", imagePath],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+
+    expect(done.status).toBe("done");
+    expect(done.comment?.body).toContain("Done with image.");
+    expect(done.comment?.body).toContain("![done-proof.png](/api/attachments/");
+
+    const attachments = await db
+      .select()
+      .from(issueAttachments)
+      .where(eq(issueAttachments.issueId, closeoutIssueId));
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]?.usage).toBe("comment_inline");
+
+    const blockIssueId = randomUUID();
+    await db.insert(issues).values({
+      id: blockIssueId,
+      orgId,
+      title: "Block with uploaded image",
+      description: "Validate CLI image uploads into blocker comments.",
+      status: "todo",
+      priority: "high",
+      assigneeAgentId: agentId,
+      createdByUserId: "local-board",
+    });
+    await runCliJson<Issue>(["issue", "checkout", blockIssueId], {
+      apiBase,
+      configPath,
+      env,
+    });
+
+    const blockImagePath = path.join(tempRoot, "block-proof.png");
+    writeFileSync(blockImagePath, Buffer.from(tinyPngBase64, "base64"));
+
+    const blocked = await runCliJson<Issue & { comment?: IssueComment | null }>(
+      ["issue", "block", blockIssueId, "--comment", "Blocked with image.", "--image", blockImagePath],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.comment?.body).toContain("Blocked with image.");
+    expect(blocked.comment?.body).toContain("![block-proof.png](/api/attachments/");
+
+    const blockAttachments = await db
+      .select()
+      .from(issueAttachments)
+      .where(eq(issueAttachments.issueId, blockIssueId));
+    expect(blockAttachments).toHaveLength(1);
+    expect(blockAttachments[0]?.usage).toBe("comment_inline");
   });
 
   it("runs the CLI-only organization skill path", { timeout: 60_000 }, async () => {
@@ -614,6 +1042,32 @@ describe("agent CLI e2e", () => {
       },
     );
     expect(scan.imported).toHaveLength(1);
+
+    const privateSkill = await runCliJson<{
+      created: AgentSkillEntry;
+      enabledSnapshot: AgentSkillSnapshot | null;
+    }>(
+      [
+        "agent",
+        "skills",
+        "create",
+        "--name",
+        "CLI Private Skill",
+        "--slug",
+        "cli-private-skill",
+        "--description",
+        "Private skill created by the agent CLI e2e regression.",
+        "--enable",
+      ],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(privateSkill.created.selectionKey).toBe("agent:cli-private-skill");
+    expect(privateSkill.created.sourceClass).toBe("agent_home");
+    expect(privateSkill.enabledSnapshot?.desiredSkills).toContain(privateSkill.created.selectionKey);
 
     const skills = await runCliJson<OrganizationSkillListItem[]>(["skill", "list"], {
       apiBase,
@@ -658,6 +1112,16 @@ describe("agent CLI e2e", () => {
           && entry.desired,
       ),
     ).toBe(true);
+
+    const additiveSnapshot = await runCliJson<AgentSkillSnapshot>(
+      ["agent", "skills", "enable", agentId, importedSkill!.key],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(additiveSnapshot.desiredSkills).toEqual(snapshot.desiredSkills);
   });
 
   it("runs the CLI-only create-agent path", { timeout: 60_000 }, async () => {

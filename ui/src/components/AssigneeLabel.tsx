@@ -1,7 +1,8 @@
-import type { AgentRole } from "@rudderhq/shared";
+import type { Agent, AgentRole } from "@rudderhq/shared";
 import { Minus, User } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AgentIcon } from "./AgentIconPicker";
+import { agentTitleBadgeLabel } from "@/lib/agent-labels";
 import { cn } from "@/lib/utils";
 
 type AssigneeLabelKind = "agent" | "user" | "unassigned";
@@ -9,18 +10,56 @@ type AssigneeLabelKind = "agent" | "user" | "unassigned";
 interface AssigneeLabelProps {
   kind: AssigneeLabelKind;
   label: string;
+  badgeLabel?: string | null;
   agentIcon?: string | null;
   agentRole?: AgentRole | null;
   className?: string;
+  layout?: "inline" | "stacked";
   muted?: boolean;
 }
 
-export function AssigneeLabel({ kind, label, agentIcon, agentRole, className, muted = false }: AssigneeLabelProps) {
+export function AgentTitleBadge({
+  label,
+  className,
+  constrain = true,
+}: {
+  label: string;
+  className?: string;
+  constrain?: boolean;
+}) {
+  return (
+    <span
+      data-slot="agent-title-badge"
+      className={cn(
+        "inline-flex min-w-0 shrink items-center rounded-sm border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium leading-3 text-muted-foreground",
+        constrain ? "max-w-[9rem]" : "max-w-full whitespace-normal",
+        className,
+      )}
+      title={label}
+    >
+      <span className={cn("min-w-0", constrain ? "truncate" : "whitespace-normal break-words text-left")}>{label}</span>
+    </span>
+  );
+}
+
+export function AssigneeLabel({
+  kind,
+  label,
+  badgeLabel,
+  agentIcon,
+  agentRole,
+  className,
+  layout = "inline",
+  muted = false,
+}: AssigneeLabelProps) {
+  const stacked = layout === "stacked";
+
   return (
     <span
       data-slot="assignee-label"
       data-kind={kind}
-      className={cn("inline-flex min-w-0 items-center gap-1.5", className)}
+      data-layout={layout}
+      className={cn("inline-flex min-w-0 items-center gap-1.5", stacked && "w-full", className)}
     >
       {kind === "agent" ? (
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
@@ -37,7 +76,44 @@ export function AssigneeLabel({ kind, label, agentIcon, agentRole, className, mu
           </AvatarFallback>
         </Avatar>
       )}
-      <span className={cn("truncate text-xs", muted && "text-muted-foreground")}>{label}</span>
+      <span className={cn(
+        "inline-flex min-w-0 max-w-full items-center gap-1.5",
+        stacked && "w-full flex-1 flex-col items-start gap-1",
+      )}>
+        <span className={cn("truncate text-xs", muted && "text-muted-foreground")}>{label}</span>
+        {badgeLabel ? <AgentTitleBadge label={badgeLabel} constrain={!stacked} /> : null}
+      </span>
+    </span>
+  );
+}
+
+export function AgentMenuLabel({ agent }: { agent: Pick<Agent, "name" | "role" | "title" | "icon"> }) {
+  const supportingLabel = agentTitleBadgeLabel(agent);
+
+  return (
+    <span data-slot="agent-menu-label" className="flex min-w-0 flex-1 items-center gap-2">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
+        <AgentIcon icon={agent.icon} role={agent.role} className="h-3.5 w-3.5" />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col text-left">
+        <span className="truncate text-xs font-medium leading-4 text-foreground">{agent.name}</span>
+        {supportingLabel ? (
+          <span data-slot="agent-menu-supporting-label" className="truncate text-[11px] leading-3 text-muted-foreground">
+            {supportingLabel}
+          </span>
+        ) : null}
+      </span>
+    </span>
+  );
+}
+
+export function AssigneeSelfActionLabel({ label = "Assign to me" }: { label?: string }) {
+  return (
+    <span data-slot="assignee-self-action-label" className="flex min-w-0 flex-1 items-center gap-2">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
+        <User className="h-3.5 w-3.5" />
+      </span>
+      <span className="truncate text-xs font-medium leading-4 text-foreground">{label}</span>
     </span>
   );
 }

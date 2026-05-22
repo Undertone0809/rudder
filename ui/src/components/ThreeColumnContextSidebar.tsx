@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type ReactNode, type RefCallback, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -43,6 +43,7 @@ import { agentsApi } from "@/api/agents";
 import { calendarApi } from "@/api/calendar";
 import { chatsApi } from "@/api/chats";
 import { heartbeatsApi } from "@/api/heartbeats";
+import { displayChatTitle } from "@/lib/chat-title";
 import { pluginsApi, type PluginUiContribution } from "@/api/plugins";
 import { formatSidebarAgentLabel } from "@/lib/agent-labels";
 import { projectColorAccent, projectColorBackgroundStyle } from "@/lib/project-colors";
@@ -59,6 +60,7 @@ import {
   ISSUE_DRAFT_CHANGED_EVENT,
   summarizeIssueDrafts,
 } from "@/lib/new-issue-dialog";
+import { useIssueFollows } from "@/hooks/useIssueFollows";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentActionsMenu } from "@/components/AgentActionsMenu";
 import { MessengerContextSidebar } from "@/components/MessengerContextSidebar";
@@ -72,495 +74,8 @@ import {
 import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CALENDAR_EVENT_STATUS_OPTIONS, useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
-import type { CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
-
-const RECENT_ISSUES_COLLAPSED_LIMIT = 5;
-const RECENT_ISSUES_EXPANDED_LIMIT = 12;
-const LINEAR_PLUGIN_KEY = "rudder.linear";
-const LINEAR_CATALOG_DATA_KEY = "linear-catalog";
-const LINEAR_PLUGIN_ROUTE_PATH = "linear";
-
-type LinearSidebarItem = {
-  id: string;
-  name: string;
-  kind: "project" | "team";
-  teamId?: string;
-};
-
-type LinearSidebarCatalog = {
-  orgId: string;
-  projects: Array<{ id: string; name: string; teamIds?: string[] }>;
-  teams: Array<{ id: string; name: string }>;
-};
-
-function resolveLinearPageContribution(contributions: PluginUiContribution[] | undefined) {
-  const contribution = contributions?.find((entry) => entry.pluginKey === LINEAR_PLUGIN_KEY);
-  if (!contribution) return null;
-  const pageSlot = contribution.slots.find((slot) => slot.type === "page");
-  if (!pageSlot) return null;
-  return {
-    pluginId: contribution.pluginId,
-    routePath: pageSlot.routePath || LINEAR_PLUGIN_ROUTE_PATH,
-  };
-}
-
-function linearIssueSourceHref(item: LinearSidebarItem): string {
-  const params = new URLSearchParams();
-  params.set("source", "linear");
-  if (item.kind === "team") {
-    params.set("linearTeamId", item.id);
-  } else {
-    if (item.teamId) params.set("linearTeamId", item.teamId);
-    params.set("linearProjectId", item.id);
-  }
-  return `/issues?${params.toString()}`;
-}
-
-function SectionLabel({
-  children,
-  action,
-  testId,
-  collapsed,
-  onToggle,
-}: {
-  children: string;
-  action?: ReactNode;
-  testId?: string;
-  collapsed?: boolean;
-  onToggle?: () => void;
-}) {
-  const canToggle = typeof collapsed === "boolean" && onToggle;
-  return (
-    <div
-      data-testid={testId}
-      className="group flex items-center justify-between px-3.5 pt-3.5 text-[11px] font-medium tracking-normal text-muted-foreground/76"
-    >
-      <span>{children}</span>
-      {action || canToggle ? (
-        <div className="flex shrink-0 items-center gap-1">
-          {action}
-          {canToggle ? (
-            <button
-              type="button"
-              onClick={onToggle}
-              aria-label={`${collapsed ? "Expand" : "Collapse"} ${children}`}
-              title={collapsed ? "Expand" : "Collapse"}
-              data-testid={testId ? `${testId}-toggle` : undefined}
-              className={cn(
-                "inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground/72 transition-[opacity,background-color,color]",
-                "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,transparent)] hover:text-foreground",
-                "opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100",
-                collapsed && "md:opacity-100",
-              )}
-            >
-              {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ContextColumnHeader({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
-  const { isMobile, setSidebarOpen } = useSidebar();
-
-  return (
-    <header
-      data-testid="workspace-context-header"
-      className="workspace-card-header workspace-context-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4 py-3"
-    >
-      <div className="min-w-0">
-        <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">{title}</h2>
-        <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{description}</p>
-      </div>
-      {!isMobile ? (
-        <button
-          type="button"
-          aria-label="Collapse workspace sidebar"
-          title="Collapse workspace sidebar"
-          className="desktop-window-no-drag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground"
-          onClick={() => setSidebarOpen(false)}
-        >
-          <PanelLeftClose className="h-4 w-4" />
-        </button>
-      ) : null}
-    </header>
-  );
-}
-
-function resolveContextColumnHeader(relativePath: string): { title: string; description: string } {
-  if (/^\/issues(?:\/|$)/.test(relativePath) || /^\/linear(?:\/|$)/.test(relativePath)) {
-    return { title: "Issues", description: "Views and project slices" };
-  }
-  if (/^\/chat(?:\/|$)/.test(relativePath)) {
-    return { title: "Chats", description: "Recent conversations" };
-  }
-  if (/^\/calendar(?:\/|$)/.test(relativePath)) {
-    return { title: "Calendar", description: "Sources and filters" };
-  }
-  if (/^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
-    return { title: "Org", description: "Organization surfaces" };
-  }
-  return { title: "Agents", description: "" };
-}
-
-function calendarStatusLabel(status: CalendarEventStatus) {
-  if (status === "in_progress") return "in progress";
-  return status;
-}
-
-const CALENDAR_LAYER_COLORS = [
-  "border-blue-400 bg-blue-500",
-  "border-emerald-400 bg-emerald-500",
-  "border-amber-400 bg-amber-500",
-  "border-rose-400 bg-rose-500",
-  "border-cyan-400 bg-cyan-500",
-  "border-violet-400 bg-violet-500",
-] as const;
-
-const CALENDAR_WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"] as const;
-
-function calendarStartOfDay(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-}
-
-function calendarAddDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
-function calendarDateKey(date: Date | string) {
-  const value = new Date(date);
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
-}
-
-function calendarStartOfMonthGrid(date: Date) {
-  const first = new Date(date.getFullYear(), date.getMonth(), 1);
-  const day = first.getDay();
-  return calendarStartOfDay(calendarAddDays(first, day === 0 ? -6 : 1 - day));
-}
-
-function calendarMonthTitle(date: Date) {
-  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(date);
-}
-
-function calendarHeatClass(count: number) {
-  if (count >= 8) return "bg-emerald-700 text-white";
-  if (count >= 5) return "bg-emerald-600 text-white";
-  if (count >= 3) return "bg-emerald-500/80 text-white";
-  if (count >= 1) return "bg-emerald-500/35 text-emerald-950 dark:text-emerald-50";
-  return "";
-}
-
-function setStringSetValue(setter: React.Dispatch<React.SetStateAction<Set<string>>>, id: string, visible: boolean) {
-  setter((current) => {
-    const next = new Set(current);
-    if (visible) next.delete(id);
-    else next.add(id);
-    return next;
-  });
-}
-
-function CalendarMiniMonth({
-  cursor,
-  setCursor,
-  completedIssueCountByDay,
-}: {
-  cursor: Date;
-  setCursor: React.Dispatch<React.SetStateAction<Date>>;
-  completedIssueCountByDay: Map<string, number>;
-}) {
-  const gridStart = calendarStartOfMonthGrid(cursor);
-  const days = Array.from({ length: 42 }, (_, index) => calendarAddDays(gridStart, index));
-  const todayKey = calendarDateKey(new Date());
-  const selectedKey = calendarDateKey(cursor);
-
-  return (
-    <section className="px-3.5 pt-3" data-testid="calendar-mini-month">
-      <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          className="inline-flex min-w-0 items-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-1.5 py-1 text-left text-sm font-medium text-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]"
-          onClick={() => setCursor((current) => new Date(current.getFullYear(), current.getMonth(), 1))}
-        >
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="truncate">{calendarMonthTitle(cursor)}</span>
-        </button>
-        <div className="flex items-center gap-0.5">
-          <button
-            type="button"
-            aria-label="Previous month"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
-            onClick={() => setCursor((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            aria-label="Next month"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
-            onClick={() => setCursor((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-      <div className="mt-3 grid grid-cols-7 gap-y-1 text-center">
-        {CALENDAR_WEEKDAY_LABELS.map((label, index) => (
-          <div key={`${label}-${index}`} className="text-[10px] font-medium text-muted-foreground/72">
-            {label}
-          </div>
-        ))}
-        {days.map((day) => {
-          const key = calendarDateKey(day);
-          const outside = day.getMonth() !== cursor.getMonth();
-          const selected = key === selectedKey;
-          const today = key === todayKey;
-          const completedCount = completedIssueCountByDay.get(key) ?? 0;
-          const showHeat = completedCount > 0 && !today && !selected;
-          return (
-            <button
-              key={key}
-              type="button"
-              aria-label={`${key}${completedCount > 0 ? `, ${completedCount} completed agent issue${completedCount === 1 ? "" : "s"}` : ""}`}
-              title={completedCount > 0 ? `${completedCount} completed agent issue${completedCount === 1 ? "" : "s"}` : undefined}
-              className={cn(
-                "mx-auto flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-xs transition-[background-color,color,box-shadow]",
-                outside && !today ? "text-muted-foreground/45" : "text-foreground/88",
-                showHeat && calendarHeatClass(completedCount),
-                today && "bg-primary text-primary-foreground shadow-sm ring-2 ring-background",
-                !today && selected && "bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,var(--surface-active))] text-foreground ring-1 ring-primary/65",
-                !today && !selected && "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)]",
-              )}
-              onClick={() => setCursor(calendarStartOfDay(day))}
-            >
-              {day.getDate()}
-            </button>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function VisibilityLayerRow({
-  label,
-  visible,
-  onToggle,
-  icon: Icon,
-  colorClass,
-}: {
-  label: string;
-  visible: boolean;
-  onToggle: () => void;
-  icon?: typeof UserRound;
-  colorClass?: string;
-}) {
-  const EyeIcon = visible ? Eye : EyeOff;
-  return (
-    <button
-      type="button"
-      aria-pressed={visible}
-      aria-label={`${visible ? "Hide" : "Show"} ${label}`}
-      onClick={onToggle}
-      className={cn(
-        "group mx-1.5 flex min-h-9 w-[calc(100%-0.75rem)] items-center gap-2 rounded-[calc(var(--radius-sm)-1px)] px-3 py-2 text-left text-sm transition-[background-color,color]",
-        "text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)]",
-        !visible && "text-muted-foreground",
-      )}
-    >
-      {colorClass ? (
-        <span className={cn("h-2.5 w-2.5 shrink-0 rounded-sm border", colorClass, !visible && "opacity-35 grayscale")} />
-      ) : Icon ? (
-        <Icon className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground", !visible && "opacity-45")} />
-      ) : null}
-      <span className="min-w-0 flex-1 truncate" title={label}>{label}</span>
-      <span
-        className={cn(
-          "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground opacity-0 transition-[opacity,background-color,color] hover:bg-[color:var(--surface-page)] hover:text-foreground group-hover:opacity-100 group-focus-visible:opacity-100",
-          !visible && "text-muted-foreground/70",
-        )}
-      >
-        <EyeIcon className="h-3.5 w-3.5" />
-      </span>
-    </button>
-  );
-}
-
-function activeConversationIdFromPath(pathname: string): string | null {
-  const match = pathname.match(/\/(?:messenger\/chat|chat)\/([^/]+)\/?/);
-  return match?.[1] ?? null;
-}
-
-function ContextItem({
-  to,
-  icon: Icon,
-  label,
-  active,
-  slidingActiveIndicator = false,
-  testId,
-}: {
-  to: string;
-  icon: typeof UserRound;
-  label: string;
-  active?: boolean;
-  slidingActiveIndicator?: boolean;
-  testId?: string;
-}) {
-  return (
-    <Link
-      to={to}
-      data-testid={testId}
-      className={cn(
-        "relative z-10 mx-1.5 flex items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
-        slidingActiveIndicator && "min-h-[var(--motion-context-item-height)]",
-        slidingActiveIndicator
-          ? active
-            ? "font-medium text-foreground"
-            : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_58%,transparent)] hover:text-foreground"
-          : active
-            ? "border-[color:color-mix(in_oklab,var(--border-soft)_72%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-elevated)_92%,var(--surface-active))] font-medium text-foreground"
-            : "text-foreground/78 hover:border-[color:color-mix(in_oklab,var(--border-soft)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground",
-      )}
-    >
-      <Icon className="h-4 w-4 shrink-0" />
-      <span className="truncate">{label}</span>
-    </Link>
-  );
-}
-
-function activeContextStyle(activeIndex: number): CSSProperties | undefined {
-  return activeIndex >= 0
-    ? ({ "--motion-context-active-index": activeIndex } as CSSProperties)
-    : undefined;
-}
-
-function SlidingContextNav({
-  activeIndex,
-  ariaLabel,
-  className,
-  indicatorTestId,
-  children,
-}: {
-  activeIndex: number;
-  ariaLabel: string;
-  className?: string;
-  indicatorTestId?: string;
-  children: ReactNode;
-}) {
-  return (
-    <nav
-      className={cn("motion-context-nav", className)}
-      style={activeContextStyle(activeIndex)}
-      data-active-index={activeIndex >= 0 ? activeIndex : undefined}
-      aria-label={ariaLabel}
-    >
-      {activeIndex >= 0 ? (
-        <span
-          data-testid={indicatorTestId}
-          className="motion-context-active-indicator"
-          aria-hidden="true"
-        />
-      ) : null}
-      {children}
-    </nav>
-  );
-}
-
-function SidebarLiveCount({ count }: { count: number }) {
-  return (
-    <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
-      <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-blue-400 opacity-75" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
-      </span>
-      <span className="text-[11px] font-medium text-blue-600 dark:text-blue-400">{count} live</span>
-    </span>
-  );
-}
-
-function ProjectListSection({
-  visibleProjects,
-  activeProjectRef,
-  closeMobileSidebar,
-  onNewProject,
-}: {
-  visibleProjects: Array<{ id: string; name: string; description: string | null; color?: string | null; urlKey?: string | null }>;
-  activeProjectRef: string | null;
-  closeMobileSidebar: () => void;
-  onNewProject: () => void;
-}) {
-  const activeProjectIndex = visibleProjects.findIndex((project) => activeProjectRef === projectRouteRef(project));
-
-  return (
-    <>
-      <SectionLabel
-        testId="workspace-projects-section"
-        action={(
-          <button
-            type="button"
-            onClick={onNewProject}
-            aria-label="New project"
-            title="Create project"
-            className={cn(
-              "inline-flex h-5 w-5 items-center justify-center rounded-[calc(var(--radius-sm)-2px)] text-muted-foreground/72 transition-[opacity,background-color,color]",
-              "hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_82%,transparent)] hover:text-foreground",
-              "opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100",
-            )}
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        )}
-      >
-        Projects
-      </SectionLabel>
-      <SlidingContextNav
-        activeIndex={activeProjectIndex}
-        ariaLabel="Project workspaces"
-        className="motion-context-nav--project-card-list mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
-        indicatorTestId="project-sidebar-active-indicator"
-      >
-        {visibleProjects.map((project) => {
-          const routeRef = projectRouteRef(project);
-          const active = activeProjectRef === routeRef;
-          return (
-            <Link
-              key={project.id}
-              to={`/projects/${routeRef}/configuration`}
-              onClick={closeMobileSidebar}
-              className={cn(
-                "relative z-10 mx-1.5 min-h-[var(--motion-context-item-height)] rounded-[calc(var(--radius-sm)-1px)] px-3.5 py-2.5 transition-colors",
-                active
-                  ? "font-medium text-foreground"
-                  : "text-foreground/88 hover:bg-[color:color-mix(in_oklab,var(--surface-active)_54%,transparent)]",
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <span
-                  data-testid={`workspace-project-color-${project.id}`}
-                  className="h-4 w-4 shrink-0 rounded-[calc(var(--radius-sm)-3px)] shadow-[inset_0_0_0_1px_color-mix(in_oklab,white_20%,transparent),0_0_0_1px_color-mix(in_oklab,var(--border-base)_72%,transparent)]"
-                  style={projectColorBackgroundStyle(project.color)}
-                />
-                <span className="truncate text-sm font-medium text-foreground">{project.name}</span>
-              </div>
-              <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                {project.description || "Project workspace"}
-              </div>
-            </Link>
-          );
-        })}
-      </SlidingContextNav>
-    </>
-  );
-}
+import type { Agent, CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
+import { RECENT_ISSUES_COLLAPSED_LIMIT, LINEAR_PLUGIN_KEY, LINEAR_CATALOG_DATA_KEY, LINEAR_PLUGIN_ROUTE_PATH, SidebarIssue, LinearSidebarItem, LinearSidebarCatalog, resolveLinearPageContribution, linearIssueSourceHref, SectionLabel, ContextColumnHeader, resolveContextColumnHeader, calendarStatusLabel, CALENDAR_LAYER_COLORS, CALENDAR_WEEKDAY_LABELS, calendarStartOfDay, calendarAddDays, calendarDateKey, calendarStartOfMonthGrid, calendarMonthTitle, calendarHeatClass, setStringSetValue, CalendarMiniMonth, VisibilityLayerRow, activeConversationIdFromPath, ContextItem, activeContextStyle, SlidingContextNav, SidebarLiveCount, ProjectListSection, SidebarIssueListSection } from "./ThreeColumnContextSidebar.parts";
 
 function RecentIssueListSection({
   issues,
@@ -687,6 +202,10 @@ export function ThreeColumnContextSidebar() {
     }));
   }, []);
   const calendarSidebarScrollRef = useScrollbarActivityRef("rudder:sidebar-scroll:calendar");
+  const issueSidebarScrollRef = useScrollbarActivityRef("rudder:sidebar-scroll:issues");
+  const workspaceProjectsScrollRef = useScrollbarActivityRef("rudder:sidebar-scroll:workspace-projects");
+  const chatSidebarScrollRef = useScrollbarActivityRef("rudder:sidebar-scroll:chat");
+  const agentSidebarScrollRef = useScrollbarActivityRef("rudder:sidebar-scroll:agents");
   const {
     cursor,
     setCursor,
@@ -754,6 +273,9 @@ export function ThreeColumnContextSidebar() {
     queryFn: () => issuesApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && isIssuesRoute,
   });
+  const { follows: issueFollows } = useIssueFollows(
+    selectedOrganizationId && isIssuesRoute ? selectedOrganizationId : null,
+  );
   const { data: pluginContributions } = useQuery({
     queryKey: queryKeys.plugins.uiContributions,
     queryFn: () => pluginsApi.listUiContributions(),
@@ -869,6 +391,10 @@ export function ThreeColumnContextSidebar() {
     () => resolveRecentIssues(recentIssueIds, allIssues ?? []),
     [allIssues, recentIssueIds],
   );
+  const starredIssueRefs = useMemo<SidebarIssue[]>(() => {
+    const issuesById = new Map((allIssues ?? []).map((issue) => [issue.id, issue]));
+    return issueFollows.map((follow) => issuesById.get(follow.issueId) ?? follow.issue);
+  }, [allIssues, issueFollows]);
   const followingIssueCount = useMemo(() => {
     if (!currentUserId) return 0;
     return (allIssues ?? []).filter((issue) => isFollowingIssue(issue, currentUserId)).length;
@@ -969,7 +495,7 @@ export function ThreeColumnContextSidebar() {
     if (isMobile) setSidebarOpen(false);
   };
 
-  const recordRecentIssueOpen = (issue: Issue) => {
+  const recordRecentIssueOpen = (issue: SidebarIssue) => {
     if (!selectedOrganizationId) return;
     setRecentIssueIds(recordRecentIssue(selectedOrganizationId, issue.id, readRecentIssueIds(selectedOrganizationId)));
   };
@@ -1185,11 +711,12 @@ export function ThreeColumnContextSidebar() {
                 visible={!hiddenAgentIds.has(agent.id)}
                 onToggle={() => setStringSetValue(setHiddenAgentIds, agent.id, hiddenAgentIds.has(agent.id))}
                 colorClass={CALENDAR_LAYER_COLORS[index % CALENDAR_LAYER_COLORS.length]}
+                agent={agent}
               />
             ))}
           </div>
 
-          <SectionLabel>Status</SectionLabel>
+          <SectionLabel>Timeline</SectionLabel>
           <div className="mt-2 space-y-0.5" data-testid="calendar-status-filters">
             {CALENDAR_EVENT_STATUS_OPTIONS.map((status) => (
               <label
@@ -1251,14 +778,39 @@ export function ThreeColumnContextSidebar() {
           </SlidingContextNav>
         )}
 
-        <div className="min-h-0 flex-1 overflow-y-auto pb-3.5">
-          <RecentIssueListSection
+        <div
+          ref={issueSidebarScrollRef}
+          data-testid="issue-sidebar-scroll"
+          className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto pb-3.5"
+        >
+          <SidebarIssueListSection
+            issues={starredIssueRefs}
+            activeIssueRef={activeIssueRef}
+            closeMobileSidebar={closeMobileSidebar}
+            collapsed={isIssueSectionCollapsed("starred")}
+            onToggleCollapsed={() => toggleIssueSection("starred")}
+            sectionLabel={`Starred (${starredIssueRefs.length})`}
+            ariaLabel="Starred issues"
+            sectionTestId="issue-starred-section"
+            listTestId="issue-starred-list"
+            rowTestIdPrefix="issue-starred-row"
+            toggleTestId="issue-starred-toggle"
+            scrollActivityKey="rudder:sidebar-scroll:starred-issues"
+          />
+          <SidebarIssueListSection
             issues={recentIssueRefs}
             activeIssueRef={activeIssueRef}
             closeMobileSidebar={closeMobileSidebar}
             onOpenIssue={recordRecentIssueOpen}
             collapsed={isIssueSectionCollapsed("recent")}
             onToggleCollapsed={() => toggleIssueSection("recent")}
+            sectionLabel={`Recently Viewed (${recentIssueRefs.length})`}
+            ariaLabel="Recently viewed issues"
+            sectionTestId="issue-recent-section"
+            listTestId="issue-recent-list"
+            rowTestIdPrefix="issue-recent-row"
+            toggleTestId="issue-recent-toggle"
+            scrollActivityKey="rudder:sidebar-scroll:recent-issues"
           />
           <SectionLabel
             testId="workspace-projects-section"
@@ -1382,6 +934,7 @@ export function ThreeColumnContextSidebar() {
             activeProjectRef={activeProjectRef}
             closeMobileSidebar={closeMobileSidebar}
             onNewProject={openNewProject}
+            scrollRef={workspaceProjectsScrollRef}
           />
         </div>
       </aside>
@@ -1402,7 +955,11 @@ export function ThreeColumnContextSidebar() {
         className="workspace-context-sidebar chat-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
       >
         <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
-        <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 py-2.5">
+        <nav
+          ref={chatSidebarScrollRef}
+          data-testid="chat-sidebar-scroll"
+          className="scrollbar-auto-hide flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 py-2.5"
+        >
           <Link
             to="/messenger/chat"
             onClick={closeMobileSidebar}
@@ -1461,7 +1018,7 @@ export function ThreeColumnContextSidebar() {
                     <div className="flex items-center gap-2">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 text-[13px] font-medium leading-tight text-foreground">
-                          <span className="truncate">{conversation.title}</span>
+                          <span className="truncate">{displayChatTitle(conversation)}</span>
                           {conversation.isUnread ? (
                             <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-red-500" aria-label="Unread chat" />
                           ) : null}
@@ -1570,7 +1127,7 @@ export function ThreeColumnContextSidebar() {
                     <div className="flex items-center gap-2">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 text-[13px] font-medium leading-tight text-foreground">
-                          <span className="truncate">{conversation.title}</span>
+                          <span className="truncate">{displayChatTitle(conversation)}</span>
                           {conversation.isUnread ? (
                             <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-red-500" aria-label="Unread chat" />
                           ) : null}
@@ -1670,8 +1227,10 @@ export function ThreeColumnContextSidebar() {
       <SlidingContextNav
         activeIndex={activeAgentIndex}
         ariaLabel="Agent team"
-        className="motion-context-nav--agent-list mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
+        className="motion-context-nav--agent-list scrollbar-auto-hide mt-2 min-h-0 flex-1 overflow-y-auto pb-3.5"
+        scrollRef={agentSidebarScrollRef}
         indicatorTestId="agent-sidebar-active-indicator"
+        testId="agent-sidebar-scroll"
       >
         {visibleAgents.map((agent) => {
           const liveCount = liveCountByAgent.get(agent.id) ?? 0;

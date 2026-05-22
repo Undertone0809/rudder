@@ -77,6 +77,15 @@ export function redactTranscriptEntryPaths(entry: TranscriptEntry, opts?: HomePa
       };
     case "tool_result":
       return { ...entry, content: redactHomePathUserSegments(entry.content, opts) };
+    case "todo_list":
+      return {
+        ...entry,
+        todoListId: entry.todoListId ? redactHomePathUserSegments(entry.todoListId, opts) : undefined,
+        items: entry.items.map((item) => ({
+          ...item,
+          text: redactHomePathUserSegments(item.text, opts),
+        })),
+      };
     case "init":
       return {
         ...entry,

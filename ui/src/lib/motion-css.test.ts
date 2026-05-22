@@ -11,7 +11,9 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain('.motion-org-edge[data-active="true"]');
     expect(motionCss).toContain(".motion-chat-options-pop");
     expect(motionCss).toContain(".motion-chat-composer-menu-pop");
+    expect(motionCss).toContain(".motion-chat-empty-heading");
     expect(motionCss).toContain(".motion-organization-menu-pop");
+    expect(motionCss).toContain(".motion-disclosure-enter");
     expect(motionCss).toContain(".motion-rail-active-indicator");
     expect(motionCss).toContain(".motion-context-active-indicator");
     expect(motionCss).toContain("animation: none !important");
@@ -35,6 +37,12 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("transform-origin: bottom center");
   });
 
+  it("defines an enter animation for draft chat heading changes", () => {
+    expect(motionCss).toContain(".motion-chat-empty-heading");
+    expect(motionCss).toContain("@keyframes rudder-chat-empty-heading-enter");
+    expect(motionCss).toContain("filter: blur(3px)");
+  });
+
   it("defines sliding active indicators for navigation surfaces", () => {
     expect(motionCss).toContain(".motion-rail-nav");
     expect(motionCss).toContain("--motion-rail-active-index");
@@ -43,6 +51,12 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain(".motion-context-nav--agent-list");
     expect(motionCss).toContain(".motion-context-nav--project-card-list");
     expect(motionCss).toContain("transform var(--motion-duration-standard) var(--motion-ease-enter)");
+  });
+
+  it("keeps organization structure edges stable while zooming", () => {
+    expect(motionCss).toContain(".motion-org-edge");
+    expect(motionCss).toContain("stroke-linecap: round");
+    expect(motionCss).toContain("vector-effect: non-scaling-stroke");
   });
 
   it("highlights kanban card borders on hover and keyboard focus", () => {
@@ -58,5 +72,22 @@ describe("Motion V1 CSS", () => {
     expect(motionCss).toContain("[data-org-menu-item]");
     expect(motionCss).toContain("--motion-org-menu-item-delay");
     expect(motionCss).toContain("clip-path: inset(0 16% 100% 0 round var(--radius-md))");
+  });
+
+  it("defines motion for transcript disclosure controls", () => {
+    expect(motionCss).toContain(".motion-disclosure-enter");
+    expect(motionCss).toContain(".motion-disclosure-icon");
+    expect(motionCss).toContain("@keyframes rudder-disclosure-enter");
+    expect(motionCss).toContain("clip-path: inset(0 0 100% 0 round var(--radius-md))");
+    expect(motionCss).toContain('.motion-disclosure-icon[data-state="open"]');
+  });
+
+  it("defines fixed-width reduced-motion text dots", () => {
+    expect(motionCss).toContain(".rudder-text-dots__dots");
+    expect(motionCss).toContain("grid-template-columns: repeat(3, 0.34em)");
+    expect(motionCss).toContain("color: currentColor");
+    expect(motionCss).toContain("@keyframes rudder-text-dots-pulse");
+    expect(motionCss).toContain(".rudder-text-dots__dot");
+    expect(motionCss).toContain("opacity: 1");
   });
 });

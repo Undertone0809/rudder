@@ -63,6 +63,12 @@ function encodeMentionParam(value: string): string {
   return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
+function stripMarkdownCode(markdown: string): string {
+  return markdown
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`[^`\n]*`/g, "");
+}
+
 export function buildProjectMentionHref(projectId: string, color?: string | null): string {
   const trimmedProjectId = projectId.trim();
   const normalizedColor = normalizeProjectMentionColor(color ?? null);
@@ -160,8 +166,9 @@ export function extractProjectMentionIds(markdown: string): string[] {
   if (!markdown) return [];
   const ids = new Set<string>();
   const re = new RegExp(PROJECT_MENTION_LINK_RE);
+  const source = stripMarkdownCode(markdown);
   let match: RegExpExecArray | null;
-  while ((match = re.exec(markdown)) !== null) {
+  while ((match = re.exec(source)) !== null) {
     const parsed = parseProjectMentionHref(match[1]);
     if (parsed) ids.add(parsed.projectId);
   }
@@ -172,8 +179,9 @@ export function extractAgentMentionIds(markdown: string): string[] {
   if (!markdown) return [];
   const ids = new Set<string>();
   const re = new RegExp(AGENT_MENTION_LINK_RE);
+  const source = stripMarkdownCode(markdown);
   let match: RegExpExecArray | null;
-  while ((match = re.exec(markdown)) !== null) {
+  while ((match = re.exec(source)) !== null) {
     const parsed = parseAgentMentionHref(match[1]);
     if (parsed) ids.add(parsed.agentId);
   }
@@ -184,8 +192,9 @@ export function extractIssueMentionIds(markdown: string): string[] {
   if (!markdown) return [];
   const ids = new Set<string>();
   const re = new RegExp(ISSUE_MENTION_LINK_RE);
+  const source = stripMarkdownCode(markdown);
   let match: RegExpExecArray | null;
-  while ((match = re.exec(markdown)) !== null) {
+  while ((match = re.exec(source)) !== null) {
     const parsed = parseIssueMentionHref(match[1]);
     if (parsed) ids.add(parsed.issueId);
   }

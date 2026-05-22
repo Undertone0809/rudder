@@ -1,6 +1,7 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import type { LangfuseObservation } from "@langfuse/tracing";
-import type { Db } from "@rudderhq/db";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { issueLabels, issues, labels, type Db } from "@rudderhq/db";
 import {
   addApprovalCommentSchema,
   createApprovalSchema,
@@ -13,15 +14,18 @@ import { validate } from "../middleware/validate.js";
 import { observeExecutionEvent, withExecutionObservation } from "../langfuse.js";
 import { logger } from "../middleware/logger.js";
 import {
+  accessService,
   approvalService,
   chatService,
   heartbeatService,
   issueApprovalService,
+  issueService,
   logActivity,
   secretService,
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { redactEventPayload } from "../redaction.js";
+import { forbidden, unprocessable } from "../errors.js";
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
   return {
@@ -125,11 +129,91 @@ async function emitChatApprovalObservationEvent(
 export function approvalRoutes(db: Db) {
   const router = Router();
   const svc = approvalService(db);
+  const access = accessService(db);
   const heartbeat = heartbeatService(db);
   const chatsSvc = chatService(db);
   const issueApprovalsSvc = issueApprovalService(db);
+  const issuesSvc = issueService(db);
   const secretsSvc = secretService(db);
   const strictSecretsMode = process.env.RUDDER_SECRETS_STRICT_MODE === "true";
+
+  function proposalAssignsOrReviewsIssue(proposal: Record<string, unknown> | null | undefined) {
+    if (!proposal) return false;
+    return Boolean(
+      (typeof proposal.assigneeAgentId === "string" && proposal.assigneeAgentId.trim().length > 0)
+      || (typeof proposal.assigneeUserId === "string" && proposal.assigneeUserId.trim().length > 0)
+      || (typeof proposal.reviewerAgentId === "string" && proposal.reviewerAgentId.trim().length > 0)
+      || (typeof proposal.reviewerUserId === "string" && proposal.reviewerUserId.trim().length > 0),
+    );
+  }
+
+  async function assertCanApproveChatIssueConversion(req: Request, approval: { orgId: string; payload: Record<string, unknown> }) {
+    const proposedIssue =
+      approval.payload?.proposedIssue
+      && typeof approval.payload.proposedIssue === "object"
+      && !Array.isArray(approval.payload.proposedIssue)
+        ? (approval.payload.proposedIssue as Record<string, unknown>)
+        : null;
+    if (!proposalAssignsOrReviewsIssue(proposedIssue)) return;
+    assertCompanyAccess(req, approval.orgId);
+    if (req.actor.type === "board" && (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) return;
+    const allowed = await access.canUser(approval.orgId, req.actor.userId, "tasks:assign");
+    if (!allowed) throw forbidden("Missing permission: tasks:assign");
+  }
+
+  async function assertChatIssueProposalLabelsIfNeeded(approval: { orgId: string; payload: Record<string, unknown> }) {
+    const proposedByAgentId = typeof approval.payload.proposedByAgentId === "string"
+      ? approval.payload.proposedByAgentId.trim()
+      : "";
+    if (!proposedByAgentId) return;
+
+    const proposedIssue =
+      approval.payload?.proposedIssue
+      && typeof approval.payload.proposedIssue === "object"
+      && !Array.isArray(approval.payload.proposedIssue)
+        ? (approval.payload.proposedIssue as Record<string, unknown>)
+        : null;
+    const labelIds = Array.isArray(proposedIssue?.labelIds)
+      ? proposedIssue.labelIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    if (labelIds.length > 0) {
+      const uniqueLabelIds = [...new Set(labelIds)];
+      const existingLabels = await db
+        .select({ id: labels.id })
+        .from(labels)
+        .where(and(eq(labels.orgId, approval.orgId), inArray(labels.id, uniqueLabelIds)));
+      if (existingLabels.length !== uniqueLabelIds.length) {
+        throw unprocessable("One or more labels are invalid for this organization");
+      }
+      return;
+    }
+
+    const parentId = typeof proposedIssue?.parentId === "string" ? proposedIssue.parentId.trim() : "";
+    if (parentId) {
+      const parentLabelRows = await db
+        .select({ labelId: issueLabels.labelId })
+        .from(issueLabels)
+        .innerJoin(issues, eq(issueLabels.issueId, issues.id))
+        .where(and(eq(issues.id, parentId), eq(issues.orgId, approval.orgId), eq(issueLabels.orgId, approval.orgId)))
+        .limit(1);
+      if (parentLabelRows.length > 0) return;
+    }
+
+    const [labelCountRow] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(labels)
+      .where(eq(labels.orgId, approval.orgId));
+    const labelCount = Number(labelCountRow?.count ?? 0);
+    if (labelCount < 5) return;
+
+    throw unprocessable(
+      `当前组织有 ${labelCount} 个 labels，agent 创建 issue 需要选择至少一个 label`,
+      {
+        code: "agent_issue_label_required",
+        labelCount,
+      },
+    );
+  }
 
   router.get("/orgs/:orgId/approvals", async (req, res) => {
     const orgId = req.params.orgId as string;
@@ -183,10 +267,26 @@ export function approvalRoutes(db: Db) {
     });
 
     if (uniqueIssueIds.length > 0) {
-      await issueApprovalsSvc.linkManyForApproval(approval.id, uniqueIssueIds, {
+      const links = await issueApprovalsSvc.linkManyForApproval(approval.id, uniqueIssueIds, {
         agentId: actor.agentId,
         userId: actor.actorType === "user" ? actor.actorId : null,
       });
+      for (const link of links) {
+        await logActivity(db, {
+          orgId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "issue.approval_linked",
+          entityType: "issue",
+          entityId: link.issueId,
+          details: {
+            approvalId: approval.id,
+            linkCreatedAt: link.createdAt.toISOString(),
+          },
+        });
+      }
     }
 
     await logActivity(db, {
@@ -218,10 +318,26 @@ export function approvalRoutes(db: Db) {
   router.post("/approvals/:id/approve", validate(resolveApprovalSchema), async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
+    const pendingApproval = await svc.getById(id);
+    const payloadOverride =
+      pendingApproval?.type === "chat_issue_creation"
+      && req.body.payload
+      && typeof req.body.payload === "object"
+      && !Array.isArray(req.body.payload)
+        ? (req.body.payload as Record<string, unknown>)
+        : undefined;
+    const approvalForValidation = pendingApproval && payloadOverride
+      ? { ...pendingApproval, payload: payloadOverride }
+      : pendingApproval;
+    if (approvalForValidation?.type === "chat_issue_creation") {
+      await assertCanApproveChatIssueConversion(req, approvalForValidation);
+      await assertChatIssueProposalLabelsIfNeeded(approvalForValidation);
+    }
     const { approval, applied } = await svc.approve(
       id,
       req.body.decidedByUserId ?? "board",
       req.body.decisionNote,
+      payloadOverride,
     );
 
     if (applied) {
@@ -258,6 +374,103 @@ export function approvalRoutes(db: Db) {
       const linkedIssues = await issueApprovalsSvc.listIssuesForApproval(approval.id);
       const linkedIssueIds = linkedIssues.map((issue) => issue.id);
       const primaryIssueId = linkedIssueIds[0] ?? null;
+      const reactivatedLinkedIssueIds: string[] = [];
+
+      for (const linkedIssue of linkedIssues) {
+        if (linkedIssue.status !== "blocked") continue;
+
+        const nextStatus = linkedIssue.assigneeAgentId || linkedIssue.assigneeUserId ? "in_progress" : "todo";
+        const updatedIssue = await issuesSvc.update(linkedIssue.id, { status: nextStatus });
+        if (!updatedIssue) continue;
+        reactivatedLinkedIssueIds.push(updatedIssue.id);
+
+        await logActivity(db, {
+          orgId: approval.orgId,
+          actorType: "user",
+          actorId: req.actor.userId ?? "board",
+          action: "issue.updated",
+          entityType: "issue",
+          entityId: updatedIssue.id,
+          details: {
+            status: updatedIssue.status,
+            source: "approval.approved",
+            approvalId: approval.id,
+            identifier: updatedIssue.identifier,
+            _previous: { status: "blocked" },
+          },
+        });
+
+        if (updatedIssue.assigneeAgentId && updatedIssue.assigneeAgentId !== approval.requestedByAgentId) {
+          try {
+            const wakeRun = await heartbeat.wakeup(updatedIssue.assigneeAgentId, {
+              source: "assignment",
+              triggerDetail: "system",
+              reason: "approval_approved",
+              payload: {
+                approvalId: approval.id,
+                approvalStatus: approval.status,
+                issueId: updatedIssue.id,
+                mutation: "approval_approved",
+              },
+              requestedByActorType: "user",
+              requestedByActorId: req.actor.userId ?? "board",
+              contextSnapshot: {
+                source: "approval.approved",
+                approvalId: approval.id,
+                approvalStatus: approval.status,
+                issueId: updatedIssue.id,
+                taskId: updatedIssue.id,
+                wakeSource: "assignment",
+                wakeReason: "approval_approved",
+                issue: {
+                  id: updatedIssue.id,
+                  title: updatedIssue.title,
+                  description: updatedIssue.description,
+                  status: updatedIssue.status,
+                  priority: updatedIssue.priority,
+                },
+              },
+            });
+
+            await logActivity(db, {
+              orgId: approval.orgId,
+              actorType: "user",
+              actorId: req.actor.userId ?? "board",
+              action: "approval.linked_issue_assignee_wakeup_queued",
+              entityType: "approval",
+              entityId: approval.id,
+              details: {
+                issueId: updatedIssue.id,
+                assigneeAgentId: updatedIssue.assigneeAgentId,
+                wakeRunId: wakeRun?.id ?? null,
+              },
+            });
+          } catch (err) {
+            logger.warn(
+              {
+                err,
+                approvalId: approval.id,
+                issueId: updatedIssue.id,
+                assigneeAgentId: updatedIssue.assigneeAgentId,
+              },
+              "failed to queue linked issue assignee wakeup after approval",
+            );
+            await logActivity(db, {
+              orgId: approval.orgId,
+              actorType: "user",
+              actorId: req.actor.userId ?? "board",
+              action: "approval.linked_issue_assignee_wakeup_failed",
+              entityType: "approval",
+              entityId: approval.id,
+              details: {
+                issueId: updatedIssue.id,
+                assigneeAgentId: updatedIssue.assigneeAgentId,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            });
+          }
+        }
+      }
 
       await logActivity(db, {
         orgId: approval.orgId,
@@ -270,6 +483,7 @@ export function approvalRoutes(db: Db) {
           type: approval.type,
           requestedByAgentId: approval.requestedByAgentId,
           linkedIssueIds,
+          reactivatedLinkedIssueIds,
         },
       });
 

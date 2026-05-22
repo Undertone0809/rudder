@@ -242,6 +242,53 @@ npm_package_version_exists() {
   [ "$resolved" = "$version" ]
 }
 
+next_patch_version() {
+  node - "$1" <<'NODE'
+const version = process.argv[2] ?? "";
+const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+if (!match) process.exit(1);
+process.stdout.write(`${match[1]}.${match[2]}.${Number(match[3]) + 1}`);
+NODE
+}
+
+fail_canary_base_already_released() {
+  local stable_version="$1"
+  local reason="$2"
+  local next_version
+
+  next_version="$(next_patch_version "$stable_version" 2>/dev/null || true)"
+  if [ -n "$next_version" ]; then
+    release_fail "canary base version $stable_version has already been released as stable ($reason). Bump the committed public package version first, for example $stable_version -> $next_version, before publishing another canary."
+  fi
+
+  release_fail "canary base version $stable_version has already been released as stable ($reason). Bump the committed public package version before publishing another canary."
+}
+
+require_unreleased_canary_base() {
+  local stable_version="$1"
+  local remote="$2"
+  shift 2
+
+  local tag_name
+  tag_name="$(stable_tag_name "$stable_version")"
+
+  if git_remote_tag_exists "$tag_name" "$remote"; then
+    fail_canary_base_already_released "$stable_version" "git tag $tag_name exists on $remote"
+  fi
+
+  if git_local_tag_exists "$tag_name"; then
+    fail_canary_base_already_released "$stable_version" "git tag $tag_name exists locally"
+  fi
+
+  local package_name
+  for package_name in "$@"; do
+    [ -n "$package_name" ] || continue
+    if npm_package_version_exists "$package_name" "$stable_version"; then
+      fail_canary_base_already_released "$stable_version" "npm package ${package_name}@${stable_version} exists"
+    fi
+  done
+}
+
 wait_for_npm_package_version() {
   local package_name="$1"
   local version="$2"
@@ -307,5 +354,5 @@ list_public_package_info() {
 }
 
 set_public_package_version() {
-  node "$REPO_ROOT/scripts/release-package-map.mjs" set-version "$1"
+  node "$REPO_ROOT/scripts/release-package-map.mjs" set-publish-version "$1"
 }

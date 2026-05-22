@@ -49,6 +49,7 @@ const mockCompanySkillService = vi.hoisted(() => ({
   buildAgentSkillSnapshot: vi.fn(),
   resolveDesiredSkillSelectionForAgent: vi.fn(),
   replaceEnabledSkillKeysForAgent: vi.fn(),
+  addEnabledSkillKeysForAgent: vi.fn(),
 }));
 
 const mockSecretService = vi.hoisted(() => ({
@@ -73,6 +74,12 @@ vi.mock("../services/index.js", () => ({
   heartbeatService: () => mockHeartbeatService,
   issueApprovalService: () => mockIssueApprovalService,
   issueService: () => ({}),
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: mockLogActivity,
   secretService: () => mockSecretService,
   syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
@@ -260,6 +267,13 @@ describe("agent skill routes", () => {
         return enabledSkillState;
       },
     );
+    mockCompanySkillService.addEnabledSkillKeysForAgent.mockImplementation(
+      async (_orgId: string, _agentId: string, skillKeys: string[]) => {
+        enabledSkillState = Array.from(new Set([...enabledSkillState, ...skillKeys]))
+          .sort((left, right) => left.localeCompare(right));
+        return enabledSkillState;
+      },
+    );
     mockCompanySkillService.resolveDesiredSkillSelectionForAgent.mockImplementation(
       async (agent: { agentRuntimeType: string }, _runtimeConfig: Record<string, unknown>, requested: string[] | undefined) => ({
         desiredSkills: normalizeDesiredSkillSelectionRefs(agent.agentRuntimeType, requested ?? []),
@@ -421,6 +435,29 @@ describe("agent skill routes", () => {
     );
   });
 
+  it("additively enables skills without replacing existing selections", async () => {
+    mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
+    enabledSkillState = ["org:organization/organization-1/alpha-test"];
+
+    const res = await request(createApp())
+      .post("/api/agents/11111111-1111-4111-8111-111111111111/skills/enable?orgId=organization-1")
+      .send({ skills: ["build-advisor"] });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockCompanySkillService.addEnabledSkillKeysForAgent).toHaveBeenCalledWith(
+      "organization-1",
+      "11111111-1111-4111-8111-111111111111",
+      [
+        "adapter:claude_local:build-advisor",
+        "org:organization/organization-1/alpha-test",
+      ],
+    );
+    expect(res.body.desiredSkills).toEqual([
+      "adapter:claude_local:build-advisor",
+      "org:organization/organization-1/alpha-test",
+    ]);
+  });
+
   it("persists canonical desired skills when creating an agent directly", async () => {
     const res = await request(createApp())
       .post("/api/orgs/organization-1/agents")
@@ -462,6 +499,22 @@ describe("agent skill routes", () => {
     expect(createInput).not.toHaveProperty("name");
   });
 
+  it("generates a DiceBear avatar instead of preserving legacy named icons during direct creation", async () => {
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/agents")
+      .send({
+        name: "QA Agent",
+        role: "qa",
+        icon: "shield",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createInput = mockAgentService.create.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
+    expect(createInput?.icon).toMatch(/^dicebear:notionists:/);
+  });
+
   it("materializes a managed SOUL.md for directly created local agents", async () => {
     const res = await request(createApp())
       .post("/api/orgs/organization-1/agents")
@@ -486,7 +539,7 @@ describe("agent skill routes", () => {
         "SOUL.md": "You are QA.",
         "TOOLS.md": expect.any(String),
       }),
-      { entryFile: "SOUL.md", replaceExisting: false },
+      { entryFile: "SOUL.md", replaceExisting: false, clearLegacyPromptTemplate: true },
     );
     expect(mockAgentService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
@@ -527,7 +580,7 @@ describe("agent skill routes", () => {
         "SOUL.md": expect.stringContaining("You are the CEO."),
         "TOOLS.md": expect.stringContaining("# TOOLS.md"),
       }),
-      { entryFile: "SOUL.md", replaceExisting: false },
+      { entryFile: "SOUL.md", replaceExisting: false, clearLegacyPromptTemplate: true },
     );
     const ceoBundle = mockAgentInstructionsService.materializeManagedBundle.mock.calls[0]?.[1] as Record<string, string>;
     expect(ceoBundle["SOUL.md"]).toContain("CEO Persona");
@@ -554,7 +607,7 @@ describe("agent skill routes", () => {
       expect.objectContaining({
         "SOUL.md": expect.stringContaining("Agent Persona"),
       }),
-      { entryFile: "SOUL.md", replaceExisting: false },
+      { entryFile: "SOUL.md", replaceExisting: false, clearLegacyPromptTemplate: true },
     );
     const defaultBundle = mockAgentInstructionsService.materializeManagedBundle.mock.calls[0]?.[1] as Record<string, string>;
     expect(defaultBundle).not.toHaveProperty("AGENTS.md");
@@ -587,6 +640,53 @@ describe("agent skill routes", () => {
           requestedConfigurationSnapshot: expect.objectContaining({
             desiredSkills: [],
           }),
+        }),
+      }),
+    );
+  });
+
+  it("generates a DiceBear avatar during hires when the request omits icon", async () => {
+    const res = await request(createApp(createDb(true)))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "QA Agent",
+        role: "qa",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createInput = mockAgentService.create.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
+    expect(createInput?.icon).toMatch(/^dicebear:notionists:/);
+    expect(mockApprovalService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          icon: expect.stringMatching(/^dicebear:notionists:/),
+        }),
+      }),
+    );
+  });
+
+  it("generates a DiceBear avatar instead of preserving legacy named icons during hires", async () => {
+    const res = await request(createApp(createDb(true)))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "QA Agent",
+        role: "qa",
+        icon: "shield",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createInput = mockAgentService.create.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
+    expect(createInput?.icon).toMatch(/^dicebear:notionists:/);
+    expect(mockApprovalService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          icon: expect.stringMatching(/^dicebear:notionists:/),
         }),
       }),
     );
@@ -658,5 +758,58 @@ describe("agent skill routes", () => {
       | { payload?: { agentRuntimeConfig?: Record<string, unknown> } }
       | undefined;
     expect(approvalInput?.payload?.agentRuntimeConfig?.promptTemplate).toBeUndefined();
+  });
+
+  it("materializes hire prompt templates even when clients send incomplete managed bundle metadata", async () => {
+    const res = await request(createApp(createDb(true)))
+      .post("/api/orgs/organization-1/agent-hires")
+      .send({
+        name: "Marketing Agent",
+        role: "cmo",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          cwd: "/tmp/workspace",
+          instructionsBundleMode: "managed",
+          instructionsEntryFile: "SOUL.md",
+          promptTemplate: "# SOUL.md -- CMO Persona\n\nYou are the CMO.",
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "11111111-1111-4111-8111-111111111111",
+        role: "cmo",
+        agentRuntimeType: "codex_local",
+      }),
+      expect.objectContaining({
+        "SOUL.md": "# SOUL.md -- CMO Persona\n\nYou are the CMO.",
+      }),
+      { entryFile: "SOUL.md", replaceExisting: false, clearLegacyPromptTemplate: true },
+    );
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({
+        agentRuntimeConfig: expect.objectContaining({
+          instructionsRootPath: "/tmp/11111111-1111-4111-8111-111111111111/instructions",
+          instructionsEntryFile: "SOUL.md",
+          instructionsFilePath: "/tmp/11111111-1111-4111-8111-111111111111/instructions/SOUL.md",
+        }),
+      }),
+    );
+    const updatePatch = mockAgentService.update.mock.calls.at(-1)?.[1] as
+      | { agentRuntimeConfig?: Record<string, unknown> }
+      | undefined;
+    expect(updatePatch?.agentRuntimeConfig?.promptTemplate).toBeUndefined();
+    expect(mockApprovalService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          agentRuntimeConfig: expect.not.objectContaining({
+            promptTemplate: expect.any(String),
+          }),
+        }),
+      }),
+    );
   });
 });

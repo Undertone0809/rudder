@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { queryKeys } from "../lib/queryKeys";
+import { formatDateTime } from "../lib/utils";
 
 function isSafeExternalUrl(value: string | null | undefined) {
   if (!value) return false;
@@ -71,10 +72,10 @@ export function ExecutionWorkspaceDetail() {
             <span className="break-all font-mono text-xs">{workspace.repoUrl}</span>
           ) : "None"}
         </DetailRow>
-        <DetailRow label="Opened">{new Date(workspace.openedAt).toLocaleString()}</DetailRow>
-        <DetailRow label="Last used">{new Date(workspace.lastUsedAt).toLocaleString()}</DetailRow>
+        <DetailRow label="Opened">{formatDateTime(workspace.openedAt)}</DetailRow>
+        <DetailRow label="Last used">{formatDateTime(workspace.lastUsedAt)}</DetailRow>
         <DetailRow label="Cleanup">
-          {workspace.cleanupEligibleAt ? `${new Date(workspace.cleanupEligibleAt).toLocaleString()}${workspace.cleanupReason ? ` · ${workspace.cleanupReason}` : ""}` : "Not scheduled"}
+          {workspace.cleanupEligibleAt ? `${formatDateTime(workspace.cleanupEligibleAt)}${workspace.cleanupReason ? ` · ${workspace.cleanupReason}` : ""}` : "Not scheduled"}
         </DetailRow>
       </div>
     </div>

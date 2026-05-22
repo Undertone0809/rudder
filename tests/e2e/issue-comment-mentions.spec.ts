@@ -22,7 +22,10 @@ test("issue comment composer uses the chat-style mention panel without exposing 
       name: "Dylan",
       role: "pm",
       agentRuntimeType: "process",
-      agentRuntimeConfig: {},
+      agentRuntimeConfig: {
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+      },
     },
   });
   expect(agentRes.ok()).toBe(true);
@@ -34,6 +37,7 @@ test("issue comment composer uses the chat-style mention panel without exposing 
       description: "The comment composer should handle @ mentions like new chat.",
       status: "todo",
       priority: "medium",
+      assigneeUserId: "local-board",
     },
   });
   expect(primaryIssueRes.ok()).toBe(true);
@@ -50,6 +54,7 @@ test("issue comment composer uses the chat-style mention panel without exposing 
     },
   });
   expect(relatedIssueRes.ok()).toBe(true);
+  const relatedIssue = await relatedIssueRes.json() as { id: string };
 
   await page.goto("/");
   await page.evaluate((orgId) => {
@@ -59,7 +64,7 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await page.setViewportSize({ width: 1440, height: 980 });
   await page.goto(`/${organization.issuePrefix}/issues/${primaryIssue.identifier ?? primaryIssue.id}`);
 
-  const composer = page.locator(".rudder-mdxeditor-content").last();
+  const composer = page.locator('.rudder-mdxeditor-content[contenteditable="true"]').last();
   await expect(composer).toBeVisible({ timeout: 15_000 });
 
   await composer.click();
@@ -79,16 +84,55 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   expect(menuBox).not.toBeNull();
   expect(menuBox!.width).toBeGreaterThan(composerBox!.width - 8);
 
+  await page.getByTestId(`markdown-mention-option-issue:${relatedIssue.id}`).click();
+  await page.keyboard.type(" mouse");
+  await expect(composer.locator("[data-mention-kind='issue']").first()).toContainText("Related mention target");
+  await expect(composer).toContainText("Related mention target mouse");
+
   await composer.press("ControlOrMeta+A");
+  await page.keyboard.type("before  after");
+  for (let i = 0; i < 6; i += 1) {
+    await page.keyboard.press("ArrowLeft");
+  }
   await page.keyboard.type("@dyl");
   await page.getByTestId(`markdown-mention-option-agent:${agent.id}`).click();
+  await page.keyboard.type("next ");
 
   const agentChip = composer.locator("[data-mention-kind='agent']").first();
   await expect(agentChip).toBeVisible();
   await expect(agentChip).toContainText("Dylan");
+  await expect(composer).toContainText(/before Dylan.*next after/);
 
   await agentChip.click();
   await page.waitForTimeout(100);
   await expect(page.locator('[class*="_linkDialogPopoverContent_"]')).toHaveCount(0);
   await expect(page.getByText(new RegExp(`agent://${agent.id}`))).toHaveCount(0);
+
+  const commentOnlyRes = await page.request.post(`/api/issues/${primaryIssue.id}/comments`, {
+    data: { body: `[${agent.name}](agent://${agent.id}) can you advise?` },
+  });
+  expect(commentOnlyRes.ok()).toBe(true);
+  const afterCommentOnlyRes = await page.request.get(`/api/issues/${primaryIssue.id}`);
+  expect(afterCommentOnlyRes.ok()).toBe(true);
+  const afterCommentOnly = await afterCommentOnlyRes.json() as {
+    assigneeAgentId: string | null;
+    assigneeUserId: string | null;
+  };
+  expect(afterCommentOnly.assigneeAgentId).toBeNull();
+  expect(afterCommentOnly.assigneeUserId).toBe("local-board");
+
+  const explicitReassignRes = await page.request.patch(`/api/issues/${primaryIssue.id}`, {
+    data: {
+      comment: `[${agent.name}](agent://${agent.id}) please own this.`,
+      assigneeAgentId: agent.id,
+      assigneeUserId: null,
+    },
+  });
+  expect(explicitReassignRes.ok()).toBe(true);
+  const afterExplicitReassign = await explicitReassignRes.json() as {
+    assigneeAgentId: string | null;
+    assigneeUserId: string | null;
+  };
+  expect(afterExplicitReassign.assigneeAgentId).toBe(agent.id);
+  expect(afterExplicitReassign.assigneeUserId).toBeNull();
 });

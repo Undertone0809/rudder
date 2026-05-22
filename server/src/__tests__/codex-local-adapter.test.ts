@@ -22,6 +22,22 @@ describe("codex_local parser", () => {
     });
     expect(parsed.errorMessage).toBe("model access denied");
   });
+
+  it("ignores closed-stdin tool session errors in terminal event parsing", () => {
+    const rawError = "write_stdin failed: stdin is closed for this session; rerun exec_command with tty=true to keep stdin open";
+    const stdout = [
+      JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
+      JSON.stringify({ type: "error", message: rawError }),
+      JSON.stringify({ type: "turn.failed", error: { message: rawError } }),
+      JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "completed anyway" } }),
+      JSON.stringify({ type: "turn.completed", usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 4 } }),
+    ].join("\n");
+
+    const parsed = parseCodexJsonl(stdout);
+    expect(parsed.sessionId).toBe("thread-123");
+    expect(parsed.summary).toBe("completed anyway");
+    expect(parsed.errorMessage).toBeNull();
+  });
 });
 
 describe("codex_local stale session detection", () => {
@@ -58,6 +74,52 @@ describe("codex_local ui stdout parser", () => {
       ),
     ).toEqual([
       { kind: "thinking", ts, text: "**Preparing to use rudder skill**" },
+    ]);
+  });
+
+  it("parses real Codex todo list lifecycle events", () => {
+    const ts = "2026-02-20T00:00:00.000Z";
+
+    expect(
+      parseCodexStdoutLine(
+        JSON.stringify({
+          type: "item.started",
+          item: {
+            id: "item_0",
+            type: "todo_list",
+            items: [{ text: "Verify event shape", completed: false }],
+          },
+        }),
+        ts,
+      ),
+    ).toEqual([
+      {
+        kind: "todo_list",
+        ts,
+        todoListId: "item_0",
+        items: [{ text: "Verify event shape", status: "pending" }],
+      },
+    ]);
+
+    expect(
+      parseCodexStdoutLine(
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            id: "item_0",
+            type: "todo_list",
+            items: [{ text: "Verify event shape", completed: true }],
+          },
+        }),
+        ts,
+      ),
+    ).toEqual([
+      {
+        kind: "todo_list",
+        ts,
+        todoListId: "item_0",
+        items: [{ text: "Verify event shape", status: "completed" }],
+      },
     ]);
   });
 
@@ -175,6 +237,52 @@ describe("codex_local ui stdout parser", () => {
         errors: ["model access denied"],
       },
     ]);
+  });
+
+  it("does not render closed-stdin tool session errors", () => {
+    const ts = "2026-02-20T00:00:00.000Z";
+    const rawError = "write_stdin failed: stdin is closed for this session; rerun exec_command with tty=true to keep stdin open";
+
+    expect(
+      parseCodexStdoutLine(
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            id: "item_0",
+            type: "error",
+            message: rawError,
+          },
+        }),
+        ts,
+      ),
+    ).toEqual([]);
+
+    expect(
+      parseCodexStdoutLine(
+        JSON.stringify({
+          type: "turn.failed",
+          error: { message: rawError },
+        }),
+        ts,
+      ),
+    ).toEqual([]);
+
+    expect(
+      parseCodexStdoutLine(
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            id: "item_2",
+            type: "command_execution",
+            command: "poll existing session",
+            aggregated_output: rawError,
+            exit_code: 1,
+            status: "failed",
+          },
+        }),
+        ts,
+      ),
+    ).toEqual([]);
   });
 });
 

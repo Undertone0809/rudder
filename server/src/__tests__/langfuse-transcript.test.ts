@@ -4,10 +4,12 @@ import type { ExecutionObservabilityContext } from "@rudderhq/shared";
 
 const mockStartExecutionChildObservation = vi.hoisted(() => vi.fn());
 const mockUpdateExecutionObservation = vi.hoisted(() => vi.fn());
+const mockUpdateExecutionTraceIO = vi.hoisted(() => vi.fn());
 
 vi.mock("../langfuse.js", () => ({
   startExecutionChildObservation: mockStartExecutionChildObservation,
   updateExecutionObservation: mockUpdateExecutionObservation,
+  updateExecutionTraceIO: mockUpdateExecutionTraceIO,
 }));
 
 const { emitExecutionTranscriptTree } = await import("../langfuse-transcript.js");
@@ -133,6 +135,19 @@ describe("emitExecutionTranscriptTree", () => {
         },
       }),
     );
+    expect(mockUpdateExecutionTraceIO).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "obs-model_turn:1" }),
+      {
+        input: "System prompt sent to the runtime.",
+      },
+    );
+    expect(mockUpdateExecutionTraceIO).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "obs-model_turn:1" }),
+      {
+        input: "System prompt sent to the runtime.",
+        output: "Inspecting the issue.",
+      },
+    );
     expect(mockUpdateExecutionObservation).toHaveBeenCalledWith(
       expect.objectContaining({ id: "obs-root" }),
       expect.any(Object),
@@ -177,6 +192,65 @@ describe("emitExecutionTranscriptTree", () => {
       expect.objectContaining({
         name: "model_turn:1",
         input: "Please inspect the system prompt.",
+      }),
+    );
+    expect(mockUpdateExecutionTraceIO).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "obs-model_turn:1" }),
+      expect.objectContaining({
+        input: "Please inspect the system prompt.",
+        output: "Inspecting.",
+      }),
+    );
+  });
+
+  it("creates a model turn from the captured runtime prompt when no turn transcript is available", () => {
+    const parent = makeObservation("root");
+
+    const stats = emitExecutionTranscriptTree({
+      context: makeContext(),
+      parentObservation: parent,
+      initialTurnInput: "Full chat runtime instruction.",
+      transcript: [],
+      fallbackResult: {
+        ts: "2026-04-12T10:00:05.000Z",
+        output: "Final chat answer.",
+        subtype: "completed",
+      },
+    });
+
+    expect(stats).toEqual({
+      turnCount: 1,
+      toolCount: 0,
+      eventCount: 0,
+      finalOutput: "Final chat answer.",
+      finalModel: null,
+      finalUsage: null,
+      finalSessionId: "chat-1",
+      hasError: false,
+    });
+    expect(mockStartExecutionChildObservation).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(Object),
+      expect.objectContaining({
+        name: "model_turn:1",
+        input: "Full chat runtime instruction.",
+      }),
+    );
+    expect(mockUpdateExecutionTraceIO).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "obs-model_turn:1" }),
+      {
+        input: "Full chat runtime instruction.",
+        output: "Final chat answer.",
+      },
+    );
+    expect(mockUpdateExecutionObservation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "obs-root" }),
+      expect.any(Object),
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          transcriptEntryCount: 0,
+          transcriptTurnCount: 1,
+        }),
       }),
     );
   });

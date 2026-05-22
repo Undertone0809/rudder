@@ -48,6 +48,118 @@ export const addChatMessageSchema = z.object({
   editUserMessageId: z.string().uuid().optional().nullable(),
 });
 
+const chatRichReferenceDisplaySchema = z.enum(["card", "inline"]);
+const chatIssueIdentifierSchema = z.string().trim().min(1).max(64).regex(/^[A-Z0-9][A-Z0-9-]*$/i);
+const chatAskUserIdentifierSchema = z.string().trim().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/);
+
+export const chatAskUserOptionSchema = z.object({
+  id: chatAskUserIdentifierSchema,
+  label: z.string().trim().min(1).max(80),
+  description: z.string().trim().min(1).max(220).optional(),
+  recommended: z.boolean().optional(),
+});
+
+export const chatAskUserQuestionSchema = z.object({
+  id: chatAskUserIdentifierSchema,
+  header: z.string().trim().min(1).max(32).optional(),
+  question: z.string().trim().min(1).max(240),
+  options: z.array(chatAskUserOptionSchema).min(2).max(3),
+  allowFreeform: z.boolean().optional(),
+}).superRefine((question, ctx) => {
+  const optionIds = new Set<string>();
+  question.options.forEach((option, index) => {
+    if (optionIds.has(option.id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Option ids must be unique within each question",
+        path: ["options", index, "id"],
+      });
+      return;
+    }
+    optionIds.add(option.id);
+  });
+});
+
+export const chatAskUserRequestSchema = z.object({
+  questions: z.array(chatAskUserQuestionSchema).min(1).max(3),
+}).superRefine((request, ctx) => {
+  const questionIds = new Set<string>();
+  request.questions.forEach((question, index) => {
+    if (questionIds.has(question.id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Question ids must be unique within requestUserInput",
+        path: ["questions", index, "id"],
+      });
+      return;
+    }
+    questionIds.add(question.id);
+  });
+});
+
+const chatIssueRichReferenceSchema = z.object({
+  type: z.literal("issue"),
+  issueId: z.string().uuid().optional(),
+  identifier: chatIssueIdentifierSchema.optional(),
+  display: chatRichReferenceDisplaySchema.optional(),
+}).refine((value) => Boolean(value.issueId || value.identifier), {
+  message: "issueId or identifier is required",
+});
+
+const chatIssueCommentRichReferenceSchema = z.object({
+  type: z.literal("issue_comment"),
+  issueId: z.string().uuid().optional(),
+  identifier: chatIssueIdentifierSchema.optional(),
+  commentId: z.string().uuid(),
+  display: chatRichReferenceDisplaySchema.optional(),
+}).refine((value) => Boolean(value.issueId || value.identifier), {
+  message: "issueId or identifier is required",
+});
+
+export const chatRichReferenceSchema = z.union([
+  chatIssueRichReferenceSchema,
+  chatIssueCommentRichReferenceSchema,
+]);
+
+export const chatRichReferencesSchema = z.array(chatRichReferenceSchema).max(5);
+
+export function chatRichReferencesFromStructuredPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+  const rawReferences = (payload as Record<string, unknown>).richReferences;
+  if (!Array.isArray(rawReferences)) return [];
+
+  return rawReferences
+    .map((reference) => chatRichReferenceSchema.safeParse(reference))
+    .filter((result): result is z.SafeParseSuccess<z.infer<typeof chatRichReferenceSchema>> => result.success)
+    .map((result) => result.data)
+    .slice(0, 5);
+}
+
+export function chatAskUserRequestFromStructuredPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const rawRequest = (payload as Record<string, unknown>).requestUserInput;
+  const parsed = chatAskUserRequestSchema.safeParse(rawRequest);
+  return parsed.success ? parsed.data : null;
+}
+
+export function sanitizeChatStructuredPayload(payload: Record<string, unknown> | null | undefined) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const next = { ...payload };
+  const requestUserInput = chatAskUserRequestFromStructuredPayload(payload);
+  if (requestUserInput) {
+    next.requestUserInput = requestUserInput;
+  } else {
+    delete next.requestUserInput;
+  }
+  const richReferences = chatRichReferencesFromStructuredPayload(payload);
+  if (richReferences.length > 0) {
+    next.richReferences = richReferences;
+  } else {
+    delete next.richReferences;
+  }
+  return Object.keys(next).length > 0 ? next : null;
+}
+
 export const createChatAttachmentMetadataSchema = z.object({
   messageId: z.string().uuid(),
 });
@@ -61,6 +173,9 @@ const chatIssueProposalSchema = z.object({
   parentId: z.string().uuid().optional().nullable(),
   assigneeAgentId: z.string().uuid().optional().nullable(),
   assigneeUserId: z.string().trim().optional().nullable(),
+  reviewerAgentId: z.string().uuid().optional().nullable(),
+  reviewerUserId: z.string().trim().optional().nullable(),
+  labelIds: z.array(z.string().uuid()).optional(),
 });
 
 export const convertChatToIssueSchema = z.object({
@@ -82,6 +197,7 @@ export const resolveChatOperationProposalSchema = z.object({
 
 export const updateChatConversationUserStateSchema = z.object({
   pinned: z.boolean().optional(),
+  unread: z.boolean().optional(),
 });
 
 export type ChatConversationStatus = z.infer<typeof chatConversationStatusSchema>;
@@ -95,6 +211,10 @@ export type CreateChatConversation = z.infer<typeof createChatConversationSchema
 export type SetChatProjectContext = z.infer<typeof setChatProjectContextSchema>;
 export type UpdateChatConversation = z.infer<typeof updateChatConversationSchema>;
 export type AddChatMessage = z.infer<typeof addChatMessageSchema>;
+export type ChatAskUserOption = z.infer<typeof chatAskUserOptionSchema>;
+export type ChatAskUserQuestion = z.infer<typeof chatAskUserQuestionSchema>;
+export type ChatAskUserRequest = z.infer<typeof chatAskUserRequestSchema>;
+export type ChatRichReference = z.infer<typeof chatRichReferenceSchema>;
 export type CreateChatAttachmentMetadata = z.infer<typeof createChatAttachmentMetadataSchema>;
 export type ConvertChatToIssue = z.infer<typeof convertChatToIssueSchema>;
 export type ChatOperationProposal = z.infer<typeof chatOperationProposalSchema>;

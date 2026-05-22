@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -9,7 +10,10 @@ import {
   activityLog,
   agentTaskSessions,
   approvals,
+  calendarEvents,
+  calendarSources,
   chatConversations,
+  chatMessages,
   costEvents,
   createDb,
   financeEvents,
@@ -33,6 +37,10 @@ const AGENT_STUB_PATH = path.join(BIN_DIR, "landing-agent-stub.js");
 const SERVER_LOG_PATH = path.join(OUTPUT_ROOT, "server.log");
 const SHOTS_DIR = path.join(OUTPUT_ROOT, "shots");
 const PATH_PREFIX = `/opt/homebrew/bin:${process.env.PATH ?? ""}`;
+const PNPM_BIN = process.env.PNPM_BIN ?? "pnpm";
+const CHROME_EXECUTABLE_PATH = process.env.LANDING_SHOTS_CHROME_EXECUTABLE_PATH
+  ?? "/Applications/Browser/Google Chrome.app/Contents/MacOS/Google Chrome";
+const CAPTURE_CHAT = process.env.LANDING_SHOTS_CAPTURE_CHAT !== "0";
 const require = createRequire(import.meta.url);
 const {
   and,
@@ -48,7 +56,10 @@ type SeedContext = {
   issues: Record<string, { id: string; identifier: string | null; title: string }>;
   approvals: Record<string, { id: string }>;
   chats: Record<string, { id: string }>;
+  runs: Record<string, { id: string }>;
 };
+
+const pendingIssuePatches: Array<{ id: string; patch: Record<string, unknown> }> = [];
 
 const SKIP_CAPTURE = process.env.LANDING_SHOTS_SKIP_CAPTURE === "1";
 const HOLD_OPEN = process.env.LANDING_SHOTS_HOLD_OPEN === "1";
@@ -61,6 +72,73 @@ function orgRoute(orgPrefix: string, pathname: string) {
   const normalizedPrefix = orgPrefix.replace(/^\/+|\/+$/g, "");
   const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
   return `/${normalizedPrefix}${normalizedPath}`;
+}
+
+function safePathSegment(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+async function writeRunLog(input: {
+  orgId: string;
+  agentId: string;
+  runId: string;
+  issueTitle: string;
+  summary: string;
+  startedAt: string;
+  finishedAt: string;
+}) {
+  const relPath = path.join(
+    safePathSegment(input.orgId),
+    safePathSegment(input.agentId),
+    `${safePathSegment(input.runId)}.ndjson`,
+  );
+  const absPath = path.join(INSTANCE_ROOT, "data", "run-logs", relPath);
+  const codexEvents = [
+    {
+      type: "thread.started",
+      thread_id: `landing-${input.runId}`,
+      model: "gpt-5.4",
+    },
+    {
+      type: "item.completed",
+      item: {
+        id: `msg-${input.runId}`,
+        type: "agent_message",
+        text: [
+          `Working on: ${input.issueTitle}`,
+          "",
+          input.summary,
+          "",
+          "Close-out evidence:",
+          "- inspected the issue context",
+          "- updated the linked work artifact",
+          "- left review notes and next action on the issue",
+        ].join("\n"),
+      },
+    },
+    {
+      type: "turn.completed",
+      result: input.summary,
+      usage: { input_tokens: 8200, cached_input_tokens: 2100, output_tokens: 1400 },
+    },
+  ];
+  const logContent = codexEvents
+    .map((event, index) => JSON.stringify({
+      ts: index === 0 ? input.startedAt : input.finishedAt,
+      stream: "stdout",
+      chunk: `${JSON.stringify(event)}\n`,
+    }))
+    .join("\n") + "\n";
+
+  await fs.mkdir(path.dirname(absPath), { recursive: true });
+  await fs.writeFile(absPath, logContent, "utf8");
+
+  return {
+    logRef: relPath,
+    logBytes: Buffer.byteLength(logContent, "utf8"),
+    logSha256: createHash("sha256").update(logContent).digest("hex"),
+    stdoutExcerpt: input.summary,
+  };
 }
 
 async function ensureEmptyDir(dir: string) {
@@ -228,8 +306,8 @@ async function resolveRuntimeInfo() {
 async function startServer() {
   await fs.writeFile(SERVER_LOG_PATH, "", "utf8");
   const child = spawn(
-    "/opt/homebrew/bin/npx",
-    ["pnpm", "--filter", "@rudderhq/server", "dev"],
+    PNPM_BIN,
+    ["--filter", "@rudderhq/server", "dev"],
     {
       cwd: REPO_ROOT,
       env: {
@@ -360,7 +438,7 @@ async function createAgent(
         budgetMonthlyCents: input.budgetMonthlyCents,
         runtimeConfig: {
           heartbeat: {
-            enabled: true,
+            enabled: false,
             intervalSec: input.intervalSec,
           },
         },
@@ -378,7 +456,7 @@ async function createAgent(
         },
         runtimeConfig: {
           heartbeat: {
-            enabled: true,
+            enabled: false,
             intervalSec: input.intervalSec,
           },
         },
@@ -393,9 +471,25 @@ async function createIssue(
   orgId: string,
   data: Record<string, unknown>,
 ) {
-  return apiJson<{ id: string; identifier: string | null; title: string }>(
-    await api.post(`/api/orgs/${orgId}/issues`, { data }),
+  const createData = { ...data };
+  const assignmentPatch: Record<string, unknown> = {};
+  for (const key of ["assigneeAgentId", "assigneeUserId", "reviewerAgentId", "reviewerUserId"]) {
+    if (Object.prototype.hasOwnProperty.call(createData, key)) {
+      assignmentPatch[key] = createData[key];
+      delete createData[key];
+    }
+  }
+  if (createData.status === "in_progress") {
+    assignmentPatch.status = createData.status;
+    createData.status = "todo";
+  }
+  const created = await apiJson<{ id: string; identifier: string | null; title: string }>(
+    await api.post(`/api/orgs/${orgId}/issues`, { data: createData }),
   );
+  if (Object.keys(assignmentPatch).length > 0) {
+    pendingIssuePatches.push({ id: created.id, patch: assignmentPatch });
+  }
+  return created;
 }
 
 async function createApproval(api: APIRequestContext, orgId: string, data: Record<string, unknown>) {
@@ -404,16 +498,23 @@ async function createApproval(api: APIRequestContext, orgId: string, data: Recor
   );
 }
 
-async function createChat(api: APIRequestContext, orgId: string) {
+async function createChat(api: APIRequestContext, orgId: string, preferredAgentId: string) {
   return apiJson<{ id: string }>(
     await api.post(`/api/orgs/${orgId}/chats`, {
       data: {
         title: "Launch intake",
         summary: "Clarify launch requests, draft issue proposals, and keep the work trail attached to the resulting issue.",
+        preferredAgentId,
         issueCreationMode: "manual_approval",
         planMode: false,
       },
     }),
+  );
+}
+
+async function createOrganizationResource(api: APIRequestContext, orgId: string, data: Record<string, unknown>) {
+  return apiJson<{ id: string }>(
+    await api.post(`/api/orgs/${orgId}/resources`, { data }),
   );
 }
 
@@ -801,16 +902,143 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
       role: "engineer",
       title: "Launch Support Engineer",
       capabilities: "Cover launch-week support escalations, triage onboarding blockers, and keep the beta queue moving.",
-      desiredSkills: ["debug-run-transcript", "software-product-advisor"],
+      desiredSkills: ["debug-run-transcript-maintainer", "software-product-advisor"],
       agentRuntimeType: "codex_local",
     },
     issueIds: [hiringIssue.id],
   });
 
-  const chat = await createChat(api, org.id);
+  const chat = await createChat(api, org.id, designEngineer.id);
+  const chatProposalApproval = await createApproval(api, org.id, {
+    type: "chat_issue_creation",
+    payload: {
+      conversationId: chat.id,
+      proposedIssue: {
+        title: "Ship enterprise pricing comparison page",
+        description: "Create the pricing comparison page before Friday with competitor callouts, customer proof, and a public beta CTA.",
+        priority: "high",
+        projectId: projects.launch.id,
+        assigneeAgentId: growthLead.id,
+        reviewerAgentId: ceo.id,
+      },
+    },
+  });
+
+  const workspaceRoot = path.join(INSTANCE_ROOT, "organizations", org.id, "workspaces");
+  await fs.mkdir(path.join(workspaceRoot, "launch"), { recursive: true });
+  await fs.mkdir(path.join(workspaceRoot, "runbooks"), { recursive: true });
+  await fs.mkdir(path.join(workspaceRoot, "agents", "growth-lead"), { recursive: true });
+  await fs.writeFile(path.join(workspaceRoot, "README.md"), [
+    "# Rudder public beta launch workspace",
+    "",
+    "This workspace contains the canonical launch plan, pricing copy, onboarding checklist, and operational runbooks for the desktop-first public beta.",
+  ].join("\n"), "utf8");
+  await fs.writeFile(path.join(workspaceRoot, "launch", "public-beta-message.md"), [
+    "# Public beta message",
+    "",
+    "Rudder is the operating layer for agent teams. The launch page should show how goals, tasks, approvals, skills, and budgets stay connected while agents work.",
+    "",
+    "## Review points",
+    "- keep the desktop-first positioning concrete",
+    "- avoid claiming autonomous delivery without human gates",
+    "- link pricing proof to the approval trail",
+  ].join("\n"), "utf8");
+  await fs.writeFile(path.join(workspaceRoot, "runbooks", "desktop-crash-triage.md"), [
+    "# Desktop crash triage",
+    "",
+    "1. Check packaged startup logs.",
+    "2. Compare profile migration status against the release checklist.",
+    "3. Attach the crash breadcrumb summary to the active task before close-out.",
+  ].join("\n"), "utf8");
+  await fs.writeFile(path.join(workspaceRoot, "agents", "growth-lead", "handoff.md"), [
+    "# Growth Lead handoff",
+    "",
+    "Own launch messaging, homepage CTA, pricing proof, and beta activation notes. Escalate public claims through the approval queue.",
+  ].join("\n"), "utf8");
+
+  await createOrganizationResource(api, org.id, {
+    name: "Implementation spec",
+    kind: "file",
+    locator: "workspace://README.md",
+    description: "Canonical workspace entry point for the launch-week demo org.",
+  });
+  await createOrganizationResource(api, org.id, {
+    name: "Public beta message",
+    kind: "file",
+    locator: "workspace://launch/public-beta-message.md",
+    description: "Messaging brief used by the Growth Lead and reviewer before publishing launch copy.",
+  });
+  await createOrganizationResource(api, org.id, {
+    name: "Desktop crash triage runbook",
+    kind: "file",
+    locator: "workspace://runbooks/desktop-crash-triage.md",
+    description: "Operational runbook attached to desktop reliability tasks and packaged-startup review.",
+  });
+  await createOrganizationResource(api, org.id, {
+    name: "Pricing preview",
+    kind: "url",
+    locator: "https://example.com/rudder/pricing-v4",
+    description: "Preview URL for the enterprise pricing comparison page awaiting approval.",
+  });
+  await createOrganizationResource(api, org.id, {
+    name: "Launch support queue",
+    kind: "connector_object",
+    locator: "slack://example/launch-support",
+    description: "Synthetic connector target for launch-week support escalation and staffing review.",
+  });
 
   const db = createDb(dbUrl);
-  const now = new Date("2026-04-22T10:00:00.000Z");
+  const now = new Date("2026-05-14T10:00:00.000Z");
+
+  for (const patch of pendingIssuePatches) {
+    await db
+      .update(issues)
+      .set(patch.patch)
+      .where(eq(issues.id, patch.id));
+  }
+
+  await db.insert(chatMessages).values([
+    {
+      orgId: org.id,
+      conversationId: chat.id,
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body: "Create an issue to ship the enterprise pricing comparison page before Friday. It needs competitor callouts, two customer proof points, and a draft CTA.",
+      createdAt: new Date(isoAt(now, -0.95)),
+      updatedAt: new Date(isoAt(now, -0.95)),
+    },
+    {
+      orgId: org.id,
+      conversationId: chat.id,
+      role: "assistant",
+      kind: "issue_proposal",
+      status: "completed",
+      body: "I drafted a launch-scoped issue from this request. Review it here before creating the durable issue.",
+      structuredPayload: {
+        issueProposal: {
+          title: "Ship enterprise pricing comparison page",
+          description: [
+            "Create the pricing comparison page before Friday.",
+            "",
+            "Scope:",
+            "- compare Rudder against two alternatives",
+            "- add two customer proof points",
+            "- draft the public beta CTA",
+            "- keep approval language aligned with launch review flow",
+          ].join("\n"),
+          priority: "high",
+          projectId: projects.launch.id,
+          assigneeAgentId: growthLead.id,
+          reviewerAgentId: ceo.id,
+        },
+      },
+      approvalId: chatProposalApproval.id,
+      replyingAgentId: designEngineer.id,
+      createdAt: new Date(isoAt(now, -0.9)),
+      updatedAt: new Date(isoAt(now, -0.9)),
+    },
+  ]);
 
   const runRows = await db
     .select({ id: heartbeatRuns.id })
@@ -826,7 +1054,7 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
     if (runLinkedCostRows.length > 0) {
       await db.delete(financeEvents).where(inArray(financeEvents.costEventId, runLinkedCostRows.map((row) => row.id)));
     }
-    await db.update(agentTaskSessions).set({ lastRunId: null }).where(inArray(agentTaskSessions.lastRunId, runIds));
+    await db.delete(agentTaskSessions).where(eq(agentTaskSessions.orgId, org.id));
     await db.delete(heartbeatRunEvents).where(inArray(heartbeatRunEvents.runId, runIds));
     await db.delete(activityLog).where(inArray(activityLog.runId, runIds));
     await db.delete(financeEvents).where(inArray(financeEvents.heartbeatRunId, runIds));
@@ -840,8 +1068,9 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
       agentId: ceo.id,
       invocationSource: "scheduler",
       triggerDetail: "system",
-      status: "running",
+      status: "succeeded",
       startedAt: new Date(isoAt(now, -0.3)),
+      finishedAt: new Date(isoAt(now, -0.1)),
       resultJson: { summary: "Reviewing launch metrics and open approvals." },
       contextSnapshot: { issueId: hiringIssue.id },
       createdAt: new Date(isoAt(now, -0.3)),
@@ -902,6 +1131,204 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
   ]).returning({ id: heartbeatRuns.id, agentId: heartbeatRuns.agentId });
 
   const runByAgent = new Map(insertedRuns.map((row) => [row.agentId, row.id]));
+  const runEvidence = [
+    {
+      runId: runByAgent.get(ceo.id)!,
+      agentId: ceo.id,
+      issueId: hiringIssue.id,
+      projectId: projects.releaseOperations.id,
+      issueTitle: hiringIssue.title,
+      summary: "Reviewed launch-week support coverage, identified two uncovered time blocks, and requested staffing approval.",
+      startedAt: isoAt(now, -0.3),
+      finishedAt: isoAt(now, -0.1),
+      status: "actual",
+    },
+    {
+      runId: runByAgent.get(foundingEngineer.id)!,
+      agentId: foundingEngineer.id,
+      issueId: crashIssue.id,
+      projectId: projects.desktopReliability.id,
+      issueTitle: crashIssue.title,
+      summary: "Fixed macOS 15 packaged-startup crash, added migration guardrails, and attached PR #184 with smoke results.",
+      startedAt: isoAt(now, -2.2),
+      finishedAt: isoAt(now, -2.0),
+      status: "actual",
+    },
+    {
+      runId: runByAgent.get(designEngineer.id)!,
+      agentId: designEngineer.id,
+      issueId: approvalCopyIssue.id,
+      projectId: projects.enterpriseReadiness.id,
+      issueTitle: approvalCopyIssue.title,
+      summary: "Rewrote approval copy so release-sensitive decisions show risk, owner, linked issue, and next reviewer action.",
+      startedAt: isoAt(now, -5.0),
+      finishedAt: isoAt(now, -4.7),
+      status: "actual",
+    },
+    {
+      runId: runByAgent.get(releaseEngineer.id)!,
+      agentId: releaseEngineer.id,
+      issueId: releaseChecklistIssue.id,
+      projectId: projects.releaseOperations.id,
+      issueTitle: releaseChecklistIssue.title,
+      summary: "Packaged the beta build, ran desktop smoke checks, and confirmed rollback notes are ready for launch week.",
+      startedAt: isoAt(now, -8.0),
+      finishedAt: isoAt(now, -7.6),
+      status: "actual",
+    },
+    {
+      runId: runByAgent.get(growthLead.id)!,
+      agentId: growthLead.id,
+      issueId: briefIssue.id,
+      projectId: projects.launch.id,
+      issueTitle: briefIssue.title,
+      summary: "Drafted the beta launch brief, linked pricing review evidence, and routed customer proof claims for approval.",
+      startedAt: isoAt(now, -18.0),
+      finishedAt: isoAt(now, -17.2),
+      status: "actual",
+    },
+  ];
+
+  for (const row of runEvidence) {
+    const log = await writeRunLog({
+      orgId: org.id,
+      agentId: row.agentId,
+      runId: row.runId,
+      issueTitle: row.issueTitle,
+      summary: row.summary,
+      startedAt: row.startedAt,
+      finishedAt: row.finishedAt,
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({
+        logStore: "local_file",
+        logRef: log.logRef,
+        logBytes: log.logBytes,
+        logSha256: log.logSha256,
+        stdoutExcerpt: log.stdoutExcerpt,
+      })
+      .where(eq(heartbeatRuns.id, row.runId));
+  }
+
+  await db.insert(heartbeatRunEvents).values(runEvidence.flatMap((row) => [
+    {
+      orgId: org.id,
+      runId: row.runId,
+      agentId: row.agentId,
+      seq: 1,
+      eventType: "adapter.invoke",
+      level: "info",
+      message: `Invoked codex_local runtime for ${row.issueTitle}`,
+      payload: {
+        agentRuntimeType: "codex_local",
+        command: AGENT_STUB_PATH,
+        context: { issueId: row.issueId, issueTitle: row.issueTitle },
+      },
+      createdAt: new Date(row.startedAt),
+    },
+    {
+      orgId: org.id,
+      runId: row.runId,
+      agentId: row.agentId,
+      seq: 2,
+      eventType: "run.closeout",
+      level: "info",
+      message: row.summary,
+      payload: { issueId: row.issueId, closeout: "issue_comment_and_artifact" },
+      createdAt: new Date(row.finishedAt),
+    },
+  ]));
+
+  const [runCalendarSource, operatorCalendarSource] = await db.insert(calendarSources).values([
+    {
+      orgId: org.id,
+      type: "agent_work",
+      name: "Rudder Agent Work History",
+      ownerType: "system",
+      status: "active",
+      createdAt: new Date(isoAt(now, -20.0)),
+      updatedAt: now,
+    },
+    {
+      orgId: org.id,
+      type: "rudder_local",
+      name: "Operator Calendar",
+      ownerType: "user",
+      ownerUserId: "local-board",
+      status: "active",
+      createdAt: new Date(isoAt(now, -20.0)),
+      updatedAt: now,
+    },
+  ]).returning({ id: calendarSources.id, type: calendarSources.type });
+
+  await db.insert(calendarEvents).values([
+    ...runEvidence.map((row) => ({
+      orgId: org.id,
+      sourceId: runCalendarSource!.id,
+      eventKind: "agent_work_block",
+      eventStatus: row.status,
+      ownerType: "agent",
+      ownerAgentId: row.agentId,
+      title: row.issueTitle,
+      description: row.summary,
+      startAt: new Date(row.startedAt),
+      endAt: new Date(row.finishedAt),
+      timezone: "UTC",
+      allDay: false,
+      visibility: "full",
+      issueId: row.issueId,
+      projectId: row.projectId,
+      goalId: goal.id,
+      heartbeatRunId: row.runId,
+      sourceMode: "derived",
+      createdAt: new Date(row.startedAt),
+      updatedAt: new Date(row.finishedAt),
+    })),
+    {
+      orgId: org.id,
+      sourceId: operatorCalendarSource!.id,
+      eventKind: "human_event",
+      eventStatus: "planned",
+      ownerType: "user",
+      ownerUserId: "local-board",
+      title: "Operator review: pricing claims and customer proof",
+      description: "Human checkpoint before the pricing comparison page can ship.",
+      startAt: new Date(isoAt(now, -1.4)),
+      endAt: new Date(isoAt(now, -1.0)),
+      timezone: "UTC",
+      allDay: false,
+      visibility: "full",
+      issueId: mainIssue.id,
+      projectId: projects.launch.id,
+      goalId: goal.id,
+      sourceMode: "manual",
+      createdAt: new Date(isoAt(now, -1.4)),
+      updatedAt: new Date(isoAt(now, -1.0)),
+    },
+    {
+      orgId: org.id,
+      sourceId: operatorCalendarSource!.id,
+      eventKind: "human_event",
+      eventStatus: "actual",
+      ownerType: "user",
+      ownerUserId: "local-board",
+      title: "Launch support staffing decision",
+      description: "Review support coverage gaps surfaced by the CEO agent.",
+      startAt: new Date(isoAt(now, -0.8)),
+      endAt: new Date(isoAt(now, -0.55)),
+      timezone: "UTC",
+      allDay: false,
+      visibility: "full",
+      issueId: hiringIssue.id,
+      projectId: projects.releaseOperations.id,
+      goalId: goal.id,
+      approvalId: staffingApproval.id,
+      sourceMode: "manual",
+      createdAt: new Date(isoAt(now, -0.8)),
+      updatedAt: new Date(isoAt(now, -0.55)),
+    },
+  ]);
 
   await db.insert(issueComments).values([
     {
@@ -1049,7 +1476,11 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
 
   await db.update(approvals).set({ createdAt: new Date(isoAt(now, -1.2)), updatedAt: new Date(isoAt(now, -1.2)) }).where(eq(approvals.id, publishApproval.id));
   await db.update(approvals).set({ createdAt: new Date(isoAt(now, -6.5)), updatedAt: new Date(isoAt(now, -6.5)) }).where(eq(approvals.id, staffingApproval.id));
-  await db.update(chatConversations).set({ createdAt: new Date(isoAt(now, -0.9)), updatedAt: new Date(isoAt(now, -0.9)) }).where(eq(chatConversations.id, chat.id));
+  await db.update(chatConversations).set({
+    createdAt: new Date(isoAt(now, -0.95)),
+    updatedAt: new Date(isoAt(now, -0.9)),
+    lastMessageAt: new Date(isoAt(now, -0.9)),
+  }).where(eq(chatConversations.id, chat.id));
 
   const launchActivityIds = await db
     .select({ id: activityLog.id })
@@ -1115,6 +1546,9 @@ async function seedDemoOrg(api: APIRequestContext, dbUrl: string): Promise<SeedC
     chats: {
       intake: chat,
     },
+    runs: {
+      foundingEngineer: { id: runByAgent.get(foundingEngineer.id)! },
+    },
   };
 }
 
@@ -1150,30 +1584,41 @@ async function captureLocator(page: Page, locator: Locator, filename: string, pa
   });
 }
 
+async function captureViewport(page: Page, filename: string) {
+  await page.screenshot({
+    path: path.join(SHOTS_DIR, filename),
+    fullPage: false,
+  });
+}
+
 async function captureDashboard(page: Page, orgPrefix: string) {
   console.log("capture: dashboard");
   await page.goto(orgRoute(orgPrefix, "/dashboard"));
   await waitForLocator(page.locator("#main-content"));
-  await page.waitForTimeout(1200);
+  await expect(page.locator("#main-content")).toContainText("Fixed macOS 15 packaged-startup crash", { timeout: 30_000 });
+  await page.waitForTimeout(2400);
   const main = page.locator("#main-content");
   await captureLocator(page, main.locator("div.space-y-6").first(), "dashboard-control-plane.png", { x: 18, y: 18 });
+  await captureViewport(page, "board-overview.png");
+}
+
+async function captureMobileDashboard(page: Page, orgPrefix: string) {
+  console.log("capture: mobile dashboard");
+  await page.setViewportSize({ width: 780, height: 1688 });
+  await page.goto(orgRoute(orgPrefix, "/dashboard"));
+  await waitForLocator(page.locator("#main-content"));
+  await page.waitForTimeout(1200);
+  await captureViewport(page, "mobile-dashboard.png");
+  await page.setViewportSize({ width: 1728, height: 1180 });
 }
 
 async function captureChatCreateIssue(page: Page, seed: SeedContext) {
   console.log("capture: chat proposal");
   await page.goto(orgRoute(seed.org.issuePrefix, `/chat/${seed.chats.intake.id}`));
-  const composer = page.locator(".rudder-mdxeditor-content").first();
-  await expect(composer).toBeVisible({ timeout: 30_000 });
-  await composer.fill("Create an issue to ship the enterprise pricing comparison page before Friday. It needs competitor callouts, two customer proof points, and a draft CTA.");
-  await page.getByRole("button", { name: "Send" }).click();
   const reviewBlock = page.getByTestId("proposal-review-block").last();
   await expect(reviewBlock).toBeVisible({ timeout: 30_000 });
   await page.waitForTimeout(800);
   await captureLocator(page, page.locator("#main-content"), "chat-create-issue-proposal.png", { x: 18, y: 18 });
-
-  await reviewBlock.getByRole("button", { name: "Approve" }).click();
-  await expect(page.locator("#main-content")).toContainText("Created issue", { timeout: 30_000 });
-  await page.waitForTimeout(800);
   await captureLocator(page, page.locator("#main-content"), "chat-create-issue.png", { x: 18, y: 18 });
 }
 
@@ -1193,15 +1638,28 @@ async function captureIssuesCrossProject(page: Page, orgPrefix: string) {
   await expect(main).toBeVisible({ timeout: 30_000 });
   await page.waitForTimeout(1200);
   await captureLocator(page, main, "issues-cross-project-overview.png", { x: 18, y: 18 });
+  await captureViewport(page, "issue-flow.png");
+}
+
+async function captureIssueDetail(page: Page, seed: SeedContext) {
+  console.log("capture: issue detail");
+  await page.goto(orgRoute(seed.org.issuePrefix, `/issues/${seed.issues.main.identifier ?? seed.issues.main.id}`));
+  const main = page.locator("#main-content");
+  await expect(main).toBeVisible({ timeout: 30_000 });
+  await expect(main).toContainText(seed.issues.main.title, { timeout: 30_000 });
+  await page.waitForTimeout(1200);
+  await captureViewport(page, "issue-detail.png");
 }
 
 async function captureApproval(page: Page, seed: SeedContext) {
   console.log("capture: approval");
   await page.goto(orgRoute(seed.org.issuePrefix, `/messenger/approvals/${seed.approvals.publish.id}`));
+  await expect(page.locator("#main-content")).toBeVisible({ timeout: 30_000 });
   const dialog = page.getByTestId("approval-detail-dialog");
   await expect(dialog).toBeVisible({ timeout: 30_000 });
   await page.waitForTimeout(600);
   await captureLocator(page, dialog, "approval-review.png", { x: 18, y: 18 });
+  await captureViewport(page, "messenger-approvals.png");
 }
 
 async function captureHeartbeats(page: Page, orgPrefix: string) {
@@ -1220,6 +1678,18 @@ async function captureCosts(page: Page, orgPrefix: string) {
   await expect(main).toBeVisible({ timeout: 30_000 });
   await page.waitForTimeout(1200);
   await captureLocator(page, main, "costs-budget-control.png", { x: 18, y: 18 });
+  await captureViewport(page, "cost-visibility.png");
+}
+
+async function captureCalendar(page: Page, orgPrefix: string) {
+  console.log("capture: calendar");
+  await page.goto(orgRoute(orgPrefix, "/calendar"));
+  const main = page.locator("#main-content");
+  await expect(main).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "day", exact: true }).click();
+  await expect(main).toContainText("Founding Engineer", { timeout: 30_000 });
+  await page.waitForTimeout(1200);
+  await captureViewport(page, "calendar-work-history.png");
 }
 
 async function captureOrgChart(page: Page, orgPrefix: string) {
@@ -1229,6 +1699,133 @@ async function captureOrgChart(page: Page, orgPrefix: string) {
   await expect(main).toBeVisible({ timeout: 30_000 });
   await page.waitForTimeout(1200);
   await captureLocator(page, main, "org-structure.png", { x: 18, y: 18 });
+}
+
+async function captureAgentDetail(page: Page, seed: SeedContext) {
+  console.log("capture: agent detail");
+  await page.goto(orgRoute(seed.org.issuePrefix, "/agents/founding-engineer/skills"));
+  const main = page.locator("#main-content");
+  await expect(main).toBeVisible({ timeout: 30_000 });
+  await expect(main).toContainText(seed.agents.foundingEngineer.name, { timeout: 30_000 });
+  await page.waitForTimeout(1200);
+  await captureViewport(page, "agent-detail.png");
+}
+
+async function captureAgentRunDetail(page: Page, seed: SeedContext) {
+  console.log("capture: agent run detail");
+  await page.goto(orgRoute(seed.org.issuePrefix, `/agents/founding-engineer/runs/${seed.runs.foundingEngineer.id}`));
+  const main = page.locator("#main-content");
+  await expect(main).toBeVisible({ timeout: 30_000 });
+  await expect(main).toContainText("Fixed macOS 15 packaged-startup crash", { timeout: 30_000 });
+  await expect(main).toContainText("Transcript", { timeout: 30_000 });
+  await page.waitForTimeout(1200);
+  await captureViewport(page, "agent-run-detail.png");
+}
+
+async function captureWorkspaces(page: Page, orgPrefix: string) {
+  console.log("capture: workspaces");
+  await page.goto(orgRoute(orgPrefix, "/workspaces?path=launch%2Fpublic-beta-message.md"));
+  const main = page.locator("#main-content");
+  await expect(main).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(1200);
+  await captureViewport(page, "organization-work.png");
+}
+
+async function captureResources(page: Page, orgPrefix: string) {
+  console.log("capture: resources");
+  await page.goto(orgRoute(orgPrefix, "/resources"));
+  const main = page.locator("#main-content");
+  await expect(main).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(1200);
+  await captureViewport(page, "workspaces-resources.png");
+}
+
+async function captureSkills(page: Page, orgPrefix: string) {
+  console.log("capture: skills");
+  await page.goto(orgRoute(orgPrefix, "/skills"));
+  const main = page.locator("#main-content");
+  await expect(main).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(1200);
+  await captureViewport(page, "skills-library.png");
+}
+
+async function captureInstanceSettings(page: Page) {
+  console.log("capture: instance settings");
+  await page.goto("/instance/settings/general");
+  const main = page.locator("#main-content");
+  await expect(main).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(1200);
+  await captureViewport(page, "instance-settings.png");
+}
+
+async function capturePluginManager(page: Page) {
+  console.log("capture: plugin manager");
+  await page.goto("/instance/settings/plugins");
+  const main = page.locator("#main-content");
+  await expect(main).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(1200);
+  await captureViewport(page, "plugin-manager.png");
+}
+
+async function captureCliWorkflow(page: Page) {
+  console.log("capture: cli workflow");
+  await page.setViewportSize({ width: 1728, height: 1180 });
+  await page.setContent(`<!doctype html>
+    <html>
+      <head>
+        <style>
+          html, body { margin: 0; min-height: 100%; background: #f7f3eb; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f2933; }
+          .wrap { width: 100%; min-height: 100vh; box-sizing: border-box; padding: 96px 120px; display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 36px; align-items: center; }
+          .terminal { background: #16181d; color: #d8dee9; border-radius: 14px; box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25); overflow: hidden; border: 1px solid rgba(255,255,255,0.08); }
+          .chrome { height: 44px; background: #22252b; display: flex; align-items: center; gap: 8px; padding: 0 18px; }
+          .dot { width: 11px; height: 11px; border-radius: 50%; }
+          .red { background: #ff5f57; } .yellow { background: #ffbd2e; } .green { background: #28c840; }
+          pre { margin: 0; padding: 28px 30px 34px; font: 20px/1.55 "SFMono-Regular", Consolas, "Liberation Mono", monospace; white-space: pre-wrap; }
+          .prompt { color: #8bd5ca; } .muted { color: #8992a3; } .ok { color: #a6e3a1; } .url { color: #89b4fa; }
+          .panel { background: #fffaf1; border: 1px solid #e6dccb; border-radius: 14px; padding: 28px; }
+          h1 { margin: 0 0 18px; font-size: 36px; line-height: 1.1; letter-spacing: 0; }
+          .item { display: grid; grid-template-columns: 28px 1fr; gap: 12px; padding: 14px 0; border-top: 1px solid #eadfcd; font-size: 19px; line-height: 1.45; }
+          .item:first-of-type { border-top: 0; }
+          .check { width: 28px; height: 22px; border-radius: 999px; background: #0f766e; color: white; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+          .caption { color: #64748b; font-size: 17px; line-height: 1.55; margin-top: 16px; }
+        </style>
+      </head>
+      <body>
+        <div class="wrap">
+          <div class="terminal">
+            <div class="chrome"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+            <pre><span class="prompt">$</span> npx @rudderhq/cli@latest start
+<span class="ok">Rudder</span>
+Mode       embedded-postgres | local_trusted
+API        <span class="url">http://127.0.0.1:3100/api</span>
+UI         <span class="url">http://127.0.0.1:3100</span>
+Database   ~/.rudder/instances/dev/db
+
+<span class="prompt">$</span> curl http://127.0.0.1:3100/api/health
+{"ok":true,"mode":"local_trusted"}
+
+<span class="muted">Seeded demo org: Rudder public beta launch week</span></pre>
+          </div>
+          <div class="panel">
+            <h1>Local-first setup with a real launch-week org</h1>
+            <div class="item"><span class="check">OK</span><span>Embedded Postgres starts automatically for local development.</span></div>
+            <div class="item"><span class="check">OK</span><span>The board opens with projects, agents, tasks, approvals, and costs already linked.</span></div>
+            <div class="item"><span class="check">OK</span><span>CLI checks use the same API surface that agents and the desktop shell use.</span></div>
+            <p class="caption">This screenshot is rendered from the mock-data-maintainer landing demo scenario, not an AI illustration.</p>
+          </div>
+        </div>
+      </body>
+    </html>`);
+  await captureViewport(page, "installation-cli.png");
+}
+
+async function launchBrowser() {
+  const launchOptions = {
+    headless: true,
+    timeout: 30_000,
+    ...(CHROME_EXECUTABLE_PATH ? { executablePath: CHROME_EXECUTABLE_PATH } : {}),
+  };
+  return chromium.launch(launchOptions);
 }
 
 async function writeManifest() {
@@ -1271,20 +1868,35 @@ async function main() {
       seed,
       screenshots: [
         "dashboard-control-plane.png",
+        "board-overview.png",
+        "mobile-dashboard.png",
         "chat-create-issue-proposal.png",
         "chat-create-issue.png",
         "issue-execution-loop.png",
+        "issue-flow.png",
         "issues-cross-project-overview.png",
+        "issue-detail.png",
         "approval-review.png",
+        "messenger-approvals.png",
         "heartbeats-team-ops.png",
         "costs-budget-control.png",
+        "cost-visibility.png",
+        "calendar-work-history.png",
         "org-structure.png",
+        "agent-detail.png",
+        "agent-run-detail.png",
+        "organization-work.png",
+        "workspaces-resources.png",
+        "skills-library.png",
+        "instance-settings.png",
+        "plugin-manager.png",
+        "installation-cli.png",
       ].map((file) => path.join(SHOTS_DIR, file)),
       serverLog: SERVER_LOG_PATH,
     }, null, 2));
 
     if (!SKIP_CAPTURE) {
-      const browser = await chromium.launch({ headless: true });
+      const browser = await launchBrowser();
       try {
         const context = await browser.newContext({
           baseURL: runtime.baseUrl,
@@ -1294,13 +1906,32 @@ async function main() {
         const page = await context.newPage();
         await setSelectedOrg(page, seed.org.id);
         await captureDashboard(page, seed.org.issuePrefix);
-        await captureChatCreateIssue(page, seed);
+        await captureMobileDashboard(page, seed.org.issuePrefix);
+        if (CAPTURE_CHAT) {
+          try {
+            await captureChatCreateIssue(page, seed);
+          } catch (error) {
+            console.warn("capture: chat proposal skipped", error);
+          }
+        } else {
+          console.log("capture: chat proposal skipped (LANDING_SHOTS_CAPTURE_CHAT=0)");
+        }
         await captureIssue(page, seed.org.issuePrefix);
         await captureIssuesCrossProject(page, seed.org.issuePrefix);
+        await captureIssueDetail(page, seed);
         await captureApproval(page, seed);
         await captureHeartbeats(page, seed.org.issuePrefix);
         await captureCosts(page, seed.org.issuePrefix);
+        await captureCalendar(page, seed.org.issuePrefix);
         await captureOrgChart(page, seed.org.issuePrefix);
+        await captureAgentDetail(page, seed);
+        await captureAgentRunDetail(page, seed);
+        await captureWorkspaces(page, seed.org.issuePrefix);
+        await captureResources(page, seed.org.issuePrefix);
+        await captureSkills(page, seed.org.issuePrefix);
+        await captureInstanceSettings(page);
+        await capturePluginManager(page);
+        await captureCliWorkflow(page);
         await context.close();
       } finally {
         await browser.close();

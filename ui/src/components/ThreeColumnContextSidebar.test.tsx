@@ -22,6 +22,14 @@ const mockState = vi.hoisted(() => ({
   search: "",
   relativePath: "/issues",
   issues: [] as Array<{ id: string; identifier: string; title: string; status: string; projectId?: string | null }>,
+  follows: [] as Array<{
+    id: string;
+    orgId: string;
+    issueId: string;
+    userId: string;
+    createdAt: string;
+    issue: { id: string; identifier: string; title: string; status: string };
+  }>,
   projects: [] as Array<{ id: string; name: string; archivedAt?: string | null; color?: string | null; urlKey?: string | null }>,
   linearContributions: [] as Array<{
     pluginId: string;
@@ -159,7 +167,11 @@ vi.mock("@/context/DialogContext", () => ({
 
 vi.mock("@/hooks/useIssueFollows", () => ({
   useIssueFollows: () => ({
+    follows: mockState.follows,
     followedIssueIds: [],
+    isLoading: false,
+    error: null,
+    toggleFollowIssue: vi.fn(),
   }),
 }));
 
@@ -228,6 +240,7 @@ beforeEach(() => {
   mockState.search = "";
   mockState.relativePath = "/issues";
   mockState.issues = [];
+  mockState.follows = [];
   mockState.projects = [];
   mockState.linearContributions = [];
   mockState.linearCatalog = null;
@@ -244,6 +257,7 @@ afterEach(() => {
   cleanupFn = null;
   resetIssueDraftStorage();
   document.body.innerHTML = "";
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -259,6 +273,99 @@ function renderSidebar() {
 }
 
 describe("ThreeColumnContextSidebar issue draft recovery", () => {
+  it("uses auto-hidden scrollbars for the issues sidebar main scroll region", () => {
+    vi.useFakeTimers();
+
+    renderSidebar();
+
+    const scrollRegion = document.querySelector("[data-testid='issue-sidebar-scroll']") as HTMLDivElement | null;
+    expect(scrollRegion).not.toBeNull();
+    expect(scrollRegion?.classList.contains("scrollbar-auto-hide")).toBe(true);
+    expect(scrollRegion?.classList.contains("overflow-y-auto")).toBe(true);
+
+    act(() => {
+      scrollRegion?.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(scrollRegion?.classList.contains("is-scrolling")).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(701);
+    });
+
+    expect(scrollRegion?.classList.contains("is-scrolling")).toBe(false);
+  });
+
+  it("uses auto-hidden scrollbars for sibling context sidebar scroll regions", () => {
+    mockState.pathname = "/RUD/projects";
+    mockState.relativePath = "/projects";
+    mockState.projects = [
+      { id: "project-1", name: "Launch Prep", archivedAt: null, color: "blue", urlKey: "launch-prep" },
+    ];
+
+    renderSidebar();
+
+    expect(document.querySelector("[data-testid='workspace-projects-scroll']")?.classList.contains("scrollbar-auto-hide")).toBe(true);
+  });
+
+  it("shows calendar timeline filters with user-facing status labels", () => {
+    mockState.pathname = "/RUD/calendar";
+    mockState.relativePath = "/calendar";
+
+    renderSidebar();
+
+    const statusFilters = document.querySelector("[data-testid='calendar-status-filters']");
+    expect(document.body.textContent).toContain("Timeline");
+    expect(document.body.textContent).not.toContain("Status");
+    expect(statusFilters?.textContent).toContain("Planned");
+    expect(statusFilters?.textContent).toContain("Running runs");
+    expect(statusFilters?.textContent).toContain("Run history");
+    expect(statusFilters?.textContent).toContain("External calendar");
+    expect(statusFilters?.textContent).toContain("Projected heartbeats");
+    expect(statusFilters?.textContent).toContain("Cancelled");
+    expect(statusFilters?.textContent).not.toContain("in_progress");
+    expect(statusFilters?.textContent).not.toContain("projected");
+
+    const projectedCheckbox = document.querySelector("[aria-label='Show Projected heartbeats events']");
+    expect(projectedCheckbox?.getAttribute("data-state")).toBe("unchecked");
+    expect(document.querySelector("[aria-label='Show Running runs events']")).not.toBeNull();
+    expect(document.querySelector("[aria-label='Show Run history events']")).not.toBeNull();
+  });
+
+  it("uses agent avatars in calendar agent filters", () => {
+    mockState.pathname = "/RUD/calendar";
+    mockState.relativePath = "/calendar";
+
+    renderSidebar();
+
+    const avatar = document.querySelector("[data-testid='calendar-agent-avatar-agent-1']");
+    expect(avatar).not.toBeNull();
+    expect(avatar?.textContent).not.toContain("Penelope");
+    expect(document.body.textContent).toContain("Penelope");
+  });
+
+  it("uses auto-hidden scrollbars for chat and agent context sidebars", () => {
+    mockState.pathname = "/RUD/chat/chat-1";
+    mockState.relativePath = "/chat/chat-1";
+
+    renderSidebar();
+
+    expect(document.querySelector("[data-testid='chat-sidebar-scroll']")?.classList.contains("scrollbar-auto-hide")).toBe(true);
+
+    act(() => {
+      cleanupFn?.();
+    });
+    cleanupFn = null;
+    document.body.innerHTML = "";
+
+    mockState.pathname = "/RUD/agents/penelope/dashboard";
+    mockState.relativePath = "/agents/penelope/dashboard";
+
+    renderSidebar();
+
+    expect(document.querySelector("[data-testid='agent-sidebar-scroll']")?.classList.contains("scrollbar-auto-hide")).toBe(true);
+  });
+
   it("collapses the desktop workspace sidebar from the context header", () => {
     mockState.isMobile = false;
 
@@ -366,25 +473,25 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     renderSidebar();
 
     expect(document.querySelector('a[href="/issues?scope=recent"]')).toBeNull();
-    expect(document.querySelector("[data-testid='issue-recent-section']")?.textContent).toContain("Recently Viewed");
+    expect(document.querySelector("[data-testid='issue-recent-section']")?.textContent).toContain("Recently Viewed (13)");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-1']")?.textContent).toContain("Recent issue 1");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-5']")?.textContent).toContain("Recent issue 5");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-6']")).toBeNull();
 
     const toggle = document.querySelector("[data-testid='issue-recent-toggle']") as HTMLButtonElement | null;
-    expect(toggle?.textContent).toContain("Show 7 more");
+    expect(toggle?.textContent).toContain("Show all");
 
     act(() => {
       toggle?.click();
     });
 
     expect(document.querySelector("[data-testid='issue-recent-row-issue-12']")?.textContent).toContain("Recent issue 12");
-    expect(document.querySelector("[data-testid='issue-recent-row-issue-13']")).toBeNull();
-    expect(document.body.textContent).toContain("Showing latest 12 of 13");
+    expect(document.querySelector("[data-testid='issue-recent-row-issue-13']")?.textContent).toContain("Recent issue 13");
+    expect(document.body.textContent).not.toContain("Showing latest");
     expect(toggle?.textContent).toContain("Show less");
   });
 
-  it("keeps the expanded recent list scroll-bounded at the expanded limit", () => {
+  it("keeps the expanded recent list scroll-bounded while showing every resolved recent issue", () => {
     mockState.issues = Array.from({ length: 12 }, (_, index) => ({
       id: `issue-${index + 1}`,
       identifier: `RUD-${index + 1}`,
@@ -402,9 +509,10 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
 
     const recentList = document.querySelector("[data-testid='issue-recent-list']") as HTMLDivElement | null;
     expect(recentList?.className).toContain("max-h-72");
+    expect(recentList?.className).toContain("scrollbar-auto-hide");
     expect(recentList?.className).toContain("overflow-y-auto");
     expect(document.querySelector("[data-testid='issue-recent-row-issue-12']")?.textContent).toContain("Recent issue 12");
-    expect(document.body.textContent).not.toContain("Showing latest 12 of 12");
+    expect(document.body.textContent).not.toContain("Showing latest");
   });
 
   it("moves a clicked recent sidebar issue to the front of recent history", () => {
@@ -443,6 +551,64 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     renderSidebar();
 
     const activeRow = document.querySelector("[data-testid='issue-recent-row-issue-2']") as HTMLAnchorElement | null;
+    expect(activeRow?.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("renders starred issues as bounded sidebar rows after issues are starred", () => {
+    mockState.issues = Array.from({ length: 7 }, (_, index) => ({
+      id: `issue-${index + 1}`,
+      identifier: `RUD-${index + 1}`,
+      title: `Starred issue ${index + 1}`,
+      status: "todo",
+    }));
+    mockState.follows = mockState.issues.map((issue, index) => ({
+      id: `follow-${index + 1}`,
+      orgId: "org-1",
+      issueId: issue.id,
+      userId: "user-1",
+      createdAt: `2026-04-26T10:${String(index).padStart(2, "0")}:00.000Z`,
+      issue,
+    }));
+
+    renderSidebar();
+
+    expect(document.querySelector('a[href="/issues?scope=starred"]')).toBeNull();
+    expect(document.querySelector("[data-testid='issue-starred-section']")?.textContent).toContain("Starred (7)");
+    expect(document.querySelector("[data-testid='issue-starred-row-issue-1']")?.textContent).toContain("Starred issue 1");
+    expect(document.querySelector("[data-testid='issue-starred-row-issue-5']")?.textContent).toContain("Starred issue 5");
+    expect(document.querySelector("[data-testid='issue-starred-row-issue-6']")).toBeNull();
+
+    const toggle = document.querySelector("[data-testid='issue-starred-toggle']") as HTMLButtonElement | null;
+    expect(toggle?.textContent).toContain("Show all");
+
+    act(() => {
+      toggle?.click();
+    });
+
+    expect(document.querySelector("[data-testid='issue-starred-row-issue-7']")?.textContent).toContain("Starred issue 7");
+    const starredList = document.querySelector("[data-testid='issue-starred-list']") as HTMLDivElement | null;
+    expect(starredList?.className).toContain("max-h-72");
+    expect(starredList?.className).toContain("scrollbar-auto-hide");
+    expect(toggle?.textContent).toContain("Show less");
+  });
+
+  it("marks the active issue detail in the starred sidebar list", () => {
+    mockState.pathname = "/RUD/issues/RUD-2";
+    mockState.relativePath = "/issues/RUD-2";
+    const starredIssue = { id: "issue-2", identifier: "RUD-2", title: "Starred active issue", status: "todo" };
+    mockState.issues = [starredIssue];
+    mockState.follows = [{
+      id: "follow-1",
+      orgId: "org-1",
+      issueId: starredIssue.id,
+      userId: "user-1",
+      createdAt: "2026-04-26T10:00:00.000Z",
+      issue: starredIssue,
+    }];
+
+    renderSidebar();
+
+    const activeRow = document.querySelector("[data-testid='issue-starred-row-issue-2']") as HTMLAnchorElement | null;
     expect(activeRow?.getAttribute("aria-current")).toBe("page");
   });
 

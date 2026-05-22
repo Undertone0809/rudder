@@ -28,6 +28,65 @@ describe("costService Langfuse export", () => {
     vi.clearAllMocks();
   });
 
+  it("includes normalized token totals in cost summaries", async () => {
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(selectChain([{ id: "org-1", budgetMonthlyCents: 10_000 }]))
+        .mockReturnValueOnce(selectChain([
+          {
+            total: 123,
+            inputTokens: 1_000,
+            cachedInputTokens: 250,
+            outputTokens: 500,
+            totalTokens: 1_500,
+            eventCount: 3,
+            tokenEventCount: 2,
+          },
+        ])),
+    };
+
+    const svc = costService(db as never);
+    await expect(svc.summary("org-1")).resolves.toMatchObject({
+      spendCents: 123,
+      inputTokens: 1_000,
+      cachedInputTokens: 250,
+      outputTokens: 500,
+      totalTokens: 1_500,
+      eventCount: 3,
+      tokenEventCount: 2,
+    });
+  });
+
+  it("normalizes cost summary aggregates above the Postgres int4 range", async () => {
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(selectChain([{ id: "org-1", budgetMonthlyCents: 0 }]))
+        .mockReturnValueOnce(selectChain([
+          {
+            total: 0,
+            inputTokens: "2797218444",
+            cachedInputTokens: "2648503296",
+            outputTokens: "7422998",
+            totalTokens: "2804641442",
+            eventCount: 740,
+            tokenEventCount: 740,
+          },
+        ])),
+    };
+
+    const svc = costService(db as never);
+    await expect(svc.summary("org-1")).resolves.toMatchObject({
+      inputTokens: 2_797_218_444,
+      cachedInputTokens: 2_648_503_296,
+      outputTokens: 7_422_998,
+      totalTokens: 2_804_641_442,
+      eventCount: 740,
+      tokenEventCount: 740,
+    });
+  });
+
   it("emits a detached cost event when tied to a heartbeat run", async () => {
     const db = {
       select: vi

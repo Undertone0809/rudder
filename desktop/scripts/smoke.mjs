@@ -20,10 +20,13 @@ const smokeMode = smokeModeArg?.slice("--mode=".length) ?? process.env.RUDDER_DE
 const smokeScenario = smokeScenarioArg?.slice("--scenario=".length) ?? process.env.RUDDER_DESKTOP_SMOKE_SCENARIO ?? null;
 const tmpRoot = await mkdtemp(path.join(os.tmpdir(), "rudder-desktop-smoke-"));
 const REQUIRED_BUNDLED_SKILLS = [
+  "conversation-to-skill",
   "para-memory-files",
   "rudder",
   "rudder-create-agent",
   "rudder-create-plugin",
+  "skill-creator",
+  "skill-optimizer",
 ];
 console.log(`[desktop-smoke] temp root: ${tmpRoot}`);
 
@@ -380,7 +383,15 @@ async function closeDesktop(electronApp) {
 async function verifyNativeApplicationMenu(electronApp, page, companyId, issuePrefix) {
   const platform = await electronApp.evaluate(() => process.platform);
   if (platform !== "darwin") {
-    console.log("[desktop-smoke] native macOS application menu check skipped");
+    const { hasApplicationMenu, visibleMenuBarWindows } = await electronApp.evaluate(({ BrowserWindow, Menu }) => ({
+      hasApplicationMenu: Boolean(Menu.getApplicationMenu()),
+      visibleMenuBarWindows: BrowserWindow.getAllWindows()
+        .filter((window) => !window.isDestroyed() && window.isMenuBarVisible())
+        .length,
+    }));
+    assert.equal(hasApplicationMenu, false, "native application menu should be hidden on non-macOS platforms");
+    assert.equal(visibleMenuBarWindows, 0, "desktop windows should hide the native menu bar on non-macOS platforms");
+    console.log("[desktop-smoke] native non-macOS application menu hidden");
     return page;
   }
 
@@ -537,6 +548,79 @@ async function verifySettingsOverlayFlow(page, companyId, issuePrefix) {
   console.log("[desktop-smoke] settings modal closed");
 }
 
+async function verifyIssueDetailEscapeNavigation(page, companyId, issuePrefix, issue) {
+  console.log("[desktop-smoke] verifying issue detail Escape navigation");
+  const issueRouteId = issue.identifier ?? issue.id;
+  const waitForPath = (expectedPath, timeout = 15_000) => page.waitForFunction(
+    ({ path }) => window.location.pathname === path,
+    { path: expectedPath },
+    { timeout },
+  );
+  const waitForIssueListPath = () => page.waitForFunction(
+    ({ expectedPath }) => window.location.pathname === expectedPath,
+    { expectedPath: `/${issuePrefix}/issues` },
+    { timeout: 15_000 },
+  );
+  const pressEscapeToIssueList = async () => {
+    let lastError;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await page.keyboard.press("Escape");
+      try {
+        await waitForIssueListPath();
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  };
+  const setSmokeRoute = (nextPath, mode = "replace") => page.evaluate(({ nextCompanyId, nextPath, mode }) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", nextCompanyId);
+    if (mode === "push") {
+      window.history.pushState({}, "", nextPath);
+    } else {
+      window.history.replaceState({}, "", nextPath);
+    }
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, {
+    nextCompanyId: companyId,
+    nextPath,
+    mode,
+  });
+
+  await setSmokeRoute(`/${issuePrefix}/issues`);
+  await waitForPath(`/${issuePrefix}/issues`);
+  await setSmokeRoute(`/${issuePrefix}/issues/${issueRouteId}`, "push");
+  await page.waitForURL(new RegExp(`/${issuePrefix}/issues/${issueRouteId}$`), { timeout: 30_000 });
+  await page.getByRole("heading", { name: issue.title }).waitFor({ state: "visible", timeout: 30_000 });
+
+  await pressEscapeToIssueList();
+
+  console.log("[desktop-smoke] issue detail Escape navigation returned to issues");
+}
+
+async function verifyOrganizationWorkspacesNavigation(electronApp, page, companyId, issuePrefix) {
+  console.log("[desktop-smoke] verifying organization Workspaces navigation");
+  await page.evaluate(({ nextCompanyId, nextPath }) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", nextCompanyId);
+    window.history.replaceState({}, "", nextPath);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, {
+    nextCompanyId: companyId,
+    nextPath: `/${issuePrefix}/org`,
+  });
+  await page.waitForURL(new RegExp(`/${issuePrefix}/org$`), { timeout: 30_000 });
+
+  await page.getByRole("link", { name: "Workspaces" }).click();
+  page = await waitForBoardWindow(electronApp, page, {
+    expectedUrlPattern: new RegExp(`/${issuePrefix}/workspaces(?:[?#].*)?$`),
+  });
+  await page.getByTestId("org-workspaces-files-card").waitFor({ state: "visible", timeout: 30_000 });
+  await page.getByTestId("org-workspaces-editor-card").waitFor({ state: "visible", timeout: 30_000 });
+  console.log("[desktop-smoke] organization Workspaces page opened");
+  return page;
+}
+
 async function assertDesktopServiceWorkersDisabled(page) {
   const state = await page.evaluate(async () => {
     const registrations = "serviceWorker" in navigator
@@ -661,6 +745,13 @@ async function runCleanScenario(mode) {
     }
     firstRun.page = await verifyReloadRecovery(firstRun.electronApp, firstRun.page, company.id, company.issuePrefix);
     firstRun.page = await verifyNativeApplicationMenu(firstRun.electronApp, firstRun.page, company.id, company.issuePrefix);
+    await verifyIssueDetailEscapeNavigation(firstRun.page, company.id, company.issuePrefix, issue);
+    firstRun.page = await verifyOrganizationWorkspacesNavigation(
+      firstRun.electronApp,
+      firstRun.page,
+      company.id,
+      company.issuePrefix,
+    );
     await verifySettingsOverlayFlow(firstRun.page, company.id, company.issuePrefix);
     console.log("[desktop-smoke] closing first app run");
     await closeDesktop(firstRun.electronApp);

@@ -139,6 +139,13 @@ Rudder business data lives under the shared Rudder home:
 
 Electron `userData` now stores only desktop-shell preferences such as window state. It is not the source of truth for Rudder config, database, or storage.
 
+Published CLI and Desktop starts install the server runtime into a versioned
+cache under `~/.rudder/runtimes/<version>`. Rudder automatically prunes old
+runtime cache entries after runtime preparation while protecting the requested
+version, a recent previous version, the latest stable/canary entries, and
+versions referenced by live local-runtime descriptors. This cache is
+reconstructable from npm and is separate from instance data.
+
 ## Runtime coordination
 
 Desktop does not blindly start a second local server for the same instance.
@@ -153,6 +160,18 @@ Instead it:
 The boot screen and Desktop settings page show the active profile, instance, runtime mode (`attached` or `owned`), server version, and the shared instance data path.
 
 In packaged mode, resident-shell actions can restart the local runtime without changing the shared instance path.
+
+## Failure recovery
+
+Desktop has two operator-facing recovery layers after the local runtime starts:
+
+- If the React UI throws during render, the board shows a recovery surface instead
+  of unmounting to a blank window. The operator can reload the UI, copy a
+  diagnostic, or restart Rudder from Desktop.
+- If Electron detects that the renderer process exited, failed to load the main
+  frame, or stopped responding, Desktop shows or prompts for recovery instead of
+  leaving a dark empty window. Reloading the UI keeps the local runtime running;
+  restarting Rudder restarts the owned or attached local startup flow.
 
 ## Smoke and isolated runs
 
@@ -215,21 +234,35 @@ falling back to the committed stable base version.
 Desktop artifacts are not published to npm. The CLI `start` command resolves
 the appropriate GitHub Release asset for the current platform, verifies
 `SHASUMS256.txt`, installs the app into a per-user location, and launches it.
+Downloaded Desktop assets are cached under `~/.rudder/desktop-assets/` by
+SHA-256 checksum so repeated installs or retries can reuse an already verified
+portable asset instead of downloading the full release again.
 The current Desktop channel is an unsigned portable alpha; signed/notarized
 installer distribution can be restored after Apple and Windows code signing are
 available.
 
-Packaged Desktop checks for updates on startup against GitHub Releases. Stable
-builds compare against the latest stable release, and canary builds compare
-against the latest canary release. Beta prereleases are ignored; if a newer
-matching release exists, the app prompts the user to update.
-The manual About-page check uses the same release comparison. When the operator
-chooses Update, Desktop starts the bundled CLI `start --no-cli` portable
-replacement flow for the discovered version. That flow downloads the matching
-release asset, verifies `SHASUMS256.txt`, requests the running Desktop shell to
-quit, replaces the per-user portable app, refreshes launchers, and reopens
-Rudder. If active agent runs exist, the update is blocked until active work is
-stopped.
+Packaged Desktop checks for updates on startup against GitHub Releases. The
+local Desktop update channel defaults to stable, so update checks compare
+against the latest stable release unless the operator enables canary updates in
+Settings > General. With canary enabled, startup, menu, and About-page checks
+compare against the latest canary release. Beta prereleases are ignored; if a
+newer matching release exists, the app prompts the user to update.
+When the operator chooses Update, Desktop starts the bundled CLI
+`start --no-cli` portable replacement flow for the discovered version. That
+flow downloads the matching release asset, verifies `SHASUMS256.txt`, requests
+the running Desktop shell to quit, replaces the per-user portable app, refreshes
+launchers, and reopens Rudder. If active agent runs exist, the update is blocked
+until active work is stopped.
+
+During an in-app update, Desktop shows a compact bottom-right update status card
+with structured progress from the bundled CLI. Byte-backed downloads may show a
+determinate percentage; release resolution, checksum verification, active-run
+waiting, replacement preparation, and relaunch are shown as phase status rather
+than fake percentages. After the release asset is downloaded and verified, the
+card switches to a ready state with a Restart to update action; replacement and
+relaunch begin only after that confirmation. Settings > About can also show the
+same update session as a denser phase-by-phase diagnostic panel for debugging or
+validation.
 
 This is a full portable asset replacement. It is not a binary-delta incremental
 update path.

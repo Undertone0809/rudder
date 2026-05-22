@@ -58,6 +58,12 @@ vi.mock("../services/index.js", () => ({
   heartbeatService: () => ({}),
   issueApprovalService: () => ({ linkManyForApproval: vi.fn() }),
   issueService: () => ({}),
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: mockLogActivity,
   secretService: () => mockSecretService,
   syncInstructionsBundleConfigFromFilePath: vi.fn((_agent, config) => config),
@@ -129,7 +135,7 @@ describe("agent private skill routes", () => {
       locationLabel: "AGENT_HOME/skills",
       sourcePath: "/tmp/agent-helper",
       targetPath: null,
-      detail: "Created in AGENT_HOME/skills.",
+      detail: "Installed, not enabled. Future runs will not load it until enabled.",
     });
     mockAccessService.hasPermission.mockResolvedValue(false);
   });

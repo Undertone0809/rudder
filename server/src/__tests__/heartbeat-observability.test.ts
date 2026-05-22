@@ -147,10 +147,48 @@ describe("heartbeat observability surface", () => {
       usedSkillCount: 0,
       usedSkillKeys: [],
       usedSkills: [],
+      promptRequestedSkillCount: 0,
+      promptRequestedSkillKeys: [],
+      promptRequestedSkills: [],
+      skillEvidenceType: "loaded",
+      skillEvidenceCount: 0,
+      skillEvidenceKeys: [],
+      skillEvidenceSkills: [],
     });
   });
 
-  it("infers used skills from explicit skill references in adapter prompts", () => {
+  it("preserves runtime-reported loaded skills when they differ from prepared skills", () => {
+    expect(buildHeartbeatAdapterInvokePayload({
+      meta: {
+        agentRuntimeType: "opencode_local",
+        command: "opencode",
+        loadedSkills: [
+          {
+            key: "rudder/build-advisor",
+            runtimeName: "build-advisor",
+            name: "Build Advisor",
+            description: "Diagnose build quality",
+          },
+        ],
+      },
+      runtimeSkills: [],
+    })).toMatchObject({
+      loadedSkillCount: 1,
+      loadedSkillKeys: ["rudder/build-advisor"],
+      loadedSkills: [
+        {
+          key: "rudder/build-advisor",
+          runtimeName: "build-advisor",
+          name: "Build Advisor",
+          description: "Diagnose build quality",
+        },
+      ],
+      skillEvidenceType: "loaded",
+      skillEvidenceKeys: [],
+    });
+  });
+
+  it("separates prompt-requested skills from runtime-reported used skills", () => {
     expect(buildHeartbeatAdapterInvokePayload({
       meta: {
         agentRuntimeType: "codex_local",
@@ -172,14 +210,63 @@ describe("heartbeat observability surface", () => {
         },
       ],
     })).toMatchObject({
-      usedSkillCount: 1,
-      usedSkillKeys: ["rudder/build-advisor"],
-      usedSkills: [
+      usedSkillCount: 0,
+      usedSkillKeys: [],
+      usedSkills: [],
+      promptRequestedSkillCount: 1,
+      promptRequestedSkillKeys: ["rudder/build-advisor"],
+      promptRequestedSkills: [
         {
           key: "rudder/build-advisor",
           label: "build-advisor",
         },
       ],
+      skillEvidenceType: "requested",
+      skillEvidenceCount: 1,
+      skillEvidenceKeys: ["rudder/build-advisor"],
+      skillEvidenceSkills: [
+        {
+          key: "rudder/build-advisor",
+          label: "build-advisor",
+        },
+      ],
+    });
+  });
+
+  it("preserves explicit runtime-reported used skills as strongest evidence", () => {
+    expect(buildHeartbeatAdapterInvokePayload({
+      meta: {
+        agentRuntimeType: "codex_local",
+        command: "codex",
+        prompt: "Please use [$build-advisor](/workspace/.agents/skills/build-advisor/SKILL.md).",
+        usedSkills: [
+          {
+            key: "rudder/screenshot",
+            runtimeName: "screenshot",
+            name: "Screenshot",
+          },
+        ],
+      },
+      runtimeSkills: [
+        {
+          key: "rudder/build-advisor",
+          runtimeName: "build-advisor",
+          name: "Build Advisor",
+          description: "Diagnose build quality",
+        },
+        {
+          key: "rudder/screenshot",
+          runtimeName: "screenshot",
+          name: "Screenshot",
+          description: null,
+        },
+      ],
+    })).toMatchObject({
+      usedSkillCount: 1,
+      usedSkillKeys: ["rudder/screenshot"],
+      promptRequestedSkillKeys: ["rudder/build-advisor"],
+      skillEvidenceType: "used",
+      skillEvidenceKeys: ["rudder/screenshot"],
     });
   });
 });

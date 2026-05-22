@@ -55,6 +55,7 @@ test.describe("Agent configuration advanced options", () => {
     const runConcurrencyInput = page.getByRole("spinbutton", { name: "Agent run concurrency" });
     await expect(runConcurrencyInput).toBeVisible();
     await expect(runConcurrencyInput).toHaveValue("3");
+    await expect(page.getByRole("switch", { name: "Preflight before timer run", exact: true })).toBeChecked();
 
     const advancedButton = page.getByRole("button", { name: "Advanced options", exact: true }).first();
     await expect(advancedButton).toHaveAttribute("aria-expanded", "false");
@@ -88,7 +89,7 @@ test.describe("Agent configuration advanced options", () => {
     expect(refreshedRes.ok()).toBe(true);
     const refreshed = await refreshedRes.json() as {
       agentRuntimeConfig: { modelFallbacks?: Array<{ agentRuntimeType: string; model: string; config?: Record<string, unknown> }> };
-      runtimeConfig: { heartbeat?: { maxConcurrentRuns?: number } };
+      runtimeConfig: { heartbeat?: { maxConcurrentRuns?: number; preflightEnabled?: boolean } };
     };
     expect(refreshed.agentRuntimeConfig.modelFallbacks).toEqual([
       { agentRuntimeType: "codex_local", model: "gpt-5.4" },
@@ -98,6 +99,74 @@ test.describe("Agent configuration advanced options", () => {
       }),
     ]);
     expect(refreshed.runtimeConfig.heartbeat?.maxConcurrentRuns).toBe(4);
+    expect(refreshed.runtimeConfig.heartbeat?.preflightEnabled).toBe(true);
+  });
+
+  test("saves and clears Codex thinking effort", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Agent-Config-Thinking-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Naomi",
+        role: "ceo",
+        title: "CEO",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {
+          command: "codex",
+          model: "gpt-5.5",
+          modelFallbacks: [],
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+
+    await page.addInitScript((orgId: string) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/configuration`, {
+      waitUntil: "domcontentloaded",
+    });
+
+    await expect(page.getByRole("heading", { name: "Naomi", exact: true })).toBeVisible();
+    const primaryThinkingEffortButton = page.getByRole("button", { name: "Auto", exact: true }).first();
+    await expect(primaryThinkingEffortButton).toBeVisible();
+    await primaryThinkingEffortButton.click();
+    await page.locator("[data-radix-popper-content-wrapper]").last().getByText("High", { exact: true }).click();
+
+    const saveHighResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes(`/api/agents/${agent.id}`),
+    );
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    const savedHighResponse = await saveHighResponse;
+    expect(savedHighResponse.ok()).toBe(true);
+    const savedHigh = await savedHighResponse.json() as { agentRuntimeConfig: Record<string, unknown> };
+    expect(savedHigh.agentRuntimeConfig.modelReasoningEffort).toBe("high");
+    expect(savedHigh.agentRuntimeConfig).not.toHaveProperty("reasoningEffort");
+
+    const highThinkingEffortButton = page.getByRole("button", { name: "High", exact: true }).first();
+    await expect(highThinkingEffortButton).toBeVisible();
+    await highThinkingEffortButton.click();
+    await page.locator("[data-radix-popper-content-wrapper]").last().getByText("Auto", { exact: true }).click();
+
+    const saveAutoResponse = page.waitForResponse((response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes(`/api/agents/${agent.id}`),
+    );
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    const savedAutoResponse = await saveAutoResponse;
+    expect(savedAutoResponse.ok()).toBe(true);
+    const savedAuto = await savedAutoResponse.json() as { agentRuntimeConfig: Record<string, unknown> };
+    expect(savedAuto.agentRuntimeConfig).not.toHaveProperty("modelReasoningEffort");
+    expect(savedAuto.agentRuntimeConfig).not.toHaveProperty("reasoningEffort");
   });
 
   test("suppresses warning-only runtime environment results in the visible UI", async ({ page }) => {

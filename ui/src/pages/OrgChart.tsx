@@ -9,7 +9,7 @@ import { agentUrl, cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
-import { AgentIcon } from "../components/AgentIconPicker";
+import { AgentIcon, getAgentAvatarImageSrc } from "../components/AgentIconPicker";
 import { Download, Network, Upload } from "lucide-react";
 import { AGENT_ROLE_LABELS, type Agent } from "@rudderhq/shared";
 
@@ -19,6 +19,7 @@ const CARD_H = 100;
 const GAP_X = 32;
 const GAP_Y = 80;
 const PADDING = 60;
+const ACTIVE_EDGE_NODE_GAP = 10;
 
 // ── Tree layout types ───────────────────────────────────────────────────
 
@@ -300,7 +301,7 @@ export function OrgChart() {
     <div
       ref={containerRef}
       data-panning={dragging ? "true" : "false"}
-      className="motion-org-viewport w-full flex-1 min-h-0 overflow-hidden relative bg-muted/20 border border-border rounded-lg"
+      className="motion-org-viewport w-full flex-1 min-h-[calc(100dvh-12rem)] overflow-hidden relative bg-muted/20 border border-border rounded-lg md:min-h-0"
       style={{ cursor: dragging ? "grabbing" : "grab" }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -379,15 +380,17 @@ export function OrgChart() {
             const y1 = parent.y + CARD_H;
             const x2 = child.x + CARD_W / 2;
             const y2 = child.y;
-            const midY = (y1 + y2) / 2;
             const edgeActive = liveNodeIds.has(child.id);
+            const lineStartY = edgeActive ? y1 + ACTIVE_EDGE_NODE_GAP : y1;
+            const lineEndY = edgeActive ? y2 - ACTIVE_EDGE_NODE_GAP : y2;
+            const midY = (lineStartY + lineEndY) / 2;
 
             return (
               <path
                 key={`${parent.id}-${child.id}`}
                 className="motion-org-edge"
                 data-active={edgeActive ? "true" : "false"}
-                d={`M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`}
+                d={`M ${x1} ${lineStartY} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${lineEndY}`}
                 fill="none"
                 stroke="var(--border)"
                 strokeWidth={1.5}
@@ -409,6 +412,7 @@ export function OrgChart() {
           const agent = agentMap.get(node.id);
           const dotColor = statusDotColor[node.status] ?? defaultDotColor;
           const nodeLive = liveNodeIds.has(node.id);
+          const avatarImageSrc = getAgentAvatarImageSrc(agent?.icon);
 
           return (
             <div
@@ -428,9 +432,13 @@ export function OrgChart() {
               <div className="flex items-center px-4 py-3 gap-3">
                 {/* Agent icon + status dot */}
                 <div className="relative shrink-0">
-                  <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center">
-                    <AgentIcon icon={agent?.icon} role={agent?.role} className="h-4.5 w-4.5 text-foreground/70" />
-                  </div>
+                  {avatarImageSrc ? (
+                    <AgentIcon icon={agent?.icon} role={agent?.role} className="h-9 w-9 rounded-full object-cover" />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center">
+                      <AgentIcon icon={agent?.icon} role={agent?.role} className="h-4.5 w-4.5 text-foreground/70" />
+                    </div>
+                  )}
                   <span
                     className={cn(
                       "absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card",

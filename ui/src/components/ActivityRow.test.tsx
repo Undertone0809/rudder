@@ -34,6 +34,14 @@ describe("resolveActivityActorName", () => {
   it("uses You for the current board user in generic actor labels", () => {
     expect(resolveBoardActorLabel("user", "user-1", "user-1")).toBe("You");
   });
+
+  it("uses the nickname for the current board user when configured", () => {
+    expect(resolveBoardActorLabel("user", "user-1", "user-1", "  Zee  ")).toBe("Zee");
+  });
+
+  it("falls back to You when the configured nickname is blank", () => {
+    expect(resolveBoardActorLabel("user", "user-1", "user-1", "   ")).toBe("You");
+  });
 });
 
 describe("ActivityRow", () => {
@@ -56,12 +64,42 @@ describe("ActivityRow", () => {
         agentMap={new Map()}
         entityNameMap={new Map()}
         currentBoardUserId="user-1"
+        operatorDisplayName="Zee"
       />,
     );
 
-    expect(html).toContain("You");
+    expect(html).toContain("Zee");
+    expect(html).not.toContain("You");
     expect(html).toContain("created");
     expect(html).toContain("goal");
     expect(html).toContain("Launch the new onboarding flow");
+  });
+
+  it("renders code commit activity with the short sha and subject", () => {
+    const html = renderToStaticMarkup(
+      <ActivityRow
+        event={{
+          id: "activity-commit",
+          orgId: "org-1",
+          actorType: "agent",
+          actorId: "agent-1",
+          action: "issue.code_committed",
+          entityType: "issue",
+          entityId: "issue-1",
+          agentId: "agent-1",
+          runId: "run-1",
+          details: { shortSha: "abc1234", subject: "fix: report code commit" },
+          createdAt: new Date("2026-04-09T10:00:00.000Z"),
+        }}
+        agentMap={new Map([["agent-1", { id: "agent-1", name: "Wesley", role: "engineer", icon: "rocket" } as any]])}
+        entityNameMap={new Map([["issue:issue-1", "ZST-117"]])}
+        entityTitleMap={new Map([["issue:issue-1", "Add agent-reported commit activity"]])}
+      />,
+    );
+
+    expect(html).toContain("Wesley");
+    expect(html).toContain("committed abc1234: fix: report code commit to");
+    expect(html).toContain("ZST-117");
+    expect(html).toContain("Add agent-reported commit activity");
   });
 });

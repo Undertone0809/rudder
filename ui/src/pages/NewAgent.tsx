@@ -120,7 +120,7 @@ export function NewAgent() {
     });
   }, [organizationSkills, organizationUrlKey]);
 
-  // The four Rudder bundled skills are part of every new agent's baseline and should
+  // Rudder bundled skills are part of every new agent's baseline and should
   // not appear as optional operator choices in the creation form.
   const selectableOrganizationSkillPickerItems = useMemo(
     // New-agent creation should only surface truly optional org-library skills.
@@ -271,6 +271,7 @@ export function NewAgent() {
         heartbeat: {
           enabled: configValues.heartbeatEnabled,
           intervalSec: configValues.intervalSec,
+          preflightEnabled: configValues.preflightEnabled,
           wakeOnDemand: true,
           cooldownSec: 10,
           maxConcurrentRuns: configValues.maxConcurrentRuns,

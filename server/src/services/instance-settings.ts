@@ -14,16 +14,24 @@ import { eq } from "drizzle-orm";
 
 const DEFAULT_SINGLETON_KEY = "default";
 
+function stripLegacyGitIdentity(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const { gitIdentity: _gitIdentity, ...rest } = raw as Record<string, unknown>;
+  return rest;
+}
+
 function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
-  const parsed = instanceGeneralSettingsSchema.safeParse(raw ?? {});
+  const parsed = instanceGeneralSettingsSchema.safeParse(stripLegacyGitIdentity(raw) ?? {});
   if (parsed.success) {
     return {
       censorUsernameInLogs: parsed.data.censorUsernameInLogs ?? false,
+      showDeveloperDiagnostics: parsed.data.showDeveloperDiagnostics ?? false,
       locale: parsed.data.locale ?? "en",
     };
   }
   return {
     censorUsernameInLogs: false,
+    showDeveloperDiagnostics: false,
     locale: "en",
   };
 }
@@ -92,6 +100,24 @@ export function instanceSettingsService(db: Db) {
     return created;
   }
 
+  async function updateGeneralJson(patch: PatchInstanceGeneralSettings): Promise<InstanceSettings> {
+    const current = await getOrCreateRow();
+    const nextGeneral = normalizeGeneralSettings({
+      ...normalizeGeneralSettings(current.general),
+      ...patch,
+    });
+    const now = new Date();
+    const [updated] = await db
+      .update(instanceSettings)
+      .set({
+        general: { ...nextGeneral },
+        updatedAt: now,
+      })
+      .where(eq(instanceSettings.id, current.id))
+      .returning();
+    return toInstanceSettings(updated ?? current);
+  }
+
   return {
     get: async (): Promise<InstanceSettings> => toInstanceSettings(await getOrCreateRow()),
 
@@ -106,21 +132,7 @@ export function instanceSettingsService(db: Db) {
     },
 
     updateGeneral: async (patch: PatchInstanceGeneralSettings): Promise<InstanceSettings> => {
-      const current = await getOrCreateRow();
-      const nextGeneral = normalizeGeneralSettings({
-        ...normalizeGeneralSettings(current.general),
-        ...patch,
-      });
-      const now = new Date();
-      const [updated] = await db
-        .update(instanceSettings)
-        .set({
-          general: { ...nextGeneral },
-          updatedAt: now,
-        })
-        .where(eq(instanceSettings.id, current.id))
-        .returning();
-      return toInstanceSettings(updated ?? current);
+      return updateGeneralJson(patch);
     },
 
     updateNotifications: async (patch: PatchInstanceNotificationSettings): Promise<InstanceSettings> => {

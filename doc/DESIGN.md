@@ -107,6 +107,7 @@ Use presentation language that matches the entry type:
 - Generic tool entries may show structured request and response payloads when expanded, because the payload shape is part of understanding the tool call.
 - Standalone stdout/stderr entries should remain clearly labeled as stream output and should not be merged into generic tool metadata.
 - Top-level transcript summaries should describe operator-meaningful activity such as reading, searching, editing, or running commands; expandable details are for the exact command, tool payload, or stream body.
+- Agent thinking that explains intermediate progress should stay readable inline in chat and run-detail transcript narratives; reserve default folding for tool payloads, raw command detail, and noisy stream output.
 
 ### 3.4.2 Review Blocks Inside Chat
 
@@ -127,6 +128,18 @@ Rules:
 
 Use strong hierarchy, not loud styling.
 Color, elevation, and emphasis should be used sparingly and intentionally.
+
+### 3.6 Scrollbars
+
+Scrollable regions should stay visually quiet when idle.
+
+Rules:
+
+- Do not leave visible scroll thumbs in idle panels, sidebars, menus, popovers, drawers, or dense option lists.
+- Show scrollbars only while the user is actively scrolling, then fade or hide them again.
+- Use the shared `.scrollbar-auto-hide` class plus `useScrollbarActivityRef` for native `overflow-auto` / `overflow-y-auto` regions.
+- Apply the same rule to nested scroll regions inside popovers and menus; avoid multiple always-visible internal scrollbars on one surface.
+- Keep scroll affordance through layout, clipping, and content continuation rather than permanent scrollbar chrome.
 
 ## 4. Information Hierarchy
 

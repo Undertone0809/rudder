@@ -1,12 +1,13 @@
 /// <reference path="./types/express.d.ts" />
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
+import { createHash, randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 import type { Request as ExpressRequest, RequestHandler } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import {
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
   WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
@@ -30,6 +31,7 @@ import {
   organizations,
   organizationMemberships,
   instanceUserRoles,
+  invites,
 } from "@rudderhq/db";
 import detectPort from "detect-port";
 import { createRudderApp } from "./app.js";
@@ -163,6 +165,92 @@ export interface StartServerOptions {
   printBanner?: boolean;
   onEvent?: (event: ServerBootstrapEvent) => void;
   runtimeOwnerKind?: LocalRuntimeOwnerKind | null;
+}
+
+export interface BootstrapCeoInviteOptions {
+  dbUrl: string;
+  force?: boolean;
+  expiresHours?: number;
+}
+
+export interface BootstrapCeoInviteResult {
+  token: string;
+  expiresAt: Date;
+}
+
+export async function checkDatabaseConnection(dbUrl: string): Promise<void> {
+  const db = createDb(dbUrl);
+  const closableDb = db as typeof db & {
+    $client?: {
+      end?: (options?: { timeout?: number }) => Promise<void>;
+    };
+  };
+  try {
+    await db.execute("SELECT 1");
+  } finally {
+    await closableDb.$client?.end?.({ timeout: 5 }).catch(() => undefined);
+  }
+}
+
+function hashBootstrapInviteToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function createBootstrapInviteToken() {
+  return `pcp_bootstrap_${randomBytes(24).toString("hex")}`;
+}
+
+export async function createBootstrapCeoInvite(
+  options: BootstrapCeoInviteOptions,
+): Promise<BootstrapCeoInviteResult | null> {
+  const db = createDb(options.dbUrl);
+  const closableDb = db as typeof db & {
+    $client?: {
+      end?: (options?: { timeout?: number }) => Promise<void>;
+    };
+  };
+  try {
+    const existingAdminCount = await db
+      .select()
+      .from(instanceUserRoles)
+      .where(eq(instanceUserRoles.role, "instance_admin"))
+      .then((rows) => rows.length);
+
+    if (existingAdminCount > 0 && !options.force) {
+      return null;
+    }
+
+    const now = new Date();
+    await db
+      .update(invites)
+      .set({ revokedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(invites.inviteType, "bootstrap_ceo"),
+          isNull(invites.revokedAt),
+          isNull(invites.acceptedAt),
+          gt(invites.expiresAt, now),
+        ),
+      );
+
+    const token = createBootstrapInviteToken();
+    const expiresHours = Math.max(1, Math.min(24 * 30, options.expiresHours ?? 72));
+    const created = await db
+      .insert(invites)
+      .values({
+        inviteType: "bootstrap_ceo",
+        tokenHash: hashBootstrapInviteToken(token),
+        allowedJoinTypes: "human",
+        expiresAt: new Date(Date.now() + expiresHours * 60 * 60 * 1000),
+        invitedByUserId: "system",
+      })
+      .returning()
+      .then((rows) => rows[0]);
+
+    return { token, expiresAt: created.expiresAt };
+  } finally {
+    await closableDb.$client?.end?.({ timeout: 5 }).catch(() => undefined);
+  }
 }
 
 export interface StartManagedLocalServerOptions extends StartServerOptions {

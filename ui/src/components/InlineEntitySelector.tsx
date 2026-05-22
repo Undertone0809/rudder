@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "../lib/utils";
 
@@ -23,6 +23,10 @@ interface InlineEntitySelectorProps {
   renderOption?: (option: InlineEntityOption, isSelected: boolean) => ReactNode;
   /** Skip the Portal so the popover stays in the DOM tree (fixes scroll inside Dialogs). */
   disablePortal?: boolean;
+  side?: "top" | "right" | "bottom" | "left";
+  sideOffset?: number;
+  contentClassName?: string;
+  variant?: "inline" | "field";
 }
 
 export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySelectorProps>(
@@ -40,6 +44,10 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
       renderTriggerValue,
       renderOption,
       disablePortal,
+      side = "bottom",
+      sideOffset,
+      contentClassName,
+      variant = "inline",
     },
     ref,
   ) {
@@ -98,7 +106,10 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
             ref={ref}
             type="button"
             className={cn(
-              "inline-flex min-w-0 items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-sm font-medium text-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "inline-flex min-w-0 items-center gap-1 border border-border text-sm font-medium text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              variant === "field"
+                ? "h-10 w-full justify-between rounded-md bg-background px-3 hover:bg-accent/30"
+                : "rounded-md bg-muted/40 px-2 py-1 hover:bg-accent/50",
               className,
             )}
             onPointerDown={() => { isPointerDownRef.current = true; }}
@@ -107,16 +118,29 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
               isPointerDownRef.current = false;
             }}
           >
-            {renderTriggerValue
-              ? renderTriggerValue(currentOption)
-              : (currentOption?.label ?? <span className="text-muted-foreground">{placeholder}</span>)}
+            <span className={cn(
+              "flex min-w-0 items-center gap-2",
+              variant === "field" && "flex-1 overflow-hidden",
+            )}>
+              {renderTriggerValue
+                ? renderTriggerValue(currentOption)
+                : (currentOption?.label ?? <span className="text-muted-foreground">{placeholder}</span>)}
+            </span>
+            {variant === "field" ? <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" /> : null}
           </button>
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          side="bottom"
+          side={side}
+          sideOffset={sideOffset}
           collisionPadding={16}
-          className="w-[min(20rem,calc(100vw-2rem))] p-1"
+          className={cn(
+            "motion-inline-selector-pop z-[70] flex max-h-[min(18rem,var(--radix-popover-content-available-height))] flex-col overflow-hidden p-1",
+            variant === "field"
+              ? "w-[var(--radix-popover-trigger-width)] min-w-64 max-w-[calc(100vw-2rem)]"
+              : "w-[min(20rem,calc(100vw-2rem))]",
+            contentClassName,
+          )}
           disablePortal={disablePortal}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
@@ -174,7 +198,7 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
               }
             }}
           />
-          <div className="max-h-56 overflow-y-auto overscroll-contain py-1 touch-pan-y">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1 touch-pan-y">
             {filteredOptions.length === 0 ? (
               <p className="px-2 py-2 text-xs text-muted-foreground">{emptyMessage}</p>
             ) : (
@@ -185,8 +209,9 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
                   <button
                     key={option.id || "__none__"}
                     type="button"
+                    data-inline-entity-option
                     className={cn(
-                      "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm touch-manipulation",
+                      "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors touch-manipulation hover:bg-accent/80",
                       isHighlighted && "bg-accent",
                     )}
                     onMouseEnter={() => setHighlightedIndex(index)}

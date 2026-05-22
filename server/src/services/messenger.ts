@@ -5,6 +5,7 @@ import {
   approvalComments,
   approvals,
   agents,
+  authUsers,
   chatConversations,
   heartbeatRuns,
   issueComments,
@@ -14,6 +15,7 @@ import {
 } from "@rudderhq/db";
 import {
   formatMessengerPreview,
+  formatMessengerTitle,
   type Approval,
   type BudgetIncident,
   type ChatConversation,
@@ -49,7 +51,17 @@ const ISSUE_ACTIVITY_ACTIONS = [
   "heartbeat.retried",
 ] as const;
 
-const ACTIONABLE_APPROVAL_STATUSES = new Set(["pending", "revision_requested"]);
+const ACTIONABLE_APPROVAL_STATUSES = new Set(["pending"]);
+const ISSUE_UPDATE_METADATA_KEYS = new Set([
+  "identifier",
+  "issueIdentifier",
+  "_previous",
+  "source",
+  "reopened",
+  "reopenedFrom",
+  "normalizedFromStatus",
+  "normalizedReason",
+]);
 
 type ThreadStateRow = typeof messengerThreadUserStates.$inferSelect;
 type ThreadReadState = {
@@ -62,6 +74,7 @@ type IssueUniverseRow = {
   status: string;
   priority: string;
   assigneeUserId: string | null;
+  reviewerUserId: string | null;
   createdByUserId: string | null;
   identifier: string | null;
   updatedAt: Date;
@@ -73,6 +86,8 @@ type IssueCommentRow = {
   body: string;
   authorAgentId: string | null;
   authorUserId: string | null;
+  authorAgentName: string | null;
+  authorUserName: string | null;
   createdAt: Date;
 };
 
@@ -86,6 +101,27 @@ type IssueActivityRow = {
   createdAt: Date;
   runId: string | null;
 };
+
+type IssueStatusChange = {
+  from: string | null;
+  to: string;
+};
+
+function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
+  if (!details) return [];
+  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
+}
+
+function isDescriptionOnlyIssueUpdate(activity: IssueActivityRow): boolean {
+  if (activity.action !== "issue.updated") return false;
+  const changedKeys = issueUpdatedChangedKeys(activity.details);
+  return changedKeys.length === 1 && changedKeys[0] === "description";
+}
+
+function shouldNotifyIssueActivity(activity: IssueActivityRow): boolean {
+  if (isDescriptionOnlyIssueUpdate(activity)) return false;
+  return true;
+}
 
 type ApprovalRow = {
   id: string;
@@ -215,17 +251,61 @@ function issueHref(issue: IssueUniverseRow) {
   return `/issues/${issue.identifier ?? issue.id}`;
 }
 
+function issueDisplayLabel(issue: IssueUniverseRow) {
+  return issue.identifier ? `${issue.identifier} · ${issue.title}` : issue.title;
+}
+
+function issueThreadPreview(issue: IssueUniverseRow, preview: string | null) {
+  const label = issueDisplayLabel(issue);
+  const normalizedPreview = truncate(preview, 120);
+  if (!normalizedPreview || normalizedPreview === label) return truncate(label, 180);
+  return truncate(`${label} — ${normalizedPreview}`, 180);
+}
+
+function humanizeIssueStatus(status: string) {
+  return status.replaceAll("_", " ");
+}
+
+function issueStatusChangeFromActivity(activity: IssueActivityRow | null | undefined): IssueStatusChange | null {
+  if (!activity || activity.action !== "issue.updated") return null;
+  const details = activity.details ?? {};
+  if (typeof details.status !== "string") return null;
+
+  const previous = details._previous && typeof details._previous === "object"
+    ? details._previous as Record<string, unknown>
+    : null;
+  const from = typeof previous?.status === "string" ? previous.status : null;
+  return { from, to: details.status };
+}
+
+function issueStatusActivityMatchesSourceComment(
+  activity: IssueActivityRow | null | undefined,
+  sourceComment: Pick<IssueCommentRow, "createdAt"> | null | undefined,
+) {
+  if (!activity || !sourceComment) return false;
+  const details = activity.details ?? {};
+  if (details.source !== "comment") return false;
+  if (!issueStatusChangeFromActivity(activity)) return false;
+
+  const activityAt = normalizeDate(activity.createdAt)?.getTime();
+  const commentAt = normalizeDate(sourceComment.createdAt)?.getTime();
+  if (activityAt === undefined || commentAt === undefined) return false;
+  return Math.abs(commentAt - activityAt) <= 5_000;
+}
+
 function issueBodyFromSnapshot(
   issue: IssueUniverseRow,
   latestPreview: string | null,
   followed: boolean,
   created: boolean,
   assigned: boolean,
+  reviewer: boolean,
 ) {
   const flags: string[] = [];
   if (followed) flags.push("followed");
   if (created) flags.push("created by me");
   if (assigned) flags.push("assigned to me");
+  if (reviewer) flags.push("review requested");
   const status = issue.status.replaceAll("_", " ");
   const priority = issue.priority.replaceAll("_", " ");
   const prefix = [status, priority].filter(Boolean).join(" · ");
@@ -238,10 +318,16 @@ function summarizeIssueActivity(activity: IssueActivityRow, issue: IssueUniverse
   switch (activity.action) {
     case "issue.updated": {
       if (typeof details.status === "string") {
-        return `Status changed to ${details.status.replaceAll("_", " ")}`;
+        const status = humanizeIssueStatus(details.status);
+        if (details.status === "done") return "Completed";
+        if (details.status === "cancelled") return "Cancelled";
+        return `Status changed to ${status}`;
       }
       if (typeof details.assigneeUserId !== "undefined" || typeof details.assigneeAgentId !== "undefined") {
         return "Assignment changed";
+      }
+      if (typeof details.reviewerUserId !== "undefined" || typeof details.reviewerAgentId !== "undefined") {
+        return "Reviewer changed";
       }
       return "Issue updated";
     }
@@ -272,6 +358,19 @@ function isSelfAuthoredComment(comment: IssueCommentRow, userId: string) {
   return comment.authorUserId === userId;
 }
 
+function issueCommentAuthorLabel(
+  comment: Pick<IssueCommentRow, "authorAgentId" | "authorUserId" | "authorAgentName" | "authorUserName"> | null,
+  currentUserId: string | null,
+) {
+  if (!comment) return null;
+  if (comment.authorAgentId) return comment.authorAgentName?.trim() || `Agent ${comment.authorAgentId.slice(0, 8)}`;
+  if (comment.authorUserId) {
+    if (currentUserId && comment.authorUserId === currentUserId) return "You";
+    return comment.authorUserName?.trim() || `User ${comment.authorUserId.slice(0, 8)}`;
+  }
+  return "System";
+}
+
 function isSelfAuthoredActivity(activity: IssueActivityRow, userId: string) {
   return activity.actorType === "user" && activity.actorId === userId;
 }
@@ -279,6 +378,32 @@ function isSelfAuthoredActivity(activity: IssueActivityRow, userId: string) {
 function summarizeApprovalPayload(approval: ApprovalRow) {
   const payload = redactEventPayload(approval.payload);
   if (!payload) return null;
+  if (approval.type === "chat_issue_creation") {
+    const proposal =
+      payload.proposedIssue &&
+      typeof payload.proposedIssue === "object" &&
+      !Array.isArray(payload.proposedIssue)
+        ? (payload.proposedIssue as Record<string, unknown>)
+        : payload;
+    const title = typeof proposal.title === "string" && proposal.title.trim() ? proposal.title.trim() : null;
+    const description =
+      typeof proposal.description === "string" && proposal.description.trim()
+        ? truncate(proposal.description.trim(), 120)
+        : null;
+    return [title ? `Issue: ${title}` : "Agent proposed an issue from chat", description]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  if (approval.type === "chat_operation") {
+    const proposal =
+      payload.operationProposal &&
+      typeof payload.operationProposal === "object" &&
+      !Array.isArray(payload.operationProposal)
+        ? (payload.operationProposal as Record<string, unknown>)
+        : payload;
+    const summary = typeof proposal.summary === "string" && proposal.summary.trim() ? proposal.summary.trim() : null;
+    return summary ? `Operation: ${truncate(summary, 120)}` : "Agent proposed a chat operation";
+  }
   if (approval.type === "hire_agent") {
     const name = typeof payload.name === "string" ? payload.name : null;
     const role = typeof payload.role === "string" ? payload.role : null;
@@ -308,7 +433,7 @@ function approvalActions(approval: ApprovalRow) {
   return [
     buildAction("Approve", `/approvals/${approval.id}/approve`, "POST"),
     buildAction("Reject", `/approvals/${approval.id}/reject`, "POST"),
-    buildAction("Request revision", `/approvals/${approval.id}/request-revision`, "POST"),
+    buildAction("Request changes", `/approvals/${approval.id}/request-revision`, "POST"),
     buildAction("Expand details", `/messenger/approvals/${approval.id}`, "GET"),
     buildAction("Open full approval", `/messenger/approvals/${approval.id}`, "GET"),
   ];
@@ -324,17 +449,18 @@ function issueActions(issue: IssueUniverseRow, currentUserId: string | null) {
 
 function chatSummary(conversation: ChatConversationRow): MessengerThreadSummary {
   const preview =
-    conversation.latestReplyPreview ?? conversation.summary ?? truncate(conversation.title, 140) ?? "Start the conversation";
+    conversation.latestReplyPreview ?? truncate(conversation.summary, 140) ?? truncate(conversation.title, 140) ?? "Start the conversation";
   return {
     threadKey: threadKeyForChat(conversation.id),
     kind: "chat",
-    title: conversation.title,
+    title: formatMessengerTitle(conversation.title, { max: 80 }) ?? conversation.title,
     subtitle: preview,
     preview,
     latestActivityAt: conversation.lastMessageAt ?? conversation.updatedAt,
     lastReadAt: conversation.lastReadAt,
     unreadCount: conversation.unreadCount,
     needsAttention: conversation.needsAttention,
+    isPinned: conversation.isPinned,
     href: `/messenger/chat/${conversation.id}`,
   };
 }
@@ -356,6 +482,7 @@ function issueSummary(
     lastReadAt,
     unreadCount,
     needsAttention: unreadCount > 0,
+    isPinned: false,
     href: "/messenger/issues",
   };
 }
@@ -380,6 +507,7 @@ function approvalSummary(
     lastReadAt,
     unreadCount,
     needsAttention: unreadCount > 0,
+    isPinned: false,
     href: "/messenger/approvals",
   };
 }
@@ -404,6 +532,7 @@ function systemSummary(
     lastReadAt,
     unreadCount,
     needsAttention: unreadCount > 0,
+    isPinned: false,
     href: `/messenger/system/${kind}`,
   };
 }
@@ -414,17 +543,25 @@ function issueCard(
   followed: boolean,
   latestPreview: string | null,
   latestActivityAt: Date,
-  sourceComment: Pick<IssueCommentRow, "id" | "body"> | null,
+  sourceComment: Pick<IssueCommentRow, "id" | "body" | "authorAgentId" | "authorUserId" | "authorAgentName" | "authorUserName"> | null,
+  latestActivity: IssueActivityRow | null,
 ): MessengerIssueThreadItem {
   const createdByMe = issue.createdByUserId === currentUserId;
   const assignedToMe = issue.assigneeUserId === currentUserId;
+  const reviewerForMe = issue.reviewerUserId === currentUserId && issue.status === "in_review";
+  const statusChange = issueStatusChangeFromActivity(latestActivity);
+  const sourceCommentAuthorKind = sourceComment?.authorAgentId
+    ? "agent"
+    : sourceComment?.authorUserId ? "user" : "system";
+  const sourceCommentByMe = Boolean(sourceComment?.authorUserId && sourceComment.authorUserId === currentUserId);
+  const sourceCommentAuthorLabel = issueCommentAuthorLabel(sourceComment, currentUserId);
   return {
     id: issue.id,
     threadKey: "issues",
     kind: "issues",
-    title: `${issue.identifier ?? issue.id} · ${issue.title}`,
-    subtitle: issueBodyFromSnapshot(issue, latestPreview, followed, createdByMe, assignedToMe),
-    body: issueBodyFromSnapshot(issue, latestPreview, followed, createdByMe, assignedToMe),
+    title: issueDisplayLabel(issue),
+    subtitle: issueBodyFromSnapshot(issue, latestPreview, followed, createdByMe, assignedToMe, reviewerForMe),
+    body: issueBodyFromSnapshot(issue, latestPreview, followed, createdByMe, assignedToMe, reviewerForMe),
     preview: latestPreview,
     href: issueHref(issue),
     latestActivityAt,
@@ -433,14 +570,24 @@ function issueCard(
       issueId: issue.id,
       issueIdentifier: issue.identifier,
       status: issue.status,
+      ...(statusChange ? { statusChange } : {}),
       priority: issue.priority,
       followed,
       createdByMe,
       assignedToMe,
+      reviewerForMe,
+      ...(sourceComment
+        ? {
+          sourceCommentAuthorKind,
+          sourceCommentByMe,
+          sourceCommentAuthorLabel,
+        }
+        : {}),
     },
     issueId: issue.id,
     issueIdentifier: issue.identifier,
     sourceCommentId: sourceComment?.id ?? null,
+    sourceCommentAuthorLabel,
     sourceCommentBody: sourceComment?.body ?? null,
   };
 }
@@ -453,11 +600,17 @@ function approvalCard(
 ): MessengerApprovalThreadItem {
   const payloadPreview = summarizeApprovalPayload(approval);
   const body = latestComment ? truncate(latestComment.body) : approval.decisionNote ?? payloadPreview;
+  const title =
+    approval.type === "chat_issue_creation"
+      ? "Review proposed issue"
+      : approval.type === "chat_operation"
+        ? "Review chat operation"
+        : approval.type.replaceAll("_", " ");
   return {
     id: approval.id,
     threadKey: "approvals",
     kind: "approvals",
-    title: approval.type.replaceAll("_", " "),
+    title,
     subtitle: `${approvalRequesterLabel(approval, currentUserId)} · ${approval.status.replaceAll("_", " ")}`,
     body,
     preview: body,
@@ -587,6 +740,7 @@ export function messengerService(db: Db) {
           status: issues.status,
           priority: issues.priority,
           assigneeUserId: issues.assigneeUserId,
+          reviewerUserId: issues.reviewerUserId,
           createdByUserId: issues.createdByUserId,
           identifier: issues.identifier,
           updatedAt: issues.updatedAt,
@@ -595,7 +749,7 @@ export function messengerService(db: Db) {
         .where(
           and(
             eq(issues.orgId, orgId),
-            or(eq(issues.assigneeUserId, userId), eq(issues.createdByUserId, userId)),
+            or(eq(issues.assigneeUserId, userId), eq(issues.createdByUserId, userId), eq(issues.reviewerUserId, userId)),
             isNull(issues.hiddenAt),
           ),
         )
@@ -637,9 +791,13 @@ export function messengerService(db: Db) {
             body: issueComments.body,
             authorAgentId: issueComments.authorAgentId,
             authorUserId: issueComments.authorUserId,
+            authorAgentName: agents.name,
+            authorUserName: authUsers.name,
             createdAt: issueComments.createdAt,
           })
           .from(issueComments)
+          .leftJoin(agents, eq(issueComments.authorAgentId, agents.id))
+          .leftJoin(authUsers, eq(issueComments.authorUserId, authUsers.id))
           .where(and(eq(issueComments.orgId, orgId), inArray(issueComments.issueId, issueIds)))
           .orderBy(desc(issueComments.createdAt)),
       issueIds.length === 0
@@ -679,7 +837,14 @@ export function messengerService(db: Db) {
     }
     const latestActivityByIssue = new Map<string, IssueActivityRow>();
     const latestExternalActivityByIssue = new Map<string, IssueActivityRow>();
+    const latestSuppressedActivityByIssue = new Map<string, IssueActivityRow>();
     for (const row of activityRows) {
+      if (!shouldNotifyIssueActivity(row)) {
+        if (!latestSuppressedActivityByIssue.has(row.entityId)) {
+          latestSuppressedActivityByIssue.set(row.entityId, row);
+        }
+        continue;
+      }
       if (!latestActivityByIssue.has(row.entityId)) {
         latestActivityByIssue.set(row.entityId, row);
       }
@@ -690,30 +855,46 @@ export function messengerService(db: Db) {
 
     const unsortedEntries = issuesUniverse.map((issue) => {
       const latestComment = latestCommentByIssue.get(issue.id) ?? null;
+      const latestExternalComment = latestExternalCommentByIssue.get(issue.id) ?? null;
       const latestActivity = latestActivityByIssue.get(issue.id) ?? null;
-      const latestCommentAt = normalizeDate(latestComment?.createdAt ?? null);
-      const latestEventAt = maxDate(latestCommentAt, latestActivity?.createdAt);
+      const latestVisibleComment = latestExternalComment;
+      const latestVisibleCommentAt = normalizeDate(latestVisibleComment?.createdAt ?? null);
+      const latestEventAt = maxDate(latestVisibleCommentAt, latestActivity?.createdAt);
       const latestActivityAt = maxDate(issue.updatedAt, latestEventAt);
       const latestSourceIsComment =
-        latestCommentAt &&
-        (!latestActivity?.createdAt || latestCommentAt.getTime() >= new Date(latestActivity.createdAt).getTime());
+        latestVisibleCommentAt &&
+        (!latestActivity?.createdAt || latestVisibleCommentAt.getTime() >= new Date(latestActivity.createdAt).getTime());
       const latestPreview = latestSourceIsComment
-        ? truncate(latestComment?.body)
+        ? truncate(latestVisibleComment?.body)
         : latestActivity
           ? summarizeIssueActivity(latestActivity, issue)
           : null;
+      const statusChangeActivity = latestSourceIsComment
+        ? (issueStatusActivityMatchesSourceComment(latestActivity, latestVisibleComment) ? latestActivity : null)
+        : latestActivity;
 
-      const latestExternalComment = latestExternalCommentByIssue.get(issue.id) ?? null;
       const latestExternalActivity = latestExternalActivityByIssue.get(issue.id) ?? null;
       const latestExternalCommentAt = normalizeDate(latestExternalComment?.createdAt ?? null);
+      const latestSuppressedActivityAt = normalizeDate(latestSuppressedActivityByIssue.get(issue.id)?.createdAt ?? null);
+      const issueUpdatedAt = normalizeDate(issue.updatedAt);
+      const suppressedActivityMatchesIssueUpdate = Boolean(
+        latestSuppressedActivityAt &&
+        issueUpdatedAt &&
+        latestSuppressedActivityAt.getTime() >= issueUpdatedAt.getTime() - 5_000,
+      );
       const fallbackAssignedActivityAt =
-        issue.assigneeUserId === userId && !latestActivityByIssue.has(issue.id)
-          ? normalizeDate(issue.updatedAt)
+        issue.assigneeUserId === userId && !latestActivityByIssue.has(issue.id) && !suppressedActivityMatchesIssueUpdate
+          ? issueUpdatedAt
+          : null;
+      const fallbackReviewerActivityAt =
+        issue.reviewerUserId === userId && issue.status === "in_review" && !latestActivityByIssue.has(issue.id) && !suppressedActivityMatchesIssueUpdate
+          ? issueUpdatedAt
           : null;
       const attentionActivityAt = maxDate(
         latestExternalCommentAt,
         latestExternalActivity?.createdAt,
         fallbackAssignedActivityAt,
+        fallbackReviewerActivityAt,
       );
       const attentionPreview =
         latestExternalCommentAt &&
@@ -721,9 +902,17 @@ export function messengerService(db: Db) {
           ? truncate(latestExternalComment?.body)
           : latestExternalActivity
             ? summarizeIssueActivity(latestExternalActivity, issue)
-            : fallbackAssignedActivityAt
-              ? issueBodyFromSnapshot(issue, null, issue.followed, issue.createdByUserId === userId, issue.assigneeUserId === userId)
+            : fallbackAssignedActivityAt || fallbackReviewerActivityAt
+              ? issueBodyFromSnapshot(
+                issue,
+                null,
+                issue.followed,
+                issue.createdByUserId === userId,
+                issue.assigneeUserId === userId,
+                issue.reviewerUserId === userId && issue.status === "in_review",
+              )
               : null;
+      const summaryPreview = attentionActivityAt ? issueThreadPreview(issue, attentionPreview) : null;
 
       return {
         item: issueCard(
@@ -732,10 +921,11 @@ export function messengerService(db: Db) {
           issue.followed,
           latestPreview,
           latestActivityAt ?? issue.updatedAt,
-          latestSourceIsComment ? latestComment : null,
+          latestSourceIsComment ? latestVisibleComment : null,
+          statusChangeActivity,
         ),
         attentionActivityAt,
-        attentionPreview,
+        attentionPreview: summaryPreview,
       };
     });
 
@@ -769,8 +959,9 @@ export function messengerService(db: Db) {
         lastReadAt,
         unreadCount,
         needsAttention: unreadCount > 0,
+        isPinned: false,
         href: "/messenger/issues",
-        description: "Followed issues, issues I created, and issues assigned to me",
+        description: "Followed issues, issues I created, issues assigned to me, and issues ready for my review",
         items: chronologicalItems,
       } satisfies MessengerThreadDetail<MessengerIssueThreadItem>,
     };
@@ -835,6 +1026,7 @@ export function messengerService(db: Db) {
         lastReadAt,
         unreadCount,
         needsAttention: unreadCount > 0,
+        isPinned: false,
         href: "/messenger/approvals",
         description: "Approvals needing attention",
         items: chronologicalItems,
@@ -898,6 +1090,7 @@ export function messengerService(db: Db) {
         lastReadAt,
         unreadCount,
         needsAttention: unreadCount > 0,
+        isPinned: false,
         href: "/messenger/system/failed-runs",
         description: "Recent failed heartbeat runs",
         items: chronologicalItems,
@@ -934,6 +1127,7 @@ export function messengerService(db: Db) {
         lastReadAt,
         unreadCount,
         needsAttention: unreadCount > 0,
+        isPinned: false,
         href: "/messenger/system/budget-alerts",
         description: "Open budget incidents",
         items,
@@ -973,6 +1167,7 @@ export function messengerService(db: Db) {
         lastReadAt,
         unreadCount,
         needsAttention: unreadCount > 0,
+        isPinned: false,
         href: "/messenger/system/join-requests",
         description: "Pending organization join requests",
         items,

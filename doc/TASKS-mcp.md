@@ -70,7 +70,7 @@ Create a new issue.
 | `priority`    | number   | no       | 0-4. Default: 0 (none)                        |
 | `estimate`    | number   | no       | Point estimate                                |
 | `dueDate`     | string   | no       | ISO date                                      |
-| `assigneeId`  | string   | no       | Agent to assign                               |
+| `assigneeId`  | string   | no       | Agent to assign. Agent-authenticated creates default to the creating agent when omitted |
 | `projectId`   | string   | no       | Project to associate with                     |
 | `milestoneId` | string   | no       | Milestone within the project                  |
 | `parentId`    | string   | no       | Parent issue (makes this a sub-issue)         |

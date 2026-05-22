@@ -10,6 +10,18 @@ const mockWithExecutionObservation = vi.hoisted(() => vi.fn(async (_context, _in
 const mockObserveExecutionEvent = vi.hoisted(() => vi.fn().mockResolvedValue(null));
 const mockUpdateExecutionObservation = vi.hoisted(() => vi.fn());
 const mockUpdateExecutionTraceIO = vi.hoisted(() => vi.fn());
+const mockEmitExecutionTranscriptTree = vi.hoisted(() =>
+  vi.fn(() => ({
+    turnCount: 0,
+    toolCount: 0,
+    eventCount: 0,
+    finalOutput: null,
+    finalModel: null,
+    finalUsage: null,
+    finalSessionId: null,
+    hasError: false,
+  })),
+);
 
 const mockChatService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -17,9 +29,13 @@ const mockChatService = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
   markRead: vi.fn(),
+  markUnread: vi.fn(),
   setPinned: vi.fn(),
   listMessages: vi.fn(),
+  getMessage: vi.fn(),
   addMessage: vi.fn(),
+  updateMessage: vi.fn(),
+  markInterruptedStreamingMessages: vi.fn(),
   addUserChatMessage: vi.fn(),
   addContextLink: vi.fn(),
   setProjectContextLink: vi.fn(),
@@ -36,6 +52,7 @@ const mockCompanyService = vi.hoisted(() => ({
 
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
+  listLabels: vi.fn(),
 }));
 
 const mockProjectService = vi.hoisted(() => ({
@@ -44,6 +61,11 @@ const mockProjectService = vi.hoisted(() => ({
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
+}));
+
+const mockAccessService = vi.hoisted(() => ({
+  canUser: vi.fn(),
+  hasPermission: vi.fn(),
 }));
 
 const mockGoalService = vi.hoisted(() => ({
@@ -68,11 +90,18 @@ const mockStorage = vi.hoisted(() => ({
 }));
 
 vi.mock("../services/index.js", () => ({
+  accessService: () => mockAccessService,
   agentService: () => mockAgentService,
   chatService: () => mockChatService,
   organizationService: () => mockCompanyService,
   goalService: () => mockGoalService,
   issueService: () => mockIssueService,
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
   logActivity: mockLogActivity,
   operatorProfileService: () => mockOperatorProfileService,
   projectService: () => mockProjectService,
@@ -89,6 +118,10 @@ vi.mock("../langfuse.js", () => ({
   updateExecutionTraceIO: mockUpdateExecutionTraceIO,
 }));
 
+vi.mock("../langfuse-transcript.js", () => ({
+  emitExecutionTranscriptTree: mockEmitExecutionTranscriptTree,
+}));
+
 function createConversation(overrides: Partial<Record<string, unknown>> = {}) {
   const now = new Date("2026-03-26T08:00:00.000Z");
   return {
@@ -98,7 +131,7 @@ function createConversation(overrides: Partial<Record<string, unknown>> = {}) {
     title: "New chat",
     summary: null,
     latestReplyPreview: null,
-    preferredAgentId: null,
+    preferredAgentId: "agent-1",
     routedAgentId: null,
     primaryIssueId: null,
     primaryIssue: null,
@@ -113,9 +146,9 @@ function createConversation(overrides: Partial<Record<string, unknown>> = {}) {
     needsAttention: false,
     resolvedAt: null,
     chatRuntime: {
-      sourceType: "copilot",
-      sourceLabel: "Rudder Copilot",
-      runtimeAgentId: "copilot-agent",
+      sourceType: "agent",
+      sourceLabel: "Chat Specialist",
+      runtimeAgentId: "agent-1",
       agentRuntimeType: "codex_local",
       model: "gpt-5",
       available: true,
@@ -200,14 +233,17 @@ describe("chat routes", () => {
     mockChatAssistantService.enrichConversations.mockImplementation(async (conversations) => conversations);
     mockChatAssistantService.getChatAssistantAvailability.mockResolvedValue({
       available: true,
-      sourceType: "copilot",
-      sourceLabel: "Rudder Copilot",
-      runtimeAgentId: "copilot-agent",
+      sourceType: "agent",
+      sourceLabel: "Chat Specialist",
+      runtimeAgentId: "agent-1",
       agentRuntimeType: "codex_local",
       model: "gpt-5",
       error: null,
     });
     mockLogActivity.mockResolvedValue(undefined);
+    mockAccessService.canUser.mockResolvedValue(true);
+    mockAccessService.hasPermission.mockResolvedValue(true);
+    mockIssueService.listLabels.mockResolvedValue([]);
     mockOperatorProfileService.get.mockResolvedValue({
       nickname: "Zee",
       moreAboutYou: "Prefers concise answers",
@@ -223,6 +259,50 @@ describe("chat routes", () => {
     mockChatService.addUserChatMessage.mockImplementation(async (_cid: string, _orgId: string, body: string) =>
       createMessage("message-user", "user", "message", body),
     );
+    mockChatService.updateMessage.mockImplementation(async (_conversationId: string, messageId: string, input: Record<string, unknown>) => ({
+      ...createMessage(
+        messageId,
+        "assistant",
+        typeof input.kind === "string" ? input.kind : "message",
+        typeof input.body === "string" ? input.body : "",
+      ),
+      status: typeof input.status === "string" ? input.status : "completed",
+      structuredPayload: input.structuredPayload ?? null,
+      transcript: Array.isArray(input.transcript) ? input.transcript : [],
+      replyingAgentId: typeof input.replyingAgentId === "string" ? input.replyingAgentId : null,
+    }));
+    mockChatService.markInterruptedStreamingMessages.mockResolvedValue([]);
+  });
+
+  it("passes chat search query and status to the chat list service", async () => {
+    mockChatService.list.mockResolvedValue([createConversation({ title: "Searchable chat" })]);
+
+    const res = await request(createApp())
+      .get("/api/orgs/organization-1/chats")
+      .query({ status: "all", q: "launch notes" });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.list).toHaveBeenCalledWith(
+      "organization-1",
+      { status: "all", q: "launch notes" },
+      "user-1",
+    );
+    expect(mockChatAssistantService.enrichConversations).toHaveBeenCalled();
+  });
+
+  it("updates chat unread state through the user-state endpoint", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.markUnread.mockResolvedValue({});
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/user-state")
+      .send({ unread: true });
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.markUnread).toHaveBeenCalledWith("chat-1", "organization-1", "user-1");
+    expect(mockChatService.markRead).not.toHaveBeenCalled();
+    expect(res.body.id).toBe("chat-1");
   });
 
   it("creates a conversation using the organization default issue creation mode", async () => {
@@ -243,6 +323,88 @@ describe("chat routes", () => {
     );
   });
 
+  it("rejects chat creation when the preferred agent is unknown", async () => {
+    const preferredAgentId = "10000000-0000-4000-8000-000000000001";
+    mockAgentService.getById.mockResolvedValueOnce(null);
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats")
+      .send({ preferredAgentId });
+
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: "Preferred agent must belong to the same organization" });
+    expect(mockAgentService.getById).toHaveBeenCalledWith(preferredAgentId);
+    expect(mockChatService.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects chat creation when the preferred agent belongs to another organization", async () => {
+    const preferredAgentId = "10000000-0000-4000-8000-000000000002";
+    mockAgentService.getById.mockResolvedValueOnce({
+      id: preferredAgentId,
+      orgId: "other-organization",
+      status: "idle",
+    });
+
+    const res = await request(createApp())
+      .post("/api/orgs/organization-1/chats")
+      .send({ preferredAgentId });
+
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: "Preferred agent must belong to the same organization" });
+    expect(mockAgentService.getById).toHaveBeenCalledWith(preferredAgentId);
+    expect(mockChatService.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects message sends before persisting when no preferred agent is available", async () => {
+    const conversation = createConversation({
+      preferredAgentId: null,
+      chatRuntime: {
+        sourceType: "unconfigured",
+        sourceLabel: "Choose an agent",
+        runtimeAgentId: null,
+        agentRuntimeType: null,
+        model: null,
+        available: false,
+        error: "Choose a chat agent before sending messages.",
+      },
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatAssistantService.getChatAssistantAvailability.mockResolvedValueOnce(conversation.chatRuntime);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Need help" });
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: "Choose a chat agent before sending messages." });
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("marks stale streaming assistant messages interrupted when listing messages", async () => {
+    const conversation = createConversation();
+    const interruptedMessage = {
+      ...createMessage("message-streaming", "assistant", "message", "Partial preserved reply"),
+      status: "interrupted",
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.markInterruptedStreamingMessages.mockResolvedValueOnce([interruptedMessage]);
+    mockChatService.listMessages.mockResolvedValueOnce([interruptedMessage]);
+
+    const res = await request(createApp())
+      .get("/api/chats/chat-1/messages");
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.markInterruptedStreamingMessages).toHaveBeenCalledWith("chat-1");
+    expect(mockChatService.listMessages).toHaveBeenCalledWith("chat-1");
+    expect(res.body[0]).toEqual(expect.objectContaining({
+      id: "message-streaming",
+      status: "interrupted",
+      body: "Partial preserved reply",
+    }));
+  });
+
   it("updates a chat project context after validating organization ownership", async () => {
     const conversation = createConversation();
     const updatedConversation = createConversation({
@@ -259,6 +421,7 @@ describe("chat routes", () => {
       }],
     });
     mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([]);
     mockProjectService.getById.mockResolvedValue({
       id: "10000000-0000-4000-8000-000000000010",
       orgId: "organization-1",
@@ -289,6 +452,7 @@ describe("chat routes", () => {
     const conversation = createConversation();
     const updatedConversation = createConversation({ contextLinks: [] });
     mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([]);
     mockChatService.setProjectContextLink.mockResolvedValue(updatedConversation);
 
     const res = await request(createApp())
@@ -311,6 +475,42 @@ describe("chat routes", () => {
     );
   });
 
+  it("rejects project context changes after conversation messages exist", async () => {
+    const conversation = createConversation({
+      contextLinks: [{
+        id: "context-project-1",
+        orgId: "organization-1",
+        conversationId: "chat-1",
+        entityType: "project",
+        entityId: "10000000-0000-4000-8000-000000000010",
+        metadata: null,
+        entity: null,
+        createdAt: new Date("2026-03-26T08:00:00.000Z"),
+        updatedAt: new Date("2026-03-26T08:00:00.000Z"),
+      }],
+    });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockProjectService.getById.mockResolvedValue({
+      id: "10000000-0000-4000-8000-000000000011",
+      orgId: "organization-1",
+    });
+    mockChatService.listMessages.mockResolvedValue([
+      createMessage("message-user", "user", "message", "Keep this project scoped"),
+    ]);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/project-context")
+      .send({ projectId: "10000000-0000-4000-8000-000000000011" });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: "Project context is locked after conversation starts" });
+    expect(mockChatService.setProjectContextLink).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "chat.project_context_updated" }),
+    );
+  });
+
   it("turns assistant issue proposals into approval-backed proposal messages in manual mode", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need a scoped auth plan");
@@ -321,6 +521,7 @@ describe("chat routes", () => {
           title: "Implement auth flow",
           description: "Create a tracked auth implementation task.",
           priority: "high",
+          reviewerAgentId: "10000000-0000-4000-8000-000000000077",
         },
       },
     };
@@ -346,12 +547,12 @@ describe("chat routes", () => {
     mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
       outcome: "completed",
       partialBody: "This should become an issue.",
-      replyingAgentId: "copilot-agent",
+      replyingAgentId: "agent-1",
       reply: {
         kind: "issue_proposal",
         body: "This should become an issue.",
         structuredPayload: proposalMessage.structuredPayload,
-        replyingAgentId: "copilot-agent",
+        replyingAgentId: "agent-1",
       },
     });
 
@@ -364,6 +565,11 @@ describe("chat routes", () => {
       "organization-1",
       expect.objectContaining({
         type: "chat_issue_creation",
+        payload: expect.objectContaining({
+          proposedIssue: expect.objectContaining({
+            reviewerAgentId: "10000000-0000-4000-8000-000000000077",
+          }),
+        }),
       }),
     );
     expect(mockChatService.addMessage).toHaveBeenNthCalledWith(
@@ -404,11 +610,156 @@ describe("chat routes", () => {
     expect(res.body.messages).toHaveLength(2);
   });
 
-  it("auto-creates an issue from a plan-mode proposal without approval", async () => {
+  it("persists assistant ask_user replies without creating approvals", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help deciding scope");
+    const askUserPayload = {
+      requestUserInput: {
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Which scope should the agent implement?",
+            options: [
+              { id: "narrow", label: "Narrow", recommended: true },
+              { id: "broad", label: "Broad" },
+            ],
+            allowFreeform: true,
+          },
+        ],
+      },
+    };
+    const askUserMessage = {
+      ...createMessage("message-ask-user", "assistant", "ask_user", "I need one decision before continuing."),
+      structuredPayload: askUserPayload,
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(askUserMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "I need one decision before continuing.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "ask_user",
+        body: "I need one decision before continuing.",
+        structuredPayload: askUserPayload,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Need help deciding scope" });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.createProposalApproval).not.toHaveBeenCalled();
+    expect(mockChatService.addMessage).toHaveBeenNthCalledWith(
+      1,
+      "chat-1",
+      expect.objectContaining({
+        role: "assistant",
+        kind: "ask_user",
+        approvalId: null,
+        structuredPayload: askUserPayload,
+      }),
+    );
+    expect(mockObserveExecutionEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        name: "chat.reply.persisted",
+        metadata: expect.objectContaining({
+          assistantKind: "ask_user",
+          approvalId: null,
+        }),
+      }),
+    );
+    expect(res.body.messages).toHaveLength(2);
+  });
+
+  it("does not default manual approval-backed issue proposals to the selected chat agent", async () => {
+    const conversation = createConversation({
+      preferredAgentId: "agent-1",
+      chatRuntime: {
+        sourceType: "agent",
+        sourceLabel: "Chat Specialist",
+        runtimeAgentId: "agent-1",
+        agentRuntimeType: "codex_local",
+        model: "gpt-5",
+        available: true,
+        error: null,
+      },
+    });
+    const userMessage = createMessage("message-user", "user", "message", "Need the selected agent to own this");
+    const proposalMessage = {
+      ...createMessage("message-proposal", "assistant", "issue_proposal", "This should become an assigned issue.", "approval-1"),
+      structuredPayload: {
+        issueProposal: {
+          title: "Implement owned flow",
+          description: "Create a tracked implementation task for the selected agent.",
+          priority: "medium",
+        },
+      },
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(proposalMessage);
+    mockChatService.createProposalApproval.mockResolvedValue({
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "chat_issue_creation",
+      status: "pending",
+      payload: {},
+      requestedByAgentId: null,
+      requestedByUserId: "user-1",
+      decisionNote: null,
+      decidedByUserId: null,
+      decidedAt: null,
+      createdAt: new Date("2026-03-26T08:01:00.000Z"),
+      updatedAt: new Date("2026-03-26T08:01:00.000Z"),
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "This should become an assigned issue.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "issue_proposal",
+        body: "This should become an assigned issue.",
+        structuredPayload: {
+          issueProposal: {
+            title: "Implement owned flow",
+            description: "Create a tracked implementation task for the selected agent.",
+            priority: "medium",
+          },
+        },
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Need the selected agent to own this" });
+
+    expect(res.status).toBe(201);
+    const approvalInput = mockChatService.createProposalApproval.mock.calls[0]?.[1] as any;
+    expect(approvalInput.payload.proposedIssue.assigneeAgentId).toBeUndefined();
+    expect(approvalInput.payload.proposedIssue.assigneeUserId).toBeUndefined();
+
+    const savedMessage = mockChatService.addMessage.mock.calls[0]?.[1] as any;
+    expect(savedMessage.structuredPayload.issueProposal.assigneeAgentId).toBeUndefined();
+    expect(savedMessage.structuredPayload.issueProposal.assigneeUserId).toBeUndefined();
+    expect(mockAgentService.getById).not.toHaveBeenCalledWith("agent-1");
+  });
+
+  it("keeps plan-mode issue proposals approval-backed and preserves the plan document", async () => {
     const conversation = createConversation({ planMode: true });
     const userMessage = createMessage("message-user", "user", "message", "Plan the auth rollout");
     const proposalMessage = {
-      ...createMessage("message-proposal", "assistant", "issue_proposal", "I mapped the rollout plan."),
+      ...createMessage("message-proposal", "assistant", "issue_proposal", "I mapped the rollout plan.", "approval-1"),
       structuredPayload: {
         issueProposal: {
           title: "Implement auth flow",
@@ -421,11 +772,97 @@ describe("chat routes", () => {
         },
       },
     };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(proposalMessage);
+    mockChatService.createProposalApproval.mockResolvedValue({
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "chat_issue_creation",
+      status: "pending",
+      payload: {},
+      requestedByAgentId: null,
+      requestedByUserId: "user-1",
+      decisionNote: null,
+      decidedByUserId: null,
+      decidedAt: null,
+      createdAt: new Date("2026-03-26T08:01:00.000Z"),
+      updatedAt: new Date("2026-03-26T08:01:00.000Z"),
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "I mapped the rollout plan.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "issue_proposal",
+        body: "I mapped the rollout plan.",
+        structuredPayload: proposalMessage.structuredPayload,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Plan the auth rollout" });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.convertToIssue).not.toHaveBeenCalled();
+    expect(mockChatService.createProposalApproval).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        type: "chat_issue_creation",
+        payload: expect.objectContaining({
+          chatConversationId: "chat-1",
+          proposedIssue: expect.objectContaining({
+            title: "Implement auth flow",
+            description: "Track the auth rollout plan in an issue.",
+          }),
+          planDocument: expect.objectContaining({
+            title: "Auth rollout plan",
+            body: "## Scope\n- Login\n- Session management",
+          }),
+        }),
+      }),
+    );
+    expect(mockChatService.addMessage).toHaveBeenNthCalledWith(
+      1,
+      "chat-1",
+      expect.objectContaining({
+        role: "assistant",
+        kind: "issue_proposal",
+        approvalId: "approval-1",
+        structuredPayload: expect.objectContaining({
+          planDocument: expect.objectContaining({ title: "Auth rollout plan" }),
+        }),
+      }),
+    );
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "chat.issue_converted" }),
+    );
+    expect(res.body.messages).toHaveLength(2);
+  });
+
+  it("still auto-creates non-plan issue proposals when auto-create mode is enabled", async () => {
+    const conversation = createConversation({ issueCreationMode: "auto_create" });
+    const userMessage = createMessage("message-user", "user", "message", "Create the issue directly");
+    const proposalMessage = {
+      ...createMessage("message-proposal", "assistant", "issue_proposal", "This should become an issue."),
+      structuredPayload: {
+        issueProposal: {
+          title: "Implement direct issue flow",
+          description: "Track the direct issue creation path.",
+          priority: "medium",
+        },
+      },
+    };
     const issue = {
       id: "issue-1",
       orgId: "organization-1",
       identifier: "ISS-1",
-      title: "Implement auth flow",
+      title: "Implement direct issue flow",
     };
     const systemMessage = {
       ...createMessage("message-system", "system", "system_event", "Created issue ISS-1 from this chat conversation."),
@@ -444,34 +881,27 @@ describe("chat routes", () => {
     mockChatService.convertToIssue.mockResolvedValue(issue);
     mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
       outcome: "completed",
-      partialBody: "I mapped the rollout plan.",
-      replyingAgentId: "copilot-agent",
+      partialBody: "This should become an issue.",
+      replyingAgentId: "agent-1",
       reply: {
         kind: "issue_proposal",
-        body: "I mapped the rollout plan.",
+        body: "This should become an issue.",
         structuredPayload: proposalMessage.structuredPayload,
-        replyingAgentId: "copilot-agent",
+        replyingAgentId: "agent-1",
       },
     });
 
     const res = await request(createApp())
       .post("/api/chats/chat-1/messages")
-      .send({ body: "Plan the auth rollout" });
+      .send({ body: "Create the issue directly" });
 
     expect(res.status).toBe(201);
     expect(mockChatService.createProposalApproval).not.toHaveBeenCalled();
     expect(mockChatService.convertToIssue).toHaveBeenCalledWith("chat-1", {
       actorUserId: "user-1",
+      createdByAgentId: "agent-1",
       messageId: "message-proposal",
     });
-    expect(mockChatService.addMessage).toHaveBeenNthCalledWith(
-      1,
-      "chat-1",
-      expect.objectContaining({
-        role: "assistant",
-        kind: "issue_proposal",
-      }),
-    );
     expect(mockChatService.addMessage).toHaveBeenNthCalledWith(
       2,
       "chat-1",
@@ -488,11 +918,7 @@ describe("chat routes", () => {
       expect.anything(),
       expect.objectContaining({
         action: "chat.issue_converted",
-        details: expect.objectContaining({
-          issueId: "issue-1",
-          issueIdentifier: "ISS-1",
-          source: "plan_mode",
-        }),
+        details: expect.objectContaining({ source: "auto_create" }),
       }),
     );
     expect(res.body.messages).toHaveLength(3);
@@ -510,12 +936,12 @@ describe("chat routes", () => {
     mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
       outcome: "completed",
       partialBody: "Working on it",
-      replyingAgentId: "copilot-agent",
+      replyingAgentId: "agent-1",
       reply: {
         kind: "message",
         body: "Working on it",
         structuredPayload: null,
-        replyingAgentId: "copilot-agent",
+        replyingAgentId: "agent-1",
       },
     });
 
@@ -533,6 +959,105 @@ describe("chat routes", () => {
         },
       }),
     );
+  });
+
+  it("stores generated assistant images as chat attachments", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Generate a UI");
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Generated a mockup.");
+    const generatedAttachment = {
+      id: "attachment-generated",
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      messageId: "message-assistant",
+      assetId: "asset-generated",
+      provider: "local_disk",
+      objectKey: "chats/chat-1/generated/ig_test.png",
+      contentType: "image/png",
+      byteSize: 8,
+      sha256: "sha256-generated",
+      originalFilename: "ig_test.png",
+      createdByAgentId: "agent-1",
+      createdByUserId: null,
+      contentPath: "/api/assets/asset-generated/content",
+      createdAt: new Date("2026-03-26T08:01:00.000Z"),
+      updatedAt: new Date("2026-03-26T08:01:00.000Z"),
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatService.createAttachment.mockResolvedValueOnce(generatedAttachment);
+    mockStorage.putFile.mockResolvedValueOnce({
+      provider: "local_disk",
+      objectKey: "chats/chat-1/generated/ig_test.png",
+      contentType: "image/png",
+      byteSize: 8,
+      sha256: "sha256-generated",
+      originalFilename: "ig_test.png",
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Generated a mockup.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Generated a mockup.",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+        generatedAttachments: [{
+          source: "codex_image_generation",
+          originalFilename: "ig_test.png",
+          contentType: "image/png",
+          body: Buffer.from("fake-png"),
+          toolCallId: "ig_test",
+        }],
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Generate a UI" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockStorage.putFile).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: "organization-1",
+      namespace: "chats/chat-1/generated",
+      originalFilename: "ig_test.png",
+      contentType: "image/png",
+      body: Buffer.from("fake-png"),
+    }));
+    expect(mockChatService.createAttachment).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      messageId: "message-assistant",
+      createdByAgentId: "agent-1",
+      createdByUserId: null,
+    }));
+
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events.at(-1)).toEqual(expect.objectContaining({
+      type: "final",
+      messages: [
+        expect.objectContaining({
+          id: "message-assistant",
+          attachments: [expect.objectContaining({ id: "attachment-generated", contentPath: "/api/assets/asset-generated/content" })],
+        }),
+      ],
+    }));
   });
 
   it("persists the selected agent as replyingAgentId for preferred-agent chats", async () => {
@@ -600,6 +1125,7 @@ describe("chat routes", () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "Working on it");
+    const runtimePrompt = "You are Chat Specialist, replying inside Rudder's chat scene.\n\nConversation input:\n{}";
 
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listMessages.mockResolvedValue([userMessage]);
@@ -625,21 +1151,21 @@ describe("chat routes", () => {
             description: "Verification helpers",
           },
         ],
-        prompt: "You are Rudder Copilot, the system-managed chat copilot for this Rudder organization.\n\nConversation input:\n{}",
+        prompt: runtimePrompt,
         promptMetrics: {
-          promptChars: 64,
+          promptChars: 85,
         },
         context: {},
       });
       return {
         outcome: "completed",
         partialBody: "Working on it",
-        replyingAgentId: "copilot-agent",
+        replyingAgentId: "agent-1",
         reply: {
           kind: "message",
           body: "Working on it",
           structuredPayload: null,
-          replyingAgentId: "copilot-agent",
+          replyingAgentId: "agent-1",
         },
       };
     });
@@ -677,32 +1203,64 @@ describe("chat routes", () => {
       expect.objectContaining({
         input: expect.objectContaining({
           body: "Need help",
-          instruction: "You are Rudder Copilot, the system-managed chat copilot for this Rudder organization.\n\nConversation input:\n{}",
+          instruction: runtimePrompt,
           promptMetrics: {
-            promptChars: 64,
+            promptChars: 85,
           },
         }),
       }),
     );
+    expect(mockEmitExecutionTranscriptTree).toHaveBeenCalledWith(expect.objectContaining({
+      fallbackResult: {
+        output: "Working on it",
+      },
+      initialTurnInput: runtimePrompt,
+      transcript: [],
+    }));
   });
 
   it("streams ack, transcript entries, deltas, and final persisted messages", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need help");
     const assistantMessage = createMessage("message-assistant", "assistant", "message", "Streaming reply");
+    const runtimePrompt = "You are Chat Specialist in streaming mode.\n\nConversation input:\n{}";
 
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listMessages.mockResolvedValue([userMessage]);
     mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
     mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
     mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onInvocationMeta?.({
+        agentRuntimeType: "codex_local",
+        command: "codex",
+        cwd: "/tmp/chat-runtime",
+        commandNotes: [],
+        loadedSkills: [],
+        prompt: runtimePrompt,
+        promptMetrics: {
+          promptChars: runtimePrompt.length,
+        },
+        context: {},
+      });
       await input.onAssistantState?.("streaming");
       await input.onTranscriptEntry?.({
         kind: "thinking",
         ts: "2026-03-26T08:01:01.000Z",
         text: "Inspecting current request",
       });
+      await input.onObservedTranscriptEntry?.({
+        kind: "thinking",
+        ts: "2026-03-26T08:01:01.000Z",
+        text: "Inspecting current request",
+      });
       await input.onTranscriptEntry?.({
+        kind: "tool_call",
+        ts: "2026-03-26T08:01:02.000Z",
+        name: "read_file",
+        toolUseId: "tool-1",
+        input: { path: "ui/src/pages/Chat.tsx" },
+      });
+      await input.onObservedTranscriptEntry?.({
         kind: "tool_call",
         ts: "2026-03-26T08:01:02.000Z",
         name: "read_file",
@@ -715,12 +1273,12 @@ describe("chat routes", () => {
       return {
         outcome: "completed",
         partialBody: "Streaming reply",
-        replyingAgentId: "copilot-agent",
+        replyingAgentId: "agent-1",
         reply: {
           kind: "message",
           body: "Streaming reply",
           structuredPayload: null,
-          replyingAgentId: "copilot-agent",
+          replyingAgentId: "agent-1",
         },
       };
     });
@@ -765,13 +1323,214 @@ describe("chat routes", () => {
       expect.objectContaining({
         role: "assistant",
         kind: "message",
-        replyingAgentId: "copilot-agent",
+        status: "streaming",
+        body: "",
+        replyingAgentId: "agent-1",
+        transcript: expect.any(Array),
+      }),
+    );
+    expect(mockChatService.updateMessage).toHaveBeenLastCalledWith(
+      "chat-1",
+      "message-assistant",
+      expect.objectContaining({
+        kind: "message",
+        status: "completed",
+        body: "Streaming reply",
+        replyingAgentId: "agent-1",
         transcript: [
           expect.objectContaining({ kind: "thinking", text: "Inspecting current request" }),
           expect.objectContaining({ kind: "tool_call", name: "read_file" }),
         ],
       }),
     );
+    expect(mockEmitExecutionTranscriptTree).toHaveBeenCalledWith(expect.objectContaining({
+      fallbackResult: {
+        output: "Streaming reply",
+        subtype: "completed",
+        isError: false,
+      },
+      initialTurnInput: runtimePrompt,
+      transcript: [
+        expect.objectContaining({ kind: "thinking", text: "Inspecting current request" }),
+        expect.objectContaining({ kind: "tool_call", name: "read_file" }),
+      ],
+    }));
+  });
+
+  it("updates a streaming assistant placeholder into ask_user on final", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Need help choosing scope");
+    const progressMessage = {
+      ...createMessage("message-assistant", "assistant", "message", ""),
+      status: "streaming",
+    };
+    const askUserPayload = {
+      requestUserInput: {
+        questions: [
+          {
+            id: "scope",
+            question: "Which scope should the agent implement?",
+            options: [
+              { id: "narrow", label: "Narrow" },
+              { id: "broad", label: "Broad" },
+            ],
+          },
+        ],
+      },
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(progressMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onAssistantState?.("streaming");
+      await input.onAssistantDelta?.("I need one decision.");
+      await input.onAssistantState?.("finalizing");
+      return {
+        outcome: "completed",
+        partialBody: "I need one decision.",
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "ask_user",
+          body: "I need one decision.",
+          structuredPayload: askUserPayload,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Need help choosing scope" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(events.at(-1)?.type).toBe("final");
+    expect(events.at(-1)?.messages[0]).toEqual(expect.objectContaining({
+      id: "message-assistant",
+      kind: "ask_user",
+      structuredPayload: askUserPayload,
+    }));
+    expect(mockChatService.updateMessage).toHaveBeenLastCalledWith(
+      "chat-1",
+      "message-assistant",
+      expect.objectContaining({
+        kind: "ask_user",
+        status: "completed",
+        body: "I need one decision.",
+        structuredPayload: askUserPayload,
+      }),
+    );
+  });
+
+  it("stores streamed chat attachments before invoking the assistant", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Can you see this?");
+    const attachment = {
+      id: "attachment-1",
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      messageId: "message-user",
+      assetId: "asset-1",
+      provider: "local_disk",
+      objectKey: "chats/chat-1/image.png",
+      contentType: "image/png",
+      byteSize: 8,
+      sha256: "sha256",
+      originalFilename: "image.png",
+      createdByAgentId: null,
+      createdByUserId: "user-1",
+      contentPath: "/api/assets/asset-1/content",
+      createdAt: new Date("2026-03-26T08:01:00.000Z"),
+      updatedAt: new Date("2026-03-26T08:01:00.000Z"),
+    };
+    const userMessageWithAttachment = {
+      ...userMessage,
+      attachments: [attachment],
+    };
+    const assistantMessage = createMessage("message-assistant", "assistant", "message", "Yes.");
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.createAttachment.mockResolvedValueOnce(attachment);
+    mockChatService.listMessages.mockResolvedValue([userMessageWithAttachment]);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "Yes.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: "Yes.",
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .field("body", "Can you see this?")
+      .attach("files", Buffer.from("fake-png"), {
+        filename: "image.png",
+        contentType: "image/png",
+      })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          text += chunk;
+        });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(mockStorage.putFile).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: "organization-1",
+      namespace: "chats/chat-1",
+      originalFilename: "image.png",
+      contentType: "image/png",
+    }));
+    expect(mockChatService.createAttachment).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: "organization-1",
+      conversationId: "chat-1",
+      messageId: "message-user",
+      contentType: "image/png",
+      originalFilename: "image.png",
+      createdByUserId: "user-1",
+    }));
+    expect(events[0]).toEqual(expect.objectContaining({
+      type: "ack",
+      userMessage: expect.objectContaining({
+        id: "message-user",
+        attachments: [expect.objectContaining({ id: "attachment-1", contentPath: "/api/assets/asset-1/content" })],
+      }),
+    }));
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledWith(expect.objectContaining({
+      messages: [expect.objectContaining({
+        id: "message-user",
+        attachments: [expect.objectContaining({ id: "attachment-1" })],
+      })],
+    }));
   });
 
   it("stores streamed chat attachments before invoking the assistant", async () => {
@@ -885,7 +1644,7 @@ describe("chat routes", () => {
     mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
       outcome: "stopped",
       partialBody: "Partial reply",
-      replyingAgentId: "copilot-agent",
+      replyingAgentId: "agent-1",
     });
 
     const res = await request(createApp())
@@ -918,7 +1677,7 @@ describe("chat routes", () => {
         role: "assistant",
         kind: "message",
         status: "stopped",
-        replyingAgentId: "copilot-agent",
+        replyingAgentId: "agent-1",
         transcript: [],
       }),
     );
@@ -941,12 +1700,12 @@ describe("chat routes", () => {
         return {
           outcome: "completed",
           partialBody: "Completed after disconnect",
-          replyingAgentId: "copilot-agent",
+          replyingAgentId: "agent-1",
           reply: {
             kind: "message",
             body: "Completed after disconnect",
             structuredPayload: null,
-            replyingAgentId: "copilot-agent",
+            replyingAgentId: "agent-1",
           },
         };
       });
@@ -993,10 +1752,11 @@ describe("chat routes", () => {
 
       releaseAssistant();
       await waitUntil(() => {
-        expect(mockChatService.addMessage).toHaveBeenCalledWith(
+        expect(mockChatService.updateMessage).toHaveBeenCalledWith(
           "chat-1",
+          "message-assistant",
           expect.objectContaining({
-            role: "assistant",
+            status: "completed",
             body: "Completed after disconnect",
           }),
         );
@@ -1026,7 +1786,7 @@ describe("chat routes", () => {
         return {
           outcome: "stopped",
           partialBody: "Partial reply",
-          replyingAgentId: "copilot-agent",
+          replyingAgentId: "agent-1",
         };
       });
     });
@@ -1126,6 +1886,26 @@ describe("chat routes", () => {
         }),
       }),
     );
+  });
+
+  it("requires task assignment permission to convert reviewer-bearing chat proposals", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation());
+    mockAccessService.canUser.mockResolvedValue(false);
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/convert-to-issue")
+      .send({
+        proposal: {
+          title: "Implement reviewed work",
+          description: "Create a reviewed issue from chat.",
+          priority: "medium",
+          reviewerAgentId: "10000000-0000-4000-8000-000000000077",
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Missing permission: tasks:assign");
+    expect(mockChatService.convertToIssue).not.toHaveBeenCalled();
   });
 
   it("traces operation proposal resolution as a chat action", async () => {

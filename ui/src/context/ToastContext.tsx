@@ -13,8 +13,11 @@ export type ToastTone = "info" | "success" | "warn" | "error";
 
 export interface ToastAction {
   label: string;
-  href: string;
+  href?: string;
+  onClick?: () => void | Promise<void>;
 }
+
+export type ToastIcon = "download";
 
 export interface ToastInput {
   id?: string;
@@ -23,6 +26,8 @@ export interface ToastInput {
   body?: string;
   tone?: ToastTone;
   ttlMs?: number;
+  persistent?: boolean;
+  icon?: ToastIcon;
   action?: ToastAction;
 }
 
@@ -32,6 +37,8 @@ export interface ToastItem {
   body?: string;
   tone: ToastTone;
   ttlMs: number;
+  persistent?: boolean;
+  icon?: ToastIcon;
   action?: ToastAction;
   createdAt: number;
 }
@@ -102,7 +109,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       const tone = input.tone ?? "info";
       const ttlMs = normalizeTtl(input.ttlMs, tone);
       const dedupeKey =
-        input.dedupeKey ?? input.id ?? `${tone}|${input.title}|${input.body ?? ""}|${input.action?.href ?? ""}`;
+        input.dedupeKey ?? input.id ?? `${tone}|${input.title}|${input.body ?? ""}|${input.action?.href ?? input.action?.label ?? ""}`;
 
       for (const [key, ts] of dedupeRef.current.entries()) {
         if (now - ts > DEDUPE_MAX_AGE_MS) {
@@ -126,6 +133,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           body: input.body,
           tone,
           ttlMs,
+          persistent: input.persistent,
+          icon: input.icon,
           action: input.action,
           createdAt: now,
         };
@@ -134,10 +143,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         return [nextToast, ...withoutCurrent].slice(0, MAX_TOASTS);
       });
 
-      const timeout = window.setTimeout(() => {
-        dismissToast(id);
-      }, ttlMs);
-      timersRef.current.set(id, timeout);
+      if (!input.persistent) {
+        const timeout = window.setTimeout(() => {
+          dismissToast(id);
+        }, ttlMs);
+        timersRef.current.set(id, timeout);
+      }
       return id;
     },
     [clearTimer, dismissToast],

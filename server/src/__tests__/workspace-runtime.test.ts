@@ -19,6 +19,30 @@ import type { WorkspaceOperationRecorder } from "../services/workspace-operation
 const execFileAsync = promisify(execFile);
 const leasedRunIds = new Set<string>();
 
+const GIT_IDENTITY_TEST_ENV_KEYS = [
+  "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_COMMITTER_NAME",
+  "GIT_COMMITTER_EMAIL",
+  "GIT_CONFIG_GLOBAL",
+  "XDG_CONFIG_HOME",
+] as const;
+
+function clearInheritedGitIdentityEnv(): () => void {
+  const previous = new Map<string, string | undefined>();
+  for (const key of GIT_IDENTITY_TEST_ENV_KEYS) {
+    previous.set(key, process.env[key]);
+    delete process.env[key];
+  }
+
+  return () => {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+}
+
 async function runGit(cwd: string, args: string[]) {
   await execFileAsync("git", args, { cwd });
 }
@@ -31,6 +55,24 @@ async function createTempRepo() {
   await fs.writeFile(path.join(repoRoot, "README.md"), "hello\n", "utf8");
   await runGit(repoRoot, ["add", "README.md"]);
   await runGit(repoRoot, ["commit", "-m", "Initial commit"]);
+  await runGit(repoRoot, ["checkout", "-B", "main"]);
+  return repoRoot;
+}
+
+async function createTempRepoWithoutStoredIdentity() {
+  const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-worktree-no-identity-repo-"));
+  await runGit(repoRoot, ["init"]);
+  await fs.writeFile(path.join(repoRoot, "README.md"), "hello\n", "utf8");
+  await runGit(repoRoot, ["add", "README.md"]);
+  await runGit(repoRoot, [
+    "-c",
+    "user.email=setup@example.com",
+    "-c",
+    "user.name=Setup User",
+    "commit",
+    "-m",
+    "Initial commit",
+  ]);
   await runGit(repoRoot, ["checkout", "-B", "main"]);
   return repoRoot;
 }
@@ -128,6 +170,69 @@ afterEach(async () => {
 });
 
 describe("realizeExecutionWorkspace", () => {
+  it("prevents fallback .local commits in runtime-created worktrees without identity", async () => {
+    const repoRoot = await createTempRepoWithoutStoredIdentity();
+    const restoreGitEnv = clearInheritedGitIdentityEnv();
+    const previousHome = process.env.HOME;
+    const previousGitConfigNoSystem = process.env.GIT_CONFIG_NOSYSTEM;
+    process.env.HOME = path.join(repoRoot, "empty-home");
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+
+    try {
+      const workspace = await realizeExecutionWorkspace({
+        base: {
+          baseCwd: repoRoot,
+          source: "project_primary",
+          projectId: "project-1",
+          workspaceId: "workspace-1",
+          repoUrl: null,
+          repoRef: "HEAD",
+        },
+        config: {
+          workspaceStrategy: {
+            type: "git_worktree",
+            branchTemplate: "{{issue.identifier}}-{{slug}}",
+          },
+        },
+        issue: {
+          id: "issue-identity",
+          identifier: "PAP-451",
+          title: "Missing identity guard",
+        },
+        agent: {
+          id: "agent-1",
+          name: "Codex Coder",
+          orgId: "organization-1",
+        },
+      });
+
+      await expect(
+        execFileAsync("git", ["config", "--local", "--get", "user.useConfigOnly"], { cwd: workspace.cwd }),
+      ).resolves.toMatchObject({ stdout: "true\n" });
+      await expect(
+        execFileAsync("git", ["commit", "--allow-empty", "-m", "agent commit"], {
+          cwd: workspace.cwd,
+          env: {
+            ...process.env,
+            HOME: process.env.HOME,
+            GIT_CONFIG_NOSYSTEM: "1",
+          },
+        }),
+      ).rejects.toMatchObject({
+        stderr: expect.not.stringContaining(".local"),
+      });
+      const count = await execFileAsync("git", ["rev-list", "--count", "HEAD"], { cwd: workspace.cwd });
+      expect(count.stdout.trim()).toBe("1");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousGitConfigNoSystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
+      else process.env.GIT_CONFIG_NOSYSTEM = previousGitConfigNoSystem;
+      restoreGitEnv();
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("creates and reuses a git worktree for an issue-scoped branch", async () => {
     const repoRoot = await createTempRepo();
 

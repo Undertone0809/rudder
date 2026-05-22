@@ -177,10 +177,17 @@ describe("heartbeat run concurrency", () => {
     }
   });
 
-  async function seedAgentFixture(maxConcurrentRuns?: number) {
+  async function seedAgentFixture(options?: number | {
+    runtimeConfig?: Record<string, unknown>;
+    createdAt?: Date;
+    lastHeartbeatAt?: Date | null;
+  }) {
     const orgId = randomUUID();
     const agentId = randomUUID();
     const orgName = `Rudder ${orgId.slice(0, 6)}`;
+    const fixtureOptions = typeof options === "number"
+      ? { runtimeConfig: { heartbeat: { maxConcurrentRuns: options } } }
+      : options ?? {};
 
     await db.insert(organizations).values({
       id: orgId,
@@ -198,13 +205,22 @@ describe("heartbeat run concurrency", () => {
       status: "active",
       agentRuntimeType: "codex_local",
       agentRuntimeConfig: {},
-      runtimeConfig: maxConcurrentRuns === undefined
-        ? {}
-        : { heartbeat: { maxConcurrentRuns } },
+      runtimeConfig: fixtureOptions.runtimeConfig ?? {},
       permissions: {},
+      lastHeartbeatAt: fixtureOptions.lastHeartbeatAt,
+      createdAt: fixtureOptions.createdAt,
+      updatedAt: fixtureOptions.createdAt,
     });
 
     return { orgId, agentId };
+  }
+
+  async function disableExistingTimerAgents() {
+    await db.update(agents).set({
+      runtimeConfig: {},
+      lastHeartbeatAt: new Date(),
+      updatedAt: new Date(),
+    });
   }
 
   async function seedIssueFixture(input: {
@@ -282,6 +298,19 @@ describe("heartbeat run concurrency", () => {
       })
       .from(heartbeatRuns)
       .where(and(eq(heartbeatRuns.agentId, agentId), inArray(heartbeatRuns.status, ["queued", "running"])));
+  }
+
+  async function listWakeupRequestsForAgent(agentId: string) {
+    return await db
+      .select({
+        id: agentWakeupRequests.id,
+        status: agentWakeupRequests.status,
+        reason: agentWakeupRequests.reason,
+        runId: agentWakeupRequests.runId,
+        finishedAt: agentWakeupRequests.finishedAt,
+      })
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.agentId, agentId));
   }
 
   it("promotes queued runs up to the configured concurrency limit", async () => {
@@ -448,5 +477,77 @@ describe("heartbeat run concurrency", () => {
     expect(liveRuns).toHaveLength(1);
     expect(mockRuntimeAdapter.calls).toHaveLength(1);
     expect((liveRuns[0]?.contextSnapshot as Record<string, unknown>)?.issueId).toBe(issueId);
+  });
+
+  it("skips timer heartbeats before launching the runtime when no actionable work exists", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T04:00:00.000Z");
+    const tickAt = new Date("2026-04-27T04:05:00.000Z");
+    const { orgId, agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 0, skipped: 1 });
+    expect(mockBudgetService.getInvocationBlock).toHaveBeenCalledWith(orgId, agentId, {
+      issueId: null,
+      projectId: null,
+    });
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    expect(await listRunStatuses(agentId)).toHaveLength(0);
+
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups).toHaveLength(1);
+    expect(wakeups[0]).toMatchObject({
+      status: "skipped",
+      reason: "heartbeat.preflight.no_actionable_work",
+      runId: null,
+    });
+    expect(wakeups[0]?.finishedAt).toBeInstanceOf(Date);
+
+    const [agent] = await db
+      .select({ lastHeartbeatAt: agents.lastHeartbeatAt })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+    expect(agent?.lastHeartbeatAt).toBeInstanceOf(Date);
+  });
+
+  it("allows timer heartbeats without actionable work when preflight is disabled", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T05:00:00.000Z");
+    const tickAt = new Date("2026-04-27T05:05:00.000Z");
+    const { agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60, preflightEnabled: false } },
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
+    await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
+    expect(mockRuntimeAdapter.calls[0]?.taskKey).toBeNull();
+    expect(await listRunStatuses(agentId)).toHaveLength(1);
+  });
+
+  it("allows timer heartbeats when assigned work exists", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T06:00:00.000Z");
+    const tickAt = new Date("2026-04-27T06:05:00.000Z");
+    const { orgId, agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
+    });
+    await seedIssueFixture({ orgId, agentId });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
+    await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
+    expect(await listRunStatuses(agentId)).toHaveLength(1);
   });
 });

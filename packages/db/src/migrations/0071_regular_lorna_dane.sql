@@ -1,0 +1,1 @@
+ALTER TABLE "automations" ALTER COLUMN "project_id" DROP NOT NULL;

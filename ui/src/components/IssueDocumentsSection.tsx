@@ -5,6 +5,7 @@ import { useLocation } from "@/lib/router";
 import { ApiError } from "../api/client";
 import { issuesApi } from "../api/issues";
 import { useAutosaveIndicator } from "../hooks/useAutosaveIndicator";
+import { extractDocumentOutline, type DocumentOutlineItem } from "../lib/document-outline";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, relativeTime } from "../lib/utils";
 import { MarkdownBody } from "./MarkdownBody";
@@ -744,6 +745,20 @@ export function IssueDocumentsSection({
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="text-muted-foreground"
+                    title="Expand editor"
+                    aria-label="Expand editor"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      onFocusDocument?.(doc.key);
+                    }}
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
                     variant="ghost"
                     size="icon-xs"
                     className="text-muted-foreground"
@@ -1000,6 +1015,7 @@ export type IssueDocumentFocusTarget =
 export function IssueDocumentFocusPage({
   issue,
   target,
+  motionState = "open",
   mentions,
   imageUploadHandler,
   onClose,
@@ -1007,6 +1023,7 @@ export function IssueDocumentFocusPage({
 }: {
   issue: Issue;
   target: IssueDocumentFocusTarget;
+  motionState?: "open" | "closing";
   mentions?: MentionOption[];
   imageUploadHandler?: (file: File) => Promise<string>;
   onClose: () => void;
@@ -1014,6 +1031,7 @@ export function IssueDocumentFocusPage({
 }) {
   const queryClient = useQueryClient();
   const bodyEditorRef = useRef<MarkdownEditorRef | null>(null);
+  const editorHostRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autosaveDocumentKey, setAutosaveDocumentKey] = useState<string | null>(null);
@@ -1211,28 +1229,37 @@ export function IssueDocumentFocusPage({
     : target.kind === "existing"
       ? titleCaseWords(target.key)
       : "Untitled document";
+  const documentOutline = useMemo(() => extractDocumentOutline(draft?.body ?? ""), [draft?.body]);
+  const hasMeaningfulBody = Boolean(draft?.body.trim());
+  const hasAutosaveActivity = Boolean(autosaveDocumentKey) || Boolean(draft?.isNew && hasMeaningfulBody);
   const statusLabel = error
     ? "Could not save"
-    : draft?.isNew
-      ? draft.body.trim()
-        ? autosaveState === "saving"
-          ? "Creating..."
-          : autosaveState === "saved"
-            ? "Created"
-            : "Draft"
-        : "Draft"
-      : autosaveDocumentKey === draft?.key && autosaveState === "saving"
-        ? "Autosaving..."
-        : autosaveDocumentKey === draft?.key && autosaveState === "saved"
+    : autosaveState === "saving" && hasAutosaveActivity
+      ? "Saving..."
+      : autosaveState === "error" && hasAutosaveActivity
+        ? "Could not save"
+        : autosaveState === "saved" || (draft && !draft.isNew)
           ? "Saved"
-          : autosaveDocumentKey === draft?.key && autosaveState === "error"
-            ? "Could not save"
-            : "Saved";
+          : "";
+  const scrollToOutlineItem = useCallback((item: DocumentOutlineItem) => {
+    const headings = Array.from(editorHostRef.current?.querySelectorAll("h1,h2,h3,h4,h5,h6") ?? []);
+    const targetHeading = headings[item.headingIndex];
+    if (targetHeading instanceof HTMLElement) {
+      targetHeading.scrollIntoView({ block: "center", behavior: "smooth" });
+      return;
+    }
+    bodyEditorRef.current?.focus();
+  }, []);
 
   return (
     <section
       aria-label="Focused document editor"
-      className="min-h-[calc(100dvh-7rem)] animate-in fade-in-0 slide-in-from-right-2 duration-200"
+      className={cn(
+        "min-h-[calc(100dvh-7rem)]",
+        motionState === "closing"
+          ? "animate-out fade-out-0 slide-out-to-right-2 duration-200"
+          : "animate-in fade-in-0 slide-in-from-right-2 duration-200",
+      )}
     >
       <div className="mb-4 flex items-center justify-between gap-3 border-b border-border/60 pb-3">
         <div className="flex min-w-0 items-center gap-2">
@@ -1263,41 +1290,70 @@ export function IssueDocumentFocusPage({
 
       {error ? <p className="mb-3 text-xs text-destructive">{error}</p> : null}
 
-      <div className="flex min-h-[calc(100dvh-13rem)] w-full max-w-[980px] flex-col pl-10 pr-4 pt-3">
-        {!draft ? (
-          <p className="text-sm text-muted-foreground">Loading document...</p>
-        ) : (
-          <>
-            {!isPlanKey(draft.key) ? (
-              <input
-                value={draft.title}
-                onChange={(event) => {
-                  setDraft((current) => current ? { ...current, title: event.target.value } : current);
-                }}
-                placeholder="Untitled document"
-                className="w-full bg-transparent text-[28px] font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/45"
-                autoFocus
-              />
+      <div className="grid min-h-[calc(100dvh-13rem)] w-full grid-cols-1 gap-6 pt-3 xl:grid-cols-[minmax(0,1fr)_220px]">
+        <div className="flex min-h-[calc(100dvh-13rem)] w-full max-w-[980px] min-w-0 flex-col pl-10 pr-4">
+          {!draft ? (
+            <p className="text-sm text-muted-foreground">Loading document...</p>
+          ) : (
+            <>
+              {!isPlanKey(draft.key) ? (
+                <input
+                  value={draft.title}
+                  onChange={(event) => {
+                    setDraft((current) => current ? { ...current, title: event.target.value } : current);
+                  }}
+                  placeholder="Untitled document"
+                  className="w-full bg-transparent text-[28px] font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/45"
+                  autoFocus
+                />
+              ) : (
+                <h2 className="text-[28px] font-semibold leading-tight text-foreground">Plan</h2>
+              )}
+              <div className="mt-4 border-t border-border/60" />
+              <div ref={editorHostRef} className="min-h-0 flex-1">
+                <MarkdownEditor
+                  ref={bodyEditorRef}
+                  value={draft.body}
+                  onChange={(body) => {
+                    setDraft((current) => current ? { ...current, body } : current);
+                  }}
+                  placeholder="Write the document..."
+                  bordered={false}
+                  className="mt-4 min-h-0 flex-1 bg-transparent"
+                  contentClassName="min-h-[calc(100dvh-20rem)] cursor-text text-[16px] leading-7"
+                  mentions={mentions}
+                  imageUploadHandler={imageUploadHandler}
+                  onSubmit={() => void commitDraft(draft, { trackAutosave: true })}
+                />
+              </div>
+            </>
+          )}
+        </div>
+        <aside aria-label="Document sections" className="hidden min-w-0 xl:block">
+          <div className="sticky top-4 border-l border-border/60 py-1 pl-4">
+            <div className="mb-2 text-xs font-medium text-muted-foreground">Sections</div>
+            {documentOutline.length > 0 ? (
+              <nav className="space-y-0.5">
+                {documentOutline.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="block w-full truncate rounded px-2 py-1 text-left text-xs leading-5 text-muted-foreground hover:bg-accent/50 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    style={{ paddingLeft: `${8 + Math.max(0, item.level - 1) * 10}px` }}
+                    title={item.title}
+                    onClick={() => scrollToOutlineItem(item)}
+                  >
+                    {item.title}
+                  </button>
+                ))}
+              </nav>
             ) : (
-              <h2 className="text-[28px] font-semibold leading-tight text-foreground">Plan</h2>
+              <p className="max-w-[180px] text-xs leading-5 text-muted-foreground/75">
+                Add Markdown headings to show sections.
+              </p>
             )}
-            <div className="mt-4 border-t border-border/60" />
-            <MarkdownEditor
-              ref={bodyEditorRef}
-              value={draft.body}
-              onChange={(body) => {
-                setDraft((current) => current ? { ...current, body } : current);
-              }}
-              placeholder="Write the document..."
-              bordered={false}
-              className="mt-4 min-h-0 flex-1 bg-transparent"
-              contentClassName="min-h-[calc(100dvh-20rem)] cursor-text text-[16px] leading-7"
-              mentions={mentions}
-              imageUploadHandler={imageUploadHandler}
-              onSubmit={() => void commitDraft(draft, { trackAutosave: true })}
-            />
-          </>
-        )}
+          </div>
+        </aside>
       </div>
     </section>
   );
