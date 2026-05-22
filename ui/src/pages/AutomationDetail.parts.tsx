@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  Activity,
   ChevronDown,
   ChevronRight,
-  Clock3,
   RefreshCw,
   Trash2,
-  Webhook,
-  Zap,
 } from "lucide-react";
 import { buildAutomationTriggerPatch } from "../lib/automation-trigger-patch";
 import { cn, formatDateTime } from "../lib/utils";
@@ -366,16 +362,11 @@ export function TriggerEditor({
   }, [canAutosaveTrigger, draft, isTriggerDirty, onSave, trigger]);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="overflow-hidden rounded-md border border-border/70 bg-background/35">
-      <div className="flex min-w-0 items-center gap-2 px-3 py-2.5">
-        <div className="flex min-w-0 flex-1 items-start gap-2">
-          <span className="mt-0.5 shrink-0 text-muted-foreground">
-            {trigger.kind === "schedule" ? <Clock3 className="h-3.5 w-3.5" /> : trigger.kind === "webhook" ? <Webhook className="h-3.5 w-3.5" /> : <Zap className="h-3.5 w-3.5" />}
-          </span>
-          <div className="min-w-0 space-y-0.5">
-            <div className="truncate text-sm font-medium" title={primaryTriggerLabel}>{primaryTriggerLabel}</div>
-            <div className="truncate text-xs text-muted-foreground" title={secondaryTriggerLabel}>{secondaryTriggerLabel}</div>
-          </div>
+    <Collapsible open={open} onOpenChange={setOpen} className="overflow-hidden rounded-md border border-border/60 bg-background/25">
+      <div className="flex min-h-12 min-w-0 items-center gap-2 px-3 py-2">
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="truncate text-sm font-medium" title={primaryTriggerLabel}>{primaryTriggerLabel}</div>
+          <div className="truncate text-xs text-muted-foreground" title={secondaryTriggerLabel}>{secondaryTriggerLabel}</div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {showSyncBadge ? (
@@ -420,19 +411,20 @@ export function TriggerEditor({
 
       <CollapsibleContent
         data-testid="automation-trigger-editor-body"
-        className="border-t border-border/60 px-3 pb-3 pt-3 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-1"
+        className="px-3 pb-3 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-1 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-1"
       >
-        <div className="grid gap-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs">Label</Label>
+        <div className="grid gap-2 border-t border-border/50 pt-3">
+          <div className="grid gap-1.5 sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
+            <Label className="text-xs text-muted-foreground">Label</Label>
             <Input
               value={draft.label}
+              className="h-8"
               onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))}
             />
           </div>
           {trigger.kind === "schedule" && (
-            <div className="space-y-1.5">
-              <Label className="text-xs">Schedule</Label>
+            <div className="grid gap-1.5 sm:grid-cols-[92px_minmax(0,1fr)] sm:items-start">
+              <Label className="pt-2 text-xs text-muted-foreground">Schedule</Label>
               <ScheduleEditor
                 value={draft.cronExpression}
                 onChange={(cronExpression) => setDraft((current) => ({ ...current, cronExpression }))}
@@ -441,13 +433,13 @@ export function TriggerEditor({
           )}
           {trigger.kind === "webhook" && (
             <>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Signing mode</Label>
+              <div className="grid gap-1.5 sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
+                <Label className="text-xs text-muted-foreground">Signing mode</Label>
                 <Select
                   value={draft.signingMode}
                   onValueChange={(signingMode) => setDraft((current) => ({ ...current, signingMode }))}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="h-8">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -457,10 +449,11 @@ export function TriggerEditor({
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Replay window (seconds)</Label>
+              <div className="grid gap-1.5 sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
+                <Label className="text-xs text-muted-foreground">Replay window</Label>
                 <Input
                   value={draft.replayWindowSec}
+                  className="h-8"
                   onChange={(event) => setDraft((current) => ({ ...current, replayWindowSec: event.target.value }))}
                 />
               </div>
@@ -498,13 +491,5 @@ export function TriggerEditor({
         ) : null}
       </CollapsibleContent>
     </Collapsible>
-  );
-}
-
-export function AutomationActivityGlyph() {
-  return (
-    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-      <Activity className="h-3 w-3" />
-    </span>
   );
 }

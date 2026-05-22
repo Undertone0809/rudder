@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { forwardRef, useImperativeHandle } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AutomationDetail } from "./AutomationDetail";
 
 (
@@ -382,6 +382,14 @@ vi.mock("../components/LiveRunWidget", () => ({
 
 let cleanupFn: (() => void) | null = null;
 
+beforeEach(() => {
+  automation.outputMode = "track_issue";
+  automation.chatConversationId = null;
+  automation.chatConversation = null;
+  automation.recentRuns[0]!.linkedChatConversationId = null;
+  automation.recentRuns[0]!.linkedChatConversation = null;
+});
+
 afterEach(() => {
   cleanupFn?.();
   cleanupFn = null;
@@ -482,11 +490,30 @@ describe("AutomationDetail", () => {
     expect(activitySection?.textContent).toContain("Activity");
     expect(activitySection?.querySelector('[data-testid="automation-activity-list"]')).toBeTruthy();
     const activityRow = activitySection?.querySelector('[data-testid="automation-activity-row"]');
-    expect(activityRow?.className).toContain("grid-cols-[auto_minmax(0,1fr)]");
-    expect(activityRow?.className).toContain("sm:grid-cols-[auto_minmax(0,1fr)_auto]");
-    expect(activityRow?.querySelector('[data-testid="automation-activity-summary"]')?.className).toContain("flex-wrap");
+    expect(activityRow?.className).toContain("min-h-8");
+    expect(activityRow?.className).toContain("grid-cols-[16px_minmax(0,1fr)]");
+    expect(activityRow?.className).toContain("sm:grid-cols-[16px_minmax(0,1fr)_auto]");
+    expect(activityRow?.querySelector('[data-testid="automation-activity-summary"]')?.className).toContain("whitespace-nowrap");
+    expect(activityRow?.querySelector('[data-testid="automation-activity-summary"] span')?.className).toContain("truncate");
+    expect(activityRow?.querySelector("svg")).toBeNull();
     expect(container.querySelector('[data-testid="automation-detail-agent-control"]')?.textContent).toContain("Ada");
     expect(container.querySelector('[data-testid="automation-detail-project-control"]')?.textContent).toContain("Automation UX");
+  });
+
+  it("shows chat output as an automation-owned chat without an existing-chat selector", async () => {
+    automation.outputMode = "chat_output";
+    automation.chatConversationId = null;
+    automation.chatConversation = null;
+
+    const container = renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Send to chat");
+    expect(container.textContent).toContain("New chat");
+    expect(container.textContent).not.toContain("Search chats");
   });
 
   it("keeps delivery rule controls contained in the sidebar width", async () => {

@@ -11,6 +11,7 @@ import {
   automationRuns,
   automations,
   automationTriggers,
+  chatContextLinks,
   chatConversations,
   chatMessages,
 } from "@rudderhq/db";
@@ -126,36 +127,17 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     if (parentIssue.orgId !== orgId) throw unprocessable("Parent issue must belong to same organization");
   }
 
-  async function assertChatOutputDestination(input: {
-    orgId: string;
+  function assertChatOutputDestination(input: {
     outputMode: string;
     chatConversationId: string | null | undefined;
-    assigneeAgentId: string;
-    allowAssigneeChatMismatch?: boolean;
+    existingChatConversationId?: string | null;
+    isCreate?: boolean;
   }) {
-    if (input.outputMode !== "chat_output") return null;
-    if (!input.chatConversationId) return null;
-    const conversation = await db
-      .select({
-        id: chatConversations.id,
-        orgId: chatConversations.orgId,
-        status: chatConversations.status,
-        preferredAgentId: chatConversations.preferredAgentId,
-      })
-      .from(chatConversations)
-      .where(eq(chatConversations.id, input.chatConversationId))
-      .then((rows) => rows[0] ?? null);
-    if (!conversation) throw notFound("Chat conversation not found");
-    if (conversation.orgId !== input.orgId) throw unprocessable("Chat conversation must belong to same organization");
-    if (conversation.status !== "active") throw unprocessable("Chat output requires an active conversation");
-    if (
-      conversation.preferredAgentId &&
-      conversation.preferredAgentId !== input.assigneeAgentId &&
-      !input.allowAssigneeChatMismatch
-    ) {
-      throw unprocessable("Chat conversation preferred agent must match the automation assignee");
+    if (input.outputMode !== "chat_output" || !input.chatConversationId) return;
+    if (!input.isCreate && input.chatConversationId === input.existingChatConversationId) {
+      return;
     }
-    return conversation;
+    throw unprocessable("Chat output creates an automation-owned conversation; existing chats cannot be selected");
   }
 
   async function resolveAutomationRunChatConversationId(input: {
@@ -164,7 +146,12 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     executor: Db;
   }) {
     if (input.automation.outputMode !== "chat_output") return null;
-    if (input.automation.chatConversationId) return input.automation.chatConversationId;
+    const automationRow = await input.executor
+      .select({ chatConversationId: automations.chatConversationId })
+      .from(automations)
+      .where(eq(automations.id, input.automation.id))
+      .then((rows) => rows[0] ?? null);
+    if (automationRow?.chatConversationId) return automationRow.chatConversationId;
 
     const existingRun = await input.executor
       .select({ linkedChatConversationId: automationRuns.linkedChatConversationId })
@@ -185,6 +172,18 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       })
       .returning({ id: chatConversations.id });
     if (!conversation) return null;
+    if (input.automation.projectId) {
+      await input.executor
+        .insert(chatContextLinks)
+        .values({
+          orgId: input.automation.orgId,
+          conversationId: conversation.id,
+          entityType: "project",
+          entityId: input.automation.projectId,
+          metadata: null,
+        })
+        .onConflictDoNothing();
+    }
 
     await input.executor
       .update(automationRuns)
@@ -193,6 +192,13 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         updatedAt: new Date(),
       })
       .where(eq(automationRuns.id, input.runId));
+    await input.executor
+      .update(automations)
+      .set({
+        chatConversationId: conversation.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(automations.id, input.automation.id));
     return conversation.id;
   }
 
@@ -1023,12 +1029,10 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       await assertAssignableAgent(orgId, input.assigneeAgentId);
       if (input.goalId) await assertGoal(orgId, input.goalId);
       if (input.parentIssueId) await assertParentIssue(orgId, input.parentIssueId);
-      await assertChatOutputDestination({
-        orgId,
+      assertChatOutputDestination({
         outputMode: input.outputMode,
         chatConversationId: input.chatConversationId,
-        assigneeAgentId: input.assigneeAgentId,
-        allowAssigneeChatMismatch: input.allowAssigneeChatMismatch,
+        isCreate: true,
       });
       const [created] = await db
         .insert(automations)
@@ -1041,7 +1045,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           description: input.description ?? null,
           assigneeAgentId: input.assigneeAgentId,
           outputMode: input.outputMode,
-          chatConversationId: input.chatConversationId ?? null,
+          chatConversationId: null,
           priority: input.priority,
           status: input.status,
           concurrencyPolicy: input.concurrencyPolicy,
@@ -1061,18 +1065,22 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       const nextProjectId = patch.projectId === undefined ? existing.projectId : patch.projectId;
       const nextAssigneeAgentId = patch.assigneeAgentId ?? existing.assigneeAgentId;
       const nextOutputMode = patch.outputMode ?? existing.outputMode;
-      const nextChatConversationId = patch.chatConversationId === undefined ? existing.chatConversationId : patch.chatConversationId;
+      const requestedChatConversationId = patch.chatConversationId === undefined ? existing.chatConversationId : patch.chatConversationId;
       if (nextProjectId) await assertProject(existing.orgId, nextProjectId);
       if (patch.assigneeAgentId) await assertAssignableAgent(existing.orgId, nextAssigneeAgentId);
       if (patch.goalId) await assertGoal(existing.orgId, patch.goalId);
       if (patch.parentIssueId) await assertParentIssue(existing.orgId, patch.parentIssueId);
-      await assertChatOutputDestination({
-        orgId: existing.orgId,
+      assertChatOutputDestination({
         outputMode: nextOutputMode,
-        chatConversationId: nextChatConversationId,
-        assigneeAgentId: nextAssigneeAgentId,
-        allowAssigneeChatMismatch: patch.allowAssigneeChatMismatch,
+        chatConversationId: requestedChatConversationId,
+        existingChatConversationId: existing.chatConversationId,
       });
+      const nextChatConversationId =
+        nextOutputMode === "chat_output"
+          ? existing.outputMode === "chat_output"
+            ? existing.chatConversationId
+            : null
+          : null;
       const [updated] = await db
         .update(automations)
         .set({
@@ -1083,7 +1091,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           description: patch.description === undefined ? existing.description : patch.description,
           assigneeAgentId: nextAssigneeAgentId,
           outputMode: nextOutputMode,
-          chatConversationId: nextOutputMode === "chat_output" ? nextChatConversationId : null,
+          chatConversationId: nextChatConversationId,
           priority: patch.priority ?? existing.priority,
           status: patch.status ?? existing.status,
           concurrencyPolicy: patch.concurrencyPolicy ?? existing.concurrencyPolicy,
