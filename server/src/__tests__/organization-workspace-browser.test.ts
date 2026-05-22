@@ -265,7 +265,40 @@ describe("organization workspace browser", () => {
       contentType: "application/octet-stream",
       previewKind: "binary",
       contentPath: null,
-      message: "Binary files are not previewed in the organization workspace view.",
+      message: "Binary files cannot be rendered in Docs.",
+      truncated: false,
+    }));
+  });
+
+  it("returns full text file content instead of truncating Docs files", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Browser Full Text Org",
+      urlKey: deriveOrganizationUrlKey("Workspace Browser Full Text Org"),
+      issuePrefix: "WBF",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const filePath = path.join(resolveOrganizationWorkspaceRoot(orgId), "docs", "large.md");
+    const content = `# Large file\n\n${"Line with enough content to exceed the old limit.\n".repeat(4_500)}`;
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, content, "utf8");
+
+    const detail = await workspaceBrowser.readFile(orgId, "docs/large.md");
+
+    expect(detail).toEqual(expect.objectContaining({
+      filePath: "docs/large.md",
+      rootExists: true,
+      content,
+      contentType: "text/markdown",
+      previewKind: "text",
+      message: null,
       truncated: false,
     }));
   });

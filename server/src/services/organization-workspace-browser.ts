@@ -15,7 +15,6 @@ import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, resolveOrganizationWorkspaceRoot } from "../home-paths.js";
 import { organizationService } from "./orgs.js";
 
-const MAX_PREVIEW_BYTES = 200_000;
 const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".DS_Store", ".cache", ".npm", ".nvm"]);
 const PROTECTED_LIBRARY_RESOURCE_ROOTS = new Set(["agents", "artifacts", "plans", "skills"]);
 const WORKSPACE_TEXT_CONTENT_TYPES = new Map([
@@ -395,25 +394,23 @@ export function organizationWorkspaceBrowserService(db: Db) {
           contentType,
           previewKind,
           contentPath: null,
-          message: "Binary files are not previewed in the organization workspace view.",
+          message: "Binary files cannot be rendered in Docs.",
           truncated: false,
         };
       }
 
-      const truncated = buffer.length > MAX_PREVIEW_BYTES;
-      const rawContent = buffer.subarray(0, MAX_PREVIEW_BYTES).toString("utf8");
       return {
         source: root.source,
         rootPath: resolvedRoot,
         repoUrl: root.repoUrl,
         filePath: normalizedPath,
         rootExists: true,
-        content: rawContent,
+        content: buffer.toString("utf8"),
         contentType,
         previewKind,
         contentPath: null,
-        message: truncated ? "Preview truncated to the first 200 KB." : null,
-        truncated,
+        message: null,
+        truncated: false,
       };
     },
 

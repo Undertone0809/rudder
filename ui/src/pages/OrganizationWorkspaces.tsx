@@ -2902,7 +2902,7 @@ export function OrganizationWorkspaceBrowser({
                   className="scrollbar-auto-hide h-full min-h-0 overflow-auto"
                 >
                   <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
-                    {selectedFileDetail.message ?? "This file is shown read-only here."}
+                    {selectedFileDetail.message ?? "This file is rendered read-only in Docs."}
                   </div>
                   <pre className="overflow-x-auto px-4 py-4 text-xs leading-6 text-foreground">
                     <code>{selectedFileDetail.content}</code>
@@ -2910,7 +2910,7 @@ export function OrganizationWorkspaceBrowser({
                 </div>
               ) : (
                 <div className="px-4 py-6 text-sm text-muted-foreground">
-                  {selectedFileDetail?.message ?? "This file cannot be previewed."}
+                  {selectedFileDetail?.message ?? "This file cannot be rendered in Docs."}
                 </div>
               )}
             </div>
