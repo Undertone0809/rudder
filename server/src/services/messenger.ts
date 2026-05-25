@@ -195,6 +195,10 @@ type JoinRequestRow = {
 };
 
 type ChatConversationRow = Awaited<ReturnType<ReturnType<typeof chatService>["list"]>>[number];
+type ChatSummarySource = Pick<
+  ChatConversationRow,
+  "id" | "title" | "summary" | "latestReplyPreview" | "lastMessageAt" | "updatedAt" | "lastReadAt" | "unreadCount" | "needsAttention" | "isPinned"
+>;
 type ChatMessageRow = Awaited<ReturnType<ReturnType<typeof chatService>["listMessages"]>>[number];
 type HeartbeatRunRow = typeof heartbeatRuns.$inferSelect;
 
@@ -456,7 +460,7 @@ function issueActions(issue: IssueUniverseRow, currentUserId: string | null) {
   return actions;
 }
 
-function chatSummary(conversation: ChatConversationRow): MessengerThreadSummary {
+function chatSummary(conversation: ChatSummarySource): MessengerThreadSummary {
   const preview =
     conversation.latestReplyPreview ?? truncate(conversation.summary, 140) ?? truncate(conversation.title, 140) ?? "Start the conversation";
   return {
@@ -1452,7 +1456,7 @@ export function messengerService(db: Db) {
       "join-requests",
     ]);
     const [chats, issueData, approvalData, failedRunData, budgetData, joinRequestData] = await Promise.all([
-      chatsSvc.list(orgId, { status: "active" }, userId),
+      chatsSvc.listSummaries(orgId, { status: "active" }, userId),
       loadIssueThreadSummaryData(orgId, userId, syntheticThreadStates),
       loadApprovalThreadSummaryData(orgId, userId, syntheticThreadStates),
       loadFailedRunSummaryData(orgId, userId, syntheticThreadStates),

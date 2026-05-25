@@ -1664,6 +1664,59 @@ describe("messengerService and issue follows", () => {
     expect(chatSummary?.subtitle).toBe("需求: 把 Agent 的处理流程规范化");
   });
 
+  it("keeps pending chat approvals attention in Messenger thread summaries when chat is read", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-chat-pending-approval-summary";
+    const chatId = randomUUID();
+    const approvalId = randomUUID();
+    const activityAt = new Date("2026-04-12T12:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Chat Approval Attention Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Chat Approval Attention Org"),
+      issuePrefix: `A${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(chatConversations).values({
+      id: chatId,
+      orgId,
+      title: "Read chat with pending approval",
+      status: "active",
+      lastMessageAt: activityAt,
+      createdAt: activityAt,
+      updatedAt: activityAt,
+    });
+    await db.insert(approvals).values({
+      id: approvalId,
+      orgId,
+      type: "chat_issue_creation",
+      requestedByUserId: userId,
+      status: "pending",
+      payload: { proposedIssue: { title: "Needs approval" } },
+      createdAt: activityAt,
+      updatedAt: activityAt,
+    });
+    await db.insert(chatMessages).values({
+      orgId,
+      conversationId: chatId,
+      role: "assistant",
+      kind: "approval_request",
+      body: "Please approve this issue proposal.",
+      approvalId,
+      createdAt: activityAt,
+      updatedAt: activityAt,
+    });
+    await chatSvc.markRead(chatId, orgId, userId, new Date("2026-04-12T13:00:00.000Z"));
+
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const chatSummary = summaries.find((item) => item.threadKey === `chat:${chatId}`);
+
+    expect(chatSummary?.unreadCount).toBe(0);
+    expect(chatSummary?.needsAttention).toBe(true);
+  });
+
   it("hides empty synthetic threads for a brand-new organization", async () => {
     const orgId = randomUUID();
     const userId = "board-user-empty";

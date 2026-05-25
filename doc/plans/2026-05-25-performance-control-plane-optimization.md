@@ -482,6 +482,40 @@ Phase 13 evidence:
   isolated database on the already-running local Rudder Postgres instance
 - `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 2 --explain`
 
+## Phase 14 Result
+
+The fourteenth slice optimized the chat portion of `/messenger/threads`.
+The current thread-list path calls the full chat list hydrator even though the
+Messenger summary only needs conversation title, preview, latest activity,
+read state, pinned state, unread count, and pending-approval attention.
+
+The existing chat list and chat detail behavior remains unchanged. Messenger now
+uses a summary-only chat list path that skips detail-only hydration such as
+context links and primary issue objects.
+
+The compatibility boundary is the Messenger thread list:
+
+- active chat inclusion and ordering remain unchanged
+- pinned state remains available in `/messenger/threads`
+- latest reply preview remains unchanged
+- unread count and pending approval attention remain unchanged
+- archived chats remain excluded from the default Messenger thread list
+
+On the seeded medium harness after this change,
+`messenger.listThreadSummaries` ran five times with a minimum in the high-30 ms
+range, p50 around 42 ms, and average around 45 ms. Phase 13's seeded medium
+evidence was two runs with an average around 55 ms. This remains fixture
+evidence and should not be read as a production latency claim.
+
+Phase 14 evidence:
+
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/messenger-service.test.ts --reporter=verbose`
+  with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
+  isolated database on the already-running local Rudder Postgres instance
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 2 --explain`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 5`
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local
