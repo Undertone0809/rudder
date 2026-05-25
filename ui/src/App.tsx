@@ -36,7 +36,7 @@ import { OrganizationWorkspaceBackups } from "./pages/OrganizationWorkspaceBacku
 import { OrganizationSkills } from "./pages/OrganizationSkills";
 import { OrganizationExport } from "./pages/OrganizationExport";
 import { OrganizationImport } from "./pages/OrganizationImport";
-import { DesignGuide } from "./pages/DesignGuide";
+import { UiLab } from "./pages/UiLab";
 import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { InstanceNotificationsSettings } from "./pages/InstanceNotificationsSettings";
 import { InstanceLangfuseSettings } from "./pages/InstanceLangfuseSettings";
@@ -46,7 +46,6 @@ import { InstanceSettings } from "./pages/InstanceSettings";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
 import { PluginPage } from "./pages/PluginPage";
-import { RunTranscriptUxLab } from "./pages/RunTranscriptUxLab";
 import { OrgChart } from "./pages/OrgChart";
 import { NewAgent } from "./pages/NewAgent";
 import { AuthPage } from "./pages/Auth";
@@ -243,8 +242,9 @@ function boardRoutes() {
       <Route path="activity" element={<Activity />} />
       <Route path="inbox" element={<LegacyInboxRedirect />} />
       <Route path="inbox/*" element={<LegacyInboxRedirect />} />
-      <Route path="design-guide" element={<DesignGuide />} />
-      <Route path="tests/ux/runs" element={<RunTranscriptUxLab />} />
+      <Route path="ui-lab" element={<UiLab />} />
+      <Route path="design-guide" element={<UiLab initialSection="design-guide" />} />
+      <Route path="tests/ux/runs" element={<UiLab initialSection="transcripts" />} />
       <Route path=":pluginRoutePath" element={<PluginPage />} />
       <Route path="*" element={<NotFoundPage scope="board" />} />
     </>
@@ -533,6 +533,8 @@ export function App() {
           <Route path="inbox/*" element={<LegacyInboxRedirect />} />
           <Route path="chat" element={<LegacyMessengerRedirect />} />
           <Route path="chat/:conversationId" element={<LegacyMessengerRedirect />} />
+          <Route path="ui-lab" element={<UnprefixedBoardRedirect />} />
+          <Route path="design-guide" element={<UnprefixedBoardRedirect />} />
           <Route path="automations" element={<UnprefixedBoardRedirect />} />
           <Route path="automations/:automationId" element={<UnprefixedBoardRedirect />} />
           <Route path="calendar" element={<UnprefixedBoardRedirect />} />
