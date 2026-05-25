@@ -5,8 +5,8 @@
     <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.10"/>
     </filter>
-    <marker id="arrow" markerWidth="16" markerHeight="16" refX="13" refY="8" orient="auto" markerUnits="strokeWidth">
-      <path d="M3,3 L13,8 L3,13" fill="none" stroke="#0f766e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#0f766e"/>
     </marker>
     <style>
       .title { font: 760 38px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #0f172a; }
@@ -56,11 +56,11 @@
     <text x="1100" y="350" class="body">清楚后再交给执行者</text>
   </g>
 
-  <path d="M372 307 H398" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <path d="M700 307 H726" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <path d="M1028 307 H1054" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M356 307 H406" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M684 307 H734" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M1012 307 H1062" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
 
-  <path d="M1205 390 V421 C1205 444 1186 463 1163 463 H1070" stroke="#0f766e" stroke-width="4" stroke-linecap="round" fill="none" marker-end="url(#arrow)"/>
+  <path d="M1205 390 V504 H1020" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#arrow)"/>
 
   <g filter="url(#cardShadow)">
     <rect x="742" y="430" width="270" height="148" rx="22" fill="#fdf2f8" stroke="#fbcfe8" stroke-width="2"/>
@@ -83,9 +83,8 @@
     <text x="116" y="544" class="body">接受、要求修改，或阻塞</text>
   </g>
 
-  <path d="M1054 504 H1028" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <path d="M726 504 H700" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <path d="M398 504 H372" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M742 504 H692" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M414 504 H364" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
 
   <rect x="86" y="625" width="582" height="70" rx="20" fill="#f8fafc" stroke="#dbe3ea" stroke-width="2"/>
   <text x="116" y="655" class="pill">Messenger</text>
