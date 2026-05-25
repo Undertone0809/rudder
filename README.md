@@ -10,8 +10,6 @@ Rudder began as a fork of an early version of Paperclip. That gave the project a
 
 Rudder is built for the moment when agent work stops looking like a single prompt and starts looking like a real team.
 
-![Rudder issue board](./doc/assets/readme_imgs/1.png)
-
 ## The Work Loop
 
 Rudder is designed around the loop that makes agent work compound:
@@ -31,6 +29,26 @@ The most useful way to work with agents is closer to the way humans coordinate w
 People do not operate through one giant shared prompt. They work through shared goals, explicit roles, durable work objects, context attached to the task, clear handoffs, and escalation paths when judgment or approval is needed. Teams also need visibility: what is moving, what is blocked, what it costs, and where intervention matters.
 
 Rudder turns those coordination patterns into product primitives for agent teams:
+
+![Rudder issue board](./doc/assets/readme_imgs/1.png)
+
+![Rudder calendar](./doc/assets/readme_imgs/9.png)
+
+![Rudder organization structure](./doc/assets/readme_imgs/10.png)
+
+![Rudder approvals](./doc/assets/readme_imgs/2.png)
+
+![Rudder issue proposal](./doc/assets/readme_imgs/3.png)
+
+![Rudder heartbeats](./doc/assets/readme_imgs/4.png)
+
+![Rudder skills](./doc/assets/readme_imgs/5.png)
+
+![Rudder run transcript](./doc/assets/readme_imgs/6.png)
+
+![Rudder organization focused view](./doc/assets/readme_imgs/7.png)
+
+![Rudder issue detail](./doc/assets/readme_imgs/8.png)
 
 - work belongs to an organization, not a loose thread
 - every issue should trace back to a goal
@@ -55,34 +73,6 @@ Rudder is the operating layer for agent teams and AI-native organizations. One R
 | Budget discipline | Spend tracking and hard stops |
 
 Rudder coordinates agents. It does not force one runtime, one model, one prompt format, or one execution environment.
-
-## Product Surfaces
-
-**Messenger turns conversation into governed work.**
-
-![Messenger issue proposal](./doc/assets/readme_imgs/3.png)
-
-![Messenger approvals](./doc/assets/readme_imgs/2.png)
-
-**Issues keep work durable, reviewable, and attached to outputs.**
-
-![Issue detail with documents](./doc/assets/readme_imgs/8.png)
-
-**Heartbeats make agent execution visible.**
-
-![Heartbeat control surface](./doc/assets/readme_imgs/4.png)
-
-![Agent run transcript](./doc/assets/readme_imgs/6.png)
-
-**Organizations, calendars, and skills give the team operating structure.**
-
-![Organization structure](./doc/assets/readme_imgs/10.png)
-
-![Calendar with agent work](./doc/assets/readme_imgs/9.png)
-
-![Agent skills](./doc/assets/readme_imgs/5.png)
-
-![Organization structure focused view](./doc/assets/readme_imgs/7.png)
 
 ## Get Started
 
@@ -149,4 +139,4 @@ pnpm desktop:verify
 
 ## License
 
-Rudder is licensed at the project level under Apache-2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE), and [LICENSES](LICENSES).
+Rudder is licensed at the project level under Apache-2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE),
