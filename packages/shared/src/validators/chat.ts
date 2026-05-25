@@ -1,5 +1,9 @@
 import { z } from "zod";
 import {
+  AUTOMATION_CATCH_UP_POLICIES,
+  AUTOMATION_CONCURRENCY_POLICIES,
+  AUTOMATION_OUTPUT_MODES,
+  AUTOMATION_STATUSES,
   CHAT_CONTEXT_ENTITY_TYPES,
   CHAT_CONVERSATION_STATUSES,
   CHAT_ISSUE_CREATION_MODES,
@@ -143,6 +147,32 @@ export function chatAskUserRequestFromStructuredPayload(payload: unknown) {
   return parsed.success ? parsed.data : null;
 }
 
+export const chatAutomationCreateSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(20_000).optional().nullable(),
+  projectId: z.string().uuid().optional().nullable(),
+  goalId: z.string().uuid().optional().nullable(),
+  parentIssueId: z.string().uuid().optional().nullable(),
+  priority: z.enum(["critical", "high", "medium", "low"]).optional().default("medium"),
+  status: z.enum(AUTOMATION_STATUSES).optional().default("active"),
+  concurrencyPolicy: z.enum(AUTOMATION_CONCURRENCY_POLICIES).optional().default("coalesce_if_active"),
+  catchUpPolicy: z.enum(AUTOMATION_CATCH_UP_POLICIES).optional().default("skip_missed"),
+  outputMode: z.enum(AUTOMATION_OUTPUT_MODES).optional().default("chat_output"),
+  schedule: z.object({
+    cronExpression: z.string().trim().min(1),
+    timezone: z.string().trim().min(1),
+    label: z.string().trim().max(120).optional().nullable(),
+    enabled: z.boolean().optional().default(true),
+  }),
+});
+
+export function chatAutomationCreateFromStructuredPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const rawRequest = (payload as Record<string, unknown>).automationCreate;
+  const parsed = chatAutomationCreateSchema.safeParse(rawRequest);
+  return parsed.success ? parsed.data : null;
+}
+
 export function sanitizeChatStructuredPayload(payload: Record<string, unknown> | null | undefined) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
   const next = { ...payload };
@@ -157,6 +187,12 @@ export function sanitizeChatStructuredPayload(payload: Record<string, unknown> |
     next.richReferences = richReferences;
   } else {
     delete next.richReferences;
+  }
+  const automationCreate = chatAutomationCreateFromStructuredPayload(payload);
+  if (automationCreate) {
+    next.automationCreate = automationCreate;
+  } else {
+    delete next.automationCreate;
   }
   return Object.keys(next).length > 0 ? next : null;
 }
@@ -216,6 +252,7 @@ export type ChatAskUserOption = z.infer<typeof chatAskUserOptionSchema>;
 export type ChatAskUserQuestion = z.infer<typeof chatAskUserQuestionSchema>;
 export type ChatAskUserRequest = z.infer<typeof chatAskUserRequestSchema>;
 export type ChatRichReference = z.infer<typeof chatRichReferenceSchema>;
+export type ChatAutomationCreate = z.infer<typeof chatAutomationCreateSchema>;
 export type CreateChatAttachmentMetadata = z.infer<typeof createChatAttachmentMetadataSchema>;
 export type ConvertChatToIssue = z.infer<typeof convertChatToIssueSchema>;
 export type ChatOperationProposal = z.infer<typeof chatOperationProposalSchema>;

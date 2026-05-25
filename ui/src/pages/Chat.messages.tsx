@@ -478,7 +478,7 @@ export function issueCreatedSystemMessageParts(message: ChatMessage) {
 
 function automationSourceSystemMessageParts(message: ChatMessage) {
   const payload = message.structuredPayload;
-  if (!payload || payload.eventType !== "automation_source") return null;
+  if (!payload || (payload.eventType !== "automation_source" && payload.eventType !== "automation_created")) return null;
 
   const automationId = readStructuredPayloadString(payload, "automationId");
   const automationTitle = readStructuredPayloadString(payload, "automationTitle") ?? "automation";
@@ -503,6 +503,21 @@ export function ChatSystemMessageBody({
   const automationSourceParts = automationSourceSystemMessageParts(message);
 
   if (automationSourceParts) {
+    if (message.structuredPayload?.eventType === "automation_created") {
+      return (
+        <span className="min-w-0 flex-1 leading-5">
+          Created automation{" "}
+          <Link
+            to={`/automations/${automationSourceParts.automationId}`}
+            className="chat-system-issue-link"
+            aria-label={`Open automation ${automationSourceParts.automationTitle}`}
+          >
+            {automationSourceParts.automationTitle}
+          </Link>
+          {" "}from this chat conversation.
+        </span>
+      );
+    }
     return (
       <span className="min-w-0 flex-1 leading-5">
         From automation{" "}
