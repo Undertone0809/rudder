@@ -195,6 +195,22 @@ Phase 2 evidence:
   with `RUDDER_SIDEBAR_BADGES_TEST_DATABASE_URL` pointed at a temporary isolated
   database on the already-running local Rudder Postgres instance
 
+## Phase 3 Result
+
+The third slice started the Messenger summary split without changing the
+`/messenger/threads` response shape. It consolidated synthetic thread read-state
+loading so the thread summary endpoint loads read states for `issues`,
+`approvals`, `failed-runs`, `budget-alerts`, and `join-requests` in one query
+instead of repeating the same `messenger_thread_user_states` lookup inside each
+summary builder. Detail endpoints keep their single-thread paths.
+
+Phase 3 evidence:
+
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/messenger-service.test.ts --reporter=verbose`
+  with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
+  isolated database on the already-running local Rudder Postgres instance
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local
@@ -202,5 +218,5 @@ Phase 2 evidence:
   database on an already-running local Rudder Postgres instance instead.
 - Runtime latency targets still need a seeded fixture and timing harness before
   claiming quantified performance wins.
-- The next behavioral-compatible candidates are Messenger thread summary split,
-  opt-in issue list pagination, and transactional cost rollups.
+- The next behavioral-compatible candidates are deeper Messenger summary-only
+  loaders, opt-in issue list pagination, and transactional cost rollups.

@@ -67,6 +67,8 @@ type ThreadStateRow = typeof messengerThreadUserStates.$inferSelect;
 type ThreadReadState = {
   lastReadAt: Date;
 };
+type ThreadStateMap = Map<string, ThreadStateRow>;
+type ThreadStateSource = ThreadStateMap | Promise<ThreadStateMap>;
 
 type IssueUniverseRow = {
   id: string;
@@ -724,6 +726,17 @@ async function loadThreadStates(db: Db, orgId: string, userId: string, threadKey
   return new Map<string, ThreadStateRow>(rows.map((row) => [row.threadKey, row]));
 }
 
+async function lastReadAtForThread(
+  db: Db,
+  orgId: string,
+  userId: string,
+  threadKey: string,
+  threadStates?: ThreadStateSource,
+) {
+  const states = threadStates ?? loadThreadStates(db, orgId, userId, [threadKey]);
+  return (await states).get(threadKey)?.lastReadAt ?? null;
+}
+
 export function messengerService(db: Db) {
   const issuesSvc = issueService(db);
   const chatsSvc = chatService(db);
@@ -775,11 +788,11 @@ export function messengerService(db: Db) {
     return Array.from(universe.values());
   }
 
-  async function loadIssueSummaryData(orgId: string, userId: string) {
+  async function loadIssueSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
+    const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "issues", threadStates);
     const issuesUniverse = await loadIssueUniverse(orgId, userId);
     const issueIds = issuesUniverse.map((row) => row.id);
-    const threadStates = await loadThreadStates(db, orgId, userId, ["issues"]);
-    const lastReadAt = threadStates.get("issues")?.lastReadAt ?? null;
+    const lastReadAt = await lastReadAtPromise;
 
     const [commentRows, activityRows] = await Promise.all([
       issueIds.length === 0
@@ -967,9 +980,8 @@ export function messengerService(db: Db) {
     };
   }
 
-  async function loadApprovalSummaryData(orgId: string, userId: string) {
-    const threadStates = await loadThreadStates(db, orgId, userId, ["approvals"]);
-    const lastReadAt = threadStates.get("approvals")?.lastReadAt ?? null;
+  async function loadApprovalSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
+    const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "approvals", threadStates);
 
     const [approvalRows, latestComments] = await Promise.all([
       db
@@ -989,6 +1001,7 @@ export function messengerService(db: Db) {
         .orderBy(desc(approvalComments.createdAt)),
     ]);
 
+    const lastReadAt = await lastReadAtPromise;
     const latestCommentByApproval = new Map<string, ApprovalCommentRow>();
     for (const row of latestComments) {
       if (!latestCommentByApproval.has(row.approvalId)) {
@@ -1034,9 +1047,8 @@ export function messengerService(db: Db) {
     };
   }
 
-  async function loadFailedRunData(orgId: string, userId: string) {
-    const threadStates = await loadThreadStates(db, orgId, userId, ["failed-runs"]);
-    const lastReadAt = threadStates.get("failed-runs")?.lastReadAt ?? null;
+  async function loadFailedRunData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
+    const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "failed-runs", threadStates);
 
     const [runRows, agentRows] = await Promise.all([
       db
@@ -1063,6 +1075,7 @@ export function messengerService(db: Db) {
         .from(agents)
         .where(eq(agents.orgId, orgId)),
     ]);
+    const lastReadAt = await lastReadAtPromise;
     const agentNames = new Map(agentRows.map((row) => [row.id, row.name]));
     const items = runRows.map((run) => failedRunCard(run, agentNames.get(run.agentId) ?? null));
     const latestFirstItems = [...items].sort(compareLatestActivity);
@@ -1098,10 +1111,10 @@ export function messengerService(db: Db) {
     };
   }
 
-  async function loadBudgetAlertData(orgId: string, userId: string) {
-    const threadStates = await loadThreadStates(db, orgId, userId, ["budget-alerts"]);
-    const lastReadAt = threadStates.get("budget-alerts")?.lastReadAt ?? null;
+  async function loadBudgetAlertData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
+    const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "budget-alerts", threadStates);
     const incidents = ((await budgetsSvc.overview(orgId)).activeIncidents ?? []) as BudgetIncidentRow[];
+    const lastReadAt = await lastReadAtPromise;
 
     const items = incidents.map((incident) => budgetCard(incident));
     const latestActivityAt = items[0]?.latestActivityAt ?? null;
@@ -1135,14 +1148,14 @@ export function messengerService(db: Db) {
     };
   }
 
-  async function loadJoinRequestData(orgId: string, userId: string) {
-    const threadStates = await loadThreadStates(db, orgId, userId, ["join-requests"]);
-    const lastReadAt = threadStates.get("join-requests")?.lastReadAt ?? null;
+  async function loadJoinRequestData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
+    const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "join-requests", threadStates);
     const rows = (await db
       .select()
       .from(joinRequests)
       .where(and(eq(joinRequests.orgId, orgId), eq(joinRequests.status, "pending_approval")))
       .orderBy(desc(joinRequests.updatedAt), desc(joinRequests.createdAt))) as JoinRequestRow[];
+    const lastReadAt = await lastReadAtPromise;
     const items = rows.map((row) => joinRequestCard(row));
     const latestActivityAt = items[0]?.latestActivityAt ?? null;
     const unreadCount = systemUnreadCountSince(rows, lastReadAt);
@@ -1176,13 +1189,20 @@ export function messengerService(db: Db) {
   }
 
   async function listThreadSummaries(orgId: string, userId: string) {
+    const syntheticThreadStates = loadThreadStates(db, orgId, userId, [
+      "issues",
+      "approvals",
+      "failed-runs",
+      "budget-alerts",
+      "join-requests",
+    ]);
     const [chats, issueData, approvalData, failedRunData, budgetData, joinRequestData] = await Promise.all([
       chatsSvc.list(orgId, { status: "active" }, userId),
-      loadIssueSummaryData(orgId, userId),
-      loadApprovalSummaryData(orgId, userId),
-      loadFailedRunData(orgId, userId),
-      loadBudgetAlertData(orgId, userId),
-      loadJoinRequestData(orgId, userId),
+      loadIssueSummaryData(orgId, userId, syntheticThreadStates),
+      loadApprovalSummaryData(orgId, userId, syntheticThreadStates),
+      loadFailedRunData(orgId, userId, syntheticThreadStates),
+      loadBudgetAlertData(orgId, userId, syntheticThreadStates),
+      loadJoinRequestData(orgId, userId, syntheticThreadStates),
     ]);
 
     const syntheticSummaries: MessengerThreadSummary[] = [];
