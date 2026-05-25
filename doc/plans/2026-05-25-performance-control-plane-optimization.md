@@ -9,6 +9,7 @@ entities:
   - sidebar_badges
   - messenger_chat
   - issue_search
+  - cost_events
 issue:
 related_plans:
   - 2026-05-10-messenger-pinned-thread-summary.md
@@ -210,6 +211,26 @@ Phase 3 evidence:
 - `pnpm --filter @rudderhq/server exec vitest run src/__tests__/messenger-service.test.ts --reporter=verbose`
   with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
   isolated database on the already-running local Rudder Postgres instance
+
+## Phase 4 Result
+
+The fourth slice reduced cost-event write amplification without changing budget
+or cost API behavior. `costService.createEvent` now recomputes the current UTC
+month agent spend and organization spend with one conditional aggregate over
+`cost_events` instead of two separate month-window aggregate scans.
+
+The compatibility boundary is unchanged:
+
+- the inserted `cost_events` row is still the source of truth
+- `agents.spentMonthlyCents` and `organizations.spentMonthlyCents` are still
+  refreshed before budget evaluation
+- budget hard-stop evaluation still receives the same inserted event
+- no schema, migration, rollup, or response contract changed
+
+Phase 4 evidence:
+
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/costs-langfuse.test.ts src/__tests__/monthly-spend-service.test.ts --reporter=verbose`
 
 ## Open Issues
 

@@ -88,12 +88,14 @@ describe("costService Langfuse export", () => {
   });
 
   it("emits a detached cost event when tied to a heartbeat run", async () => {
+    const updateSet = vi.fn().mockReturnValue({
+      where: vi.fn().mockResolvedValue(undefined),
+    });
     const db = {
       select: vi
         .fn()
         .mockReturnValueOnce(selectChain([{ id: "agent-1", orgId: "org-1" }]))
-        .mockReturnValueOnce(selectChain([{ total: 12 }]))
-        .mockReturnValueOnce(selectChain([{ total: 34 }])),
+        .mockReturnValueOnce(selectChain([{ agentTotal: 12, organizationTotal: 34 }])),
       insert: vi.fn().mockReturnValue({
         values: vi.fn().mockReturnValue({
           returning: vi.fn().mockResolvedValue([
@@ -116,9 +118,7 @@ describe("costService Langfuse export", () => {
         }),
       }),
       update: vi.fn().mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue(undefined),
-        }),
+        set: updateSet,
       }),
     };
 
@@ -150,5 +150,12 @@ describe("costService Langfuse export", () => {
         name: "cost.ingested",
       }),
     );
+    expect(db.select).toHaveBeenCalledTimes(2);
+    expect(updateSet).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      spentMonthlyCents: 12,
+    }));
+    expect(updateSet).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      spentMonthlyCents: 34,
+    }));
   });
 });

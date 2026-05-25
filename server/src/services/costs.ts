@@ -72,26 +72,31 @@ function currentUtcMonthWindow(now = new Date()) {
   };
 }
 
-async function getMonthlySpendTotal(
+async function getMonthlySpendTotalsForEvent(
   db: Db,
-  scope: { orgId: string; agentId?: string | null },
+  event: { orgId: string; agentId: string },
 ) {
   const { start, end } = currentUtcMonthWindow();
-  const conditions = [
-    eq(costEvents.orgId, scope.orgId),
-    gte(costEvents.occurredAt, start),
-    lt(costEvents.occurredAt, end),
-  ];
-  if (scope.agentId) {
-    conditions.push(eq(costEvents.agentId, scope.agentId));
-  }
   const [row] = await db
     .select({
-      total: sumNumberSql(costEvents.costCents),
+      agentTotal: sumNumberSql(sql`
+        case
+          when ${costEvents.agentId} = ${event.agentId} then ${costEvents.costCents}
+          else 0
+        end
+      `),
+      organizationTotal: sumNumberSql(costEvents.costCents),
     })
     .from(costEvents)
-    .where(and(...conditions));
-  return Number(row?.total ?? 0);
+    .where(and(
+      eq(costEvents.orgId, event.orgId),
+      gte(costEvents.occurredAt, start),
+      lt(costEvents.occurredAt, end),
+    ));
+  return {
+    agentTotal: Number(row?.agentTotal ?? 0),
+    organizationTotal: Number(row?.organizationTotal ?? 0),
+  };
 }
 
 export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
@@ -121,15 +126,12 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .returning()
         .then((rows) => rows[0]);
 
-      const [agentMonthSpend, companyMonthSpend] = await Promise.all([
-        getMonthlySpendTotal(db, { orgId, agentId: event.agentId }),
-        getMonthlySpendTotal(db, { orgId }),
-      ]);
+      const { agentTotal, organizationTotal } = await getMonthlySpendTotalsForEvent(db, event);
 
       await db
         .update(agents)
         .set({
-          spentMonthlyCents: agentMonthSpend,
+          spentMonthlyCents: agentTotal,
           updatedAt: new Date(),
         })
         .where(eq(agents.id, event.agentId));
@@ -137,7 +139,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       await db
         .update(organizations)
         .set({
-          spentMonthlyCents: companyMonthSpend,
+          spentMonthlyCents: organizationTotal,
           updatedAt: new Date(),
         })
         .where(eq(organizations.id, orgId));
