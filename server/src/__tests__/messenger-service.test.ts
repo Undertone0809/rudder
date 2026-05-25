@@ -18,10 +18,12 @@ import {
   documents,
   ensurePostgresDatabase,
   heartbeatRuns,
+  invites,
   issueFollows,
   issueComments,
   issueDocuments,
   issues,
+  joinRequests,
   messengerThreadUserStates,
   organizations,
 } from "@rudderhq/db";
@@ -133,6 +135,8 @@ describe("messengerService and issue follows", () => {
     await db.delete(approvalComments);
     await db.delete(approvals);
     await db.delete(heartbeatRuns);
+    await db.delete(joinRequests);
+    await db.delete(invites);
     await db.delete(activityLog);
     await db.delete(issueComments);
     await db.delete(issueDocuments);
@@ -1321,14 +1325,157 @@ describe("messengerService and issue follows", () => {
         updatedAt: newerActivityAt,
       },
     ]);
+    await messengerSvc.setThreadRead(orgId, userId, "failed-runs", new Date("2026-04-12T10:00:00.000Z"));
 
     const thread = await messengerSvc.getSystemThread(orgId, userId, "failed-runs");
     const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
     const failedRunsSummary = summaries.find((item) => item.threadKey === "failed-runs");
 
     expect(thread.detail.items.map((item) => item.id)).toEqual([olderRunId, newerRunId]);
+    expect(thread.summary.unreadCount).toBe(1);
     expect(thread.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+    expect(failedRunsSummary?.preview).toBe("Newer run failed");
+    expect(failedRunsSummary?.unreadCount).toBe(1);
     expect(failedRunsSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+  });
+
+  it("summarizes pending join requests without loading the detail thread", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const userId = "board-user-join-requests";
+    const olderRequestId = randomUUID();
+    const newerRequestId = randomUUID();
+    const resolvedRequestId = randomUUID();
+    const otherOrgRequestId = randomUUID();
+    const olderInviteId = randomUUID();
+    const newerInviteId = randomUUID();
+    const resolvedInviteId = randomUUID();
+    const otherOrgInviteId = randomUUID();
+    const activeChatId = randomUUID();
+    const olderActivityAt = new Date("2026-04-12T09:00:00.000Z");
+    const newerActivityAt = new Date("2026-04-12T12:00:00.000Z");
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Messenger Join Requests Org",
+        urlKey: deriveOrganizationUrlKey("Messenger Join Requests Org"),
+        issuePrefix: `J${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Join Requests Org",
+        urlKey: deriveOrganizationUrlKey("Other Join Requests Org"),
+        issuePrefix: `O${otherOrgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(invites).values([
+      {
+        id: olderInviteId,
+        orgId,
+        tokenHash: `hash-${olderInviteId}`,
+        expiresAt: new Date("2026-12-31T00:00:00.000Z"),
+      },
+      {
+        id: newerInviteId,
+        orgId,
+        tokenHash: `hash-${newerInviteId}`,
+        expiresAt: new Date("2026-12-31T00:00:00.000Z"),
+      },
+      {
+        id: resolvedInviteId,
+        orgId,
+        tokenHash: `hash-${resolvedInviteId}`,
+        expiresAt: new Date("2026-12-31T00:00:00.000Z"),
+      },
+      {
+        id: otherOrgInviteId,
+        orgId: otherOrgId,
+        tokenHash: `hash-${otherOrgInviteId}`,
+        expiresAt: new Date("2026-12-31T00:00:00.000Z"),
+      },
+    ]);
+    await db.insert(joinRequests).values([
+      {
+        id: olderRequestId,
+        inviteId: olderInviteId,
+        orgId,
+        requestType: "agent",
+        status: "pending_approval",
+        requestIp: "127.0.0.1",
+        requestEmailSnapshot: "older@example.com",
+        agentName: "Older request",
+        capabilities: "Older request capabilities",
+        createdAt: olderActivityAt,
+        updatedAt: olderActivityAt,
+      },
+      {
+        id: newerRequestId,
+        inviteId: newerInviteId,
+        orgId,
+        requestType: "agent",
+        status: "pending_approval",
+        requestIp: "127.0.0.1",
+        requestEmailSnapshot: "newer@example.com",
+        agentName: "Newer request",
+        capabilities: "Newer request capabilities",
+        createdAt: newerActivityAt,
+        updatedAt: newerActivityAt,
+      },
+      {
+        id: resolvedRequestId,
+        inviteId: resolvedInviteId,
+        orgId,
+        requestType: "agent",
+        status: "approved",
+        requestIp: "127.0.0.1",
+        requestEmailSnapshot: "resolved@example.com",
+        agentName: "Resolved request",
+        capabilities: "Resolved request should not appear",
+        createdAt: new Date("2026-04-12T13:00:00.000Z"),
+        updatedAt: new Date("2026-04-12T13:00:00.000Z"),
+      },
+      {
+        id: otherOrgRequestId,
+        inviteId: otherOrgInviteId,
+        orgId: otherOrgId,
+        requestType: "agent",
+        status: "pending_approval",
+        requestIp: "127.0.0.1",
+        requestEmailSnapshot: "other@example.com",
+        agentName: "Other org request",
+        capabilities: "Other org request should not appear",
+        createdAt: new Date("2026-04-12T14:00:00.000Z"),
+        updatedAt: new Date("2026-04-12T14:00:00.000Z"),
+      },
+    ]);
+    await db.insert(chatConversations).values({
+      id: activeChatId,
+      orgId,
+      title: "Older active chat",
+      status: "active",
+      lastMessageAt: olderActivityAt,
+      createdAt: olderActivityAt,
+      updatedAt: olderActivityAt,
+    });
+    await messengerSvc.setThreadRead(orgId, userId, "join-requests", new Date("2026-04-12T10:00:00.000Z"));
+
+    const thread = await messengerSvc.getSystemThread(orgId, userId, "join-requests");
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const joinRequestsSummary = summaries.find((item) => item.threadKey === "join-requests");
+
+    expect(thread.detail.items.map((item) => item.id)).toEqual([newerRequestId, olderRequestId]);
+    expect(thread.summary.unreadCount).toBe(1);
+    expect(thread.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+    expect(joinRequestsSummary?.subtitle).toBe("2 items");
+    expect(joinRequestsSummary?.preview).toBe("Newer request capabilities");
+    expect(joinRequestsSummary?.unreadCount).toBe(1);
+    expect(joinRequestsSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+    expect(summaries[0]?.threadKey).toBe("join-requests");
+    expect(thread.detail.items.map((item) => item.id)).not.toContain(resolvedRequestId);
+    expect(thread.detail.items.map((item) => item.id)).not.toContain(otherOrgRequestId);
   });
 
   it("excludes archived chats from Messenger thread summaries", async () => {

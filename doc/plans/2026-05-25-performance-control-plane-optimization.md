@@ -232,6 +232,31 @@ Phase 4 evidence:
 - `pnpm --filter @rudderhq/server typecheck`
 - `pnpm --filter @rudderhq/server exec vitest run src/__tests__/costs-langfuse.test.ts src/__tests__/monthly-spend-service.test.ts --reporter=verbose`
 
+## Phase 5 Result
+
+The fifth slice continued the Messenger summary split. `/messenger/threads` now
+uses summary-only loaders for the `failed-runs` and `join-requests` synthetic
+threads instead of constructing their full detail item lists just to decide
+whether a summary row should be shown.
+
+The detail endpoints remain unchanged:
+
+- `/messenger/system/failed-runs` still uses the full failed-run detail loader
+  with agent names, item cards, chronological ordering, and retry/open actions.
+- `/messenger/system/join-requests` still uses the full join-request detail
+  loader with action cards and request metadata.
+
+The summary-only loaders preserve the existing list semantics by computing
+item count, latest activity, unread count, and latest preview directly from the
+same scoped rows.
+
+Phase 5 evidence:
+
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/messenger-service.test.ts --reporter=verbose`
+  with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
+  isolated database on the already-running local Rudder Postgres instance
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local

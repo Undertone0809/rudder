@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
   activityLog,
@@ -69,6 +69,10 @@ type ThreadReadState = {
 };
 type ThreadStateMap = Map<string, ThreadStateRow>;
 type ThreadStateSource = ThreadStateMap | Promise<ThreadStateMap>;
+type SystemSummaryData = {
+  summary: MessengerThreadSummary;
+  itemCount: number;
+};
 
 type IssueUniverseRow = {
   id: string;
@@ -1111,6 +1115,57 @@ export function messengerService(db: Db) {
     };
   }
 
+  async function loadFailedRunSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource): Promise<SystemSummaryData> {
+    const lastReadAt = await lastReadAtForThread(db, orgId, userId, "failed-runs", threadStates);
+    const latestActivitySql = sql<Date | null>`max(coalesce(${heartbeatRuns.updatedAt}, ${heartbeatRuns.createdAt}))`;
+    const failedRunPredicate = and(eq(heartbeatRuns.orgId, orgId), eq(heartbeatRuns.status, "failed"));
+
+    const [summaryRows, latestRows, unreadRows] = await Promise.all([
+      db
+        .select({
+          itemCount: sql<number>`count(*)::int`,
+          latestActivityAt: latestActivitySql,
+        })
+        .from(heartbeatRuns)
+        .where(failedRunPredicate),
+      db
+        .select({
+          error: heartbeatRuns.error,
+          stderrExcerpt: heartbeatRuns.stderrExcerpt,
+        })
+        .from(heartbeatRuns)
+        .where(failedRunPredicate)
+        .orderBy(desc(heartbeatRuns.updatedAt), desc(heartbeatRuns.createdAt))
+        .limit(1),
+      lastReadAt
+        ? db
+          .select({
+            unreadCount: sql<number>`count(*)::int`,
+          })
+          .from(heartbeatRuns)
+          .where(and(failedRunPredicate, gt(heartbeatRuns.updatedAt, lastReadAt)))
+        : Promise.resolve([]),
+    ]);
+
+    const summaryRow = summaryRows[0];
+    const latestRun = latestRows[0] ?? null;
+    const itemCount = Number(summaryRow?.itemCount ?? 0);
+    const unreadCount = lastReadAt ? Number(unreadRows[0]?.unreadCount ?? 0) : itemCount;
+    return {
+      itemCount,
+      summary: systemSummary(
+        "failed-runs",
+        "Failed runs",
+        itemCount,
+        normalizeDate(summaryRow?.latestActivityAt ?? null),
+        unreadCount,
+        lastReadAt,
+        "No failed runs yet",
+        truncate(latestRun?.error) ?? truncate(latestRun?.stderrExcerpt),
+      ),
+    };
+  }
+
   async function loadBudgetAlertData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
     const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "budget-alerts", threadStates);
     const incidents = ((await budgetsSvc.overview(orgId)).activeIncidents ?? []) as BudgetIncidentRow[];
@@ -1188,6 +1243,57 @@ export function messengerService(db: Db) {
     };
   }
 
+  async function loadJoinRequestSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource): Promise<SystemSummaryData> {
+    const lastReadAt = await lastReadAtForThread(db, orgId, userId, "join-requests", threadStates);
+    const latestActivitySql = sql<Date | null>`max(coalesce(${joinRequests.updatedAt}, ${joinRequests.createdAt}))`;
+    const joinRequestPredicate = and(eq(joinRequests.orgId, orgId), eq(joinRequests.status, "pending_approval"));
+
+    const [summaryRows, latestRows, unreadRows] = await Promise.all([
+      db
+        .select({
+          itemCount: sql<number>`count(*)::int`,
+          latestActivityAt: latestActivitySql,
+        })
+        .from(joinRequests)
+        .where(joinRequestPredicate),
+      db
+        .select({
+          capabilities: joinRequests.capabilities,
+          requestEmailSnapshot: joinRequests.requestEmailSnapshot,
+        })
+        .from(joinRequests)
+        .where(joinRequestPredicate)
+        .orderBy(desc(joinRequests.updatedAt), desc(joinRequests.createdAt))
+        .limit(1),
+      lastReadAt
+        ? db
+          .select({
+            unreadCount: sql<number>`count(*)::int`,
+          })
+          .from(joinRequests)
+          .where(and(joinRequestPredicate, gt(joinRequests.updatedAt, lastReadAt)))
+        : Promise.resolve([]),
+    ]);
+
+    const summaryRow = summaryRows[0];
+    const latestRequest = latestRows[0] ?? null;
+    const itemCount = Number(summaryRow?.itemCount ?? 0);
+    const unreadCount = lastReadAt ? Number(unreadRows[0]?.unreadCount ?? 0) : itemCount;
+    return {
+      itemCount,
+      summary: systemSummary(
+        "join-requests",
+        "Join requests",
+        itemCount,
+        normalizeDate(summaryRow?.latestActivityAt ?? null),
+        unreadCount,
+        lastReadAt,
+        "No pending join requests",
+        latestRequest?.capabilities ?? latestRequest?.requestEmailSnapshot ?? null,
+      ),
+    };
+  }
+
   async function listThreadSummaries(orgId: string, userId: string) {
     const syntheticThreadStates = loadThreadStates(db, orgId, userId, [
       "issues",
@@ -1200,17 +1306,17 @@ export function messengerService(db: Db) {
       chatsSvc.list(orgId, { status: "active" }, userId),
       loadIssueSummaryData(orgId, userId, syntheticThreadStates),
       loadApprovalSummaryData(orgId, userId, syntheticThreadStates),
-      loadFailedRunData(orgId, userId, syntheticThreadStates),
+      loadFailedRunSummaryData(orgId, userId, syntheticThreadStates),
       loadBudgetAlertData(orgId, userId, syntheticThreadStates),
-      loadJoinRequestData(orgId, userId, syntheticThreadStates),
+      loadJoinRequestSummaryData(orgId, userId, syntheticThreadStates),
     ]);
 
     const syntheticSummaries: MessengerThreadSummary[] = [];
     if (issueData.detail.items.length > 0) syntheticSummaries.push(issueData.summary);
     if (approvalData.detail.items.length > 0) syntheticSummaries.push(approvalData.summary);
-    if (failedRunData.detail.items.length > 0) syntheticSummaries.push(failedRunData.summary);
+    if (failedRunData.itemCount > 0) syntheticSummaries.push(failedRunData.summary);
     if (budgetData.detail.items.length > 0) syntheticSummaries.push(budgetData.summary);
-    if (joinRequestData.detail.items.length > 0) syntheticSummaries.push(joinRequestData.summary);
+    if (joinRequestData.itemCount > 0) syntheticSummaries.push(joinRequestData.summary);
 
     const threadSummaries: MessengerThreadSummary[] = [
       ...chats.map(chatSummary),
