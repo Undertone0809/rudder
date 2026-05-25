@@ -15,17 +15,45 @@ describe("UiLab coverage registry", () => {
       "PriorityIcon",
       "EntityRow",
       "MetricCard",
+      "ActivityCharts",
       "FilterBar",
       "InlineEditor",
+      "InlineEntitySelector",
       "PageSkeleton",
       "Identity",
       "AgentIdentity",
+      "AgentAvatar",
       "AssigneeLabel",
+      "ReportsToPicker",
       "IssueLabelChip",
       "ActivityRow",
       "IssueRow",
       "ApprovalCard",
       "AgentActionButtons",
+      "AgentIconPicker",
+      "AgentProperties",
+      "ApprovalPayload",
+      "ApprovalPayloadRenderer",
+      "DashboardDateRangeControl",
+      "GoalProperties",
+      "GoalTree",
+      "HeartbeatEnabledButtons",
+      "JsonSchemaForm",
+      "MarkdownBody",
+      "PackageFileTree",
+      "PageTabBar",
+      "ProjectProperties",
+      "ResourceLocatorField",
+      "ScheduleEditor",
+      "BudgetPolicyCard",
+      "BudgetIncidentCard",
+      "FinanceKindCard",
+      "FinanceTimelineCard",
+      "RudderLogo",
+      "SkillReferenceToken",
+      "SidebarNavItem",
+      "SidebarSection",
+      "SidebarSectionHeader",
       "CommandPalette",
       "RunTranscriptView",
     ]) {
@@ -39,5 +67,34 @@ describe("UiLab coverage registry", () => {
 
     expect(issueProperties?.status).toBe("context-required");
     expect(issueProperties?.gaps).toContain("issue");
+  });
+
+  it("does not leave common shell and workflow surfaces out of the inventory", () => {
+    const coverage = getUiLabCoverage();
+    const componentIds = new Set(coverage.map((entry) => entry.componentId));
+
+    for (const expected of [
+      "ActiveAgentsPanel",
+      "AgentActionsMenu",
+      "BreadcrumbBar",
+      "DesktopUpdateStatusCard",
+      "DevRestartBanner",
+      "InstanceSidebar",
+      "MessengerContextSidebar",
+      "MobileBottomNav",
+      "MobileWorkspaceDrawer",
+      "OrganizationSettingsSidebar",
+      "OrganizationSwitcher",
+      "SettingsSidebar",
+      "SidebarAgents",
+      "SidebarChatSessions",
+      "SidebarProjects",
+      "WorkspaceBackupFilesSidebar",
+      "NewAgentDialog",
+      "NewGoalDialog",
+      "NewProjectDialog",
+    ]) {
+      expect(componentIds.has(expected), expected).toBe(true);
+    }
   });
 });

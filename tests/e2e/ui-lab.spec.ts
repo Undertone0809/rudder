@@ -33,13 +33,25 @@ test.describe("UI Lab", () => {
     await expect(page.getByText("Activity, timestamps, copy, and progress")).toBeVisible();
     await expect(page.getByText("Issue rows and agent actions")).toBeVisible();
     await expect(page.getByText("Approval card")).toBeVisible();
+    await expect(page.getByText("Agent avatar, picker, and properties")).toBeVisible();
+    await expect(page.getByText("Charts, selectors, and sidebar rows")).toBeVisible();
+    await expect(page.getByText("Schema form")).toBeVisible();
+    await expect(page.getByText("File tree")).toBeVisible();
+    await expect(page.getByText("Goal and project properties")).toBeVisible();
+    await expect(page.getByText("Budget and finance cards")).toBeVisible();
     await expect(page.getByText("RUD-214").first()).toBeVisible();
-    await expect(page.getByText("Reviewer Agent", { exact: true })).toBeVisible();
+    await expect(page.getByText("Reviewer Agent", { exact: true }).first()).toBeVisible();
 
     await page.getByRole("button", { name: /Coverage/ }).click();
     await page.getByPlaceholder("Search components, paths, or statuses").fill("RunTranscriptView");
     await expect(page.getByRole("cell", { name: "RunTranscriptView", exact: true })).toBeVisible();
     await expect(page.getByRole("cell", { name: "Fixture-backed" })).toBeVisible();
+
+    await page.getByPlaceholder("Search components, paths, or statuses").fill("JsonSchemaForm");
+    await expect(page.getByRole("cell", { name: "JsonSchemaForm", exact: true })).toBeVisible();
+
+    await page.getByPlaceholder("Search components, paths, or statuses").fill("WorkspaceBackupFilesSidebar");
+    await expect(page.getByRole("cell", { name: "WorkspaceBackupFilesSidebar", exact: true })).toBeVisible();
 
     await page.goto(`/${organization.issuePrefix}/design-guide`);
     await expect(page.getByText("Existing design guide")).toBeVisible();
