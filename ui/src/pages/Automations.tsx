@@ -12,6 +12,9 @@ import {
   Info,
   MessageSquare,
   MoreHorizontal,
+  Pause,
+  Pencil,
+  Play,
   Plus,
   Repeat,
   Trash2,
@@ -1174,12 +1177,14 @@ export function Automations() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => navigate(`/automations/${automation.id}`)}>
+                              <Pencil className="h-4 w-4" />
                               Edit
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={runningAutomationId === automation.id || !enabled}
                               onClick={() => runAutomation.mutate(automation.id)}
                             >
+                              <Play className="h-4 w-4" />
                               {runningAutomationId === automation.id ? "Running..." : "Run now"}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
@@ -1192,10 +1197,11 @@ export function Automations() {
                               }
                               disabled={isStatusPending}
                             >
+                              {enabled ? <Pause className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
                               {enabled ? "Pause" : "Enable"}
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
+                              variant="destructive"
                               disabled={deleteAutomation.isPending}
                               onClick={async () => {
                                 const confirmed = await confirm({
@@ -1208,7 +1214,7 @@ export function Automations() {
                                 deleteAutomation.mutate(automation.id);
                               }}
                             >
-                              <Trash2 className="mr-2 h-3.5 w-3.5" />
+                              <Trash2 className="h-4 w-4" />
                               Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>
