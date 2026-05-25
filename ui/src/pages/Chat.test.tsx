@@ -355,6 +355,54 @@ describe("ProposalCard", () => {
     expect(html).not.toContain("shadow-sm");
   });
 
+  it("renders generated replying agent avatars when the stored icon is missing", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Use a generated fallback avatar.",
+      replyingAgentId: "agent-1",
+      structuredPayload: {
+        title: "Review missing avatar",
+        priority: "medium",
+        description: "The assistant attribution should not fall back to the bot glyph.",
+      },
+    }), conversation({}), [
+      {
+        id: "agent-1",
+        name: "Mira",
+        role: "general",
+        title: "Operator",
+        icon: null,
+      } as Agent,
+    ]);
+
+    expect(html).toContain("data:image/svg+xml");
+    expect(html).toContain("h-8 w-8 shrink-0");
+    expect(html).not.toContain("border-border/70");
+    expect(html).not.toContain("bg-muted/90");
+    expect(html).not.toContain("shadow-sm");
+  });
+
+  it("renders generated replying agent avatars while the agent directory is unavailable", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Use a generated fallback avatar before agent data loads.",
+      replyingAgentId: "agent-1",
+      structuredPayload: {
+        title: "Review unloaded avatar",
+        priority: "medium",
+        description: "The assistant attribution should not flash the bot glyph.",
+      },
+    }), conversation({}), []);
+
+    expect(html).toContain("data:image/svg+xml");
+    expect(html).toContain("h-8 w-8 shrink-0");
+    expect(html).not.toContain("border-border/70");
+    expect(html).not.toContain("bg-muted/90");
+    expect(html).not.toContain("shadow-sm");
+  });
+
   it("shows revision-requested issue proposals as read-only requested changes", () => {
     const html = renderProposalCard(message({
       role: "assistant",

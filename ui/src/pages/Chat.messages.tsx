@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
   Boxes,
-  Bot,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -56,7 +55,7 @@ import { TextDots } from "@/components/TextDots";
 import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
-import { AgentIcon, getAgentAvatarImageSrc } from "@/components/AgentIconPicker";
+import { AgentIcon } from "@/components/AgentIconPicker";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -137,21 +136,19 @@ export function ChatAssistantAttributionRow({
   const agent = replyingAgentId ? agents?.find((a) => a.id === replyingAgentId) : null;
   const fallbackLabel = replyingAgentId ? conversation.chatRuntime?.sourceLabel ?? "Unknown agent" : "Assistant";
   const label = agent?.name ?? fallbackLabel;
-  const agentImageSrc = agent ? getAgentAvatarImageSrc(agent.icon) : null;
 
   return (
     <div className="mb-2 flex items-center gap-2.5">
-      {agent && agentImageSrc ? (
-        <AgentIcon icon={agent.icon} role={agent.role} className="h-8 w-8 shrink-0" />
+      {agent || replyingAgentId ? (
+        <AgentIcon
+          icon={agent?.icon}
+          role={agent?.role}
+          fallbackSeed={agent?.id ?? replyingAgentId}
+          className="h-8 w-8 shrink-0"
+        />
       ) : (
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/90 text-foreground shadow-sm">
-          {agent ? (
-            <AgentIcon icon={agent.icon} role={agent.role} className="h-4 w-4" />
-          ) : replyingAgentId ? (
-            <Bot className="h-4 w-4 text-muted-foreground" />
-          ) : (
-            <Sparkles className="h-4 w-4 text-muted-foreground" />
-          )}
+          <Sparkles className="h-4 w-4 text-muted-foreground" />
         </span>
       )}
       <span className="text-sm font-semibold tracking-tight text-foreground">{label}</span>
