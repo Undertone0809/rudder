@@ -265,16 +265,6 @@ test.describe("Automations index layout", () => {
     expect(agentRes.ok()).toBe(true);
     const agent = (await agentRes.json()) as { id: string };
 
-    const chatRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/chats`, {
-      data: {
-        title: "Daily digest",
-        preferredAgentId: agent.id,
-        issueCreationMode: "manual_approval",
-      },
-    });
-    expect(chatRes.ok()).toBe(true);
-    const chat = (await chatRes.json()) as { id: string };
-
     const automationRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`, {
       data: {
         title: "Daily digest",
@@ -282,7 +272,7 @@ test.describe("Automations index layout", () => {
         assigneeAgentId: agent.id,
         priority: "medium",
         outputMode: "chat_output",
-        chatConversationId: chat.id,
+        chatConversationId: null,
       },
     });
     expect(automationRes.ok()).toBe(true);
@@ -294,10 +284,29 @@ test.describe("Automations index layout", () => {
     expect(runRes.ok()).toBe(true);
     const run = (await runRes.json()) as { linkedIssueId: string | null; linkedChatConversationId: string | null };
     expect(run.linkedIssueId).toBeTruthy();
-    expect(run.linkedChatConversationId).toBe(chat.id);
+    expect(run.linkedChatConversationId).toBeTruthy();
 
     await selectOrganization(page, organization.id);
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/chat/${run.linkedChatConversationId}`);
+
+    await expect(page.getByText("From automation").first()).toBeVisible();
+    await expect(page.getByText("Daily digest", { exact: true }).first()).toBeVisible();
+
+    const completeFirstIssueRes = await page.request.patch(`${E2E_BASE_URL}/api/issues/${run.linkedIssueId}`, {
+      data: { status: "done" },
+    });
+    expect(completeFirstIssueRes.ok()).toBe(true);
+
+    const secondRunRes = await page.request.post(`${E2E_BASE_URL}/api/automations/${automation.id}/run`, {
+      data: { source: "manual" },
+    });
+    expect(secondRunRes.ok()).toBe(true);
+    const secondRun = (await secondRunRes.json()) as { linkedIssueId: string | null; linkedChatConversationId: string | null };
+    expect(secondRun.linkedIssueId).toBeTruthy();
+    expect(secondRun.linkedChatConversationId).toBeTruthy();
+    expect(secondRun.linkedChatConversationId).not.toBe(run.linkedChatConversationId);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/chat/${secondRun.linkedChatConversationId}`);
 
     await expect(page.getByText("From automation").first()).toBeVisible();
     await expect(page.getByText("Daily digest", { exact: true }).first()).toBeVisible();

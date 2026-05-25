@@ -170,7 +170,7 @@ export function AutomationDetail() {
             concurrencyPolicy: automation.concurrencyPolicy,
             catchUpPolicy: automation.catchUpPolicy,
             outputMode: automation.outputMode,
-            chatConversationId: automation.chatConversationId ?? "",
+            chatConversationId: "",
           }
         : null,
     [automation],
@@ -185,8 +185,7 @@ export function AutomationDetail() {
       editDraft.priority !== automationDefaults.priority ||
       editDraft.concurrencyPolicy !== automationDefaults.concurrencyPolicy ||
       editDraft.catchUpPolicy !== automationDefaults.catchUpPolicy ||
-      editDraft.outputMode !== automationDefaults.outputMode ||
-      editDraft.chatConversationId !== automationDefaults.chatConversationId
+      editDraft.outputMode !== automationDefaults.outputMode
     );
   }, [editDraft, automationDefaults]);
   const canAutoSaveAutomation = Boolean(
@@ -203,7 +202,7 @@ export function AutomationDetail() {
       concurrencyPolicy: editDraft.concurrencyPolicy,
       catchUpPolicy: editDraft.catchUpPolicy,
       outputMode: editDraft.outputMode,
-      chatConversationId: editDraft.outputMode === "chat_output" ? editDraft.chatConversationId || null : null,
+      chatConversationId: null,
     }),
     [editDraft],
   );
@@ -1099,7 +1098,7 @@ export function AutomationDetail() {
                   onValueChange={(outputMode) => setEditDraft((current) => ({
                     ...current,
                     outputMode,
-                    chatConversationId: outputMode === "chat_output" ? current.chatConversationId : "",
+                    chatConversationId: "",
                   }))}
                 >
                   <SelectTrigger size="sm" className="-mx-1 h-7 w-fit border-0 bg-transparent px-1 py-0.5 text-sm shadow-none hover:bg-accent/50">
