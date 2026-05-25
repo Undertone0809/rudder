@@ -330,12 +330,36 @@ Phase 8 evidence:
   with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
   isolated database on the already-running local Rudder Postgres instance
 
+## Phase 9 Result
+
+The ninth slice added a repeatable seeded timing harness for the optimized
+control-plane paths. `pnpm perf:control-plane` now runs
+`scripts/perf/control-plane-baseline.ts` against an explicit `DATABASE_URL`,
+seeds a synthetic organization, times the hot service paths, emits JSON timing
+summaries, and removes its seeded rows by default.
+
+The harness covers:
+
+- sidebar base counts
+- unread touched issue count
+- active chat attention count
+- Messenger thread summaries
+- cost event ingestion and monthly spend recomputation
+
+It supports `--scale smoke|medium`, `--iterations <n>`, `--no-migrate`, and
+`--keep-data` for later `EXPLAIN` work on the generated org.
+
+Phase 9 evidence:
+
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale smoke --iterations 2`
+- `pnpm --filter @rudderhq/server typecheck`
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local
   shared-memory pressure is cleared; focused SQL validation used an isolated
   database on an already-running local Rudder Postgres instance instead.
-- Runtime latency targets still need a seeded fixture and timing harness before
-  claiming quantified performance wins.
+- Runtime latency targets still need production-shaped `EXPLAIN
+  (ANALYZE, BUFFERS)` evidence before claiming quantified performance wins.
 - The next behavioral-compatible candidates are deeper Messenger summary-only
   loaders, opt-in issue list pagination, and transactional cost rollups.
