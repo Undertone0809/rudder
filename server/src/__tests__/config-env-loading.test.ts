@@ -270,4 +270,79 @@ describe("server config env loading", () => {
       environment: "prod",
     });
   });
+
+  it("defaults automatic database backup guard to 256 MiB", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    const projectDir = path.join(tempDir, "repo");
+    fs.mkdirSync(projectDir, { recursive: true });
+    process.chdir(projectDir);
+    writeText(path.join(projectDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+
+    delete process.env.RUDDER_CONFIG;
+    delete process.env.RUDDER_DB_BACKUP_MAX_ESTIMATED_BYTES;
+    vi.doMock("../config-file.js", () => ({
+      readConfigFile: () => ({
+        $meta: {
+          version: 1,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          source: "configure",
+        },
+        database: {
+          mode: "embedded-postgres",
+          embeddedPostgresPort: 54329,
+          backup: {
+            enabled: true,
+            intervalMinutes: 60,
+            retentionDays: 30,
+            dir: "~/.rudder/instances/default/data/backups",
+          },
+        },
+        logging: {},
+        server: {},
+      }),
+    }));
+
+    const loadConfig = await importLoadConfig();
+    const config = loadConfig();
+
+    expect(config.databaseBackupMaxEstimatedBytes).toBe(256 * 1024 * 1024);
+  });
+
+  it("lets env vars override the database backup guard size", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    const projectDir = path.join(tempDir, "repo");
+    fs.mkdirSync(projectDir, { recursive: true });
+    process.chdir(projectDir);
+    writeText(path.join(projectDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+
+    delete process.env.RUDDER_CONFIG;
+    process.env.RUDDER_DB_BACKUP_MAX_ESTIMATED_BYTES = "384MiB";
+    vi.doMock("../config-file.js", () => ({
+      readConfigFile: () => ({
+        $meta: {
+          version: 1,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          source: "configure",
+        },
+        database: {
+          mode: "embedded-postgres",
+          embeddedPostgresPort: 54329,
+          backup: {
+            enabled: true,
+            intervalMinutes: 60,
+            retentionDays: 30,
+            maxEstimatedBytes: 128,
+            dir: "~/.rudder/instances/default/data/backups",
+          },
+        },
+        logging: {},
+        server: {},
+      }),
+    }));
+
+    const loadConfig = await importLoadConfig();
+    const config = loadConfig();
+
+    expect(config.databaseBackupMaxEstimatedBytes).toBe(384 * 1024 * 1024);
+  });
 });

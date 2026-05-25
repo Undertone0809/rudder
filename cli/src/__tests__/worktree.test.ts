@@ -24,7 +24,7 @@ import {
   rewriteLocalUrlPort,
   sanitizeWorktreeInstanceId,
 } from "../commands/worktree-lib.js";
-import type { RudderConfig } from "../config/schema.js";
+import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type RudderConfig } from "../config/schema.js";
 
 const ORIGINAL_CWD = process.cwd();
 const ORIGINAL_ENV = { ...process.env };
@@ -55,6 +55,7 @@ function buildSourceConfig(): RudderConfig {
         enabled: true,
         intervalMinutes: 60,
         retentionDays: 30,
+        maxEstimatedBytes: DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
         dir: "/tmp/main/backups",
       },
     },

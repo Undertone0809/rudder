@@ -3,6 +3,7 @@ import path from "node:path";
 import pc from "picocolors";
 import {
   AUTH_BASE_URL_MODES,
+  DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
   DEPLOYMENT_EXPOSURES,
   DEPLOYMENT_MODES,
   SECRET_PROVIDERS,
@@ -54,6 +55,7 @@ const ONBOARD_ENV_KEYS = [
   "RUDDER_DB_BACKUP_INTERVAL_MINUTES",
   "RUDDER_DB_BACKUP_RETENTION_DAYS",
   "RUDDER_DB_BACKUP_DIR",
+  "RUDDER_DB_BACKUP_MAX_ESTIMATED_BYTES",
   "RUDDER_DEPLOYMENT_MODE",
   "RUDDER_DEPLOYMENT_EXPOSURE",
   "HOST",
@@ -89,6 +91,26 @@ function parseNumberFromEnv(rawValue: string | undefined): number | null {
   if (!rawValue) return null;
   const parsed = Number(rawValue);
   if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
+function parseBytesFromEnv(rawValue: string | undefined): number | null {
+  const value = rawValue?.trim();
+  if (!value) return null;
+  const match = value.match(/^(\d+(?:\.\d+)?)\s*(b|kb|kib|mb|mib|gb|gib)?$/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2]?.toLowerCase() ?? "b";
+  const multiplier =
+    unit === "gb" || unit === "gib"
+      ? 1024 ** 3
+      : unit === "mb" || unit === "mib"
+        ? 1024 ** 2
+        : unit === "kb" || unit === "kib"
+          ? 1024
+          : 1;
+  const parsed = Math.floor(amount * multiplier);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) return null;
   return parsed;
 }
 
@@ -161,6 +183,9 @@ function quickstartDefaultsFromEnv(): {
     1,
     parseNumberFromEnv(process.env.RUDDER_DB_BACKUP_RETENTION_DAYS) ?? 30,
   );
+  const databaseBackupMaxEstimatedBytes =
+    parseBytesFromEnv(process.env.RUDDER_DB_BACKUP_MAX_ESTIMATED_BYTES) ??
+    DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES;
   const defaults: OnboardDefaults = {
     database: {
       mode: databaseUrl ? "postgres" : "embedded-postgres",
@@ -174,6 +199,7 @@ function quickstartDefaultsFromEnv(): {
         enabled: databaseBackupEnabled,
         intervalMinutes: databaseBackupIntervalMinutes,
         retentionDays: databaseBackupRetentionDays,
+        maxEstimatedBytes: databaseBackupMaxEstimatedBytes,
         dir: resolvePathFromEnv(process.env.RUDDER_DB_BACKUP_DIR) ?? resolveDefaultBackupDir(instanceId),
       },
     },

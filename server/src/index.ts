@@ -25,8 +25,6 @@ import {
   inspectMigrations,
   applyPendingMigrations,
   reconcilePendingMigrationHistory,
-  formatDatabaseBackupResult,
-  runDatabaseBackup,
   authUsers,
   organizations,
   organizationMemberships,
@@ -68,6 +66,7 @@ import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { serverVersion } from "./version.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
+import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
 
 type BetterAuthSessionUser = {
   id: string;
@@ -981,22 +980,12 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   
       backupInFlight = true;
       try {
-        const result = await runDatabaseBackup({
+        await runScheduledDatabaseBackupOnce({
           connectionString: activeDatabaseConnectionString,
           backupDir: config.databaseBackupDir,
           retentionDays: config.databaseBackupRetentionDays,
-          filenamePrefix: "rudder",
+          maxEstimatedBytes: config.databaseBackupMaxEstimatedBytes,
         });
-        logger.info(
-          {
-            backupFile: result.backupFile,
-            sizeBytes: result.sizeBytes,
-            prunedCount: result.prunedCount,
-            backupDir: config.databaseBackupDir,
-            retentionDays: config.databaseBackupRetentionDays,
-          },
-          `Automatic database backup complete: ${formatDatabaseBackupResult(result)}`,
-        );
       } catch (err) {
         logger.error({ err, backupDir: config.databaseBackupDir }, "Automatic database backup failed");
       } finally {
@@ -1009,6 +998,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         intervalMinutes: config.databaseBackupIntervalMinutes,
         retentionDays: config.databaseBackupRetentionDays,
         backupDir: config.databaseBackupDir,
+        maxEstimatedBytes: config.databaseBackupMaxEstimatedBytes,
       },
       "Automatic database backups enabled",
     );
