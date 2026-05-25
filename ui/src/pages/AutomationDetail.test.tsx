@@ -503,7 +503,7 @@ describe("AutomationDetail", () => {
     expect(container.querySelector('[data-testid="automation-detail-project-control"]')?.textContent).toContain("Automation UX");
   });
 
-  it("shows chat output as an automation-owned chat without an existing-chat selector", async () => {
+  it("shows chat output without a redundant per-run chat selector", async () => {
     automation.outputMode = "chat_output";
     automation.chatConversationId = null;
     automation.chatConversation = null;
@@ -515,7 +515,7 @@ describe("AutomationDetail", () => {
     });
 
     expect(container.textContent).toContain("Send to chat");
-    expect(container.textContent).toContain("New chat");
+    expect(container.querySelector('[data-testid="automation-configuration-card"]')?.textContent).not.toContain("New chat");
     expect(container.textContent).not.toContain("Search chats");
   });
 

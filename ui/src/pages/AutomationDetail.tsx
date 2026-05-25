@@ -599,10 +599,6 @@ export function AutomationDetail() {
   );
   const currentAssignee = editDraft.assigneeAgentId ? agentById.get(editDraft.assigneeAgentId) ?? null : null;
   const currentProject = editDraft.projectId ? projectById.get(editDraft.projectId) ?? null : null;
-  const automationResultChat = useMemo(() => {
-    if (automation?.chatConversation) return automation.chatConversation;
-    return automation?.recentRuns.find((run) => run.linkedChatConversation)?.linkedChatConversation ?? null;
-  }, [automation]);
   const triggerById = useMemo(
     () => new Map((automation?.triggers ?? []).map((trigger) => [trigger.id, trigger])),
     [automation?.triggers],
@@ -1115,24 +1111,6 @@ export function AutomationDetail() {
                   </SelectContent>
                 </Select>
               </SidebarPropertyRow>
-              {editDraft.outputMode === "chat_output" ? (
-                <SidebarPropertyRow label="Chat">
-                  {automationResultChat ? (
-                    <Link
-                      data-testid="automation-owned-chat-link"
-                      to={`/messenger/chat/${automationResultChat.id}`}
-                      className="-mx-1 inline-flex min-h-7 max-w-full items-center px-1 py-0.5 text-sm font-medium text-foreground hover:underline"
-                    >
-                      <span className="truncate">{automationResultChat.title}</span>
-                    </Link>
-                  ) : (
-                    <SidebarSelectValue>
-                      <span>New chat</span>
-                    </SidebarSelectValue>
-                  )}
-                </SidebarPropertyRow>
-              ) : null}
-
               <SidebarPropertyRow label="Repeats">
                 <span className="min-w-0 truncate text-sm text-foreground" title={summarizeTrigger(nextTrigger)}>
                   {summarizeTrigger(nextTrigger)}
