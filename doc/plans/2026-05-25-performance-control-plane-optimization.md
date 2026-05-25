@@ -346,8 +346,9 @@ The harness covers:
 - Messenger thread summaries
 - cost event ingestion and monthly spend recomputation
 
-It supports `--scale smoke|medium`, `--iterations <n>`, `--no-migrate`, and
-`--keep-data` for later `EXPLAIN` work on the generated org.
+It supports `--scale smoke|medium|cost-heavy`, `--iterations <n>`,
+`--no-migrate`, and `--keep-data` for later `EXPLAIN` work on the generated
+org.
 
 Phase 9 evidence:
 
@@ -516,6 +517,82 @@ Phase 14 evidence:
 - `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 2 --explain`
 - `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 5`
 
+## Phase 15 Plan
+
+The fifteenth slice will address the remaining cost-event write amplification.
+`costService.createEvent` currently inserts one `cost_events` row and then
+re-scans the current UTC month to refresh `agents.spentMonthlyCents` and
+`organizations.spentMonthlyCents`.
+
+The target change is a transactional monthly spend rollup keyed by organization,
+scope, and UTC month. The inserted `cost_events` row remains the audit source of
+truth, while create-time budget enforcement reads the same current-month totals
+from the transactionally updated rollup instead of scanning the full month.
+
+Compatibility requirements:
+
+- hard-stop budget evaluation must still happen after the inserted event and
+  refreshed current-month spend totals
+- agent and organization `spentMonthlyCents` fields must retain their existing
+  current UTC month meaning
+- non-current-month cost events must not inflate current-month spend fields
+- existing cost history must be backfilled into the rollup during migration
+- summary and trend endpoints remain event-backed; this slice only changes the
+  write-time monthly spend refresh path
+
+Phase 15 validation target:
+
+- generated migration and `@rudderhq/db` typecheck
+- focused cost service tests for same-month increment, out-of-month events, and
+  existing Langfuse/budget behavior
+- `pnpm --filter @rudderhq/server typecheck`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 5`
+
+## Phase 15 Result
+
+The fifteenth slice replaced the write-time current-month cost scan with a
+transactionally maintained monthly spend rollup. `cost_events` remains the
+audit source of truth for summaries and trends, while `costService.createEvent`
+now updates two rollup rows inside the same transaction as the inserted event:
+one agent-month row and one organization-month row.
+
+The compatibility boundary is unchanged:
+
+- current-month events still refresh `agents.spentMonthlyCents` and
+  `organizations.spentMonthlyCents` before budget evaluation
+- non-current-month events do not inflate current-month spend fields
+- if a rollup row is missing after migration, import, or direct test setup, the
+  service reconciles the current UTC month from `cost_events` once and inserts
+  the missing rollup
+- summary and trend endpoints still aggregate from `cost_events`
+- organization removal now deletes monthly spend rollups before deleting the
+  organization row, preserving the existing delete workflow for organizations
+  that have cost history
+
+The migration adds `cost_monthly_spend_rollups`, backfills organization and
+agent monthly totals from existing `cost_events`, and indexes both the unique
+scope/month identity and organization/month lookup.
+
+The perf harness now seeds steady-state cost rollups after direct fixture
+inserts and adds `--scale cost-heavy` for cost-ingestion evidence. On an
+isolated temporary database with 50,005 cost events,
+`costs.createEvent` timed at min 4.22 ms, p50 5.91 ms, max 9.44 ms, and avg
+6.18 ms. The representative `costs.monthlySpendRollupLookup` explain path read
+only the small monthly rollup table instead of scanning `cost_events`. On the
+medium fixture, `costs.createEvent` timed at min 3.68 ms, p50 4.44 ms, max
+5.02 ms, and avg 4.41 ms.
+
+Phase 15 evidence:
+
+- `pnpm --filter @rudderhq/db typecheck`
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/costs-langfuse.test.ts src/__tests__/monthly-spend-service.test.ts --reporter=verbose`
+- `RUDDER_COSTS_ROLLUPS_TEST_DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm --filter @rudderhq/server exec vitest run src/__tests__/costs-rollups-service.test.ts --reporter=verbose`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/orgs-service.test.ts --reporter=verbose`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale cost-heavy --iterations 5 --explain`
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 5`
+- `pnpm build`
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local
@@ -525,4 +602,4 @@ Phase 14 evidence:
   larger production-like organizations before claiming end-user performance
   wins.
 - The next behavioral-compatible candidates are deeper Messenger summary-only
-  loaders, opt-in issue list pagination, and transactional cost rollups.
+  loaders and opt-in issue list pagination.

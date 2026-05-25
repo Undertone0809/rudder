@@ -540,6 +540,13 @@
       "when": 1779718284150,
       "tag": "0076_silky_captain_flint",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1779723488902,
+      "tag": "0077_thin_black_cat",
+      "breakpoints": true
     }
   ]
 }

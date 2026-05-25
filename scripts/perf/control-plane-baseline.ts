@@ -10,6 +10,7 @@ import {
   chatConversations,
   chatMessages,
   costEvents,
+  costMonthlySpendRollups,
   createDb,
   heartbeatRuns,
   invites,
@@ -25,7 +26,7 @@ import { messengerService } from "../../server/src/services/messenger.js";
 import { costService } from "../../server/src/services/costs.js";
 import { visibleIncomingMessageSql } from "../../server/src/services/chats.helpers.js";
 
-type ScaleName = "smoke" | "medium";
+type ScaleName = "smoke" | "medium" | "cost-heavy";
 
 type ScenarioScale = {
   agents: number;
@@ -64,6 +65,18 @@ const SCALES: Record<ScaleName, ScenarioScale> = {
     failedRuns: 500,
     joinRequests: 100,
     costEvents: 1_500,
+  },
+  "cost-heavy": {
+    agents: 40,
+    issues: 200,
+    issueCommentsPerIssue: 2,
+    chats: 100,
+    chatMessagesPerChat: 2,
+    approvals: 80,
+    approvalCommentsPerApproval: 1,
+    failedRuns: 100,
+    joinRequests: 20,
+    costEvents: 50_000,
   },
 };
 
@@ -176,7 +189,7 @@ async function explainOptimizedPaths(
   boardUserId: string,
   agentId: string,
 ) {
-  const { start, end } = currentUtcMonthWindow();
+  const { start } = currentUtcMonthWindow();
   const queries = [
     {
       name: "sidebar.actionableApprovals",
@@ -305,15 +318,16 @@ async function explainOptimizedPaths(
       `,
     },
     {
-      name: "costs.monthlySpendTotalsForEvent",
+      name: "costs.monthlySpendRollupLookup",
       query: sql`
-        select
-          coalesce(sum(case when agent_id = ${agentId} then cost_cents else 0 end), 0)::double precision as agent_total,
-          coalesce(sum(cost_cents), 0)::double precision as organization_total
-        from cost_events
+        select scope_type, scope_id, spend_cents
+        from cost_monthly_spend_rollups
         where org_id = ${orgId}
-          and occurred_at >= ${start.toISOString()}::timestamptz
-          and occurred_at < ${end.toISOString()}::timestamptz
+          and month_start = ${start.toISOString()}::timestamptz
+          and (
+            (scope_type = 'organization' and scope_id = ${orgId})
+            or (scope_type = 'agent' and scope_id = ${agentId})
+          )
       `,
     },
     {
@@ -528,6 +542,59 @@ async function main() {
       occurredAt: minutesAgo(index),
     })), (chunk) => db.insert(costEvents).values(chunk));
 
+    await db.execute(sql`
+      insert into cost_monthly_spend_rollups (
+        org_id,
+        scope_type,
+        scope_id,
+        month_start,
+        spend_cents,
+        created_at,
+        updated_at
+      )
+      select
+        cost_events.org_id,
+        'organization',
+        cost_events.org_id::text,
+        (date_trunc('month', cost_events.occurred_at at time zone 'UTC') at time zone 'UTC') as month_start,
+        coalesce(sum(cost_events.cost_cents), 0)::int,
+        now(),
+        now()
+      from cost_events
+      where cost_events.org_id = ${orgId}
+      group by cost_events.org_id, (date_trunc('month', cost_events.occurred_at at time zone 'UTC') at time zone 'UTC')
+      on conflict (org_id, scope_type, scope_id, month_start)
+      do update set
+        spend_cents = excluded.spend_cents,
+        updated_at = now()
+    `);
+    await db.execute(sql`
+      insert into cost_monthly_spend_rollups (
+        org_id,
+        scope_type,
+        scope_id,
+        month_start,
+        spend_cents,
+        created_at,
+        updated_at
+      )
+      select
+        cost_events.org_id,
+        'agent',
+        cost_events.agent_id::text,
+        (date_trunc('month', cost_events.occurred_at at time zone 'UTC') at time zone 'UTC') as month_start,
+        coalesce(sum(cost_events.cost_cents), 0)::int,
+        now(),
+        now()
+      from cost_events
+      where cost_events.org_id = ${orgId}
+      group by cost_events.org_id, cost_events.agent_id, (date_trunc('month', cost_events.occurred_at at time zone 'UTC') at time zone 'UTC')
+      on conflict (org_id, scope_type, scope_id, month_start)
+      do update set
+        spend_cents = excluded.spend_cents,
+        updated_at = now()
+    `);
+
     const sidebar = sidebarBadgeService(db);
     const messenger = messengerService(db);
     const costs = costService(db);
@@ -578,6 +645,7 @@ async function main() {
   } finally {
     if (!options.keepData) {
       await db.delete(costEvents).where(eq(costEvents.orgId, orgId));
+      await db.delete(costMonthlySpendRollups).where(eq(costMonthlySpendRollups.orgId, orgId));
       await db.delete(messengerThreadUserStates).where(eq(messengerThreadUserStates.orgId, orgId));
       await db.delete(chatConversationUserStates).where(eq(chatConversationUserStates.orgId, orgId));
       await db.delete(chatMessages).where(eq(chatMessages.orgId, orgId));
