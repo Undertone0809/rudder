@@ -526,6 +526,13 @@
       "when": 1779708506785,
       "tag": "0074_fresh_whizzer",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1779710547881,
+      "tag": "0075_pink_weapon_omega",
+      "breakpoints": true
     }
   ]
 }

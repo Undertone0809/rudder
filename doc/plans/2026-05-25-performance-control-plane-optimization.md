@@ -306,6 +306,30 @@ Phase 7 evidence:
   with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
   isolated database on the already-running local Rudder Postgres instance
 
+## Phase 8 Result
+
+The eighth slice added the indexes needed by the approvals summary-only loader:
+
+- `approvals_company_updated_idx` on `(org_id, updated_at)` for latest approval
+  summary candidates and organization-scoped approval counts.
+- `approvals_company_status_updated_idx` on `(org_id, status, updated_at)` for
+  pending approval unread counts.
+- `approval_comments_company_created_idx` on `(org_id, created_at)` for latest
+  approval-comment summary candidates.
+
+These indexes keep Phase 7 from trading full row hydration for unindexed latest
+or unread scans on growing approval/comment histories. The existing detail
+endpoint and response contracts are unchanged.
+
+Phase 8 evidence:
+
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/postgres pnpm db:generate`
+- `pnpm --filter @rudderhq/db typecheck`
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/messenger-service.test.ts --reporter=verbose`
+  with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
+  isolated database on the already-running local Rudder Postgres instance
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local

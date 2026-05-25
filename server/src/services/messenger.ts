@@ -1080,7 +1080,7 @@ export function messengerService(db: Db) {
         })
         .from(approvalComments)
         .innerJoin(approvals, eq(approvalComments.approvalId, approvals.id))
-        .where(approvalPredicate)
+        .where(and(approvalPredicate, eq(approvalComments.orgId, orgId)))
         .orderBy(desc(approvalComments.createdAt))
         .limit(1),
       db
