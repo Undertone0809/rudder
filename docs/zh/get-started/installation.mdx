@@ -1,27 +1,27 @@
 ---
 title: "安装 Rudder"
-description: "通过 CLI 安装并启动 Rudder Desktop。"
+description: "用 CLI 安装并启动 Rudder Desktop。"
 ---
 
-最快的方式是安装当前用户可用的便携版 Rudder Desktop，并准备配套的持久 CLI。
+最快的方式是安装当前用户可用的便携版 Rudder Desktop，同时准备好持久 CLI。
 
 ![Rudder CLI 终端工作流](../../images/installation-cli.png)
 
 ## 如果你想使用 Rudder
 
-运行公开安装命令：
+直接运行：
 
 ```bash
 npx @rudderhq/cli@latest start
 ```
 
-持久 CLI 可用后，可以直接使用同一套 `rudder` 命令入口。
+CLI 安装好之后，可以继续用同一套 `rudder` 命令。
 
 ```bash
 rudder start
 ```
 
-当你的目标是打开本地应用、创建组织并运行 agent 工作时，使用这条路径。它会让 CLI 和便携版 Desktop 保持在同一发布版本。
+如果你只是想打开本地应用、创建组织、跑 agent 工作，就走这条路径。CLI 和便携版 Desktop 会保持在同一个发布版本。
 
 ## 贡献者设置
 
@@ -36,9 +36,9 @@ pnpm dev
 
 这会在 `http://localhost:3100` 启动 API server 和 UI。
 
-开发环境默认使用嵌入式 PostgreSQL。如果没有设置 `DATABASE_URL`，不需要单独准备数据库。
+开发环境默认使用嵌入式 PostgreSQL。没有设置 `DATABASE_URL` 时，不需要单独准备数据库。
 
-只有在你要修改 Rudder 源码时才使用这条路径。它启动的是本地开发服务，不会安装公开发布的便携版 Desktop。
+只有要改 Rudder 源码时才用这条路径。它启动的是本地开发服务，不会安装公开发布的便携版 Desktop。
 
 ## 下一步
 
