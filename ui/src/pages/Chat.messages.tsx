@@ -234,15 +234,15 @@ export function ProposalCard({
         data-testid="proposal-review-block"
         data-status={reviewStatus ?? "default"}
         data-kind={proposalKind}
-        className="chat-review-block mt-4 rounded-[var(--radius-xl)] p-5 text-foreground transition-all duration-200"
+        className="chat-review-block mt-4 max-w-[760px] rounded-[var(--radius-lg)] p-4 text-foreground transition-all duration-200"
       >
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border-soft)] pb-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--accent-base)_28%,var(--border-base))] bg-[color:color-mix(in_oklab,var(--surface-proposal)_86%,var(--surface-elevated))] text-[color:var(--accent-strong)]">
-              <ListChecks className="h-5 w-5" aria-hidden="true" />
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--border-soft)] pb-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-[color:color-mix(in_oklab,var(--accent-base)_20%,var(--border-base))] bg-[color:color-mix(in_oklab,var(--surface-proposal)_62%,transparent)] text-[color:var(--accent-strong)]">
+              <ListChecks className="h-4 w-4" aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <div className="text-lg font-semibold leading-6 text-[color:var(--accent-strong)]">
+              <div className="text-sm font-semibold leading-5 text-[color:var(--accent-strong)]">
                 {proposalKindLabel}
               </div>
             </div>
@@ -254,19 +254,31 @@ export function ProposalCard({
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="pt-3">
           <div className="min-w-0">
             {issueProposal ? (
               <>
-                <div className="text-xl font-semibold leading-7 text-foreground">{String(issueProposal.title)}</div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-shell)_78%,transparent)] px-2.5 py-1 text-xs text-muted-foreground">
-                    <span>Priority</span>
+                <div className="text-[18px] font-semibold leading-6 text-foreground">{String(issueProposal.title)}</div>
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="text-muted-foreground/80">Priority</span>
                     <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
                   </span>
+                  {proposalAssigneeLabel ? (
+                    <span className="inline-flex min-w-0 items-center gap-1.5">
+                      <span className="text-muted-foreground/80">Assignee</span>
+                      <span className="truncate text-foreground/80">{proposalAssigneeLabel}</span>
+                    </span>
+                  ) : null}
+                  {proposalReviewerLabel ? (
+                    <span className="inline-flex min-w-0 items-center gap-1.5">
+                      <span className="text-muted-foreground/80">Reviewer</span>
+                      <span className="truncate text-foreground/80">{proposalReviewerLabel}</span>
+                    </span>
+                  ) : null}
                 </div>
                 {proposalAssigneeLabel || proposalReviewerLabel ? (
-                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <div className="sr-only">
                     {proposalAssigneeLabel ? <span>Assignee · {proposalAssigneeLabel}</span> : null}
                     {proposalReviewerLabel ? <span>Reviewer · {proposalReviewerLabel}</span> : null}
                   </div>
@@ -291,11 +303,17 @@ export function ProposalCard({
         </div>
 
         {issueProposal ? (
-          <div className="mt-4 border-t border-[color:var(--border-soft)] pt-4 text-sm leading-6 text-muted-foreground">
-            <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
-              {String(issueProposal.description)}
-            </MarkdownBody>
-          </div>
+          <details className="chat-review-details mt-4 border-t border-[color:var(--border-soft)] pt-3">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-[var(--radius-sm)] py-1 text-sm font-medium text-foreground outline-none transition-colors hover:text-[color:var(--accent-strong)] focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]">
+              <span>Proposal details</span>
+              <ChevronDown className="chat-review-details-icon h-4 w-4 text-muted-foreground transition-transform duration-200" aria-hidden="true" />
+            </summary>
+            <div className="mt-3 text-sm leading-6 text-muted-foreground">
+              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+                {String(issueProposal.description)}
+              </MarkdownBody>
+            </div>
+          </details>
         ) : null}
 
         {planDocument ? (

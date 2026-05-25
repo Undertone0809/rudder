@@ -1033,18 +1033,21 @@
     background:
       linear-gradient(
         180deg,
-        color-mix(in oklab, var(--surface-proposal) 26%, var(--surface-elevated)),
-        var(--surface-elevated) 34%
+        color-mix(in oklab, var(--surface-proposal) 18%, var(--surface-elevated)),
+        var(--surface-elevated) 26%
       );
-    border: 1px solid color-mix(in oklab, var(--accent-base) 18%, var(--border-base));
-    box-shadow: var(--shadow-sm);
+    border: 1px solid color-mix(in oklab, var(--accent-base) 14%, var(--border-base));
+    box-shadow:
+      inset 0 1px 0 color-mix(in oklab, white 32%, transparent),
+      0 12px 28px -24px color-mix(in oklab, var(--accent-base) 42%, black);
   }
 
   .chat-review-block[data-kind="issue"] {
-    border-color: color-mix(in oklab, var(--accent-base) 30%, var(--border-base));
+    border-color: color-mix(in oklab, var(--accent-base) 22%, var(--border-base));
     box-shadow:
-      inset 3px 0 0 color-mix(in oklab, var(--accent-base) 58%, transparent),
-      var(--shadow-sm);
+      inset 0 2px 0 color-mix(in oklab, var(--accent-base) 44%, transparent),
+      inset 0 1px 0 color-mix(in oklab, white 32%, transparent),
+      0 12px 28px -24px color-mix(in oklab, var(--accent-base) 42%, black);
   }
 
   .chat-review-block[data-status="approved"] {
@@ -1062,6 +1065,14 @@
   .chat-review-note {
     background: color-mix(in oklab, var(--surface-shell) 90%, transparent);
     border: 1px solid color-mix(in oklab, var(--border-soft) 88%, transparent);
+  }
+
+  .chat-review-details > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .chat-review-details[open] .chat-review-details-icon {
+    transform: rotate(180deg);
   }
 
   .chat-system-pill {
