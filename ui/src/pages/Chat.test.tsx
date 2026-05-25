@@ -643,6 +643,37 @@ describe("ask_user chat messages", () => {
     ]);
   });
 
+  it("formats multiple selected answers as a normal user message", () => {
+    const request = {
+      questions: [
+        {
+          ...askUserPayload.requestUserInput.questions[0],
+          selectionMode: "multiple" as const,
+        },
+      ],
+    };
+    const body = formatAskUserAnswerMessage(request, {
+      scope: {
+        kind: "options",
+        labels: ["Narrow path", "Broad path"],
+      },
+    });
+
+    expect(body).toBe([
+      "Answering the requested input:",
+      "",
+      "- Scope",
+      "  Answer: Narrow path, Broad path",
+    ].join("\n"));
+    expect(parseAskUserAnswerMessage(request, body)).toEqual([
+      {
+        questionId: "scope",
+        title: "Scope",
+        answer: "Narrow path, Broad path",
+      },
+    ]);
+  });
+
   it("parses legacy multiline freeform bullets without treating them as question titles", () => {
     const request = askUserPayload.requestUserInput;
     const body = [

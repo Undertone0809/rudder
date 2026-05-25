@@ -64,6 +64,7 @@ export const chatAskUserQuestionSchema = z.object({
   header: z.string().trim().min(1).max(32).optional(),
   question: z.string().trim().min(1).max(240),
   options: z.array(chatAskUserOptionSchema).min(2).max(3),
+  selectionMode: z.enum(["single", "multiple"]).optional(),
   allowFreeform: z.boolean().optional(),
 }).superRefine((question, ctx) => {
   const optionIds = new Set<string>();

@@ -807,6 +807,11 @@ export type AskUserAnswerRecord = Array<{
   answer: string;
 }>;
 
+export type AskUserAnswerValue =
+  | { kind: "option"; label: string }
+  | { kind: "options"; labels: string[] }
+  | { kind: "freeform"; text: string };
+
 export const ASK_USER_ANSWER_PREFIX = "Answering the requested input:";
 
 export function formatAskUserAnswerLines(answer: string) {
@@ -819,16 +824,21 @@ export function formatAskUserAnswerLines(answer: string) {
 
 export function formatAskUserAnswerMessage(
   request: ChatAskUserRequest,
-  answers: Record<string, { kind: "option"; label: string } | { kind: "freeform"; text: string }>,
+  answers: Record<string, AskUserAnswerValue>,
 ) {
   const lines = [ASK_USER_ANSWER_PREFIX];
   for (const question of request.questions) {
     const answer = answers[question.id];
     if (!answer) continue;
     const title = askUserQuestionTitle(question);
+    const answerText = answer.kind === "freeform"
+      ? answer.text
+      : answer.kind === "options"
+        ? answer.labels.join(", ")
+        : answer.label;
     lines.push("");
     lines.push(`- ${title}`);
-    lines.push(...formatAskUserAnswerLines(answer.kind === "freeform" ? answer.text : answer.label));
+    lines.push(...formatAskUserAnswerLines(answerText));
   }
   return lines.join("\n");
 }

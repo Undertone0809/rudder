@@ -20,6 +20,7 @@ describe("chat ask_user request payloads", () => {
               { id: "narrow", label: "Narrow", description: "Smallest shippable path", recommended: true },
               { id: "broad", label: "Broad" },
             ],
+            selectionMode: "multiple",
             allowFreeform: true,
           },
         ],
@@ -29,6 +30,24 @@ describe("chat ask_user request payloads", () => {
     expect(chatAskUserRequestSchema.safeParse(payload.requestUserInput).success).toBe(true);
     expect(chatAskUserRequestFromStructuredPayload(payload)).toEqual(payload.requestUserInput);
     expect(sanitizeChatStructuredPayload(payload)).toEqual(payload);
+  });
+
+  it("rejects unsupported ask_user selection modes", () => {
+    const parsed = chatAskUserRequestSchema.safeParse({
+      questions: [
+        {
+          id: "scope",
+          question: "Which scope?",
+          selectionMode: "all",
+          options: [
+            { id: "narrow", label: "Narrow" },
+            { id: "broad", label: "Broad" },
+          ],
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
   });
 
   it("drops malformed requestUserInput during general structured payload sanitization", () => {
