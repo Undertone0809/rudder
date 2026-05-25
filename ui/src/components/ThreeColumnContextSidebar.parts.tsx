@@ -205,7 +205,7 @@ export function resolveContextColumnHeader(relativePath: string): { title: strin
   if (/^\/chat(?:\/|$)/.test(relativePath)) {
     return { title: "Chats", description: "Recent conversations" };
   }
-  if (/^\/calendar(?:\/|$)/.test(relativePath)) {
+  if (/^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath)) {
     return { title: "Calendar", description: "Sources and filters" };
   }
   if (/^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
@@ -697,4 +697,3 @@ export function SidebarIssueListSection({
     </section>
   );
 }
-

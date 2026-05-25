@@ -24,6 +24,7 @@ import { useI18n } from "@/context/I18nContext";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { projectsApi } from "@/api/projects";
 import { queryKeys } from "@/lib/queryKeys";
+import { DashboardCalendarSwitcher } from "@/components/DashboardCalendarSwitcher";
 
 type GlobalToolbarContext = { orgId: string | null; orgPrefix: string | null };
 
@@ -206,6 +207,7 @@ export function BreadcrumbBar({
     const isLinearIssueSource = isIssuesRoute && activeIssueSource === "linear";
     const isProjectsRoute = /^\/projects(?:\/|$)/.test(relativePath);
     const isProjectsIndex = isProjectsRoute && !/^\/projects\/[^/]+/.test(relativePath);
+    const isDashboardCalendarSurface = /^\/dashboard(?:\/calendar)?(?:\/|$)/.test(relativePath);
     return (
       <div
         className={cn(
@@ -218,9 +220,13 @@ export function BreadcrumbBar({
       >
         {menuButton}
         {openWorkspaceSidebarButton}
-        <div className="min-w-0 shrink-0">
-          <h1 className="truncate text-[15px] font-semibold tracking-tight text-foreground">{threeColumnTitle}</h1>
-        </div>
+        {isDashboardCalendarSurface ? (
+          <DashboardCalendarSwitcher />
+        ) : (
+          <div className="min-w-0 shrink-0">
+            <h1 className="truncate text-[15px] font-semibold tracking-tight text-foreground">{threeColumnTitle}</h1>
+          </div>
+        )}
         {desktopChrome ? <div className="desktop-window-drag hidden min-h-full flex-1 md:block" /> : null}
         {isIssuesRoute ? (
           <div className={cn("hidden items-center gap-3 md:flex", desktopChrome && "desktop-window-no-drag")}>

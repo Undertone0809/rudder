@@ -83,7 +83,7 @@ export function ThreeColumnContextSidebar() {
   const relativePath = toOrganizationRelativePath(location.pathname);
   const contextHeader = useMemo(() => resolveContextColumnHeader(relativePath), [relativePath]);
   const isMessengerRoute = /^\/messenger(?:\/|$)/.test(relativePath);
-  const isCalendarRoute = /^\/calendar(?:\/|$)/.test(relativePath);
+  const isCalendarRoute = /^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath);
   const isLinearPluginRoute = /^\/linear(?:\/|$)/.test(relativePath);
   const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath) || isLinearPluginRoute;
   const isOrgWorkspaceRoute = /^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);

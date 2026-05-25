@@ -1,5 +1,4 @@
 import {
-  CalendarDays,
   CircleDot,
   Clock3,
   Target,
@@ -81,7 +80,6 @@ export function MobileWorkspaceDrawer() {
           </Button>
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
           <SidebarNavItem to="/org" label="Org" icon={Network} />
-          <SidebarNavItem to="/calendar" label="Calendar" icon={CalendarDays} />
           <SidebarNavItem to="/heartbeats" label="Heartbeats" icon={Clock3} />
           <SidebarNavItem to="/goals" label="Goals" icon={Target} />
           <SidebarNavItem

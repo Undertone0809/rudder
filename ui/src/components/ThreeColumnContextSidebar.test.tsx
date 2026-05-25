@@ -309,8 +309,8 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
   });
 
   it("shows calendar timeline filters with user-facing status labels", () => {
-    mockState.pathname = "/RUD/calendar";
-    mockState.relativePath = "/calendar";
+    mockState.pathname = "/RUD/dashboard/calendar";
+    mockState.relativePath = "/dashboard/calendar";
 
     renderSidebar();
 
@@ -333,8 +333,8 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
   });
 
   it("uses agent avatars in calendar agent filters", () => {
-    mockState.pathname = "/RUD/calendar";
-    mockState.relativePath = "/calendar";
+    mockState.pathname = "/RUD/dashboard/calendar";
+    mockState.relativePath = "/dashboard/calendar";
 
     renderSidebar();
 
