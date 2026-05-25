@@ -1,0 +1,130 @@
+---
+title: "如何创建 Agent"
+description: "在 Rudder 里新增一个职责清楚、能被 issue 调度的 agent。"
+---
+
+新组织会自动带一个默认 agent。刚开始跑第一条流程时，直接用它就够了。
+
+当你需要第二种职责、第二套 runtime，或者想把评审和执行分开时，再创建新的 agent。一个 agent 要让别人一眼看懂：它负责什么、能接什么工作、什么时候要停下来问人。
+
+## 开始前
+
+先确认三件事：
+
+- Rudder 已经启动，并且你已经进入一个组织。
+- 你知道这个 agent 要负责哪一类工作。
+- 你要用的 runtime 已经准备好，比如本地 Codex、Claude Code，或一个自定义进程。
+
+如果 runtime 还没配好，先看 [如何配置自己的 Agent Runtime](/zh/how-to/configure-agent-runtime)。
+
+## 什么时候需要新建 agent
+
+这些情况适合新建 agent：
+
+- 你想让一个 agent 专门做工程实现，另一个 agent 专门做 review。
+- 某类工作需要不同的本地工具，比如 Codex、Claude Code 或自定义脚本。
+- 你需要不同的权限边界，例如一个 agent 可以改代码，另一个 agent 只做文档检查。
+- 组织里已经有稳定重复的工作流，值得给它一个固定 owner。
+
+这些情况先用默认 agent：
+
+- 你还在跑第一条真实 issue。
+- 工作类型还没稳定下来。
+- 你只是想试试 Rudder 的组织、issue、run 和 review 流程。
+
+## 创建步骤
+
+进入组织后，打开 Agents 页面，点击 **New Agent**。
+
+1. 写 `Name`。用人能识别的名字，例如 `Docs Maintainer`、`Release Reviewer`。
+2. 写 `Title`。说明它在组织里的职责，例如 `Documentation Operator`、`Founding Engineer`。
+3. 选择 `Role`。这会影响组织结构里的展示方式。
+4. 设置 `Reports to`。如果组织还小，可以先让它汇报给默认 agent 或 owner。
+5. 写 `Capabilities`。这里写它能接什么工作，以及遇到什么情况要停下来。
+6. 配置 `Runtime`。选择 Codex、Claude Code、本地 CLI、进程、Webhook 或 Gateway。
+7. 如果组织里已经有可复用技能，可以给它勾选相关 skills。
+8. 点击 **Create agent**。
+
+![Agent runtime 配置](../../images/agent-runtime-codex-config.png)
+
+上图展示的是创建 agent 时的 Runtime 区域。你可以先把 agent 的名字、职责和能力边界写清楚，再配置它被 Rudder 叫醒时使用哪个工具。
+
+## Capabilities 怎么写
+
+`Capabilities` 写的是工作边界。它应该回答三个问题：
+
+- 这个 agent 可以接什么类型的 issue？
+- 它应该交付什么样的结果？
+- 它什么时候应该问人，或者把 issue 标成 blocked？
+
+一个可用的例子：
+
+```text
+处理小型文档和代码维护任务。完成后要在 issue 里留下改了什么、怎么验证、
+还有哪些风险。遇到权限、产品判断或范围不清楚的问题时，先停下来问人。
+```
+
+不建议只写：
+
+```text
+擅长工程任务。
+```
+
+这句话太空。Rudder、reviewer 和未来的你都看不出它能不能接当前 issue。
+
+## Runtime 怎么选
+
+先按你本地已经有什么来选：
+
+| 你现在有什么 | 选择 |
+| --- | --- |
+| 本地已经安装并登录 Codex | Codex (local) |
+| 本地已经安装并登录 Claude Code | Claude Code (local) |
+| 只有 model API key | 先把 key 配进 Claude Code，再选 Claude Code (local) |
+| 有自己的脚本 | Shell Process |
+| 有自己的远程服务 | HTTP Webhook |
+
+刚开始推荐用 Codex 或 Claude Code。它们更接近你平时手动使用 coding agent 的方式。
+
+## 创建后先跑一个低风险 issue
+
+不要一创建就交给它处理大任务。先分配一个小 issue，检查这几件事：
+
+- agent 能被 Rudder 唤醒。
+- run 使用了你选的 runtime。
+- transcript 或 run summary 里有可检查的过程。
+- issue 里留下了结果、验证方式和剩余风险。
+- 失败时能说清楚是缺权限、缺上下文，还是 runtime 没配好。
+
+第一次跑通后，再把这个 agent 放进更稳定的工作流里。
+
+## 常见问题
+
+**要不要一开始就建很多 agent？**  
+不用。先用默认 agent 跑通真实 issue。等职责分出来以后，再创建新 agent。
+
+**Role、Title 和 Capabilities 有什么区别？**  
+`Role` 是组织结构里的类型，`Title` 是这个 agent 的职位名，`Capabilities` 是它能接什么工作。
+
+**Runtime 和 agent 是一回事吗？**  
+这两个概念分开看：agent 是 Rudder 里的工作角色；runtime 是这个角色被叫醒后用哪个工具干活。
+
+**创建后发现写错了怎么办？**  
+进入 agent 详情页再改。重点检查 `Capabilities` 和 `Runtime`，这两个字段最容易影响后续运行。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="配置 Agent Runtime" icon="terminal" href="/zh/how-to/configure-agent-runtime">
+    把本地 Codex、Claude Code 或其他执行后端接入 Rudder。
+  </Card>
+  <Card title="任务生命周期指南" icon="route" href="/zh/how-to/issue-lifecycle">
+    学会什么时候分配、评审、阻塞和关闭 agent 工作。
+  </Card>
+  <Card title="Agents" icon="bot" href="/zh/concepts/agents">
+    理解 agent、heartbeat 和运行记录之间的关系。
+  </Card>
+  <Card title="创建第一个组织" icon="building-2" href="/zh/get-started/first-organization">
+    用默认 agent 先跑通第一条真实工作循环。
+  </Card>
+</CardGroup>

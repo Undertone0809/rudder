@@ -102,6 +102,7 @@
             "tab": "操作指南",
             "pages": [
               "zh/how-to/issue-lifecycle",
+              "zh/how-to/create-agent",
               "zh/how-to/configure-agent-runtime"
             ]
           }

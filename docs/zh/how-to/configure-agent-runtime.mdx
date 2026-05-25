@@ -54,7 +54,7 @@ Codex、Claude Code、Gemini CLI、OpenCode、Pi、Cursor 这类本地 CLI agent
 
 ![Codex 本地 runtime 配置](../../images/agent-runtime-codex-config.png)
 
-上图是 agent 表单里的 Runtime 区域。这里不是在创建一个新的模型，而是在告诉 Rudder：这个 agent 被叫醒时，要用 Codex local 来执行。
+上图是 agent 表单里的 Runtime 区域。这里的重点是告诉 Rudder：这个 agent 被叫醒时，要用 Codex local 来执行。
 
 1. 创建或编辑 agent。
 2. 在 Runtime type 里选择 Codex (local)、Claude Code (local)，或你正在用的本地 CLI。
@@ -219,8 +219,11 @@ Rudder 调用进程时，也会提供 Rudder runtime 环境变量。不要把密
   <Card title="Agents" icon="bot" href="/zh/concepts/agents">
     查看 agent 模型和 heartbeat 循环。
   </Card>
+  <Card title="创建 Agent" icon="bot" href="/zh/how-to/create-agent">
+    新增有独立职责和 runtime 的 agent。
+  </Card>
   <Card title="第一个组织" icon="building-2" href="/zh/get-started/first-organization">
-    在新的 Rudder 组织里创建第一个 agent。
+    用默认 agent 跑通第一条真实工作循环。
   </Card>
   <Card title="Issue 生命周期" icon="circle-check" href="/zh/how-to/issue-lifecycle">
     理解 runtime 的工作如何在 issue 上关闭。
