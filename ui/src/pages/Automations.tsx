@@ -91,36 +91,6 @@ type AutomationTemplate = {
 
 const automationTemplates: AutomationTemplate[] = [
   {
-    id: "advisor-review-loop",
-    title: { en: "Advisor review loop", "zh-CN": "Advisor review loop" },
-    summary: {
-      en: "Run Build Advisor plus two reviewer passes before handoff.",
-      "zh-CN": "先跑 Build Advisor，再做两轮 reviewer 验收。",
-    },
-    scheduleCron: "0 11 * * 1",
-    outputMode: "track_issue",
-    description: {
-      en: [
-        "Use [advisor-review-loop-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/advisor-review-loop-maintainer/SKILL.md) as the operating workflow.",
-        "",
-        "1. Identify the proposal, implementation, UI state, release, workflow, or agent outcome that needs acceptance review.",
-        "2. Build a focused evidence packet from the relevant repo files, docs, screenshots, logs, traces, commits, PRs, or eval output.",
-        "3. Run the advisor pass first: scenario analysis, requirement classes, non-goals, corner cases, realistic options, and a concrete evaluation rubric.",
-        "4. Run two independent reviewer roles: one for scenario and demand correctness, one for implementation, workflow, validation, and handoff trust.",
-        "5. Rework any blocking gaps, run a second review round when the work is high-stakes or still uncertain, and report the final verdict with validation and residual risk.",
-      ].join("\n"),
-      "zh-CN": [
-        "使用 [advisor-review-loop-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/advisor-review-loop-maintainer/SKILL.md) 作为执行 workflow。",
-        "",
-        "1. 明确需要验收的 proposal、implementation、UI state、release、workflow 或 agent outcome。",
-        "2. 从相关 repo 文件、docs、截图、日志、trace、commit、PR 或 eval 输出中构建最小 evidence packet。",
-        "3. 先跑 advisor pass：场景分析、需求类、非目标、corner cases、可行选项和具体 evaluation rubric。",
-        "4. 跑两个独立 reviewer 角色：一个负责场景和需求正确性，一个负责实现、workflow、validation 和 handoff 可信度。",
-        "5. 对 blocking gaps 返工；高风险或不确定工作要跑第二轮 review，并在最终结论里报告 validation 和剩余风险。",
-      ].join("\n"),
-    },
-  },
-  {
     id: "bug-triage",
     title: { en: "Bug triage", "zh-CN": "Bug 分诊" },
     summary: { en: "Assess and prioritize new bug reports.", "zh-CN": "评估并排序新提交的缺陷。" },
