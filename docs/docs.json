@@ -62,7 +62,8 @@
           {
             "tab": "How-to Guides",
             "pages": [
-              "how-to/issue-lifecycle"
+              "how-to/issue-lifecycle",
+              "how-to/configure-agent-runtime"
             ]
           }
         ]
@@ -100,7 +101,8 @@
           {
             "tab": "操作指南",
             "pages": [
-              "zh/how-to/issue-lifecycle"
+              "zh/how-to/issue-lifecycle",
+              "zh/how-to/configure-agent-runtime"
             ]
           }
         ]
@@ -126,6 +128,10 @@
           {
             "label": "Issue lifecycle guide",
             "href": "/how-to/issue-lifecycle"
+          },
+          {
+            "label": "Configure an agent runtime",
+            "href": "/how-to/configure-agent-runtime"
           }
         ]
       },
