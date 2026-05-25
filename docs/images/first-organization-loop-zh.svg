@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="780" viewBox="0 0 1440 780" role="img" aria-labelledby="title desc">
   <title id="title">Rudder 第一个组织的真实工作流程</title>
-  <desc id="desc">从真实目标、组织、agent runtime、issue、assignee、heartbeat run、证据和 review，到 done 或 blocked，并通过 Messenger 和 Calendar 回看。</desc>
+  <desc id="desc">从一件真实任务开始：添加 agent、创建 issue、分配 owner、运行 agent、检查证据，再把结论写回 issue。</desc>
   <defs>
     <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.10"/>
@@ -23,37 +23,37 @@
   <rect width="1440" height="780" rx="36" fill="#f8fafc"/>
   <rect x="48" y="48" width="1344" height="684" rx="32" fill="#ffffff" stroke="#dbe3ea" stroke-width="2"/>
 
-  <text x="86" y="116" class="title">第一个组织要跑通的，不是一堆功能，而是一条真实工作链路</text>
-  <text x="86" y="158" class="subtitle">先把目标和 issue 写清楚，再让一个 agent 接手；运行后必须留下证据，最后由人或 reviewer 判断能不能关闭。</text>
+  <text x="86" y="116" class="title">第一个组织，先跑完一件真实工作</text>
+  <text x="86" y="158" class="subtitle">目标写清楚，issue 写清楚，再交给一个 agent。运行结束后，看证据，再决定通过、退回还是阻塞。</text>
 
-  <text x="86" y="212" class="lane">主线：issue 是工作记录</text>
+  <text x="86" y="212" class="lane">主线：所有工作都回到 issue</text>
 
   <g filter="url(#cardShadow)">
     <rect x="86" y="238" width="270" height="138" rx="22" fill="#ecfdf5" stroke="#99f6e4" stroke-width="2"/>
-    <text x="116" y="280" class="step">1. 真实目标</text>
-    <text x="116" y="319" class="head">为什么要做</text>
-    <text x="116" y="350" class="body">给组织一个可执行方向</text>
+    <text x="116" y="280" class="step">1. 选一个真任务</text>
+    <text x="116" y="319" class="head">要做什么</text>
+    <text x="116" y="350" class="body">别从空测试开始</text>
   </g>
 
   <g filter="url(#cardShadow)">
     <rect x="414" y="238" width="270" height="138" rx="22" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
     <text x="444" y="280" class="step">2. 添加 agent</text>
-    <text x="444" y="319" class="head">谁能接活</text>
-    <text x="444" y="350" class="body">配置角色、能力、runtime</text>
+    <text x="444" y="319" class="head">谁来干活</text>
+    <text x="444" y="350" class="body">写清角色、能力、runtime</text>
   </g>
 
   <g filter="url(#cardShadow)">
     <rect x="742" y="238" width="270" height="138" rx="22" fill="#fff7ed" stroke="#fed7aa" stroke-width="2"/>
     <text x="772" y="280" class="step">3. 创建 issue</text>
-    <text x="772" y="319" class="head">下一步是什么</text>
-    <text x="772" y="350" class="body">标题、结果、上下文、验收</text>
+    <text x="772" y="319" class="head">把任务写清楚</text>
+    <text x="772" y="350" class="body">结果、上下文、验收标准</text>
   </g>
 
   <g filter="url(#cardShadow)">
     <rect x="1070" y="238" width="270" height="138" rx="22" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="2"/>
     <text x="1100" y="280" class="step">4. 分配 issue</text>
-    <text x="1100" y="319" class="head">只有一个 owner</text>
-    <text x="1100" y="350" class="body">清楚后再交给执行者</text>
+    <text x="1100" y="319" class="head">交给一个 owner</text>
+    <text x="1100" y="350" class="body">一个 issue 不要多人抢</text>
   </g>
 
   <path d="M356 307 H406" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
@@ -65,22 +65,22 @@
   <g filter="url(#cardShadow)">
     <rect x="742" y="430" width="270" height="148" rx="22" fill="#fdf2f8" stroke="#fbcfe8" stroke-width="2"/>
     <text x="772" y="473" class="step">5. agent 运行</text>
-    <text x="772" y="512" class="head">agent 开始执行</text>
-    <text x="772" y="544" class="body">读取 issue，留下运行记录</text>
+    <text x="772" y="512" class="head">agent 开始干活</text>
+    <text x="772" y="544" class="body">按 issue 跑，留下记录</text>
   </g>
 
   <g filter="url(#cardShadow)">
     <rect x="414" y="430" width="270" height="148" rx="22" fill="#fefce8" stroke="#fde68a" stroke-width="2"/>
     <text x="444" y="473" class="step">6. 检查证据</text>
-    <text x="444" y="512" class="head">结果能检查吗</text>
-    <text x="444" y="544" class="body">评论、文件、截图、验证</text>
+    <text x="444" y="512" class="head">能不能验收</text>
+    <text x="444" y="544" class="body">看评论、文件和验证</text>
   </g>
 
   <g filter="url(#cardShadow)">
     <rect x="86" y="430" width="270" height="148" rx="22" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
-    <text x="116" y="473" class="step">7. 写回结论</text>
+    <text x="116" y="473" class="step">7. 留下结论</text>
     <text x="116" y="512" class="head">通过 / 退回</text>
-    <text x="116" y="544" class="body">接受、要求修改，或阻塞</text>
+    <text x="116" y="544" class="body">接受、改哪里、卡在哪</text>
   </g>
 
   <path d="M742 504 H692" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
@@ -89,10 +89,10 @@
   <rect x="86" y="625" width="582" height="70" rx="20" fill="#f8fafc" stroke="#dbe3ea" stroke-width="2"/>
   <text x="116" y="655" class="pill">Messenger</text>
   <text x="220" y="655" class="small">看谁在等你：agent 提问、评审、阻塞、失败运行。</text>
-  <text x="116" y="680" class="small">它把注意力带回 issue，不替代工作记录。</text>
+  <text x="116" y="680" class="small">点进去以后，还是回到对应的 issue。</text>
 
   <rect x="710" y="625" width="630" height="70" rx="20" fill="#f8fafc" stroke="#dbe3ea" stroke-width="2"/>
   <text x="740" y="655" class="pill">Calendar</text>
-  <text x="832" y="655" class="small">回看什么时候运行、什么时候评审、时间花在哪些 issue 上。</text>
-  <text x="740" y="680" class="small">它来自真实 agent 运行和检查点，不是装饰日程。</text>
+  <text x="832" y="655" class="small">回看 agent 什么时候跑、什么时候评审、时间花在哪些 issue 上。</text>
+  <text x="740" y="680" class="small">这里看的是实际工作历史，少靠手填日程。</text>
 </svg>
