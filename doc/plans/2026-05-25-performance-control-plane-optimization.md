@@ -354,12 +354,35 @@ Phase 9 evidence:
 - `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale smoke --iterations 2`
 - `pnpm --filter @rudderhq/server typecheck`
 
+## Phase 10 Result
+
+The tenth slice extended the timing harness with `--explain`. When enabled, the
+same seeded org now emits `EXPLAIN (ANALYZE, BUFFERS)` plans for representative
+queries behind the optimized paths:
+
+- actionable approval badge count
+- latest failed-run badge count
+- failed-run, join-request, approval, and approval-comment Messenger summary
+  candidates
+- active chat attention count
+- cost-event monthly spend recomputation
+
+This turns the previous timing-only harness into a reusable evidence packet for
+checking whether the newly added indexes are actually selected on seeded data.
+
+Phase 10 evidence:
+
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale smoke --iterations 1 --explain`
+- `pnpm --filter @rudderhq/server typecheck`
+- `git diff --check`
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local
   shared-memory pressure is cleared; focused SQL validation used an isolated
   database on an already-running local Rudder Postgres instance instead.
-- Runtime latency targets still need production-shaped `EXPLAIN
-  (ANALYZE, BUFFERS)` evidence before claiming quantified performance wins.
+- Runtime latency targets still need production-sized `medium` or larger
+  `EXPLAIN (ANALYZE, BUFFERS)` runs before claiming quantified performance
+  wins.
 - The next behavioral-compatible candidates are deeper Messenger summary-only
   loaders, opt-in issue list pagination, and transactional cost rollups.

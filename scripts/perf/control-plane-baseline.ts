@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
+import { eq, sql } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   agents,
   approvalComments,
@@ -23,6 +23,7 @@ import {
 import { sidebarBadgeService } from "../../server/src/services/sidebar-badges.js";
 import { messengerService } from "../../server/src/services/messenger.js";
 import { costService } from "../../server/src/services/costs.js";
+import { visibleIncomingMessageSql } from "../../server/src/services/chats.helpers.js";
 
 type ScaleName = "smoke" | "medium";
 
@@ -70,6 +71,7 @@ function parseArgs(argv: string[]) {
   let scale: ScaleName = "smoke";
   let keepData = false;
   let migrate = true;
+  let explain = false;
   let iterations = 5;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -103,10 +105,14 @@ function parseArgs(argv: string[]) {
       migrate = false;
       continue;
     }
+    if (arg === "--explain") {
+      explain = true;
+      continue;
+    }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  return { scale, keepData, migrate, iterations };
+  return { scale, keepData, migrate, explain, iterations };
 }
 
 function minutesAgo(minutes: number) {
@@ -145,6 +151,155 @@ function summarize(samples: Array<{ name: string; ms: number }>) {
       avgMs: Number((sum / values.length).toFixed(2)),
     };
   });
+}
+
+function currentUtcMonthWindow(now = new Date()) {
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+  return {
+    start: new Date(Date.UTC(year, month, 1, 0, 0, 0, 0)),
+    end: new Date(Date.UTC(year, month + 1, 1, 0, 0, 0, 0)),
+  };
+}
+
+async function explainQuery(db: ReturnType<typeof createDb>, name: string, query: ReturnType<typeof sql>) {
+  const rows = await db.execute(sql<Record<string, string>>`EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) ${query}`);
+  return {
+    name,
+    plan: rows.map((row) => row["QUERY PLAN"] ?? Object.values(row)[0] ?? ""),
+  };
+}
+
+async function explainOptimizedPaths(
+  db: ReturnType<typeof createDb>,
+  orgId: string,
+  boardUserId: string,
+  agentId: string,
+) {
+  const { start, end } = currentUtcMonthWindow();
+  const queries = [
+    {
+      name: "sidebar.actionableApprovals",
+      query: sql`select count(*)::int from approvals where org_id = ${orgId} and status = 'pending'`,
+    },
+    {
+      name: "sidebar.latestFailedRuns",
+      query: sql`
+        select count(*)::int
+        from (
+          select
+            heartbeat_runs.status as run_status,
+            row_number() over (
+              partition by heartbeat_runs.agent_id
+              order by heartbeat_runs.created_at desc
+            ) as run_rank
+          from heartbeat_runs
+          inner join agents
+            on heartbeat_runs.agent_id = agents.id
+            and agents.org_id = ${orgId}
+          where heartbeat_runs.org_id = ${orgId}
+            and agents.status <> 'terminated'
+        ) latest_agent_runs
+        where latest_agent_runs.run_rank = 1
+          and latest_agent_runs.run_status in ('failed', 'timed_out')
+      `,
+    },
+    {
+      name: "messenger.failedRunsLatest",
+      query: sql`
+        select error, stderr_excerpt
+        from heartbeat_runs
+        where org_id = ${orgId}
+          and status = 'failed'
+        order by updated_at desc, created_at desc
+        limit 1
+      `,
+    },
+    {
+      name: "messenger.joinRequestsLatest",
+      query: sql`
+        select capabilities, request_email_snapshot
+        from join_requests
+        where org_id = ${orgId}
+          and status = 'pending_approval'
+        order by updated_at desc, created_at desc
+        limit 1
+      `,
+    },
+    {
+      name: "messenger.approvalsLatest",
+      query: sql`
+        select *
+        from approvals
+        where org_id = ${orgId}
+        order by updated_at desc, created_at desc
+        limit 1
+      `,
+    },
+    {
+      name: "messenger.approvalCommentsLatest",
+      query: sql`
+        select approval_comments.approval_id, approval_comments.body, approval_comments.created_at
+        from approval_comments
+        inner join approvals on approval_comments.approval_id = approvals.id
+        where approvals.org_id = ${orgId}
+          and approval_comments.org_id = ${orgId}
+        order by approval_comments.created_at desc
+        limit 1
+      `,
+    },
+    {
+      name: "costs.monthlySpendTotalsForEvent",
+      query: sql`
+        select
+          coalesce(sum(case when agent_id = ${agentId} then cost_cents else 0 end), 0)::double precision as agent_total,
+          coalesce(sum(cost_cents), 0)::double precision as organization_total
+        from cost_events
+        where org_id = ${orgId}
+          and occurred_at >= ${start.toISOString()}::timestamptz
+          and occurred_at < ${end.toISOString()}::timestamptz
+      `,
+    },
+    {
+      name: "sidebar.activeChatAttention",
+      query: sql`
+        select count(*)::int
+        from chat_conversations
+        where chat_conversations.org_id = ${orgId}
+          and chat_conversations.status = 'active'
+          and (
+            exists (
+              select 1
+              from chat_messages
+              inner join chat_conversation_user_states
+                on chat_conversation_user_states.org_id = ${orgId}
+                and chat_conversation_user_states.user_id = ${boardUserId}
+                and chat_conversation_user_states.conversation_id = chat_messages.conversation_id
+              where chat_messages.org_id = ${orgId}
+                and chat_messages.conversation_id = chat_conversations.id
+                and chat_messages.superseded_at is null
+                and ${visibleIncomingMessageSql()}
+                and chat_messages.created_at > chat_conversation_user_states.last_read_at
+            )
+            or exists (
+              select 1
+              from chat_messages
+              inner join approvals on chat_messages.approval_id = approvals.id
+              where chat_messages.org_id = ${orgId}
+                and chat_messages.conversation_id = chat_conversations.id
+                and chat_messages.superseded_at is null
+                and approvals.org_id = ${orgId}
+                and approvals.status = 'pending'
+            )
+          )
+      `,
+    },
+  ];
+  const plans: Array<Awaited<ReturnType<typeof explainQuery>>> = [];
+  for (const query of queries) {
+    plans.push(await explainQuery(db, query.name, query.query));
+  }
+  return plans;
 }
 
 async function main() {
@@ -338,6 +493,9 @@ async function main() {
         occurredAt: new Date(),
       })));
     }
+    const explainPlans = options.explain
+      ? await explainOptimizedPaths(db, orgId, boardUserId, agentIds[0]!)
+      : undefined;
 
     console.log(JSON.stringify({
       orgId,
@@ -356,6 +514,7 @@ async function main() {
       },
       iterations: options.iterations,
       timings: summarize(samples),
+      ...(explainPlans ? { explainPlans } : {}),
     }, null, 2));
   } finally {
     if (!options.keepData) {
