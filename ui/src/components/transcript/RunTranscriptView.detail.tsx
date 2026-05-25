@@ -28,7 +28,7 @@ import type { LucideIcon } from "lucide-react";
 import { TranscriptMode, TranscriptDensity, TranscriptPresentation, TranscriptToolCategory, TranscriptDigestBucket, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptActionIconTreatment, TranscriptToolSemanticInfo, TranscriptToolCardEntry, TranscriptMemoryScope, TranscriptMemoryUpdateChange, TranscriptTodoListItem, RunTranscriptViewProps, TranscriptBlock, ChatTranscriptTurn, ChatTranscriptAction, COMMON_FILENAME_TOKENS, STRONG_WRITE_COMMAND_TOKENS, LONG_EVENT_COLLAPSE_CHARS, LONG_EVENT_COLLAPSE_LINES, LOCAL_POSIX_FILE_ROOTS, TranscriptMarkdownLinkClickHandler, asRecord, decodeFileUrlPath, resolveTranscriptLocalFileTarget, shouldHandlePlainClick, compactWhitespace, isTurnStartedText, isRudderDeveloperDiagnosticLine, isRudderDeveloperDiagnosticContinuationLine, filterRoutineStdout, isWarningStderrLine, isAnalyticsForbiddenHtmlStart, filterRenderableTranscriptEntries, shouldCollapseEventText, formatTranscriptTimestamp, getTranscriptActionIconTreatment, getTranscriptActionIconTone, TranscriptActionIcon, TranscriptActionIconSlot, TranscriptActionIconStack, getTranscriptTimestampTitle, formatTranscriptDuration, truncate, pluralize, humanizeLabel } from "./RunTranscriptView.common";
 import { decodeShellEscapes, stripWrappedShell, tokenizeShellForClassification, shellTokensForCommand, isShellControlToken, commandSegmentFrom, splitShellCommandSegments, hasHelpSignal, hasStdoutWriteRedirect, extractStdoutWriteRedirectTarget, extractStdoutWriteRedirectTargetFromTokens, commandSegmentHasStdoutWriteRedirect, commandUsesInPlaceSed, commandUsesInPlacePerl, isPackageInstallCommand, commandSegmentUsesInPlaceSed, commandSegmentUsesInPlacePerl, findStrongEditSegment, hasPackageInstallSegment, getShellPositionalArgsFromTokens, classifyShellCommand, unwrapQuotedToken, cleanShellToken, normalizeTranscriptPathToken, titleCaseAgentSlug, inferAgentNameFromMemoryPath, classifyAgentMemoryPath, formatMemoryScopeLabel, formatMemoryScopeSummary, formatMemoryEffect, formatMemoryOperation, splitFileChangeEntries, extractMemoryUpdateFailureReason, parseMemoryUpdateSystemText, tokenizeShell } from "./RunTranscriptView.shell";
 import { normalizePathTarget, dedupeTargets, extractSkillSlugFromEntryPath, extractSkillSlugsFromEntryPaths, formatSkillUseAction, isLikelyPathToken, isLikelySedExpressionToken, getShellPositionalArgs, extractRecordPaths, extractRecordQuery, readStringField, extractQueryValues, extractWebSearchQueries, isWebSearchTool, formatWebSearchSummary, McpToolDetails, MCP_METADATA_KEYS, parseMcpToolName, sanitizeMcpArgs, extractMcpToolDetails, summarizeMcpValue, summarizeMcpArgs, formatMcpLabel, formatMcpSummary, formatTargetAction, quoteSummaryText, formatSearchActionSummary, summarizeCommandPhrase, extractShellFlagValue, formatRudderTarget, summarizeIssueComment, describeRudderCommandSemanticInfo, describeCommandSemanticInfo, formatUnknown, formatToolPayload, extractToolUseId, describeToolInvocation, summarizeRecord, summarizeToolInput, parseStructuredToolResult, formatCommandTerminalOutput, isCommandTool, describeToolSemanticInfo } from "./RunTranscriptView.semantic";
-import { formatSemanticDigest, summarizeToolResult, parseSystemActivity, getTodoListCompletedCount, formatTodoListSummary, formatTodoListRaw, shouldHideNiceModeStderr, groupCommandBlocks, segmentTranscriptEntriesByTurn, normalizeTranscript, summarizeChatTurn, normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
+import { formatSemanticDigest, summarizeToolResult, parseSystemActivity, getTodoListCompletedCount, formatTodoListSummary, formatTodoListRaw, shouldHideNiceModeStderr, groupCommandBlocks, segmentTranscriptEntriesByTurn, normalizeTranscript, summarizeChatTurn, normalizeChatTranscriptTurns, parseClaudeSkillContext } from "./RunTranscriptView.normalize";
 import { TranscriptMessageBlock, TranscriptThinkingBlock, renderTranscriptBlock, CommandTerminalDetail, TranscriptToolCard, hasSelectedText, DisclosureChevron, areAllToolEntriesErrored, formatTranscriptLabel, TranscriptCommandGroup, TranscriptActivityRow, TranscriptTodoListRow, TranscriptMemoryUpdateRow, TranscriptEventRow, TranscriptStdoutRow } from "./RunTranscriptView.blocks";
 import { flattenChatTranscriptActions, getToolCommand, shouldHideChatToolResult, TranscriptChatStdoutActionRow, TranscriptChatToolActionRow, TranscriptChatActionRow, ChatTranscriptTurnSegment, isChatActionBlock, segmentChatTranscriptBlocks, formatChatActionSummary, getChatActionIconInfo, TranscriptChatActionGroup, TranscriptChatTurn, trimTrailingWhitespace, redactAssistantSuffixFromChatTranscript, filterChatAssistantTranscriptEntries, TranscriptChatTimeline } from "./RunTranscriptView.chat";
 
@@ -230,7 +230,7 @@ export function RawTranscriptView({
           )}
         >
           <span className="text-[10px] tracking-[0.06em] text-muted-foreground">
-            {formatTranscriptLabel(entry.kind)}
+            {formatRawTranscriptLabel(entry)}
           </span>
           <pre className="min-w-0 whitespace-pre-wrap break-words text-foreground/80">
             {entry.kind === "tool_call"
@@ -239,7 +239,7 @@ export function RawTranscriptView({
                 ? formatToolPayload(entry.content)
                 : entry.kind === "todo_list"
                   ? formatTodoListRaw(entry.items)
-                : entry.kind === "result"
+                  : entry.kind === "result"
                   ? `${entry.text}\n${formatTokens(entry.inputTokens)} / ${formatTokens(entry.outputTokens)} / $${entry.costUsd.toFixed(6)}`
                   : entry.kind === "init"
                     ? `model=${entry.model}${entry.sessionId ? ` session=${entry.sessionId}` : ""}`
@@ -251,3 +251,8 @@ export function RawTranscriptView({
   );
 }
 
+function formatRawTranscriptLabel(entry: TranscriptEntry): string {
+  return entry.kind === "user" && parseClaudeSkillContext(entry.text)
+    ? "Skill Context"
+    : formatTranscriptLabel(entry.kind);
+}

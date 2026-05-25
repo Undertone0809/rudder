@@ -147,6 +147,71 @@ export function formatTodoListRaw(items: TranscriptTodoListItem[]): string {
     .join("\n");
 }
 
+interface ClaudeSkillContext {
+  slug: string | null;
+  baseDirectory: string;
+  args: string | null;
+  rawText: string;
+}
+
+export function parseClaudeSkillContext(text: string): ClaudeSkillContext | null {
+  const baseMatch = text.match(/^Base directory for this skill:\s*(.+)$/m);
+  if (!baseMatch) return null;
+
+  const baseDirectory = compactWhitespace(baseMatch[1] ?? "");
+  if (!baseDirectory) return null;
+
+  const pathSlug = extractSkillSlugFromEntryPath(`${baseDirectory.replace(/\/+$/, "")}/SKILL.md`);
+  const headingMatch = text.match(/^#\s+(.+?)\s+Skill\s*$/m);
+  const headingSlug = headingMatch?.[1]
+    ? headingMatch[1].trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+    : null;
+  const argsMatch = text.match(/^ARGUMENTS:\s*(.*)$/m);
+
+  return {
+    slug: pathSlug ?? headingSlug,
+    baseDirectory,
+    args: argsMatch?.[1] ? compactWhitespace(argsMatch[1]) : null,
+    rawText: text,
+  };
+}
+
+function isSkillToolBlock(block: TranscriptBlock | undefined): block is Extract<TranscriptBlock, { type: "tool" }> {
+  return block?.type === "tool" && block.name.trim().toLowerCase() === "skill";
+}
+
+function readSkillToolName(input: unknown): string | null {
+  const record = asRecord(input);
+  return readStringField(record, ["skill", "name"]);
+}
+
+function normalizeSkillSlug(value: string | null): string | null {
+  return value ? value.trim().toLowerCase() : null;
+}
+
+function appendClaudeSkillContextToTool(
+  block: Extract<TranscriptBlock, { type: "tool" }>,
+  context: ClaudeSkillContext,
+  ts: string,
+) {
+  const skillName = readSkillToolName(block.input) ?? context.slug ?? "skill";
+  const contextSummary = [
+    `Loaded skill context: ${skillName}`,
+    `Base directory: ${context.baseDirectory}`,
+    context.args ? `Arguments: ${context.args}` : null,
+  ].filter(Boolean).join("\n");
+  const existingResult = block.result?.trim();
+  block.result = [
+    existingResult || `Launching skill: ${skillName}`,
+    contextSummary,
+    "",
+    context.rawText,
+  ].join("\n");
+  block.status = "completed";
+  block.isError = false;
+  block.endTs = ts;
+}
+
 export function shouldHideNiceModeStderr(text: string): boolean {
   const normalized = compactWhitespace(text).toLowerCase();
   return normalized.startsWith("[rudder] skipping saved session resume");
@@ -250,6 +315,32 @@ export function normalizeTranscript(
     const previous = blocks[blocks.length - 1];
 
     if (entry.kind === "assistant" || entry.kind === "user") {
+      if (entry.kind === "user") {
+        const skillContext = parseClaudeSkillContext(entry.text);
+        if (skillContext) {
+          const matchingTool = [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> => {
+            if (!isSkillToolBlock(block)) return false;
+            const toolSkill = normalizeSkillSlug(readSkillToolName(block.input));
+            const contextSkill = normalizeSkillSlug(skillContext.slug);
+            return !contextSkill || !toolSkill || toolSkill === contextSkill;
+          });
+          if (matchingTool) {
+            appendClaudeSkillContextToTool(matchingTool, skillContext, entry.ts);
+            continue;
+          }
+          blocks.push({
+            type: "event",
+            ts: entry.ts,
+            label: "skill context",
+            tone: "info",
+            text: `Loaded ${skillContext.slug ?? "skill"} context`,
+            detail: skillContext.rawText,
+            collapseByDefault: true,
+          });
+          continue;
+        }
+      }
+
       const isStreaming = streaming && entry.kind === "assistant" && entry.delta === true;
       if (previous?.type === "message" && previous.role === entry.kind) {
         previous.text += previous.text.endsWith("\n") || entry.text.startsWith("\n") ? entry.text : `\n${entry.text}`;
@@ -563,4 +654,3 @@ export function normalizeChatTranscriptTurns(
 
   return { preludeBlocks, turns };
 }
-

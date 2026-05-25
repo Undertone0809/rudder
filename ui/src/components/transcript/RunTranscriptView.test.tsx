@@ -1329,6 +1329,82 @@ describe("RunTranscriptView", () => {
     expect(html).not.toContain("Read /Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
   });
 
+  it("folds Claude Code skill context user injections into the skill tool card", () => {
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "tool_call",
+        ts: "2026-05-25T09:56:02.245Z",
+        name: "Skill",
+        toolUseId: "tool-skill-1",
+        input: {
+          skill: "rudder-create-agent",
+          args: "create COO agent",
+        },
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-05-25T09:56:02.254Z",
+        toolUseId: "tool-skill-1",
+        content: "Launching skill: rudder-create-agent",
+        isError: false,
+      },
+      {
+        kind: "user",
+        ts: "2026-05-25T09:56:02.255Z",
+        text: [
+          "Base directory for this skill: /var/folders/example/T/rudder-skills/.claude/skills/rudder-create-agent",
+          "",
+          "# Rudder Create Agent Skill",
+          "",
+          "Use this skill when you are asked to hire or create an agent in Rudder.",
+          "",
+          "ARGUMENTS: create COO agent",
+        ].join("\n"),
+      },
+    ];
+
+    const blocks = normalizeTranscript(entries, false);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      type: "tool",
+      name: "Skill",
+      status: "completed",
+      result: expect.stringContaining("Loaded skill context: rudder-create-agent"),
+    });
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView density="compact" entries={entries} />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Use rudder-create-agent skill");
+    expect(html).not.toContain("User</span>");
+    expect(html).not.toContain("Base directory for this skill");
+  });
+
+  it("labels Claude Code skill context clearly in raw transcript mode", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          mode="raw"
+          density="compact"
+          entries={[
+            {
+              kind: "user",
+              ts: "2026-05-25T09:56:02.255Z",
+              text: "Base directory for this skill: /tmp/rudder-skills/.claude/skills/rudder-create-agent\n\n# Rudder Create Agent Skill",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Skill Context");
+    expect(html).not.toContain(">User<");
+  });
+
   it("decodes shell-escaped search queries in chat activity summaries", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
