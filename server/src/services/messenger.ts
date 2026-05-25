@@ -73,6 +73,9 @@ type SystemSummaryData = {
   summary: MessengerThreadSummary;
   itemCount: number;
 };
+type IssueThreadData = SystemSummaryData & {
+  detail?: MessengerThreadDetail<MessengerIssueThreadItem>;
+};
 
 type IssueUniverseRow = {
   id: string;
@@ -792,7 +795,12 @@ export function messengerService(db: Db) {
     return Array.from(universe.values());
   }
 
-  async function loadIssueSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
+  async function loadIssueData(
+    orgId: string,
+    userId: string,
+    threadStates: ThreadStateSource | undefined,
+    options: { includeDetail: boolean },
+  ): Promise<IssueThreadData> {
     const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "issues", threadStates);
     const issuesUniverse = await loadIssueUniverse(orgId, userId);
     const issueIds = issuesUniverse.map((row) => row.id);
@@ -801,21 +809,42 @@ export function messengerService(db: Db) {
     const [commentRows, activityRows] = await Promise.all([
       issueIds.length === 0
         ? Promise.resolve([] as IssueCommentRow[])
-        : db
+        : options.includeDetail
+          ? db
+            .select({
+              id: issueComments.id,
+              issueId: issueComments.issueId,
+              body: issueComments.body,
+              authorAgentId: issueComments.authorAgentId,
+              authorUserId: issueComments.authorUserId,
+              authorAgentName: agents.name,
+              authorUserName: authUsers.name,
+              createdAt: issueComments.createdAt,
+            })
+            .from(issueComments)
+            .leftJoin(agents, eq(issueComments.authorAgentId, agents.id))
+            .leftJoin(authUsers, eq(issueComments.authorUserId, authUsers.id))
+            .where(and(eq(issueComments.orgId, orgId), inArray(issueComments.issueId, issueIds)))
+            .orderBy(desc(issueComments.createdAt))
+          : db
           .select({
             id: issueComments.id,
             issueId: issueComments.issueId,
             body: issueComments.body,
             authorAgentId: issueComments.authorAgentId,
             authorUserId: issueComments.authorUserId,
-            authorAgentName: agents.name,
-            authorUserName: authUsers.name,
+            authorAgentName: sql<string | null>`null`,
+            authorUserName: sql<string | null>`null`,
             createdAt: issueComments.createdAt,
           })
           .from(issueComments)
-          .leftJoin(agents, eq(issueComments.authorAgentId, agents.id))
-          .leftJoin(authUsers, eq(issueComments.authorUserId, authUsers.id))
-          .where(and(eq(issueComments.orgId, orgId), inArray(issueComments.issueId, issueIds)))
+          .where(
+            and(
+              eq(issueComments.orgId, orgId),
+              inArray(issueComments.issueId, issueIds),
+              sql<boolean>`(${issueComments.authorUserId} is null or ${issueComments.authorUserId} <> ${userId})`,
+            ),
+          )
           .orderBy(desc(issueComments.createdAt)),
       issueIds.length === 0
         ? Promise.resolve([] as IssueActivityRow[])
@@ -845,7 +874,7 @@ export function messengerService(db: Db) {
     const latestCommentByIssue = new Map<string, IssueCommentRow>();
     const latestExternalCommentByIssue = new Map<string, IssueCommentRow>();
     for (const row of commentRows) {
-      if (!latestCommentByIssue.has(row.issueId)) {
+      if (options.includeDetail && !latestCommentByIssue.has(row.issueId)) {
         latestCommentByIssue.set(row.issueId, row);
       }
       if (!isSelfAuthoredComment(row, userId) && !latestExternalCommentByIssue.has(row.issueId)) {
@@ -932,28 +961,34 @@ export function messengerService(db: Db) {
       const summaryPreview = attentionActivityAt ? issueThreadPreview(issue, attentionPreview) : null;
 
       return {
-        item: issueCard(
-          issue,
-          userId,
-          issue.followed,
-          latestPreview,
-          latestActivityAt ?? issue.updatedAt,
-          latestSourceIsComment ? latestVisibleComment : null,
-          statusChangeActivity,
-        ),
+        issue,
+        item: options.includeDetail
+          ? issueCard(
+            issue,
+            userId,
+            issue.followed,
+            latestPreview,
+            latestActivityAt ?? issue.updatedAt,
+            latestSourceIsComment ? latestVisibleComment : null,
+            statusChangeActivity,
+          )
+          : null,
         attentionActivityAt,
         attentionPreview: summaryPreview,
       };
     });
 
-    const unsortedItems = unsortedEntries.map((entry) => entry.item);
     const latestFirstEntries = [...unsortedEntries].sort((a, b) => {
       const aTime = a.attentionActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
       const bTime = b.attentionActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
       if (aTime !== bTime) return bTime - aTime;
-      return a.item.title.localeCompare(b.item.title);
+      return issueDisplayLabel(a.issue).localeCompare(issueDisplayLabel(b.issue));
     });
-    const chronologicalItems = [...unsortedItems].sort(compareChronologicalActivity);
+    const chronologicalItems = options.includeDetail
+      ? unsortedEntries
+        .flatMap((entry) => entry.item ? [entry.item] : [])
+        .sort(compareChronologicalActivity)
+      : [];
 
     const latestAttentionEntry = latestFirstEntries.find((entry) => entry.attentionActivityAt);
     const latestActivityAt = latestAttentionEntry?.attentionActivityAt ?? null;
@@ -964,9 +999,12 @@ export function messengerService(db: Db) {
       return itemActivity.getTime() > lastReadAt.getTime();
     }).length;
 
-    return {
+    const data: IssueThreadData = {
       summary: issueSummary(issuesUniverse.length, latestActivityAt, unreadCount, lastReadAt, latestAttentionEntry?.attentionPreview ?? null),
-      detail: {
+      itemCount: issuesUniverse.length,
+    };
+    if (options.includeDetail) {
+      data.detail = {
         threadKey: "issues",
         kind: "issues",
         title: "Issues",
@@ -980,8 +1018,21 @@ export function messengerService(db: Db) {
         href: "/messenger/issues",
         description: "Followed issues, issues I created, issues assigned to me, and issues ready for my review",
         items: chronologicalItems,
-      } satisfies MessengerThreadDetail<MessengerIssueThreadItem>,
+      };
+    }
+    return data;
+  }
+
+  async function loadIssueSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
+    const data = await loadIssueData(orgId, userId, threadStates, { includeDetail: true });
+    return {
+      summary: data.summary,
+      detail: data.detail!,
     };
+  }
+
+  async function loadIssueThreadSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource): Promise<SystemSummaryData> {
+    return loadIssueData(orgId, userId, threadStates, { includeDetail: false });
   }
 
   async function loadApprovalSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
@@ -1402,7 +1453,7 @@ export function messengerService(db: Db) {
     ]);
     const [chats, issueData, approvalData, failedRunData, budgetData, joinRequestData] = await Promise.all([
       chatsSvc.list(orgId, { status: "active" }, userId),
-      loadIssueSummaryData(orgId, userId, syntheticThreadStates),
+      loadIssueThreadSummaryData(orgId, userId, syntheticThreadStates),
       loadApprovalThreadSummaryData(orgId, userId, syntheticThreadStates),
       loadFailedRunSummaryData(orgId, userId, syntheticThreadStates),
       loadBudgetAlertData(orgId, userId, syntheticThreadStates),
@@ -1410,7 +1461,7 @@ export function messengerService(db: Db) {
     ]);
 
     const syntheticSummaries: MessengerThreadSummary[] = [];
-    if (issueData.detail.items.length > 0) syntheticSummaries.push(issueData.summary);
+    if (issueData.itemCount > 0) syntheticSummaries.push(issueData.summary);
     if (approvalData.itemCount > 0) syntheticSummaries.push(approvalData.summary);
     if (failedRunData.itemCount > 0) syntheticSummaries.push(failedRunData.summary);
     if (budgetData.detail.items.length > 0) syntheticSummaries.push(budgetData.summary);

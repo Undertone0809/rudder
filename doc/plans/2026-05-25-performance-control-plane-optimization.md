@@ -448,6 +448,40 @@ Phase 12 evidence:
   reviewer, read-state-only, comment-only, and hidden-issue coverage
 - `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 1 --explain`
 
+## Phase 13 Result
+
+The thirteenth slice continued the Messenger summary split for the `issues`
+synthetic thread. `/messenger/threads` no longer builds full issue detail cards
+for the Issues synthetic summary row.
+
+The detail endpoint remains unchanged:
+
+- `/messenger/issues` still loads the full issue thread with chronological
+  cards, source comment metadata, status-change metadata, and issue actions.
+
+The summary path now calls a summary-only loader that preserves the same
+tracked-issue universe, unread count, latest attention timestamp, and preview
+semantics, but skips work that only the detail view needs:
+
+- no `MessengerIssueThreadItem` cards are built for the thread list
+- no chronological item sort is performed for the thread list
+- summary comment loading only reads external comments and avoids author-name
+  joins that are only needed by detail cards
+
+On the seeded medium harness after this change,
+`messenger.listThreadSummaries` ran twice with a minimum around 44 ms and an
+average around 55 ms. The previous medium run in Phase 12 was around 68 ms.
+This remains fixture evidence and should not be read as a production latency
+claim.
+
+Phase 13 evidence:
+
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/messenger-service.test.ts --reporter=verbose`
+  with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
+  isolated database on the already-running local Rudder Postgres instance
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 2 --explain`
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local
