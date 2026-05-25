@@ -257,6 +257,30 @@ Phase 5 evidence:
   with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
   isolated database on the already-running local Rudder Postgres instance
 
+## Phase 6 Result
+
+The sixth slice added the indexes needed by the new Messenger system-thread
+summary loaders:
+
+- `heartbeat_runs_company_status_updated_idx` on
+  `(org_id, status, updated_at)`
+- `join_requests_company_status_updated_idx` on
+  `(org_id, status, updated_at)`
+
+These indexes match the `/messenger/threads` summary-only filters for failed
+runs and pending join requests, including latest-activity ordering and
+read-state unread counts. This keeps Phase 5 from merely shifting work from
+application hydration into less-indexed database scans.
+
+Phase 6 evidence:
+
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/postgres pnpm db:generate`
+- `pnpm --filter @rudderhq/db typecheck`
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/messenger-service.test.ts --reporter=verbose`
+  with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
+  isolated database on the already-running local Rudder Postgres instance
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local

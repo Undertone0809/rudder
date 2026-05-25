@@ -47,5 +47,10 @@ export const heartbeatRuns = pgTable(
       table.agentId,
       table.startedAt,
     ),
+    companyStatusUpdatedIdx: index("heartbeat_runs_company_status_updated_idx").on(
+      table.orgId,
+      table.status,
+      table.updatedAt,
+    ),
   }),
 );
