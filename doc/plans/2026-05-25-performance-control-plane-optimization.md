@@ -412,6 +412,42 @@ Phase 11 evidence:
   including multi-comment approval summary coverage
 - `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 1 --explain`
 
+## Phase 12 Result
+
+The twelfth slice tightened another seeded medium hotspot without changing
+sidebar badge semantics. The medium harness showed
+`sidebar.countUnreadTouchedIssues` taking roughly 94 ms before this slice.
+
+The previous count-only helper still used the shared issue-list predicates,
+which expand into repeated per-issue comment/read-state subqueries. This slice
+keeps the same user-visible definition but computes it with one SQL aggregation
+pass:
+
+- aggregate per-issue user comment, external comment, and read-state timestamps
+- join those aggregates to eligible inbox issues
+- keep the same touched-by-user sources: creator, assignee, reviewer, read
+  state, or authored comment
+- keep the same unread rule: latest external comment must be newer than the
+  user's latest touch
+- keep automation execution and hidden issues excluded
+
+The perf harness now includes `sidebar.unreadTouchedIssues` in the `--explain`
+packet and runs `ANALYZE` before EXPLAIN so fresh seeded databases have usable
+planner statistics. On the seeded medium harness after this change,
+`sidebar.countUnreadTouchedIssues` timed at roughly 20 ms, and the representative
+`sidebar.unreadTouchedIssues` plan executed in roughly 1.5 ms. This remains
+medium fixture evidence, not a production latency claim.
+
+Phase 12 evidence:
+
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/sidebar-badges-service.test.ts --reporter=verbose`
+  with `RUDDER_SIDEBAR_BADGES_TEST_DATABASE_URL` pointed at a temporary isolated
+  database on the already-running local Rudder Postgres instance, including
+  read-after-external-comment, self-reply-after-external-comment, creator,
+  reviewer, read-state-only, comment-only, and hidden-issue coverage
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 1 --explain`
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local

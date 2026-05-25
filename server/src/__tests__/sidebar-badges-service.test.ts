@@ -168,10 +168,18 @@ describe("sidebarBadgeService", () => {
     const userId = "board-user";
     const issueId = randomUUID();
     const selfOnlyIssueId = randomUUID();
+    const readCleanIssueId = randomUUID();
+    const selfResolvedIssueId = randomUUID();
+    const createdByMeIssueId = randomUUID();
+    const reviewerIssueId = randomUUID();
+    const readStateOnlyIssueId = randomUUID();
+    const commentOnlyIssueId = randomUUID();
+    const hiddenIssueId = randomUUID();
     const automationIssueId = randomUUID();
     const otherOrgIssueId = randomUUID();
     const readAt = new Date("2026-05-01T10:00:00.000Z");
     const unreadAt = new Date("2026-05-01T11:00:00.000Z");
+    const rereadAt = new Date("2026-05-01T12:00:00.000Z");
 
     await db.insert(issues).values([
       {
@@ -191,6 +199,75 @@ describe("sidebarBadgeService", () => {
         status: "todo",
         priority: "medium",
         assigneeUserId: userId,
+        createdAt: readAt,
+        updatedAt: readAt,
+      },
+      {
+        id: readCleanIssueId,
+        orgId,
+        title: "Read clean issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: readAt,
+        updatedAt: readAt,
+      },
+      {
+        id: selfResolvedIssueId,
+        orgId,
+        title: "Self resolved issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: readAt,
+        updatedAt: readAt,
+      },
+      {
+        id: createdByMeIssueId,
+        orgId,
+        title: "Created by me issue",
+        status: "todo",
+        priority: "medium",
+        createdByUserId: userId,
+        createdAt: readAt,
+        updatedAt: readAt,
+      },
+      {
+        id: reviewerIssueId,
+        orgId,
+        title: "Reviewer issue",
+        status: "in_review",
+        priority: "medium",
+        reviewerUserId: userId,
+        createdAt: readAt,
+        updatedAt: readAt,
+      },
+      {
+        id: readStateOnlyIssueId,
+        orgId,
+        title: "Read-state touched issue",
+        status: "todo",
+        priority: "medium",
+        createdAt: readAt,
+        updatedAt: readAt,
+      },
+      {
+        id: commentOnlyIssueId,
+        orgId,
+        title: "Comment touched issue",
+        status: "todo",
+        priority: "medium",
+        createdAt: readAt,
+        updatedAt: readAt,
+      },
+      {
+        id: hiddenIssueId,
+        orgId,
+        title: "Hidden issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        hiddenAt: readAt,
         createdAt: readAt,
         updatedAt: readAt,
       },
@@ -220,6 +297,9 @@ describe("sidebarBadgeService", () => {
     await db.insert(issueReadStates).values([
       { orgId, issueId, userId, lastReadAt: readAt },
       { orgId, issueId: selfOnlyIssueId, userId, lastReadAt: readAt },
+      { orgId, issueId: readCleanIssueId, userId, lastReadAt: rereadAt },
+      { orgId, issueId: selfResolvedIssueId, userId, lastReadAt: readAt },
+      { orgId, issueId: readStateOnlyIssueId, userId, lastReadAt: readAt },
       { orgId, issueId: automationIssueId, userId, lastReadAt: readAt },
       { orgId: otherOrgId, issueId: otherOrgIssueId, userId, lastReadAt: readAt },
     ]);
@@ -227,11 +307,20 @@ describe("sidebarBadgeService", () => {
     await db.insert(issueComments).values([
       { orgId, issueId, body: "external update", createdAt: unreadAt },
       { orgId, issueId: selfOnlyIssueId, authorUserId: userId, body: "my update", createdAt: unreadAt },
+      { orgId, issueId: readCleanIssueId, body: "external update already read", createdAt: unreadAt },
+      { orgId, issueId: selfResolvedIssueId, body: "external update before my reply", createdAt: unreadAt },
+      { orgId, issueId: selfResolvedIssueId, authorUserId: userId, body: "my later reply", createdAt: rereadAt },
+      { orgId, issueId: createdByMeIssueId, body: "external update for creator", createdAt: unreadAt },
+      { orgId, issueId: reviewerIssueId, body: "external update for reviewer", createdAt: unreadAt },
+      { orgId, issueId: readStateOnlyIssueId, body: "external update for read-state touch", createdAt: unreadAt },
+      { orgId, issueId: commentOnlyIssueId, authorUserId: userId, body: "my earlier comment", createdAt: readAt },
+      { orgId, issueId: commentOnlyIssueId, body: "external update for comment touch", createdAt: unreadAt },
+      { orgId, issueId: hiddenIssueId, body: "hidden issue update", createdAt: unreadAt },
       { orgId, issueId: automationIssueId, body: "automation update", createdAt: unreadAt },
       { orgId: otherOrgId, issueId: otherOrgIssueId, body: "other org update", createdAt: unreadAt },
     ]);
 
-    await expect(svc.countUnreadTouchedIssues(orgId, userId)).resolves.toBe(1);
+    await expect(svc.countUnreadTouchedIssues(orgId, userId)).resolves.toBe(5);
   });
 
   it("counts active chat attention while preserving first-read state creation", async () => {

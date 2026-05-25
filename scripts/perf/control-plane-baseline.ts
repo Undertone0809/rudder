@@ -205,6 +205,56 @@ async function explainOptimizedPaths(
       `,
     },
     {
+      name: "sidebar.unreadTouchedIssues",
+      query: sql`
+        with comment_stats as (
+          select
+            issue_comments.issue_id as issue_id,
+            max(issue_comments.created_at) filter (
+              where issue_comments.author_user_id = ${boardUserId}
+            ) as my_last_comment_at,
+            max(issue_comments.created_at) filter (
+              where issue_comments.author_user_id is null
+                or issue_comments.author_user_id <> ${boardUserId}
+            ) as last_external_comment_at
+          from issue_comments
+          where issue_comments.org_id = ${orgId}
+          group by issue_comments.issue_id
+        ),
+        read_stats as (
+          select
+            issue_read_states.issue_id as issue_id,
+            max(issue_read_states.last_read_at) as my_last_read_at
+          from issue_read_states
+          where issue_read_states.org_id = ${orgId}
+            and issue_read_states.user_id = ${boardUserId}
+          group by issue_read_states.issue_id
+        )
+        select count(*)::int as count
+        from issues
+        left join comment_stats on comment_stats.issue_id = issues.id
+        left join read_stats on read_stats.issue_id = issues.id
+        where issues.org_id = ${orgId}
+          and issues.status in ('backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done')
+          and issues.origin_kind <> 'automation_execution'
+          and issues.hidden_at is null
+          and (
+            issues.created_by_user_id = ${boardUserId}
+            or issues.assignee_user_id = ${boardUserId}
+            or issues.reviewer_user_id = ${boardUserId}
+            or read_stats.my_last_read_at is not null
+            or comment_stats.my_last_comment_at is not null
+          )
+          and comment_stats.last_external_comment_at > greatest(
+            coalesce(comment_stats.my_last_comment_at, to_timestamp(0)),
+            coalesce(read_stats.my_last_read_at, to_timestamp(0)),
+            coalesce(case when issues.created_by_user_id = ${boardUserId} then issues.created_at else null end, to_timestamp(0)),
+            coalesce(case when issues.assignee_user_id = ${boardUserId} then issues.updated_at else null end, to_timestamp(0)),
+            coalesce(case when issues.reviewer_user_id = ${boardUserId} then issues.updated_at else null end, to_timestamp(0))
+          )
+      `,
+    },
+    {
       name: "messenger.failedRunsLatest",
       query: sql`
         select error, stderr_excerpt
@@ -498,6 +548,9 @@ async function main() {
         costCents: 3,
         occurredAt: new Date(),
       })));
+    }
+    if (options.explain) {
+      await db.execute(sql`analyze`);
     }
     const explainPlans = options.explain
       ? await explainOptimizedPaths(db, orgId, boardUserId, agentIds[0]!)
