@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, ne, not, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
   agents,
@@ -17,7 +17,6 @@ import {
 import { visibleIncomingMessageSql } from "./chats.helpers.js";
 
 const ACTIONABLE_APPROVAL_STATUSES = ["pending"];
-const FAILED_HEARTBEAT_STATUSES = ["failed", "timed_out"];
 const INBOX_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done"];
 
 type SidebarBadgeBaseCounts = {
@@ -72,52 +71,49 @@ export function sidebarBadgeService(db: Db) {
   }
 
   async function countFailedLatestRuns(orgId: string) {
-    const latestRunByAgent = await db
-      .selectDistinctOn([heartbeatRuns.agentId], {
-        runStatus: heartbeatRuns.status,
-      })
-      .from(heartbeatRuns)
-      .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
-      .where(
-        and(
-          eq(heartbeatRuns.orgId, orgId),
-          eq(agents.orgId, orgId),
-          not(eq(agents.status, "terminated")),
-        ),
-      )
-      .orderBy(heartbeatRuns.agentId, desc(heartbeatRuns.createdAt));
+    const rows = await db.execute(sql<{ count: number }>`
+      select count(*)::int as count
+      from (
+        select
+          ${heartbeatRuns.status} as run_status,
+          row_number() over (
+            partition by ${heartbeatRuns.agentId}
+            order by ${heartbeatRuns.createdAt} desc
+          ) as run_rank
+        from ${heartbeatRuns}
+        inner join ${agents}
+          on ${heartbeatRuns.agentId} = ${agents.id}
+          and ${agents.orgId} = ${orgId}
+        where ${heartbeatRuns.orgId} = ${orgId}
+          and ${agents.status} <> 'terminated'
+      ) latest_agent_runs
+      where latest_agent_runs.run_rank = 1
+        and latest_agent_runs.run_status in ('failed', 'timed_out')
+    `);
 
-    return latestRunByAgent.filter((row) =>
-      FAILED_HEARTBEAT_STATUSES.includes(row.runStatus),
-    ).length;
+    return Number(rows[0]?.count ?? 0);
   }
 
   async function ensureActiveChatUserStates(orgId: string, userId: string) {
-    const activeConversations = await db
-      .select({
-        orgId: chatConversations.orgId,
-        conversationId: chatConversations.id,
-        lastMessageAt: chatConversations.lastMessageAt,
-        updatedAt: chatConversations.updatedAt,
-        createdAt: chatConversations.createdAt,
-      })
-      .from(chatConversations)
-      .where(and(eq(chatConversations.orgId, orgId), eq(chatConversations.status, "active")));
-
-    if (activeConversations.length === 0) return;
-
-    await db
-      .insert(chatConversationUserStates)
-      .values(
-        activeConversations.map((row) => ({
-          orgId: row.orgId,
-          conversationId: row.conversationId,
-          userId,
-          lastReadAt: row.lastMessageAt ?? row.updatedAt ?? row.createdAt,
-          updatedAt: new Date(),
-        })),
+    await db.execute(sql`
+      insert into chat_conversation_user_states (
+        org_id,
+        conversation_id,
+        user_id,
+        last_read_at,
+        updated_at
       )
-      .onConflictDoNothing();
+      select
+        ${chatConversations.orgId},
+        ${chatConversations.id},
+        ${userId},
+        coalesce(${chatConversations.lastMessageAt}, ${chatConversations.updatedAt}, ${chatConversations.createdAt}),
+        now()
+      from ${chatConversations}
+      where ${chatConversations.orgId} = ${orgId}
+        and ${chatConversations.status} = 'active'
+      on conflict (org_id, conversation_id, user_id) do nothing
+    `);
   }
 
   return {

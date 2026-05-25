@@ -2,7 +2,7 @@
 title: Performance control-plane optimization
 date: 2026-05-25
 kind: implementation
-status: completed
+status: in_progress
 area: api
 entities:
   - control_plane_performance
@@ -175,6 +175,26 @@ Reviewer-requested hardening added:
   semantics, automation issue exclusion, and latest failed-run semantics
 - an explicit `approvals.orgId = orgId` predicate for pending proposal attention
 
+## Phase 2 Result
+
+The second slice tightened the same compatibility boundary by removing the
+remaining row hydration inside sidebar badge internals:
+
+- latest failed-run badges now count in SQL with `row_number()` over each active
+  agent instead of selecting one latest run row per agent and filtering in
+  JavaScript
+- chat first-read state creation now uses a single `insert ... select ... on
+  conflict do nothing` statement instead of selecting every active conversation
+  into application memory before inserting user states
+
+Phase 2 evidence:
+
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/sidebar-badges-routes.test.ts --reporter=verbose`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/sidebar-badges-service.test.ts --reporter=verbose`
+  with `RUDDER_SIDEBAR_BADGES_TEST_DATABASE_URL` pointed at a temporary isolated
+  database on the already-running local Rudder Postgres instance
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local
@@ -182,3 +202,5 @@ Reviewer-requested hardening added:
   database on an already-running local Rudder Postgres instance instead.
 - Runtime latency targets still need a seeded fixture and timing harness before
   claiming quantified performance wins.
+- The next behavioral-compatible candidates are Messenger thread summary split,
+  opt-in issue list pagination, and transactional cost rollups.
