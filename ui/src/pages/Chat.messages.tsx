@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -10,7 +10,6 @@ import {
   ChevronRight,
   Copy,
   Folder,
-  ListChecks,
   Loader2,
   Paperclip,
   Pencil,
@@ -56,6 +55,7 @@ import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { AgentIcon } from "@/components/AgentIconPicker";
+import { AssigneeLabel } from "@/components/AssigneeLabel";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -91,7 +91,7 @@ import {
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
 import { displayChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title";
-import { formatChatAgentLabel } from "@/lib/agent-labels";
+import { agentTitleBadgeLabel, formatChatAgentLabel } from "@/lib/agent-labels";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import { projectColorCssVars } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
@@ -156,6 +156,70 @@ export function ChatAssistantAttributionRow({
   );
 }
 
+type ProposalPrincipalDisplay =
+  | { kind: "agent"; label: string; agent?: Agent | null }
+  | { kind: "user"; label: string }
+  | null;
+
+function issueProposalPrincipalDisplay(
+  proposal: Record<string, unknown>,
+  role: "assignee" | "reviewer",
+  agents: Agent[] | undefined,
+): ProposalPrincipalDisplay {
+  const agentIdKey = role === "assignee" ? "assigneeAgentId" : "reviewerAgentId";
+  const userIdKey = role === "assignee" ? "assigneeUserId" : "reviewerUserId";
+  const agentId = typeof proposal[agentIdKey] === "string" ? proposal[agentIdKey].trim() : "";
+  if (agentId) {
+    const agent = agents?.find((candidate) => candidate.id === agentId) ?? null;
+    return {
+      kind: "agent",
+      label: agent?.name ?? (role === "assignee" ? "Unknown agent" : "Unknown reviewer"),
+      agent,
+    };
+  }
+
+  const userId = typeof proposal[userIdKey] === "string" ? proposal[userIdKey].trim() : "";
+  if (userId) {
+    return {
+      kind: "user",
+      label: formatAssigneeUserLabel(userId, null) ?? (role === "assignee" ? "Human assignee" : "Human reviewer"),
+    };
+  }
+
+  return null;
+}
+
+function ProposalFactRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid min-h-9 grid-cols-[minmax(5rem,0.8fr)_minmax(0,1.2fr)] items-center gap-4 border-b border-[color:var(--border-soft)] py-2 last:border-b-0">
+      <div className="text-sm text-muted-foreground">{label}</div>
+      <div className="flex min-w-0 justify-end text-sm font-medium text-foreground">{children}</div>
+    </div>
+  );
+}
+
+function ProposalPrincipalLabel({ principal }: { principal: ProposalPrincipalDisplay }) {
+  if (!principal) return <span className="text-muted-foreground">None</span>;
+  if (principal.kind === "agent") {
+    return (
+      <AssigneeLabel
+        kind="agent"
+        label={principal.label}
+        badgeLabel={principal.agent ? agentTitleBadgeLabel(principal.agent) : null}
+        agentIcon={principal.agent?.icon ?? null}
+        agentRole={principal.agent?.role ?? null}
+      />
+    );
+  }
+  return <AssigneeLabel kind="user" label={principal.label} />;
+}
+
 export function ProposalCard({
   conversation,
   message,
@@ -196,11 +260,18 @@ export function ProposalCard({
   const showDecisionNote = showApprovalActions || showOperationActions;
   const showRevisionAction = message.approval?.status === "pending";
   const decisionNoteId = `proposal-review-note-${message.id}`;
+  const proposalDetailsId = `proposal-details-${message.id}`;
   const resolvedDecisionNote = message.approval?.decisionNote ?? operationProposalDecisionNoteFromMessage(message);
   const showReviewControls = showDecisionNote || canConvertDirectly || Boolean(resolvedDecisionNote);
   const resolvedDecisionNoteLabel = reviewStatus === "revision_requested" ? "Requested changes" : "Decision note";
   const proposalAssigneeLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "assignee", agents) : null;
   const proposalReviewerLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "reviewer", agents) : null;
+  const proposalAssigneeDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "assignee", agents) : null;
+  const proposalReviewerDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "reviewer", agents) : null;
+  const proposalDescription = issueProposal ? String(issueProposal.description) : "";
+  const [proposalDetailsExpanded, setProposalDetailsExpanded] = useState(false);
+  const [proposalDetailsCanExpand, setProposalDetailsCanExpand] = useState(false);
+  const proposalDetailsRef = useRef<HTMLDivElement | null>(null);
   const proposalKind = issueProposal ? "issue" : operationProposal ? "operation" : planDocument ? "plan" : "default";
   const proposalKindLabel = issueProposal
     ? "Issue proposal"
@@ -209,6 +280,32 @@ export function ProposalCard({
       : planDocument
         ? "Plan proposal"
         : "Proposal";
+
+  useEffect(() => {
+    setProposalDetailsExpanded(false);
+  }, [message.id, proposalDescription]);
+
+  useEffect(() => {
+    const details = proposalDetailsRef.current;
+    if (!details || !issueProposal) {
+      setProposalDetailsCanExpand(false);
+      return;
+    }
+
+    const updateCanExpand = () => {
+      const computedStyle = window.getComputedStyle(details);
+      const lineHeight = Number.parseFloat(computedStyle.lineHeight);
+      const collapsedTenLineHeight = Number.isFinite(lineHeight) ? lineHeight * 10 : 240;
+      setProposalDetailsCanExpand(details.scrollHeight > collapsedTenLineHeight + 1);
+    };
+
+    updateCanExpand();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateCanExpand);
+    observer.observe(details);
+    return () => observer.disconnect();
+  }, [issueProposal, proposalDescription, proposalDetailsExpanded]);
 
   return (
     <div className="text-foreground">
@@ -231,48 +328,47 @@ export function ProposalCard({
         data-testid="proposal-review-block"
         data-status={reviewStatus ?? "default"}
         data-kind={proposalKind}
-        className="chat-review-block mt-4 max-w-[760px] rounded-[var(--radius-lg)] p-4 text-foreground transition-all duration-200"
+        className="chat-review-block mt-4 max-w-[860px] rounded-[var(--radius-lg)] text-foreground transition-all duration-200"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--border-soft)] pb-3">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-[color:color-mix(in_oklab,var(--accent-base)_20%,var(--border-base))] bg-[color:color-mix(in_oklab,var(--surface-proposal)_62%,transparent)] text-[color:var(--accent-strong)]">
-              <ListChecks className="h-4 w-4" aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <div className="text-sm font-semibold leading-5 text-[color:var(--accent-strong)]">
-                {proposalKindLabel}
-              </div>
-            </div>
+        <div
+          className={cn(
+            "chat-review-docket-header grid border-b border-[color:var(--border-soft)]",
+            reviewStatus ? "grid-cols-1 sm:grid-cols-[1fr_minmax(9rem,13rem)]" : "grid-cols-1",
+          )}
+        >
+          <div className="flex min-w-0 items-center gap-3 px-5 py-4">
+            <span className="h-6 w-1 rounded-full bg-[color:var(--accent-strong)]" aria-hidden="true" />
+            <span className="truncate text-sm font-semibold leading-5 text-foreground">{proposalKindLabel}</span>
           </div>
           {reviewStatus ? (
-            <div data-testid="proposal-review-status">
+            <div
+              data-testid="proposal-review-status"
+              className="flex min-w-0 items-center justify-start border-t border-[color:var(--border-soft)] px-5 py-4 sm:justify-end sm:border-l sm:border-t-0 sm:pr-9"
+            >
               <StatusBadge status={reviewStatus} />
             </div>
           ) : null}
         </div>
 
-        <div className="pt-3">
+        <div className="px-5 py-5">
           <div className="min-w-0">
             {issueProposal ? (
               <>
-                <div className="text-[18px] font-semibold leading-6 text-foreground">{String(issueProposal.title)}</div>
-                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="text-muted-foreground/80">Priority</span>
-                    <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
-                  </span>
-                  {proposalAssigneeLabel ? (
-                    <span className="inline-flex min-w-0 items-center gap-1.5">
-                      <span className="text-muted-foreground/80">Assignee</span>
-                      <span className="truncate text-foreground/80">{proposalAssigneeLabel}</span>
-                    </span>
-                  ) : null}
-                  {proposalReviewerLabel ? (
-                    <span className="inline-flex min-w-0 items-center gap-1.5">
-                      <span className="text-muted-foreground/80">Reviewer</span>
-                      <span className="truncate text-foreground/80">{proposalReviewerLabel}</span>
-                    </span>
-                  ) : null}
+                <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(15rem,22rem)]">
+                  <div className="flex min-w-0 items-center border-b border-[color:var(--border-soft)] pb-5 md:border-b-0 md:pb-0">
+                    <div className="text-[26px] font-semibold leading-tight text-foreground">{String(issueProposal.title)}</div>
+                  </div>
+                  <div className="chat-review-fact-ledger">
+                    <ProposalFactRow label="Priority">
+                      <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
+                    </ProposalFactRow>
+                    <ProposalFactRow label="Owner">
+                      <ProposalPrincipalLabel principal={proposalAssigneeDisplay} />
+                    </ProposalFactRow>
+                    <ProposalFactRow label="Reviewer">
+                      <ProposalPrincipalLabel principal={proposalReviewerDisplay} />
+                    </ProposalFactRow>
+                  </div>
                 </div>
                 {proposalAssigneeLabel || proposalReviewerLabel ? (
                   <div className="sr-only">
@@ -300,21 +396,45 @@ export function ProposalCard({
         </div>
 
         {issueProposal ? (
-          <details className="chat-review-details mt-4 border-t border-[color:var(--border-soft)] pt-3">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-[var(--radius-sm)] py-1 text-sm font-medium text-foreground outline-none transition-colors hover:text-[color:var(--accent-strong)] focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]">
-              <span>Proposal details</span>
-              <ChevronDown className="chat-review-details-icon h-4 w-4 text-muted-foreground transition-transform duration-200" aria-hidden="true" />
-            </summary>
-            <div className="mt-3 text-sm leading-6 text-muted-foreground">
+          <section className="border-t border-[color:var(--border-soft)] px-5 py-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-foreground">Proposal details</div>
+              {proposalDetailsCanExpand ? (
+                <button
+                  type="button"
+                  aria-controls={proposalDetailsId}
+                  aria-expanded={proposalDetailsExpanded}
+                  className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-1 text-xs font-medium text-[color:var(--accent-strong)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-proposal)_55%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]"
+                  onClick={() => setProposalDetailsExpanded((current) => !current)}
+                >
+                  {proposalDetailsExpanded ? "Show less" : "Show full proposal"}
+                  <ChevronDown
+                    className={cn(
+                      "h-3.5 w-3.5 transition-transform duration-200",
+                      proposalDetailsExpanded && "rotate-180",
+                    )}
+                    aria-hidden="true"
+                  />
+                </button>
+              ) : null}
+            </div>
+            <div
+              id={proposalDetailsId}
+              ref={proposalDetailsRef}
+              className={cn(
+                "chat-review-details-body text-sm leading-6 text-muted-foreground",
+                !proposalDetailsExpanded && "chat-review-details-body--collapsed",
+              )}
+            >
               <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
-                {String(issueProposal.description)}
+                {proposalDescription}
               </MarkdownBody>
             </div>
-          </details>
+          </section>
         ) : null}
 
         {planDocument ? (
-          <div className="mt-4 border-t border-[color:var(--border-soft)] pt-4">
+          <div className="border-t border-[color:var(--border-soft)] px-5 py-4">
             {issueProposal ? (
               <div className="text-[11px] font-medium text-muted-foreground">{planDocument.title}</div>
             ) : null}
@@ -327,13 +447,15 @@ export function ProposalCard({
         ) : null}
 
         {operationProposal?.patch && typeof operationProposal.patch === "object" ? (
-          <pre className="mt-4 overflow-x-auto rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-shell)_88%,transparent)] p-3 text-xs text-muted-foreground">
-            {JSON.stringify(operationProposal.patch, null, 2)}
-          </pre>
+          <div className="border-t border-[color:var(--border-soft)] px-5 py-4">
+            <pre className="overflow-x-auto rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-shell)_88%,transparent)] p-3 text-xs text-muted-foreground">
+              {JSON.stringify(operationProposal.patch, null, 2)}
+            </pre>
+          </div>
         ) : null}
 
         {showReviewControls ? (
-          <div className="mt-5 border-t border-[color:var(--border-soft)] pt-4">
+          <div className="border-t border-[color:var(--border-soft)] px-5 py-5">
             {showDecisionNote ? (
               <label className="block space-y-2">
                 <span className="text-xs font-medium text-muted-foreground">

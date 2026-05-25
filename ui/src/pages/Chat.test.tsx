@@ -270,6 +270,11 @@ describe("ProposalCard", () => {
     expect(reviewBlockHtml).not.toContain("Issue description");
     expect(reviewBlockHtml).toContain("Priority");
     expect(reviewBlockHtml).toContain("High");
+    expect(reviewBlockHtml).toContain("Proposal details");
+    expect(reviewBlockHtml).toContain("chat-review-details-body--collapsed");
+    expect(reviewBlockHtml).not.toContain("<details");
+    expect(reviewBlockHtml).not.toContain("<summary");
+    expect(reviewBlockHtml).not.toContain("Goal");
     expect(reviewBlockHtml).not.toContain("Review this proposal here before continuing the conversation.");
     expect(reviewBlockHtml).toContain(issueTitle);
     expect(reviewBlockHtml).toContain(issueDescription);
@@ -297,6 +302,8 @@ describe("ProposalCard", () => {
 
     expect(html).toContain("Assignee · Wesley");
     expect(html).toContain("Reviewer · CTO");
+    expect(html).toContain("Owner");
+    expect(html).toContain('data-slot="assignee-label"');
   });
 
   it("renders uploaded replying agent avatars without the assistant avatar shell", () => {
