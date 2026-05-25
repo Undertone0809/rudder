@@ -53,6 +53,8 @@ npx @rudderhq/cli@latest start
 
 Codex、Claude Code、Gemini CLI、OpenCode、Pi、Cursor 这类本地 CLI agent 都走这个路径。
 
+![Codex 本地 runtime 配置](../../images/agent-runtime-codex-config.png)
+
 1. 创建或编辑 agent。
 2. 选择 runtime 类型。
 3. 如果 runtime 支持 model 选择，就选择 model。
@@ -110,6 +112,8 @@ Rudder 调用进程时，也会提供 Rudder runtime 环境变量。不要把密
 - `command` 是否存在
 - `cwd` 是否是绝对目录
 - 命令能否从配置的工作目录和 `PATH` 里找到
+
+![Shell Process runtime 环境测试](../../images/agent-runtime-process-test.png)
 
 ## 配置 HTTP Webhook runtime
 
