@@ -1,76 +1,76 @@
 # Rudder
 
-> Collaborate with agents the way humans work together.
+> Build your self-improving Agent Team.
 
-Rudder is an orchestration and control platform for agent work, and the operating layer for agent teams. It gives humans and agents a shared structure for goals, tasks, knowledge, workflows, approvals, and feedback, so work can keep moving inside clear boundaries.
+Agents that think, build, play, and learn from real work.
 
-Rudder began from a fork of an early version of Paperclip. That gave us a practical starting point for agent operations. Since then, the product has been evolving around a clearer idea: agent collaboration works better when it borrows from how people actually work together — through roles, reporting lines, handoffs, memory, trust boundaries, and visible feedback loops.
+Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for assigning work, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
+
+Rudder began as a fork of an early version of Paperclip. That gave the project a practical starting point for agent operations; Rudder is now evolving around a sharper product idea: agent teams improve when real work leaves behind durable context, decisions, feedback, and reusable operating patterns.
 
 Rudder is built for the moment when agent work stops looking like a single prompt and starts looking like a real team.
 
+## The Work Loop
+
+Rudder is designed around the loop that makes agent work compound:
+
+```text
+Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
+```
+
+The control plane matters because this loop needs structure. Goals explain why work exists. Issues make work durable. Heartbeats run agents in a visible way. Reviews and approvals keep autonomy governable. Feedback, comments, documents, run history, and skills give the team a place to keep what it learned.
+
+Rudder does not assume every lesson is automatically promoted into a new skill or workflow. The product direction is to make those promotion paths explicit, reviewable, and reusable instead of leaving them buried in chat transcripts or one-off prompts.
+
 ## The Design Idea
 
-Rudder is shaped by a simple belief: the most useful way to work with agents is closer to the way humans coordinate with each other.
+The most useful way to work with agents is closer to the way humans coordinate with each other.
 
-People do not operate through one giant shared prompt. They work through shared goals, explicit roles, durable work objects, context that stays attached to the task, clear handoffs, and escalation paths when judgment or approval is needed. Teams also need visibility: what is moving, what is blocked, what it costs, and where intervention matters.
+People do not operate through one giant shared prompt. They work through shared goals, explicit roles, durable work objects, context attached to the task, clear handoffs, and escalation paths when judgment or approval is needed. Teams also need visibility: what is moving, what is blocked, what it costs, and where intervention matters.
 
-Rudder turns those coordination patterns into product primitives for agent teams.
+Rudder turns those coordination patterns into product primitives for agent teams:
 
-![](./doc/assets/readme_imgs/1.png)
+![Rudder issue board](./doc/assets/readme_imgs/1.png)
 
-![](./doc/assets/readme_imgs/9.png)
+![Rudder calendar](./doc/assets/readme_imgs/9.png)
 
-![](./doc/assets/readme_imgs/10.png)
+![Rudder organization structure](./doc/assets/readme_imgs/10.png)
 
-![](./doc/assets/readme_imgs/2.png)
+![Rudder approvals](./doc/assets/readme_imgs/2.png)
 
-![](./doc/assets/readme_imgs/3.png)
+![Rudder issue proposal](./doc/assets/readme_imgs/3.png)
 
-![](./doc/assets/readme_imgs/4.png)
+![Rudder heartbeats](./doc/assets/readme_imgs/4.png)
 
-![](./doc/assets/readme_imgs/5.png)
+![Rudder skills](./doc/assets/readme_imgs/5.png)
 
-![](./doc/assets/readme_imgs/6.png)
+![Rudder run transcript](./doc/assets/readme_imgs/6.png)
 
-![](./doc/assets/readme_imgs/7.png)
+![Rudder organization focused view](./doc/assets/readme_imgs/7.png)
 
-![](./doc/assets/readme_imgs/8.png)
-
-
-
-That means:
+![Rudder issue detail](./doc/assets/readme_imgs/8.png)
 
 - work belongs to an organization, not a loose thread
-- every task should trace back to a goal
-- agents should have explicit roles, runtime config, and reporting lines
-- chat should help clarify and route work, while durable execution stays attached to issues, approvals, and outputs
-- autonomy should stay legible, governable, and budget-aware
-
-## Why Rudder
-
-As soon as agent work becomes ongoing, three things start to matter very quickly: structure, continuity, and control.
-
-You need a place where goals stay visible, tasks remain durable, knowledge compounds over time, approvals have a clear surface, and spend does not disappear into hidden runtime loops. You also need a way to let different agents collaborate without re-explaining the same organizational context every time work begins.
-
-Rudder provides that control layer. It helps teams define the working relationship between humans and agents, and gives agent execution a place to live inside an actual operating structure.
+- every issue should trace back to a goal
+- agents have roles, runtime config, reporting lines, and skills
+- chat helps clarify and route work, while durable execution stays attached to issues, approvals, outputs, and run history
+- autonomy stays legible, governable, and budget-aware
 
 ## What Rudder Is
 
-Rudder is the operating layer for agent teams. One Rudder instance can run one or many AI companies, each with its own goal, org structure, employees, work, budgets, and governance.
+Rudder is the operating layer for agent teams and AI-native organizations. One Rudder instance can run one or many organizations, each with its own goal, org structure, agents, issues, budgets, approvals, and governance.
 
-
-| Human company pattern | Rudder equivalent                               |
-| --------------------- | ----------------------------------------------- |
-| Company mission       | Company goal                                    |
-| Employees             | AI agents                                       |
-| Org chart             | Agent reporting structure                       |
-| Work ownership        | Issues and assignments                          |
-| Team workflow         | Workflow definitions and execution paths        |
-| Operational memory    | Knowledge, comments, logs, and activity history |
-| Manager check-ins     | Agent heartbeats                                |
-| Executive review      | Board approvals                                 |
-| Budget discipline     | Spend tracking and hard stops                   |
-
+| Human team pattern | Rudder equivalent |
+| --- | --- |
+| Mission | Organization goal |
+| Employees | AI agents |
+| Org chart | Agent reporting structure |
+| Work ownership | Issues and assignments |
+| Team workflow | Workflow definitions and execution paths |
+| Operational memory | Comments, documents, run history, activity, and skills |
+| Manager check-ins | Agent heartbeats |
+| Executive review | Board approvals |
+| Budget discipline | Spend tracking and hard stops |
 
 Rudder coordinates agents. It does not force one runtime, one model, one prompt format, or one execution environment.
 
@@ -78,15 +78,13 @@ Rudder coordinates agents. It does not force one runtime, one model, one prompt 
 
 ### Try Rudder
 
-The fastest path installs the per-user portable Rudder Desktop app and prepares
-the matching persistent CLI:
+The fastest path installs the per-user portable Rudder Desktop app and prepares the matching persistent CLI:
 
 ```bash
 npx @rudderhq/cli@latest start
 ```
 
-After the persistent CLI is available, the direct `rudder` form is the same
-command surface:
+After the persistent CLI is available, the direct `rudder` form is the same command surface:
 
 ```bash
 rudder start
@@ -115,6 +113,9 @@ Rudder defaults to embedded PostgreSQL in development. If `DATABASE_URL` is unse
 5. Create or convert work into issues.
 6. Let agents pick up work through heartbeat invocations.
 7. Review outputs, approvals, activity, and spend from the board.
+8. Leave feedback on the run, issue, or output.
+9. Preserve reusable lessons as better context, skills, decisions, or workflows.
+10. Future runs use the improved team context.
 
 Every durable piece of work should still answer one question: why does this task exist? In Rudder, the intended answer is traceable all the way back to the organization goal.
 
