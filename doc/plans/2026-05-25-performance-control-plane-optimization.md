@@ -376,13 +376,49 @@ Phase 10 evidence:
 - `pnpm --filter @rudderhq/server typecheck`
 - `git diff --check`
 
+## Phase 11 Result
+
+The eleventh slice used the medium `--explain` harness to tune one remaining
+Messenger approvals summary hot path without changing the response contract.
+The seeded medium run showed `messenger.approvalCommentsLatest` using a nested
+loop that repeatedly scanned organization approval comments while looking for
+the newest approval-backed comment.
+
+The fix keeps the same semantics but changes the query shape and index support:
+
+- `/messenger/threads` still computes the approvals synthetic summary from the
+  newest approval update and newest approval comment candidate.
+- The newest approval comment candidate now uses a lateral per-approval latest
+  comment query, preserving both `approvals.org_id` and
+  `approval_comments.org_id` checks.
+- A new `approval_comments_company_approval_created_idx` index on
+  `(org_id, approval_id, created_at)` makes the lateral lookup use an indexed
+  backward scan per approval instead of repeatedly scanning all org comments.
+
+On the seeded medium harness, the representative
+`messenger.approvalCommentsLatest` plan moved from the earlier nested-loop
+shape that read roughly 3,936 buffers and took about 12 ms to an indexed
+lateral plan reading roughly 939 buffers and taking about 0.27 ms. This is
+medium fixture evidence, not a production latency claim.
+
+Phase 11 evidence:
+
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/postgres pnpm db:generate`
+- `pnpm --filter @rudderhq/db typecheck`
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/messenger-service.test.ts --reporter=verbose`
+  with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
+  isolated database on the already-running local Rudder Postgres instance
+  including multi-comment approval summary coverage
+- `DATABASE_URL=postgres://rudder:rudder@127.0.0.1:54339/<temp-db> pnpm perf:control-plane -- --scale medium --iterations 1 --explain`
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local
   shared-memory pressure is cleared; focused SQL validation used an isolated
   database on an already-running local Rudder Postgres instance instead.
-- Runtime latency targets still need production-sized `medium` or larger
-  `EXPLAIN (ANALYZE, BUFFERS)` runs before claiming quantified performance
+- Runtime latency targets still need production-shaped evidence from real or
+  larger production-like organizations before claiming end-user performance
   wins.
 - The next behavioral-compatible candidates are deeper Messenger summary-only
   loaders, opt-in issue list pagination, and transactional cost rollups.

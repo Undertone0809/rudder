@@ -1,0 +1,1 @@
+CREATE INDEX "approval_comments_company_approval_created_idx" ON "approval_comments" USING btree ("org_id","approval_id","created_at");

@@ -1299,6 +1299,12 @@ describe("messengerService and issue follows", () => {
       {
         orgId,
         approvalId: pendingApprovalId,
+        body: "Older approval comment should not drive the summary preview.",
+        createdAt: new Date("2026-04-11T10:45:00.000Z"),
+      },
+      {
+        orgId,
+        approvalId: pendingApprovalId,
         body: "Latest approval comment drives the summary preview.",
         createdAt: latestCommentAt,
       },

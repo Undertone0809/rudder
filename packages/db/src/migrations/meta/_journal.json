@@ -533,6 +533,13 @@
       "when": 1779710547881,
       "tag": "0075_pink_weapon_omega",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1779718284150,
+      "tag": "0076_silky_captain_flint",
+      "breakpoints": true
     }
   ]
 }

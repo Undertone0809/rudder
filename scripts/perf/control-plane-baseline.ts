@@ -239,12 +239,18 @@ async function explainOptimizedPaths(
     {
       name: "messenger.approvalCommentsLatest",
       query: sql`
-        select approval_comments.approval_id, approval_comments.body, approval_comments.created_at
-        from approval_comments
-        inner join approvals on approval_comments.approval_id = approvals.id
+        select latest_comment.approval_id, latest_comment.body, latest_comment.created_at
+        from approvals
+        inner join lateral (
+          select approval_comments.approval_id, approval_comments.body, approval_comments.created_at
+          from approval_comments
+          where approval_comments.org_id = ${orgId}
+            and approval_comments.approval_id = approvals.id
+          order by approval_comments.created_at desc
+          limit 1
+        ) latest_comment on true
         where approvals.org_id = ${orgId}
-          and approval_comments.org_id = ${orgId}
-        order by approval_comments.created_at desc
+        order by latest_comment.created_at desc
         limit 1
       `,
     },

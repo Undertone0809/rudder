@@ -1070,19 +1070,27 @@ export function messengerService(db: Db) {
         .orderBy(desc(approvals.updatedAt), desc(approvals.createdAt))
         .limit(1),
       db
-        .select({
-          approval: approvals,
-          comment: {
-            approvalId: approvalComments.approvalId,
-            body: approvalComments.body,
-            createdAt: approvalComments.createdAt,
-          },
-        })
-        .from(approvalComments)
-        .innerJoin(approvals, eq(approvalComments.approvalId, approvals.id))
-        .where(and(approvalPredicate, eq(approvalComments.orgId, orgId)))
-        .orderBy(desc(approvalComments.createdAt))
-        .limit(1),
+        .execute(sql<ApprovalCommentRow>`
+          select
+            latest_comment.approval_id as "approvalId",
+            latest_comment.body as "body",
+            latest_comment.created_at as "createdAt"
+          from ${approvals}
+          inner join lateral (
+            select
+              ${approvalComments.approvalId},
+              ${approvalComments.body},
+              ${approvalComments.createdAt}
+            from ${approvalComments}
+            where ${approvalComments.orgId} = ${orgId}
+              and ${approvalComments.approvalId} = ${approvals.id}
+            order by ${approvalComments.createdAt} desc
+            limit 1
+          ) latest_comment on true
+          where ${approvals.orgId} = ${orgId}
+          order by latest_comment.created_at desc
+          limit 1
+        `),
       db
         .select({
           unreadCount: sql<number>`count(*)::int`,
@@ -1104,6 +1112,14 @@ export function messengerService(db: Db) {
         .orderBy(desc(approvalComments.createdAt))
         .limit(1)
       : [];
+    const latestCommentRow = (latestCommentRows[0] ?? null) as ApprovalCommentRow | null;
+    const latestCommentApprovalRows = latestCommentRow
+      ? await db
+        .select()
+        .from(approvals)
+        .where(and(eq(approvals.id, latestCommentRow.approvalId), approvalPredicate))
+        .limit(1)
+      : [];
 
     const candidateItems: MessengerApprovalThreadItem[] = [];
     if (latestApproval) {
@@ -1111,12 +1127,12 @@ export function messengerService(db: Db) {
       const latestActivityAt = maxDate(latestApproval.updatedAt, latestComment?.createdAt) ?? latestApproval.updatedAt;
       candidateItems.push(approvalCard(latestApproval, latestComment, userId, latestActivityAt));
     }
-    const latestCommentRow = latestCommentRows[0] ?? null;
     if (latestCommentRow) {
-      const approval = latestCommentRow.approval as ApprovalRow;
-      const latestComment = latestCommentRow.comment as ApprovalCommentRow;
-      const latestActivityAt = maxDate(approval.updatedAt, latestComment.createdAt) ?? approval.updatedAt;
-      candidateItems.push(approvalCard(approval, latestComment, userId, latestActivityAt));
+      const approval = (latestCommentApprovalRows[0] ?? null) as ApprovalRow | null;
+      if (approval) {
+        const latestActivityAt = maxDate(approval.updatedAt, latestCommentRow.createdAt) ?? approval.updatedAt;
+        candidateItems.push(approvalCard(approval, latestCommentRow, userId, latestActivityAt));
+      }
     }
 
     const latestItem = candidateItems.sort(compareLatestActivity)[0] ?? null;
