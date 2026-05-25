@@ -1230,6 +1230,102 @@ describe("messengerService and issue follows", () => {
     expect(approvalsSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
   });
 
+  it("summarizes approvals from latest comments without hydrating the detail thread", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    const userId = "board-user-approval-summary-only";
+    const pendingApprovalId = randomUUID();
+    const approvedApprovalId = randomUUID();
+    const otherOrgApprovalId = randomUUID();
+    const pendingUpdatedAt = new Date("2026-04-11T11:00:00.000Z");
+    const approvedUpdatedAt = new Date("2026-04-11T12:00:00.000Z");
+    const latestCommentAt = new Date("2026-04-11T13:00:00.000Z");
+
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Messenger Approval Summary Only Org",
+        urlKey: deriveOrganizationUrlKey("Messenger Approval Summary Only Org"),
+        issuePrefix: `AS${orgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Approval Summary Org",
+        urlKey: deriveOrganizationUrlKey("Other Approval Summary Org"),
+        issuePrefix: `OA${otherOrgId.replace(/-/g, "").slice(0, 5).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(approvals).values([
+      {
+        id: pendingApprovalId,
+        orgId,
+        type: "chat_issue_creation",
+        status: "pending",
+        requestedByUserId: userId,
+        payload: {
+          proposedIssue: {
+            title: "Pending approval",
+            description: "Needs review.",
+            priority: "medium",
+          },
+        },
+        createdAt: new Date("2026-04-11T10:00:00.000Z"),
+        updatedAt: pendingUpdatedAt,
+      },
+      {
+        id: approvedApprovalId,
+        orgId,
+        type: "hire_agent",
+        status: "approved",
+        requestedByUserId: userId,
+        payload: { name: "Approved later" },
+        createdAt: approvedUpdatedAt,
+        updatedAt: approvedUpdatedAt,
+      },
+      {
+        id: otherOrgApprovalId,
+        orgId: otherOrgId,
+        type: "hire_agent",
+        status: "pending",
+        requestedByUserId: userId,
+        payload: { name: "Other org approval" },
+        createdAt: latestCommentAt,
+        updatedAt: latestCommentAt,
+      },
+    ]);
+    await db.insert(approvalComments).values([
+      {
+        orgId,
+        approvalId: pendingApprovalId,
+        body: "Latest approval comment drives the summary preview.",
+        createdAt: latestCommentAt,
+      },
+      {
+        orgId: otherOrgId,
+        approvalId: otherOrgApprovalId,
+        body: "Other org comment should not drive this summary.",
+        createdAt: new Date("2026-04-11T14:00:00.000Z"),
+      },
+    ]);
+    await messengerSvc.setThreadRead(orgId, userId, "approvals", new Date("2026-04-11T10:30:00.000Z"));
+
+    const thread = await messengerSvc.getApprovalsThread(orgId, userId);
+    const summaries = await messengerSvc.listThreadSummaries(orgId, userId);
+    const approvalsSummary = summaries.find((item) => item.threadKey === "approvals");
+
+    expect(thread.detail.items.map((item) => item.id)).toEqual([approvedApprovalId, pendingApprovalId]);
+    expect(thread.detail.items.map((item) => item.id)).not.toContain(otherOrgApprovalId);
+    expect(thread.summary.latestActivityAt?.toISOString()).toBe(latestCommentAt.toISOString());
+    expect(thread.summary.preview).toBe("Latest approval comment drives the summary preview.");
+    expect(thread.summary.unreadCount).toBe(1);
+    expect(approvalsSummary?.subtitle).toBe("2 approvals");
+    expect(approvalsSummary?.latestActivityAt?.toISOString()).toBe(latestCommentAt.toISOString());
+    expect(approvalsSummary?.preview).toBe("Latest approval comment drives the summary preview.");
+    expect(approvalsSummary?.unreadCount).toBe(1);
+  });
+
   it("summarizes chat issue approvals without exposing raw payload ids", async () => {
     const orgId = randomUUID();
     const userId = "board-user-chat-approval-summary";

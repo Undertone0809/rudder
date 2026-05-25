@@ -281,6 +281,31 @@ Phase 6 evidence:
   with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
   isolated database on the already-running local Rudder Postgres instance
 
+## Phase 7 Result
+
+The seventh slice moved the `approvals` synthetic thread in
+`/messenger/threads` to a summary-only loader. The thread list no longer
+loads every approval and every approval comment to produce the single
+approvals summary row.
+
+The detail endpoint remains unchanged:
+
+- `/messenger/approvals` still uses the full approval detail loader with
+  chronological cards, comment-backed previews, action links, and redacted
+  approval payloads.
+
+The summary-only loader preserves the existing summary semantics by computing
+the approval count and pending unread count directly, then comparing the latest
+approval update with the latest approval comment so comment-backed previews can
+still pin the summary.
+
+Phase 7 evidence:
+
+- `pnpm --filter @rudderhq/server typecheck`
+- `pnpm --filter @rudderhq/server exec vitest run src/__tests__/messenger-service.test.ts --reporter=verbose`
+  with `RUDDER_MESSENGER_SERVICE_TEST_DATABASE_URL` pointed at a temporary
+  isolated database on the already-running local Rudder Postgres instance
+
 ## Open Issues
 
 - Default embedded-Postgres service tests may fail on this machine until local
