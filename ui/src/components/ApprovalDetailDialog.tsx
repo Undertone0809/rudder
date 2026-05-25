@@ -29,7 +29,6 @@ import { AgentIdentity } from "./AgentAvatar";
 import { MarkdownBody } from "./MarkdownBody";
 import {
   ApprovalPayloadRenderer,
-  ChatIssueApprovalLabelPicker,
   approvalPayloadWithChatIssueLabelIds,
   approvalLabel,
   chatIssueApprovalLabelIds,
@@ -350,21 +349,15 @@ export function ApprovalDetailDialog({
                           projects,
                           labels,
                           selectedLabelIds: selectedChatIssueLabelIds,
+                          onSelectedLabelIdsChange: approval.type === "chat_issue_creation" && isActionable
+                            ? setSelectedChatIssueLabelIds
+                            : undefined,
+                          labelPickerDisabled: approveMutation.isPending || chatIssueLabelOptionsLoading,
                           chatConversation,
                           currentUserId: currentBoardUserId,
                         }}
                       />
                     </ApprovalInset>
-
-                    {approval.type === "chat_issue_creation" && isActionable ? (
-                      <ChatIssueApprovalLabelPicker
-                        labels={labels}
-                        selectedLabelIds={selectedChatIssueLabelIds}
-                        onChange={setSelectedChatIssueLabelIds}
-                        required={Boolean(chatIssueLabelsRequired)}
-                        disabled={approveMutation.isPending || chatIssueLabelOptionsLoading}
-                      />
-                    ) : null}
 
                     {approval.decisionNote ? (
                       <ApprovalInset className="px-3 py-3">
