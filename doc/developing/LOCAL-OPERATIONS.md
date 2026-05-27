@@ -105,6 +105,8 @@ Rudder can run automatic DB backups on a timer. Defaults:
 - every 60 minutes
 - retain 30 days
 - backup dir: `~/.rudder/instances/default/data/backups`
+- scheduled backups are skipped before the in-process SQL dump starts when the
+  database estimate exceeds 256 MiB
 
 Configure these in:
 
@@ -123,6 +125,10 @@ pnpm db:backup
 Environment overrides:
 
 - `RUDDER_DB_BACKUP_ENABLED=true|false`
+- `RUDDER_DB_BACKUP_INTERVAL_MINUTES=<minutes>`
+- `RUDDER_DB_BACKUP_RETENTION_DAYS=<days>`
+- `RUDDER_DB_BACKUP_DIR=/absolute/or/~/path`
+- `RUDDER_DB_BACKUP_MAX_ESTIMATED_BYTES=<bytes|MiB|GiB>`
 
 ## Automatic Workspace Backups
 
@@ -144,9 +150,6 @@ Runtime and package-manager cache trees under managed agent homes are skipped
 from workspace snapshots. Large individual files and snapshots past the local
 size guardrail are skipped with backup warnings instead of failing the entire
 version.
-- `RUDDER_DB_BACKUP_INTERVAL_MINUTES=<minutes>`
-- `RUDDER_DB_BACKUP_RETENTION_DAYS=<days>`
-- `RUDDER_DB_BACKUP_DIR=/absolute/or/~/path`
 
 ## Secrets in Dev
 

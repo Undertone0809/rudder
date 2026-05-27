@@ -20,6 +20,8 @@ import type {
   OrganizationPortabilityExportResult,
   OrganizationExportJob,
   OrganizationExportJobCreateResult,
+  OrganizationIntelligenceProfile,
+  OrganizationIntelligenceProfilePurpose,
   OrganizationPortabilityImportRequest,
   OrganizationPortabilityImportResult,
   OrganizationPortabilityPreviewRequest,
@@ -44,6 +46,14 @@ export const organizationsApi = {
   list: () => api.get<Organization[]>("/orgs"),
   get: (orgId: string) => api.get<Organization>(`/orgs/${orgId}`),
   stats: () => api.get<OrganizationStats>("/orgs/stats"),
+  listIntelligenceProfiles: (orgId: string) =>
+    api.get<Array<OrganizationIntelligenceProfile | null>>(`/orgs/${orgId}/intelligence-profiles`),
+  updateIntelligenceProfile: (
+    orgId: string,
+    purpose: OrganizationIntelligenceProfilePurpose,
+    data: Pick<OrganizationIntelligenceProfile, "agentRuntimeType" | "agentRuntimeConfig" | "status">,
+  ) =>
+    api.put<OrganizationIntelligenceProfile>(`/orgs/${orgId}/intelligence-profiles/${purpose}`, data),
   create: (data: {
     name: string;
     description?: string | null;

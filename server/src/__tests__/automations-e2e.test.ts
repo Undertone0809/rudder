@@ -25,10 +25,13 @@ import {
   automationRuns,
   automations,
   automationTriggers,
+  chatConversations,
+  chatMessages,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { errorHandler } from "../middleware/index.js";
 import { accessService } from "../services/access.js";
+import { publishAutomationRunOutputToChat } from "../services/automation-chat-output.js";
 
 function mockServicesIndex() {
   vi.doMock("../services/index.js", async () => {
@@ -124,6 +127,16 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function startTempDatabase() {
+  const externalConnectionString = process.env.RUDDER_AUTOMATIONS_E2E_TEST_DATABASE_URL?.trim();
+  if (externalConnectionString) {
+    const parsed = new URL(externalConnectionString);
+    const dbName = parsed.pathname.replace(/^\//, "");
+    parsed.pathname = "/postgres";
+    await ensurePostgresDatabase(parsed.toString(), dbName);
+    await applyPendingMigrations(externalConnectionString);
+    return { connectionString: externalConnectionString, dataDir: "", instance: null };
+  }
+
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-automations-e2e-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
@@ -172,6 +185,8 @@ describe("automation routes end-to-end", () => {
     await db.delete(principalPermissionGrants);
     await db.delete(organizationMemberships);
     await db.delete(automations);
+    await db.delete(chatMessages);
+    await db.delete(chatConversations);
     await db.delete(projects);
     await db.delete(agents);
     await db.delete(organizations);
@@ -344,5 +359,59 @@ describe("automation routes end-to-end", () => {
         "automation.run_triggered",
       ]),
     );
+  }, 20_000);
+
+  it("creates a chat-output automation result chat and publishes the final output", async () => {
+    const { orgId, agentId, projectId, userId } = await seedFixture();
+    const app = await createApp({
+      type: "board",
+      userId,
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: [orgId],
+    });
+
+    const createRes = await request(app)
+      .post(`/api/orgs/${orgId}/automations`)
+      .send({
+        projectId,
+        title: "Daily result chat",
+        description: "Send the final result to chat.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      });
+
+    expect(createRes.status).toBe(201);
+    expect(createRes.body.chatConversationId).toBeNull();
+
+    const runRes = await request(app)
+      .post(`/api/automations/${createRes.body.id}/run`)
+      .send({ source: "manual" });
+
+    expect(runRes.status).toBe(202);
+    expect(runRes.body.status).toBe("issue_created");
+    expect(runRes.body.linkedIssueId).toBeTruthy();
+    expect(runRes.body.linkedChatConversationId).toBeTruthy();
+
+    const [automationRow] = await db
+      .select({ chatConversationId: automations.chatConversationId })
+      .from(automations)
+      .where(eq(automations.id, createRes.body.id));
+    expect(automationRow?.chatConversationId).toBeNull();
+
+    const outputMessage = await publishAutomationRunOutputToChat(db, {
+      issueId: runRes.body.linkedIssueId,
+      output: "Final result ready for follow-up.",
+      status: "succeeded",
+      transcript: [],
+    });
+
+    expect(outputMessage?.conversationId).toBe(runRes.body.linkedChatConversationId);
+    expect(outputMessage?.body).toBe("Final result ready for follow-up.");
+    expect(outputMessage?.replyingAgentId).toBe(agentId);
   }, 20_000);
 });

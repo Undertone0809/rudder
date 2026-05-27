@@ -196,3 +196,41 @@ test("ask_user steps multi-question requests through one question at a time", as
   await expect(answer).toContainText("Handoff");
   await expect(answer).toContainText("Full report");
 });
+
+test("ask_user supports multi-select questions", async ({ page }) => {
+  const command = await writeAskUserStub(`ask-user-multi-select-${Date.now()}`, {
+    questions: [
+      {
+        id: "evidence",
+        header: "Evidence",
+        question: "Which evidence should the agent collect?",
+        selectionMode: "multiple",
+        options: [
+          { id: "tests", label: "Test output" },
+          { id: "screenshots", label: "Screenshots" },
+          { id: "diff", label: "Diff summary" },
+        ],
+        allowFreeform: false,
+      },
+    ],
+  });
+  const organization = await createAskUserOrg(page, `AskUserMultiSelect-${Date.now()}`, command);
+
+  await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.fill("Help me choose evidence");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const panel = page.getByTestId("chat-ask-user-panel");
+  await expect(panel).toBeVisible({ timeout: 15_000 });
+  await panel.getByRole("button", { name: /Test output/ }).click();
+  await expect(panel.getByRole("button", { name: /Screenshots/ })).toBeVisible();
+  await panel.getByRole("button", { name: /Screenshots/ }).click();
+  await panel.getByRole("button", { name: "Submit answer" }).click();
+
+  await expect(page.getByTestId("chat-ask-user-panel")).toHaveCount(0, { timeout: 15_000 });
+  const answer = page.getByTestId("chat-ask-user-answer").last();
+  await expect(answer).toContainText("Evidence");
+  await expect(answer).toContainText("Test output, Screenshots");
+});

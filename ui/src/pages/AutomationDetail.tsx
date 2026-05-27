@@ -7,9 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
-  MessageSquare,
   Play,
-  Plus,
   RefreshCw,
   Repeat,
   Trash2,
@@ -19,7 +17,6 @@ import { automationsApi, type AutomationTriggerResponse, type RotateAutomationTr
 import { heartbeatsApi } from "../api/heartbeats";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import { agentsApi } from "../api/agents";
-import { chatsApi } from "../api/chats";
 import { issuesApi } from "../api/issues";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { projectsApi } from "../api/projects";
@@ -57,7 +54,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Badge } from "@/components/ui/badge";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import type { ActivityEvent, AutomationRunSummary, AutomationTrigger } from "@rudderhq/shared";
-import { concurrencyPolicies, catchUpPolicies, signingModes, concurrencyPolicyDescriptions, catchUpPolicyDescriptions, SecretMessage, addUniqueId, removeId, autoResizeTextarea, formatActivityDetailValue, getActivityDetailString, humanizeToken, triggerKindLabel, runSourceLabel, getLocalTimezone, formatAutomationTimestamp, summarizeTrigger, automationRiskLabel, SidebarSection, SidebarRow, SidebarPropertyRow, SidebarSelectValue, AutomationActivityGlyph, TriggerEditor } from "./AutomationDetail.parts";
+import { concurrencyPolicies, catchUpPolicies, signingModes, concurrencyPolicyDescriptions, catchUpPolicyDescriptions, SecretMessage, addUniqueId, removeId, autoResizeTextarea, formatActivityDetailValue, getActivityDetailString, humanizeToken, triggerKindLabel, runSourceLabel, getLocalTimezone, formatAutomationTimestamp, summarizeTrigger, automationRiskLabel, SidebarSection, SidebarRow, SidebarPropertyRow, SidebarSelectValue, TriggerEditor } from "./AutomationDetail.parts";
 
 export function AutomationDetail() {
   const { automationId } = useParams<{ automationId: string }>();
@@ -145,11 +142,6 @@ export function AutomationDetail() {
     queryFn: () => projectsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
-  const { data: chats } = useQuery({
-    queryKey: queryKeys.chats.list(selectedOrganizationId!, "active"),
-    queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
-    enabled: !!selectedOrganizationId,
-  });
   const { data: issues } = useQuery({
     queryKey: queryKeys.issues.list(selectedOrganizationId!),
     queryFn: () => issuesApi.list(selectedOrganizationId!),
@@ -178,7 +170,7 @@ export function AutomationDetail() {
             concurrencyPolicy: automation.concurrencyPolicy,
             catchUpPolicy: automation.catchUpPolicy,
             outputMode: automation.outputMode,
-            chatConversationId: automation.chatConversationId ?? "",
+            chatConversationId: "",
           }
         : null,
     [automation],
@@ -193,8 +185,7 @@ export function AutomationDetail() {
       editDraft.priority !== automationDefaults.priority ||
       editDraft.concurrencyPolicy !== automationDefaults.concurrencyPolicy ||
       editDraft.catchUpPolicy !== automationDefaults.catchUpPolicy ||
-      editDraft.outputMode !== automationDefaults.outputMode ||
-      editDraft.chatConversationId !== automationDefaults.chatConversationId
+      editDraft.outputMode !== automationDefaults.outputMode
     );
   }, [editDraft, automationDefaults]);
   const canAutoSaveAutomation = Boolean(
@@ -211,7 +202,7 @@ export function AutomationDetail() {
       concurrencyPolicy: editDraft.concurrencyPolicy,
       catchUpPolicy: editDraft.catchUpPolicy,
       outputMode: editDraft.outputMode,
-      chatConversationId: editDraft.outputMode === "chat_output" ? editDraft.chatConversationId || null : null,
+      chatConversationId: null,
     }),
     [editDraft],
   );
@@ -265,7 +256,7 @@ export function AutomationDetail() {
         ...draft,
         projectId: draft.projectId || null,
         description: draft.description.trim() || null,
-        chatConversationId: draft.outputMode === "chat_output" ? draft.chatConversationId || null : null,
+        chatConversationId: null,
       });
     },
     onSuccess: async () => {
@@ -605,20 +596,8 @@ export function AutomationDetail() {
       })),
     [projects],
   );
-  const chatOptions = useMemo<InlineEntityOption[]>(
-    () =>
-      (chats ?? []).map((chat) => ({
-        id: chat.id,
-        label: chat.title,
-        searchText: chat.summary ?? chat.latestReplyPreview ?? "",
-      })),
-    [chats],
-  );
   const currentAssignee = editDraft.assigneeAgentId ? agentById.get(editDraft.assigneeAgentId) ?? null : null;
   const currentProject = editDraft.projectId ? projectById.get(editDraft.projectId) ?? null : null;
-  const currentChat = editDraft.chatConversationId
-    ? (chats ?? []).find((chat) => chat.id === editDraft.chatConversationId) ?? automation?.chatConversation ?? null
-    : null;
   const triggerById = useMemo(
     () => new Map((automation?.triggers ?? []).map((trigger) => [trigger.id, trigger])),
     [automation?.triggers],
@@ -826,6 +805,9 @@ export function AutomationDetail() {
     }
 
     for (const event of activity ?? []) {
+      if (event.action === "automation.updated") {
+        continue;
+      }
       if (event.action === "automation.run_triggered" && event.entityType === "automation_run" && runIds.has(event.entityId)) {
         continue;
       }
@@ -1017,23 +999,25 @@ export function AutomationDetail() {
             {automationActivityItems.length === 0 ? (
               <p className="text-xs text-muted-foreground">No activity yet.</p>
             ) : (
-              <div data-testid="automation-activity-list" className="space-y-1">
+              <div data-testid="automation-activity-list" className="relative space-y-1 before:absolute before:bottom-2 before:left-[7.5px] before:top-2 before:w-px before:bg-border/70">
                 {automationActivityItems.map((item) => (
                   <div
                     key={item.id}
                     data-testid="automation-activity-row"
-                    className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-0.5 rounded-sm px-1 py-0.5 text-xs text-muted-foreground sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center"
+                    className="grid min-h-8 grid-cols-[16px_minmax(0,1fr)] gap-x-2 rounded-sm py-1 text-xs text-muted-foreground sm:grid-cols-[16px_minmax(0,1fr)_auto] sm:items-center"
                   >
-                    <AutomationActivityGlyph />
-                    <span data-testid="automation-activity-summary" className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                      <span className="text-foreground/90">{item.title}</span>
+                    <span aria-hidden="true" className="relative z-10 row-span-2 flex h-full min-h-6 w-4 items-start justify-center pt-[7px] sm:row-span-1 sm:items-center sm:pt-0">
+                      <span className="h-2 w-2 rounded-full border border-background bg-muted-foreground/40 shadow-[0_0_0_2px_hsl(var(--background))]" />
+                    </span>
+                    <span data-testid="automation-activity-summary" className="flex min-w-0 items-baseline gap-x-1.5 overflow-hidden whitespace-nowrap">
+                      <span className="min-w-0 truncate text-foreground/90">{item.title}</span>
                       {item.details.length > 0 && (
                         <span
                           data-testid="automation-activity-details"
-                          className="inline-flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-muted-foreground"
+                          className="inline-flex min-w-0 items-baseline gap-x-1.5 overflow-hidden text-muted-foreground"
                         >
                           {item.details.map((detail, i) => (
-                            <span key={i}>
+                            <span key={i} className="min-w-0 truncate">
                               {i > 0 && <span className="mr-1.5 text-border">·</span>}
                               {detail}
                             </span>
@@ -1114,7 +1098,7 @@ export function AutomationDetail() {
                   onValueChange={(outputMode) => setEditDraft((current) => ({
                     ...current,
                     outputMode,
-                    chatConversationId: outputMode === "chat_output" ? current.chatConversationId : "",
+                    chatConversationId: "",
                   }))}
                 >
                   <SelectTrigger size="sm" className="-mx-1 h-7 w-fit border-0 bg-transparent px-1 py-0.5 text-sm shadow-none hover:bg-accent/50">
@@ -1126,47 +1110,6 @@ export function AutomationDetail() {
                   </SelectContent>
                 </Select>
               </SidebarPropertyRow>
-              {editDraft.outputMode === "chat_output" ? (
-                <SidebarPropertyRow label="Chat">
-                  <InlineEntitySelector
-                    value={editDraft.chatConversationId}
-                    options={chatOptions}
-                    placeholder="New chat"
-                    noneLabel="New chat"
-                    searchPlaceholder="Search chats..."
-                    emptyMessage="No active chats found."
-                    className="-mx-1 min-h-7 w-full justify-between border-0 bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:bg-accent/50"
-                    onChange={(chatConversationId) => setEditDraft((current) => ({ ...current, chatConversationId }))}
-                    renderTriggerValue={(option) =>
-                      option && currentChat ? (
-                        <SidebarSelectValue>
-                          <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <span className="truncate">{option.label}</span>
-                        </SidebarSelectValue>
-                      ) : (
-                        <SidebarSelectValue>
-                          <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <span>New chat</span>
-                        </SidebarSelectValue>
-                      )
-                    }
-                    renderOption={(option) =>
-                      option.id ? (
-                        <>
-                          <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <span className="truncate">{option.label}</span>
-                        </>
-                      ) : (
-                        <>
-                          <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <span className="truncate">{option.label}</span>
-                        </>
-                      )
-                    }
-                  />
-                </SidebarPropertyRow>
-              ) : null}
-
               <SidebarPropertyRow label="Repeats">
                 <span className="min-w-0 truncate text-sm text-foreground" title={summarizeTrigger(nextTrigger)}>
                   {summarizeTrigger(nextTrigger)}

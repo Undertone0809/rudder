@@ -3,6 +3,7 @@ import type { Db } from "@rudderhq/db";
 import {
   automations,
   automationRuns,
+  chatContextLinks,
   chatConversations,
   chatMessages,
   issues,
@@ -16,7 +17,7 @@ function automationRunOutputBody(input: {
 }) {
   const output = input.output?.trim();
   if (output) return output;
-  if (input.status === "failed" || input.status === "timed_out") {
+  if (input.status === "failed" || input.status === "timed_out" || input.status === "cancelled") {
     return "Automation run failed before it produced a final response.";
   }
   return "Automation run completed.";
@@ -45,21 +46,21 @@ export async function publishAutomationRunOutputToChat(
       automationId: automations.id,
       automationTitle: automations.title,
       automationOutputMode: automations.outputMode,
-      automationChatConversationId: automations.chatConversationId,
+      projectId: automations.projectId,
       assigneeAgentId: automations.assigneeAgentId,
       runId: automationRuns.id,
       orgId: automationRuns.orgId,
       linkedChatConversationId: automationRuns.linkedChatConversationId,
     })
     .from(issues)
-    .innerJoin(automationRuns, sql`${issues.originRunId} = ${automationRuns.id}::text`)
+    .innerJoin(automationRuns, sql<boolean>`${issues.originRunId} = ${automationRuns.id}::text`)
     .innerJoin(automations, eq(automationRuns.automationId, automations.id))
     .where(and(eq(issues.id, input.issueId), eq(issues.originKind, "automation_execution")))
     .then((rows) => rows[0] ?? null);
 
   if (!row || row.automationOutputMode !== "chat_output") return null;
 
-  let conversationId = row.linkedChatConversationId ?? row.automationChatConversationId;
+  let conversationId = row.linkedChatConversationId;
   if (!conversationId) {
     const [conversation] = await db
       .insert(chatConversations)
@@ -74,6 +75,18 @@ export async function publishAutomationRunOutputToChat(
       .returning({ id: chatConversations.id });
     conversationId = conversation?.id ?? null;
     if (!conversationId) return null;
+    if (row.projectId) {
+      await db
+        .insert(chatContextLinks)
+        .values({
+          orgId: row.orgId,
+          conversationId,
+          entityType: "project",
+          entityId: row.projectId,
+          metadata: null,
+        })
+        .onConflictDoNothing();
+    }
     await db
       .update(automationRuns)
       .set({
@@ -82,7 +95,6 @@ export async function publishAutomationRunOutputToChat(
       })
       .where(eq(automationRuns.id, row.runId));
   }
-
   const existing = await db
     .select()
     .from(chatMessages)

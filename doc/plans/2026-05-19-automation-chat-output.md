@@ -66,6 +66,9 @@ events into Messenger.
   destination and persists that destination.
 - Running a chat-output automation creates a normal execution issue and also
   posts a visible Messenger event that links to the automation run and issue.
+- Successful chat-output execution auto-closes that execution issue as `done`;
+  the delivered result is treated as the close-out signal instead of queuing
+  passive issue follow-up.
 - Terminal run states write a final chat event without relying on the agent to
   post manually.
 - Automation detail and recent runs show the configured output mode and chat

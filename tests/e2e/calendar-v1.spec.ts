@@ -101,6 +101,30 @@ async function createExternalEvent(page: Page, orgId: string, sourceId: string, 
 }
 
 test.describe("Calendar V1", () => {
+  test("nests Calendar under Dashboard navigation", async ({ page }) => {
+    await page.setViewportSize({ width: 1490, height: 1003 });
+
+    const organization = await createCalendarOrg(page, `Calendar-Dashboard-Nav-${Date.now()}`);
+
+    await selectOrganization(page, organization.id);
+    await page.goto("/dashboard");
+
+    const primaryRail = page.getByTestId("primary-rail");
+    await expect(page.getByTestId("dashboard-calendar-switcher")).toBeVisible({ timeout: 20_000 });
+    await expect(primaryRail.getByRole("link", { name: /Calendar/ })).toHaveCount(0);
+    await expect(primaryRail.getByRole("link", { name: /Dashboard/ })).toHaveAttribute("aria-current", "page");
+
+    await page.getByTestId("dashboard-calendar-switcher").getByRole("link", { name: /Calendar/ }).click();
+    await expect(page).toHaveURL(/\/dashboard\/calendar$/);
+    await expect(page.getByTestId("dashboard-calendar-switcher")).toHaveAttribute("data-mode", "calendar");
+    await expect(page.getByTestId("calendar-mini-month")).toBeVisible();
+    await expect(primaryRail.getByRole("link", { name: /Dashboard/ })).toHaveAttribute("aria-current", "page");
+
+    await page.getByTestId("dashboard-calendar-switcher").getByRole("link", { name: /Dashboard/ }).click();
+    await expect(page).toHaveURL(/\/dashboard$/);
+    await expect(page.getByTestId("dashboard-calendar-switcher")).toHaveAttribute("data-mode", "dashboard");
+  });
+
   test("uses the workspace shell and keeps Google setup in a compact modal", async ({ page }) => {
     test.slow();
     await page.setViewportSize({ width: 1490, height: 1003 });
@@ -122,7 +146,7 @@ test.describe("Calendar V1", () => {
     const agent = await agentRes.json();
 
     await selectOrganization(page, organization.id);
-    await page.goto("/calendar");
+    await page.goto("/dashboard/calendar");
 
     await expect(page.getByTestId("workspace-context-card")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("workspace-main-card")).toBeVisible();
@@ -178,7 +202,7 @@ test.describe("Calendar V1", () => {
     await createExternalEvent(page, organization.id, personalSource.id, "Hidden external test event", localIso(todayKey, 10), localIso(todayKey, 11));
 
     await selectOrganization(page, organization.id);
-    await page.goto("/calendar");
+    await page.goto("/dashboard/calendar");
 
     await expect(page.getByTestId("calendar-google-source-list")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("Work calendar")).toBeVisible();
@@ -220,7 +244,7 @@ test.describe("Calendar V1", () => {
     expect(agentRes.ok()).toBe(true);
 
     await selectOrganization(page, organization.id);
-    await page.goto("/calendar");
+    await page.goto("/dashboard/calendar");
 
     await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole("button", { name: /^week$/i })).toBeVisible();
@@ -266,7 +290,7 @@ test.describe("Calendar V1", () => {
     ));
 
     await selectOrganization(page, organization.id);
-    await page.goto("/calendar");
+    await page.goto("/dashboard/calendar");
 
     await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
     const busyCluster = page.locator('[data-testid^="calendar-collision-cluster-"]').filter({ hasText: "3 events · 3 agents" }).first();
@@ -307,7 +331,7 @@ test.describe("Calendar V1", () => {
     ]);
 
     await selectOrganization(page, organization.id);
-    await page.goto("/calendar");
+    await page.goto("/dashboard/calendar");
 
     await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
     const busyCluster = page.locator('[data-testid^="calendar-collision-cluster-"]').filter({ hasText: "3 events · 2 agents" }).first();
@@ -349,7 +373,7 @@ test.describe("Calendar V1", () => {
     const issue = await issueRes.json();
 
     await selectOrganization(page, organization.id);
-    await page.goto("/calendar");
+    await page.goto("/dashboard/calendar");
 
     await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("CEO (CEO)", { exact: true })).toBeVisible();
@@ -427,7 +451,7 @@ test.describe("Calendar V1", () => {
     const overlapC = await createHumanEvent(page, organization.id, "Overlap C", localIso(todayKey, 13, 30), localIso(todayKey, 14, 30));
 
     await selectOrganization(page, organization.id);
-    await page.goto("/calendar");
+    await page.goto("/dashboard/calendar");
     await expect(page.getByTestId("calendar-mini-month")).toBeVisible({ timeout: 20_000 });
 
     const dayColumn = page.getByTestId(`calendar-day-column-${todayKey}`);

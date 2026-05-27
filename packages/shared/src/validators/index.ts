@@ -52,6 +52,14 @@ export {
   type MoveOrganizationWorkspaceEntry,
 } from "./organization.js";
 export {
+  organizationIntelligenceProfilePurposeSchema,
+  organizationIntelligenceProfileStatusSchema,
+  organizationIntelligenceProfileConfigSchema,
+  upsertOrganizationIntelligenceProfileSchema,
+  type OrganizationIntelligenceProfilePurposeInput,
+  type UpsertOrganizationIntelligenceProfileInput,
+} from "./organization-intelligence-profile.js";
+export {
   organizationResourceKindSchema,
   organizationResourceSourceTypeSchema,
   projectResourceAttachmentRoleSchema,
@@ -85,6 +93,8 @@ export {
   chatRichReferenceSchema,
   chatRichReferencesSchema,
   chatRichReferencesFromStructuredPayload,
+  chatAutomationCreateSchema,
+  chatAutomationCreateFromStructuredPayload,
   sanitizeChatStructuredPayload,
   createChatAttachmentMetadataSchema,
   convertChatToIssueSchema,
@@ -100,6 +110,7 @@ export {
   type ChatAskUserQuestion,
   type ChatAskUserRequest,
   type ChatRichReference,
+  type ChatAutomationCreate,
   type CreateChatAttachmentMetadata,
   type ConvertChatToIssue,
   type ChatOperationProposal,

@@ -10,6 +10,9 @@ import {
   FolderOpen,
   MessageSquare,
   MoreHorizontal,
+  Pause,
+  Pencil,
+  Play,
   Plus,
   Repeat,
   Trash2,
@@ -264,8 +267,8 @@ function localizeText(text: LocalizedText, locale = getUiLocale()) {
 function outputInstruction(mode: AutomationOutputMode, locale = getUiLocale()) {
   if (mode === "chat_output") {
     return locale === "zh-CN"
-      ? "输出：将结果发送到相关 Rudder chat 对话；只有出现明确阻塞或后续动作时才创建任务。"
-      : "Output: send the result to the relevant Rudder chat conversation; create tracked work only for concrete blockers or follow-up actions.";
+      ? "输出：每次运行都将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。"
+      : "Output: send each run's final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions.";
   }
   return locale === "zh-CN"
     ? "输出：创建或更新 board 可跟踪任务，确保结果可以被 review。"
@@ -283,8 +286,12 @@ function removeOutputInstruction(description: string) {
   return description
     .replace(/\n*Output: create or update board-tracked work so the result can be reviewed\.\s*$/u, "")
     .replace(/\n*Output: send the result to the relevant Rudder chat conversation; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
+    .replace(/\n*Output: send the final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
+    .replace(/\n*Output: send each run's final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
     .replace(/\n*输出：创建或更新 board 可跟踪任务，确保结果可以被 review。\s*$/u, "")
     .replace(/\n*输出：将结果发送到相关 Rudder chat 对话；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
+    .replace(/\n*输出：将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
+    .replace(/\n*输出：每次运行都将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
     .trim();
 }
 
@@ -870,7 +877,7 @@ export function Automations() {
                       value: "chat_output" as const,
                       icon: MessageSquare,
                       title: "Send to chat",
-                      summary: "Post summary to a chat conversation",
+                      summary: "Post each run to a new chat",
                     },
                   ]).map((option) => {
                     const Icon = option.icon;
@@ -1167,12 +1174,14 @@ export function Automations() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => navigate(`/automations/${automation.id}`)}>
+                              <Pencil className="h-4 w-4" />
                               Edit
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={runningAutomationId === automation.id || !enabled}
                               onClick={() => runAutomation.mutate(automation.id)}
                             >
+                              <Play className="h-4 w-4" />
                               {runningAutomationId === automation.id ? "Running..." : "Run now"}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
@@ -1185,10 +1194,11 @@ export function Automations() {
                               }
                               disabled={isStatusPending}
                             >
+                              {enabled ? <Pause className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
                               {enabled ? "Pause" : "Enable"}
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
+                              variant="destructive"
                               disabled={deleteAutomation.isPending}
                               onClick={async () => {
                                 const confirmed = await confirm({
@@ -1201,7 +1211,7 @@ export function Automations() {
                                 deleteAutomation.mutate(automation.id);
                               }}
                             >
-                              <Trash2 className="mr-2 h-3.5 w-3.5" />
+                              <Trash2 className="h-4 w-4" />
                               Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>

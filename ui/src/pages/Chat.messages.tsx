@@ -53,12 +53,12 @@ import {
 import { MarkdownBody, type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences";
 import { TextDots } from "@/components/TextDots";
-import { formatPriorityLabel } from "@/lib/priorities";
 import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { AgentIcon, getAgentAvatarImageSrc } from "@/components/AgentIconPicker";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
+import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
 import { RunTranscriptView } from "@/components/transcript/RunTranscriptView";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -123,7 +123,7 @@ import { resolveLocalFileTarget } from "@/lib/local-file-targets";
 import { cn, relativeTime } from "@/lib/utils";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useI18n } from "@/context/I18nContext";
-import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName } from "./Chat.parts";
+import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, AskUserAnswerValue, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName } from "./Chat.parts";
 
 export function ChatAssistantAttributionRow({
   replyingAgentId,
@@ -204,6 +204,14 @@ export function ProposalCard({
   const resolvedDecisionNoteLabel = reviewStatus === "revision_requested" ? "Requested changes" : "Decision note";
   const proposalAssigneeLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "assignee", agents) : null;
   const proposalReviewerLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "reviewer", agents) : null;
+  const proposalKind = issueProposal ? "issue" : operationProposal ? "operation" : planDocument ? "plan" : "default";
+  const proposalKindLabel = issueProposal
+    ? "Issue proposal"
+    : operationProposal
+      ? "Operation proposal"
+      : planDocument
+        ? "Plan proposal"
+        : "Proposal";
 
   return (
     <div className="text-foreground">
@@ -225,15 +233,37 @@ export function ProposalCard({
       <div
         data-testid="proposal-review-block"
         data-status={reviewStatus ?? "default"}
+        data-kind={proposalKind}
         className="chat-review-block mt-4 rounded-[var(--radius-xl)] p-5 text-foreground transition-all duration-200"
       >
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border-soft)] pb-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--accent-base)_28%,var(--border-base))] bg-[color:color-mix(in_oklab,var(--surface-proposal)_86%,var(--surface-elevated))] text-[color:var(--accent-strong)]">
+              <ListChecks className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-lg font-semibold leading-6 text-[color:var(--accent-strong)]">
+                {proposalKindLabel}
+              </div>
+            </div>
+          </div>
+          {reviewStatus ? (
+            <div data-testid="proposal-review-status">
+              <StatusBadge status={reviewStatus} />
+            </div>
+          ) : null}
+        </div>
+
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             {issueProposal ? (
               <>
-                <div className="text-base font-medium text-foreground">{String(issueProposal.title)}</div>
-                <div className="mt-1 text-xs font-medium text-muted-foreground">
-                  Priority · {formatPriorityLabel(String(issueProposal.priority ?? "medium"))}
+                <div className="text-xl font-semibold leading-7 text-foreground">{String(issueProposal.title)}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-shell)_78%,transparent)] px-2.5 py-1 text-xs text-muted-foreground">
+                    <span>Priority</span>
+                    <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
+                  </span>
                 </div>
                 {proposalAssigneeLabel || proposalReviewerLabel ? (
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -252,17 +282,12 @@ export function ProposalCard({
             ) : planDocument ? (
               <div className="text-base font-medium text-foreground">{planDocument.title}</div>
             ) : null}
-            {reviewBanner ? (
+            {reviewBanner && (!issueProposal || reviewStatus !== "pending") ? (
               <p className="mt-3 text-sm leading-6 text-muted-foreground">
                 {reviewBanner}
               </p>
             ) : null}
           </div>
-          {reviewStatus ? (
-            <div data-testid="proposal-review-status">
-              <StatusBadge status={reviewStatus} />
-            </div>
-          ) : null}
         </div>
 
         {issueProposal ? (
@@ -453,7 +478,7 @@ export function issueCreatedSystemMessageParts(message: ChatMessage) {
 
 function automationSourceSystemMessageParts(message: ChatMessage) {
   const payload = message.structuredPayload;
-  if (!payload || payload.eventType !== "automation_source") return null;
+  if (!payload || (payload.eventType !== "automation_source" && payload.eventType !== "automation_created")) return null;
 
   const automationId = readStructuredPayloadString(payload, "automationId");
   const automationTitle = readStructuredPayloadString(payload, "automationTitle") ?? "automation";
@@ -478,6 +503,21 @@ export function ChatSystemMessageBody({
   const automationSourceParts = automationSourceSystemMessageParts(message);
 
   if (automationSourceParts) {
+    if (message.structuredPayload?.eventType === "automation_created") {
+      return (
+        <span className="min-w-0 flex-1 leading-5">
+          Created automation{" "}
+          <Link
+            to={`/automations/${automationSourceParts.automationId}`}
+            className="chat-system-issue-link"
+            aria-label={`Open automation ${automationSourceParts.automationTitle}`}
+          >
+            {automationSourceParts.automationTitle}
+          </Link>
+          {" "}from this chat conversation.
+        </span>
+      );
+    }
     return (
       <span className="min-w-0 flex-1 leading-5">
         From automation{" "}
@@ -619,7 +659,7 @@ export function AskUserPanel({
   onOpenAttachmentPreview: (preview: AttachmentPreviewState) => void;
   onSubmit: (body: string) => void;
 }) {
-  const [selectedByQuestionId, setSelectedByQuestionId] = useState<Record<string, string>>({});
+  const [selectedByQuestionId, setSelectedByQuestionId] = useState<Record<string, string[]>>({});
   const [freeformByQuestionId, setFreeformByQuestionId] = useState<Record<string, string>>({});
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [reviewingAnswers, setReviewingAnswers] = useState(false);
@@ -632,17 +672,25 @@ export function AskUserPanel({
   }, [message.id]);
 
   const answers = useMemo(() => {
-    const next: Record<string, { kind: "option"; label: string } | { kind: "freeform"; text: string }> = {};
+    const next: Record<string, AskUserAnswerValue> = {};
     for (const question of request.questions) {
-      const selected = selectedByQuestionId[question.id] ?? "";
-      if (selected === "__other") {
+      const selected = selectedByQuestionId[question.id] ?? [];
+      const isMultiple = question.selectionMode === "multiple";
+      if (!isMultiple && selected[0] === "__other") {
         const text = freeformByQuestionId[question.id]?.trim() ?? "";
         if (text) next[question.id] = { kind: "freeform", text };
         continue;
       }
-      const option = question.options.find((entry) => entry.id === selected);
-      if (option) {
-        next[question.id] = { kind: "option", label: option.label };
+      const labels = selected
+        .filter((optionId) => optionId !== "__other")
+        .map((optionId) => question.options.find((entry) => entry.id === optionId)?.label)
+        .filter((label): label is string => Boolean(label));
+      if (selected.includes("__other")) {
+        const text = freeformByQuestionId[question.id]?.trim() ?? "";
+        if (text) labels.push(`Other: ${text}`);
+      }
+      if (labels.length > 0) {
+        next[question.id] = isMultiple ? { kind: "options", labels } : { kind: "option", label: labels[0] ?? "" };
       }
     }
     return next;
@@ -659,8 +707,11 @@ export function AskUserPanel({
     const next = { ...answers };
     for (const question of request.questions) {
       if (next[question.id]) continue;
-      if (selectedByQuestionId[question.id] === "__other") {
-        next[question.id] = { kind: "freeform", text: answerAttachmentsText };
+      const selected = selectedByQuestionId[question.id] ?? [];
+      if (selected.includes("__other")) {
+        next[question.id] = question.selectionMode === "multiple"
+          ? { kind: "options", labels: [`Other: ${answerAttachmentsText}`] }
+          : { kind: "freeform", text: answerAttachmentsText };
       }
     }
     return next;
@@ -678,9 +729,20 @@ export function AskUserPanel({
     setReviewingAnswers(true);
   };
 
+  const answerText = (answer: AskUserAnswerValue | undefined) =>
+    answer?.kind === "freeform" ? answer.text : answer?.kind === "options" ? answer.labels.join(", ") : answer?.label ?? "Not answered";
+
   const selectOption = (question: ChatAskUserQuestion, index: number, optionId: string) => {
-    setSelectedByQuestionId((current) => ({ ...current, [question.id]: optionId }));
-    if (optionId !== "__other") {
+    const isMultiple = question.selectionMode === "multiple";
+    setSelectedByQuestionId((current) => {
+      const existing = current[question.id] ?? [];
+      if (!isMultiple) return { ...current, [question.id]: [optionId] };
+      const nextSelection = existing.includes(optionId)
+        ? existing.filter((entry) => entry !== optionId)
+        : [...existing, optionId];
+      return { ...current, [question.id]: nextSelection };
+    });
+    if (!isMultiple && optionId !== "__other") {
       moveToNextQuestion(index);
     }
   };
@@ -716,7 +778,7 @@ export function AskUserPanel({
                   <span className="min-w-0">
                     <span className="block truncate font-medium text-foreground">{askUserQuestionTitle(question)}</span>
                     <span className="mt-0.5 block whitespace-pre-wrap break-words text-muted-foreground">
-                      {answer?.kind === "freeform" ? answer.text : answer?.label ?? "Not answered"}
+                      {answerText(answer)}
                     </span>
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">Edit</span>
@@ -738,8 +800,9 @@ export function AskUserPanel({
           ) : null}
           <div className="mt-2 grid gap-1.5">
             {currentQuestion.options.map((option) => {
-              const selected = selectedByQuestionId[currentQuestion.id] ?? "";
-              const active = selected === option.id;
+              const selected = selectedByQuestionId[currentQuestion.id] ?? [];
+              const isMultiple = currentQuestion.selectionMode === "multiple";
+              const active = selected.includes(option.id);
               return (
                 <button
                   key={option.id}
@@ -755,7 +818,8 @@ export function AskUserPanel({
                 >
                   <span
                     className={cn(
-                      "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
+                      "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border",
+                      isMultiple ? "rounded-[4px]" : "rounded-full",
                       active ? "border-[color:var(--accent-base)] bg-[color:var(--accent-base)] text-primary-foreground" : "border-border",
                     )}
                     aria-hidden
@@ -785,27 +849,28 @@ export function AskUserPanel({
                 type="button"
                 className={cn(
                   "flex w-full items-center gap-2 rounded-[var(--radius-md)] border px-3 py-2 text-left text-sm transition-colors",
-                  selectedByQuestionId[currentQuestion.id] === "__other"
+                  (selectedByQuestionId[currentQuestion.id] ?? []).includes("__other")
                     ? "border-[color:var(--accent-base)] bg-[color:color-mix(in_oklab,var(--accent-soft)_62%,transparent)]"
                     : "border-border bg-background/70 hover:bg-[color:var(--surface-active)]",
                 )}
-                aria-pressed={selectedByQuestionId[currentQuestion.id] === "__other"}
+                aria-pressed={(selectedByQuestionId[currentQuestion.id] ?? []).includes("__other")}
                 onClick={() => selectOption(currentQuestion, boundedQuestionIndex, "__other")}
               >
                 <span
                   className={cn(
-                    "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
-                    selectedByQuestionId[currentQuestion.id] === "__other" ? "border-[color:var(--accent-base)] bg-[color:var(--accent-base)] text-primary-foreground" : "border-border",
+                    "flex h-4 w-4 shrink-0 items-center justify-center border",
+                    currentQuestion.selectionMode === "multiple" ? "rounded-[4px]" : "rounded-full",
+                    (selectedByQuestionId[currentQuestion.id] ?? []).includes("__other") ? "border-[color:var(--accent-base)] bg-[color:var(--accent-base)] text-primary-foreground" : "border-border",
                   )}
                   aria-hidden
                 >
-                  {selectedByQuestionId[currentQuestion.id] === "__other" ? <CheckCircle2 className="h-3 w-3" /> : null}
+                  {(selectedByQuestionId[currentQuestion.id] ?? []).includes("__other") ? <CheckCircle2 className="h-3 w-3" /> : null}
                 </span>
                 <span className="font-medium text-foreground">Other</span>
               </button>
             ) : null}
           </div>
-          {selectedByQuestionId[currentQuestion.id] === "__other" ? (
+          {(selectedByQuestionId[currentQuestion.id] ?? []).includes("__other") ? (
             <div className="mt-2 space-y-2">
               <Textarea
                 value={freeformByQuestionId[currentQuestion.id] ?? ""}
@@ -850,7 +915,7 @@ export function AskUserPanel({
         </section>
       ) : null}
 
-      {selectedByQuestionId[currentQuestion?.id ?? ""] !== "__other" && hasPendingAttachments ? (
+      {!(selectedByQuestionId[currentQuestion?.id ?? ""] ?? []).includes("__other") && hasPendingAttachments ? (
         <div data-testid="chat-ask-user-pending-attachments" className="mt-3 flex min-w-0 flex-wrap gap-2">
           {pendingFiles.map((file) => {
             const fileKey = pendingAttachmentKey(file);

@@ -1043,9 +1043,21 @@
   }
 
   .chat-review-block {
-    background: var(--surface-elevated);
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--surface-proposal) 26%, var(--surface-elevated)),
+        var(--surface-elevated) 34%
+      );
     border: 1px solid color-mix(in oklab, var(--accent-base) 18%, var(--border-base));
     box-shadow: var(--shadow-sm);
+  }
+
+  .chat-review-block[data-kind="issue"] {
+    border-color: color-mix(in oklab, var(--accent-base) 30%, var(--border-base));
+    box-shadow:
+      inset 3px 0 0 color-mix(in oklab, var(--accent-base) 58%, transparent),
+      var(--shadow-sm);
   }
 
   .chat-review-block[data-status="approved"] {

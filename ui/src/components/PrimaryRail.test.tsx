@@ -251,6 +251,19 @@ describe("PrimaryRail active motion indicator", () => {
     expect(indicator).not.toBeNull();
   });
 
+  it("keeps calendar nested under the dashboard rail item", async () => {
+    mockState.pathname = "/dashboard/calendar";
+
+    await renderPrimaryRail();
+
+    const nav = document.querySelector(".motion-rail-nav");
+    const calendarLink = Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent?.includes("Calendar"));
+
+    expect(nav?.getAttribute("data-active-index")).toBe("1");
+    expect(calendarLink).toBeUndefined();
+  });
+
   it("moves the rail indicator to issue routes", async () => {
     mockState.pathname = "/issues/RUD-123";
 

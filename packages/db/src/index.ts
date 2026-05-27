@@ -23,9 +23,15 @@ export {
   type SysvSharedMemorySegment,
 } from "./embedded-postgres-recovery.js";
 export {
+  estimateDatabaseBackupSize,
+  getDatabaseBackupSizeGuardDecision,
   runDatabaseBackup,
   runDatabaseRestore,
   formatDatabaseBackupResult,
+  type DatabaseBackupSizeEstimate,
+  type DatabaseBackupSizeGuardDecision,
+  type DatabaseBackupTableSizeEstimate,
+  type EstimateDatabaseBackupSizeOptions,
   type RunDatabaseBackupOptions,
   type RunDatabaseBackupResult,
   type RunDatabaseRestoreOptions,

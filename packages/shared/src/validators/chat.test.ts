@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  chatAutomationCreateFromStructuredPayload,
   chatAskUserRequestFromStructuredPayload,
   chatAskUserRequestSchema,
   convertChatToIssueSchema,
@@ -20,6 +21,7 @@ describe("chat ask_user request payloads", () => {
               { id: "narrow", label: "Narrow", description: "Smallest shippable path", recommended: true },
               { id: "broad", label: "Broad" },
             ],
+            selectionMode: "multiple",
             allowFreeform: true,
           },
         ],
@@ -29,6 +31,24 @@ describe("chat ask_user request payloads", () => {
     expect(chatAskUserRequestSchema.safeParse(payload.requestUserInput).success).toBe(true);
     expect(chatAskUserRequestFromStructuredPayload(payload)).toEqual(payload.requestUserInput);
     expect(sanitizeChatStructuredPayload(payload)).toEqual(payload);
+  });
+
+  it("rejects unsupported ask_user selection modes", () => {
+    const parsed = chatAskUserRequestSchema.safeParse({
+      questions: [
+        {
+          id: "scope",
+          question: "Which scope?",
+          selectionMode: "all",
+          options: [
+            { id: "narrow", label: "Narrow" },
+            { id: "broad", label: "Broad" },
+          ],
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
   });
 
   it("drops malformed requestUserInput during general structured payload sanitization", () => {
@@ -189,5 +209,64 @@ describe("chat issue proposals", () => {
         }),
       },
     });
+  });
+});
+
+describe("chat automation creation payloads", () => {
+  it("keeps a valid scheduled automation request with defaults", () => {
+    const payload = {
+      automationCreate: {
+        title: "Daily AI HOT report",
+        description: "Run aihot and send a short Chinese summary.",
+        schedule: {
+          cronExpression: "0 12 * * *",
+          timezone: "Asia/Shanghai",
+        },
+      },
+    };
+
+    expect(chatAutomationCreateFromStructuredPayload(payload)).toMatchObject({
+      title: "Daily AI HOT report",
+      description: "Run aihot and send a short Chinese summary.",
+      priority: "medium",
+      status: "active",
+      concurrencyPolicy: "coalesce_if_active",
+      catchUpPolicy: "skip_missed",
+      outputMode: "chat_output",
+      schedule: {
+        cronExpression: "0 12 * * *",
+        timezone: "Asia/Shanghai",
+        enabled: true,
+      },
+    });
+    expect(sanitizeChatStructuredPayload(payload)).toEqual({
+      automationCreate: expect.objectContaining({
+        title: "Daily AI HOT report",
+        outputMode: "chat_output",
+      }),
+    });
+  });
+
+  it("drops malformed automationCreate payloads during sanitization", () => {
+    expect(sanitizeChatStructuredPayload({
+      summary: "keep this",
+      automationCreate: {
+        title: "Missing schedule",
+      },
+    })).toEqual({ summary: "keep this" });
+  });
+
+  it("requires automation schedules to declare timezone explicitly", () => {
+    const payload = {
+      automationCreate: {
+        title: "Daily AI HOT report",
+        schedule: {
+          cronExpression: "0 12 * * *",
+        },
+      },
+    };
+
+    expect(chatAutomationCreateFromStructuredPayload(payload)).toBeNull();
+    expect(sanitizeChatStructuredPayload(payload)).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
-import { Check, Tag, UserPlus, Lightbulb, MessageSquare, Settings2, ShieldAlert, ShieldCheck } from "lucide-react";
+import type { ReactNode } from "react";
+import { Check, ChevronDown, Tag, UserPlus, Lightbulb, MessageSquare, Settings2, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { Agent, ChatConversation, IssueLabel, Project } from "@rudderhq/shared";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { cn, formatCents } from "../lib/utils";
@@ -7,6 +8,7 @@ import { MarkdownBody } from "./MarkdownBody";
 import { formatPriorityLabel } from "../lib/priorities";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
 import { Link } from "@/lib/router";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   ApprovalCodeBlock,
   ApprovalField,
@@ -19,6 +21,8 @@ export interface ApprovalPayloadContext {
   projects?: Project[] | null;
   labels?: IssueLabel[] | null;
   selectedLabelIds?: string[] | null;
+  onSelectedLabelIdsChange?: (labelIds: string[]) => void;
+  labelPickerDisabled?: boolean;
   chatConversation?: Pick<ChatConversation, "id" | "title"> | null;
   currentUserId?: string | null;
 }
@@ -167,42 +171,138 @@ export function ChatIssueApprovalLabelPicker({
   );
 }
 
+function ChatIssueApprovalLabelPopover({
+  labels,
+  selectedLabelIds,
+  onChange,
+  required,
+  disabled,
+  children,
+}: {
+  labels: IssueLabel[];
+  selectedLabelIds: string[];
+  onChange: (labelIds: string[]) => void;
+  required: boolean;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  const labelListScrollRef = useScrollbarActivityRef();
+  const selected = new Set(selectedLabelIds);
+  return (
+    <Popover>
+      <PopoverTrigger asChild disabled={disabled}>
+        {children}
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-64 p-1" collisionPadding={16}>
+        <div className="px-2.5 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-medium text-foreground">Issue labels</div>
+            {required ? (
+              <div className="text-[11px] font-medium text-destructive">Required</div>
+            ) : null}
+          </div>
+        </div>
+        <div ref={labelListScrollRef} className="scrollbar-auto-hide max-h-56 space-y-0.5 overflow-y-auto overscroll-contain p-1 pt-0">
+          {labels.map((label) => {
+            const isSelected = selected.has(label.id);
+            return (
+              <button
+                key={label.id}
+                type="button"
+                aria-pressed={isSelected}
+                disabled={disabled}
+                className={cn(
+                  "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent/50 disabled:cursor-not-allowed disabled:opacity-60",
+                  isSelected && "bg-accent text-accent-foreground",
+                )}
+                onClick={() => {
+                  onChange(
+                    isSelected
+                      ? selectedLabelIds.filter((id) => id !== label.id)
+                      : [...selectedLabelIds, label.id],
+                  );
+                }}
+              >
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: label.color }} />
+                <span className="min-w-0 flex-1 truncate">{label.name}</span>
+                {isSelected ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function LabelsField({
   labelIds,
   labels,
   required,
+  onChange,
+  disabled,
 }: {
   labelIds: string[];
   labels?: IssueLabel[] | null;
   required: boolean;
+  onChange?: (labelIds: string[]) => void;
+  disabled?: boolean;
 }) {
   if (labelIds.length === 0 && !required) return null;
   const labelById = new Map((labels ?? []).map((label) => [label.id, label]));
   const selectedLabels = labelIds.map((id) => labelById.get(id)).filter((label): label is IssueLabel => Boolean(label));
   const unresolvedIds = labelIds.filter((id) => !labelById.has(id));
+  const editable = Boolean(onChange && labels && labels.length > 0);
+  const renderedLabels =
+    selectedLabels.length > 0 || unresolvedIds.length > 0 ? (
+      <span className="flex flex-wrap gap-1.5">
+        {selectedLabels.map((label) => (
+          <span
+            key={label.id}
+            className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 py-1 text-xs font-medium"
+          >
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: label.color }} />
+            <span className="truncate">{label.name}</span>
+          </span>
+        ))}
+        {unresolvedIds.map((id) => (
+          <ApprovalInlineCode key={id}>{id}</ApprovalInlineCode>
+        ))}
+      </span>
+    ) : (
+      <span className="text-xs font-medium text-destructive">
+        Required before approval
+      </span>
+    );
 
   return (
     <ApprovalField label="Labels" align="start">
-      {selectedLabels.length > 0 || unresolvedIds.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {selectedLabels.map((label) => (
-            <span
-              key={label.id}
-              className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 py-1 text-xs font-medium"
-            >
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: label.color }} />
-              <span className="truncate">{label.name}</span>
-            </span>
-          ))}
-          {unresolvedIds.map((id) => (
-            <ApprovalInlineCode key={id}>{id}</ApprovalInlineCode>
-          ))}
-        </div>
-      ) : (
-        <span className="text-xs font-medium text-destructive">
-          Required before approval
-        </span>
-      )}
+      {editable ? (
+        <ChatIssueApprovalLabelPopover
+          labels={labels!}
+          selectedLabelIds={labelIds}
+          onChange={onChange!}
+          required={required}
+          disabled={disabled}
+        >
+          <button
+            type="button"
+            disabled={disabled}
+            className={cn(
+              "inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-1.5 py-1 text-left transition-colors hover:border-border hover:bg-accent/30 disabled:cursor-not-allowed disabled:opacity-60",
+              required && labelIds.length === 0 && "border-destructive/40 bg-destructive/5 hover:bg-destructive/10",
+            )}
+            data-testid="chat-issue-label-popover-trigger"
+          >
+            {selectedLabels.length > 0 || unresolvedIds.length > 0 ? renderedLabels : (
+              <span className="px-1 text-xs font-medium text-destructive">
+                {required ? "Required before approval" : "Select label"}
+              </span>
+            )}
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          </button>
+        </ChatIssueApprovalLabelPopover>
+      ) : renderedLabels}
     </ApprovalField>
   );
 }
@@ -393,7 +493,13 @@ function ChatIssueCreationPayload({
       <PayloadField label="Priority" value={typeof proposal.priority === "string" ? formatPriorityLabel(proposal.priority) : proposal.priority} />
       <ProjectField projectId={proposal.projectId} projects={context?.projects} />
       <PayloadField label="Goal" value={proposal.goalId} />
-      <LabelsField labelIds={labelIds} labels={context?.labels} required={labelsRequired} />
+      <LabelsField
+        labelIds={labelIds}
+        labels={context?.labels}
+        required={labelsRequired}
+        onChange={context?.onSelectedLabelIdsChange}
+        disabled={context?.labelPickerDisabled}
+      />
       <AssigneeField
         agentId={proposal.assigneeAgentId}
         userId={proposal.assigneeUserId}

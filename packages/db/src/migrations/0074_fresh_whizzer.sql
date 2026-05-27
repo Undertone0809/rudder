@@ -1,0 +1,2 @@
+CREATE INDEX "heartbeat_runs_company_status_updated_idx" ON "heartbeat_runs" USING btree ("org_id","status","updated_at");--> statement-breakpoint
+CREATE INDEX "join_requests_company_status_updated_idx" ON "join_requests" USING btree ("org_id","status","updated_at");

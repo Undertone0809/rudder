@@ -13,16 +13,17 @@ When there is a conflict, `SPEC-implementation.md` controls V1 behavior.
 
 ## 2. V1 Outcomes
 
-Rudder V1 must provide a full control-plane loop for autonomous agents:
+Rudder V1 must provide a full work loop for agent teams:
 
 1. A human board creates an organization and defines goals.
-2. The board creates and manages agents in an org tree.
-3. Agents receive and execute tasks via heartbeat invocations.
-4. All work is tracked through tasks, comments, and chat conversations with audit visibility.
-5. Token/cost usage is reported and budget limits can stop work.
-6. The board can intervene anywhere (pause agents/tasks, override decisions).
+2. The board creates and manages agents with roles, runtimes, capabilities, and reporting lines.
+3. A human or agent turns intent into an issue with enough context to execute.
+4. Agents receive and execute issue work via heartbeat invocations.
+5. Runs, comments, review decisions, feedback, and outputs stay attached to the issue with audit visibility.
+6. Token/cost usage is reported and budget limits can stop work.
+7. The board can intervene anywhere (pause agents/issues, override decisions).
 
-Success means one operator can run a small AI-native organization end-to-end with clear visibility and control.
+Success means one operator can run a small agent team end-to-end, inspect the work loop, and preserve lessons that should make future runs better.
 The V1 north-star metric is the weekly count of real agent-work loops completed end-to-end through Rudder.
 
 ## 3. Explicit V1 Product Decisions
@@ -37,7 +38,7 @@ These decisions close open questions from `SPEC.md` for V1.
 | Org graph | Strict tree (`reports_to` nullable root); no multi-manager reporting |
 | Visibility | Full visibility to board and all agents in same organization |
 | Communication | Issues remain the execution surface; Messenger is the board communication shell that unifies chat conversations and inbox-style attention streams |
-| Task ownership | Single assignee; atomic checkout required for `in_progress` transition |
+| Issue ownership | Single assignee; atomic checkout required for `in_progress` transition |
 | Recovery | No automatic reassignment; work recovery stays explicit/auditable; visible same-agent recovery retry is allowed |
 | Issue close-out | Successful issue-backed runs must leave a close-out signal or Rudder may queue bounded same-agent passive follow-up |
 | Agent adapters | Built-in `process` and `http` adapters |
@@ -63,15 +64,15 @@ V1 implementation extends this baseline into an organization-centric, governance
 - Organization lifecycle (create/list/get/update/archive)
 - Goal hierarchy linked to organization mission
 - Agent lifecycle with org structure and agent runtime configuration
-- Task lifecycle with parent/child hierarchy and comments
+- Issue lifecycle with parent/child hierarchy and comments
 - Chat lifecycle with conversation, message, context-link, attachment, and convert-to-issue flows
-- Atomic task checkout and explicit task status transitions
-- Board approvals for hires and CEO strategy proposal
+- Atomic issue checkout and explicit issue status transitions
+- Board approvals for hires and initial operating-plan proposals
 - Heartbeat invocation, status tracking, and cancellation
 - Cost event ingestion and rollups (agent/task/project/organization)
 - Budget settings and hard-stop enforcement
-- Board web UI for dashboard, Organization Structure, chat, tasks, agents, approvals, costs
-- Agent-facing API contract (task read/write, heartbeat report, cost report)
+- Board web UI for dashboard, Organization Structure, chat, issues, agents, approvals, costs
+- Agent-facing API contract (issue read/write, heartbeat report, cost report)
 - Auditable activity log for all mutating actions
 
 ## 5.2 Out of Scope (V1)
@@ -79,7 +80,7 @@ V1 implementation extends this baseline into an organization-centric, governance
 - Plugin framework and third-party extension SDK
 - Revenue/expense accounting beyond model/token costs
 - Knowledge base subsystem
-- Public marketplace (ClipHub)
+- Public template marketplace
 - Multi-board governance or role-based human permission granularity
 - Automatic self-healing orchestration (auto-reassign/retry planners)
 
@@ -495,9 +496,9 @@ Issue-backed run close-out:
 
 - Bearer API key mapped to one agent and organization
 - Agent key scope:
-  - read org/task/organization context for own organization
-  - read/write own assigned tasks and comments
-  - create tasks/comments for delegation
+  - read organization, goal, issue, and run context for own organization
+  - read/write own assigned issues and comments
+  - create issues/comments for delegation
   - report heartbeat status
   - report cost events
 - Agent cannot:
@@ -512,8 +513,8 @@ Issue-backed run close-out:
 | Create organization | yes | no |
 | Hire/create agent | yes (direct) | request via approval |
 | Pause/resume agent | yes | no |
-| Create/update task | yes | yes |
-| Force reassign task | yes | limited |
+| Create/update issue | yes | yes |
+| Force reassign issue | yes | limited |
 | Approve strategy/hire requests | yes | no |
 | Report cost | yes | yes |
 | Set organization budget | yes | no |
@@ -648,9 +649,42 @@ Chat behavior requirements:
 - chat-driven issue creation and lightweight operations reuse the approval system
 - automation runs may post status/result events into an explicit Messenger chat,
   but durable automation execution remains issue-backed
+- for `chat_output` automations, a successful issue-backed execution auto-closes
+  the execution issue as `done` after the run succeeds so result delivery is not
+  reinterpreted as missing issue close-out
 - board users can optionally store a personal chat profile with `nickname` and `more_about_you`
 - the selected chat agent may use that per-user profile as prompt context only when at least one profile field is non-empty
 - assistant turns require an explicit `preferred_agent_id`; the UI defaults editable conversations to the last selected available agent or first available agent, while conversations with no selected chat agent remain discussable/editable but cannot invoke a runtime until one is chosen
+
+## 10.9.1 Organization Intelligence Profiles
+
+Rudder product intelligence features that are not agent work use organization-level
+Intelligence profiles instead of a hidden agent identity.
+
+Initial profiles:
+
+- `lightweight` / Fast Intelligence: low-latency utilities such as chat title
+  generation, short summaries, and classification.
+- `reasoning` / Smart Intelligence: reasoning-heavy utilities such as issue AI
+  search, reranking, and complex summaries.
+
+Requirements:
+
+- profiles are organization-scoped
+- profiles are not agents and do not appear in the org chart
+- profiles must not create `replyingAgentId`, heartbeat runs, agent runtime
+  sessions, or hidden Copilot rows
+- profile config may use the same adapter model and `modelFallbacks` shape as
+  agent runtime config
+- profile execution must filter agent-only identity/workspace fields such as
+  instructions, prompt templates, enabled skills, and workspace strategy
+- product utility calls resolve Fast or Smart by purpose through a product
+  intelligence service that uses a synthetic product identity, no persisted
+  agent row, no heartbeat run, and no local agent API token
+- Organization Settings exposes Fast and Smart with the same horizontal primary
+  model plus fallback-chain card interaction used by agent config
+- chat assistant replies still require explicit `preferred_agent_id`; no chat
+  reply may fall back to an Intelligence profile
 
 ## 10.10 Error Semantics
 
@@ -798,20 +832,20 @@ Scheduler must skip invocation when:
 
 Board can bypass request flow and create agents directly via UI; direct create is still logged as a governance action.
 
-## 12.2 CEO Strategy Approval
+## 12.2 Initial Operating-Plan Approval
 
-1. CEO posts strategy proposal as `approval(type=approve_ceo_strategy)`.
-2. Board reviews payload (plan text, initial structure, high-level tasks).
-3. Approval unlocks execution state for CEO-created delegated work.
+1. A lead/default agent posts an operating-plan proposal. The current compatibility approval type is `approve_ceo_strategy`.
+2. Board reviews payload (plan text, initial structure, high-level issues).
+3. Approval unlocks execution state for delegated work created by that proposal.
 
-Before first strategy approval, CEO may only draft tasks, not transition them to active execution states.
+Before the first operating-plan approval, the proposing agent may only draft issues, not transition them to active execution states.
 
 ## 12.3 Board Override
 
 Board can at any time:
 
 - pause/resume/terminate any agent
-- reassign or cancel any task
+- reassign or cancel any issue
 - edit budgets and limits
 - approve/reject/cancel pending approvals
 
@@ -877,7 +911,7 @@ V1 UI routes:
 - `/chat` legacy chat entry surface
 - `/inbox` legacy attention surface
 - `/orgs/:id/org` Organization Structure and agent status
-- `/orgs/:id/tasks` task list/kanban
+- `/orgs/:id/issues` issue list/kanban
 - `/orgs/:id/agents/:agentId` agent detail
 - `/orgs/:id/costs` cost and budget dashboard
 - `/orgs/:id/activity` audit/event stream
@@ -913,7 +947,7 @@ Required UX behaviors:
 
 ## 15.4 Reliability Targets
 
-- API p95 latency under 250 ms for standard CRUD at 1k tasks/organization
+- API p95 latency under 250 ms for standard CRUD at 1k issues/organization
 - heartbeat invoke acknowledgement under 2 s for process adapter
 - no lost approval decisions (transactional writes)
 
@@ -942,7 +976,7 @@ Required UX behaviors:
 
 ## 17.3 End-to-End Tests
 
-- board creates organization -> hires CEO -> approves strategy -> CEO receives work
+- board creates organization -> creates or uses a default agent -> approves operating plan when needed -> agent receives issue work
 - agent reports cost -> budget threshold reached -> auto-pause occurs
 - task delegation across teams with request depth increment
 
@@ -1001,8 +1035,8 @@ V1 is complete only when all criteria are true:
 1. A board user can create multiple organizations and switch between them.
 2. An organization can run at least one active heartbeat-enabled agent.
 3. Task checkout is conflict-safe with `409` on concurrent claims.
-4. Agents can update tasks/comments and report costs with API keys only.
-5. Board can approve/reject hire and CEO strategy requests in UI.
+4. Agents can update issues/comments and report costs with API keys only.
+5. Board can approve/reject hire and operating-plan requests in UI.
 6. Budget hard limit auto-pauses an agent and prevents new invocations.
 7. Dashboard shows accurate counts/spend from live DB data.
 8. Every mutation is auditable in activity log.
@@ -1015,7 +1049,7 @@ V1 is complete only when all criteria are true:
 - richer workflow-state customization per team
 - milestones/labels/dependency graph depth beyond V1 minimum
 - realtime transport optimization (SSE/WebSockets)
-- public template marketplace integration (ClipHub)
+- public template marketplace integration
 
 ## 21. Organization Portability Package (V1 Addendum)
 

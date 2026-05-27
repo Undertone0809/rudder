@@ -605,8 +605,11 @@ test.describe("Messenger unified threads contract", () => {
     await expect(approvalCard).toContainText("Classify proposed work");
     await expect(approvalCard).toContainText("Required before approval");
     await expect(approvalCard.getByRole("button", { name: "Approve" })).toBeDisabled();
+    await expect(approvalCard.getByTestId("chat-issue-approval-label-picker")).toHaveCount(0);
 
-    await approvalCard.getByRole("button", { name: "Engineering" }).click();
+    await approvalCard.getByTestId("chat-issue-label-popover-trigger").click();
+    await expect(page.getByText("Issue labels")).toBeVisible();
+    await page.getByRole("button", { name: "Engineering" }).click();
     await expect(approvalCard).toContainText("Engineering");
     await expect(approvalCard.getByRole("button", { name: "Approve" })).toBeEnabled();
     await approvalCard.getByRole("button", { name: "Approve" }).click();

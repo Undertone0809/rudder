@@ -516,8 +516,43 @@
     {
       "idx": 73,
       "version": "7",
-      "when": 1779440083084,
-      "tag": "0073_careful_jigsaw",
+      "when": 1779440902448,
+      "tag": "0073_bizarre_calypso",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1779708506785,
+      "tag": "0074_fresh_whizzer",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1779710547881,
+      "tag": "0075_pink_weapon_omega",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1779718284150,
+      "tag": "0076_silky_captain_flint",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1779723488902,
+      "tag": "0077_thin_black_cat",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1779872896181,
+      "tag": "0078_stale_screwball",
       "breakpoints": true
     }
   ]

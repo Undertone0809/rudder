@@ -115,18 +115,6 @@ export function automationRoutes(db: Db) {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? "board" : null,
     });
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: automation.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "automation.updated",
-      entityType: "automation",
-      entityId: automation.id,
-      details: { title: updated?.title ?? automation.title },
-    });
     res.json(updated);
   });
 

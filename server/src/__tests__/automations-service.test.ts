@@ -20,6 +20,7 @@ import {
   automationRuns,
   automations,
   automationTriggers,
+  chatContextLinks,
   chatConversations,
   chatMessages,
 } from "@rudderhq/db";
@@ -121,6 +122,7 @@ describe("automation service live-execution coalescing", () => {
     await db.delete(automationRuns);
     await db.delete(automationTriggers);
     await db.delete(automations);
+    await db.delete(chatContextLinks);
     await db.delete(chatMessages);
     await db.delete(chatConversations);
     await db.delete(organizationSecretVersions);
@@ -329,7 +331,7 @@ describe("automation service live-execution coalescing", () => {
     ]);
   });
 
-  it("posts chat output events while preserving issue-backed execution", async () => {
+  it("rejects arbitrary existing chat output destinations", async () => {
     const { agentId, orgId, projectId, svc } = await seedFixture();
     const [chat] = await db
       .insert(chatConversations)
@@ -344,6 +346,30 @@ describe("automation service live-execution coalescing", () => {
       .returning();
     expect(chat).toBeTruthy();
 
+    await expect(
+      svc.create(
+        orgId,
+        {
+          projectId,
+          goalId: null,
+          parentIssueId: null,
+          title: "Daily standup",
+          description: "Summarize active work.",
+          assigneeAgentId: agentId,
+          outputMode: "chat_output",
+          chatConversationId: chat!.id,
+          priority: "medium",
+          status: "active",
+          concurrencyPolicy: "coalesce_if_active",
+          catchUpPolicy: "skip_missed",
+        },
+        {},
+      ),
+    ).rejects.toThrow("Chat output creates an automation-owned conversation");
+  });
+
+  it("posts chat output final results while preserving issue-backed execution", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture();
     const automation = await svc.create(
       orgId,
       {
@@ -354,7 +380,7 @@ describe("automation service live-execution coalescing", () => {
         description: "Summarize active work.",
         assigneeAgentId: agentId,
         outputMode: "chat_output",
-        chatConversationId: chat!.id,
+        chatConversationId: null,
         priority: "medium",
         status: "active",
         concurrencyPolicy: "coalesce_if_active",
@@ -367,7 +393,7 @@ describe("automation service live-execution coalescing", () => {
 
     expect(run.status).toBe("issue_created");
     expect(run.linkedIssueId).toBeTruthy();
-    expect(run.linkedChatConversationId).toBe(chat!.id);
+    expect(run.linkedChatConversationId).toBeTruthy();
     expect(run.startedChatMessageId).toBeTruthy();
     expect(run.lastChatMessageId).toBe(run.startedChatMessageId);
 
@@ -420,9 +446,24 @@ describe("automation service live-execution coalescing", () => {
       status: "succeeded",
     });
     expect((terminalMessage?.structuredPayload as Record<string, unknown>).__chatTranscript).toHaveLength(1);
+    const duplicateOutputMessage = await publishAutomationRunOutputToChat(db, {
+      issueId: run.linkedIssueId,
+      output: "Duplicate result should not post.",
+      status: "succeeded",
+      transcript: [],
+    });
+    expect(duplicateOutputMessage?.id).toBe(outputMessage?.id);
+    const resultMessages = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, outputMessage!.conversationId));
+    expect(resultMessages.filter((message) =>
+      (message.structuredPayload as Record<string, unknown> | null)?.eventType === "automation_run_result" &&
+      (message.structuredPayload as Record<string, unknown> | null)?.runId === run.id,
+    )).toHaveLength(1);
   });
 
-  it("creates a new chat output destination when no conversation is selected", async () => {
+  it("creates a separate chat output destination for each execution run", async () => {
     const { agentId, orgId, projectId, svc } = await seedFixture();
     const automation = await svc.create(
       orgId,
@@ -448,6 +489,12 @@ describe("automation service live-execution coalescing", () => {
     expect(run.status).toBe("issue_created");
     expect(run.linkedChatConversationId).toBeTruthy();
     expect(run.startedChatMessageId).toBeTruthy();
+    const updatedAutomation = await db
+      .select({ chatConversationId: automations.chatConversationId })
+      .from(automations)
+      .where(eq(automations.id, automation.id))
+      .then((rows) => rows[0] ?? null);
+    expect(updatedAutomation?.chatConversationId).toBeNull();
 
     const createdChat = await db
       .select()
@@ -459,6 +506,16 @@ describe("automation service live-execution coalescing", () => {
       title: "Daily digest",
       preferredAgentId: agentId,
       status: "active",
+    });
+    const projectContext = await db
+      .select()
+      .from(chatContextLinks)
+      .where(eq(chatContextLinks.conversationId, run.linkedChatConversationId!))
+      .then((rows) => rows[0] ?? null);
+    expect(projectContext).toMatchObject({
+      orgId,
+      entityType: "project",
+      entityId: projectId,
     });
 
     const startedMessage = await db
@@ -486,6 +543,18 @@ describe("automation service live-execution coalescing", () => {
       .where(eq(chatMessages.id, outputMessage!.id))
       .then((rows) => rows[0] ?? null);
     expect(terminalMessage?.conversationId).toBe(run.linkedChatConversationId);
+
+    const secondRun = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(secondRun.status).toBe("issue_created");
+    expect(secondRun.linkedChatConversationId).toBeTruthy();
+    expect(secondRun.linkedChatConversationId).not.toBe(run.linkedChatConversationId);
+
+    const chats = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.orgId, orgId));
+    expect(chats).toHaveLength(2);
   });
 
   it("does not create an empty new chat for coalesced chat-output runs", async () => {
@@ -531,40 +600,91 @@ describe("automation service live-execution coalescing", () => {
     );
   });
 
-  it("rejects inactive chat output destinations", async () => {
+  it("does not create an empty new chat for skipped chat-output runs", async () => {
     const { agentId, orgId, projectId, svc } = await seedFixture();
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Say hello",
+        description: "Say hello to me.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "skip_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+
+    const firstRun = await svc.runAutomation(automation.id, { source: "manual" });
+    const secondRun = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(firstRun.status).toBe("issue_created");
+    expect(firstRun.linkedChatConversationId).toBeTruthy();
+    expect(secondRun.status).toBe("skipped");
+    expect(secondRun.linkedChatConversationId).toBeNull();
+
+    const chats = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.orgId, orgId));
+    expect(chats).toHaveLength(1);
+    const messages = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.orgId, orgId));
+    expect(messages.map((message) => message.body)).not.toContain(
+      "Say hello skipped because an active automation run already exists.",
+    );
+  });
+
+  it("rejects chat output destination updates to arbitrary existing chats", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture();
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Digest",
+        description: "Post a digest.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
     const [chat] = await db
       .insert(chatConversations)
       .values({
         orgId,
-        title: "Archived digest",
+        title: "Unrelated digest",
         preferredAgentId: agentId,
-        status: "archived",
+        status: "active",
         issueCreationMode: "manual_approval",
         planMode: false,
       })
       .returning();
 
     await expect(
-      svc.create(
-        orgId,
+      svc.update(
+        automation.id,
         {
-          projectId,
-          goalId: null,
-          parentIssueId: null,
-          title: "Digest",
-          description: "Post a digest.",
-          assigneeAgentId: agentId,
           outputMode: "chat_output",
           chatConversationId: chat!.id,
-          priority: "medium",
-          status: "active",
-          concurrencyPolicy: "coalesce_if_active",
-          catchUpPolicy: "skip_missed",
         },
         {},
       ),
-    ).rejects.toThrow("Chat output requires an active conversation");
+    ).rejects.toThrow("Chat output creates an automation-owned conversation");
   });
 
   it("creates and runs automations without a project", async () => {

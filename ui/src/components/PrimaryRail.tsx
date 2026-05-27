@@ -7,7 +7,6 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import {
   Bot,
-  CalendarDays,
   MessageCirclePlus,
   FolderKanban,
   Inbox,
@@ -183,7 +182,7 @@ export function PrimaryRail({
       to: "/dashboard",
       label: "Dashboard",
       icon: LayoutDashboard,
-      active: /^\/dashboard(?:\/|$)/.test(relativePath),
+      active: /^\/(?:dashboard|calendar)(?:\/|$)/.test(relativePath),
     },
     {
       key: "issues",
@@ -219,13 +218,6 @@ export function PrimaryRail({
       label: "Auto",
       icon: Repeat,
       active: /^\/automations(?:\/|$)/.test(relativePath),
-    },
-    {
-      key: "calendar",
-      to: "/calendar",
-      label: "Calendar",
-      icon: CalendarDays,
-      active: /^\/calendar(?:\/|$)/.test(relativePath),
     },
   ];
   const activeRailIndex = railItems.findIndex((item) => item.active);

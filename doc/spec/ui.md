@@ -798,12 +798,12 @@ The inbox is the board operator's primary action center. It aggregates everythin
 ├─────────────────────────────────────────────────────────┤
 │ APPROVALS                        See all approvals →    │
 │ ● 🛡 Hire Agent: "Marketing Analyst"                    │
-│ │  Requested by CEO · 2h ago                            │
+│ │  Requested by Lead Agent · 2h ago                     │
 │ │  Role: marketing · Reports to: CMO · Budget: $100/mo  │
 │ │  [✕ Reject]  [✓ Approve]                              │
 │ │                                                       │
-│ ● 🛡 CEO Strategy: "Q2 Growth Plan"                     │
-│ │  Requested by CEO · 4h ago                            │
+│ ● 🛡 Operating Plan: "Q2 Growth Plan"                   │
+│ │  Requested by Lead Agent · 4h ago                     │
 │ │  [View details →]                                     │
 │                                                         │
 │ ALERTS                                                  │

@@ -344,6 +344,7 @@ describe("Automations", () => {
     });
 
     expect(container.textContent).toContain("No automations yet");
+    expect(container.textContent).not.toContain("Advisor review loop");
     expect(container.textContent).toContain("Bug triage");
     expect(container.textContent).toContain("Daily standup");
     expect(container.textContent).toContain("Weekly progress report");
@@ -391,7 +392,7 @@ describe("Automations", () => {
       await Promise.resolve();
     });
 
-    expect(runbookInput?.value).toContain("relevant Rudder chat conversation");
+    expect(runbookInput?.value).toContain("final result to a new Rudder chat");
   });
 
   it("opens the composer from the header as a blank prompt input", async () => {
@@ -438,7 +439,7 @@ describe("Automations", () => {
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
     expect(titleInput?.value).toBe("日会");
     expect(runbookInput?.value).toContain("上一个工作日以来更新的进行中任务");
-    expect(runbookInput?.value).toContain("发送到相关 Rudder chat");
+    expect(runbookInput?.value).toContain("发送到新的 Rudder chat");
   });
 
   it("renders last run as a fixed timestamp without the run status caption", async () => {

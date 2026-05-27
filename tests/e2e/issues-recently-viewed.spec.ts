@@ -322,6 +322,8 @@ test.describe("Issues recently viewed sidebar", () => {
 
     await page.goto("/issues");
 
+    await expect(page.getByTestId("issues-working-count")).toContainText("2 working");
+
     const projectRow = page.getByTestId(`issue-project-row-${project.id}`);
     await expect(projectRow).toContainText("Sidebar Live Project");
     await expect(projectRow).toContainText("2 live");

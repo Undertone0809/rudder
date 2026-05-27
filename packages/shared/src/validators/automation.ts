@@ -21,14 +21,29 @@ const automationBodySchema = z.object({
   catchUpPolicy: z.enum(AUTOMATION_CATCH_UP_POLICIES).optional().default("skip_missed"),
   outputMode: z.enum(AUTOMATION_OUTPUT_MODES).optional().default("track_issue"),
   chatConversationId: z.string().uuid().optional().nullable().default(null),
-  allowAssigneeChatMismatch: z.boolean().optional().default(false),
 });
 
-export const createAutomationSchema = automationBodySchema;
+export const createAutomationSchema = automationBodySchema.superRefine((value, ctx) => {
+  if (value.chatConversationId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["chatConversationId"],
+      message: "Chat output creates an automation-owned conversation; existing chats cannot be selected",
+    });
+  }
+});
 
 export type CreateAutomation = z.infer<typeof createAutomationSchema>;
 
-export const updateAutomationSchema = automationBodySchema.partial();
+export const updateAutomationSchema = automationBodySchema.partial().superRefine((value, ctx) => {
+  if (value.chatConversationId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["chatConversationId"],
+      message: "Chat output creates an automation-owned conversation; existing chats cannot be selected",
+    });
+  }
+});
 export type UpdateAutomation = z.infer<typeof updateAutomationSchema>;
 
 const baseTriggerSchema = z.object({

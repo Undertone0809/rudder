@@ -35,7 +35,7 @@ import { OrganizationWorkspaceBackups } from "./pages/OrganizationWorkspaceBacku
 import { OrganizationSkills } from "./pages/OrganizationSkills";
 import { OrganizationExport } from "./pages/OrganizationExport";
 import { OrganizationImport } from "./pages/OrganizationImport";
-import { DesignGuide } from "./pages/DesignGuide";
+import { UiLab } from "./pages/UiLab";
 import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { InstanceNotificationsSettings } from "./pages/InstanceNotificationsSettings";
 import { InstanceLangfuseSettings } from "./pages/InstanceLangfuseSettings";
@@ -45,7 +45,6 @@ import { InstanceSettings } from "./pages/InstanceSettings";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
 import { PluginPage } from "./pages/PluginPage";
-import { RunTranscriptUxLab } from "./pages/RunTranscriptUxLab";
 import { OrgChart } from "./pages/OrgChart";
 import { NewAgent } from "./pages/NewAgent";
 import { AuthPage } from "./pages/Auth";
@@ -183,6 +182,7 @@ function boardRoutes() {
     <>
       <Route index element={<Navigate to="dashboard" replace />} />
       <Route path="dashboard" element={<Dashboard />} />
+      <Route path="dashboard/calendar" element={<CalendarPage />} />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="organizations" element={<LegacyOrganizationsRedirect />} />
       <Route path="organization/settings" element={<OrganizationSettings />} />
@@ -235,7 +235,7 @@ function boardRoutes() {
       <Route path="chat/:conversationId" element={<LegacyMessengerRedirect />} />
       <Route path="automations" element={<Automations />} />
       <Route path="automations/:automationId" element={<AutomationDetail />} />
-      <Route path="calendar" element={<CalendarPage />} />
+      <Route path="calendar" element={<LegacyCalendarRedirect />} />
       <Route path="execution-workspaces/:workspaceId" element={<ExecutionWorkspaceDetail />} />
       <Route path="goals" element={<Goals />} />
       <Route path="goals/:goalId" element={<GoalDetail />} />
@@ -243,8 +243,9 @@ function boardRoutes() {
       <Route path="activity" element={<Activity />} />
       <Route path="inbox" element={<LegacyInboxRedirect />} />
       <Route path="inbox/*" element={<LegacyInboxRedirect />} />
-      <Route path="design-guide" element={<DesignGuide />} />
-      <Route path="tests/ux/runs" element={<RunTranscriptUxLab />} />
+      <Route path="ui-lab" element={<UiLab />} />
+      <Route path="design-guide" element={<UiLab initialSection="design-guide" />} />
+      <Route path="tests/ux/runs" element={<UiLab initialSection="transcripts" />} />
       <Route path=":pluginRoutePath" element={<PluginPage />} />
       <Route path="*" element={<NotFoundPage scope="board" />} />
     </>
@@ -274,6 +275,15 @@ function LegacyInboxRedirect() {
     return <Navigate to={`/messenger${location.search}${location.hash}`} replace />;
   }
   return <Navigate to={`/${orgPrefix}/messenger${location.search}${location.hash}`} replace />;
+}
+
+function LegacyCalendarRedirect() {
+  const location = useLocation();
+  const { orgPrefix } = useParams<{ orgPrefix?: string }>();
+  if (!orgPrefix) {
+    return <Navigate to={`/dashboard/calendar${location.search}${location.hash}`} replace />;
+  }
+  return <Navigate to={`/${orgPrefix}/dashboard/calendar${location.search}${location.hash}`} replace />;
 }
 
 function InstanceSettingsRedirect({ requestedPath }: { requestedPath?: string }) {
@@ -535,6 +545,8 @@ export function App() {
             <Route path="plugins/:pluginId" element={<PluginSettings />} />
           </Route>
           <Route path="organizations" element={<LegacyOrganizationsRedirect />} />
+          <Route path="dashboard" element={<UnprefixedBoardRedirect />} />
+          <Route path="dashboard/calendar" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
           <Route path="messenger" element={<UnprefixedBoardRedirect />} />
@@ -543,6 +555,8 @@ export function App() {
           <Route path="inbox/*" element={<LegacyInboxRedirect />} />
           <Route path="chat" element={<LegacyMessengerRedirect />} />
           <Route path="chat/:conversationId" element={<LegacyMessengerRedirect />} />
+          <Route path="ui-lab" element={<UnprefixedBoardRedirect />} />
+          <Route path="design-guide" element={<UnprefixedBoardRedirect />} />
           <Route path="automations" element={<UnprefixedBoardRedirect />} />
           <Route path="automations/:automationId" element={<UnprefixedBoardRedirect />} />
           <Route path="calendar" element={<UnprefixedBoardRedirect />} />

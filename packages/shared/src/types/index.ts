@@ -13,6 +13,10 @@ export type {
   OrganizationWorkspaceEntryMutationResult,
 } from "./organization.js";
 export type {
+  OrganizationIntelligenceProfile,
+  UpsertOrganizationIntelligenceProfile,
+} from "./organization-intelligence-profile.js";
+export type {
   ChatConversation,
   ChatMessage,
   ChatAttachment,

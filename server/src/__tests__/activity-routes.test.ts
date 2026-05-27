@@ -10,6 +10,12 @@ const mockActivityService = vi.hoisted(() => ({
   runsForIssue: vi.fn(),
   issuesForRun: vi.fn(),
   create: vi.fn(),
+  organizationIntelligenceProfileService: () => ({
+    list: vi.fn(),
+    getByPurpose: vi.fn(),
+    upsert: vi.fn(),
+    ensureDefaultsFromRuntime: vi.fn(),
+  }),
 }));
 
 const mockIssueService = vi.hoisted(() => ({

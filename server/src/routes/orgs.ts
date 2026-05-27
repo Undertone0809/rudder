@@ -17,6 +17,8 @@ import {
   updateOrganizationWorkspaceFileSchema,
   renameOrganizationWorkspaceEntrySchema,
   moveOrganizationWorkspaceEntrySchema,
+  organizationIntelligenceProfilePurposeSchema,
+  upsertOrganizationIntelligenceProfileSchema,
   createWorkspaceBackupSchema,
   restoreWorkspaceBackupSchema,
 } from "@rudderhq/shared";
@@ -31,6 +33,7 @@ import {
   organizationPortabilityService,
   workspaceBackupService,
   organizationSkillService,
+  organizationIntelligenceProfileService,
   organizationService,
   documentService,
   logActivity,
@@ -45,6 +48,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
   const agents = agentService(db);
   const portability = organizationPortabilityService(db, storage);
   const organizationSkills = organizationSkillService(db);
+  const intelligenceProfiles = organizationIntelligenceProfileService(db);
   const access = accessService(db);
   const budgets = budgetService(db);
   const resources = resourceCatalogService(db);
@@ -288,6 +292,47 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     const catalog = await resources.listOrganizationResources(orgId);
     res.json(catalog);
   });
+
+  router.get("/:orgId/intelligence-profiles", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    assertCompanyAccess(req, orgId);
+    assertBoard(req);
+    res.json(await intelligenceProfiles.list(orgId));
+  });
+
+  router.put(
+    "/:orgId/intelligence-profiles/:purpose",
+    validate(upsertOrganizationIntelligenceProfileSchema),
+    async (req, res) => {
+      const orgId = req.params.orgId as string;
+      assertCompanyAccess(req, orgId);
+      assertBoard(req);
+      const purpose = organizationIntelligenceProfilePurposeSchema.safeParse(req.params.purpose);
+      if (!purpose.success) {
+        res.status(404).json({ error: "Unknown intelligence profile purpose" });
+        return;
+      }
+
+      const profile = await intelligenceProfiles.upsert(orgId, purpose.data, req.body);
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        orgId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "organization.intelligence_profile.updated",
+        entityType: "organization_intelligence_profile",
+        entityId: profile.id,
+        details: {
+          purpose: profile.purpose,
+          agentRuntimeType: profile.agentRuntimeType,
+          status: profile.status,
+        },
+      });
+      res.json(profile);
+    },
+  );
 
   router.post("/:orgId/resources", validate(createOrganizationResourceSchema), async (req, res) => {
     const orgId = req.params.orgId as string;

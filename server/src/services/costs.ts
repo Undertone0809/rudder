@@ -1,6 +1,6 @@
-import { and, desc, eq, gte, isNotNull, lt, lte, sql, type SQLWrapper } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, lt, lte, or, sql, type SQLWrapper } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
-import { activityLog, agents, organizations, costEvents, issues, projects } from "@rudderhq/db";
+import { activityLog, agents, organizations, costEvents, costMonthlySpendRollups, issues, projects } from "@rudderhq/db";
 import { ADDITIONAL_CACHED_INPUT_TOKEN_PROVIDERS } from "@rudderhq/shared";
 import { notFound, unprocessable } from "../errors.js";
 import { observeExecutionEvent } from "../langfuse.js";
@@ -72,26 +72,166 @@ function currentUtcMonthWindow(now = new Date()) {
   };
 }
 
-async function getMonthlySpendTotal(
-  db: Db,
-  scope: { orgId: string; agentId?: string | null },
-) {
-  const { start, end } = currentUtcMonthWindow();
-  const conditions = [
-    eq(costEvents.orgId, scope.orgId),
-    gte(costEvents.occurredAt, start),
-    lt(costEvents.occurredAt, end),
-  ];
-  if (scope.agentId) {
-    conditions.push(eq(costEvents.agentId, scope.agentId));
-  }
+type CostRollupDb = Pick<Db, "insert" | "select" | "update">;
+type CostRollupScope = {
+  orgId: string;
+  scopeType: "organization" | "agent";
+  scopeId: string;
+  monthStart: Date;
+  monthEnd: Date;
+};
+
+function isWithinWindow(value: Date, start: Date, end: Date) {
+  const time = value.getTime();
+  return time >= start.getTime() && time < end.getTime();
+}
+
+function costRollupIdentityWhere(input: Omit<CostRollupScope, "monthEnd">) {
+  return and(
+    eq(costMonthlySpendRollups.orgId, input.orgId),
+    eq(costMonthlySpendRollups.scopeType, input.scopeType),
+    eq(costMonthlySpendRollups.scopeId, input.scopeId),
+    eq(costMonthlySpendRollups.monthStart, input.monthStart),
+  );
+}
+
+async function calculateMonthlySpendForScope(db: CostRollupDb, input: CostRollupScope) {
   const [row] = await db
     .select({
-      total: sumNumberSql(costEvents.costCents),
+      spendCents: sumNumberSql(costEvents.costCents),
     })
     .from(costEvents)
-    .where(and(...conditions));
-  return Number(row?.total ?? 0);
+    .where(and(
+      eq(costEvents.orgId, input.orgId),
+      ...(input.scopeType === "agent" ? [eq(costEvents.agentId, input.scopeId)] : []),
+      gte(costEvents.occurredAt, input.monthStart),
+      lt(costEvents.occurredAt, input.monthEnd),
+    ));
+  return Number(row?.spendCents ?? 0);
+}
+
+async function reconcileInsertedMonthlySpendRollup(db: CostRollupDb, input: CostRollupScope) {
+  const spendCents = await calculateMonthlySpendForScope(db, input);
+  await db
+    .update(costMonthlySpendRollups)
+    .set({
+      spendCents,
+      updatedAt: new Date(),
+    })
+    .where(costRollupIdentityWhere(input));
+  return spendCents;
+}
+
+async function insertMissingMonthlySpendRollup(db: CostRollupDb, input: CostRollupScope) {
+  const spendCents = await calculateMonthlySpendForScope(db, input);
+  const [inserted] = await db
+    .insert(costMonthlySpendRollups)
+    .values({
+      orgId: input.orgId,
+      scopeType: input.scopeType,
+      scopeId: input.scopeId,
+      monthStart: input.monthStart,
+      spendCents,
+    })
+    .onConflictDoNothing({
+      target: [
+        costMonthlySpendRollups.orgId,
+        costMonthlySpendRollups.scopeType,
+        costMonthlySpendRollups.scopeId,
+        costMonthlySpendRollups.monthStart,
+      ],
+    })
+    .returning({ spendCents: costMonthlySpendRollups.spendCents });
+  if (inserted) return Number(inserted.spendCents);
+
+  const [existing] = await db
+    .select({ spendCents: costMonthlySpendRollups.spendCents })
+    .from(costMonthlySpendRollups)
+    .where(costRollupIdentityWhere(input));
+  return Number(existing?.spendCents ?? spendCents);
+}
+
+async function incrementMonthlySpendRollup(
+  db: CostRollupDb,
+  input: CostRollupScope & { costCents: number },
+) {
+  const [inserted] = await db
+    .insert(costMonthlySpendRollups)
+    .values({
+      orgId: input.orgId,
+      scopeType: input.scopeType,
+      scopeId: input.scopeId,
+      monthStart: input.monthStart,
+      spendCents: input.costCents,
+    })
+    .onConflictDoNothing({
+      target: [
+        costMonthlySpendRollups.orgId,
+        costMonthlySpendRollups.scopeType,
+        costMonthlySpendRollups.scopeId,
+        costMonthlySpendRollups.monthStart,
+      ],
+    })
+    .returning({ spendCents: costMonthlySpendRollups.spendCents });
+  if (inserted) return reconcileInsertedMonthlySpendRollup(db, input);
+
+  const [updated] = await db
+    .update(costMonthlySpendRollups)
+    .set({
+      spendCents: sql`${costMonthlySpendRollups.spendCents} + ${input.costCents}`,
+      updatedAt: new Date(),
+    })
+    .where(costRollupIdentityWhere(input))
+    .returning({ spendCents: costMonthlySpendRollups.spendCents });
+  return Number(updated?.spendCents ?? input.costCents);
+}
+
+async function getMonthlySpendTotalsFromRollups(
+  db: CostRollupDb,
+  event: { orgId: string; agentId: string },
+) {
+  const { start, end } = currentUtcMonthWindow();
+  const rows = await db
+    .select({
+      scopeType: costMonthlySpendRollups.scopeType,
+      scopeId: costMonthlySpendRollups.scopeId,
+      spendCents: costMonthlySpendRollups.spendCents,
+    })
+    .from(costMonthlySpendRollups)
+    .where(and(
+      eq(costMonthlySpendRollups.orgId, event.orgId),
+      eq(costMonthlySpendRollups.monthStart, start),
+      or(
+        and(
+          eq(costMonthlySpendRollups.scopeType, "organization"),
+          eq(costMonthlySpendRollups.scopeId, event.orgId),
+        ),
+        and(
+          eq(costMonthlySpendRollups.scopeType, "agent"),
+          eq(costMonthlySpendRollups.scopeId, event.agentId),
+        ),
+      ),
+    ));
+  const agentRow = rows.find((row) => row.scopeType === "agent" && row.scopeId === event.agentId);
+  const organizationRow = rows.find((row) => row.scopeType === "organization" && row.scopeId === event.orgId);
+  const agentTotal = agentRow?.spendCents ?? await insertMissingMonthlySpendRollup(db, {
+    orgId: event.orgId,
+    scopeType: "agent",
+    scopeId: event.agentId,
+    monthStart: start,
+    monthEnd: end,
+  });
+  const organizationTotal = organizationRow?.spendCents ?? await insertMissingMonthlySpendRollup(db, {
+    orgId: event.orgId,
+    scopeType: "organization",
+    scopeId: event.orgId,
+    monthStart: start,
+    monthEnd: end,
+  });
+  return {
+    agentTotal: Number(agentTotal),
+    organizationTotal: Number(organizationTotal),
+  };
 }
 
 export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
@@ -109,38 +249,59 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         throw unprocessable("Agent does not belong to organization");
       }
 
-      const event = await db
-        .insert(costEvents)
-        .values({
-          ...data,
-          orgId,
-          biller: data.biller ?? data.provider,
-          billingType: data.billingType ?? "unknown",
-          cachedInputTokens: data.cachedInputTokens ?? 0,
-        })
-        .returning()
-        .then((rows) => rows[0]);
+      const event = await db.transaction(async (tx) => {
+        const inserted = await tx
+          .insert(costEvents)
+          .values({
+            ...data,
+            orgId,
+            biller: data.biller ?? data.provider,
+            billingType: data.billingType ?? "unknown",
+            cachedInputTokens: data.cachedInputTokens ?? 0,
+          })
+          .returning()
+          .then((rows) => rows[0]);
 
-      const [agentMonthSpend, companyMonthSpend] = await Promise.all([
-        getMonthlySpendTotal(db, { orgId, agentId: event.agentId }),
-        getMonthlySpendTotal(db, { orgId }),
-      ]);
+        const { start, end } = currentUtcMonthWindow();
+        const totals = isWithinWindow(inserted.occurredAt, start, end)
+          ? {
+            agentTotal: await incrementMonthlySpendRollup(tx, {
+              orgId,
+              scopeType: "agent",
+              scopeId: inserted.agentId,
+              monthStart: start,
+              monthEnd: end,
+              costCents: inserted.costCents,
+            }),
+            organizationTotal: await incrementMonthlySpendRollup(tx, {
+              orgId,
+              scopeType: "organization",
+              scopeId: orgId,
+              monthStart: start,
+              monthEnd: end,
+              costCents: inserted.costCents,
+            }),
+          }
+          : await getMonthlySpendTotalsFromRollups(tx, inserted);
 
-      await db
-        .update(agents)
-        .set({
-          spentMonthlyCents: agentMonthSpend,
-          updatedAt: new Date(),
-        })
-        .where(eq(agents.id, event.agentId));
+        await tx
+          .update(agents)
+          .set({
+            spentMonthlyCents: totals.agentTotal,
+            updatedAt: new Date(),
+          })
+          .where(eq(agents.id, inserted.agentId));
 
-      await db
-        .update(organizations)
-        .set({
-          spentMonthlyCents: companyMonthSpend,
-          updatedAt: new Date(),
-        })
-        .where(eq(organizations.id, orgId));
+        await tx
+          .update(organizations)
+          .set({
+            spentMonthlyCents: totals.organizationTotal,
+            updatedAt: new Date(),
+          })
+          .where(eq(organizations.id, orgId));
+
+        return inserted;
+      });
 
       await budgets.evaluateCostEvent(event);
 

@@ -1,4 +1,5 @@
 export { organizations } from "./organizations.js";
+export { organizationIntelligenceProfiles } from "./organization_intelligence_profiles.js";
 export { organizationResources } from "./organization_resources.js";
 export { organizationLogos } from "./organization_logos.js";
 export { authUsers, authSessions, authAccounts, authVerifications } from "./auth.js";
@@ -54,6 +55,7 @@ export { issueDocuments } from "./issue_documents.js";
 export { heartbeatRuns } from "./heartbeat_runs.js";
 export { heartbeatRunEvents } from "./heartbeat_run_events.js";
 export { costEvents } from "./cost_events.js";
+export { costMonthlySpendRollups } from "./cost_monthly_spend_rollups.js";
 export { financeEvents } from "./finance_events.js";
 export { approvals } from "./approvals.js";
 export { approvalComments } from "./approval_comments.js";

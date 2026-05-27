@@ -1,6 +1,12 @@
 export const ORGANIZATION_STATUSES = ["active", "paused", "archived"] as const;
 export type OrganizationStatus = (typeof ORGANIZATION_STATUSES)[number];
 
+export const ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES = ["lightweight", "reasoning"] as const;
+export type OrganizationIntelligenceProfilePurpose = (typeof ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES)[number];
+
+export const ORGANIZATION_INTELLIGENCE_PROFILE_STATUSES = ["configured", "disabled", "invalid"] as const;
+export type OrganizationIntelligenceProfileStatus = (typeof ORGANIZATION_INTELLIGENCE_PROFILE_STATUSES)[number];
+
 export const DEPLOYMENT_MODES = ["local_trusted", "authenticated"] as const;
 export type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
 

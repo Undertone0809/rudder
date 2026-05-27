@@ -3,6 +3,7 @@ import { Check, ChevronLeft, ChevronRight, Circle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDialog } from "@/context/DialogContext";
 import { useI18n } from "@/context/I18nContext";
+import { useNavigate } from "@/lib/router";
 import { cn } from "@/lib/utils";
 
 const PRODUCT_TOUR_STORAGE_KEY = "rudder.productTour.completed.v1";
@@ -259,6 +260,7 @@ function getChecklistPosition(callout: FloatingBox): ChecklistPosition {
 export function ProductTourOverlay() {
   const { t } = useI18n();
   const { productTourOpen, closeProductTour } = useDialog();
+  const navigate = useNavigate();
   const [stepIndex, setStepIndex] = useState(0);
   const [targetRect, setTargetRect] = useState<TargetRect | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -302,9 +304,13 @@ export function ProductTourOverlay() {
   );
 
   const dismiss = useCallback(() => {
+    const shouldOpenIssuesAfterSetup = hasPendingProductTour();
     markProductTourComplete();
     closeProductTour();
-  }, [closeProductTour]);
+    if (shouldOpenIssuesAfterSetup) {
+      navigate("/issues");
+    }
+  }, [closeProductTour, navigate]);
 
   if (!productTourOpen || !targetRect || !calloutPosition || !checklistPosition) {
     return null;

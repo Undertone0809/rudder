@@ -10,6 +10,7 @@ import { ProductTourOverlay, hasCompletedProductTour } from "./ProductTourOverla
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const closeProductTour = vi.hoisted(() => vi.fn());
+const navigate = vi.hoisted(() => vi.fn());
 let storageState: Record<string, string> = {};
 
 function installLocalStorageMock() {
@@ -68,6 +69,10 @@ vi.mock("@/context/I18nContext", () => ({
   }),
 }));
 
+vi.mock("@/lib/router", () => ({
+  useNavigate: () => navigate,
+}));
+
 let cleanupFn: (() => void) | null = null;
 
 afterEach(() => {
@@ -77,6 +82,7 @@ afterEach(() => {
   document.documentElement.classList.remove("desktop-shell-macos");
   window.localStorage.clear();
   closeProductTour.mockReset();
+  navigate.mockReset();
   vi.unstubAllGlobals();
 });
 
@@ -160,7 +166,42 @@ describe("ProductTourOverlay", () => {
     });
 
     expect(closeProductTour).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
     expect(hasCompletedProductTour()).toBe(true);
+  });
+
+  it("opens the issue tracker after the first pending setup tour ends", async () => {
+    setViewport(1280, 800);
+    const container = renderOverlay();
+    window.localStorage.setItem("rudder.productTour.pendingAfterSetup.v1", "true");
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    for (let index = 0; index < 4; index += 1) {
+      const nextButton = Array.from(document.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Next"));
+      expect(nextButton).toBeTruthy();
+      act(() => {
+        click(nextButton!);
+      });
+    }
+
+    expect(container.textContent).toContain("You can replay this tour from Settings");
+
+    const finishButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Finish"));
+    expect(finishButton).toBeTruthy();
+
+    act(() => {
+      click(finishButton!);
+    });
+
+    expect(closeProductTour).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith("/issues");
+    expect(hasCompletedProductTour()).toBe(true);
+    expect(window.localStorage.getItem("rudder.productTour.pendingAfterSetup.v1")).toBeNull();
   });
 
   it("keeps desktop tour chrome out of the macOS titlebar and rail area", async () => {

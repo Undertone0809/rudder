@@ -37,7 +37,46 @@ async function expectTourChromeSeparated(page: Page) {
 }
 
 test.describe("Product tour", () => {
-  test("can be replayed from profile settings without tour chrome overlap", async ({ page }) => {
+  test("opens the issue tracker after the pending setup tour finishes", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Product Tour Pending ${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as { issuePrefix: string };
+
+    await page.goto(`/${organization.issuePrefix}/dashboard`);
+    await page.evaluate(() => {
+      window.localStorage.removeItem("rudder.productTour.completed.v1");
+      window.localStorage.setItem("rudder.productTour.pendingAfterSetup.v1", "true");
+    });
+    await page.reload();
+
+    await expect(page.getByRole("dialog", { name: "Rudder is the control plane for agent work" })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/dashboard$`));
+
+    for (const title of [
+      "Start with one task an agent can actually move",
+      "Issues are the executable units of work",
+      "Inspect the work before you approve or continue",
+      "You can replay this tour from Settings",
+    ]) {
+      await page.getByRole("button", { name: "Next" }).click();
+      await expect(page.getByRole("dialog", { name: title })).toBeVisible();
+    }
+
+    await page.getByRole("button", { name: "Finish" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues$`));
+    await expect(page.getByRole("heading", { name: "Issue Tracker" })).toBeVisible();
+    await expect.poll(() =>
+      page.evaluate(() => window.localStorage.getItem("rudder.productTour.pendingAfterSetup.v1")),
+    ).toBeNull();
+  });
+
+  test("can be replayed from general settings without tour chrome overlap", async ({ page }) => {
     await page.setViewportSize({ width: 1920, height: 1257 });
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -56,9 +95,9 @@ test.describe("Product tour", () => {
     await page.getByRole("button", { name: "System settings" }).click();
 
     const modal = page.getByTestId("settings-modal-shell");
-    await modal.locator('a[href$="/instance/settings/profile"]').click();
-    await expect(modal.getByRole("heading", { name: "Profile", exact: true })).toBeVisible();
-    await expect(modal.getByText("Rudder workspace walkthrough")).toBeVisible();
+    await modal.locator('a[href$="/instance/settings/general"]').click();
+    await expect(modal.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+    await expect(modal.getByText("Workspace tour")).toBeVisible();
 
     await modal.getByRole("button", { name: "Start tour" }).click();
 

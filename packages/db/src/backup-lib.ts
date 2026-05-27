@@ -20,6 +20,34 @@ export type RunDatabaseBackupResult = {
   prunedCount: number;
 };
 
+export type EstimateDatabaseBackupSizeOptions = {
+  connectionString: string;
+  connectTimeoutSeconds?: number;
+  includeMigrationJournal?: boolean;
+  excludeTables?: string[];
+};
+
+export type DatabaseBackupTableSizeEstimate = {
+  schemaName: string;
+  tableName: string;
+  totalBytes: number;
+  rowEstimate: number;
+};
+
+export type DatabaseBackupSizeEstimate = {
+  databaseSizeBytes: number;
+  includedTableTotalBytes: number;
+  tableCount: number;
+  largestTables: DatabaseBackupTableSizeEstimate[];
+};
+
+export type DatabaseBackupSizeGuardDecision = {
+  shouldSkip: boolean;
+  reason: "database_too_large_for_in_process_backup" | null;
+  estimatedBytes: number;
+  maxEstimatedBytes: number;
+};
+
 export type RunDatabaseRestoreOptions = {
   connectionString: string;
   backupFile: string;
@@ -139,6 +167,93 @@ function quoteQualifiedName(schemaName: string, objectName: string): string {
 
 function tableKey(schemaName: string, tableName: string): string {
   return `${schemaName}.${tableName}`;
+}
+
+function coercePgNonNegativeNumber(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return parsed;
+}
+
+export function getDatabaseBackupSizeGuardDecision(
+  estimate: DatabaseBackupSizeEstimate,
+  maxEstimatedBytes: number,
+): DatabaseBackupSizeGuardDecision {
+  const safeMaxEstimatedBytes = Math.max(1, Math.trunc(maxEstimatedBytes));
+  const estimatedBytes = Math.max(
+    estimate.databaseSizeBytes,
+    estimate.includedTableTotalBytes,
+  );
+
+  if (estimatedBytes > safeMaxEstimatedBytes) {
+    return {
+      shouldSkip: true,
+      reason: "database_too_large_for_in_process_backup",
+      estimatedBytes,
+      maxEstimatedBytes: safeMaxEstimatedBytes,
+    };
+  }
+
+  return {
+    shouldSkip: false,
+    reason: null,
+    estimatedBytes,
+    maxEstimatedBytes: safeMaxEstimatedBytes,
+  };
+}
+
+export async function estimateDatabaseBackupSize(
+  opts: EstimateDatabaseBackupSizeOptions,
+): Promise<DatabaseBackupSizeEstimate> {
+  const connectTimeout = Math.max(1, Math.trunc(opts.connectTimeoutSeconds ?? 5));
+  const includeMigrationJournal = opts.includeMigrationJournal === true;
+  const excludedTableNames = normalizeTableNameSet(opts.excludeTables);
+  const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
+
+  try {
+    await sql`SELECT 1`;
+
+    const databaseRows = await sql<{ database_size_bytes: string | number }[]>`
+      SELECT pg_database_size(current_database()) AS database_size_bytes
+    `;
+    const relationRows = await sql<{
+      schema_name: string;
+      table_name: string;
+      total_bytes: string | number;
+      row_estimate: string | number;
+    }[]>`
+      SELECT
+        n.nspname AS schema_name,
+        c.relname AS table_name,
+        pg_total_relation_size(c.oid) AS total_bytes,
+        GREATEST(c.reltuples, 0)::bigint AS row_estimate
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind = 'r'
+        AND (
+          n.nspname = 'public'
+          OR (${includeMigrationJournal}::boolean AND n.nspname = ${DRIZZLE_SCHEMA} AND c.relname = ${DRIZZLE_MIGRATIONS_TABLE})
+        )
+      ORDER BY pg_total_relation_size(c.oid) DESC, n.nspname, c.relname
+    `;
+    const tableSizes = relationRows
+      .filter((row) => !excludedTableNames.has(row.table_name))
+      .map((row) => ({
+        schemaName: row.schema_name,
+        tableName: row.table_name,
+        totalBytes: coercePgNonNegativeNumber(row.total_bytes),
+        rowEstimate: coercePgNonNegativeNumber(row.row_estimate),
+      }));
+
+    return {
+      databaseSizeBytes: coercePgNonNegativeNumber(databaseRows[0]?.database_size_bytes),
+      includedTableTotalBytes: tableSizes.reduce((sum, row) => sum + row.totalBytes, 0),
+      tableCount: tableSizes.length,
+      largestTables: tableSizes.slice(0, 5),
+    };
+  } finally {
+    await sql.end();
+  }
 }
 
 export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise<RunDatabaseBackupResult> {
