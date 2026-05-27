@@ -264,7 +264,7 @@ export function calendarRoutes(db: Db) {
       entityId: source.id,
       details: { visibilityDefault: source.visibilityDefault },
     });
-    res.redirect(303, "/calendar?google=connected");
+    res.redirect(303, "/dashboard/calendar?google=connected");
   });
 
   router.post("/orgs/:orgId/calendar/google/sync", validate(googleCalendarSyncSchema), async (req, res) => {
