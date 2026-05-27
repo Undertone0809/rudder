@@ -2,19 +2,25 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
   Boxes,
+  ChevronDown,
   CheckCircle2,
   Component,
   DollarSign,
   FileText,
   FlaskConical,
+  Folder,
   Gauge,
   Inbox,
   LayoutDashboard,
   ListFilter,
   ListTodo,
+  Paperclip,
   Search,
+  Send,
   Shapes,
   ShieldAlert,
+  Sparkles,
+  Square,
   Workflow,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -25,6 +31,9 @@ import type {
   Approval,
   BudgetIncident,
   BudgetPolicySummary,
+  ChatAskUserRequest,
+  ChatConversation,
+  ChatMessage,
   FinanceByKind,
   FinanceEvent,
   Goal,
@@ -90,8 +99,31 @@ import { SidebarSection } from "@/components/SidebarSection";
 import { SidebarSectionActionButton, SidebarSectionHeader } from "@/components/SidebarSectionHeader";
 import { SkillReferenceToken } from "@/components/SkillReferenceToken";
 import { RudderLogo } from "@/components/RudderLogo";
+import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences";
+import { runTranscriptFixtureEntries } from "@/fixtures/runTranscriptFixtures";
 import { DesignGuide } from "./DesignGuide";
 import { RunTranscriptUxLab } from "./RunTranscriptUxLab";
+import {
+  AssistantDraftItem,
+  AskUserAnswerBubble,
+  AskUserHistoryRecord,
+  AskUserPanel,
+  ChatAssistantAttributionRow,
+  ChatAttachmentList,
+  ChatAttachmentPreviewDialog,
+  ChatEmptyStatePromptOptions,
+  ChatFileAttachmentChip,
+  ChatImageAttachmentTile,
+  ChatLongMessageBody,
+  ChatMessageItem,
+  ChatMessagesLoadingState,
+  ChatSystemMessageBody,
+  EMPTY_STATE_PROMPT_GROUPS,
+  OptimisticUserDraftItem,
+  PendingAttachmentPreview,
+  StreamTranscriptItem,
+  type AttachmentPreviewState,
+} from "./Chat.parts";
 import { cn } from "@/lib/utils";
 
 type UiLabSectionId = "overview" | "primitives" | "common" | "design-guide" | "transcripts" | "coverage";
@@ -288,6 +320,27 @@ export const uiLabCoverage: CoverageEntry[] = [
   { componentId: "RunTranscriptView", category: "workflow", sourcePath: "ui/src/components/transcript/RunTranscriptView.tsx", status: "fixture-backed", exampleKind: "module" },
   { componentId: "CommentThread", category: "workflow", sourcePath: "ui/src/components/CommentThread.tsx", status: "covered", exampleKind: "module" },
   { componentId: "MarkdownEditor", category: "workflow", sourcePath: "ui/src/components/MarkdownEditor.tsx", status: "covered", exampleKind: "module" },
+  { componentId: "ChatEmptyStatePromptOptions", category: "workflow", sourcePath: "ui/src/pages/Chat.parts.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatImageAttachmentTile", category: "workflow", sourcePath: "ui/src/pages/Chat.attachments.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatFileAttachmentChip", category: "workflow", sourcePath: "ui/src/pages/Chat.attachments.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "PendingAttachmentPreview", category: "workflow", sourcePath: "ui/src/pages/Chat.attachments.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatAttachmentList", category: "workflow", sourcePath: "ui/src/pages/Chat.attachments.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatAttachmentPreviewDialog", category: "workflow", sourcePath: "ui/src/pages/Chat.attachments.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatAssistantAttributionRow", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ProposalCard", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatLongMessageBody", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatSystemMessageBody", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "AskUserHistoryRecord", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "AskUserAnswerBubble", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "AskUserPanel", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatMessageItem", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "OptimisticUserDraftItem", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatMessagesLoadingState", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "StreamTranscriptItem", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "AssistantDraftItem", category: "workflow", sourcePath: "ui/src/pages/Chat.messages.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatRichReferences", category: "workflow", sourcePath: "ui/src/components/chat-renderables/ChatRichReferences.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatComposerSurface", category: "workflow", sourcePath: "ui/src/pages/Chat.tsx", status: "fixture-backed", exampleKind: "fixture" },
+  { componentId: "ChatPage", category: "workflow", sourcePath: "ui/src/pages/Chat.tsx", status: "context-required", exampleKind: "registry-only", gaps: "Full chat route owns URL state, API queries, live generation, sidebar, and composer persistence." },
   { componentId: "AgentConfigForm", category: "workflow", sourcePath: "ui/src/components/AgentConfigForm.tsx", status: "context-required", exampleKind: "registry-only", gaps: "Needs runtime adapter fixtures and org data." },
   { componentId: "NewIssueDialog", category: "workflow", sourcePath: "ui/src/components/NewIssueDialog.tsx", status: "context-required", exampleKind: "registry-only", gaps: "Uses dialog context, org data, labels, agents, and projects." },
   { componentId: "IssueProperties", category: "product", sourcePath: "ui/src/components/IssueProperties.tsx", status: "context-required", exampleKind: "registry-only", gaps: "Needs issue, agents, projects, goals, and mutation callbacks." },
@@ -675,6 +728,223 @@ const fixtureFileTree: FileTreeNode[] = [
   },
 ];
 
+const fixtureChatImageSrc = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='14' fill='%230f172a'/%3E%3Cpath d='M18 68 37 47l13 13 10-12 18 20H18Z' fill='%2338bdf8'/%3E%3Ccircle cx='64' cy='31' r='8' fill='%23facc15'/%3E%3C/svg%3E";
+
+const fixtureChatConversation: ChatConversation = {
+  id: "chat-ui-lab",
+  orgId: "org-rudder",
+  status: "active",
+  title: "UI Lab component review",
+  summary: "Fixture conversation for reviewing chat components.",
+  latestReplyPreview: "I split the component inventory into visible lab states.",
+  preferredAgentId: fixtureAgent.id,
+  routedAgentId: fixtureAgent.id,
+  primaryIssueId: fixtureIssue.id,
+  primaryIssue: {
+    id: fixtureIssue.id,
+    identifier: fixtureIssue.identifier,
+    title: fixtureIssue.title,
+    status: fixtureIssue.status,
+    priority: fixtureIssue.priority,
+  },
+  issueCreationMode: "manual_approval",
+  planMode: false,
+  createdByUserId: "local-board",
+  lastMessageAt: new Date(Date.now() - 1000 * 60 * 3),
+  lastReadAt: new Date(Date.now() - 1000 * 60 * 2),
+  isPinned: true,
+  isUnread: true,
+  unreadCount: 2,
+  needsAttention: true,
+  resolvedAt: null,
+  contextLinks: [],
+  chatRuntime: {
+    sourceType: "agent",
+    sourceLabel: fixtureAgent.name,
+    runtimeAgentId: fixtureAgent.id,
+    agentRuntimeType: fixtureAgent.agentRuntimeType,
+    model: "gpt-5",
+    available: true,
+    error: null,
+  },
+  createdAt: new Date(Date.now() - 1000 * 60 * 35),
+  updatedAt: new Date(Date.now() - 1000 * 60 * 2),
+};
+
+const fixtureChatAttachments: ChatMessage["attachments"] = [
+  {
+    id: "chat-attachment-image",
+    orgId: "org-rudder",
+    conversationId: fixtureChatConversation.id,
+    messageId: "chat-assistant-message",
+    assetId: "asset-chat-image",
+    provider: "local",
+    objectKey: "ui-lab/chat-preview.svg",
+    contentType: "image/svg+xml",
+    byteSize: 382,
+    sha256: "fixture-image-sha",
+    originalFilename: "chat-preview.svg",
+    createdByAgentId: fixtureAgent.id,
+    createdByUserId: null,
+    createdAt: new Date(Date.now() - 1000 * 60 * 4),
+    updatedAt: new Date(Date.now() - 1000 * 60 * 4),
+    contentPath: fixtureChatImageSrc,
+  },
+  {
+    id: "chat-attachment-plan",
+    orgId: "org-rudder",
+    conversationId: fixtureChatConversation.id,
+    messageId: "chat-user-message",
+    assetId: "asset-chat-plan",
+    provider: "local",
+    objectKey: "doc/DESIGN.md",
+    contentType: "text/markdown",
+    byteSize: 4096,
+    sha256: "fixture-plan-sha",
+    originalFilename: "DESIGN.md",
+    createdByAgentId: null,
+    createdByUserId: "local-board",
+    createdAt: new Date(Date.now() - 1000 * 60 * 6),
+    updatedAt: new Date(Date.now() - 1000 * 60 * 6),
+    contentPath: "file:///Users/zeeland/projects/rudder-oss/doc/DESIGN.md",
+  },
+];
+
+const fixtureChatAskUserRequest: ChatAskUserRequest = {
+  questions: [
+    {
+      id: "scope",
+      header: "Scope",
+      question: "Which chat surfaces should the lab prioritize?",
+      options: [
+        { id: "common", label: "Common components", description: "Messages, attachments, and input requests.", recommended: true },
+        { id: "full-page", label: "Full page", description: "Route-owned chat shell and live generation state." },
+      ],
+      allowFreeform: true,
+    },
+    {
+      id: "evidence",
+      header: "Evidence",
+      question: "What evidence should be collected before handoff?",
+      options: [
+        { id: "browser", label: "Browser screenshot", recommended: true },
+        { id: "coverage", label: "Coverage search" },
+      ],
+      selectionMode: "multiple",
+      allowFreeform: true,
+    },
+  ],
+};
+
+const fixtureChatAskUserAnswer = [
+  {
+    questionId: "scope",
+    title: "Scope",
+    answer: "Show the common chat components, not only the route shell.",
+  },
+  {
+    questionId: "evidence",
+    title: "Evidence",
+    answer: "Use the UI Lab E2E path and a browser check.",
+  },
+];
+
+function fixtureChatMessage(overrides: Partial<ChatMessage> & Pick<ChatMessage, "id" | "role" | "body">): ChatMessage {
+  const createdAt = new Date(Date.now() - 1000 * 60 * 5);
+  return {
+    orgId: "org-rudder",
+    conversationId: fixtureChatConversation.id,
+    kind: "message",
+    status: "completed",
+    structuredPayload: null,
+    approvalId: null,
+    approval: null,
+    attachments: [],
+    replyingAgentId: null,
+    chatTurnId: "turn-ui-lab",
+    turnVariant: 1,
+    supersededAt: null,
+    createdAt,
+    updatedAt: createdAt,
+    ...overrides,
+  };
+}
+
+const fixtureChatUserMessage = fixtureChatMessage({
+  id: "chat-user-message",
+  role: "user",
+  body: "Can you make the UI Lab show the common chat states?",
+  attachments: [fixtureChatAttachments[1]!],
+});
+
+const fixtureChatAssistantMessage = fixtureChatMessage({
+  id: "chat-assistant-message",
+  role: "assistant",
+  body: [
+    "I will expose the chat prompt options, message rows, attachment chips, ask-user states, and process transcript states in the lab.",
+    "",
+    "This keeps the component review surface close to the real Messenger experience.",
+  ].join("\n"),
+  attachments: [fixtureChatAttachments[0]!],
+  replyingAgentId: fixtureAgent.id,
+});
+
+const fixtureChatProposalMessage = fixtureChatMessage({
+  id: "chat-proposal-message",
+  role: "assistant",
+  kind: "issue_proposal",
+  body: "I can turn this chat into a reviewable issue before implementation.",
+  structuredPayload: {
+    issueProposal: {
+      title: "Add chat components to UI Lab",
+      description: "Render common Messenger and chat message states in the internal UI Lab.",
+      priority: "high",
+      assigneeAgentId: fixtureAgent.id,
+      reviewerUserId: "local-board",
+    },
+  },
+  replyingAgentId: fixtureAgent.id,
+});
+
+const fixtureChatSystemMessage = fixtureChatMessage({
+  id: "chat-system-message",
+  role: "system",
+  kind: "system_event",
+  body: "Created issue RUD-214 from this chat conversation.",
+  structuredPayload: {
+    eventType: "issue_created",
+    issueId: fixtureIssue.id,
+    issueIdentifier: fixtureIssue.identifier,
+  },
+});
+
+const fixtureChatAskUserMessage = fixtureChatMessage({
+  id: "chat-ask-user-message",
+  role: "assistant",
+  kind: "ask_user",
+  body: "I need one product decision before finishing the lab surface.",
+  structuredPayload: {
+    requestUserInput: fixtureChatAskUserRequest,
+  },
+  replyingAgentId: fixtureAgent.id,
+});
+
+const fixtureChatRichReferenceMessage = fixtureChatMessage({
+  id: "chat-rich-reference-message",
+  role: "assistant",
+  body: "I referenced the implementation issue for context.",
+  structuredPayload: {
+    richReferences: [
+      {
+        type: "issue",
+        issueId: "00000000-0000-4000-8000-000000000214",
+        display: "card",
+      },
+    ],
+  },
+  replyingAgentId: fixtureAgent.id,
+});
+
 function LabPanel({
   title,
   description,
@@ -904,6 +1174,15 @@ function CommonComponentsSection() {
   const [checkedFiles, setCheckedFiles] = useState(() => new Set(["ui/src/components/StatusBadge.tsx", "ui/src/pages/UiLab.tsx"]));
   const [selectedEntity, setSelectedEntity] = useState("issue-ui-lab");
   const [reportsTo, setReportsTo] = useState<string | null>("agent-cto");
+  const [chatPreview, setChatPreview] = useState<AttachmentPreviewState | null>(null);
+  const [chatDecisionNote, setChatDecisionNote] = useState("");
+  const pendingChatFile = useMemo(() => {
+    if (typeof File === "undefined") return null;
+    return new File(["UI Lab chat fixture"], "lab-answer.txt", {
+      type: "text/plain",
+      lastModified: Date.now() - 1000 * 60 * 2,
+    });
+  }, []);
 
   const chartDays = useMemo(() => {
     const today = new Date();
@@ -1142,6 +1421,285 @@ function CommonComponentsSection() {
               desiredSkills: ["agent-work-reviewer-maintainer", "rudder-ui-polish-maintainer"],
             }}
           />
+        </LabExample>
+
+        <LabExample title="Chat prompts, messages, and process states">
+          <div className="space-y-5">
+            <ChatEmptyStatePromptOptions
+              group={EMPTY_STATE_PROMPT_GROUPS[0]!}
+              optionsId="ui-lab-chat-prompt-options"
+              entered
+              originX="36%"
+              onExampleSelect={() => {}}
+            />
+
+            <div className="rounded-md border border-border bg-card/60 p-3">
+              <ChatAssistantAttributionRow
+                replyingAgentId={fixtureAgent.id}
+                conversation={fixtureChatConversation}
+                agents={[fixtureAgent]}
+              />
+              <ChatLongMessageBody
+                body="ChatLongMessageBody keeps assistant markdown readable inside the real chat typography."
+                skillReferences={[]}
+                className="max-w-[72ch] text-[15px] leading-7 text-foreground"
+              />
+              <div className="chat-system-pill mt-3 rounded-[calc(var(--radius-sm)+2px)] px-4 py-2 text-sm">
+                <ChatSystemMessageBody
+                  message={fixtureChatSystemMessage}
+                  skillReferences={[]}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-md border border-border bg-background p-3">
+              <ChatMessageItem
+                conversation={fixtureChatConversation}
+                message={fixtureChatUserMessage}
+                agents={[fixtureAgent]}
+                decisionNote={chatDecisionNote}
+                onDecisionNoteChange={setChatDecisionNote}
+                onApprovalAction={() => {}}
+                onResolveOperationProposal={() => {}}
+                onConvertToIssue={() => {}}
+                actionPending={false}
+                onCopyMessageText={() => {}}
+                onEditUserMessage={() => {}}
+                onContinueInterruptedMessage={() => {}}
+                onRetryFailedMessage={() => {}}
+                onOpenImage={setChatPreview}
+                onOpenFile={() => {}}
+                skillReferences={[]}
+              />
+              <ChatMessageItem
+                conversation={fixtureChatConversation}
+                message={fixtureChatAssistantMessage}
+                agents={[fixtureAgent]}
+                decisionNote={chatDecisionNote}
+                onDecisionNoteChange={setChatDecisionNote}
+                onApprovalAction={() => {}}
+                onResolveOperationProposal={() => {}}
+                onConvertToIssue={() => {}}
+                actionPending={false}
+                onCopyMessageText={() => {}}
+                onEditUserMessage={() => {}}
+                onContinueInterruptedMessage={() => {}}
+                onRetryFailedMessage={() => {}}
+                onOpenImage={setChatPreview}
+                onOpenFile={() => {}}
+                skillReferences={[]}
+              />
+              <ChatMessageItem
+                conversation={fixtureChatConversation}
+                message={fixtureChatProposalMessage}
+                agents={[fixtureAgent]}
+                decisionNote={chatDecisionNote}
+                onDecisionNoteChange={setChatDecisionNote}
+                onApprovalAction={() => {}}
+                onResolveOperationProposal={() => {}}
+                onConvertToIssue={() => {}}
+                actionPending={false}
+                onCopyMessageText={() => {}}
+                onEditUserMessage={() => {}}
+                onContinueInterruptedMessage={() => {}}
+                onRetryFailedMessage={() => {}}
+                onOpenImage={setChatPreview}
+                onOpenFile={() => {}}
+                skillReferences={[]}
+              />
+            </div>
+
+            <div className="space-y-3 rounded-md border border-border bg-card/60 p-3">
+              <OptimisticUserDraftItem
+                body="Draft answer that has not been persisted yet."
+                createdAt={new Date(Date.now() - 1000 * 45)}
+                onCopyMessageText={() => {}}
+                onEditDraftOnly={() => {}}
+                skillReferences={[]}
+              />
+              <AssistantDraftItem
+                body="Checking the chat component inventory..."
+                createdAt={new Date(Date.now() - 1000 * 30)}
+                state="finalizing"
+                replyingAgentId={fixtureAgent.id}
+                conversation={fixtureChatConversation}
+                agents={[fixtureAgent]}
+                onCopyMessageText={() => {}}
+                skillReferences={[]}
+              />
+              <StreamTranscriptItem
+                entries={runTranscriptFixtureEntries.slice(1, 5)}
+                state="completed"
+                streamStartedAt={new Date("2026-03-11T15:21:05.948Z")}
+                streamEndedAt={new Date("2026-03-11T15:21:18.952Z")}
+                assistantMessageBody="Checking the chat component inventory..."
+                defaultOpen
+              />
+              <ChatMessagesLoadingState />
+            </div>
+          </div>
+        </LabExample>
+
+        <LabExample title="Chat composer surface">
+          <div className="space-y-4">
+            <div className="chat-composer rounded-[var(--radius-lg)] p-3">
+              <div
+                data-testid="ui-lab-chat-composer-editor"
+                className="chat-field min-h-[104px] rounded-[var(--radius-md)] px-3 py-2.5 text-[15px] leading-7"
+                aria-label="Chat composer draft"
+              >
+                Ask the design lead to review the UI Lab chat fixtures and call out any missing common component states.
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
+                    aria-label="Add files and options"
+                  >
+                    <Paperclip className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked="true"
+                    aria-label="Plan mode"
+                    className="chat-chip inline-flex items-center gap-2 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>Plan mode</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-chip inline-flex max-w-[min(100%,15rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium"
+                    aria-label="Project context: UI Lab"
+                  >
+                    <Folder className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 truncate">UI Lab</span>
+                    <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-chip inline-flex max-w-[min(100%,16rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium"
+                    aria-label="Agent selector: Design Lead"
+                  >
+                    <Bot className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 truncate">Design Lead</span>
+                    <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-chip inline-flex max-w-[min(100%,18rem)] min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium"
+                    aria-label="Skills"
+                  >
+                    <span className="min-w-0 truncate">$rudder-ui-polish-maintainer</span>
+                    <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Send" className="rounded-full bg-white text-black hover:bg-zinc-100 dark:bg-white dark:text-black">
+                    <Send className="h-[17px] w-[17px]" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Stop streaming" className="rounded-full border border-border">
+                    <Square className="h-3.5 w-3.5 fill-current" />
+                  </Button>
+                </div>
+              </div>
+              {pendingChatFile ? (
+                <div data-testid="chat-pending-attachments" className="mt-2.5 flex flex-wrap gap-2">
+                  <PendingAttachmentPreview
+                    file={pendingChatFile}
+                    onOpenImage={setChatPreview}
+                    onRemove={() => {}}
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            <div className="chat-composer rounded-[var(--radius-lg)] p-3">
+              <div className="chat-field min-h-[70px] rounded-[var(--radius-md)] px-3 py-2.5 text-sm text-muted-foreground">
+                Message blocked until a chat agent can receive work.
+              </div>
+              <div className="chat-warning mt-2.5 rounded-[var(--radius-md)] px-3 py-2.5 text-sm">
+                Create or activate an agent before sending messages. <span className="underline underline-offset-4">Open agents</span>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="chat-chip inline-flex items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                    <Bot className="h-3.5 w-3.5" />
+                    No active agent
+                  </span>
+                </div>
+                <Button type="button" variant="ghost" size="icon-sm" aria-label="Send disabled" disabled className="rounded-full bg-white text-black dark:bg-white dark:text-black">
+                  <Send className="h-[17px] w-[17px]" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </LabExample>
+
+        <LabExample title="Chat attachments, rich references, and input requests">
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center gap-3">
+              <ChatImageAttachmentTile
+                src={fixtureChatImageSrc}
+                name="chat-preview.svg"
+                onOpen={() => setChatPreview({ src: fixtureChatImageSrc, name: "chat-preview.svg" })}
+              />
+              <ChatFileAttachmentChip
+                name="DESIGN.md"
+                href="file:///Users/zeeland/projects/rudder-oss/doc/DESIGN.md"
+                onOpenFile={() => {}}
+              />
+              {pendingChatFile ? (
+                <PendingAttachmentPreview
+                  file={pendingChatFile}
+                  onOpenImage={setChatPreview}
+                  onRemove={() => {}}
+                />
+              ) : null}
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Attachment list</p>
+              <ChatAttachmentList
+                attachments={fixtureChatAttachments}
+                onOpenImage={setChatPreview}
+                onOpenFile={() => {}}
+              />
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Rich reference fallback</p>
+              <ChatRichReferences message={fixtureChatRichReferenceMessage} />
+            </div>
+
+            <AskUserHistoryRecord
+              message={fixtureChatAskUserMessage}
+              request={fixtureChatAskUserRequest}
+              answered={false}
+              conversation={fixtureChatConversation}
+              agents={[fixtureAgent]}
+              skillReferences={[]}
+            />
+            <AskUserAnswerBubble answer={fixtureChatAskUserAnswer} />
+            <AskUserPanel
+              message={fixtureChatAskUserMessage}
+              request={fixtureChatAskUserRequest}
+              disabled={false}
+              pendingFiles={pendingChatFile ? [pendingChatFile] : []}
+              onAddAttachment={() => {}}
+              onRemovePendingFile={() => {}}
+              onOpenAttachmentPreview={setChatPreview}
+              onSubmit={() => {}}
+            />
+            <ChatAttachmentPreviewDialog
+              preview={chatPreview}
+              onOpenChange={(open) => {
+                if (!open) setChatPreview(null);
+              }}
+            />
+          </div>
         </LabExample>
 
         <LabExample title="Tabs, date range, and heartbeat controls">
