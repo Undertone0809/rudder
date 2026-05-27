@@ -4,6 +4,8 @@
 
 Agents that think, build, play, and learn from real work.
 
+[Website](https://rudder.zeeland.studio) | [Docs](https://doc.rudder.zeeland.studio)
+
 Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for assigning work, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
 
 Rudder began as a fork of an early version of Paperclip. That gave the project a practical starting point for agent operations; Rudder is now evolving around a sharper product idea: agent teams improve when real work leaves behind durable context, decisions, feedback, and reusable operating patterns.
