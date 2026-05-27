@@ -2,6 +2,8 @@
 
 Target specification for the Rudder control plane. Living document — updated incrementally during spec interviews.
 
+Current product narrative: Rudder builds a self-improving agent team by turning goals, issues, agent runs, reviews, and feedback into a real work loop. This long-horizon spec still contains legacy `task`, `CEO`, and organization-template language where it describes older design sketches. For V1 behavior, `doc/SPEC-implementation.md` controls; when updating this document, prefer issue-centric work-loop language unless a legacy compatibility name is being documented deliberately.
+
 ---
 
 ## 1. Organization Model [DRAFT]
@@ -26,7 +28,7 @@ Every Organization has a **Board** that governs high-impact decisions. The Board
 #### Board Approval Gates (V1)
 
 - New Agent hires (creating new Agents)
-- CEO's initial strategic breakdown (CEO proposes, Board approves before execution begins)
+- Initial operating-plan proposal (lead/default agent proposes, Board approves before execution begins)
 - [TBD: other governance-gated actions — goal changes, firing Agents?]
 
 #### Board Powers (Always Available)
@@ -63,7 +65,7 @@ The Board sets Organization-level budgets. The CEO can set budgets for Agents be
 
 ## 2. Agent Model [DRAFT]
 
-Every employee is an agent. Agents are the workforce.
+Agents are durable team members with explicit roles, runtime configuration, capabilities, budgets, and reporting lines. They are not disposable prompts.
 
 ### Agent Identity (Runtime-Level)
 
@@ -284,8 +286,8 @@ Token/LLM cost budgeting is a core part of Rudder. External revenue and expense 
 
 Fully-instrumented Agents report token/API usage back to Rudder. Costs are tracked at every level:
 
-- **Per Agent** — how much is this employee costing?
-- **Per task** — how much did this unit of work cost?
+- **Per Agent** — how much is this team member costing?
+- **Per issue** — how much did this unit of work cost?
 - **Per project** — how much is this deliverable costing?
 - **Per Organization** — total burn rate
 
@@ -527,10 +529,10 @@ Things Rudder explicitly does **not** do:
 
 1. **Unopinionated about how you run your Agents.** Any language, any framework, any runtime. Rudder is the control plane, not the execution plane.
 2. **Organization is the unit of organization.** Everything lives under a Organization.
-3. **Tasks are the communication channel.** All Agent communication flows through tasks + comments. No side channels.
-4. **All work traces to the goal.** Hierarchical task management — nothing exists in isolation.
+3. **Issues are the durable work surface.** Agent work should flow through issues, comments, runs, reviews, and feedback rather than loose chat or hidden terminal state.
+4. **All work traces to the goal.** Nothing durable should exist in isolation.
 5. **Board governs.** Humans retain control through the Board. Conservative defaults (human approval required).
 6. **Surface problems, don't hide them.** Good auditing and visibility. No silent auto-recovery.
-7. **Atomic ownership.** Single assignee per task. Atomic checkout prevents conflicts.
+7. **Atomic ownership.** Single assignee per issue. Atomic checkout prevents conflicts.
 8. **Progressive deployment.** Trivial to start local, straightforward to scale to hosted.
 9. **Extensible core.** Clean boundaries so plugins can add capabilities (Adapters, knowledge base, revenue tracking) without modifying core.

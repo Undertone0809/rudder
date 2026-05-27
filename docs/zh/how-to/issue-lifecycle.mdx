@@ -1,28 +1,29 @@
 ---
 title: "如何把一条 issue 从请求跑到完成"
 description: "用具体场景解释什么时候分配执行者、设置 reviewer、更新状态和关闭工作。"
+icon: "route"
 ---
 
-`issue` 是 Rudder 把人类意图变成可检查 agent 工作的主要方式。这篇指南关注实际用户旅程：什么时候创建 issue、什么时候分配执行者、什么时候加 reviewer、状态怎么设置，以及如何关闭循环。
+`issue` 是 Rudder 把人类意图变成可检查 agent 工作的主要方式。这篇指南讲实际操作：什么时候创建 issue、什么时候分配执行者、什么时候加 reviewer、状态怎么设，以及怎么关闭。
 
 ![Issue 工作流界面](../../images/issue-flow.png)
 
 ## 默认旅程
 
-大多数有用的 Rudder 工作遵循这条路径：
+大多数有用的 Rudder 工作会走这条路径：
 
 1. 在 Chat 中捕获请求，或直接创建 issue。
-2. 在 `backlog` 中塑形，直到结果和上下文清楚。
+2. 放进 `backlog` 里塑形，直到结果和上下文清楚。
 3. 当执行者不需要再讨论产品意图就能开始时，移到 `todo`。
 4. 下一步属于一个 agent 或人时，分配唯一执行者。
 5. Assignee checkout 后进入 `in_progress`。
 6. 下一步属于其他人或外部条件时，移到 `blocked`。
 7. 输出准备好被判断时，移到 `in_review`。
-8. 证据被接受后，才关闭为 `done`。
+8. 证据被接受后，再关闭为 `done`。
 
 ## Backlog 还是 todo？
 
-当问题真实但还需要塑形时，用 `backlog`。
+问题真实、但还没准备好执行时，用 `backlog`。
 
 好的 backlog 示例：
 
@@ -30,7 +31,7 @@ description: "用具体场景解释什么时候分配执行者、设置 reviewer
 - “调查为什么截图数据看起来很假。”
 - “也许应该加一个 Calendar 页面”，但还没定义它回答什么用户问题。
 
-当工作已经可以执行时，用 `todo`。
+工作已经可以执行时，用 `todo`。
 
 好的 todo 示例：
 
@@ -56,11 +57,11 @@ description: "用具体场景解释什么时候分配执行者、设置 reviewer
 - 下一步其实是人类决策
 - 权限或凭据缺失
 
-Rudder 有意保持一个 issue 只有一个 assignee。如果 Growth、Engineering 和 QA 都要参与，就创建多个 issue 或子 issue。
+Rudder 有意让一个 issue 只有一个 assignee。如果 Growth、Engineering 和 QA 都要参与，就创建多个 issue 或子 issue。
 
 ## 什么时候加 reviewer
 
-当关闭 issue 需要独立判断时，加 reviewer。
+关闭 issue 需要独立判断时，加 reviewer。
 
 适合 reviewer 的工作：
 
@@ -76,7 +77,7 @@ Rudder 有意保持一个 issue 只有一个 assignee。如果 Growth、Engineer
 - 会变成另一个 issue 的探索笔记
 - 关闭评论已经足够作为证据的小型内部修复
 
-有输出可以判断时，再把 issue 移到 `in_review`，并让 reviewer 留下明确结论。
+有输出可以判断时，再把 issue 移到 `in_review`，让 reviewer 留下明确结论。
 
 ## 状态最佳实践
 
@@ -91,7 +92,7 @@ Rudder 有意保持一个 issue 只有一个 assignee。如果 Growth、Engineer
 
 ## 如何阅读下面的用例
 
-下面不是抽象任务板模板，而是从真实 Rudder 工作场景中脱敏改写出来的示例。阅读重点是路由判断：来了什么信号，应该沉淀成哪条 issue，下一步归谁，谁判断结果，以及什么证据可以关闭循环。
+下面这些例子来自真实 Rudder 工作场景，已经做过脱敏改写。阅读重点是路由判断：来了什么信号，应该沉淀成哪条 issue，下一步归谁，谁判断结果，以及什么证据可以关闭。
 
 | 场景 | 初始信号 | 持久 issue | 执行者 | 评审者 | 关闭证据 |
 | --- | --- | --- | --- | --- | --- |
@@ -103,26 +104,26 @@ Rudder 有意保持一个 issue 只有一个 assignee。如果 Growth、Engineer
 
 ## 用例：Chat 图片附件 bug
 
-用户在 Chat 里发了一张截图，然后问：为什么 Codex agent 还要在 transcript 里运行一条可见的 `curl ... Authorization ...` 命令才能读取图片？这不是泛泛的“优化附件体验”，而是一个具体的信任问题：transcript 暴露了实现细节，让用户觉得 agent 原生看不了图。
+用户在 Chat 里发了一张截图，然后问：为什么 Codex agent 还要在 transcript 里运行一条可见的 `curl ... Authorization ...` 命令才能读取图片？这是具体的信任问题：transcript 暴露了实现细节，让用户觉得 agent 原生看不了图。
 
 1. 把 Chat 反馈沉淀成 bug issue：“Optimize Chat image attachment handling for Codex runtime”。
 2. 只有在证据还没收集完时，才放在 `backlog`：截图、受影响 runtime、当前 prompt、失败的用户旅程。
-3. 期望行为清楚后移到 `todo`：图片附件应该先被 Rudder 准备给 runtime，用户可见 transcript 里不应该出现带认证信息的下载命令。
+3. 期望行为清楚后移到 `todo`：图片附件应该先由 Rudder 准备给 runtime，用户可见 transcript 里不应该出现带认证信息的下载命令。
 4. 分配一个工程 agent，因为下一步会跨 server prompt、runtime handoff 和测试。
 5. 加 reviewer，因为这会改变用户可见 Chat 流程和 transcript 隐私预期。
-6. 只有当 issue 里有证据时才进 `in_review`：prompt 行为、runtime bridge、transcript 截图、测试证明原始下载命令已经消失。
+6. 只有当 issue 里有证据时才进 `in_review`：prompt 行为、runtime bridge、transcript 截图，以及证明原始下载命令已经消失的测试。
 7. Reviewer 接受行为和证据质量后，才能关闭为 `done`。
 
 ## 用例：Backlog 评论唤醒了错误 agent
 
-一个 backlog issue 已经挂着 engineer assignee。Operator 评论时只 mention 了 designer，但 engineer 也被唤醒开始运行。这里的问题不只是通知噪音，而是 `backlog` 的含义被破坏了。
+一个 backlog issue 已经挂着 engineer assignee。Operator 评论时只 mention 了 designer，但 engineer 也被唤醒开始运行。这里已经破坏了 `backlog` 的含义，不只是多发了一条通知。
 
 1. 创建高优先级 bug issue：“Backlog issue comment should not auto-wakeup assignee”。
 2. 原来的 backlog issue 只作为证据，不要直接在那里面修。
 3. 规则清楚后移到 `todo`：backlog 普通评论不能唤醒 assignee；显式 mention 只唤醒被 mention 的 agent。
 4. 分配给负责 wakeup 语义的工程 agent。
 5. 加 reviewer，因为它影响“agent 什么时候允许开始运行”的控制面不变量。
-6. 只有在复现无法确认、或状态语义还没决定时，才使用 `blocked`。
+6. 只有在复现无法确认，或状态语义还没决定时，才使用 `blocked`。
 7. 当测试覆盖 backlog 普通评论、显式 mention、非 backlog assignee wakeup 后，进入 `in_review`。
 
 ## 用例：Chat 需要结构化提问组件

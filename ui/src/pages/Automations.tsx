@@ -12,6 +12,9 @@ import {
   Info,
   MessageSquare,
   MoreHorizontal,
+  Pause,
+  Pencil,
+  Play,
   Plus,
   Repeat,
   Trash2,
@@ -89,36 +92,6 @@ type AutomationTemplate = {
 };
 
 const automationTemplates: AutomationTemplate[] = [
-  {
-    id: "advisor-review-loop",
-    title: { en: "Advisor review loop", "zh-CN": "Advisor review loop" },
-    summary: {
-      en: "Run Build Advisor plus two reviewer passes before handoff.",
-      "zh-CN": "先跑 Build Advisor，再做两轮 reviewer 验收。",
-    },
-    scheduleCron: "0 11 * * 1",
-    outputMode: "track_issue",
-    description: {
-      en: [
-        "Use [advisor-review-loop-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/advisor-review-loop-maintainer/SKILL.md) as the operating workflow.",
-        "",
-        "1. Identify the proposal, implementation, UI state, release, workflow, or agent outcome that needs acceptance review.",
-        "2. Build a focused evidence packet from the relevant repo files, docs, screenshots, logs, traces, commits, PRs, or eval output.",
-        "3. Run the advisor pass first: scenario analysis, requirement classes, non-goals, corner cases, realistic options, and a concrete evaluation rubric.",
-        "4. Run two independent reviewer roles: one for scenario and demand correctness, one for implementation, workflow, validation, and handoff trust.",
-        "5. Rework any blocking gaps, run a second review round when the work is high-stakes or still uncertain, and report the final verdict with validation and residual risk.",
-      ].join("\n"),
-      "zh-CN": [
-        "使用 [advisor-review-loop-maintainer](/Users/zeeland/projects/rudder-oss/.agents/skills/maintainer/advisor-review-loop-maintainer/SKILL.md) 作为执行 workflow。",
-        "",
-        "1. 明确需要验收的 proposal、implementation、UI state、release、workflow 或 agent outcome。",
-        "2. 从相关 repo 文件、docs、截图、日志、trace、commit、PR 或 eval 输出中构建最小 evidence packet。",
-        "3. 先跑 advisor pass：场景分析、需求类、非目标、corner cases、可行选项和具体 evaluation rubric。",
-        "4. 跑两个独立 reviewer 角色：一个负责场景和需求正确性，一个负责实现、workflow、validation 和 handoff 可信度。",
-        "5. 对 blocking gaps 返工；高风险或不确定工作要跑第二轮 review，并在最终结论里报告 validation 和剩余风险。",
-      ].join("\n"),
-    },
-  },
   {
     id: "bug-triage",
     title: { en: "Bug triage", "zh-CN": "Bug 分诊" },
@@ -291,8 +264,8 @@ function localizeText(text: LocalizedText, locale = getUiLocale()) {
 function outputInstruction(mode: AutomationOutputMode, locale = getUiLocale()) {
   if (mode === "chat_output") {
     return locale === "zh-CN"
-      ? "输出：将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。"
-      : "Output: send the final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions.";
+      ? "输出：每次运行都将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。"
+      : "Output: send each run's final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions.";
   }
   return locale === "zh-CN"
     ? "输出：创建或更新 board 可跟踪任务，确保结果可以被 review。"
@@ -310,9 +283,11 @@ function removeOutputInstruction(description: string) {
     .replace(/\n*Output: create or update board-tracked work so the result can be reviewed\.\s*$/u, "")
     .replace(/\n*Output: send the result to the relevant Rudder chat conversation; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
     .replace(/\n*Output: send the final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
+    .replace(/\n*Output: send each run's final result to a new Rudder chat; create tracked work only for concrete blockers or follow-up actions\.\s*$/u, "")
     .replace(/\n*输出：创建或更新 board 可跟踪任务，确保结果可以被 review。\s*$/u, "")
     .replace(/\n*输出：将结果发送到相关 Rudder chat 对话；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
     .replace(/\n*输出：将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
+    .replace(/\n*输出：每次运行都将最终结果发送到新的 Rudder chat；只有出现明确阻塞或后续动作时才创建任务。\s*$/u, "")
     .trim();
 }
 
@@ -949,7 +924,7 @@ export function Automations() {
                       value: "chat_output" as const,
                       icon: MessageSquare,
                       title: "Send to chat",
-                      summary: "Post final result to a new chat",
+                      summary: "Post each run to a new chat",
                     },
                   ]).map((option) => {
                     const Icon = option.icon;
@@ -982,7 +957,7 @@ export function Automations() {
                   data-testid="automation-create-chat-destination"
                   className="inline-flex h-8 min-w-0 max-w-[240px] items-center rounded-md border border-border/70 bg-background/40 px-2 text-sm font-medium text-foreground"
                 >
-                  <span className="truncate">New chat</span>
+                  <span className="truncate">New chat per run</span>
                 </span>
               ) : null}
 
@@ -1204,12 +1179,14 @@ export function Automations() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => navigate(`/automations/${automation.id}`)}>
+                              <Pencil className="h-4 w-4" />
                               Edit
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={runningAutomationId === automation.id || !enabled}
                               onClick={() => runAutomation.mutate(automation.id)}
                             >
+                              <Play className="h-4 w-4" />
                               {runningAutomationId === automation.id ? "Running..." : "Run now"}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
@@ -1222,10 +1199,11 @@ export function Automations() {
                               }
                               disabled={isStatusPending}
                             >
+                              {enabled ? <Pause className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
                               {enabled ? "Pause" : "Enable"}
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
+                              variant="destructive"
                               disabled={deleteAutomation.isPending}
                               onClick={async () => {
                                 const confirmed = await confirm({
@@ -1238,7 +1216,7 @@ export function Automations() {
                                 deleteAutomation.mutate(automation.id);
                               }}
                             >
-                              <Trash2 className="mr-2 h-3.5 w-3.5" />
+                              <Trash2 className="h-4 w-4" />
                               Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>

@@ -192,6 +192,22 @@ describe("ChatSystemMessageBody", () => {
     expect(html).toContain('aria-label="Open automation Say hello"');
     expect(html).toContain(">Say hello</a>.");
   });
+
+  it("renders created automation events as links back to automation detail", () => {
+    const html = renderSystemMessageBody(message({
+      body: 'Created automation "Daily AI HOT report" from this chat conversation.',
+      structuredPayload: {
+        eventType: "automation_created",
+        automationId: "auto-1",
+        automationTitle: "Daily AI HOT report",
+      },
+    }));
+
+    expect(html).toContain("Created automation");
+    expect(html).toContain('href="/automations/auto-1"');
+    expect(html).toContain('aria-label="Open automation Daily AI HOT report"');
+    expect(html).toContain(">Daily AI HOT report</a> from this chat conversation.");
+  });
 });
 
 describe("draft issue chat context", () => {
@@ -639,6 +655,37 @@ describe("ask_user chat messages", () => {
           "- keep API extensible",
           "- defer broad UI",
         ].join("\n"),
+      },
+    ]);
+  });
+
+  it("formats multiple selected answers as a normal user message", () => {
+    const request = {
+      questions: [
+        {
+          ...askUserPayload.requestUserInput.questions[0],
+          selectionMode: "multiple" as const,
+        },
+      ],
+    };
+    const body = formatAskUserAnswerMessage(request, {
+      scope: {
+        kind: "options",
+        labels: ["Narrow path", "Broad path"],
+      },
+    });
+
+    expect(body).toBe([
+      "Answering the requested input:",
+      "",
+      "- Scope",
+      "  Answer: Narrow path, Broad path",
+    ].join("\n"));
+    expect(parseAskUserAnswerMessage(request, body)).toEqual([
+      {
+        questionId: "scope",
+        title: "Scope",
+        answer: "Narrow path, Broad path",
       },
     ]);
   });

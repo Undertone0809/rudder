@@ -131,6 +131,7 @@ export interface ChatAskUserQuestion {
   header?: string;
   question: string;
   options: ChatAskUserOption[];
+  selectionMode?: "single" | "multiple";
   allowFreeform?: boolean;
 }
 

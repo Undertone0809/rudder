@@ -146,13 +146,6 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
     executor: Db;
   }) {
     if (input.automation.outputMode !== "chat_output") return null;
-    const automationRow = await input.executor
-      .select({ chatConversationId: automations.chatConversationId })
-      .from(automations)
-      .where(eq(automations.id, input.automation.id))
-      .then((rows) => rows[0] ?? null);
-    if (automationRow?.chatConversationId) return automationRow.chatConversationId;
-
     const existingRun = await input.executor
       .select({ linkedChatConversationId: automationRuns.linkedChatConversationId })
       .from(automationRuns)
@@ -192,13 +185,6 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         updatedAt: new Date(),
       })
       .where(eq(automationRuns.id, input.runId));
-    await input.executor
-      .update(automations)
-      .set({
-        chatConversationId: conversation.id,
-        updatedAt: new Date(),
-      })
-      .where(eq(automations.id, input.automation.id));
     return conversation.id;
   }
 
@@ -542,11 +528,13 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
   }) {
     if (input.automation.outputMode !== "chat_output") return null;
     const executor = input.executor ?? db;
-    if (
-      !input.automation.chatConversationId &&
-      (input.status === "coalesced" || input.status === "skipped")
-    ) {
-      return null;
+    if (input.status === "coalesced" || input.status === "skipped") {
+      const existingRun = await executor
+        .select({ linkedChatConversationId: automationRuns.linkedChatConversationId })
+        .from(automationRuns)
+        .where(eq(automationRuns.id, input.runId))
+        .then((rows) => rows[0] ?? null);
+      if (!existingRun?.linkedChatConversationId) return null;
     }
     if (input.status === "completed") return null;
     const conversationId = await resolveAutomationRunChatConversationId({
@@ -688,9 +676,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
           triggeredAt,
           idempotencyKey: input.idempotencyKey ?? null,
           triggerPayload: input.payload ?? null,
-          linkedChatConversationId: input.automation.outputMode === "chat_output"
-            ? input.automation.chatConversationId
-            : null,
+          linkedChatConversationId: null,
         })
         .returning();
 
@@ -910,23 +896,10 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
       const row = await getAutomationById(id);
       if (!row) return null;
       if (row.status === "archived") return null;
-      const [project, assignee, parentIssue, chatConversation, triggers, recentRuns, activeIssue] = await Promise.all([
+      const [project, assignee, parentIssue, triggers, recentRuns, activeIssue] = await Promise.all([
         row.projectId ? db.select().from(projects).where(eq(projects.id, row.projectId)).then((rows) => rows[0] ?? null) : null,
         db.select().from(agents).where(eq(agents.id, row.assigneeAgentId)).then((rows) => rows[0] ?? null),
         row.parentIssueId ? issueSvc.getById(row.parentIssueId) : null,
-        row.chatConversationId
-          ? db
-            .select({
-              id: chatConversations.id,
-              title: chatConversations.title,
-              status: chatConversations.status,
-              preferredAgentId: chatConversations.preferredAgentId,
-              lastMessageAt: chatConversations.lastMessageAt,
-            })
-            .from(chatConversations)
-            .where(eq(chatConversations.id, row.chatConversationId))
-            .then((rows) => rows[0] ?? null)
-          : null,
         db.select().from(automationTriggers).where(eq(automationTriggers.automationId, row.id)).orderBy(asc(automationTriggers.createdAt)),
         db
           .select({
@@ -1017,7 +990,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         project,
         assignee,
         parentIssue,
-        chatConversation,
+        chatConversation: null,
         triggers: triggers as AutomationTrigger[],
         recentRuns,
         activeIssue,
@@ -1075,12 +1048,7 @@ export function automationService(db: Db, deps: { heartbeat?: IssueAssignmentWak
         chatConversationId: requestedChatConversationId,
         existingChatConversationId: existing.chatConversationId,
       });
-      const nextChatConversationId =
-        nextOutputMode === "chat_output"
-          ? existing.outputMode === "chat_output"
-            ? existing.chatConversationId
-            : null
-          : null;
+      const nextChatConversationId = null;
       const [updated] = await db
         .update(automations)
         .set({

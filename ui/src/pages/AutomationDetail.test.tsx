@@ -488,11 +488,14 @@ describe("AutomationDetail", () => {
     const activitySection = container.querySelector('section[aria-label="Activity"]');
     expect(activitySection).toBeTruthy();
     expect(activitySection?.textContent).toContain("Activity");
-    expect(activitySection?.querySelector('[data-testid="automation-activity-list"]')).toBeTruthy();
+    const activityList = activitySection?.querySelector('[data-testid="automation-activity-list"]');
+    expect(activityList).toBeTruthy();
+    expect(activityList?.className).toContain("before:left-[7.5px]");
     const activityRow = activitySection?.querySelector('[data-testid="automation-activity-row"]');
     expect(activityRow?.className).toContain("min-h-8");
     expect(activityRow?.className).toContain("grid-cols-[16px_minmax(0,1fr)]");
     expect(activityRow?.className).toContain("sm:grid-cols-[16px_minmax(0,1fr)_auto]");
+    expect(activityRow?.firstElementChild?.className).toContain("justify-center");
     expect(activityRow?.querySelector('[data-testid="automation-activity-summary"]')?.className).toContain("whitespace-nowrap");
     expect(activityRow?.querySelector('[data-testid="automation-activity-summary"] span')?.className).toContain("truncate");
     expect(activityRow?.querySelector("svg")).toBeNull();
@@ -500,7 +503,7 @@ describe("AutomationDetail", () => {
     expect(container.querySelector('[data-testid="automation-detail-project-control"]')?.textContent).toContain("Automation UX");
   });
 
-  it("shows chat output as an automation-owned chat without an existing-chat selector", async () => {
+  it("shows chat output without a redundant per-run chat selector", async () => {
     automation.outputMode = "chat_output";
     automation.chatConversationId = null;
     automation.chatConversation = null;
@@ -512,7 +515,7 @@ describe("AutomationDetail", () => {
     });
 
     expect(container.textContent).toContain("Send to chat");
-    expect(container.textContent).toContain("New chat");
+    expect(container.querySelector('[data-testid="automation-configuration-card"]')?.textContent).not.toContain("New chat");
     expect(container.textContent).not.toContain("Search chats");
   });
 

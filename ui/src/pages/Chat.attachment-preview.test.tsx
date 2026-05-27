@@ -773,6 +773,57 @@ describe("Chat ask_user panel", () => {
     expect(panel?.textContent).toContain("Include screenshot evidence");
     expect(panel?.textContent).not.toContain("Question 3 of 3");
   });
+
+  it("lets one ask_user question collect multiple selected options", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        pendingAskUser({
+          structuredPayload: {
+            requestUserInput: {
+              questions: [
+                {
+                  id: "evidence",
+                  header: "Evidence",
+                  question: "Which evidence should the agent collect?",
+                  selectionMode: "multiple",
+                  options: [
+                    { id: "tests", label: "Test output" },
+                    { id: "screenshots", label: "Screenshots" },
+                    { id: "diff", label: "Diff summary" },
+                  ],
+                  allowFreeform: false,
+                },
+              ],
+            },
+          },
+        }),
+      ],
+    };
+
+    const { container } = renderChat();
+    const panel = container.querySelector("[data-testid='chat-ask-user-panel']");
+    expect(panel).not.toBeNull();
+
+    const clickButton = async (label: string) => {
+      const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
+        candidate.textContent?.includes(label)
+      );
+      expect(button).not.toBeUndefined();
+      await act(async () => {
+        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+    };
+
+    await clickButton("Test output");
+    expect(panel?.textContent).toContain("Screenshots");
+    await clickButton("Screenshots");
+    await clickButton("Submit answer");
+
+    expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(mockState.sendMessageStream.mock.calls[0]?.[1]).toContain("Answer: Test output, Screenshots");
+  });
 });
 
 describe("Chat project context selector", () => {

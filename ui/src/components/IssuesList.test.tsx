@@ -721,6 +721,47 @@ describe("IssuesList", () => {
     });
   });
 
+  it("shows the count of currently working issues in the board toolbar", () => {
+    window.localStorage.setItem(
+      "test:issues:org-1",
+      JSON.stringify({
+        viewMode: "board",
+        statuses: ["in_progress"],
+      }),
+    );
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    cleanupFn = () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    };
+
+    act(() => {
+      root.render(
+        <IssuesList
+          issues={[
+            issueFixture({ id: "issue-live-visible", title: "Live visible", status: "in_progress" }),
+            issueFixture({ id: "issue-live-filtered", title: "Live filtered", status: "done" }),
+            issueFixture({ id: "issue-idle-visible", title: "Idle visible", status: "in_progress" }),
+          ]}
+          liveIssueIds={new Set(["issue-live-visible", "issue-live-filtered"])}
+          viewStateKey="test:issues"
+          toolbarMode="controls-only"
+          onUpdateIssue={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.querySelector('[data-testid="issues-working-count"]')?.textContent).toBe("1 working");
+    expect(container.textContent).toContain("Live visible");
+    expect(container.textContent).not.toContain("Live filtered");
+  });
+
   it("sorts each board status lane using the saved sort order", () => {
     window.localStorage.setItem(
       "test:issues:org-1",

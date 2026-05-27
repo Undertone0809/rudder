@@ -1,33 +1,53 @@
 # Rudder
 
-**Rudder is an orchestration and control platform for agent work, and the operating layer for agent teams. It organizes goals, tasks, knowledge, and workflows into an executable structure, enabling agents to work within clear boundaries, collaborate, and move work forward.**
+> Build your self-improving Agent Team.
 
-**Rudder is the backbone of the autonomous economy.** We are building the infrastructure that autonomous AI organizations run on. Our goal is for Rudder-powered organizations to collectively generate economic output that rivals the GDP of the world's largest countries. Every decision we make should serve that: make autonomous organizations more capable, more governable, more scalable, and more real.
+Agents that think, build, play, and learn from real work.
+
+Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for assigning work, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
 
 ## The Vision
 
-Autonomous organizations — AI workforces organized with real structure, governance, and accountability — will become a major force in the global economy. Not one organization. Thousands. Millions. An entire economic layer that runs on AI labor, coordinated through Rudder.
+Agent teams become useful when their work stops disappearing into one-off prompts. They need the same durable coordination surfaces that make human teams compound: goals, explicit ownership, shared context, review, feedback, operating memory, and budget discipline.
 
-Rudder is not the organization. Rudder is what makes the organizations possible. We are the orchestration and control layer, the nervous system, the operating layer. Every autonomous organization needs structure, task management, cost control, goal alignment, and human governance. That's us. We are to autonomous organizations what the corporate operating system is to human ones — except this time, the operating system is real software, not metaphor.
+Rudder is the operating layer that makes those loops visible and repeatable. It is not the agent runtime and it is not a generic chat product. It is the place where real work becomes structured enough to assign, run, review, learn from, and improve.
 
-The measure of our success is not whether one organization works. It's whether Rudder becomes the default foundation that autonomous organizations are built on — and whether those organizations, collectively, become a serious economic force that rivals the output of nations.
-
-Our current operating north-star metric is narrower and more concrete: the weekly count of real agent-work loops completed end-to-end through Rudder.
+The current north-star metric is the weekly count of real agent-work loops completed end-to-end through Rudder.
 
 ## The Problem
 
-Task management software doesn't go far enough. When your entire workforce is AI agents, you need more than a to-do list — you need a **control plane** for an entire organization.
+Agent work breaks down when it lives in a single long prompt or an isolated terminal session. The hard questions are operational:
+
+- Who owns this work?
+- Why does it matter?
+- What context did the agent use?
+- What changed?
+- Who reviewed the result?
+- What did it cost?
+- What should the team remember before the next run?
+
+A normal task board does not answer those questions for agent work. A transcript alone does not either.
 
 ## What This Is
 
-Rudder is the orchestration and control platform for an organization of AI agents. It is the single place where you:
+Rudder is the shared operating structure for a self-improving agent team. It is the place where humans and agents:
 
-- **Manage agents as employees** — hire, organize, and track who does what
-- **Define organization structure** — an Organization Structure that agents themselves operate within
-- **Track work in real time** — see at any moment what every agent is working on
-- **Control costs** — token salary budgets per agent, spend tracking, burn rate
-- **Align to goals** — agents see how their work serves the bigger mission
-- **Store organization knowledge** — a shared brain for the organization
+- **Define goals** — every durable issue should answer why it exists.
+- **Assign issues** — work has one clear owner and enough context to start.
+- **Run agents** — heartbeats make execution visible instead of hidden.
+- **Review outputs** — results, evidence, approvals, and blockers stay attached to the work.
+- **Control spend** — budgets, cost events, and hard stops keep autonomy legible.
+- **Preserve lessons** — feedback, comments, run history, documents, and skills make future runs better.
+
+## The Work Loop
+
+Rudder is designed around the loop that makes agent teams improve:
+
+```text
+Goal -> Issue -> Agent run -> Review -> Feedback -> Learning -> Better future runs
+```
+
+The product should make that loop concrete without overclaiming automation. Rudder should preserve the evidence and create reviewable promotion paths for better context, skills, decisions, and workflows. It should not silently rewrite agent behavior or bury lessons inside chat transcripts.
 
 ## Architecture
 
@@ -38,22 +58,23 @@ Two layers:
 The central nervous system. Manages:
 
 - Agent registry and Organization Structure
-- Task assignment and status
+- Issue assignment and status
 - Budget and token spend tracking
-- Organization knowledge base
-- Goal hierarchy (organization → team → agent → task)
+- Organization knowledge and reusable operating context
+- Goal hierarchy (organization -> team -> agent -> issue)
 - Heartbeat monitoring — know when agents are alive, idle, or stuck
 
 ### 2. Execution Services (agent runtimes)
 
-Agents run externally and report into the control plane. An agent is just Python code that gets kicked off and does work. Agent runtimes connect Rudder to different execution environments:
+Agents run through local or external runtimes and report into the control plane. Agent runtimes connect Rudder to different execution environments:
 
-- **OpenClaw** — initial agent runtime target
-- **Heartbeat loop** — simple custom Python that loops, checks in, does work
-- **Others** — any runtime that can call an API
+- local coding CLIs and processes
+- HTTP/webhook-based agents
+- gateway-backed agent systems
+- any runtime that can be called, can report progress, or can leave evidence through the API
 
-The control plane doesn't run agents. It orchestrates them. Agents run wherever they run and phone home.
+The control plane coordinates work and preserves the record. Runtimes do the actual work.
 
 ## Core Principle
 
-You should be able to look at Rudder and understand your entire organization at a glance — who's doing what, how much it costs, and whether it's working.
+You should be able to look at Rudder and understand the agent team at a glance: what goal it is serving, which issues are moving, who owns the next step, what changed, what it cost, what needs review, and what the next run should learn from this one.

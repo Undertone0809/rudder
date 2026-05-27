@@ -127,6 +127,16 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function startTempDatabase() {
+  const externalConnectionString = process.env.RUDDER_AUTOMATIONS_E2E_TEST_DATABASE_URL?.trim();
+  if (externalConnectionString) {
+    const parsed = new URL(externalConnectionString);
+    const dbName = parsed.pathname.replace(/^\//, "");
+    parsed.pathname = "/postgres";
+    await ensurePostgresDatabase(parsed.toString(), dbName);
+    await applyPendingMigrations(externalConnectionString);
+    return { connectionString: externalConnectionString, dataDir: "", instance: null };
+  }
+
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-automations-e2e-"));
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
@@ -391,7 +401,7 @@ describe("automation routes end-to-end", () => {
       .select({ chatConversationId: automations.chatConversationId })
       .from(automations)
       .where(eq(automations.id, createRes.body.id));
-    expect(automationRow?.chatConversationId).toBe(runRes.body.linkedChatConversationId);
+    expect(automationRow?.chatConversationId).toBeNull();
 
     const outputMessage = await publishAutomationRunOutputToChat(db, {
       issueId: runRes.body.linkedIssueId,

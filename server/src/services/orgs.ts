@@ -25,6 +25,7 @@ import {
   heartbeatRuns,
   heartbeatRunEvents,
   costEvents,
+  costMonthlySpendRollups,
   financeEvents,
   approvalComments,
   approvals,
@@ -355,6 +356,7 @@ export function organizationService(db: Db) {
         await tx.delete(issueReadStates).where(eq(issueReadStates.orgId, id));
         await tx.delete(issueWorkProducts).where(eq(issueWorkProducts.orgId, id));
         await tx.delete(costEvents).where(eq(costEvents.orgId, id));
+        await tx.delete(costMonthlySpendRollups).where(eq(costMonthlySpendRollups.orgId, id));
         await tx.delete(financeEvents).where(eq(financeEvents.orgId, id));
         await tx.delete(documentRevisions).where(eq(documentRevisions.orgId, id));
         await tx.delete(documents).where(eq(documents.orgId, id));

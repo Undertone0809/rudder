@@ -289,6 +289,46 @@ export function chatService(db: Db) {
     }));
   }
 
+  async function hydrateConversationSummaries(rows: ConversationRow[], userId?: string | null) {
+    if (userId) {
+      await ensureConversationUserStates(rows, userId);
+    }
+
+    const conversationIds = rows.map((row) => row.id);
+    const orgId = rows[0]?.orgId ?? null;
+
+    const [
+      userStatesByConversationId,
+      unreadCountsByConversationId,
+      pendingProposalConversationIds,
+      latestReplyPreviewsByConversationId,
+    ] = await Promise.all([
+      userId && orgId
+        ? listConversationUserStates(orgId, userId, conversationIds)
+        : Promise.resolve(new Map<string, ConversationUserStateRow>()),
+      userId && orgId
+        ? listUnreadCountsByConversation(orgId, userId, conversationIds)
+        : Promise.resolve(new Map<string, number>()),
+      orgId
+        ? listPendingProposalStates(orgId, conversationIds)
+        : Promise.resolve(new Set<string>()),
+      orgId
+        ? listLatestReplyPreviews(orgId, conversationIds)
+        : Promise.resolve(new Map<string, string | null>()),
+    ]);
+    return rows.map((row) => ({
+      ...row,
+      latestReplyPreview: latestReplyPreviewsByConversationId.get(row.id) ?? null,
+      lastReadAt: userStatesByConversationId.get(row.id)?.lastReadAt ?? null,
+      isPinned: Boolean(userStatesByConversationId.get(row.id)?.pinnedAt),
+      unreadCount: unreadCountsByConversationId.get(row.id) ?? 0,
+      isUnread: (unreadCountsByConversationId.get(row.id) ?? 0) > 0,
+      needsAttention:
+        (unreadCountsByConversationId.get(row.id) ?? 0) > 0 ||
+        pendingProposalConversationIds.has(row.id),
+    }));
+  }
+
   async function getConversationOrThrow(id: string) {
     const row = await db
       .select()
@@ -423,6 +463,24 @@ export function chatService(db: Db) {
         ...conversation,
         searchPreview: searchPreviews.get(conversation.id) ?? null,
       }));
+  }
+
+  async function listSummaries(
+      orgId: string,
+      options?: { status?: "active" | "resolved" | "archived" | "all" },
+      userId?: string | null,
+    ) {
+      const status = options?.status ?? "active";
+      const conditions = [eq(chatConversations.orgId, orgId)];
+      if (status !== "all") {
+        conditions.push(eq(chatConversations.status, status));
+      }
+      const rows = await db
+        .select()
+        .from(chatConversations)
+        .where(and(...conditions))
+        .orderBy(desc(sql`coalesce(${chatConversations.lastMessageAt}, ${chatConversations.updatedAt})`));
+      return hydrateConversationSummaries(rows, userId);
   }
 
   async function getById(id: string, userId?: string | null) {
@@ -1465,6 +1523,7 @@ export function chatService(db: Db) {
 
   return {
     list,
+    listSummaries,
     getById,
     create,
     update,

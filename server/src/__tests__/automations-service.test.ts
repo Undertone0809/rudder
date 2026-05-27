@@ -463,7 +463,7 @@ describe("automation service live-execution coalescing", () => {
     )).toHaveLength(1);
   });
 
-  it("creates a new chat output destination when no conversation is selected", async () => {
+  it("creates a separate chat output destination for each execution run", async () => {
     const { agentId, orgId, projectId, svc } = await seedFixture();
     const automation = await svc.create(
       orgId,
@@ -494,7 +494,7 @@ describe("automation service live-execution coalescing", () => {
       .from(automations)
       .where(eq(automations.id, automation.id))
       .then((rows) => rows[0] ?? null);
-    expect(updatedAutomation?.chatConversationId).toBe(run.linkedChatConversationId);
+    expect(updatedAutomation?.chatConversationId).toBeNull();
 
     const createdChat = await db
       .select()
@@ -543,6 +543,18 @@ describe("automation service live-execution coalescing", () => {
       .where(eq(chatMessages.id, outputMessage!.id))
       .then((rows) => rows[0] ?? null);
     expect(terminalMessage?.conversationId).toBe(run.linkedChatConversationId);
+
+    const secondRun = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(secondRun.status).toBe("issue_created");
+    expect(secondRun.linkedChatConversationId).toBeTruthy();
+    expect(secondRun.linkedChatConversationId).not.toBe(run.linkedChatConversationId);
+
+    const chats = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.orgId, orgId));
+    expect(chats).toHaveLength(2);
   });
 
   it("does not create an empty new chat for coalesced chat-output runs", async () => {
@@ -572,7 +584,7 @@ describe("automation service live-execution coalescing", () => {
     expect(firstRun.status).toBe("issue_created");
     expect(firstRun.linkedChatConversationId).toBeTruthy();
     expect(secondRun.status).toBe("coalesced");
-    expect(secondRun.linkedChatConversationId).toBe(firstRun.linkedChatConversationId);
+    expect(secondRun.linkedChatConversationId).toBeNull();
 
     const chats = await db
       .select()
@@ -583,8 +595,51 @@ describe("automation service live-execution coalescing", () => {
       .select()
       .from(chatMessages)
       .where(eq(chatMessages.orgId, orgId));
-    expect(messages.map((message) => message.body)).toContain(
+    expect(messages.map((message) => message.body)).not.toContain(
       "Say hello coalesced into an active automation run.",
+    );
+  });
+
+  it("does not create an empty new chat for skipped chat-output runs", async () => {
+    const { agentId, orgId, projectId, svc } = await seedFixture();
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Say hello",
+        description: "Say hello to me.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "skip_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+
+    const firstRun = await svc.runAutomation(automation.id, { source: "manual" });
+    const secondRun = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(firstRun.status).toBe("issue_created");
+    expect(firstRun.linkedChatConversationId).toBeTruthy();
+    expect(secondRun.status).toBe("skipped");
+    expect(secondRun.linkedChatConversationId).toBeNull();
+
+    const chats = await db
+      .select()
+      .from(chatConversations)
+      .where(eq(chatConversations.orgId, orgId));
+    expect(chats).toHaveLength(1);
+    const messages = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.orgId, orgId));
+    expect(messages.map((message) => message.body)).not.toContain(
+      "Say hello skipped because an active automation run already exists.",
     );
   });
 

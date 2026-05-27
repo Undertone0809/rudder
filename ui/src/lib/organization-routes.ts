@@ -19,6 +19,7 @@ const BOARD_ROUTE_ROOTS = new Set([
   "usage",
   "activity",
   "inbox",
+  "ui-lab",
   "design-guide",
 ]);
 

@@ -37,5 +37,10 @@ export const joinRequests = pgTable(
       table.requestType,
       table.createdAt,
     ),
+    companyStatusUpdatedIdx: index("join_requests_company_status_updated_idx").on(
+      table.orgId,
+      table.status,
+      table.updatedAt,
+    ),
   }),
 );

@@ -1,80 +1,89 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="720" viewBox="0 0 1440 720" role="img" aria-labelledby="title desc">
-  <title id="title">Rudder 第一个组织工作循环</title>
-  <desc id="desc">从组织目标到 issue、分配执行者、agent heartbeat、评审证据、Messenger 和 Calendar 的端到端流程。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="780" viewBox="0 0 1440 780" role="img" aria-labelledby="title desc">
+  <title id="title">Rudder 第一个组织的真实工作流程</title>
+  <desc id="desc">从一件真实任务开始：创建 issue、分配给默认 agent、运行 agent、检查证据，再把结论写回 issue。</desc>
   <defs>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
-      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#0f172a" flood-opacity="0.12"/>
+    <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.10"/>
     </filter>
-    <marker id="arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
-      <path d="M2,2 L12,7 L2,12" fill="none" stroke="#0f766e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#0f766e"/>
     </marker>
+    <style>
+      .title { font: 760 38px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #0f172a; }
+      .subtitle { font: 400 21px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #475569; }
+      .lane { font: 760 18px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: .08em; fill: #0f766e; }
+      .step { font: 760 20px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #0f766e; }
+      .head { font: 760 28px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #0f172a; }
+      .body { font: 400 20px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #475569; }
+      .small { font: 400 18px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #64748b; }
+      .pill { font: 700 18px Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #0f172a; }
+    </style>
   </defs>
 
-  <rect width="1440" height="720" rx="34" fill="#f8fafc"/>
-  <rect x="54" y="56" width="1332" height="608" rx="30" fill="#ffffff" stroke="#dbe3ea" stroke-width="2"/>
+  <rect width="1440" height="780" rx="36" fill="#f8fafc"/>
+  <rect x="48" y="48" width="1344" height="684" rx="32" fill="#ffffff" stroke="#dbe3ea" stroke-width="2"/>
 
-  <text x="92" y="124" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="36" font-weight="750">第一条有用的 Rudder 工作循环</text>
-  <text x="92" y="168" fill="#64748b" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="22">先让人类把目标说清楚，再让 agent 接手一个可以检查、可以评审、可以回看的 issue。</text>
+  <text x="86" y="116" class="title">第一个组织，先跑完一件真实工作</text>
+  <text x="86" y="158" class="subtitle">目标写清楚，issue 写清楚，再交给默认 agent。运行结束后，看证据，再决定通过、退回还是阻塞。</text>
 
-  <g filter="url(#shadow)">
-    <rect x="92" y="230" width="250" height="142" rx="22" fill="#ecfdf5" stroke="#99f6e4" stroke-width="2"/>
-    <text x="122" y="276" fill="#0f766e" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">1. 组织目标</text>
-    <text x="122" y="316" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">为什么要做</text>
-    <text x="122" y="348" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">让任务能追溯到方向</text>
+  <text x="86" y="212" class="lane">主线：所有工作都回到 issue</text>
+
+  <g filter="url(#cardShadow)">
+    <rect x="86" y="238" width="330" height="138" rx="22" fill="#ecfdf5" stroke="#99f6e4" stroke-width="2"/>
+    <text x="116" y="280" class="step">1. 选一个真任务</text>
+    <text x="116" y="319" class="head">要做什么</text>
+    <text x="116" y="350" class="body">别从空测试开始</text>
   </g>
 
-  <g filter="url(#shadow)">
-    <rect x="430" y="230" width="250" height="142" rx="22" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
-    <text x="460" y="276" fill="#2563eb" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">2. 创建 issue</text>
-    <text x="460" y="316" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">下一步是什么</text>
-    <text x="460" y="348" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">写清结果、上下文、验收</text>
+  <g filter="url(#cardShadow)">
+    <rect x="520" y="238" width="330" height="138" rx="22" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+    <text x="550" y="280" class="step">2. 创建 issue</text>
+    <text x="550" y="319" class="head">把任务写清楚</text>
+    <text x="550" y="350" class="body">结果、上下文、验收标准</text>
   </g>
 
-  <g filter="url(#shadow)">
-    <rect x="768" y="230" width="250" height="142" rx="22" fill="#fff7ed" stroke="#fed7aa" stroke-width="2"/>
-    <text x="798" y="276" fill="#c2410c" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">3. 分配执行者</text>
-    <text x="798" y="316" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">谁来推进</text>
-    <text x="798" y="348" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">todo + assignee 才适合启动</text>
+  <g filter="url(#cardShadow)">
+    <rect x="954" y="238" width="330" height="138" rx="22" fill="#fff7ed" stroke="#fed7aa" stroke-width="2"/>
+    <text x="984" y="280" class="step">3. 分配 issue</text>
+    <text x="984" y="319" class="head">交给默认 agent</text>
+    <text x="984" y="350" class="body">一个 issue 一个 owner</text>
   </g>
 
-  <g filter="url(#shadow)">
-    <rect x="1106" y="230" width="250" height="142" rx="22" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="2"/>
-    <text x="1136" y="276" fill="#7c3aed" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">4. Heartbeat 运行</text>
-    <text x="1136" y="316" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">agent 开始工作</text>
-    <text x="1136" y="348" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">留下 transcript 和产物</text>
+  <g filter="url(#cardShadow)">
+    <rect x="954" y="430" width="330" height="148" rx="22" fill="#fdf2f8" stroke="#fbcfe8" stroke-width="2"/>
+    <text x="984" y="473" class="step">4. agent 运行</text>
+    <text x="984" y="512" class="head">agent 开始干活</text>
+    <text x="984" y="544" class="body">按 issue 跑，留下记录</text>
   </g>
 
-  <path d="M356 301 H416" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <path d="M694 301 H754" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <path d="M1032 301 H1092" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M416 307 H512" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M850 307 H946" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M1119 386 V422" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
 
-  <path d="M1231 388 V448 C1231 478 1207 502 1177 502 H1032" stroke="#0f766e" stroke-width="4" stroke-linecap="round" fill="none" marker-end="url(#arrow)"/>
-
-  <g filter="url(#shadow)">
-    <rect x="768" y="454" width="250" height="142" rx="22" fill="#fdf2f8" stroke="#fbcfe8" stroke-width="2"/>
-    <text x="798" y="500" fill="#be185d" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">5. 检查证据</text>
-    <text x="798" y="540" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">结果够好吗</text>
-    <text x="798" y="572" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">需要判断时加 reviewer</text>
+  <g filter="url(#cardShadow)">
+    <rect x="520" y="430" width="330" height="148" rx="22" fill="#fefce8" stroke="#fde68a" stroke-width="2"/>
+    <text x="550" y="473" class="step">5. 检查证据</text>
+    <text x="550" y="512" class="head">能不能验收</text>
+    <text x="550" y="544" class="body">看评论、文件和验证</text>
   </g>
 
-  <g filter="url(#shadow)">
-    <rect x="430" y="454" width="250" height="142" rx="22" fill="#fefce8" stroke="#fde68a" stroke-width="2"/>
-    <text x="460" y="500" fill="#a16207" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">6. 记录注意力</text>
-    <text x="460" y="540" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">哪里需要人</text>
-    <text x="460" y="572" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">Messenger 暴露阻塞和回复</text>
+  <g filter="url(#cardShadow)">
+    <rect x="86" y="430" width="330" height="148" rx="22" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="116" y="473" class="step">6. 留下结论</text>
+    <text x="116" y="512" class="head">通过 / 退回</text>
+    <text x="116" y="544" class="body">接受、改哪里、卡在哪</text>
   </g>
 
-  <g filter="url(#shadow)">
-    <rect x="92" y="454" width="250" height="142" rx="22" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
-    <text x="122" y="500" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="20" font-weight="700">7. 回看历史</text>
-    <text x="122" y="540" fill="#0f172a" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="28" font-weight="760">时间花在哪</text>
-    <text x="122" y="572" fill="#475569" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">Calendar 展示运行和检查点</text>
-  </g>
+  <path d="M954 504 H858" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M520 504 H424" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
 
-  <path d="M754 525 H694" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <path d="M416 525 H356" stroke="#0f766e" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <rect x="86" y="625" width="582" height="70" rx="20" fill="#f8fafc" stroke="#dbe3ea" stroke-width="2"/>
+  <text x="116" y="655" class="pill">Messenger</text>
+  <text x="220" y="655" class="small">看谁在等你：agent 提问、评审、阻塞、失败运行。</text>
+  <text x="116" y="680" class="small">点进去以后，还是回到对应的 issue。</text>
 
-  <path d="M217 438 V394 C217 382 225 376 237 376" stroke="#0f766e" stroke-width="4" stroke-linecap="round" fill="none" marker-end="url(#arrow)"/>
-
-  <text x="92" y="638" fill="#64748b" font-family="Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="18">判断标准：每个 issue 都有清楚的下一步、唯一执行者、可检查证据，以及最终能被接受或退回的结论。</text>
+  <rect x="710" y="625" width="630" height="70" rx="20" fill="#f8fafc" stroke="#dbe3ea" stroke-width="2"/>
+  <text x="740" y="655" class="pill">Calendar</text>
+  <text x="832" y="655" class="small">回看 agent 什么时候跑、什么时候评审、时间花在哪些 issue 上。</text>
+  <text x="740" y="680" class="small">这里看的是实际工作历史，少靠手填日程。</text>
 </svg>

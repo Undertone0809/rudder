@@ -309,8 +309,8 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
   });
 
   it("shows calendar timeline filters with user-facing status labels", () => {
-    mockState.pathname = "/RUD/calendar";
-    mockState.relativePath = "/calendar";
+    mockState.pathname = "/RUD/dashboard/calendar";
+    mockState.relativePath = "/dashboard/calendar";
 
     renderSidebar();
 
@@ -332,9 +332,24 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.querySelector("[aria-label='Show Run history events']")).not.toBeNull();
   });
 
+  it("places the Dashboard and Calendar switcher in the calendar context header", () => {
+    mockState.pathname = "/RUD/dashboard/calendar";
+    mockState.relativePath = "/dashboard/calendar";
+
+    renderSidebar();
+
+    const header = document.querySelector("[data-testid='workspace-context-header']");
+    const switcher = header?.querySelector("[data-testid='dashboard-calendar-switcher']");
+    expect(switcher).not.toBeNull();
+    expect(switcher?.getAttribute("data-mode")).toBe("calendar");
+    expect(header?.textContent).toContain("Dashboard");
+    expect(header?.textContent).toContain("Calendar");
+    expect(header?.textContent).not.toContain("Sources and filters");
+  });
+
   it("uses agent avatars in calendar agent filters", () => {
-    mockState.pathname = "/RUD/calendar";
-    mockState.relativePath = "/calendar";
+    mockState.pathname = "/RUD/dashboard/calendar";
+    mockState.relativePath = "/dashboard/calendar";
 
     renderSidebar();
 

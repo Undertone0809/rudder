@@ -376,6 +376,11 @@ export function IssuesList({
     const filteredByControls = applyFilters(sourceIssues, viewState, currentUserId);
     return sortIssues(filteredByControls, viewState);
   }, [issues, searchedIssues, viewState, normalizedIssueSearch, currentUserId]);
+  const workingIssueCount = useMemo(
+    () => filtered.filter((issue) => liveIssueIds?.has(issue.id)).length,
+    [filtered, liveIssueIds],
+  );
+  const workingIssueLabel = `${workingIssueCount} ${workingIssueCount === 1 ? "issue" : "issues"} working in current view`;
 
   const { data: labels } = useQuery({
     queryKey: queryKeys.issues.labels(selectedOrganizationId!),
@@ -574,6 +579,14 @@ export function IssuesList({
         </div>
 
         <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+          <div
+            data-testid="issues-working-count"
+            className="mr-1 inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_82%,transparent)] px-3 text-sm font-medium text-muted-foreground"
+            aria-label={workingIssueLabel}
+            title={workingIssueLabel}
+          >
+            {workingIssueCount} working
+          </div>
           <div className="mr-1 flex items-center overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--border-base)] bg-[color:color-mix(in_oklab,var(--surface-inset)_82%,transparent)]">
             <button
               className={`p-1.5 transition-colors ${viewState.viewMode === "list" ? "bg-[color:var(--surface-active)] text-foreground" : "text-muted-foreground hover:text-foreground"}`}

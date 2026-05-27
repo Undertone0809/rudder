@@ -336,7 +336,7 @@ describe("Automations", () => {
     });
 
     expect(container.textContent).toContain("No automations yet");
-    expect(container.textContent).toContain("Advisor review loop");
+    expect(container.textContent).not.toContain("Advisor review loop");
     expect(container.textContent).toContain("Bug triage");
     expect(container.textContent).toContain("Daily standup");
     expect(container.textContent).toContain("Weekly progress report");
@@ -389,7 +389,7 @@ describe("Automations", () => {
     expect(document.body.textContent).not.toContain("Search chats");
   });
 
-  it("opens templates from the composer header and applies the advisor review loop template", async () => {
+  it("opens templates from the composer header and applies the dependency audit template", async () => {
     renderPage();
 
     await act(async () => {
@@ -412,20 +412,21 @@ describe("Automations", () => {
     });
 
     expect(document.body.textContent).toContain("Automation templates");
-    expect(document.body.textContent).toContain("Run Build Advisor plus two reviewer passes");
+    expect(document.body.textContent).not.toContain("Advisor review loop");
+    expect(document.body.textContent).toContain("Scan for security and maintenance risks.");
 
     await act(async () => {
       Array.from(document.body.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("Advisor review loop"))
+        .find((button) => button.textContent?.includes("Dependency audit"))
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
     const titleInput = document.querySelector('textarea[placeholder="Automation title"]') as HTMLTextAreaElement | null;
     const runbookInput = document.querySelector('textarea[aria-label="Instructions"]') as HTMLTextAreaElement | null;
-    expect(titleInput?.value).toBe("Advisor review loop");
-    expect(runbookInput?.value).toContain("advisor-review-loop-maintainer");
-    expect(runbookInput?.value).toContain("two independent reviewer roles");
+    expect(titleInput?.value).toBe("Dependency audit");
+    expect(runbookInput?.value).toContain("Inspect dependency and lockfile changes");
+    expect(runbookInput?.value).toContain("known vulnerabilities");
     expect(document.body.textContent).not.toContain("Automation templates");
   });
 

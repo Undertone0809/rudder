@@ -1,6 +1,6 @@
 import { randomInt } from "node:crypto";
 import path from "node:path";
-import type { RudderConfig } from "../config/schema.js";
+import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type RudderConfig } from "../config/schema.js";
 import { expandHomePrefix } from "../config/home.js";
 
 export const DEFAULT_WORKTREE_HOME = "~/.rudder-worktrees";
@@ -204,6 +204,7 @@ export function buildWorktreeConfig(input: {
         enabled: source?.database.backup.enabled ?? true,
         intervalMinutes: source?.database.backup.intervalMinutes ?? 60,
         retentionDays: source?.database.backup.retentionDays ?? 30,
+        maxEstimatedBytes: source?.database.backup.maxEstimatedBytes ?? DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
         dir: paths.backupDir,
       },
     },

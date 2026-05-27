@@ -72,7 +72,7 @@ test.describe("Automations index layout", () => {
     await expect(page.getByRole("button", { name: /Bug triage/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Daily standup/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /Weekly progress report/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Advisor review loop/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Advisor review loop/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Create custom automation/ })).toHaveCount(0);
     await expect(page.getByText("Start from scratch")).toHaveCount(0);
 
@@ -91,7 +91,8 @@ test.describe("Automations index layout", () => {
     await createButton.click();
     await expect(page.getByPlaceholder("Automation title")).toBeVisible();
     await expect(page.getByRole("button", { name: "Use template" })).toBeVisible();
-    await expect(page.getByText("Run output")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Track as issue/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Delivery rules/ })).toBeVisible();
     await expect(page.getByText("Every day at 09:00")).toBeVisible();
     await expect(page.getByTestId("automation-composer-shell")).toBeVisible();
 
@@ -101,7 +102,7 @@ test.describe("Automations index layout", () => {
     });
   });
 
-  test("applies the advisor review loop template from the composer header", async ({ page }, testInfo) => {
+  test("applies the dependency audit template from the composer header", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
 
     const orgRes = await page.request.post(`${E2E_BASE_URL}/api/orgs`, {
@@ -120,15 +121,16 @@ test.describe("Automations index layout", () => {
 
     const templatePicker = page.getByTestId("automation-template-picker");
     await expect(templatePicker).toBeVisible();
-    await templatePicker.getByRole("button", { name: /Advisor review loop/ }).click();
+    await expect(templatePicker.getByRole("button", { name: /Advisor review loop/ })).toHaveCount(0);
+    await templatePicker.getByRole("button", { name: /Dependency audit/ }).click();
 
-    await expect(page.getByPlaceholder("Automation title")).toHaveValue("Advisor review loop");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("advisor-review-loop-maintainer");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("two independent reviewer roles");
-    await expect(page.getByText("Every Mon at 11:00")).toBeVisible();
+    await expect(page.getByPlaceholder("Automation title")).toHaveValue("Dependency audit");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("Inspect dependency and lockfile changes");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("known vulnerabilities");
+    await expect(page.getByText("Every Tue at 11:00")).toBeVisible();
 
     await page.screenshot({
-      path: testInfo.outputPath("automations-advisor-template-composer.png"),
+      path: testInfo.outputPath("automations-dependency-template-composer.png"),
       fullPage: true,
     });
   });
@@ -178,22 +180,27 @@ test.describe("Automations index layout", () => {
     await createButton.click();
     await page.getByPlaceholder("Automation title").fill("Composer selector interaction");
 
-    const assigneePill = page.getByTestId("automation-composer-assignee-pill");
-    const projectPill = page.getByTestId("automation-composer-project-pill");
+    const assigneePill = page.getByRole("button", { name: /^Assignee$/ });
+    const projectPill = page.getByRole("button", { name: /^No project$/ }).first();
 
-    await assigneePill.locator(":scope > button").click();
+    await assigneePill.click();
     await assertOpenSelectorScrolls(page);
     await page.getByRole("button", { name: /Auto Agent 00/ }).click();
-    await expect(assigneePill).toContainText("Auto Agent 00");
-    await expect.poll(() => directChildSvgCount(assigneePill)).toBe(0);
+    const selectedAssigneePill = page.getByRole("button", { name: /Auto Agent 00/ }).first();
+    await expect(selectedAssigneePill).toBeVisible();
+    await expect.poll(() => directChildSvgCount(selectedAssigneePill)).toBe(0);
 
     if ((await page.locator('[data-slot="popover-content"][data-state="open"]').count()) === 0) {
-      await projectPill.locator(":scope > button").click();
+      await projectPill.click();
+    }
+    if ((await page.locator('[data-slot="popover-content"][data-state="open"]').count()) === 0) {
+      await projectPill.click({ force: true });
     }
     await assertOpenSelectorScrolls(page);
     await page.getByRole("button", { name: "Auto Project 00" }).click();
-    await expect(projectPill).toContainText("Auto Project 00");
-    await expect.poll(() => directChildSvgCount(projectPill)).toBe(0);
+    const selectedProjectPill = page.getByRole("button", { name: "Auto Project 00" }).first();
+    await expect(selectedProjectPill).toBeVisible();
+    await expect.poll(() => directChildSvgCount(selectedProjectPill)).toBe(0);
 
     await page.screenshot({
       path: testInfo.outputPath("automations-composer-selectors.png"),
@@ -221,6 +228,7 @@ test.describe("Automations index layout", () => {
     await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("List all open issues labeled bug");
     await expect(page.getByText("Weekdays at 09:00")).toBeVisible();
     await expect(page.getByRole("button", { name: /Track as issue/ })).toBeVisible();
+    await page.getByRole("button", { name: /Track as issue/ }).click();
     await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
     await page.getByRole("button", { name: /Send to chat/ }).click();
     await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("relevant Rudder chat conversation");
@@ -257,16 +265,6 @@ test.describe("Automations index layout", () => {
     expect(agentRes.ok()).toBe(true);
     const agent = (await agentRes.json()) as { id: string };
 
-    const chatRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/chats`, {
-      data: {
-        title: "Daily digest",
-        preferredAgentId: agent.id,
-        issueCreationMode: "manual_approval",
-      },
-    });
-    expect(chatRes.ok()).toBe(true);
-    const chat = (await chatRes.json()) as { id: string };
-
     const automationRes = await page.request.post(`${E2E_BASE_URL}/api/orgs/${organization.id}/automations`, {
       data: {
         title: "Daily digest",
@@ -274,7 +272,7 @@ test.describe("Automations index layout", () => {
         assigneeAgentId: agent.id,
         priority: "medium",
         outputMode: "chat_output",
-        chatConversationId: chat.id,
+        chatConversationId: null,
       },
     });
     expect(automationRes.ok()).toBe(true);
@@ -286,12 +284,32 @@ test.describe("Automations index layout", () => {
     expect(runRes.ok()).toBe(true);
     const run = (await runRes.json()) as { linkedIssueId: string | null; linkedChatConversationId: string | null };
     expect(run.linkedIssueId).toBeTruthy();
-    expect(run.linkedChatConversationId).toBe(chat.id);
+    expect(run.linkedChatConversationId).toBeTruthy();
 
     await selectOrganization(page, organization.id);
-    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/chat/${run.linkedChatConversationId}`);
 
-    await expect(page.getByText("Daily digest started.")).toBeVisible();
+    await expect(page.getByText("From automation").first()).toBeVisible();
+    await expect(page.getByText("Daily digest", { exact: true }).first()).toBeVisible();
+
+    const completeFirstIssueRes = await page.request.patch(`${E2E_BASE_URL}/api/issues/${run.linkedIssueId}`, {
+      data: { status: "done" },
+    });
+    expect(completeFirstIssueRes.ok()).toBe(true);
+
+    const secondRunRes = await page.request.post(`${E2E_BASE_URL}/api/automations/${automation.id}/run`, {
+      data: { source: "manual" },
+    });
+    expect(secondRunRes.ok()).toBe(true);
+    const secondRun = (await secondRunRes.json()) as { linkedIssueId: string | null; linkedChatConversationId: string | null };
+    expect(secondRun.linkedIssueId).toBeTruthy();
+    expect(secondRun.linkedChatConversationId).toBeTruthy();
+    expect(secondRun.linkedChatConversationId).not.toBe(run.linkedChatConversationId);
+
+    await page.goto(`${E2E_BASE_URL}/${organization.issuePrefix}/messenger/chat/${secondRun.linkedChatConversationId}`);
+
+    await expect(page.getByText("From automation").first()).toBeVisible();
+    await expect(page.getByText("Daily digest", { exact: true }).first()).toBeVisible();
   });
 
   test("deletes an automation from the row menu without exposing archive lifecycle actions", async ({ page }) => {
@@ -412,12 +430,14 @@ test.describe("Automations index layout", () => {
     await page.getByTestId("workspace-main-header-actions").getByRole("button", { name: "Create automation" }).click();
     await page.getByPlaceholder("Automation title").fill("Composer mention menu interaction");
 
-    const assigneePill = page.getByTestId("automation-composer-assignee-pill");
-    await assigneePill.locator(":scope > button").click();
+    const assigneePill = page.getByRole("button", { name: /^Assignee$/ });
+    await assigneePill.click();
     await page.getByRole("button", { name: /Mention Builder/ }).click();
+    await page.keyboard.press("Escape");
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
-    await composer.fill("Use $advisor");
+    await composer.click();
+    await page.keyboard.type("Use $advisor");
 
     const mentionMenu = page.getByTestId("markdown-mention-menu");
     await expect(mentionMenu).toBeVisible({ timeout: 15_000 });

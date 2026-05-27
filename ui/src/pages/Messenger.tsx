@@ -31,7 +31,6 @@ import { projectsApi } from "@/api/projects";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { ApprovalDetailDialog } from "@/components/ApprovalDetailDialog";
 import {
-  ChatIssueApprovalLabelPicker,
   approvalPayloadWithChatIssueLabelIds,
   chatConversationIdFromApprovalPayload,
   chatIssueApprovalLabelIds,
@@ -699,22 +698,13 @@ function MessengerApprovalCard({
             projects,
             labels,
             selectedLabelIds: selectedChatIssueLabelIds,
+            onSelectedLabelIdsChange: item.approval.type === "chat_issue_creation" && pending
+              ? setSelectedChatIssueLabelIds
+              : undefined,
+            labelPickerDisabled: decisionMutation.isPending || chatIssueLabelOptionsLoading,
             chatConversation,
             currentUserId,
           }}
-          extraActions={
-            item.approval.type === "chat_issue_creation" && pending ? (
-              <div className="basis-full">
-                <ChatIssueApprovalLabelPicker
-                  labels={labels}
-                  selectedLabelIds={selectedChatIssueLabelIds}
-                  onChange={setSelectedChatIssueLabelIds}
-                  required={Boolean(chatIssueLabelsRequired)}
-                  disabled={decisionMutation.isPending || chatIssueLabelOptionsLoading}
-                />
-              </div>
-            ) : null
-          }
           allowBudgetActions
           approveDisabled={Boolean(chatIssueLabelsRequired) || chatIssueLabelOptionsLoading}
           isPending={decisionMutation.isPending}

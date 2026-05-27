@@ -46,7 +46,6 @@ export async function publishAutomationRunOutputToChat(
       automationId: automations.id,
       automationTitle: automations.title,
       automationOutputMode: automations.outputMode,
-      automationChatConversationId: automations.chatConversationId,
       projectId: automations.projectId,
       assigneeAgentId: automations.assigneeAgentId,
       runId: automationRuns.id,
@@ -61,7 +60,7 @@ export async function publishAutomationRunOutputToChat(
 
   if (!row || row.automationOutputMode !== "chat_output") return null;
 
-  let conversationId = row.linkedChatConversationId ?? row.automationChatConversationId;
+  let conversationId = row.linkedChatConversationId;
   if (!conversationId) {
     const [conversation] = await db
       .insert(chatConversations)
@@ -96,16 +95,6 @@ export async function publishAutomationRunOutputToChat(
       })
       .where(eq(automationRuns.id, row.runId));
   }
-  if (!row.automationChatConversationId && conversationId) {
-    await db
-      .update(automations)
-      .set({
-        chatConversationId: conversationId,
-        updatedAt: new Date(),
-      })
-      .where(eq(automations.id, row.automationId));
-  }
-
   const existing = await db
     .select()
     .from(chatMessages)

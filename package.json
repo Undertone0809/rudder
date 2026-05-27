@@ -29,6 +29,7 @@
     "smoke:openclaw-sse-standalone": "./scripts/smoke/openclaw-sse-standalone.sh",
     "test:e2e": "npx playwright test --config tests/e2e/playwright.config.ts",
     "test:e2e:headed": "npx playwright test --config tests/e2e/playwright.config.ts --headed",
+    "perf:control-plane": "node cli/node_modules/tsx/dist/cli.mjs scripts/perf/control-plane-baseline.ts",
     "docs:dev": "cd docs && pnpm --package=node@20 --package=mint@latest dlx mint dev",
     "docs:validate": "cd docs && PUPPETEER_SKIP_DOWNLOAD=1 pnpm --package=node@20 --package=mint@latest dlx mint validate",
     "desktop:build": "pnpm --filter @rudderhq/desktop build",

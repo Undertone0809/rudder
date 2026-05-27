@@ -317,6 +317,48 @@ describe("ApprovalPayloadRenderer", () => {
     expect(html).not.toContain("Required before approval");
   });
 
+  it("opens inline label choices from the chat issue approval label row", () => {
+    const labels: IssueLabel[] = [
+      makeIssueLabel("11111111-1111-4111-8111-111111111111", "Operations", "#2563eb"),
+      makeIssueLabel("22222222-2222-4222-8222-222222222222", "Engineering", "#0f766e"),
+    ];
+    const onChange = vi.fn();
+    const container = renderChatIssueApprovalDom(
+      {
+        chatConversationId: "chat-1",
+        proposedByAgentId: agent.id,
+        proposedIssue: {
+          title: "Fix label routing",
+          labelIds: [labels[0].id],
+        },
+      },
+      {
+        labels,
+        selectedLabelIds: [labels[0].id],
+        onSelectedLabelIdsChange: onChange,
+      },
+    );
+
+    expect(container.querySelector('[data-testid="chat-issue-approval-label-picker"]')).toBeNull();
+    const trigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-issue-label-popover-trigger"]');
+    expect(trigger).toBeTruthy();
+    expect(trigger?.textContent).toContain("Operations");
+
+    act(() => {
+      trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const engineeringButton = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Engineering"));
+    expect(engineeringButton).toBeTruthy();
+
+    act(() => {
+      engineeringButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledWith([labels[0].id, labels[1].id]);
+  });
+
   it("lets operators choose labels for chat issue approval payload overrides", () => {
     const labels: IssueLabel[] = [
       makeIssueLabel("11111111-1111-4111-8111-111111111111", "Operations", "#2563eb"),

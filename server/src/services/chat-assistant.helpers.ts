@@ -16,7 +16,7 @@ import type {
   ChatRuntimeDescriptor,
   OperatorProfileSettings,
 } from "@rudderhq/shared";
-import { chatAskUserRequestFromStructuredPayload, sanitizeChatStructuredPayload } from "@rudderhq/shared";
+import { chatAskUserRequestFromStructuredPayload, chatAutomationCreateFromStructuredPayload, sanitizeChatStructuredPayload } from "@rudderhq/shared";
 import { findServerAdapter } from "../agent-runtimes/index.js";
 import type { AgentRuntimeInvocationMeta, AgentRuntimeLoadedSkillMeta } from "../agent-runtimes/index.js";
 import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "../agent-runtimes/types.js";
@@ -46,7 +46,7 @@ export interface ResolvedChatRuntimeSource {
 }
 
 export interface ChatAssistantResult {
-  kind: "message" | "ask_user" | "issue_proposal" | "operation_proposal";
+  kind: "message" | "ask_user" | "issue_proposal" | "operation_proposal" | "automation_create";
   body: string;
   structuredPayload: Record<string, unknown> | null;
   replyingAgentId?: string | null;
@@ -373,8 +373,10 @@ export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntime
     buildChatResponseQualityPromptSection(),
     "Use result kind 'message' for clarification, summaries, and small requests that can stay in chat.",
     "Use result kind 'ask_user' only when one to three short structured questions are blocked on the user's decision before the conversation can continue safely.",
-    "For ask_user, each requestUserInput question id must be unique, and option ids must be unique within their question.",
+    "For ask_user, each requestUserInput question id must be unique, and option ids must be unique within their question. Set question selectionMode to 'multiple' only when the user can choose more than one option; omit it for normal single-choice questions.",
     "Use result kind 'issue_proposal' for larger work that should become an issue.",
+    "Use result kind 'automation_create' when the user clearly asks the selected agent to set up recurring automatic work and the schedule, assignee, and output are clear. This creates a Rudder Automation directly without a board approval proposal.",
+    "For automation_create, include structuredPayload.automationCreate with title, description, schedule.cronExpression, and schedule.timezone. Omit assigneeAgentId to assign the automation to the selected chat agent. Use outputMode 'chat_output' when the user wants the result sent back in chat.",
     "Reply in two phases.",
     "Phase 1: while you work, write concise progress updates in Markdown with no JSON fences. These are process transcript entries, not the final answer.",
     `Phase 2: on a new line, emit exactly ${resultSentinel} followed immediately by one JSON object. The JSON body is the final user-visible answer.`,
@@ -439,9 +441,24 @@ export function buildResponseSchemaPromptSection(planMode: boolean) {
                     recommended: false,
                   },
                 ],
+                selectionMode: "single",
                 allowFreeform: true,
               },
             ],
+          },
+          automationCreate: {
+            title: "required for automation_create",
+            description: "optional automation instructions",
+            priority: "critical|high|medium|low",
+            outputMode: "chat_output|track_issue",
+            projectId: "optional uuid",
+            goalId: "optional uuid",
+            parentIssueId: "optional uuid",
+            schedule: {
+              cronExpression: "required cron expression, for example 0 12 * * *",
+              timezone: "required IANA timezone, for example Asia/Shanghai",
+              label: "optional short trigger label",
+            },
           },
           richReferences: [
             {
@@ -693,12 +710,22 @@ export function validateAssistantResult(
     throw new Error("Assistant response body was empty");
   }
 
-  if (kind !== "message" && kind !== "ask_user" && kind !== "issue_proposal" && kind !== "operation_proposal") {
+  if (
+    kind !== "message"
+    && kind !== "ask_user"
+    && kind !== "issue_proposal"
+    && kind !== "operation_proposal"
+    && kind !== "automation_create"
+  ) {
     throw new Error(`Unsupported assistant result kind: ${kind}`);
   }
 
   if (kind === "ask_user" && !chatAskUserRequestFromStructuredPayload(structuredPayload)) {
     throw new Error("ask_user assistant responses require structuredPayload.requestUserInput with 1-3 valid questions");
+  }
+
+  if (kind === "automation_create" && !chatAutomationCreateFromStructuredPayload(structuredPayload)) {
+    throw new Error("automation_create assistant responses require structuredPayload.automationCreate with a valid schedule");
   }
 
   return {
