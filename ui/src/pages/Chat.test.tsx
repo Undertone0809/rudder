@@ -315,6 +315,25 @@ describe("ProposalCard", () => {
     expect(html).toContain("Reviewer · CTO");
   });
 
+  it("links replying agent attribution to agent detail", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Open the agent detail from this message.",
+      replyingAgentId: "agent-1",
+      structuredPayload: {
+        title: "Check attribution link",
+        priority: "medium",
+        description: "The assistant attribution should link to the agent detail.",
+      },
+    }), conversation({}), [
+      { id: "agent-1", name: "Wesley", role: "engineer", title: "Founding Engineer", icon: null } as Agent,
+    ]);
+
+    expect(html).toContain('href="/agents/wesley"');
+    expect(html).toContain('aria-label="Open Wesley agent detail"');
+  });
+
   it("renders uploaded replying agent avatars without the assistant avatar shell", () => {
     const html = renderProposalCard(message({
       role: "assistant",

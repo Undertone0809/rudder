@@ -120,7 +120,7 @@ import {
   showImageInFolder as showImageInFolderAction,
 } from "@/lib/image-actions";
 import { resolveLocalFileTarget } from "@/lib/local-file-targets";
-import { cn, relativeTime } from "@/lib/utils";
+import { agentUrl, cn, relativeTime } from "@/lib/utils";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useI18n } from "@/context/I18nContext";
 import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, AskUserAnswerValue, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName } from "./Chat.parts";
@@ -138,9 +138,8 @@ export function ChatAssistantAttributionRow({
   const fallbackLabel = replyingAgentId ? conversation.chatRuntime?.sourceLabel ?? "Unknown agent" : "Assistant";
   const label = agent?.name ?? fallbackLabel;
   const agentImageSrc = agent ? getAgentAvatarImageSrc(agent.icon) : null;
-
-  return (
-    <div className="mb-2 flex items-center gap-2.5">
+  const content = (
+    <>
       {agent && agentImageSrc ? (
         <AgentIcon icon={agent.icon} role={agent.role} className="h-8 w-8 shrink-0" />
       ) : (
@@ -155,6 +154,22 @@ export function ChatAssistantAttributionRow({
         </span>
       )}
       <span className="text-sm font-semibold tracking-tight text-foreground">{label}</span>
+    </>
+  );
+
+  return (
+    <div className="mb-2 flex items-center gap-2.5">
+      {agent ? (
+        <Link
+          to={agentUrl(agent)}
+          className="inline-flex items-center gap-2.5 rounded-[calc(var(--radius-sm)-1px)] pr-1 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/45"
+          aria-label={`Open ${label} agent detail`}
+        >
+          {content}
+        </Link>
+      ) : (
+        content
+      )}
     </div>
   );
 }
