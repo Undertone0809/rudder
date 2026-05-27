@@ -603,7 +603,7 @@ export function ProposalCard({
         </div>
 
         {issueProposal ? (
-          <section className="chat-review-details-section px-5 pb-4 pt-7">
+          <section className="border-t border-[color:var(--border-soft)] px-5 py-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="text-sm font-semibold text-foreground">Proposal details</div>
               {proposalDetailsCanExpand ? (
@@ -686,8 +686,10 @@ export function ProposalCard({
 
             {!showDecisionNote && resolvedDecisionNote ? (
               <div className="chat-review-note mt-1 rounded-[var(--radius-lg)] px-4 py-3">
-                <div className="text-[11px] font-medium text-muted-foreground">{resolvedDecisionNoteLabel}</div>
-                <p className="mt-2 text-sm leading-6 text-foreground/90">{resolvedDecisionNote}</p>
+                <div className="chat-review-note-header text-[11px] font-medium text-muted-foreground">
+                  {resolvedDecisionNoteLabel}
+                </div>
+                <p className="chat-review-note-body mt-2 text-sm leading-6 text-foreground/90">{resolvedDecisionNote}</p>
               </div>
             ) : null}
 
