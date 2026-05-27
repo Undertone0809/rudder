@@ -36,9 +36,10 @@
       {
         "language": "en",
         "default": true,
-        "tabs": [
+        "groups": [
           {
-            "tab": "Get Started",
+            "group": "Getting Started",
+            "icon": "rocket",
             "pages": [
               "index",
               "get-started/installation",
@@ -46,26 +47,23 @@
             ]
           },
           {
-            "tab": "Concepts",
-            "groups": [
-              {
-                "group": "Rudder Model",
-                "pages": [
-                  "concepts/overview",
-                  "concepts/goals-projects-issues",
-                  "concepts/agents",
-                  "concepts/issues",
-                  "concepts/chat",
-                  "concepts/messenger",
-                  "concepts/calendar",
-                  "concepts/workspaces",
-                  "concepts/skills"
-                ]
-              }
+            "group": "Concepts",
+            "icon": "book-open",
+            "pages": [
+              "concepts/overview",
+              "concepts/goals-projects-issues",
+              "concepts/agents",
+              "concepts/issues",
+              "concepts/chat",
+              "concepts/messenger",
+              "concepts/calendar",
+              "concepts/workspaces",
+              "concepts/skills"
             ]
           },
           {
-            "tab": "How-to Guides",
+            "group": "How-to Guides",
+            "icon": "route",
             "pages": [
               "how-to/issue-lifecycle",
               "how-to/configure-agent-runtime"
@@ -75,9 +73,10 @@
       },
       {
         "language": "cn",
-        "tabs": [
+        "groups": [
           {
-            "tab": "开始使用",
+            "group": "开始使用",
+            "icon": "rocket",
             "pages": [
               "zh/index",
               "zh/get-started/installation",
@@ -85,26 +84,23 @@
             ]
           },
           {
-            "tab": "核心概念",
-            "groups": [
-              {
-                "group": "Rudder 模型",
-                "pages": [
-                  "zh/concepts/overview",
-                  "zh/concepts/goals-projects-issues",
-                  "zh/concepts/agents",
-                  "zh/concepts/issues",
-                  "zh/concepts/chat",
-                  "zh/concepts/messenger",
-                  "zh/concepts/calendar",
-                  "zh/concepts/workspaces",
-                  "zh/concepts/skills"
-                ]
-              }
+            "group": "核心概念",
+            "icon": "book-open",
+            "pages": [
+              "zh/concepts/overview",
+              "zh/concepts/goals-projects-issues",
+              "zh/concepts/agents",
+              "zh/concepts/issues",
+              "zh/concepts/chat",
+              "zh/concepts/messenger",
+              "zh/concepts/calendar",
+              "zh/concepts/workspaces",
+              "zh/concepts/skills"
             ]
           },
           {
-            "tab": "操作指南",
+            "group": "操作指南",
+            "icon": "route",
             "pages": [
               "zh/how-to/issue-lifecycle",
               "zh/how-to/create-agent",
