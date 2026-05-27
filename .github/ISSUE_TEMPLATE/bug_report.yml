@@ -66,16 +66,53 @@ body:
     validations:
       required: true
 
-  - type: textarea
-    id: environment
+  - type: input
+    id: rudder_version
     attributes:
-      label: Environment
-      description: Include versions and runtime details when relevant.
+      label: Rudder version or commit
+      description: Enter the version, release tag, or commit SHA where you saw the bug.
+      placeholder: v0.2.6, 603adb9b, or main@603adb9b
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Which platform are you using?
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Install or run method
+      description: How are you running Rudder?
+      options:
+        - Desktop app
+        - Local development server
+        - npm package
+        - Docker or container
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment_details
+    attributes:
+      label: Environment details
+      description: Add any extra environment details that may matter.
       placeholder: |
-        - OS:
-        - Browser/Desktop:
-        - Rudder version or commit:
-        - Node/pnpm version:
+        - OS version:
+        - Browser:
+        - Node version:
+        - pnpm version:
+        - Database mode:
 
   - type: textarea
     id: evidence
@@ -90,4 +127,3 @@ body:
       label: Impact
       description: Explain severity and whether this blocks a real workflow.
       placeholder: Who is blocked? Is there a workaround?
-
