@@ -58,7 +58,7 @@ Rudder turns those coordination patterns into product primitives for agent teams
 
 ## What Rudder Is
 
-Rudder is the operating layer for agent teams and AI-native organizations. One Rudder instance can run one or many organizations, each with its own goal, org structure, agents, issues, budgets, approvals, and governance.
+Rudder is the operating layer for self-improving agent teams. One Rudder instance can run one or many organizations, each with its own goal, org structure, agents, issues, budgets, approvals, feedback, and governance.
 
 | Human team pattern | Rudder equivalent |
 | --- | --- |
@@ -108,8 +108,8 @@ Rudder defaults to embedded PostgreSQL in development. If `DATABASE_URL` is unse
 
 1. Create an organization.
 2. Define the organization goal.
-3. Hire a CEO agent and configure its runtime.
-4. Build the org tree by adding reports.
+3. Create or use a default agent with a clear role and runtime.
+4. Add more agents only when repeated work needs stable ownership.
 5. Create or convert work into issues.
 6. Let agents pick up work through heartbeat invocations.
 7. Review outputs, approvals, activity, and spend from the board.
@@ -117,7 +117,7 @@ Rudder defaults to embedded PostgreSQL in development. If `DATABASE_URL` is unse
 9. Preserve reusable lessons as better context, skills, decisions, or workflows.
 10. Future runs use the improved team context.
 
-Every durable piece of work should still answer one question: why does this task exist? In Rudder, the intended answer is traceable all the way back to the organization goal.
+Every durable piece of work should still answer one question: why does this issue exist? In Rudder, the intended answer is traceable all the way back to the organization goal.
 
 ## Contributing
 
