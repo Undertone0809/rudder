@@ -10,11 +10,11 @@ copy the matching files into this directory.
 | File | Purpose | Suggested reference page | Desktop/mobile crop notes |
 | --- | --- | --- | --- |
 | `board-overview.png` | Dashboard overview with active agents and English issue summaries. | `docs/index.mdx`, `docs/concepts/overview.mdx` | Desktop 1440 x 960. Keep the left rail and full agent grid visible. |
-| `issue-flow.png` | Issue tracker list with projects, statuses, assignees, and dates. | `docs/index.mdx`, `docs/concepts/issues.mdx`, `docs/concepts/goals-projects-issues.mdx` | Desktop 1440 x 960. Do not crop the left project slices or status column. |
+| `issue-flow.png` | Issue tracker list with projects, statuses, assignees, and dates. | `docs/concepts/issues.mdx`, `docs/concepts/goals-projects-issues.mdx` | Desktop 1440 x 960. Do not crop the left project slices or status column. |
 | `mobile-dashboard.png` | Mobile dashboard with English agent cards and bottom navigation. | Responsive/mobile docs callouts when needed. | Mobile 780 x 1688. Preserve the header, first two cards, and bottom navigation. |
 | `organization-work.png` | Organization workspaces surface with managed paths and resources. | `docs/get-started/first-organization.mdx` | Desktop 1440 x 960. Keep both workspace and resource columns visible. |
 | `first-organization-loop-zh.svg` | Chinese onboarding flow diagram for the first useful Rudder work loop. | `docs/zh/get-started/first-organization.mdx` | Vector diagram. Keep the loop readable at docs content width. |
-| `first-organization-issue-board.png` | Chinese first-organization guide issue board screenshot showing the kanban workflow used before creating the first issue. | `docs/zh/get-started/first-organization.mdx` | Source: `doc/assets/readme_imgs/1.png`. Keep the full app shell and issue columns visible. |
+| `first-organization-issue-board.png` | Issue board screenshot showing the kanban workflow used before creating or reviewing issues. | `docs/index.mdx`, `docs/zh/get-started/first-organization.mdx` | Source: `doc/assets/readme_imgs/1.png`. Keep the full app shell and issue columns visible. |
 | `skills-library.png` | Organization skills library and skill detail view. | `docs/concepts/skills.mdx` | Desktop 1440 x 960. Keep the org nav, skills list, and selected skill detail in frame. |
 | `agent-detail.png` | Agent skills tab showing personal skill management for one agent. | `docs/concepts/skills.mdx` | Desktop 1440 x 960. Keep agent navigation and the skills management view visible. |
 | `agent-run-detail.png` | Agent run detail with persisted transcript and run evidence. | `docs/get-started/first-organization.mdx` | Desktop 1440 x 960. Keep the run list and selected transcript pane visible. |
