@@ -49,7 +49,7 @@ async function buildClaudeSkillSnapshot(config: Record<string, unknown>): Promis
     sourcePath: entry.source,
     targetPath: null,
     detail: desiredSet.has(entry.key)
-      ? "Will be mounted into the ephemeral Claude skill directory on the next run."
+      ? "Will be mounted into the per-agent managed Claude skills home on the next run."
       : null,
   }));
   const warnings: string[] = [];
@@ -74,7 +74,7 @@ async function buildClaudeSkillSnapshot(config: Record<string, unknown>): Promis
       sourcePath: installedEntry.targetPath ?? path.join(skillsHome, name),
       targetPath: installedEntry.targetPath ?? path.join(skillsHome, name),
       detail: desired
-        ? "Enabled for this agent. Rudder will mount this user-installed Claude skill on the next run."
+        ? "Enabled for this agent. Rudder will mount this user-installed Claude skill into the per-agent managed Claude skills home on the next run."
         : "Installed outside Rudder management in the Claude skills home.",
     });
   }

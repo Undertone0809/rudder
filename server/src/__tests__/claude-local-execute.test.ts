@@ -25,13 +25,25 @@ const addDirSkillsPath = addDir ? path.join(addDir, ".claude", "skills") : null;
 const managedClaudeSettingsPath = process.env.HOME
   ? path.join(process.env.HOME, ".claude", "settings.json")
   : null;
+const managedClaudeSkillsPath = process.env.HOME
+  ? path.join(process.env.HOME, ".claude", "skills")
+  : null;
+const managedClaudeJsonPath = process.env.HOME
+  ? path.join(process.env.HOME, ".claude.json")
+  : null;
 const payload = {
   argv: process.argv.slice(2),
   home: process.env.HOME || null,
   prompt: fs.readFileSync(0, "utf8"),
+  claudeCodeEnv: Object.fromEntries(
+    Object.entries(process.env)
+      .filter(([key]) => key.startsWith("CLAUDE_CODE_"))
+      .sort(([left], [right]) => left.localeCompare(right)),
+  ),
   rudderEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("RUDDER_"))
     .sort(),
+  managedClaudeJsonExists: Boolean(managedClaudeJsonPath && fs.existsSync(managedClaudeJsonPath)),
   managedClaudeSettingsPath,
   managedClaudeSettings:
     managedClaudeSettingsPath && fs.existsSync(managedClaudeSettingsPath)
@@ -44,6 +56,10 @@ const payload = {
   addDirSkillEntries:
     addDirSkillsPath && fs.existsSync(addDirSkillsPath)
       ? fs.readdirSync(addDirSkillsPath).sort()
+      : [],
+  managedClaudeSkillEntries:
+    managedClaudeSkillsPath && fs.existsSync(managedClaudeSkillsPath)
+      ? fs.readdirSync(managedClaudeSkillsPath).sort()
       : [],
   gitIdentity: captureGitIdentityEnv(),
 };
@@ -163,12 +179,22 @@ describe("claude execute", () => {
       );
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
         appendedSystemPrompt: string | null;
+        prompt: string;
+        argv: string[];
+        claudeCodeEnv: Record<string, string>;
         rudderEnvKeys: string[];
         gitIdentity: GitIdentityCapture;
       };
       expectPreparedGitConfigCapture(capture);
-      expect(capture.appendedSystemPrompt).toContain("# Agent Instructions");
-      expect(capture.appendedSystemPrompt).toContain("# Tacit Memory");
+      expect(capture.appendedSystemPrompt).toBeNull();
+      expect(capture.prompt).toContain("# Agent Instructions");
+      expect(capture.prompt).toContain("# Tacit Memory");
+      expect(capture.prompt).toContain("# Rudder Runtime Skill Boundary");
+      expect(capture.prompt).toContain("Enabled Rudder Agent Skills: none.");
+      expect(capture.prompt).toContain("Follow the rudder heartbeat.");
+      expect(capture.argv).toEqual(expect.arrayContaining(["--disable-slash-commands", "--strict-mcp-config"]));
+      expect(capture.claudeCodeEnv.CLAUDE_CODE_DISABLE_AGENT_VIEW).toBe("1");
+      expect(capture.claudeCodeEnv.CLAUDE_CODE_DISABLE_CLAUDE_API_SKILL).toBe("1");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
       );
@@ -261,7 +287,7 @@ describe("claude execute", () => {
     }
   });
 
-  it("mounts explicitly enabled user-installed Claude skills into the transient add-dir surface", async () => {
+  it("mounts explicitly enabled user-installed Claude skills into the managed Claude home", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-external-skill-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "claude");
@@ -317,9 +343,9 @@ describe("claude execute", () => {
 
       expect(result.exitCode).toBe(0);
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
-        addDirSkillEntries: string[];
+        managedClaudeSkillEntries: string[];
       };
-      expect(capture.addDirSkillEntries).toContain("build-advisor");
+      expect(capture.managedClaudeSkillEntries).toContain("build-advisor");
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;
@@ -389,7 +415,9 @@ describe("claude execute", () => {
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
         managedClaudeSettingsPath: string | null;
         managedClaudeSettings: string | null;
+        managedClaudeJsonExists: boolean;
         addDirSkillEntries: string[];
+        managedClaudeSkillEntries: string[];
         argv: string[];
         home: string | null;
       };
@@ -397,14 +425,24 @@ describe("claude execute", () => {
       expect(capture.managedClaudeSettingsPath).toContain("/.rudder/instances/default/organizations/organization-1/claude-home/agents/agent-3/.claude/settings.json");
       expect(capture.argv).toEqual(expect.arrayContaining(["--setting-sources", "user"]));
       expect(capture.argv).toEqual(expect.arrayContaining(["--settings", capture.managedClaudeSettingsPath]));
+      expect(capture.argv).toEqual(expect.arrayContaining(["--disable-slash-commands", "--strict-mcp-config"]));
+      expect(capture.managedClaudeJsonExists).toBe(false);
       const managedSettings = JSON.parse(capture.managedClaudeSettings ?? "{}") as {
         env?: Record<string, unknown>;
         skillOverrides?: Record<string, unknown>;
       };
       expect(managedSettings.env?.ANTHROPIC_API_KEY).toBe("test-key");
       expect(managedSettings.env?.ANTHROPIC_BASE_URL).toBe("https://example.invalid/anthropic");
-      expect(managedSettings.skillOverrides).toEqual({});
+      expect(managedSettings.skillOverrides).toEqual(
+        expect.objectContaining({
+          "code-review": "off",
+          review: "off",
+          run: "off",
+          verify: "off",
+        }),
+      );
       expect(capture.addDirSkillEntries).not.toContain("user-skill.txt");
+      expect(capture.managedClaudeSkillEntries).toEqual([]);
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;
@@ -509,7 +547,9 @@ describe("claude execute", () => {
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
         argv: string[];
         home: string | null;
+        prompt: string;
         addDirSkillEntries: string[];
+        managedClaudeSkillEntries: string[];
         managedClaudeSettings: string | null;
       };
       expect(capture.home).toContain("/.rudder/instances/default/organizations/organization-1/claude-home/agents/agent-isolated");
@@ -520,10 +560,23 @@ describe("claude execute", () => {
       expect(capture.argv).not.toContain(rogueSettings);
       expect(capture.argv).not.toContain("project,local,user");
       expect(capture.argv).toEqual(expect.arrayContaining(["--max-turns", "2"]));
-      expect(capture.addDirSkillEntries).toEqual(["build-advisor"]);
+      expect(capture.argv).toEqual(expect.arrayContaining(["--disable-slash-commands", "--strict-mcp-config"]));
+      expect(capture.argv).not.toContain("--add-dir");
+      expect(capture.addDirSkillEntries).toEqual([]);
+      expect(capture.managedClaudeSkillEntries).toEqual(["build-advisor"]);
+      expect(capture.prompt).toContain("Enabled Rudder Agent Skills:");
+      expect(capture.prompt).toContain("build-advisor");
       const managedSettings = JSON.parse(capture.managedClaudeSettings ?? "{}") as Record<string, unknown>;
       expect(managedSettings).not.toHaveProperty("hooks");
-      expect(managedSettings.skillOverrides).toEqual({ "build-advisor": true });
+      expect(managedSettings.skillOverrides).toEqual(
+        expect.objectContaining({
+          "build-advisor": true,
+          "code-review": "off",
+          review: "off",
+          run: "off",
+          verify: "off",
+        }),
+      );
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;

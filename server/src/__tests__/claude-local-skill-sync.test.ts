@@ -140,7 +140,7 @@ describe("claude local skill sync", () => {
       state: "configured",
       origin: "user_installed",
       locationLabel: "~/.claude/skills",
-      detail: "Enabled for this agent. Rudder will mount this user-installed Claude skill on the next run.",
+      detail: "Enabled for this agent. Rudder will mount this user-installed Claude skill into the per-agent managed Claude skills home on the next run.",
     }));
   });
 });

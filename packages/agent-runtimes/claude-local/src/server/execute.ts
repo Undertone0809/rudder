@@ -40,7 +40,6 @@ import { resolveClaudeDesiredSkillNames } from "./skills.js";
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUDDER_INSTANCE_ID = "default";
 const SHARED_CLAUDE_HOME_ENTRIES = [
-  ".claude.json",
   ".config/claude",
   ".config/anthropic",
   ".anthropic",
@@ -51,32 +50,42 @@ const CLAUDE_SINGLE_VALUE_SKILL_SOURCE_FLAGS = new Set([
   "--settings",
   "--setting-sources",
 ]);
+const CLAUDE_ADAPTER_OWNED_SKILL_NAMES = [
+  "batch",
+  "claude-api",
+  "clear",
+  "code-review",
+  "compact",
+  "context",
+  "debug",
+  "fewer-permission-prompts",
+  "goal",
+  "heapdump",
+  "init",
+  "insights",
+  "keybindings-help",
+  "loop",
+  "review",
+  "run",
+  "run-skill-generator",
+  "security-review",
+  "team-onboarding",
+  "update-config",
+  "usage",
+  "verify",
+] as const;
 
-/**
- * Create a tmpdir with `.claude/skills/` containing symlinks to skills from
- * the repo's `.agents/skills/` directory, so `--add-dir` makes Claude Code discover
- * them as proper registered skills.
- */
-async function buildSkillsDir(config: Record<string, unknown>): Promise<string> {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-skills-"));
-  const target = path.join(tmp, ".claude", "skills");
-  await fs.mkdir(target, { recursive: true });
-  const availableEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
-  const desiredNames = new Set(
-    resolveClaudeDesiredSkillNames(
-      config,
-      availableEntries,
-    ),
-  );
-  for (const entry of availableEntries) {
-    if (!desiredNames.has(entry.key)) continue;
-    await fs.symlink(
-      entry.source,
-      path.join(target, entry.runtimeName),
-    );
-  }
-  return tmp;
-}
+type EnabledClaudeSkill = {
+  runtimeName: string;
+  source: string;
+};
+
+type LoadedClaudeSkill = {
+  key: string;
+  runtimeName: string;
+  name: string | null;
+  description: string | null;
+};
 
 function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -148,7 +157,7 @@ async function readJsonFile(filePath: string): Promise<Record<string, unknown> |
 async function writeManagedClaudeSettings(input: {
   sourceHome: string;
   targetHome: string;
-  enabledSkillNames: string[];
+  enabledSkills: EnabledClaudeSkill[];
 }) {
   const sourceSettings = await readJsonFile(path.join(input.sourceHome, ".claude", "settings.json"));
   const managedSettings: Record<string, unknown> = {};
@@ -162,12 +171,13 @@ async function writeManagedClaudeSettings(input: {
     managedSettings.apiKeyHelper = apiKeyHelper;
   }
 
-  const enabledSkillNames = Array.from(new Set(input.enabledSkillNames)).sort((left, right) =>
+  const enabledSkillNames = Array.from(new Set(input.enabledSkills.map((skill) => skill.runtimeName))).sort((left, right) =>
     left.localeCompare(right),
   );
-  managedSettings.skillOverrides = Object.fromEntries(
-    enabledSkillNames.map((skillName) => [skillName, true]),
-  );
+  managedSettings.skillOverrides = {
+    ...Object.fromEntries(CLAUDE_ADAPTER_OWNED_SKILL_NAMES.map((skillName) => [skillName, "off"])),
+    ...Object.fromEntries(enabledSkillNames.map((skillName) => [skillName, true])),
+  };
 
   const target = path.join(input.targetHome, ".claude", "settings.json");
   await ensureParentDir(target);
@@ -180,16 +190,20 @@ async function prepareManagedClaudeHome(
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
   agentId: string,
-  enabledSkillNames: string[],
+  enabledSkills: EnabledClaudeSkill[],
 ): Promise<string> {
   const sourceHome = resolveSharedClaudeHomeDir(env);
   const targetHome = resolveManagedClaudeHomeDir(env, orgId, agentId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(targetHome, { recursive: true });
+  await fs.rm(path.join(targetHome, ".claude.json"), { recursive: true, force: true });
   await fs.rm(path.join(targetHome, ".claude", "skills"), { recursive: true, force: true });
   await fs.mkdir(path.join(targetHome, ".claude", "skills"), { recursive: true });
-  await writeManagedClaudeSettings({ sourceHome, targetHome, enabledSkillNames });
+  for (const skill of enabledSkills) {
+    await ensureSymlink(path.join(targetHome, ".claude", "skills", skill.runtimeName), skill.source);
+  }
+  await writeManagedClaudeSettings({ sourceHome, targetHome, enabledSkills });
 
   for (const relativeEntry of SHARED_CLAUDE_HOME_ENTRIES) {
     const source = path.join(sourceHome, relativeEntry);
@@ -230,6 +244,34 @@ function stripClaudeSkillSourceArgs(args: string[]): string[] {
     out.push(arg);
   }
   return out;
+}
+
+function renderRudderSkillBoundaryPrompt(loadedSkills: LoadedClaudeSkill[]): string {
+  const lines = [
+    "# Rudder Runtime Skill Boundary",
+    "",
+    "Rudder Agent Skills for this run are controlled only by the Rudder Agent Skills page.",
+  ];
+
+  if (loadedSkills.length === 0) {
+    lines.push("", "Enabled Rudder Agent Skills: none.");
+  } else {
+    lines.push("", "Enabled Rudder Agent Skills:");
+    for (const skill of loadedSkills) {
+      const label = skill.name && skill.name !== skill.runtimeName
+        ? `${skill.runtimeName} (${skill.name})`
+        : skill.runtimeName;
+      lines.push(`- ${label}: ${skill.description ?? "No description provided."}`);
+    }
+  }
+
+  lines.push(
+    "",
+    "Do not treat adapter-owned, Claude Code built-in, global, project, plugin, slash-command, or host-installed skills as Rudder Agent Skills unless they are listed above.",
+    "When asked what agent skills you have, answer only from the Enabled Rudder Agent Skills list above.",
+  );
+
+  return lines.join("\n");
 }
 
 interface ClaudeExecutionInput {
@@ -436,20 +478,26 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
   }
+  env.CLAUDE_CODE_DISABLE_AGENT_VIEW = "1";
+  env.CLAUDE_CODE_DISABLE_CLAUDE_API_SKILL = "1";
+  env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
 
   const sourceEnv = { ...process.env, ...env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
   const claudeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredClaudeSkillNames = resolveClaudeDesiredSkillNames(config, claudeSkillEntries);
-  const enabledClaudeSkillRuntimeNames = claudeSkillEntries
+  const enabledClaudeSkills = claudeSkillEntries
     .filter((entry) => desiredClaudeSkillNames.includes(entry.key))
-    .map((entry) => entry.runtimeName);
+    .map((entry) => ({
+      runtimeName: entry.runtimeName,
+      source: entry.source,
+    }));
   env.HOME = await prepareManagedClaudeHome(
     sourceEnv,
     input.onLog ?? (async () => {}),
     agent.orgId,
     agent.id,
-    enabledClaudeSkillRuntimeNames,
+    enabledClaudeSkills,
   );
   await syncLocalCliCredentialHomeEntries({
     sourceHome: operatorHome,
@@ -577,12 +625,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   );
   const billingType = resolveClaudeBillingType(effectiveEnv);
-  const skillsDir = await buildSkillsDir(config);
   const claudeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredClaudeSkillNames = resolveClaudeDesiredSkillNames(config, claudeSkillEntries);
   const loadedSkills = claudeSkillEntries
     .filter((entry) => desiredClaudeSkillNames.includes(entry.key))
-    .map((entry) => ({
+    .map((entry): LoadedClaudeSkill => ({
       key: entry.key,
       runtimeName: entry.runtimeName,
       name: entry.name ?? null,
@@ -601,35 +648,29 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? `Provided ${imagePaths.length} local image attachment path${imagePaths.length === 1 ? "" : "s"} in the prompt for Claude Code inspection.`
       : null;
 
-  // When instructionsFilePath is configured, create a combined temp file that
-  // includes both the file content and the path directive, so we only need
-  // --append-system-prompt-file (Claude CLI forbids using both flags together).
-  let effectiveInstructionsFilePath: string | undefined;
-  if (loadedInstructions.prefix) {
-    const combinedPath = path.join(skillsDir, "agent-instructions.md");
-    await fs.writeFile(combinedPath, loadedInstructions.prefix, "utf-8");
-    effectiveInstructionsFilePath = combinedPath;
-  }
   const commandNotes = (() => {
     if (!instructionsFilePath) {
       return [
         ...loadedInstructions.commandNotes,
-        "Injected Rudder operating contract via --append-system-prompt-file.",
-        "Isolated Claude Code skill discovery to the per-agent managed Claude home and this run's Rudder-enabled skills.",
+        "Prepended Rudder operating contract to stdin prompt.",
+        "Prepended Rudder runtime skill boundary to stdin prompt.",
+        "Isolated Claude Code HOME without host .claude.json and disabled slash-command/MCP auto-loading.",
         ...(imageAttachmentNote ? [imageAttachmentNote] : []),
       ];
     }
     if (!loadedInstructions.prefix) {
       return [
         ...loadedInstructions.commandNotes,
-        "Isolated Claude Code skill discovery to the per-agent managed Claude home and this run's Rudder-enabled skills.",
+        "Prepended Rudder runtime skill boundary to stdin prompt.",
+        "Isolated Claude Code HOME without host .claude.json and disabled slash-command/MCP auto-loading.",
         ...(imageAttachmentNote ? [imageAttachmentNote] : []),
       ];
     }
     return [
       ...loadedInstructions.commandNotes,
-      `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended; relative references from ${instructionsFileDir}).`,
-      "Isolated Claude Code skill discovery to the per-agent managed Claude home and this run's Rudder-enabled skills.",
+      `Prepended instructions + path directive to stdin prompt (relative references from ${instructionsFileDir}).`,
+      "Prepended Rudder runtime skill boundary to stdin prompt.",
+      "Isolated Claude Code HOME without host .claude.json and disabled slash-command/MCP auto-loading.",
       ...(imageAttachmentNote ? [imageAttachmentNote] : []),
     ];
   })();
@@ -693,7 +734,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
+  const skillBoundaryPrompt = renderRudderSkillBoundaryPrompt(loadedSkills);
   const prompt = joinPromptSections([
+    loadedInstructions.prefix,
+    skillBoundaryPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedPrompt,
@@ -701,6 +745,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
+    skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
@@ -714,12 +759,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (model) args.push("--model", model);
     if (effort) args.push("--effort", effort);
     if (maxTurns > 0) args.push("--max-turns", String(maxTurns));
+    args.push("--disable-slash-commands");
+    args.push("--strict-mcp-config");
     args.push("--setting-sources", "user");
     args.push("--settings", path.join(env.HOME, ".claude", "settings.json"));
-    if (effectiveInstructionsFilePath) {
-      args.push("--append-system-prompt-file", effectiveInstructionsFilePath);
-    }
-    args.push("--add-dir", skillsDir);
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
   };
@@ -874,25 +917,21 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     };
   };
 
-  try {
-    const initial = await runAttempt(sessionId ?? null);
-    if (
-      sessionId &&
-      !initial.proc.timedOut &&
-      (initial.proc.exitCode ?? 0) !== 0 &&
-      initial.parsed &&
-      isClaudeUnknownSessionError(initial.parsed)
-    ) {
-      await onLog(
-        "stdout",
-        `[rudder] Claude resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
-      );
-      const retry = await runAttempt(null);
-      return toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true });
-    }
-
-    return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
-  } finally {
-    fs.rm(skillsDir, { recursive: true, force: true }).catch(() => {});
+  const initial = await runAttempt(sessionId ?? null);
+  if (
+    sessionId &&
+    !initial.proc.timedOut &&
+    (initial.proc.exitCode ?? 0) !== 0 &&
+    initial.parsed &&
+    isClaudeUnknownSessionError(initial.parsed)
+  ) {
+    await onLog(
+      "stdout",
+      `[rudder] Claude resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
+    );
+    const retry = await runAttempt(null);
+    return toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true });
   }
+
+  return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
 }

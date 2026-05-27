@@ -3,6 +3,16 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { E2E_CLAUDE_STUB, E2E_CODEX_STUB, E2E_HOME, E2E_INSTANCE_ID } from "./support/e2e-env";
 
+const BUNDLED_RUDDER_SKILL_SLUGS = [
+  "conversation-to-skill",
+  "para-memory-files",
+  "rudder",
+  "rudder-create-agent",
+  "rudder-create-plugin",
+  "skill-creator",
+  "skill-optimizer",
+] as const;
+
 async function resolveSingleAgentWorkspaceRoot(orgId: string) {
   const agentsRoot = path.join(
     E2E_HOME,
@@ -46,6 +56,45 @@ process.stdin.on("end", () => {
   process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }) + "\\n");
 });
 `;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeClaudeSkillBoundaryCaptureStub(commandPath: string, capturePath: string) {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  prompt += chunk;
+});
+process.stdin.on("end", () => {
+  const home = process.env.HOME || null;
+  const skillsHome = home ? path.join(home, ".claude", "skills") : null;
+  const claudeJsonPath = home ? path.join(home, ".claude.json") : null;
+  const payload = {
+    argv: process.argv.slice(2),
+    home,
+    prompt,
+    claudeCodeEnv: Object.fromEntries(
+      Object.entries(process.env)
+        .filter(([key]) => key.startsWith("CLAUDE_CODE_"))
+        .sort(([left], [right]) => left.localeCompare(right)),
+    ),
+    managedClaudeJsonExists: Boolean(claudeJsonPath && fs.existsSync(claudeJsonPath)),
+    managedClaudeJsonIsSymlink: Boolean(claudeJsonPath && fs.existsSync(claudeJsonPath) && fs.lstatSync(claudeJsonPath).isSymbolicLink()),
+    managedClaudeSkillEntries: skillsHome && fs.existsSync(skillsHome) ? fs.readdirSync(skillsHome).sort() : [],
+  };
+  fs.mkdirSync(path.dirname(${JSON.stringify(capturePath)}), { recursive: true });
+  fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify(payload), "utf8");
+  process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "claude-skill-boundary", model: "claude-test" }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "assistant", session_id: "claude-skill-boundary", message: { content: [{ type: "text", text: "captured" }] } }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", session_id: "claude-skill-boundary", result: "captured", usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 } }) + "\\n");
+});
+`;
+  await fs.mkdir(path.dirname(commandPath), { recursive: true });
   await fs.writeFile(commandPath, script, "utf8");
   await fs.chmod(commandPath, 0o755);
 }
@@ -872,5 +921,106 @@ test.describe("Organization and agent skills", () => {
     await expect(fs.access(path.join(managedCodexHome, "skills", ".system"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  test("invokes Claude with the Rudder skill boundary and isolated managed home", async ({ page }) => {
+    const organizationName = `Org-Claude-Skill-Boundary-${Date.now()}`;
+    const capturePath = path.join(E2E_HOME, "captures", `claude-skill-boundary-${Date.now()}.json`);
+    const captureCommandPath = path.join(E2E_HOME, "bin", `claude-skill-boundary-${Date.now()}`);
+    await writeClaudeSkillBoundaryCaptureStub(captureCommandPath, capturePath);
+    await fs.writeFile(
+      path.join(E2E_HOME, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rogue: { command: "rogue" },
+        },
+        skillUsage: {
+          "code-review": { usageCount: 99 },
+        },
+      }),
+      "utf8",
+    );
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: organizationName,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as {
+      id: string;
+    };
+
+    const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Claude Skill Boundary Tester",
+        role: "engineer",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {
+          command: captureCommandPath,
+          env: {
+            HOME: E2E_HOME,
+          },
+        },
+      },
+    });
+    expect(agentRes.ok()).toBe(true);
+    const agent = await agentRes.json() as { id: string };
+    const skillSyncRes = await page.request.post(`/api/agents/${agent.id}/skills/sync?orgId=${organization.id}`, {
+      data: {
+        desiredSkills: ["rudder/rudder"],
+      },
+    });
+    expect(skillSyncRes.ok()).toBe(true);
+
+    const managedClaudeHome = path.join(
+      E2E_HOME,
+      "instances",
+      E2E_INSTANCE_ID,
+      "organizations",
+      organization.id,
+      "claude-home",
+      "agents",
+      agent.id,
+    );
+
+    const runRes = await page.request.post(`/api/agents/${agent.id}/heartbeat/invoke?orgId=${organization.id}`);
+    expect(runRes.ok()).toBe(true);
+
+    await expect
+      .poll(async () => {
+        try {
+          return JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+            argv: string[];
+            home: string | null;
+            prompt: string;
+            claudeCodeEnv: Record<string, string>;
+            managedClaudeJsonExists: boolean;
+            managedClaudeJsonIsSymlink: boolean;
+            managedClaudeSkillEntries: string[];
+          };
+        } catch {
+          return null;
+        }
+      }, { timeout: 30_000 })
+      .toEqual(expect.objectContaining({
+        argv: expect.arrayContaining(["--disable-slash-commands", "--strict-mcp-config"]),
+        home: managedClaudeHome,
+        claudeCodeEnv: expect.objectContaining({
+          CLAUDE_CODE_DISABLE_AGENT_VIEW: "1",
+          CLAUDE_CODE_DISABLE_CLAUDE_API_SKILL: "1",
+        }),
+        managedClaudeJsonExists: false,
+        managedClaudeJsonIsSymlink: false,
+        managedClaudeSkillEntries: [...BUNDLED_RUDDER_SKILL_SLUGS],
+        prompt: expect.stringContaining("# Rudder Runtime Skill Boundary"),
+      }));
+
+    const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+      prompt: string;
+    };
+    expect(capture.prompt).toContain("Enabled Rudder Agent Skills:");
+    expect(capture.prompt).toContain("rudder");
+    expect(capture.prompt).not.toContain("code-review");
   });
 });

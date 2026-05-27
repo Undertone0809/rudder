@@ -35,5 +35,5 @@ Operational fields:
 
 Notes:
 - When Rudder realizes a workspace/runtime for a run, it injects RUDDER_WORKSPACE_* and RUDDER_RUNTIME_* env vars for agent-side tooling.
-- Rudder runs Claude with a per-agent managed HOME, generated Claude settings, and a transient --add-dir skill surface so Claude loads only the skills explicitly enabled on the agent's Skills page. Unselected skills already present in the real user home, project settings, plugins, or extra --add-dir/--settings args do not load.
+- Rudder runs Claude with a per-agent managed HOME, generated Claude settings, no host .claude.json, disabled slash-command/MCP auto-loading, and a stdin Rudder skill boundary so runtime skill state is derived from the agent's Skills page instead of adapter/global/project skills.
 `;
