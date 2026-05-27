@@ -1,0 +1,152 @@
+name: Docs production
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Commit SHA, branch, or existing tag to publish"
+        required: true
+        default: "main"
+      tag_name:
+        description: "Optional docs release tag, for example docs/v2026.05.27"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docs-production
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  VERCEL_ORG_ID: team_eu3qF8T1G0150GL2tqHOrG6Q
+  VERCEL_PROJECT_ID: prj_ppjxvoIGcoV3jGTeq8vBhzObXaJV
+  VERCEL_SCOPE: zeelands-projects
+  DOCS_PRODUCTION_DOMAIN: doc.rudder.zeeland.studio
+
+jobs:
+  publish:
+    name: Publish production docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.repository == 'Undertone0809/rudder'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Resolve docs tag
+        id: tag
+        run: |
+          git fetch --tags --force origin
+
+          if [[ -n "${{ inputs.tag_name }}" ]]; then
+            tag="${{ inputs.tag_name }}"
+          else
+            tag="docs/v$(TZ=Asia/Shanghai date +%Y.%m.%d)"
+          fi
+
+          if [[ ! "$tag" =~ ^docs/v[0-9]{4}\.[0-9]{2}\.[0-9]{2}([.-][A-Za-z0-9._-]+)?$ ]]; then
+            echo "Invalid docs tag: $tag" >&2
+            exit 1
+          fi
+
+          current_sha="$(git rev-parse HEAD)"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            existing_sha="$(git rev-list -n 1 "$tag")"
+            if [[ "$existing_sha" != "$current_sha" ]]; then
+              echo "Tag $tag already exists at $existing_sha, not $current_sha" >&2
+              exit 1
+            fi
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$current_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Validate docs
+        working-directory: docs
+        run: PUPPETEER_SKIP_DOWNLOAD=1 pnpm --package=node@20 --package=mint@latest dlx mint validate
+
+      - name: Export docs
+        working-directory: docs
+        run: pnpm --package=node@20 --package=mint@latest dlx mint export --output "$RUNNER_TEMP/rudder-docs.zip"
+
+      - name: Unpack static export
+        run: |
+          mkdir -p "$RUNNER_TEMP/rudder-docs-export"
+          unzip -q "$RUNNER_TEMP/rudder-docs.zip" -d "$RUNNER_TEMP/rudder-docs-export"
+          mkdir -p "$RUNNER_TEMP/rudder-docs-export/.vercel"
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > "$RUNNER_TEMP/rudder-docs-export/.vercel/project.json"
+
+      - name: Deploy to Vercel production
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          deployment_output="$(
+            vercel deploy "$RUNNER_TEMP/rudder-docs-export" \
+              --prod \
+              --skip-domain \
+              --yes \
+              --scope "$VERCEL_SCOPE" \
+              --token "$VERCEL_TOKEN" \
+              --meta githubCommitSha="${{ steps.tag.outputs.sha }}" \
+              --meta githubCommitRef="${{ inputs.source_ref }}" \
+              --meta docsChannel=production
+          )"
+          printf '%s\n' "$deployment_output"
+          deployment_url="$(printf '%s\n' "$deployment_output" | grep -Eo 'https://[^[:space:]]+|[A-Za-z0-9.-]+\.vercel\.app' | tail -n 1)"
+          if [[ -z "$deployment_url" ]]; then
+            echo "Could not determine Vercel deployment URL" >&2
+            exit 1
+          fi
+          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
+
+      - name: Alias production domain
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vercel alias set "${{ steps.deploy.outputs.deployment_url }}" "$DOCS_PRODUCTION_DOMAIN" \
+            --scope "$VERCEL_SCOPE" \
+            --token "$VERCEL_TOKEN"
+
+      - name: Verify production domain
+        run: curl --fail --silent --show-error --location "https://$DOCS_PRODUCTION_DOMAIN" >/dev/null
+
+      - name: Create docs release tag
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          current_sha="$(git rev-parse HEAD)"
+
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            existing_sha="$(git rev-list -n 1 "$tag")"
+            if [[ "$existing_sha" != "$current_sha" ]]; then
+              echo "Tag $tag already exists at $existing_sha, not $current_sha" >&2
+              exit 1
+            fi
+            echo "Tag $tag already exists at the published commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "docs: publish $tag"
+          git push origin "refs/tags/$tag"

@@ -45,6 +45,24 @@ Every stable release has five separate surfaces:
 
 A stable release is done only when all five surfaces are handled.
 
+## Docs Site Releases
+
+The public docs site uses separate staging and production channels:
+
+- `staging.doc.rudder.zeeland.studio` follows the latest `main` docs commit.
+  [`.github/workflows/docs-staging.yml`](../.github/workflows/docs-staging.yml)
+  runs automatically on `main` pushes that touch the docs tree or docs deployment
+  workflow.
+- `doc.rudder.zeeland.studio` is production. It does not auto-follow `main`.
+  Publish it manually with
+  [`.github/workflows/docs-production.yml`](../.github/workflows/docs-production.yml)
+  from the Actions tab.
+
+Production docs publishes create a git tag in the form `docs/vYYYY.MM.DD`, for
+example `docs/v2026.05.27`. If the default date tag already exists for a
+different commit, pass a more specific `tag_name` input such as
+`docs/v2026.05.27.2`.
+
 Canaries cover verification, npm, a traceability tag, and Desktop portable assets.
 
 ## Core Invariants

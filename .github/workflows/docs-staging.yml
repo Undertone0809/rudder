@@ -1,0 +1,98 @@
+name: Docs staging
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/docs-staging.yml"
+      - "docs/**"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-staging
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  VERCEL_ORG_ID: team_eu3qF8T1G0150GL2tqHOrG6Q
+  VERCEL_PROJECT_ID: prj_ppjxvoIGcoV3jGTeq8vBhzObXaJV
+  VERCEL_SCOPE: zeelands-projects
+  DOCS_STAGING_DOMAIN: staging.doc.rudder.zeeland.studio
+
+jobs:
+  deploy:
+    name: Deploy staging docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.repository == 'Undertone0809/rudder'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Validate docs
+        working-directory: docs
+        run: PUPPETEER_SKIP_DOWNLOAD=1 pnpm --package=node@20 --package=mint@latest dlx mint validate
+
+      - name: Export docs
+        working-directory: docs
+        run: pnpm --package=node@20 --package=mint@latest dlx mint export --output "$RUNNER_TEMP/rudder-docs.zip"
+
+      - name: Unpack static export
+        run: |
+          mkdir -p "$RUNNER_TEMP/rudder-docs-export"
+          unzip -q "$RUNNER_TEMP/rudder-docs.zip" -d "$RUNNER_TEMP/rudder-docs-export"
+          mkdir -p "$RUNNER_TEMP/rudder-docs-export/.vercel"
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > "$RUNNER_TEMP/rudder-docs-export/.vercel/project.json"
+
+      - name: Deploy to Vercel preview
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          deployment_output="$(
+            vercel deploy "$RUNNER_TEMP/rudder-docs-export" \
+              --target=preview \
+              --yes \
+              --scope "$VERCEL_SCOPE" \
+              --token "$VERCEL_TOKEN" \
+              --meta githubCommitSha="$GITHUB_SHA" \
+              --meta githubCommitRef="$GITHUB_REF_NAME" \
+              --meta docsChannel=staging
+          )"
+          printf '%s\n' "$deployment_output"
+          deployment_url="$(printf '%s\n' "$deployment_output" | grep -Eo 'https://[^[:space:]]+|[A-Za-z0-9.-]+\.vercel\.app' | tail -n 1)"
+          if [[ -z "$deployment_url" ]]; then
+            echo "Could not determine Vercel deployment URL" >&2
+            exit 1
+          fi
+          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
+
+      - name: Alias staging domain
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vercel alias set "${{ steps.deploy.outputs.deployment_url }}" "$DOCS_STAGING_DOMAIN" \
+            --scope "$VERCEL_SCOPE" \
+            --token "$VERCEL_TOKEN"
+
+      - name: Verify staging domain
+        run: curl --fail --silent --show-error --location "https://$DOCS_STAGING_DOMAIN" >/dev/null
