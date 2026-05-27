@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { clearTimeout, setTimeout } from "node:timers";
 import { setTimeout as delay } from "node:timers/promises";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
@@ -414,6 +415,20 @@ export function selectChecksumAsset(assets: GithubReleaseAsset[]): GithubRelease
   return assets.find((asset) => asset.name.toLowerCase() === DESKTOP_CHECKSUM_ASSET_NAME.toLowerCase()) ?? null;
 }
 
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function githubApiHeaders(): HeadersInit {
   return {
     Accept: "application/vnd.github+json",
@@ -421,12 +436,14 @@ function githubApiHeaders(): HeadersInit {
   };
 }
 
+const GITHUB_API_TIMEOUT_MS = 15_000;
+
 async function fetchGithubRelease(repo: string, tag: string): Promise<GithubRelease> {
   const endpoint =
     tag === "latest"
       ? `https://api.github.com/repos/${repo}/releases/latest`
       : `https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`;
-  const response = await fetch(endpoint, { headers: githubApiHeaders() });
+  const response = await fetchWithTimeout(endpoint, { headers: githubApiHeaders() }, GITHUB_API_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(`GitHub Release ${tag} was not found in ${repo} (${response.status}).`);
   }
@@ -468,7 +485,7 @@ function buildGithubReleaseAsset(repo: string, tag: string, assetName: string): 
 }
 
 function uniqueAssetDownloadUrls(asset: GithubReleaseAsset): string[] {
-  const urls = [asset.url, asset.browser_download_url].filter((url): url is string => Boolean(url));
+  const urls = [asset.browser_download_url, asset.url].filter((url): url is string => Boolean(url));
   return Array.from(new Set(urls));
 }
 
@@ -507,13 +524,16 @@ export async function downloadAsset(
   mkdirSync(outputDir, { recursive: true });
   const outputPath = path.join(outputDir, path.basename(asset.name));
 
+  const ASSET_DOWNLOAD_TIMEOUT_MS = 600_000;
   let response: Response | null = null;
   const failures: string[] = [];
   for (const url of uniqueAssetDownloadUrls(asset)) {
     try {
-      const candidate = await fetch(url, {
-        headers: downloadHeadersForAssetUrl(asset, url),
-      });
+      const candidate = await fetchWithTimeout(
+        url,
+        { headers: downloadHeadersForAssetUrl(asset, url) },
+        ASSET_DOWNLOAD_TIMEOUT_MS,
+      );
       if (candidate.ok && candidate.body) {
         response = candidate;
         break;

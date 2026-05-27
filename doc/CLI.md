@@ -31,6 +31,16 @@ setup, and launch. The first `npx` package fetch and its "Ok to proceed?"
 prompt are controlled by npm itself, so Rudder progress output starts after
 npm has handed execution to the CLI.
 
+First-run speed depends on three separate network paths: npm for the thin CLI,
+npm for the cached server runtime, and GitHub Releases for the portable Desktop
+asset. On Windows, the Desktop zip is usually the largest asset. If the initial
+`npx` phase is slow before Rudder prints its banner, check npm's active registry
+and proxy settings with `npm config get registry`, `npm config get proxy`, and
+`npm config get https-proxy`. If the slowdown starts at `Downloading
+Rudder-...-portable.zip`, the bottleneck is the GitHub Release asset path;
+Rudder uses the public release download URL first and falls back to the GitHub
+asset API URL if needed.
+
 Invocation forms are equivalent once they resolve to the same CLI version:
 
 ```sh
