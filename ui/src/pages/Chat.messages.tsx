@@ -603,7 +603,7 @@ export function ProposalCard({
         </div>
 
         {issueProposal ? (
-          <section className="border-t border-[color:var(--border-soft)] px-5 py-4">
+          <section className="chat-review-details-section px-5 pb-4 pt-7">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="text-sm font-semibold text-foreground">Proposal details</div>
               {proposalDetailsCanExpand ? (
