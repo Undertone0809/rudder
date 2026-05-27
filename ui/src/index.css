@@ -1049,31 +1049,31 @@
     content: "";
     position: absolute;
     z-index: 2;
-    top: -1px;
-    right: -1px;
-    width: 2.35rem;
-    height: 2.35rem;
+    top: 0;
+    right: 0;
+    width: 3.15rem;
+    height: 3.15rem;
     background:
       linear-gradient(
         135deg,
-        color-mix(in oklab, var(--surface-elevated) 18%, transparent) 0 49%,
-        color-mix(in oklab, var(--surface-proposal) 70%, var(--surface-elevated)) 50% 100%
+        color-mix(in oklab, white 56%, var(--surface-proposal)) 0%,
+        color-mix(in oklab, var(--surface-proposal) 68%, var(--surface-elevated)) 64%,
+        color-mix(in oklab, var(--surface-shell) 86%, var(--surface-elevated)) 100%
       );
-    border-left: 1px solid color-mix(in oklab, var(--accent-base) 18%, var(--border-base));
-    border-bottom: 1px solid color-mix(in oklab, var(--accent-base) 18%, var(--border-base));
-    box-shadow: -8px 8px 16px -15px color-mix(in oklab, var(--accent-base) 45%, black);
+    clip-path: polygon(100% 0, 100% 100%, 0 0);
+    filter: drop-shadow(-10px 10px 10px color-mix(in oklab, var(--accent-base) 14%, transparent));
     pointer-events: none;
   }
 
   .chat-review-block::after {
     content: "";
     position: absolute;
-    z-index: 1;
-    top: 0.55rem;
-    right: 0.55rem;
-    width: 1.45rem;
+    z-index: 3;
+    top: 1.55rem;
+    right: -0.32rem;
+    width: 4.45rem;
     height: 1px;
-    background: color-mix(in oklab, var(--border-base) 62%, transparent);
+    background: color-mix(in oklab, var(--border-base) 74%, transparent);
     transform: rotate(45deg);
     transform-origin: center;
     pointer-events: none;
