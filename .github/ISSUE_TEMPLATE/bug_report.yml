@@ -69,36 +69,20 @@ body:
   - type: input
     id: rudder_version
     attributes:
-      label: Rudder version or commit
-      description: Enter the version, release tag, or commit SHA where you saw the bug.
-      placeholder: v0.2.6, 603adb9b, or main@603adb9b
-    validations:
-      required: true
+      label: Rudder version
+      description: If you can find it, enter the Rudder version or release tag. Leave this blank if you are not sure.
+      placeholder: v0.2.6
 
   - type: dropdown
     id: platform
     attributes:
       label: Platform
-      description: Which platform are you using?
+      description: Which operating system are you using? If you choose Other, describe it in Environment details below.
       options:
         - macOS
         - Windows
         - Linux
-        - Other
-    validations:
-      required: true
-
-  - type: dropdown
-    id: install_method
-    attributes:
-      label: Install or run method
-      description: How are you running Rudder?
-      options:
-        - Desktop app
-        - Local development server
-        - npm package
-        - Docker or container
-        - Other
+        - Other (please describe below)
     validations:
       required: true
 
@@ -106,9 +90,11 @@ body:
     id: environment_details
     attributes:
       label: Environment details
-      description: Add any extra environment details that may matter.
+      description: Add anything about your setup that may matter. If Platform is Other, please write the exact platform here.
       placeholder: |
         - OS version:
+        - If Platform is Other, what is it?
+        - How are you running Rudder? Desktop app, local development server, npm package, Docker/container, or something else?
         - Browser:
         - Node version:
         - pnpm version:
@@ -117,9 +103,19 @@ body:
   - type: textarea
     id: evidence
     attributes:
-      label: Evidence
-      description: Add logs, screenshots, traces, links, or related issues.
-      placeholder: Paste concise evidence here.
+      label: Logs, screenshots, or other evidence
+      description: |
+        Please add screenshots or the most relevant log lines around the error. You can paste a short log snippet or attach a small log file.
+
+        Local log locations:
+        - Desktop app or normal CLI runs: `~/.rudder/instances/default/logs/`
+        - Agent run logs: `~/.rudder/instances/default/data/run-logs/`
+        - Local development server: `~/.rudder/instances/dev/logs/` and `~/.rudder/instances/dev/data/run-logs/`
+        - If you set `RUDDER_HOME` or `RUDDER_INSTANCE_ID`, use `$RUDDER_HOME/instances/$RUDDER_INSTANCE_ID/` instead.
+
+        Before posting logs, please remove secrets such as API keys, tokens, cookies, passwords, private URLs, and anything from private code or prompts that you do not want public. Rudder redacts known secret fields in its own config/event logs, but third-party CLI output and raw run logs may still contain private paths, prompts, command output, or provider messages.
+      placeholder: |
+        Paste the few lines before and after the error here, or attach a small log file after checking it for private data.
 
   - type: textarea
     id: impact
