@@ -85,6 +85,9 @@ process.stdin.on("end", () => {
     ),
     managedClaudeJsonExists: Boolean(claudeJsonPath && fs.existsSync(claudeJsonPath)),
     managedClaudeJsonIsSymlink: Boolean(claudeJsonPath && fs.existsSync(claudeJsonPath) && fs.lstatSync(claudeJsonPath).isSymbolicLink()),
+    managedClaudeJsonText: claudeJsonPath && fs.existsSync(claudeJsonPath) && fs.lstatSync(claudeJsonPath).isFile()
+      ? fs.readFileSync(claudeJsonPath, "utf8")
+      : null,
     managedClaudeSkillEntries: skillsHome && fs.existsSync(skillsHome) ? fs.readdirSync(skillsHome).sort() : [],
   };
   fs.mkdirSync(path.dirname(${JSON.stringify(capturePath)}), { recursive: true });
@@ -997,6 +1000,7 @@ test.describe("Organization and agent skills", () => {
             claudeCodeEnv: Record<string, string>;
             managedClaudeJsonExists: boolean;
             managedClaudeJsonIsSymlink: boolean;
+            managedClaudeJsonText: string | null;
             managedClaudeSkillEntries: string[];
           };
         } catch {
@@ -1010,8 +1014,9 @@ test.describe("Organization and agent skills", () => {
           CLAUDE_CODE_DISABLE_AGENT_VIEW: "1",
           CLAUDE_CODE_DISABLE_CLAUDE_API_SKILL: "1",
         }),
-        managedClaudeJsonExists: false,
+        managedClaudeJsonExists: true,
         managedClaudeJsonIsSymlink: false,
+        managedClaudeJsonText: "{}\n",
         managedClaudeSkillEntries: [...BUNDLED_RUDDER_SKILL_SLUGS],
         prompt: expect.stringContaining("# Rudder Runtime Skill Boundary"),
       }));

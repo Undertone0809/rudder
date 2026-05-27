@@ -44,6 +44,11 @@ const payload = {
     .filter((key) => key.startsWith("RUDDER_"))
     .sort(),
   managedClaudeJsonExists: Boolean(managedClaudeJsonPath && fs.existsSync(managedClaudeJsonPath)),
+  managedClaudeJsonIsSymlink: Boolean(managedClaudeJsonPath && fs.existsSync(managedClaudeJsonPath) && fs.lstatSync(managedClaudeJsonPath).isSymbolicLink()),
+  managedClaudeJsonText:
+    managedClaudeJsonPath && fs.existsSync(managedClaudeJsonPath) && fs.lstatSync(managedClaudeJsonPath).isFile()
+      ? fs.readFileSync(managedClaudeJsonPath, "utf8")
+      : null,
   managedClaudeSettingsPath,
   managedClaudeSettings:
     managedClaudeSettingsPath && fs.existsSync(managedClaudeSettingsPath)
@@ -416,6 +421,8 @@ describe("claude execute", () => {
         managedClaudeSettingsPath: string | null;
         managedClaudeSettings: string | null;
         managedClaudeJsonExists: boolean;
+        managedClaudeJsonIsSymlink: boolean;
+        managedClaudeJsonText: string | null;
         addDirSkillEntries: string[];
         managedClaudeSkillEntries: string[];
         argv: string[];
@@ -426,7 +433,9 @@ describe("claude execute", () => {
       expect(capture.argv).toEqual(expect.arrayContaining(["--setting-sources", "user"]));
       expect(capture.argv).toEqual(expect.arrayContaining(["--settings", capture.managedClaudeSettingsPath]));
       expect(capture.argv).toEqual(expect.arrayContaining(["--disable-slash-commands", "--strict-mcp-config"]));
-      expect(capture.managedClaudeJsonExists).toBe(false);
+      expect(capture.managedClaudeJsonExists).toBe(true);
+      expect(capture.managedClaudeJsonIsSymlink).toBe(false);
+      expect(capture.managedClaudeJsonText).toBe("{}\n");
       const managedSettings = JSON.parse(capture.managedClaudeSettings ?? "{}") as {
         env?: Record<string, unknown>;
         skillOverrides?: Record<string, unknown>;
@@ -443,6 +452,81 @@ describe("claude execute", () => {
       );
       expect(capture.addDirSkillEntries).not.toContain("user-skill.txt");
       expect(capture.managedClaudeSkillEntries).toEqual([]);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await fs.rm(path.join(root, ".rudder"), { recursive: true, force: true });
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves Claude-managed .claude.json between runs without linking host state", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-json-preserve-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "claude");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(path.join(root, ".claude.json"), "{\"hostState\":true}\n", "utf8");
+    await writeFakeClaudeCommand(commandPath);
+
+    const managedClaudeJsonPath = path.join(
+      root,
+      ".rudder",
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "claude-home",
+      "agents",
+      "agent-preserve",
+      ".claude.json",
+    );
+    await fs.mkdir(path.dirname(managedClaudeJsonPath), { recursive: true });
+    await fs.writeFile(managedClaudeJsonPath, "{\"managedState\":true}\n", "utf8");
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-preserve",
+        agent: {
+          id: "agent-preserve",
+          orgId: "organization-1",
+          name: "Claude Coder",
+          agentRuntimeType: "claude_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            HOME: root,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        managedClaudeJsonIsSymlink: boolean;
+        managedClaudeJsonText: string | null;
+      };
+      expect(capture.managedClaudeJsonIsSymlink).toBe(false);
+      expect(capture.managedClaudeJsonText).toBe("{\"managedState\":true}\n");
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;

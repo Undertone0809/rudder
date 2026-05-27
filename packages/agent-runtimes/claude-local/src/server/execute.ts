@@ -185,6 +185,22 @@ async function writeManagedClaudeSettings(input: {
   return target;
 }
 
+async function ensureManagedClaudeJson(targetHome: string) {
+  const target = path.join(targetHome, ".claude.json");
+  const stat = await fs.lstat(target).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+
+  if (stat?.isFile()) return;
+  if (stat) {
+    await fs.rm(target, { recursive: true, force: true });
+  }
+  await fs.writeFile(target, "{}\n", { flag: "wx" }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "EEXIST") throw error;
+  });
+}
+
 async function prepareManagedClaudeHome(
   env: NodeJS.ProcessEnv,
   onLog: AgentRuntimeExecutionContext["onLog"],
@@ -197,7 +213,7 @@ async function prepareManagedClaudeHome(
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(targetHome, { recursive: true });
-  await fs.rm(path.join(targetHome, ".claude.json"), { recursive: true, force: true });
+  await ensureManagedClaudeJson(targetHome);
   await fs.rm(path.join(targetHome, ".claude", "skills"), { recursive: true, force: true });
   await fs.mkdir(path.join(targetHome, ".claude", "skills"), { recursive: true });
   for (const skill of enabledSkills) {
