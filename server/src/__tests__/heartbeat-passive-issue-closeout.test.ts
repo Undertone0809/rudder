@@ -12,6 +12,8 @@ import {
   agentWakeupRequests,
   agents,
   applyPendingMigrations,
+  automationRuns,
+  automations,
   createDb,
   ensurePostgresDatabase,
   heartbeatRunEvents,
@@ -138,6 +140,8 @@ describe("heartbeat passive issue closeout", () => {
       try {
         await db.delete(activityLog);
         await db.delete(issueComments);
+        await db.delete(automationRuns);
+        await db.delete(automations);
         await db.delete(issues);
         await db.delete(heartbeatRunEvents);
         await db.delete(heartbeatRuns);
@@ -577,6 +581,75 @@ describe("heartbeat passive issue closeout", () => {
     const issue = await getIssue(issueId);
     expect(issue?.executionRunId).toBe(followup?.id);
     expect(issue?.status).toBe("in_progress");
+  });
+
+  it("auto-closes successful chat-output automation issues instead of queuing passive follow-up", async () => {
+    const { agentId, issueId, orgId } = await seedFixture();
+    const automationId = randomUUID();
+    const automationRunId = randomUUID();
+
+    await db.insert(automations).values({
+      id: automationId,
+      orgId,
+      title: "Say hello",
+      description: "Say hello to me.",
+      assigneeAgentId: agentId,
+      outputMode: "chat_output",
+      priority: "medium",
+      status: "active",
+      concurrencyPolicy: "coalesce_if_active",
+      catchUpPolicy: "skip_missed",
+    });
+    await db.insert(automationRuns).values({
+      id: automationRunId,
+      orgId,
+      automationId,
+      source: "manual",
+      status: "issue_created",
+      linkedIssueId: issueId,
+    });
+    await db
+      .update(issues)
+      .set({
+        originKind: "automation_execution",
+        originId: automationId,
+        originRunId: automationRunId,
+      })
+      .where(eq(issues.id, issueId));
+
+    const run = await wakeIssueRun({ agentId, issueId });
+
+    const issue = await waitFor(async () => {
+      const current = await getIssue(issueId);
+      return current?.executionRunId === null && current.status === "done" ? current : null;
+    });
+    expect(issue.completedAt).toBeTruthy();
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.id).toBe(run.id);
+
+    const automationRun = await db
+      .select()
+      .from(automationRuns)
+      .where(eq(automationRuns.id, automationRunId))
+      .then((rows) => rows[0] ?? null);
+    expect(automationRun).toMatchObject({
+      status: "completed",
+      linkedIssueId: issueId,
+    });
+    expect(automationRun?.completedAt).toBeTruthy();
+
+    const closeoutActivity = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "issue.updated"))
+      .then((rows) => rows.find((row) =>
+        (row.details as Record<string, unknown> | null)?.closeoutReason === "chat_output_run_succeeded") ?? null);
+    expect(closeoutActivity?.entityId).toBe(issueId);
   });
 
   it("queues passive follow-up for reviewed assignee runs that comment without routing to review", async () => {
