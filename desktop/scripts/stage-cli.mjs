@@ -21,11 +21,9 @@ const serverRuntimeExternals = [
   "@rudderhq/agent-runtime-openclaw-gateway",
   "@rudderhq/agent-runtime-opencode-local",
   "@rudderhq/agent-runtime-pi-local",
-  "@rudderhq/agent-runtime-utils",
   "@rudderhq/db",
   "@rudderhq/plugin-sdk",
   "@rudderhq/server",
-  "@rudderhq/shared",
   "ajv",
   "ajv-formats",
   "better-auth",
@@ -33,7 +31,6 @@ const serverRuntimeExternals = [
   "commander",
   "detect-port",
   "dompurify",
-  "dotenv",
   "drizzle-orm",
   "embedded-postgres",
   "express",
@@ -46,7 +43,6 @@ const serverRuntimeExternals = [
   "pino-pretty",
   "sharp",
   "ws",
-  "zod",
 ];
 
 async function main() {
@@ -78,6 +74,9 @@ async function main() {
     minify: true,
     sourcemap: false,
     legalComments: "none",
+    banner: {
+      js: "import { createRequire as __rudderCreateRequire } from 'node:module'; const require = __rudderCreateRequire(import.meta.url);",
+    },
     external: serverRuntimeExternals,
   });
 }

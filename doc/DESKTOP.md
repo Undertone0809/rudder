@@ -15,8 +15,8 @@ Current desktop scope is intentionally narrow:
 - bundled local instance only
 - `local_trusted` only
 - packaged app uses a resident shell lifecycle
-- update detection and Rudder-managed portable replacement are available;
-  binary-delta incremental updates are not implemented yet
+- update detection, Rudder-managed portable replacement, and layered shell
+  updates are available; binary-delta patch updates are not implemented yet
 - no launch-at-login
 - no remote-instance connection mode
 
@@ -221,8 +221,11 @@ Desktop packaging uses Electron + electron-builder and currently produces:
 The GitHub Actions desktop workflow builds artifacts on all three operating systems. Stable tags under `v*` and canary tags under `canary/v*` publish Desktop artifacts to the matching GitHub Release:
 
 - `Rudder-X.Y.Z-macos-x64-portable.zip`
+- `Rudder-X.Y.Z-macos-x64-shell.zip`
 - `Rudder-X.Y.Z-macos-arm64-portable.zip`
+- `Rudder-X.Y.Z-macos-arm64-shell.zip`
 - `Rudder-X.Y.Z-windows-x64-portable.zip`
+- `Rudder-X.Y.Z-windows-x64-shell.zip`
 - `Rudder-X.Y.Z-linux-x64.AppImage`
 - `SHASUMS256.txt`
 
@@ -234,6 +237,15 @@ falling back to the committed stable base version.
 Desktop artifacts are not published to npm. The CLI `start` command resolves
 the appropriate GitHub Release asset for the current platform, verifies
 `SHASUMS256.txt`, installs the app into a per-user location, and launches it.
+On macOS and Windows, `start` prefers the layered `shell` asset when the release
+publishes one. Shell assets keep the Electron shell and packaged desktop CLI,
+but load the server from the already prepared `~/.rudder/runtimes/<version>`
+cache instead of carrying the full packaged server and embedded PostgreSQL
+payload on every Desktop update. If the shell asset is missing, unchecked, or
+cannot be downloaded, `start` falls back to the full portable asset.
+Launching a shell asset directly without the matching runtime cache is not a
+supported install path; rerun `rudder start` so the CLI can prepare the runtime
+cache first, or install the full portable asset.
 Downloaded Desktop assets are cached under `~/.rudder/desktop-assets/` by
 SHA-256 checksum so repeated installs or retries can reuse an already verified
 portable asset instead of downloading the full release again.
@@ -248,9 +260,10 @@ Settings > General. With canary enabled, startup, menu, and About-page checks
 compare against the latest canary release. Beta prereleases are ignored; if a
 newer matching release exists, the app prompts the user to update.
 When the operator chooses Update, Desktop starts the bundled CLI
-`start --no-cli` portable replacement flow for the discovered version. That
-flow downloads the matching release asset, verifies `SHASUMS256.txt`, requests
-the running Desktop shell to quit, replaces the per-user portable app, refreshes
+`start --no-cli` replacement flow for the discovered version. That flow prepares
+the matching server runtime cache, downloads the preferred shell asset when
+available or the full portable fallback otherwise, verifies `SHASUMS256.txt`,
+requests the running Desktop shell to quit, replaces the per-user app, refreshes
 launchers, and reopens Rudder. If active agent runs exist, the update is blocked
 until active work is stopped.
 
@@ -264,5 +277,8 @@ relaunch begin only after that confirmation. Settings > About can also show the
 same update session as a denser phase-by-phase diagnostic panel for debugging or
 validation.
 
-This is a full portable asset replacement. It is not a binary-delta incremental
-update path.
+This is a layered asset replacement path, not a binary-delta patcher. Fresh
+installs still download the server runtime and a Desktop app, but routine
+macOS/Windows Desktop updates avoid redownloading the embedded PostgreSQL
+payload when the release provides a shell asset and the matching runtime cache
+has already been prepared.
