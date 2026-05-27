@@ -2,14 +2,15 @@
 name: codex-session-benchmark-maintainer
 description: >
   Benchmark and compare local Codex sessions for Rudder development work. Use
-  when the user gives a Codex session id and asks to compare it with recent
-  Codex history, recent Rudder runs, or "最近 30/50/100 条", including questions
-  about efficiency, follow-up rate, interruption rate, token/cost hints,
-  problem-resolution rate, workflow quality, or whether a session performed
-  better or worse than the surrounding cohort. Produces a proxy-metric report
-  with explicit caveats, failure classes, and next skill/workflow
-  improvements. Prefer this over generic conversation analysis when the user
-  wants a target-vs-baseline comparison.
+  when the user gives a target Codex session id or clearly asks to compare one
+  session or class of sessions with recent Codex history, recent Rudder runs, or
+  "最近 30/50/100 条". Cover efficiency, follow-up rate, interruption rate,
+  token/cost hints, problem-resolution rate, workflow quality, or whether the
+  target performed better or worse than the surrounding cohort. Produces a
+  proxy-metric report with explicit caveats, failure classes, and next
+  skill/workflow improvements. Prefer this over generic conversation analysis
+  for target-vs-baseline comparison; do not use it alone for cohort-only skill
+  hygiene prompts whose deliverable is "which skill should be optimized".
 ---
 
 # Codex Session Benchmark Maintainer
@@ -49,6 +50,9 @@ Do not use this skill for:
   `agent-work-reviewer-maintainer`
 - optimizing a skill from the benchmark result; use `skill-optimizer` after this
   report identifies the reusable failure class
+- cohort-only skill maintenance such as "最近 30 个 Codex sessions，哪些 project
+  skills 需要优化" with no target session or benchmark comparison; use
+  `skill-optimizer` plus a clean recent-session evidence packet
 - claiming a session was "successful" without explaining the proxy definition
 
 If the user asks both "why did this session fail" and "how does it compare to
@@ -68,6 +72,11 @@ Identify:
 - whether Rudder agent-run history is part of the comparison or just the topic
   being discussed inside the Codex session
 
+If there is no target session and the user asks which skills or workflows need
+optimization, do not force a benchmark report. Build a brief cohort evidence
+packet, then hand off to `skill-optimizer` with the failure classes and target
+skill decision points.
+
 If the user gives only a session prefix, search local Codex logs before asking:
 
 ```bash
@@ -78,6 +87,7 @@ rg "<session-prefix>" ~/.codex/session_index.jsonl ~/.codex/sessions ~/.codex/ar
 
 Read local Codex JSONL logs from:
 
+- `~/.codex/state_5.sqlite` as the practical primary index when available
 - `~/.codex/session_index.jsonl`
 - `~/.codex/sessions/**/*.jsonl`
 - `~/.codex/archived_sessions/*.jsonl`
@@ -86,6 +96,10 @@ For recent-session windows:
 
 - dedupe by `session_meta.payload.id`
 - exclude the current active analysis session
+- exclude spawned reviewer, sidecar, and current automation child sessions unless
+  the user explicitly asks to count all agent activity
+- collapse repeated retry/resume clusters when they share the same user goal and
+  would otherwise dominate the cohort
 - preserve exact cwd and related worktree cwd as separate labels
 - include archived sessions only when the requested window or target requires
   them
@@ -95,6 +109,10 @@ For recent-session windows:
 Do not count resumed fragments, reviewer child sessions, or duplicated copied
 rollout files as separate work unless their `session_meta.id` differs and the
 user explicitly wants all agent activity.
+
+When `stage1_outputs` or summaries are missing, read the raw rollout JSONL for
+the first user request, user corrections, tool calls, final handoff, and
+validation evidence. Do not infer outcomes from the thread title alone.
 
 ### 3. Extract proxy metrics
 
@@ -177,6 +195,15 @@ If the recommendation is skill optimization, hand off to `skill-optimizer` with:
 - target skill
 - exact decision point
 - proposed eval case
+
+For cohort-only skill-maintenance prompts, the handoff itself is the main
+deliverable. Include:
+
+- cohort construction rules and explicit exclusions
+- recurring failure class or success pattern
+- target skill and exact decision point
+- small proposed patch area
+- trigger or behavior eval that would prevent the recurrence
 
 ## Output Shape
 

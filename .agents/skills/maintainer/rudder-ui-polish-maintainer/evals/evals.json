@@ -61,5 +61,15 @@
       "Stops with a concise explanation and possible fix direction rather than patching files",
       "Does not claim rendered verification of a new layout because no implementation was requested"
     ]
+  },
+  {
+    "name": "component_lab_not_polish",
+    "prompt": "我想构建一个 UI lab，里面可以看到所有组件，能区分哪些组件需要 app context。优化一下这个 UI lab。",
+    "assertions": [
+      "Does not treat UI Lab/component inventory as a narrow UI polish task",
+      "Routes through development-lifecycle-router-maintainer component-lab workflow before implementation",
+      "Requires coverage targets, context-required classification, tests, and browser proof",
+      "Uses this skill only for concrete rendered-state fixes after component-lab scope is approved"
+    ]
   }
 ]

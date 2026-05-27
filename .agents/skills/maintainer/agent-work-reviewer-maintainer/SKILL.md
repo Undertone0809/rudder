@@ -172,6 +172,23 @@ Record which evidence exists:
 Treat timed-out, skipped, or attempted checks as unverified. Do not convert
 "looked plausible in code" into product proof.
 
+When reviewing in-progress work, spawned reviewer child sessions, or a branch
+with unrelated dirty feature groups, use a mixed-state verdict instead of a
+binary pass/fail. Examples:
+
+- `accept`: no blocking product, behavior, validation, or handoff gaps remain
+  for the requested scope.
+- `conditional accept`: the artifact direction is sound, but merge/handoff is
+  blocked by missing proof, unrelated dirty work, or explicit reviewer follow-up.
+- `needs more evidence`: the required scenario, diff, source data, or validation
+  is not available enough to judge.
+- `reject`: the artifact solves the wrong problem or introduces a blocking
+  regression.
+
+For child-reviewer outputs, preserve the parent task boundary. Do not turn the
+review into implementation and do not judge sibling or unrelated dirty work as
+part of the artifact unless it affects merge/handoff safety.
+
 ### 4.1 Run The Real Scenario When It Matters
 
 For functional review, UI review, Desktop review, or workflow-regression review,
@@ -303,6 +320,9 @@ Look for:
   points disagree
 - branch mismatch: work landed somewhere but not on `main`
 - handoff mismatch: URL exists but screenshot or real flow evidence is missing
+- hygiene mismatch: the implementation artifact is plausible, but unrelated
+  dirty files, child-session duplication, or pending validation means it cannot
+  be safely merged or handed off as complete
 
 ## Multi-Round Review
 
