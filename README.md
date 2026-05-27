@@ -137,6 +137,10 @@ If you touched desktop startup, packaging, migrations, or local profile routing,
 pnpm desktop:verify
 ```
 
+## Community
+
+[LINUX DO](https://linux.do/)
+
 ## License
 
 Rudder is licensed at the project level under Apache-2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE),
