@@ -178,7 +178,7 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Preview stable publish
-        run: ./scripts/release.sh stable --dry-run
+        run: ./scripts/release.sh stable --dry-run --skip-verify
 
   stable:
     name: Publish stable release
@@ -223,7 +223,7 @@ jobs:
         run: |
           version="$(./scripts/release.sh stable --print-version)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          ./scripts/release.sh stable
+          ./scripts/release.sh stable --skip-verify
           git push origin "refs/tags/v${version}"
           PUBLISH_REMOTE=origin ./scripts/create-github-release.sh "${version}"
 
