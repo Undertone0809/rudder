@@ -40,6 +40,10 @@ Agents can manage their own working memory and personal skills inside their agen
 
 Runtime skill loading comes from the agent's enabled-skills configuration in Rudder. Installing files on disk is not the same as enabling a skill for future runs.
 
+Rudder keeps skill selection on the agent's own Skills page, not inside the adapter. Even when an agent runs through Codex, Claude Code, or another runtime adapter, the Rudder agent skills loaded for that run should come only from the skills enabled for that agent in Rudder.
+
+That boundary matters: the adapter hands Rudder's run request to a concrete tool; Rudder decides the agent identity, issue context, workspace, and enabled skills. An adapter should not automatically load skills from its own environment in a way that overrides or bypasses the agent configuration in Rudder.
+
 ## Next steps
 
 <CardGroup cols={2}>
