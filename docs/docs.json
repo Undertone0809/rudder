@@ -54,8 +54,7 @@
               "concepts/goals-projects-issues",
               "concepts/agents",
               "concepts/issues",
-              "concepts/chat",
-              "concepts/messenger",
+              "concepts/chat-messenger",
               "concepts/calendar",
               "concepts/workspaces",
               "concepts/skills"
@@ -66,6 +65,7 @@
             "icon": "route",
             "pages": [
               "how-to/issue-lifecycle",
+              "how-to/create-agent",
               "how-to/configure-agent-runtime"
             ]
           }
@@ -91,8 +91,7 @@
               "zh/concepts/goals-projects-issues",
               "zh/concepts/agents",
               "zh/concepts/issues",
-              "zh/concepts/chat",
-              "zh/concepts/messenger",
+              "zh/concepts/chat-messenger",
               "zh/concepts/calendar",
               "zh/concepts/workspaces",
               "zh/concepts/skills"
@@ -141,12 +140,8 @@
         "header": "Product",
         "items": [
           {
-            "label": "Chat",
-            "href": "/concepts/chat"
-          },
-          {
-            "label": "Messenger",
-            "href": "/concepts/messenger"
+            "label": "Chat and Messenger",
+            "href": "/concepts/chat-messenger"
           },
           {
             "label": "Calendar",
@@ -172,11 +167,11 @@
   "redirects": [
     {
       "source": "/concepts/messenger-approvals",
-      "destination": "/concepts/messenger"
+      "destination": "/concepts/chat-messenger"
     },
     {
       "source": "/zh/concepts/messenger-approvals",
-      "destination": "/zh/concepts/messenger"
+      "destination": "/zh/concepts/chat-messenger"
     }
   ]
 }

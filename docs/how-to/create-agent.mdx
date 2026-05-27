@@ -1,0 +1,132 @@
+---
+title: "Create an Agent"
+description: "Add a Rudder agent with a clear responsibility and runtime."
+icon: "bot"
+---
+
+A new organization includes a default agent. Use it for the first real workflow.
+
+Create another agent when you need a second responsibility, a second runtime, or a separate boundary between execution and review. A good agent should be easy to understand at a glance: what it owns, what work it can accept, and when it should stop and ask a human.
+
+## Before you start
+
+Confirm three things:
+
+- Rudder is running and you are inside an organization.
+- You know what class of work this agent should own.
+- The runtime you want to use is ready, such as local Codex, Claude Code, or a custom process.
+
+If the runtime is not configured yet, start with [Configure Your Agent Runtime](/how-to/configure-agent-runtime).
+
+## When to create an agent
+
+Create an agent when:
+
+- one agent should focus on implementation while another focuses on review
+- a class of work needs different local tools, such as Codex, Claude Code, or a custom script
+- you need different permission boundaries, for example one agent can edit code while another only reviews docs
+- the organization has a stable repeated workflow that deserves a fixed owner
+
+Use the default agent when:
+
+- you are still running the first real issue
+- the work type is not stable yet
+- you only want to try the organization, issue, run, and review loop
+
+## Creation steps
+
+Open the organization, go to the Agents page, and click **New Agent**.
+
+1. Write `Name`. Use a recognizable name such as `Docs Maintainer` or `Release Reviewer`.
+2. Write `Title`. Describe the responsibility, such as `Documentation Operator` or `Founding Engineer`.
+3. Choose `Role`. This affects how the agent appears in the organization structure.
+4. Set `Reports to`. In a small organization, it can report to the default agent or owner.
+5. Write `Capabilities`. State what work it can accept and when it should stop.
+6. Configure `Runtime`. Choose Codex, Claude Code, local CLI, process, webhook, or gateway.
+7. If the organization has reusable skills, enable the relevant ones.
+8. Click **Create agent**.
+
+![Agent runtime configuration](../images/agent-runtime-codex-config.png)
+
+The screenshot shows the Runtime area when creating an agent. Start by making the agent's name, responsibility, and capability boundary clear, then configure which tool Rudder should use when it wakes the agent.
+
+## How to write capabilities
+
+`Capabilities` define the work boundary. They should answer three questions:
+
+- What types of issues can this agent accept?
+- What result should it produce?
+- When should it ask a human or mark the issue as blocked?
+
+A usable example:
+
+```text
+Handles small documentation and code maintenance tasks. On completion, leaves
+an issue comment with what changed, how it was verified, and remaining risks.
+Stops to ask for human input when access, product judgment, or scope is unclear.
+```
+
+Avoid writing only:
+
+```text
+Good at engineering tasks.
+```
+
+That is too vague. Rudder, reviewers, and your future self cannot tell whether the agent should accept the current issue.
+
+## How to choose a runtime
+
+Start with what is already available locally:
+
+| What you have | Choose |
+| --- | --- |
+| Codex installed and logged in locally | Codex (local) |
+| Claude Code installed and logged in locally | Claude Code (local) |
+| Only a model API key | Configure the key in Claude Code first, then choose Claude Code (local) |
+| Your own script | Shell Process |
+| Your own remote service | HTTP Webhook |
+
+Codex or Claude Code is usually the best starting point because they behave closest to the coding agents you use manually.
+
+## Run a low-risk issue first
+
+Do not assign a brand-new agent to a large task immediately. Start with a small issue and check that:
+
+- the agent can be woken by Rudder
+- the run uses the runtime you selected
+- the transcript or run summary has an inspectable process
+- the issue includes the result, validation, and remaining risks
+- failures clearly identify missing access, missing context, or runtime setup problems
+
+After that works, move the agent into a more stable workflow.
+
+## Common questions
+
+**Should I create many agents at the start?**
+No. Use the default agent to run a real issue first. Add agents after responsibilities become clear.
+
+**What is the difference between Role, Title, and Capabilities?**
+`Role` is the organization-structure type, `Title` is the agent's position name, and `Capabilities` define what work it can accept.
+
+**Are runtime and agent the same thing?**
+No. The agent is the work role inside Rudder. The runtime is the tool that role uses when it wakes up.
+
+**What if I wrote the agent wrong?**
+Open the agent detail page and edit it. Check `Capabilities` and `Runtime` first because they most directly affect future runs.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Agent Runtime" icon="terminal" href="/how-to/configure-agent-runtime">
+    Connect local Codex, Claude Code, or another execution backend to Rudder.
+  </Card>
+  <Card title="Issue Lifecycle Guide" icon="route" href="/how-to/issue-lifecycle">
+    Learn when to assign, review, block, and close agent work.
+  </Card>
+  <Card title="Agents" icon="bot" href="/concepts/agents">
+    Understand agents, heartbeats, and run records.
+  </Card>
+  <Card title="Create Your First Organization" icon="building-2" href="/get-started/first-organization">
+    Use the default agent to run the first real work loop.
+  </Card>
+</CardGroup>
