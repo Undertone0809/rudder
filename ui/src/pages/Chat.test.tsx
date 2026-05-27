@@ -13,6 +13,7 @@ import {
   assistantStateLabel,
   buildChatProposalRevisionPrompt,
   buildDraftChatContextLinks,
+  chatIssueApprovalPayloadWithProposalOverride,
   canContinueInterruptedChatMessage,
   canRetryFailedChatMessage,
   chatEmptyStateHeading,
@@ -26,6 +27,8 @@ import {
   isChatProjectSelectionLocked,
   isAskUserMessageAnswered,
   isUserVisibleIncomingChatMessage,
+  issueProposalPrincipalSelectionValue,
+  issueProposalWithPrincipalSelection,
   parseAskUserAnswerMessage,
   resolveDraftIssueContext,
   scrollChatMessagesToBottom,
@@ -127,6 +130,7 @@ function renderProposalCard(
   chat: ChatConversation = conversation({}),
   agents?: Agent[],
   decisionNote = "",
+  extraProps: Partial<Pick<Parameters<typeof ProposalCard>[0], "currentUserId" | "issueProposalOverride" | "onIssueProposalChange">> = {},
 ) {
   return renderToStaticMarkup(
     <ThemeProvider>
@@ -137,6 +141,7 @@ function renderProposalCard(
         decisionNote={decisionNote}
         onDecisionNoteChange={vi.fn()}
         onApprovalAction={vi.fn()}
+        {...extraProps}
         onResolveOperationProposal={vi.fn()}
         onConvertToIssue={vi.fn()}
         actionPending={false}
@@ -304,6 +309,80 @@ describe("ProposalCard", () => {
     expect(html).toContain("Reviewer · CTO");
     expect(html).toContain("Owner");
     expect(html).toContain('data-slot="assignee-label"');
+  });
+
+  it("renders owner and reviewer as editable selectors while issue proposals are pending", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "This should become an issue.",
+      structuredPayload: {
+        title: "Implement editable proposal principals",
+        priority: "medium",
+        description: "Allow operators to adjust the proposal owner and reviewer before approval.",
+        assigneeAgentId: "agent-1",
+        reviewerAgentId: "agent-2",
+      },
+      approvalId: "approval-1",
+      approval: {
+        id: "approval-1",
+        orgId: "org-1",
+        type: "chat_issue_creation",
+        requestedByAgentId: "agent-1",
+        requestedByUserId: null,
+        status: "pending",
+        payload: {},
+        decisionNote: null,
+        decidedByUserId: null,
+        decidedAt: null,
+        createdAt: new Date("2026-05-07T00:00:00.000Z"),
+        updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+      },
+    }), conversation({}), [
+      { id: "agent-1", name: "Wesley", role: "engineer", title: "Founding Engineer", icon: null } as Agent,
+      { id: "agent-2", name: "CTO", role: "cto", title: "Chief Technology Officer", icon: null } as Agent,
+    ], "", {
+      currentUserId: "local-board",
+      onIssueProposalChange: vi.fn(),
+    });
+
+    expect(html).toContain('aria-label="Edit owner"');
+    expect(html).toContain('aria-label="Edit reviewer"');
+    expect(html).toContain("Wesley");
+    expect(html).toContain("CTO");
+  });
+
+  it("applies proposal principal overrides to approval payloads", () => {
+    const proposal = {
+      title: "Route proposal edits",
+      description: "Approve with the operator-edited owner and reviewer.",
+      assigneeUserId: "local-board",
+      reviewerAgentId: "agent-1",
+    };
+
+    const nextOwner = issueProposalWithPrincipalSelection(proposal, "assignee", "agent:agent-2");
+    const nextReviewer = issueProposalWithPrincipalSelection(nextOwner, "reviewer", "user:local-board");
+    const payload = chatIssueApprovalPayloadWithProposalOverride({
+      chatConversationId: "chat-1",
+      chatMessageId: "message-1",
+      proposedIssue: {
+        title: "Original title",
+        description: "Original description",
+        assigneeUserId: "someone-else",
+        reviewerAgentId: "agent-1",
+      },
+    }, nextReviewer);
+
+    expect(issueProposalPrincipalSelectionValue(nextReviewer, "assignee")).toBe("agent:agent-2");
+    expect(issueProposalPrincipalSelectionValue(nextReviewer, "reviewer")).toBe("user:local-board");
+    expect(payload.proposedIssue).toMatchObject({
+      title: "Route proposal edits",
+      description: "Approve with the operator-edited owner and reviewer.",
+      assigneeAgentId: "agent-2",
+      assigneeUserId: null,
+      reviewerAgentId: null,
+      reviewerUserId: "local-board",
+    });
   });
 
   it("renders uploaded replying agent avatars without the assistant avatar shell", () => {

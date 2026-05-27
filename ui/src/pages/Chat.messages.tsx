@@ -55,7 +55,8 @@ import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import { AgentIcon } from "@/components/AgentIconPicker";
-import { AssigneeLabel } from "@/components/AssigneeLabel";
+import { AgentMenuLabel, AssigneeLabel } from "@/components/AssigneeLabel";
+import { InlineEntitySelector, type InlineEntityOption } from "@/components/InlineEntitySelector";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -110,7 +111,12 @@ import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
   appendSkillReferencesToDraft,
 } from "@/lib/organization-skill-picker";
-import { formatAssigneeUserLabel } from "@/lib/assignees";
+import {
+  assigneeValueFromSelection,
+  currentUserAssigneeOption,
+  formatAssigneeUserLabel,
+  parseAssigneeValue,
+} from "@/lib/assignees";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import {
   canShowImageInFolder,
@@ -161,14 +167,73 @@ type ProposalPrincipalDisplay =
   | { kind: "user"; label: string }
   | null;
 
+type ProposalPrincipalRole = "assignee" | "reviewer";
+
+const proposalPrincipalFieldKeys = {
+  assignee: {
+    agent: "assigneeAgentId",
+    user: "assigneeUserId",
+  },
+  reviewer: {
+    agent: "reviewerAgentId",
+    user: "reviewerUserId",
+  },
+} as const;
+
+export function issueProposalPrincipalSelectionValue(
+  proposal: Record<string, unknown>,
+  role: ProposalPrincipalRole,
+) {
+  const keys = proposalPrincipalFieldKeys[role];
+  const rawAgentId = proposal[keys.agent];
+  const agentId = typeof rawAgentId === "string" ? rawAgentId.trim() : "";
+  if (agentId) return assigneeValueFromSelection({ assigneeAgentId: agentId });
+  const rawUserId = proposal[keys.user];
+  const userId = typeof rawUserId === "string" ? rawUserId.trim() : "";
+  if (userId) return assigneeValueFromSelection({ assigneeUserId: userId });
+  return "";
+}
+
+export function issueProposalWithPrincipalSelection(
+  proposal: Record<string, unknown>,
+  role: ProposalPrincipalRole,
+  value: string,
+) {
+  const keys = proposalPrincipalFieldKeys[role];
+  const selection = parseAssigneeValue(value);
+  return {
+    ...proposal,
+    [keys.agent]: selection.assigneeAgentId,
+    [keys.user]: selection.assigneeUserId,
+  };
+}
+
+export function chatIssueApprovalPayloadWithProposalOverride(
+  payload: Record<string, unknown>,
+  proposalOverride: Record<string, unknown>,
+) {
+  const proposedIssue =
+    payload.proposedIssue && typeof payload.proposedIssue === "object" && !Array.isArray(payload.proposedIssue)
+      ? (payload.proposedIssue as Record<string, unknown>)
+      : {};
+  return {
+    ...payload,
+    proposedIssue: {
+      ...proposedIssue,
+      ...proposalOverride,
+    },
+  };
+}
+
 function issueProposalPrincipalDisplay(
   proposal: Record<string, unknown>,
-  role: "assignee" | "reviewer",
+  role: ProposalPrincipalRole,
   agents: Agent[] | undefined,
+  currentUserId?: string | null,
 ): ProposalPrincipalDisplay {
-  const agentIdKey = role === "assignee" ? "assigneeAgentId" : "reviewerAgentId";
-  const userIdKey = role === "assignee" ? "assigneeUserId" : "reviewerUserId";
-  const agentId = typeof proposal[agentIdKey] === "string" ? proposal[agentIdKey].trim() : "";
+  const keys = proposalPrincipalFieldKeys[role];
+  const rawAgentId = proposal[keys.agent];
+  const agentId = typeof rawAgentId === "string" ? rawAgentId.trim() : "";
   if (agentId) {
     const agent = agents?.find((candidate) => candidate.id === agentId) ?? null;
     return {
@@ -178,15 +243,42 @@ function issueProposalPrincipalDisplay(
     };
   }
 
-  const userId = typeof proposal[userIdKey] === "string" ? proposal[userIdKey].trim() : "";
+  const rawUserId = proposal[keys.user];
+  const userId = typeof rawUserId === "string" ? rawUserId.trim() : "";
   if (userId) {
     return {
       kind: "user",
-      label: formatAssigneeUserLabel(userId, null) ?? (role === "assignee" ? "Human assignee" : "Human reviewer"),
+      label: formatAssigneeUserLabel(userId, currentUserId) ?? (role === "assignee" ? "Human assignee" : "Human reviewer"),
     };
   }
 
   return null;
+}
+
+function proposalPrincipalOptionDisplay(
+  option: InlineEntityOption,
+  role: ProposalPrincipalRole,
+  agents: Agent[] | undefined,
+  currentUserId?: string | null,
+): ProposalPrincipalDisplay {
+  const selection = parseAssigneeValue(option.id);
+  if (selection.assigneeAgentId) {
+    const agent = agents?.find((candidate) => candidate.id === selection.assigneeAgentId) ?? null;
+    return {
+      kind: "agent",
+      label: agent?.name ?? option.label,
+      agent,
+    };
+  }
+  if (selection.assigneeUserId) {
+    return {
+      kind: "user",
+      label: formatAssigneeUserLabel(selection.assigneeUserId, currentUserId) ?? option.label,
+    };
+  }
+  return role === "assignee"
+    ? { kind: "user", label: "No owner" }
+    : { kind: "user", label: "No reviewer" };
 }
 
 function ProposalFactRow({
@@ -220,10 +312,85 @@ function ProposalPrincipalLabel({ principal }: { principal: ProposalPrincipalDis
   return <AssigneeLabel kind="user" label={principal.label} />;
 }
 
+function ProposalPrincipalSelector({
+  proposal,
+  role,
+  agents,
+  currentUserId,
+  onChange,
+}: {
+  proposal: Record<string, unknown>;
+  role: ProposalPrincipalRole;
+  agents: Agent[] | undefined;
+  currentUserId?: string | null;
+  onChange: (nextProposal: Record<string, unknown>) => void;
+}) {
+  const value = issueProposalPrincipalSelectionValue(proposal, role);
+  const currentUserOptions = useMemo(() => currentUserAssigneeOption(currentUserId), [currentUserId]);
+  const options = useMemo<InlineEntityOption[]>(() => {
+    const agentOptions = (agents ?? [])
+      .filter((agent) => agent.status !== "terminated")
+      .map((agent) => ({
+        id: assigneeValueFromSelection({ assigneeAgentId: agent.id }),
+        label: agent.name,
+        searchText: `${agent.name} ${agent.role} ${agent.title ?? ""}`,
+      }));
+    const combined = [...currentUserOptions, ...agentOptions];
+    if (value && !combined.some((option) => option.id === value)) {
+      const currentDisplay = proposalPrincipalOptionDisplay(
+        { id: value, label: role === "assignee" ? "Current owner" : "Current reviewer" },
+        role,
+        agents,
+        currentUserId,
+      );
+      combined.unshift({
+        id: value,
+        label: currentDisplay?.label ?? (role === "assignee" ? "Current owner" : "Current reviewer"),
+      });
+    }
+    return combined;
+  }, [agents, currentUserId, currentUserOptions, role, value]);
+  const noneLabel = role === "assignee" ? "No owner" : "No reviewer";
+
+  return (
+    <InlineEntitySelector
+      value={value}
+      options={options}
+      placeholder={noneLabel}
+      noneLabel={noneLabel}
+      searchPlaceholder={role === "assignee" ? "Search owners..." : "Search reviewers..."}
+      emptyMessage={role === "assignee" ? "No owners found." : "No reviewers found."}
+      ariaLabel={role === "assignee" ? "Edit owner" : "Edit reviewer"}
+      className="max-w-full justify-end rounded-[var(--radius-sm)] border-transparent bg-transparent px-1.5 py-1 hover:border-border hover:bg-accent/50"
+      contentClassName="min-w-64"
+      onChange={(nextValue) => onChange(issueProposalWithPrincipalSelection(proposal, role, nextValue))}
+      renderTriggerValue={(option) =>
+        option ? (
+          <ProposalPrincipalLabel principal={proposalPrincipalOptionDisplay(option, role, agents, currentUserId)} />
+        ) : (
+          <AssigneeLabel kind="unassigned" label={noneLabel} muted />
+        )
+      }
+      renderOption={(option) => {
+        if (!option.id) return <AssigneeLabel kind="unassigned" label={option.label} muted />;
+        const selection = parseAssigneeValue(option.id);
+        const agent = selection.assigneeAgentId
+          ? (agents ?? []).find((candidate) => candidate.id === selection.assigneeAgentId) ?? null
+          : null;
+        if (agent) return <AgentMenuLabel agent={agent} />;
+        return <ProposalPrincipalLabel principal={proposalPrincipalOptionDisplay(option, role, agents, currentUserId)} />;
+      }}
+    />
+  );
+}
+
 export function ProposalCard({
   conversation,
   message,
   agents,
+  currentUserId,
+  issueProposalOverride,
+  onIssueProposalChange,
   decisionNote,
   onDecisionNoteChange,
   onApprovalAction,
@@ -236,6 +403,9 @@ export function ProposalCard({
   conversation: ChatConversation;
   message: ChatMessage;
   agents: Agent[] | undefined;
+  currentUserId?: string | null;
+  issueProposalOverride?: Record<string, unknown>;
+  onIssueProposalChange?: (messageId: string, nextProposal: Record<string, unknown>) => void;
   decisionNote: string;
   onDecisionNoteChange: (value: string) => void;
   onApprovalAction: (approvalId: string, action: ApprovalAction, messageId: string) => void;
@@ -245,7 +415,8 @@ export function ProposalCard({
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
 }) {
-  const issueProposal = message.kind === "issue_proposal" ? issueProposalFromMessage(message) : null;
+  const baseIssueProposal = message.kind === "issue_proposal" ? issueProposalFromMessage(message) : null;
+  const issueProposal = baseIssueProposal ? (issueProposalOverride ?? baseIssueProposal) : null;
   const planDocument = message.kind === "issue_proposal" ? planDocumentFromMessage(message) : null;
   const operationProposal = message.kind === "operation_proposal" ? operationProposalFromMessage(message) : null;
   const operationProposalStatus = message.kind === "operation_proposal"
@@ -266,9 +437,10 @@ export function ProposalCard({
   const resolvedDecisionNoteLabel = reviewStatus === "revision_requested" ? "Requested changes" : "Decision note";
   const proposalAssigneeLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "assignee", agents) : null;
   const proposalReviewerLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "reviewer", agents) : null;
-  const proposalAssigneeDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "assignee", agents) : null;
-  const proposalReviewerDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "reviewer", agents) : null;
+  const proposalAssigneeDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "assignee", agents, currentUserId) : null;
+  const proposalReviewerDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "reviewer", agents, currentUserId) : null;
   const proposalDescription = issueProposal ? String(issueProposal.description) : "";
+  const canEditIssueProposalPrincipals = Boolean(issueProposal && (showApprovalActions || canConvertDirectly) && onIssueProposalChange);
   const [proposalDetailsExpanded, setProposalDetailsExpanded] = useState(false);
   const [proposalDetailsCanExpand, setProposalDetailsCanExpand] = useState(false);
   const proposalDetailsRef = useRef<HTMLDivElement | null>(null);
@@ -343,7 +515,7 @@ export function ProposalCard({
           {reviewStatus ? (
             <div
               data-testid="proposal-review-status"
-              className="flex min-w-0 items-center justify-start border-t border-[color:var(--border-soft)] px-5 py-4 sm:justify-end sm:border-l sm:border-t-0 sm:pr-9"
+              className="relative z-[6] flex min-w-0 items-center justify-start border-t border-[color:var(--border-soft)] px-5 py-4 sm:justify-end sm:border-t-0 sm:pr-10"
             >
               <StatusBadge status={reviewStatus} />
             </div>
@@ -363,10 +535,30 @@ export function ProposalCard({
                       <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
                     </ProposalFactRow>
                     <ProposalFactRow label="Owner">
-                      <ProposalPrincipalLabel principal={proposalAssigneeDisplay} />
+                      {canEditIssueProposalPrincipals ? (
+                        <ProposalPrincipalSelector
+                          proposal={issueProposal}
+                          role="assignee"
+                          agents={agents}
+                          currentUserId={currentUserId}
+                          onChange={(nextProposal) => onIssueProposalChange?.(message.id, nextProposal)}
+                        />
+                      ) : (
+                        <ProposalPrincipalLabel principal={proposalAssigneeDisplay} />
+                      )}
                     </ProposalFactRow>
                     <ProposalFactRow label="Reviewer">
-                      <ProposalPrincipalLabel principal={proposalReviewerDisplay} />
+                      {canEditIssueProposalPrincipals ? (
+                        <ProposalPrincipalSelector
+                          proposal={issueProposal}
+                          role="reviewer"
+                          agents={agents}
+                          currentUserId={currentUserId}
+                          onChange={(nextProposal) => onIssueProposalChange?.(message.id, nextProposal)}
+                        />
+                      ) : (
+                        <ProposalPrincipalLabel principal={proposalReviewerDisplay} />
+                      )}
                     </ProposalFactRow>
                   </div>
                 </div>
@@ -1078,9 +1270,12 @@ export function ChatMessageItem({
   conversation,
   message,
   agents,
+  currentUserId,
+  issueProposalOverride,
   decisionNote,
   onDecisionNoteChange,
   onApprovalAction,
+  onIssueProposalChange,
   onResolveOperationProposal,
   onConvertToIssue,
   actionPending,
@@ -1099,9 +1294,12 @@ export function ChatMessageItem({
   conversation: ChatConversation;
   message: ChatMessage;
   agents: Agent[] | undefined;
+  currentUserId?: string | null;
+  issueProposalOverride?: Record<string, unknown>;
   decisionNote: string;
   onDecisionNoteChange: (value: string) => void;
   onApprovalAction: (approvalId: string, action: ApprovalAction, messageId: string) => void;
+  onIssueProposalChange?: (messageId: string, nextProposal: Record<string, unknown>) => void;
   onResolveOperationProposal: (messageId: string, action: ChatOperationProposalDecisionAction, decisionNote: string) => void;
   onConvertToIssue: (message: ChatMessage) => void;
   actionPending: boolean;
@@ -1130,6 +1328,9 @@ export function ChatMessageItem({
         conversation={conversation}
         message={message}
         agents={agents}
+        currentUserId={currentUserId}
+        issueProposalOverride={issueProposalOverride}
+        onIssueProposalChange={onIssueProposalChange}
         decisionNote={decisionNote}
         onDecisionNoteChange={onDecisionNoteChange}
         onApprovalAction={onApprovalAction}

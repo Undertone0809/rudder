@@ -4,6 +4,12 @@ import path from "node:path";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_BIN_DIR } from "./support/e2e-env";
 
+async function selectInlineEntityOption(page: Page, name: string) {
+  const popover = page.locator(".motion-inline-selector-pop:visible").last();
+  await expect(popover).toBeVisible();
+  await popover.getByRole("button", { name }).click();
+}
+
 async function writeProposalStub(
   name: string,
   result: {
@@ -280,6 +286,90 @@ test.describe("Chat proposal review block", () => {
     await createdIssueLink.click();
     await expect(page.getByRole("heading", { name: "Reviewer metadata proposal test" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Proposal Agent").first()).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("lets operators edit proposal owner and reviewer before approval", async ({ page }) => {
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `EditableProposal-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const ownerRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Editable Owner",
+        role: "engineer",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+    });
+    expect(ownerRes.ok()).toBe(true);
+    const owner = await ownerRes.json();
+    const reviewerRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Editable Reviewer",
+        role: "cto",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+    });
+    expect(reviewerRes.ok()).toBe(true);
+    const reviewer = await reviewerRes.json();
+    const command = await writeProposalStub("proposal-review-edit-principals", {
+      kind: "issue_proposal",
+      body: "Create a scoped issue and let the operator tune routing before approval.",
+      structuredPayload: {
+        issueProposal: {
+          title: "Editable proposal principals test",
+          description: "Verify owner and reviewer edits are used when approving a chat issue proposal.",
+          priority: "medium",
+        },
+      },
+    });
+    const chatAgent = await createE2EChatAgent(page.request, organization.id, {
+      name: "Proposal Agent",
+      command,
+    });
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    const conversationRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Editable principals proposal",
+        preferredAgentId: chatAgent.id,
+        issueCreationMode: "manual_approval",
+      },
+    });
+    expect(conversationRes.ok()).toBe(true);
+    const conversation = await conversationRes.json();
+
+    await page.goto(`/chat/${conversation.id}`);
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill("please draft an editable routing issue");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const reviewBlock = page.getByTestId("proposal-review-block").last();
+    await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
+    await expect(reviewBlock).toHaveAttribute("data-status", "pending");
+    await reviewBlock.getByRole("button", { name: "Edit owner" }).click();
+    await selectInlineEntityOption(page, "Editable Owner");
+    await reviewBlock.getByRole("button", { name: "Edit reviewer" }).click();
+    await selectInlineEntityOption(page, "Editable Reviewer");
+    await expect(reviewBlock).toContainText("Editable Owner");
+    await expect(reviewBlock).toContainText("Editable Reviewer");
+
+    await reviewBlock.getByRole("button", { name: "Approve" }).click();
+
+    await expect(reviewBlock).toHaveAttribute("data-status", "approved", { timeout: 15_000 });
+    const createdIssueLink = page.locator(".chat-system-issue-link").last();
+    await expect(createdIssueLink).toBeVisible({ timeout: 15_000 });
+    await createdIssueLink.click();
+    await expect(page.getByRole("heading", { name: "Editable proposal principals test" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(owner.name).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(reviewer.name).first()).toBeVisible({ timeout: 15_000 });
   });
 
   test("keeps plan-mode proposals pending until approval and writes the plan document", async ({ page }) => {
