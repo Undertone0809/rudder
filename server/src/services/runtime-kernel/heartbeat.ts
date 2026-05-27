@@ -1232,9 +1232,64 @@ export function heartbeatService(db: Db) {
         .orderBy(desc(heartbeatRuns.createdAt));
 
       const rows = limit ? await query.limit(limit) : await query;
+      const runIds = rows.map((row) => row.id);
+      const usedSkillsByRun = new Map<string, Map<string, { key: string; label: string }>>();
+      if (agentId && runIds.length > 0) {
+        const skillEvents = await db
+          .select({
+            runId: heartbeatRunEvents.runId,
+            payload: heartbeatRunEvents.payload,
+          })
+          .from(heartbeatRunEvents)
+          .where(
+            and(
+              eq(heartbeatRunEvents.orgId, orgId),
+              inArray(heartbeatRunEvents.runId, runIds),
+              inArray(heartbeatRunEvents.eventType, ["adapter.invoke", "adapter.skill_usage"]),
+            ),
+          )
+          .orderBy(asc(heartbeatRunEvents.createdAt), asc(heartbeatRunEvents.id));
+
+        for (const event of skillEvents) {
+          const evidence = readSkillEvidenceFromPayload(parseObject(event.payload));
+          if (evidence.evidence !== "used" || evidence.skills.length === 0) continue;
+          const runSkills = usedSkillsByRun.get(event.runId) ?? new Map<string, { key: string; label: string }>();
+          for (const skill of evidence.skills) {
+            const existing = runSkills.get(skill.key);
+            if (existing) {
+              if (existing.label === fallbackSkillLabel(existing.key) && skill.label !== fallbackSkillLabel(skill.key)) {
+                existing.label = skill.label;
+              }
+            } else {
+              runSkills.set(skill.key, skill);
+            }
+          }
+          if (runSkills.size > 0) usedSkillsByRun.set(event.runId, runSkills);
+        }
+      }
+
       return rows.map((row) => ({
         ...row,
-        resultJson: summarizeHeartbeatRunResultJson(row.resultJson),
+        resultJson: (() => {
+          const summary = summarizeHeartbeatRunResultJson(row.resultJson);
+          const usedSkills = Array.from(usedSkillsByRun.get(row.id)?.values() ?? []);
+          if (usedSkills.length === 0) return summary;
+          const skillPayload = usedSkills.map((skill) => ({
+            key: skill.key,
+            runtimeName: skill.label,
+            name: skill.label,
+          }));
+          return {
+            ...(summary ?? {}),
+            usedSkillCount: usedSkills.length,
+            usedSkillKeys: usedSkills.map((skill) => skill.key),
+            usedSkills: skillPayload,
+            skillEvidenceType: "used",
+            skillEvidenceCount: usedSkills.length,
+            skillEvidenceKeys: usedSkills.map((skill) => skill.key),
+            skillEvidenceSkills: skillPayload,
+          };
+        })(),
       }));
     },
 
