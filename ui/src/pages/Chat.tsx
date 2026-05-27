@@ -38,7 +38,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger, } from "@/components/ui/dropdown-menu"; import { MarkdownBody, type MarkdownLinkClickHandler } from "@/components/MarkdownBody"; import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences"; import { TextDots } from "@/components/TextDots"; import { formatPriorityLabel } from "@/lib/priorities"; import { ImagePreviewDialog } from "@/components/ImagePreviewDialog"; import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken"; import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor"; import { AgentIcon, getAgentAvatarImageSrc } from "@/components/AgentIconPicker"; import { HoverTimestampLabel } from "@/components/HoverTimestamp"; import { StatusBadge } from "@/components/StatusBadge"; import { RunTranscriptView } from "@/components/transcript/RunTranscriptView"; import { Skeleton } from "@/components/ui/skeleton"; import { useOrganization } from "@/context/OrganizationContext"; import { useBreadcrumbs } from "@/context/BreadcrumbContext"; import { useSidebar } from "@/context/SidebarContext"; import { useToast } from "@/context/ToastContext"; import { useChatGenerations, type ChatStreamDraft, type ChatStreamDraftState } from "@/context/ChatGenerationContext"; import { agentsApi } from "@/api/agents"; import { approvalsApi } from "@/api/approvals"; import { ApiError } from "@/api/client"; import { chatsApi } from "@/api/chats"; import { instanceSettingsApi } from "@/api/instanceSettings"; import { issuesApi } from "@/api/issues"; import { projectsApi } from "@/api/projects"; import { organizationSkillsApi } from "@/api/organizationSkills"; import { prefetchChatConversation } from "@/lib/chat-prefetch"; import { readChatDraft, saveChatDraft } from "@/lib/chat-draft-storage";
+  DropdownMenuTrigger, } from "@/components/ui/dropdown-menu"; import { MarkdownBody, type MarkdownLinkClickHandler } from "@/components/MarkdownBody"; import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences"; import { TextDots } from "@/components/TextDots"; import { formatPriorityLabel } from "@/lib/priorities"; import { ImagePreviewDialog } from "@/components/ImagePreviewDialog"; import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken"; import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor"; import { AgentIcon, getAgentAvatarImageSrc } from "@/components/AgentIconPicker"; import { HoverTimestampLabel } from "@/components/HoverTimestamp"; import { StatusBadge } from "@/components/StatusBadge"; import { RunTranscriptView } from "@/components/transcript/RunTranscriptView"; import { Skeleton } from "@/components/ui/skeleton"; import { useOrganization } from "@/context/OrganizationContext"; import { useBreadcrumbs } from "@/context/BreadcrumbContext"; import { useSidebar } from "@/context/SidebarContext"; import { useToast } from "@/context/ToastContext"; import { useChatGenerations, type ChatStreamDraft, type ChatStreamDraftState } from "@/context/ChatGenerationContext"; import { agentsApi } from "@/api/agents"; import { approvalsApi } from "@/api/approvals"; import { authApi } from "@/api/auth"; import { ApiError } from "@/api/client"; import { chatsApi } from "@/api/chats"; import { instanceSettingsApi } from "@/api/instanceSettings"; import { issuesApi } from "@/api/issues"; import { projectsApi } from "@/api/projects"; import { organizationSkillsApi } from "@/api/organizationSkills"; import { prefetchChatConversation } from "@/lib/chat-prefetch"; import { readChatDraft, saveChatDraft } from "@/lib/chat-draft-storage";
 import {
   readChatPendingAttachmentsForScope,
   resolveChatPendingAttachmentScopeKey,
@@ -64,7 +64,7 @@ import {
   canShowImageInFolder,
   copyImage as copyImageAction,
   isImageContentType,
-  showImageInFolder as showImageInFolderAction, } from "@/lib/image-actions"; import { resolveLocalFileTarget } from "@/lib/local-file-targets"; import { cn, relativeTime } from "@/lib/utils"; import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef"; import { useI18n } from "@/context/I18nContext"; import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, buildChatProposalRevisionPrompt, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName, ChatAssistantAttributionRow, ProposalCard, chatMessageHoverBarClass, ChatLongMessageBody, readStructuredPayloadString, issueCreatedSystemMessageParts, ChatSystemMessageBody, AskUserHistoryRecord, AskUserAnswerBubble, AskUserPanel, ChatMessageItem, OptimisticUserDraftItem, ChatMessagesLoadingState, StreamTranscriptItem, AssistantDraftItem } from "./Chat.parts";
+  showImageInFolder as showImageInFolderAction, } from "@/lib/image-actions"; import { resolveLocalFileTarget } from "@/lib/local-file-targets"; import { cn, relativeTime } from "@/lib/utils"; import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef"; import { useI18n } from "@/context/I18nContext"; import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, buildChatProposalRevisionPrompt, chatIssueApprovalPayloadWithProposalOverride, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName, ChatAssistantAttributionRow, ProposalCard, chatMessageHoverBarClass, ChatLongMessageBody, readStructuredPayloadString, issueCreatedSystemMessageParts, ChatSystemMessageBody, AskUserHistoryRecord, AskUserAnswerBubble, AskUserPanel, ChatMessageItem, OptimisticUserDraftItem, ChatMessagesLoadingState, StreamTranscriptItem, AssistantDraftItem } from "./Chat.parts";
 export * from "./Chat.parts";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
@@ -84,7 +84,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     scopeKey: draftStorageScopeKey,
     value: readChatDraft(draftStorageOrgId, draftStorageConversationId), })); const draft = draftState.scopeKey === draftStorageScopeKey ? draftState.value : ""; const setDraft = useCallback((nextDraft: string) => { setDraftState((current) => ({ ...current, value: nextDraft })); }, []); const [, refreshPendingFiles] = useState(0); const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
   const setPendingFilesForCurrentScope = useCallback((updater: (current: File[]) => File[]) => { updateChatPendingAttachmentsForScope(draftStorageScopeKey, updater); refreshPendingFiles((version) => version + 1); }, [draftStorageScopeKey]); const clearPendingFilesForCurrentScope = useCallback(() => { setPendingFilesForCurrentScope(() => []); }, [setPendingFilesForCurrentScope]); const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false); const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, true>>({}); const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>(NO_CHAT_AGENT_ID); const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
-  const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [editForkUserMessageId, setEditForkUserMessageId] = useState<string | null>(null); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [expandedEmptyStatePrompt, setExpandedEmptyStatePrompt] = useState<EmptyStatePromptLabel | null>(null); const [emptyStatePromptPanelEntered, setEmptyStatePromptPanelEntered] = useState(false); const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const stopRequestedChatIdsRef = useRef<Set<string>>(new Set()); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const projectDefaultInitializedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile } = useSidebar(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
+  const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [editForkUserMessageId, setEditForkUserMessageId] = useState<string | null>(null); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [expandedEmptyStatePrompt, setExpandedEmptyStatePrompt] = useState<EmptyStatePromptLabel | null>(null); const [emptyStatePromptPanelEntered, setEmptyStatePromptPanelEntered] = useState(false); const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const stopRequestedChatIdsRef = useRef<Set<string>>(new Set()); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const projectDefaultInitializedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile } = useSidebar(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
     if (!desktopShell) {
       pushToast({
         title: "Open from Desktop",
@@ -131,6 +131,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryKey: queryKeys.projects.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => projectsApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, }); const visibleProjects = useMemo(
     () => (projects ?? []).filter((project) => !project.archivedAt), [projects], );
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+  const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   const { data: issues, error: issuesError } = useQuery({
     queryKey: queryKeys.issues.list(selectedOrganizationId ?? "__none__"),
     queryFn: () => issuesApi.list(selectedOrganizationId!), enabled: !!selectedOrganizationId, }); const profileQuery = useQuery({
@@ -182,7 +187,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   } = useQuery({
     queryKey: queryKeys.agents.skills(activeSkillAgentId ?? "__none__"),
     queryFn: () => agentsApi.skills(activeSkillAgentId!, selectedOrganizationId!), enabled: Boolean(selectedOrganizationId) && Boolean(activeSkillAgentId), });
-  useEffect(() => { setEditForkUserMessageId(null); setBranchPreview(null); setAttachmentPreview(null); }, [conversationId]);
+  useEffect(() => { setEditForkUserMessageId(null); setBranchPreview(null); setAttachmentPreview(null); setIssueProposalOverridesByMessageId({}); }, [conversationId]);
   useEffect(() => { setSkillMenuOpen(false); setSkillSearchQuery(""); }, [activeSkillAgentId]);
   useEffect(() => {
     if (!composerContextMenuOpen) { setComposerMenuPosition(null);
@@ -263,7 +268,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     setDecisionNotesByMessageId((current) => {
       if (!value.trim()) { if (!(messageId in current)) return current; const { [messageId]: _removed, ...rest } = current;
         return rest; } return { ...current, [messageId]: value }; }); }, []); const clearDecisionNoteForMessage = useCallback((messageId: string) => {
-    setDecisionNotesByMessageId((current) => { if (!(messageId in current)) return current; const { [messageId]: _removed, ...rest } = current; return rest; }); }, []); const updateConversationMutation = useMutation({
+    setDecisionNotesByMessageId((current) => { if (!(messageId in current)) return current; const { [messageId]: _removed, ...rest } = current; return rest; }); }, []); const setIssueProposalOverrideForMessage = useCallback((messageId: string, nextProposal: Record<string, unknown>) => {
+    setIssueProposalOverridesByMessageId((current) => ({ ...current, [messageId]: nextProposal }));
+  }, []); const updateConversationMutation = useMutation({
     mutationFn: ({ chatId, data }: { chatId: string; data: Parameters<typeof chatsApi.update>[1] }) =>
       chatsApi.update(chatId, data),
     onSuccess: async (conversation) => {
@@ -293,11 +300,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         tone: "error", }); }, }); const markConversationReadMutation = useMutation({
     mutationFn: (chatId: string) => chatsApi.markRead(chatId),
     onSuccess: async (_result, chatId) => { await refreshChat(chatId); }, }); const convertToIssueMutation = useMutation({
-    mutationFn: ({ chatId, message }: { chatId: string; message: ChatMessage }) =>
+    mutationFn: ({ chatId, message, proposalOverride }: { chatId: string; message: ChatMessage; proposalOverride?: Record<string, unknown> }) =>
       chatsApi.convertToIssue(chatId, {
         messageId: message.id,
-        proposal: issueProposalFromMessage(message) ?? undefined, }),
-    onSuccess: async ({ issue }, variables) => { await refreshChat(variables.chatId); const issueRef = issue.identifier ?? issue.id;
+        proposal: proposalOverride ?? issueProposalFromMessage(message) ?? undefined, }),
+    onSuccess: async ({ issue }, variables) => { setIssueProposalOverridesByMessageId((current) => { if (!(variables.message.id in current)) return current; const { [variables.message.id]: _removed, ...rest } = current; return rest; }); await refreshChat(variables.chatId); const issueRef = issue.identifier ?? issue.id;
       pushToast({
         title: `Created issue ${issueRef}`,
         tone: "success",
@@ -314,10 +321,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       approvalId,
       action,
       messageId,
-    }: { approvalId: string; action: ApprovalAction; messageId: string;
-    }) => { const note = decisionNotesByMessageId[messageId]?.trim() || undefined; if (action === "approve") return approvalsApi.approve(approvalId, note); if (action === "reject") return approvalsApi.reject(approvalId, note);
+      payloadOverride,
+    }: { approvalId: string; action: ApprovalAction; messageId: string; payloadOverride?: Record<string, unknown>;
+    }) => { const note = decisionNotesByMessageId[messageId]?.trim() || undefined; if (action === "approve") return approvalsApi.approve(approvalId, note, payloadOverride); if (action === "reject") return approvalsApi.reject(approvalId, note);
       return approvalsApi.requestRevision(approvalId, note); },
     onSuccess: async (_result, variables) => { clearDecisionNoteForMessage(variables.messageId);
+      if (variables.action === "approve") {
+        setIssueProposalOverridesByMessageId((current) => { if (!(variables.messageId in current)) return current; const { [variables.messageId]: _removed, ...rest } = current; return rest; });
+      }
       await refreshChat(conversationId ?? null); },
     onError: (error) => {
       pushToast({
@@ -607,6 +618,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     const sourceMessage = rawMessages.find((message) => message.id === messageId) ?? null;
     const issueProposal = sourceMessage ? issueProposalFromMessage(sourceMessage) : null;
     const operationProposal = sourceMessage ? operationProposalFromMessage(sourceMessage) : null;
+    const proposalOverride = issueProposalOverridesByMessageId[messageId];
+    const payloadOverride =
+      action === "approve" && proposalOverride && sourceMessage?.approval?.payload
+        ? chatIssueApprovalPayloadWithProposalOverride(sourceMessage.approval.payload as Record<string, unknown>, proposalOverride)
+        : undefined;
     const proposalTitle =
       typeof issueProposal?.title === "string"
         ? issueProposal.title
@@ -614,7 +630,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           ? operationProposal.summary
           : null;
     approvalMutation.mutate(
-      { approvalId, action, messageId },
+      { approvalId, action, messageId, payloadOverride },
       {
         onSuccess: () => {
           if (action !== "requestRevision" || !selectedConversation) return;
@@ -943,6 +959,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   conversation={selectedConversation}
                                   message={message}
                                   agents={agents}
+                                  currentUserId={currentUserId}
+                                  issueProposalOverride={issueProposalOverridesByMessageId[message.id]}
+                                  onIssueProposalChange={setIssueProposalOverrideForMessage}
                                   actionPending={
                                     approvalMutation.isPending
                                     || convertToIssueMutation.isPending
@@ -950,7 +969,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   decisionNote={decisionNotesByMessageId[message.id] ?? ""} onDecisionNoteChange={(value) => setDecisionNoteForMessage(message.id, value)} onApprovalAction={handleProposalApprovalAction} onResolveOperationProposal={handleOperationProposalDecision} onConvertToIssue={(messageToConvert) =>
                                     convertToIssueMutation.mutate({
                                       chatId: selectedConversation.id,
-                                      message: messageToConvert, })
+                                      message: messageToConvert,
+                                      proposalOverride: issueProposalOverridesByMessageId[messageToConvert.id], })
                                   } onCopyMessageText={copyChatMessageText} onEditUserMessage={beginEditUserMessage} onContinueInterruptedMessage={() => {
                                     void sendMessage({
                                       bodyOverride: INTERRUPTED_CHAT_CONTINUATION_PROMPT,

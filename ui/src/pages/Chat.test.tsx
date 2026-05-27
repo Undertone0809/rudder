@@ -13,6 +13,7 @@ import {
   assistantStateLabel,
   buildChatProposalRevisionPrompt,
   buildDraftChatContextLinks,
+  chatIssueApprovalPayloadWithProposalOverride,
   canContinueInterruptedChatMessage,
   canRetryFailedChatMessage,
   chatEmptyStateHeading,
@@ -26,6 +27,8 @@ import {
   isChatProjectSelectionLocked,
   isAskUserMessageAnswered,
   isUserVisibleIncomingChatMessage,
+  issueProposalPrincipalSelectionValue,
+  issueProposalWithPrincipalSelection,
   parseAskUserAnswerMessage,
   resolveDraftIssueContext,
   scrollChatMessagesToBottom,
@@ -127,6 +130,7 @@ function renderProposalCard(
   chat: ChatConversation = conversation({}),
   agents?: Agent[],
   decisionNote = "",
+  extraProps: Partial<Pick<Parameters<typeof ProposalCard>[0], "currentUserId" | "issueProposalOverride" | "onIssueProposalChange">> = {},
 ) {
   return renderToStaticMarkup(
     <ThemeProvider>
@@ -137,6 +141,7 @@ function renderProposalCard(
         decisionNote={decisionNote}
         onDecisionNoteChange={vi.fn()}
         onApprovalAction={vi.fn()}
+        {...extraProps}
         onResolveOperationProposal={vi.fn()}
         onConvertToIssue={vi.fn()}
         actionPending={false}
@@ -286,6 +291,11 @@ describe("ProposalCard", () => {
     expect(reviewBlockHtml).not.toContain("Issue description");
     expect(reviewBlockHtml).toContain("Priority");
     expect(reviewBlockHtml).toContain("High");
+    expect(reviewBlockHtml).toContain("Proposal details");
+    expect(reviewBlockHtml).toContain("chat-review-details-body--collapsed");
+    expect(reviewBlockHtml).not.toContain("<details");
+    expect(reviewBlockHtml).not.toContain("<summary");
+    expect(reviewBlockHtml).not.toContain("Goal");
     expect(reviewBlockHtml).not.toContain("Review this proposal here before continuing the conversation.");
     expect(reviewBlockHtml).toContain(issueTitle);
     expect(reviewBlockHtml).toContain(issueDescription);
@@ -313,6 +323,82 @@ describe("ProposalCard", () => {
 
     expect(html).toContain("Assignee · Wesley");
     expect(html).toContain("Reviewer · CTO");
+    expect(html).toContain("Owner");
+    expect(html).toContain('data-slot="assignee-label"');
+  });
+
+  it("renders owner and reviewer as editable selectors while issue proposals are pending", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "This should become an issue.",
+      structuredPayload: {
+        title: "Implement editable proposal principals",
+        priority: "medium",
+        description: "Allow operators to adjust the proposal owner and reviewer before approval.",
+        assigneeAgentId: "agent-1",
+        reviewerAgentId: "agent-2",
+      },
+      approvalId: "approval-1",
+      approval: {
+        id: "approval-1",
+        orgId: "org-1",
+        type: "chat_issue_creation",
+        requestedByAgentId: "agent-1",
+        requestedByUserId: null,
+        status: "pending",
+        payload: {},
+        decisionNote: null,
+        decidedByUserId: null,
+        decidedAt: null,
+        createdAt: new Date("2026-05-07T00:00:00.000Z"),
+        updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+      },
+    }), conversation({}), [
+      { id: "agent-1", name: "Wesley", role: "engineer", title: "Founding Engineer", icon: null } as Agent,
+      { id: "agent-2", name: "CTO", role: "cto", title: "Chief Technology Officer", icon: null } as Agent,
+    ], "", {
+      currentUserId: "local-board",
+      onIssueProposalChange: vi.fn(),
+    });
+
+    expect(html).toContain('aria-label="Edit owner"');
+    expect(html).toContain('aria-label="Edit reviewer"');
+    expect(html).toContain("Wesley");
+    expect(html).toContain("CTO");
+  });
+
+  it("applies proposal principal overrides to approval payloads", () => {
+    const proposal = {
+      title: "Route proposal edits",
+      description: "Approve with the operator-edited owner and reviewer.",
+      assigneeUserId: "local-board",
+      reviewerAgentId: "agent-1",
+    };
+
+    const nextOwner = issueProposalWithPrincipalSelection(proposal, "assignee", "agent:agent-2");
+    const nextReviewer = issueProposalWithPrincipalSelection(nextOwner, "reviewer", "user:local-board");
+    const payload = chatIssueApprovalPayloadWithProposalOverride({
+      chatConversationId: "chat-1",
+      chatMessageId: "message-1",
+      proposedIssue: {
+        title: "Original title",
+        description: "Original description",
+        assigneeUserId: "someone-else",
+        reviewerAgentId: "agent-1",
+      },
+    }, nextReviewer);
+
+    expect(issueProposalPrincipalSelectionValue(nextReviewer, "assignee")).toBe("agent:agent-2");
+    expect(issueProposalPrincipalSelectionValue(nextReviewer, "reviewer")).toBe("user:local-board");
+    expect(payload.proposedIssue).toMatchObject({
+      title: "Route proposal edits",
+      description: "Approve with the operator-edited owner and reviewer.",
+      assigneeAgentId: "agent-2",
+      assigneeUserId: null,
+      reviewerAgentId: null,
+      reviewerUserId: "local-board",
+    });
   });
 
   it("links replying agent attribution to agent detail", () => {
@@ -382,6 +468,54 @@ describe("ProposalCard", () => {
         icon: "dicebear:notionists:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       } as Agent,
     ]);
+
+    expect(html).toContain("data:image/svg+xml");
+    expect(html).toContain("h-8 w-8 shrink-0");
+    expect(html).not.toContain("border-border/70");
+    expect(html).not.toContain("bg-muted/90");
+    expect(html).not.toContain("shadow-sm");
+  });
+
+  it("renders generated replying agent avatars when the stored icon is missing", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Use a generated fallback avatar.",
+      replyingAgentId: "agent-1",
+      structuredPayload: {
+        title: "Review missing avatar",
+        priority: "medium",
+        description: "The assistant attribution should not fall back to the bot glyph.",
+      },
+    }), conversation({}), [
+      {
+        id: "agent-1",
+        name: "Mira",
+        role: "general",
+        title: "Operator",
+        icon: null,
+      } as Agent,
+    ]);
+
+    expect(html).toContain("data:image/svg+xml");
+    expect(html).toContain("h-8 w-8 shrink-0");
+    expect(html).not.toContain("border-border/70");
+    expect(html).not.toContain("bg-muted/90");
+    expect(html).not.toContain("shadow-sm");
+  });
+
+  it("renders generated replying agent avatars while the agent directory is unavailable", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Use a generated fallback avatar before agent data loads.",
+      replyingAgentId: "agent-1",
+      structuredPayload: {
+        title: "Review unloaded avatar",
+        priority: "medium",
+        description: "The assistant attribution should not flash the bot glyph.",
+      },
+    }), conversation({}), []);
 
     expect(html).toContain("data:image/svg+xml");
     expect(html).toContain("h-8 w-8 shrink-0");
