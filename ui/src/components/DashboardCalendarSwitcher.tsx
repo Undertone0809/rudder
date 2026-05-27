@@ -9,7 +9,13 @@ function dashboardCalendarMode(pathname: string): "dashboard" | "calendar" {
   return "dashboard";
 }
 
-export function DashboardCalendarSwitcher({ className }: { className?: string }) {
+export function DashboardCalendarSwitcher({
+  className,
+  compact = false,
+}: {
+  className?: string;
+  compact?: boolean;
+}) {
   const location = useLocation();
   const mode = dashboardCalendarMode(location.pathname);
 
@@ -34,22 +40,24 @@ export function DashboardCalendarSwitcher({ className }: { className?: string })
         to="/dashboard"
         aria-current={mode === "dashboard" ? "page" : undefined}
         className={cn(
-          "relative z-10 inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-2 font-medium transition-colors",
+          "relative z-10 inline-flex min-w-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] font-medium transition-colors",
+          compact ? "gap-1 px-1.5" : "gap-1.5 px-2",
           mode === "dashboard" ? "text-background" : "text-muted-foreground hover:text-foreground",
         )}
       >
-        <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
+        {!compact ? <LayoutDashboard className="h-3.5 w-3.5 shrink-0" /> : null}
         <span className="truncate">Dashboard</span>
       </Link>
       <Link
         to="/dashboard/calendar"
         aria-current={mode === "calendar" ? "page" : undefined}
         className={cn(
-          "relative z-10 inline-flex min-w-0 items-center justify-center gap-1.5 rounded-[calc(var(--radius-sm)-1px)] px-2 font-medium transition-colors",
+          "relative z-10 inline-flex min-w-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] font-medium transition-colors",
+          compact ? "gap-1 px-1.5" : "gap-1.5 px-2",
           mode === "calendar" ? "text-background" : "text-muted-foreground hover:text-foreground",
         )}
       >
-        <CalendarDays className="h-3.5 w-3.5 shrink-0" />
+        {!compact ? <CalendarDays className="h-3.5 w-3.5 shrink-0" /> : null}
         <span className="truncate">Calendar</span>
       </Link>
     </nav>

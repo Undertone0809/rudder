@@ -68,6 +68,7 @@ export function BreadcrumbBar({
     [relativePath],
   );
   const threeColumnTitle = useMemo(() => {
+    if (/^\/dashboard\/calendar(?:\/|$)/.test(relativePath)) return null;
     if (/^\/dashboard(?:\/|$)/.test(relativePath)) return "Dashboard";
     if (/^\/messenger(?:\/|$)/.test(relativePath)) return "Messenger";
     if (/^\/inbox(?:\/|$)/.test(relativePath)) return "Inbox";
@@ -207,7 +208,7 @@ export function BreadcrumbBar({
     const isLinearIssueSource = isIssuesRoute && activeIssueSource === "linear";
     const isProjectsRoute = /^\/projects(?:\/|$)/.test(relativePath);
     const isProjectsIndex = isProjectsRoute && !/^\/projects\/[^/]+/.test(relativePath);
-    const isDashboardCalendarSurface = /^\/dashboard(?:\/calendar)?(?:\/|$)/.test(relativePath);
+    const isDashboardIndex = /^\/dashboard\/?$/.test(relativePath);
     return (
       <div
         className={cn(
@@ -220,7 +221,7 @@ export function BreadcrumbBar({
       >
         {menuButton}
         {openWorkspaceSidebarButton}
-        {isDashboardCalendarSurface ? (
+        {isDashboardIndex ? (
           <DashboardCalendarSwitcher />
         ) : (
           <div className="min-w-0 shrink-0">

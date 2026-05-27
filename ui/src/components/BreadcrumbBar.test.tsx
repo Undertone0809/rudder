@@ -118,13 +118,11 @@ describe("BreadcrumbBar", () => {
     expect(html).toContain("Calendar");
   });
 
-  it("slides the Dashboard and Calendar switcher to Calendar on the nested calendar page", () => {
+  it("omits the Dashboard and Calendar switcher from the main header on the nested calendar page", () => {
     pathname = "/RUD/dashboard/calendar";
 
     const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
 
-    expect(html).toContain("dashboard-calendar-switcher");
-    expect(html).toContain("data-mode=\"calendar\"");
-    expect(html).toContain("href=\"/dashboard/calendar\"");
+    expect(html).not.toContain("dashboard-calendar-switcher");
   });
 });
