@@ -183,6 +183,7 @@ function boardRoutes() {
     <>
       <Route index element={<Navigate to="dashboard" replace />} />
       <Route path="dashboard" element={<Dashboard />} />
+      <Route path="dashboard/calendar" element={<CalendarPage />} />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="organizations" element={<LegacyOrganizationsRedirect />} />
       <Route path="organization/settings" element={<OrganizationSettings />} />
@@ -234,7 +235,7 @@ function boardRoutes() {
       <Route path="chat/:conversationId" element={<LegacyMessengerRedirect />} />
       <Route path="automations" element={<Automations />} />
       <Route path="automations/:automationId" element={<AutomationDetail />} />
-      <Route path="calendar" element={<CalendarPage />} />
+      <Route path="calendar" element={<LegacyCalendarRedirect />} />
       <Route path="execution-workspaces/:workspaceId" element={<ExecutionWorkspaceDetail />} />
       <Route path="goals" element={<Goals />} />
       <Route path="goals/:goalId" element={<GoalDetail />} />
@@ -274,6 +275,15 @@ function LegacyInboxRedirect() {
     return <Navigate to={`/messenger${location.search}${location.hash}`} replace />;
   }
   return <Navigate to={`/${orgPrefix}/messenger${location.search}${location.hash}`} replace />;
+}
+
+function LegacyCalendarRedirect() {
+  const location = useLocation();
+  const { orgPrefix } = useParams<{ orgPrefix?: string }>();
+  if (!orgPrefix) {
+    return <Navigate to={`/dashboard/calendar${location.search}${location.hash}`} replace />;
+  }
+  return <Navigate to={`/${orgPrefix}/dashboard/calendar${location.search}${location.hash}`} replace />;
 }
 
 function InstanceSettingsRedirect({ requestedPath }: { requestedPath?: string }) {
@@ -525,6 +535,8 @@ export function App() {
             <Route path="plugins/:pluginId" element={<PluginSettings />} />
           </Route>
           <Route path="organizations" element={<LegacyOrganizationsRedirect />} />
+          <Route path="dashboard" element={<UnprefixedBoardRedirect />} />
+          <Route path="dashboard/calendar" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
           <Route path="messenger" element={<UnprefixedBoardRedirect />} />

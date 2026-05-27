@@ -106,4 +106,23 @@ describe("BreadcrumbBar", () => {
     expect(html).toContain("Search Linear issues...");
     expect(html).not.toContain("Create Issue");
   });
+
+  it("renders a Dashboard and Calendar switcher on the dashboard page", () => {
+    pathname = "/RUD/dashboard";
+
+    const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(html).toContain("dashboard-calendar-switcher");
+    expect(html).toContain("data-mode=\"dashboard\"");
+    expect(html).toContain("Dashboard");
+    expect(html).toContain("Calendar");
+  });
+
+  it("omits the Dashboard and Calendar switcher from the main header on the nested calendar page", () => {
+    pathname = "/RUD/dashboard/calendar";
+
+    const html = renderToStaticMarkup(<BreadcrumbBar variant="card" />);
+
+    expect(html).not.toContain("dashboard-calendar-switcher");
+  });
 });
