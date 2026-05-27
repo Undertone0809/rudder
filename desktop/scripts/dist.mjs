@@ -157,9 +157,15 @@ async function verifyShellDesktopCli(serverPackageDir) {
     ", '--dry-run', '--no-open', '--no-version-check']);",
     "if (code !== 0) process.exit(code);",
   ].join(" ");
-  await run(process.execPath, ["--input-type=module", "--eval", script], {
-    cwd: serverPackageDir,
-  });
+  const verifyScriptPath = path.join(serverPackageDir, ".rudder-shell-cli-verify.mjs");
+  await fs.writeFile(verifyScriptPath, script, "utf8");
+  try {
+    await run(process.execPath, [verifyScriptPath], {
+      cwd: serverPackageDir,
+    });
+  } finally {
+    await fs.rm(verifyScriptPath, { force: true });
+  }
 }
 
 async function createShellAppCopy(platform, arch, productName) {
