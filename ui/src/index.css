@@ -1144,38 +1144,6 @@
     padding-left: 1.25rem;
   }
 
-  .chat-review-details-section {
-    overflow: visible;
-  }
-
-  .chat-review-details-section::before {
-    content: "";
-    position: absolute;
-    z-index: 0;
-    top: -1.25rem;
-    left: 0;
-    right: 0;
-    height: 3.25rem;
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in oklab, var(--surface-elevated) 12%, transparent) 0%,
-        color-mix(in oklab, var(--surface-elevated) 74%, transparent) 48%,
-        var(--surface-elevated) 100%
-      );
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    box-shadow:
-      inset 0 1px 0 color-mix(in oklab, white 18%, transparent),
-      0 -18px 24px -24px color-mix(in oklab, var(--accent-base) 28%, black);
-    pointer-events: none;
-  }
-
-  .chat-review-details-section > * {
-    position: relative;
-    z-index: 1;
-  }
-
   .chat-review-details-body {
     position: relative;
   }
@@ -1213,8 +1181,39 @@
   }
 
   .chat-review-note {
-    background: color-mix(in oklab, var(--surface-shell) 90%, transparent);
+    position: relative;
+    overflow: hidden;
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--surface-shell) 96%, var(--surface-proposal)) 0%,
+        color-mix(in oklab, var(--surface-shell) 90%, transparent) 100%
+      );
     border: 1px solid color-mix(in oklab, var(--border-soft) 88%, transparent);
+  }
+
+  .chat-review-note-header,
+  .chat-review-note-body {
+    position: relative;
+    z-index: 1;
+  }
+
+  .chat-review-note-header::after {
+    content: "";
+    position: absolute;
+    left: -1rem;
+    right: -1rem;
+    bottom: -0.85rem;
+    height: 1.35rem;
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--surface-shell) 78%, transparent) 0%,
+      color-mix(in oklab, var(--surface-shell) 42%, transparent) 54%,
+      transparent 100%
+    );
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    pointer-events: none;
   }
 
   @media (max-width: 767px) {
