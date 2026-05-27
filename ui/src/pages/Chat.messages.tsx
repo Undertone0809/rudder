@@ -631,6 +631,7 @@ export function ProposalCard({
               className={cn(
                 "chat-review-details-body text-sm leading-6 text-muted-foreground",
                 !proposalDetailsExpanded && "chat-review-details-body--collapsed",
+                proposalDetailsCanExpand && !proposalDetailsExpanded && "chat-review-details-body--can-expand",
               )}
             >
               <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
