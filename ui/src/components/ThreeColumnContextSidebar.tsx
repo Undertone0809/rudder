@@ -63,6 +63,7 @@ import {
 import { useIssueFollows } from "@/hooks/useIssueFollows";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentActionsMenu } from "@/components/AgentActionsMenu";
+import { DashboardCalendarSwitcher } from "@/components/DashboardCalendarSwitcher";
 import { MessengerContextSidebar } from "@/components/MessengerContextSidebar";
 import { StatusIcon } from "@/components/StatusIcon";
 import {
@@ -83,7 +84,7 @@ export function ThreeColumnContextSidebar() {
   const relativePath = toOrganizationRelativePath(location.pathname);
   const contextHeader = useMemo(() => resolveContextColumnHeader(relativePath), [relativePath]);
   const isMessengerRoute = /^\/messenger(?:\/|$)/.test(relativePath);
-  const isCalendarRoute = /^\/calendar(?:\/|$)/.test(relativePath);
+  const isCalendarRoute = /^\/(?:dashboard\/calendar|calendar)(?:\/|$)/.test(relativePath);
   const isLinearPluginRoute = /^\/linear(?:\/|$)/.test(relativePath);
   const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath) || isLinearPluginRoute;
   const isOrgWorkspaceRoute = /^\/(?:org|projects|resources|heartbeats|workspaces|goals|skills|costs|activity)(?:\/|$)/.test(relativePath);
@@ -506,7 +507,9 @@ export function ThreeColumnContextSidebar() {
         data-testid="workspace-sidebar"
         className="workspace-context-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
       >
-        <ContextColumnHeader title={contextHeader.title} description={contextHeader.description} />
+        <ContextColumnHeader title={contextHeader.title} description={contextHeader.description}>
+          <DashboardCalendarSwitcher compact className="w-full" />
+        </ContextColumnHeader>
         <div ref={calendarSidebarScrollRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto pb-3.5">
           <CalendarMiniMonth
             cursor={cursor}
