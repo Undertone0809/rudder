@@ -1097,6 +1097,7 @@
 
   .chat-review-docket-header {
     z-index: 2;
+    overflow: visible;
   }
 
   .chat-review-block > div:not(.chat-review-docket-header),
@@ -1120,16 +1121,51 @@
     background: color-mix(in oklab, var(--surface-proposal) 22%, transparent);
   }
 
+  .chat-review-docket-header::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1.35rem;
+    height: 1.6rem;
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--surface-proposal) 18%, transparent) 0%,
+      color-mix(in oklab, var(--surface-elevated) 70%, transparent) 62%,
+      transparent 100%
+    );
+    backdrop-filter: blur(7px);
+    -webkit-backdrop-filter: blur(7px);
+    pointer-events: none;
+  }
+
   .chat-review-fact-ledger {
     border-left: 1px solid color-mix(in oklab, var(--border-soft) 88%, transparent);
     padding-left: 1.25rem;
   }
 
+  .chat-review-details-body {
+    position: relative;
+  }
+
   .chat-review-details-body--collapsed {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 10;
+    max-height: 15rem;
     overflow: hidden;
+  }
+
+  .chat-review-details-body--can-expand::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3rem;
+    background: linear-gradient(
+      180deg,
+      transparent,
+      color-mix(in oklab, var(--surface-elevated) 86%, transparent) 74%
+    );
+    pointer-events: none;
   }
 
   .chat-review-block[data-status="approved"] {

@@ -83,6 +83,73 @@ async function createProposalOrg(page: Page, name: string, command: string) {
 }
 
 test.describe("Chat proposal review block", () => {
+  test("collapses long proposal details until the operator expands them", async ({ page }) => {
+    const command = await writeProposalStub("proposal-review-long-details", {
+      kind: "issue_proposal",
+      body: "Create a long proposal for the details expansion test.",
+      structuredPayload: {
+        issueProposal: {
+          title: "Long proposal details test",
+          description: [
+            "Purpose: Verify long proposal details start collapsed.",
+            "Background: This text is intentionally long enough to exceed the ten-line preview area.",
+            "Scope:",
+            "- Confirm the first bullet renders in the preview.",
+            "- Confirm the second bullet renders in the preview.",
+            "- Confirm the third bullet renders in the preview.",
+            "- Confirm the fourth bullet renders below the fold.",
+            "- Confirm the fifth bullet renders below the fold.",
+            "- Confirm the sixth bullet renders below the fold.",
+            "- Confirm the seventh bullet renders below the fold.",
+            "- Confirm the eighth bullet renders below the fold.",
+            "- Confirm the ninth bullet renders below the fold.",
+            "- Confirm the tenth bullet renders below the fold.",
+            "Acceptance: Clicking show full proposal reveals every line without clipping.",
+          ].join("\n"),
+          priority: "medium",
+        },
+      },
+    });
+    const organization = await createProposalOrg(page, `LongDetails-${Date.now()}`, command);
+
+    await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+    await composer.fill("please draft a long issue proposal");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const reviewBlock = page.getByTestId("proposal-review-block").last();
+    await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
+    const details = reviewBlock.locator(".chat-review-details-body");
+    const expandButton = reviewBlock.getByRole("button", { name: "Show full proposal" });
+    await expect(expandButton).toBeVisible();
+    await expect(details).toHaveClass(/chat-review-details-body--collapsed/);
+    await expect
+      .poll(async () =>
+        details.evaluate((element) => {
+          const lineHeight = Number.parseFloat(window.getComputedStyle(element).lineHeight);
+          return {
+            clipped: element.scrollHeight > element.clientHeight + 1,
+            visibleLines: Math.round(element.clientHeight / lineHeight),
+          };
+        }),
+      )
+      .toEqual({ clipped: true, visibleLines: 10 });
+
+    await expandButton.click();
+
+    await expect(reviewBlock.getByRole("button", { name: "Show less" })).toBeVisible();
+    await expect
+      .poll(async () =>
+        details.evaluate((element) => ({
+          expanded: element.scrollHeight <= element.clientHeight + 1,
+          collapsed: element.classList.contains("chat-review-details-body--collapsed"),
+          fadeVisible: element.classList.contains("chat-review-details-body--can-expand"),
+        })),
+      )
+      .toEqual({ expanded: true, collapsed: false, fadeVisible: false });
+  });
+
   test("keeps decision note inside the review block and restores the composer after rejection", async ({ page }) => {
     const command = await writeProposalStub("proposal-review-reject", {
       kind: "issue_proposal",
