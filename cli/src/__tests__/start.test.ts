@@ -30,6 +30,7 @@ import {
   downloadDesktopAssetWithCache,
   downloadChecksums,
   getCliUpdateNotice,
+  isExactRuntimePackageSpec,
   isInstalledDesktopCurrent,
   isPersistentCliVersionCurrent,
   isSuccessfulRobocopyExitCode,
@@ -39,14 +40,18 @@ import {
   resolveCliInstallSpec,
   resolveCurrentCliVersion,
   resolveDesktopAssetTarget,
+  resolveDesktopAssetCandidates,
   resolveDefaultDesktopInstallRoot,
   resolveDesktopAssetName,
+  resolveDesktopShellAssetName,
   resolveDesktopAssetCacheDir,
   resolveDesktopInstallPaths,
   resolveDesktopReleaseVersion,
   resolveDesktopReleaseTag,
+  selectChecksummedDesktopAssetCandidate,
   selectChecksumAsset,
   selectDesktopAsset,
+  selectDesktopShellAsset,
   startCommand,
   waitForProcessExit,
 } from "../commands/start.js";
@@ -493,6 +498,13 @@ describe("desktop start command helpers", () => {
     expect(resolveDesktopAssetName("0.3.1-canary.2", windowsTarget)).toBe(
       "Rudder-0.3.1-canary.2-windows-x64-portable.zip",
     );
+    expect(resolveDesktopShellAssetName("0.3.1-canary.2", macTarget)).toBe(
+      "Rudder-0.3.1-canary.2-macos-arm64-shell.zip",
+    );
+    expect(resolveDesktopShellAssetName("0.3.1-canary.2", windowsTarget)).toBe(
+      "Rudder-0.3.1-canary.2-windows-x64-shell.zip",
+    );
+    expect(resolveDesktopShellAssetName("0.3.1-canary.2", linuxTarget)).toBeNull();
     expect(
       buildGithubReleaseAssetDownloadUrl(
         "Undertone0809/rudder",
@@ -512,6 +524,117 @@ describe("desktop start command helpers", () => {
     expect(selectDesktopAsset(assets, { platform: "macos", arch: "arm64", extension: ".zip" })?.name).toBe(
       "Rudder-0.3.1-macos-arm64-portable.zip",
     );
+  });
+
+  it("prefers layered shell desktop assets when the release publishes them", () => {
+    const assets = [
+      { name: "Rudder-0.3.1-macos-arm64-portable.zip", browser_download_url: "https://example.test/macos-arm64-full" },
+      { name: "Rudder-0.3.1-macos-arm64-shell.zip", browser_download_url: "https://example.test/macos-arm64-shell" },
+      { name: "Rudder-0.3.1-macos-x64-shell.zip", browser_download_url: "https://example.test/macos-x64-shell" },
+    ];
+    const target = { platform: "macos" as const, arch: "arm64" as const, extension: ".zip" as const };
+
+    expect(selectDesktopShellAsset(assets, target)?.name).toBe("Rudder-0.3.1-macos-arm64-shell.zip");
+    expect(
+      resolveDesktopAssetCandidates({
+        releaseAssets: assets,
+        target,
+        repo: "Undertone0809/rudder",
+        tag: "v0.3.1",
+        directReleaseVersion: "0.3.1",
+      }).map((candidate) => candidate.kind),
+    ).toEqual(["shell", "full"]);
+  });
+
+  it("uses full desktop assets when exact runtime preparation is unavailable", () => {
+    const assets = [
+      { name: "Rudder-0.3.1-macos-arm64-shell.zip", browser_download_url: "https://example.test/macos-arm64-shell" },
+      { name: "Rudder-0.3.1-macos-arm64-portable.zip", browser_download_url: "https://example.test/macos-arm64-full" },
+    ];
+    const target = { platform: "macos" as const, arch: "arm64" as const, extension: ".zip" as const };
+
+    expect(selectDesktopAsset([
+      { name: "Rudder-0.3.1-macos-arm64-shell.zip", browser_download_url: "https://example.test/shell" },
+    ], target)).toBeNull();
+    expect(
+      resolveDesktopAssetCandidates({
+        releaseAssets: assets,
+        target,
+        repo: "Undertone0809/rudder",
+        tag: "v0.3.1",
+        directReleaseVersion: "0.3.1",
+        allowShellAssets: false,
+      }).map((candidate) => ({
+        kind: candidate.kind,
+        name: candidate.asset.name,
+      })),
+    ).toEqual([
+      { kind: "full", name: "Rudder-0.3.1-macos-arm64-portable.zip" },
+    ]);
+  });
+
+  it("requires an exact versioned runtime before shell assets are eligible", () => {
+    expect(isExactRuntimePackageSpec("0.3.1", "@rudderhq/server@0.3.1")).toBe(true);
+    expect(isExactRuntimePackageSpec("0.3.1", "@rudderhq/server@latest")).toBe(false);
+    expect(isExactRuntimePackageSpec("latest", "@rudderhq/server@latest")).toBe(false);
+  });
+
+  it("falls back to the full desktop asset when shell is not checksummed", () => {
+    const candidates = [
+      {
+        kind: "shell" as const,
+        asset: { name: "Rudder-0.3.1-macos-arm64-shell.zip", browser_download_url: "https://example.test/shell" },
+      },
+      {
+        kind: "full" as const,
+        asset: { name: "Rudder-0.3.1-macos-arm64-portable.zip", browser_download_url: "https://example.test/full" },
+      },
+    ];
+    const selected = selectChecksummedDesktopAssetCandidate(
+      candidates,
+      parseChecksumFile(
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  Rudder-0.3.1-macos-arm64-portable.zip\n",
+      ),
+    );
+
+    expect(selected.kind).toBe("full");
+    expect(selected.asset.name).toBe("Rudder-0.3.1-macos-arm64-portable.zip");
+    expect(selected.expectedChecksum).toBe("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    expect(selected.warnings).toEqual([
+      "Layered Desktop shell asset is missing from SHASUMS256.txt; falling back to the full portable asset.",
+    ]);
+  });
+
+  it("tries deterministic shell URLs before full URLs when release metadata is unavailable", () => {
+    const target = { platform: "macos" as const, arch: "arm64" as const, extension: ".zip" as const };
+
+    expect(
+      resolveDesktopAssetCandidates({
+        releaseAssets: [],
+        target,
+        repo: "Undertone0809/rudder",
+        tag: "v0.3.1",
+        directReleaseVersion: "0.3.1",
+      }).map((candidate) => ({
+        kind: candidate.kind,
+        name: candidate.asset.name,
+      })),
+    ).toEqual([
+      { kind: "shell", name: "Rudder-0.3.1-macos-arm64-shell.zip" },
+      { kind: "full", name: "Rudder-0.3.1-macos-arm64-portable.zip" },
+    ]);
+  });
+
+  it("fails closed when only an unchecked shell desktop asset is available", () => {
+    expect(() => selectChecksummedDesktopAssetCandidate(
+      [
+        {
+          kind: "shell" as const,
+          asset: { name: "Rudder-0.3.1-macos-arm64-shell.zip", browser_download_url: "https://example.test/shell" },
+        },
+      ],
+      new Map(),
+    )).toThrow("No checksummed Rudder Desktop asset candidate is available.");
   });
 
   it("supports legacy macOS zip names that omit the platform", () => {
