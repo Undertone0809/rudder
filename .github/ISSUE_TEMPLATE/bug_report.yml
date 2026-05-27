@@ -1,0 +1,93 @@
+name: Bug report
+description: Report a reproducible problem or regression.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for broken behavior, regressions, crashes, incorrect data, or workflows that no longer work as expected.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the problem in one or two concise paragraphs.
+      placeholder: What is broken, and who is affected?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest sequence that reproduces the issue.
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: Actual behavior
+      description: What happens today?
+      placeholder: Describe the observed behavior, error, crash, or incorrect result.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: What should happen instead?
+      placeholder: Describe the correct behavior.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Affected area
+      description: Pick the closest area.
+      options:
+        - UI
+        - Server/API
+        - Database
+        - Desktop app
+        - CLI
+        - Agent runtime/heartbeat
+        - Docs
+        - Release/packaging
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include versions and runtime details when relevant.
+      placeholder: |
+        - OS:
+        - Browser/Desktop:
+        - Rudder version or commit:
+        - Node/pnpm version:
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Add logs, screenshots, traces, links, or related issues.
+      placeholder: Paste concise evidence here.
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Explain severity and whether this blocks a real workflow.
+      placeholder: Who is blocked? Is there a workaround?
+
