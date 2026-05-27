@@ -17,6 +17,11 @@
       "canonical": "https://doc.rudder.zeeland.studio"
     }
   },
+  "integrations": {
+    "ga4": {
+      "measurementId": "G-7LFL6GL5QZ"
+    }
+  },
   "navbar": {
     "links": [
       {
