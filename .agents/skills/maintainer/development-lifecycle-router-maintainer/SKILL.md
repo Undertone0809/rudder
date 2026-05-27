@@ -7,10 +7,12 @@ description: >
   when the user gives an ambiguous or end-to-end development request, asks which
   workflow or skill should handle a task, wants to enter at any lifecycle stage,
   wants reviewer subagents after each stage, or expects review by default before
-  handoff. Review gates require spawned reviewers by default. Prefer narrower
-  maintainer skills directly when the user clearly asks for a release, UI
-  polish, run transcript debug, local preview, data diagnosis, PR preview, or
-  review-only task.
+  handoff. Review gates require spawned reviewers by default. Also use for
+  component-lab/catalog work, performance benchmark-to-implementation work, and
+  destructive cleanup or dirty-worktree recovery where the safe route is not yet
+  clear. Prefer narrower maintainer skills directly when the user clearly asks
+  for a release, UI polish, run transcript debug, local preview, data diagnosis,
+  PR preview, or review-only task.
 ---
 
 # Development Lifecycle Router Maintainer
@@ -41,6 +43,14 @@ Use this skill when the user asks for any of:
 - continuation after `turn_aborted`, rollback, stash/worktree confusion, or a
   long `/goal` run where the agent must recover the real current state before
   resuming
+- destructive or ambiguous worktree cleanup requests such as "这些删了", "what are
+  these changes", or "is this old Codex work" where file ownership must be
+  reconstructed before removing or restoring anything
+- component lab, UI Lab, component inventory, or design-system catalog work that
+  needs fixture coverage, context-required classification, browser proof, and
+  E2E rather than a small visual polish pass
+- performance benchmark or control-plane optimization work that must start from
+  measured workload evidence and a scoped first slice before implementation
 - creating or improving a reusable workflow for development tasks
 
 Do not use this skill as a substitute for a clearly matched narrow skill. If
@@ -95,6 +105,12 @@ Classify the prompt into one primary stage:
   GitHub Release state.
 - `handoff`: work is implemented and needs final summary, validation, commit,
   push, residual risk, or PR.
+- `recovery`: the user asks to clean, delete, restore, classify, or continue
+  from a dirty worktree, stash, interrupted run, or suspected old Codex work.
+- `component_lab`: the user asks to build or expand UI Lab, component inventory,
+  component fixtures, or design-system coverage.
+- `performance_benchmark`: the user asks to benchmark Rudder, analyze
+  performance, or optimize a bottleneck before the exact fix is known.
 
 If multiple stages are present, choose the earliest blocking stage. Example:
 "fix this and review it" starts at `implementation`, then must pass
@@ -114,12 +130,24 @@ Use the smallest matching workflow:
 - Codex session benchmarking against recent local session history, efficiency,
   follow-up rate, token/cost hints, or problem-resolution proxy metrics:
   `codex-session-benchmark-maintainer`.
+- Cohort-only Codex session review whose goal is to decide which skills need
+  optimization, with no target session to benchmark: route to `skill-optimizer`
+  with a clean recent-session evidence packet instead of forcing a benchmark.
 - Screenshot-driven visible UI polish or small UI interaction fix:
   `rudder-ui-polish-maintainer`.
+- UI Lab, component inventory, fixture catalog, component coverage, or design
+  system surface work: keep this router as the owner of the component-lab route,
+  then use normal implementation plus UI/browser/E2E evidence. Do not route it
+  directly to narrow UI polish.
 - Wrong, missing, stale, or sparse data on a Rudder surface:
   `rudder-data-path-diagnostician-maintainer`.
 - Rudder agent run failure, transcript, logs, stdout/stderr, or run id:
-  `debug-run-transcript`.
+  `debug-run-transcript-maintainer`.
+- Rudder performance benchmark, control-plane bottleneck analysis, or app/API
+  optimization: first collect measured workload evidence and current validation
+  readiness, then route to implementation or
+  `architecture-refactor-driver-maintainer` only if the first slice requires
+  architectural change.
 - Local Rudder Desktop dev startup, Electron shell, embedded Postgres,
   prod-local instance confusion, or update/install failure before release:
   `rudder-desktop-dev-recovery-maintainer`.
@@ -148,6 +176,8 @@ Collect only the evidence needed to choose the route:
 - named files, screenshots, session ids, run ids, PRs, commits, or plans
 - relevant repo docs based on `AGENTS.md`
 - nearby skill contracts when choosing between skills
+- changed-file ownership when the prompt asks to delete, restore, clean up, or
+  identify old agent work
 
 Ignore injected environment text and broad repo scanning unless it affects the
 route. If the user gave a Codex session id, extract the real user prompts and
@@ -233,6 +263,60 @@ sessions, rebuild state before editing or handing off:
 If a stash exists, classify it before applying or dropping it: source session,
 files included, overlap with current task, and whether applying it would
 overwrite unrelated work. Do not drop or pop a stash just to clean up state.
+
+### 3.2 Handle dirty-worktree cleanup as recovery first
+
+For prompts like "这些删了", "no, only delete package.json changes", "what is this
+code", or "is this previous Codex uncommitted work", enter `recovery` before
+any destructive action.
+
+Build a changed-file ownership packet:
+
+- current branch, upstream, and ahead/behind state
+- every modified and untracked path grouped by likely feature or source session
+- relevant recent Codex sessions, branch names, commits, and screenshots when
+  the user references previous work
+- which files are safe to restore, which must be preserved, and which are
+  unknown
+
+Do not delete, restore, stash-pop, or commit until the target group is clear.
+If the user narrows the scope mid-run, stop and reclassify the file groups
+before touching more paths.
+
+### 3.3 Treat component labs as workflow features
+
+UI Lab, component catalog, fixture coverage, and design-system inventory work is
+not narrow UI polish, even when the user says the surface should look better.
+
+The component-lab route must define:
+
+- the coverage target: hand-authored fixtures, auto-discovered components,
+  context-required components, or all of them
+- how context-required components are labeled instead of faked
+- the user-visible route and browser proof
+- focused page/unit tests and E2E coverage when navigation or filtering changes
+- a reviewer gate for coverage quality before handoff
+
+Use `rudder-ui-polish-maintainer` only after the component-lab scope is already
+settled and the remaining task is a concrete rendered-state fix.
+
+### 3.4 Require measured evidence for performance work
+
+For "做一下 Rudder 性能优化分析", app benchmark, control-plane optimization, or
+similar prompts, start with `performance_benchmark` unless the user names an
+already-proven bottleneck.
+
+Before implementation, record:
+
+- workload shape, dataset size, route/API surface, and user scenario
+- baseline measurement and the tool or script that produced it
+- dependency/cache readiness for the checks you intend to run
+- one scoped first slice with expected impact and rollback boundary
+- verification plan, including what will be measured again after the change
+
+Do not promise full validation if dependency install, registry, browser, or
+runtime setup is already blocked. Report validation readiness before starting a
+long implementation phase.
 
 ### 4. Run default review gates
 
@@ -410,8 +494,8 @@ unless the user later switches to rework.
 
 Route: `debug -> review or implementation`.
 
-Use `debug-run-transcript` first to reconstruct what happened. Only switch to
-implementation after the root cause and target fix are clear.
+Use `debug-run-transcript-maintainer` first to reconstruct what happened. Only
+switch to implementation after the root cause and target fix are clear.
 
 ### Release request
 

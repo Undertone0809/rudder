@@ -65,10 +65,10 @@
     {
       "id": 5,
       "prompt": "这个 agent run 为什么失败了？run id 是 7d28669d，先别修，先判断应该怎么看。",
-      "expected_output": "Routes to debug-run-transcript as the first stage, reconstructs the run from run-intelligence/log sources before proposing fixes, stays out of implementation because the user asked to inspect first, and uses spawned reviewers on the diagnostic artifact before handoff.",
+      "expected_output": "Routes to debug-run-transcript-maintainer as the first stage, reconstructs the run from run-intelligence/log sources before proposing fixes, stays out of implementation because the user asked to inspect first, and uses spawned reviewers on the diagnostic artifact before handoff.",
       "files": [],
       "expectations": [
-        "The result selects the debug stage and debug-run-transcript route.",
+        "The result selects the debug stage and debug-run-transcript-maintainer route.",
         "The result uses the run-intelligence/log source priority before raw database guesses.",
         "The result does not start fixing until the failure mode and target artifact are clear.",
         "The result states what evidence is needed to move from debug to implementation or review.",
@@ -121,6 +121,45 @@
         "The result records execution mode as blocked: spawned reviewers unavailable.",
         "The result includes implementation and validation evidence gathered so far.",
         "The result stops short of claiming the routed stage is complete."
+      ]
+    },
+    {
+      "id": 15,
+      "prompt": "这些删了。no，我只叫你把 package.json 的变更删掉。帮我看看这些代码是不是之前 Codex 没 commit。",
+      "expected_output": "Routes to recovery before any destructive cleanup, rebuilds branch/status/session evidence, groups modified and untracked files by likely source or feature, touches only the narrowed target group, and preserves unrelated dirty work.",
+      "files": [],
+      "expectations": [
+        "The result classifies the task as dirty-worktree recovery rather than ordinary implementation.",
+        "The result inspects current branch, ahead/behind state, changed files, and relevant Codex sessions before deleting or restoring files.",
+        "The result groups files by source-session or feature and calls out unknown ownership.",
+        "The result stops and reclassifies when the user narrows the cleanup target.",
+        "The result does not restore, delete, stash-pop, commit, or push unrelated dirty work."
+      ]
+    },
+    {
+      "id": 16,
+      "prompt": "我想构建一个 UI lab，里面可以看到所有常用组件，也能区分哪些组件需要 app context。先在现有基础上改造。",
+      "expected_output": "Routes to the component_lab workflow instead of narrow UI polish, defines component coverage and context-required classification, implements with focused tests and browser proof, and uses reviewer evidence before handoff.",
+      "files": [],
+      "expectations": [
+        "The result does not treat UI Lab work as a small screenshot polish task.",
+        "The result names coverage targets such as authored fixtures, auto-discovered components, and context-required components.",
+        "The result includes tests and browser or screenshot evidence for the visible UI Lab route.",
+        "The result preserves unrelated dirty files and stages only the component-lab changes.",
+        "The result runs a reviewer gate on coverage quality before claiming the route complete."
+      ]
+    },
+    {
+      "id": 17,
+      "prompt": "benchmark 跑一下 APP，做一下性能测试，然后找一个最值得优化的 bottleneck 推进。",
+      "expected_output": "Routes to performance_benchmark first, records workload shape and baseline measurements, checks validation readiness, chooses one scoped first slice before implementation, and re-measures or reports the exact validation blocker after the change.",
+      "files": [],
+      "expectations": [
+        "The result starts from measured app/API/workload evidence rather than broad tuning advice.",
+        "The result states dataset size, benchmark target, and user scenario before choosing a fix.",
+        "The result checks dependency, browser, runtime, or registry readiness before promising validation.",
+        "The implementation scope is one measurable first slice with a rollback boundary.",
+        "The handoff separates measured improvement, attempted checks, and blocked validation."
       ]
     },
     {

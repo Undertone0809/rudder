@@ -18,6 +18,18 @@
       "prompt": "最近一个 release 修复 session 到底算不算高效？和最近 release/debug 类 session 比一下，然后告诉我应该优化哪个 skill。",
       "expected_output": "Compares the target only against relevant release/debug sessions, separates task complexity from agent inefficiency, and hands off a concrete skill-optimizer target only after naming the reusable failure class and decision point.",
       "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "看一下最近 30 个 Codex session，结合现有 project skills，哪些 skill 需要优化？",
+      "expected_output": "Does not run a target-vs-baseline benchmark because no target session was provided. Builds a clean cohort evidence packet, excludes the current analysis/automation thread and reviewer child sessions, collapses duplicate retry clusters, and hands off the failure classes and decision points to skill-optimizer.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "最近 30 个 session 里有 automation parent、两个 spawned reviewer、几个重复 UI Lab retry。用它们和目标 session 019e5dd3 横向对比一下。",
+      "expected_output": "Uses state_5.sqlite or local rollout JSONL to build the cohort, keeps the named target session, excludes or separately labels current automation and reviewer sidecars, collapses duplicate retry clusters unless explicitly needed, and reports proxy metrics with cohort caveats.",
+      "files": []
     }
   ]
 }
