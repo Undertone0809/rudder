@@ -45,9 +45,12 @@ const SHARED_CLAUDE_HOME_ENTRIES = [
   ".config/anthropic",
   ".anthropic",
 ] as const;
-const SHARED_CLAUDE_DOTDIR_ENTRIES = [
-  "settings.json",
-] as const;
+const CLAUDE_SINGLE_VALUE_SKILL_SOURCE_FLAGS = new Set([
+  "--plugin-dir",
+  "--plugin-url",
+  "--settings",
+  "--setting-sources",
+]);
 
 /**
  * Create a tmpdir with `.claude/skills/` containing symlinks to skills from
@@ -114,35 +117,79 @@ function resolveSharedClaudeHomeDir(env: NodeJS.ProcessEnv): string {
   return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
 }
 
-function resolveManagedClaudeHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
+function resolveManagedClaudeHomeDir(env: NodeJS.ProcessEnv, orgId: string, agentId: string): string {
   const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
   const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "claude-home");
+  return path.resolve(
+    rudderHome,
+    "instances",
+    instanceId,
+    "organizations",
+    orgId,
+    "claude-home",
+    "agents",
+    agentId,
+  );
 }
 
-async function syncClaudeSharedDotdirEntries(sourceHome: string, targetHome: string) {
-  const sourceClaudeDir = path.join(sourceHome, ".claude");
-  const targetClaudeDir = path.join(targetHome, ".claude");
-  await fs.mkdir(targetClaudeDir, { recursive: true });
-  for (const relativeEntry of SHARED_CLAUDE_DOTDIR_ENTRIES) {
-    const source = path.join(sourceClaudeDir, relativeEntry);
-    if (!(await pathExists(source))) continue;
-    await ensureSymlink(path.join(targetClaudeDir, relativeEntry), source);
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readJsonFile(filePath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
+    return isPlainRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
+}
+
+async function writeManagedClaudeSettings(input: {
+  sourceHome: string;
+  targetHome: string;
+  enabledSkillNames: string[];
+}) {
+  const sourceSettings = await readJsonFile(path.join(input.sourceHome, ".claude", "settings.json"));
+  const managedSettings: Record<string, unknown> = {};
+  const sourceEnv = sourceSettings?.env;
+  if (isPlainRecord(sourceEnv)) {
+    managedSettings.env = sourceEnv;
+  }
+
+  const apiKeyHelper = sourceSettings?.apiKeyHelper;
+  if (typeof apiKeyHelper === "string" && apiKeyHelper.trim().length > 0) {
+    managedSettings.apiKeyHelper = apiKeyHelper;
+  }
+
+  const enabledSkillNames = Array.from(new Set(input.enabledSkillNames)).sort((left, right) =>
+    left.localeCompare(right),
+  );
+  managedSettings.skillOverrides = Object.fromEntries(
+    enabledSkillNames.map((skillName) => [skillName, true]),
+  );
+
+  const target = path.join(input.targetHome, ".claude", "settings.json");
+  await ensureParentDir(target);
+  await fs.writeFile(target, `${JSON.stringify(managedSettings, null, 2)}\n`, "utf8");
+  return target;
 }
 
 async function prepareManagedClaudeHome(
   env: NodeJS.ProcessEnv,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
+  agentId: string,
+  enabledSkillNames: string[],
 ): Promise<string> {
   const sourceHome = resolveSharedClaudeHomeDir(env);
-  const targetHome = resolveManagedClaudeHomeDir(env, orgId);
+  const targetHome = resolveManagedClaudeHomeDir(env, orgId, agentId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(targetHome, { recursive: true });
+  await fs.rm(path.join(targetHome, ".claude", "skills"), { recursive: true, force: true });
   await fs.mkdir(path.join(targetHome, ".claude", "skills"), { recursive: true });
-  await syncClaudeSharedDotdirEntries(sourceHome, targetHome);
+  await writeManagedClaudeSettings({ sourceHome, targetHome, enabledSkillNames });
 
   for (const relativeEntry of SHARED_CLAUDE_HOME_ENTRIES) {
     const source = path.join(sourceHome, relativeEntry);
@@ -152,9 +199,37 @@ async function prepareManagedClaudeHome(
 
   await onLog(
     "stdout",
-    `[rudder] Using Rudder-managed Claude home "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Using per-agent Rudder-managed Claude home "${targetHome}" (seeded from "${sourceHome}").\n`,
   );
   return targetHome;
+}
+
+function stripClaudeSkillSourceArgs(args: string[]): string[] {
+  const out: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg === "--add-dir") {
+      while (index + 1 < args.length && !args[index + 1]!.startsWith("-")) {
+        index += 1;
+      }
+      continue;
+    }
+    if (CLAUDE_SINGLE_VALUE_SKILL_SOURCE_FLAGS.has(arg)) {
+      index += 1;
+      continue;
+    }
+    if (
+      arg.startsWith("--add-dir=") ||
+      arg.startsWith("--plugin-dir=") ||
+      arg.startsWith("--plugin-url=") ||
+      arg.startsWith("--settings=") ||
+      arg.startsWith("--setting-sources=")
+    ) {
+      continue;
+    }
+    out.push(arg);
+  }
+  return out;
 }
 
 interface ClaudeExecutionInput {
@@ -364,10 +439,17 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
 
   const sourceEnv = { ...process.env, ...env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
+  const claudeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
+  const desiredClaudeSkillNames = resolveClaudeDesiredSkillNames(config, claudeSkillEntries);
+  const enabledClaudeSkillRuntimeNames = claudeSkillEntries
+    .filter((entry) => desiredClaudeSkillNames.includes(entry.key))
+    .map((entry) => entry.runtimeName);
   env.HOME = await prepareManagedClaudeHome(
     sourceEnv,
     input.onLog ?? (async () => {}),
     agent.orgId,
+    agent.id,
+    enabledClaudeSkillRuntimeNames,
   );
   await syncLocalCliCredentialHomeEntries({
     sourceHome: operatorHome,
@@ -403,8 +485,8 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const graceSec = asNumber(config.graceSec, 20);
   const extraArgs = (() => {
     const fromExtraArgs = asStringArray(config.extraArgs);
-    if (fromExtraArgs.length > 0) return fromExtraArgs;
-    return asStringArray(config.args);
+    if (fromExtraArgs.length > 0) return stripClaudeSkillSourceArgs(fromExtraArgs);
+    return stripClaudeSkillSourceArgs(asStringArray(config.args));
   })();
 
   return {
@@ -533,18 +615,21 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       return [
         ...loadedInstructions.commandNotes,
         "Injected Rudder operating contract via --append-system-prompt-file.",
+        "Isolated Claude Code skill discovery to the per-agent managed Claude home and this run's Rudder-enabled skills.",
         ...(imageAttachmentNote ? [imageAttachmentNote] : []),
       ];
     }
     if (!loadedInstructions.prefix) {
       return [
         ...loadedInstructions.commandNotes,
+        "Isolated Claude Code skill discovery to the per-agent managed Claude home and this run's Rudder-enabled skills.",
         ...(imageAttachmentNote ? [imageAttachmentNote] : []),
       ];
     }
     return [
       ...loadedInstructions.commandNotes,
       `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended; relative references from ${instructionsFileDir}).`,
+      "Isolated Claude Code skill discovery to the per-agent managed Claude home and this run's Rudder-enabled skills.",
       ...(imageAttachmentNote ? [imageAttachmentNote] : []),
     ];
   })();
@@ -629,6 +714,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (model) args.push("--model", model);
     if (effort) args.push("--effort", effort);
     if (maxTurns > 0) args.push("--max-turns", String(maxTurns));
+    args.push("--setting-sources", "user");
+    args.push("--settings", path.join(env.HOME, ".claude", "settings.json"));
     if (effectiveInstructionsFilePath) {
       args.push("--append-system-prompt-file", effectiveInstructionsFilePath);
     }
