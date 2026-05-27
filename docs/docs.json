@@ -119,7 +119,7 @@
         "header": "Docs",
         "items": [
           {
-            "label": "Install Rudder",
+            "label": "Quick Start",
             "href": "/get-started/installation"
           },
           {
