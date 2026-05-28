@@ -2,6 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "Rudder",
+  "description": "Rudder is an open-source control plane for AI agent teams. It coordinates goals, issues, agent runs, reviews, budgets, workspaces, and feedback loops.",
   "logo": "/logo.png",
   "favicon": "/favicon.svg",
   "icons": {
@@ -14,8 +15,12 @@
   },
   "seo": {
     "metatags": {
-      "canonical": "https://doc.rudder.zeeland.studio"
+      "robots": "index,follow",
+      "author": "Rudder"
     }
+  },
+  "metadata": {
+    "timestamp": true
   },
   "integrations": {
     "ga4": {
@@ -43,7 +48,15 @@
             "pages": [
               "index",
               "get-started/installation",
-              "get-started/first-organization"
+              "get-started/first-organization",
+              "faq"
+            ]
+          },
+          {
+            "group": "Use Cases",
+            "icon": "workflow",
+            "pages": [
+              "use-cases/agent-work-loops"
             ]
           },
           {
@@ -78,7 +91,7 @@
             "group": "开始使用",
             "icon": "rocket",
             "pages": [
-              "zh/index",
+              "zh",
               "zh/get-started/installation",
               "zh/get-started/first-organization"
             ]

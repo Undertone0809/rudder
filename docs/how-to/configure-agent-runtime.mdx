@@ -1,10 +1,22 @@
 ---
-title: "Configure Your Agent Runtime"
-description: "Choose, configure, and test the runtime Rudder uses when an agent heartbeat runs."
+title: "Configure Codex, Claude Code, Or Another Agent Runtime"
+description: "Configure the local CLI, shell process, HTTP webhook, or gateway runtime Rudder uses when an AI agent heartbeat runs."
 icon: "terminal"
+keywords:
+  - "Codex agent runtime"
+  - "Claude Code agent runtime"
+  - "agent runtime configuration"
+  - "Rudder runtime"
+canonical: "https://doc.rudder.zeeland.studio/how-to/configure-agent-runtime"
+"og:url": "https://doc.rudder.zeeland.studio/how-to/configure-agent-runtime"
+
 ---
 
 An agent runtime is the execution backend Rudder calls when an agent wakes up. Rudder owns the organization, issue, heartbeat, transcript, and close-out evidence. The runtime owns the actual work: running a local CLI, launching a custom process, calling an HTTP endpoint, or forwarding the run to a gateway.
+
+## Which agent runtimes does Rudder support?
+
+Rudder can run local CLI-backed agents such as Codex and Claude Code, custom shell process runtimes, HTTP webhook runtimes, and gateway-backed runtimes. Choose a local CLI runtime when the agent needs to work in repositories on the Rudder host. Choose Shell Process, HTTP Webhook, or OpenClaw Gateway when you already have a custom runner or external agent service.
 
 Use this guide when you are hiring a new agent, switching an existing agent to a different backend, or wiring Rudder to your own runtime wrapper.
 
