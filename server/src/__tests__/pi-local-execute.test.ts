@@ -195,6 +195,10 @@ describe("pi execute", () => {
       expect(capture.argv[0]).toBe("-p");
       expect(capture.argv[1]).toContain("# Rudder Runtime Skill Boundary");
       expect(capture.argv[1]).toContain("Enabled Rudder Agent Skills: none.");
+      expect(capture.argv[1]).toContain("Rudder runtime note:");
+      expect(capture.argv[1]).toContain("Rudder CLI access note:");
+      expect(capture.argv[1]).toContain("rudder agent me --json");
+      expect(capture.argv[1]).toContain("rudder issue checkout {id} --json");
       expect(capture.stdin).toBe("");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
@@ -202,6 +206,7 @@ describe("pi execute", () => {
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
+      expect(promptMetrics.runtimeNoteChars).toBeGreaterThan(0);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

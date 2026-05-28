@@ -133,6 +133,33 @@ describe("rudder skill utils", () => {
     expect(logs.some((line) => line.includes('Removed stale TestRuntime skill "rudder-create-agent"'))).toBe(true);
   });
 
+  it("replaces a symlinked managed skills home before pruning to avoid mutating the operator home", async () => {
+    const root = await makeTempDir("rudder-runtime-skill-home-symlink-");
+    cleanupDirs.add(root);
+
+    const operatorSkillsHome = path.join(root, "operator-home", ".gemini", "skills");
+    const managedSkillsHome = path.join(root, "managed-home", ".gemini", "skills");
+    const desiredSkill = path.join(root, "server", "resources", "bundled-skills", "rudder");
+    const hostSkill = path.join(operatorSkillsHome, "host-only-skill");
+    await fs.mkdir(operatorSkillsHome, { recursive: true });
+    await fs.mkdir(hostSkill, { recursive: true });
+    await fs.mkdir(path.dirname(managedSkillsHome), { recursive: true });
+    await fs.mkdir(desiredSkill, { recursive: true });
+    await fs.symlink(operatorSkillsHome, managedSkillsHome);
+
+    await ensureRudderRuntimeSkillSymlinks({
+      onLog: async () => {},
+      runtimeLabel: "Gemini",
+      skillsHome: managedSkillsHome,
+      availableEntries: [{ key: "rudder/rudder", runtimeName: "rudder", source: desiredSkill }],
+      desiredSkillKeys: ["rudder/rudder"],
+    });
+
+    expect((await fs.lstat(managedSkillsHome)).isSymbolicLink()).toBe(false);
+    expect((await fs.lstat(path.join(managedSkillsHome, "rudder"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(hostSkill)).isDirectory()).toBe(true);
+  });
+
   it("prunes disabled adapter-home skills from managed runtime skill homes", async () => {
     const root = await makeTempDir("rudder-runtime-adapter-prune-");
     cleanupDirs.add(root);

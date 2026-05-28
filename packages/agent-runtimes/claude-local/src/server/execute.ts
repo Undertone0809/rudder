@@ -307,6 +307,34 @@ function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean 
   return typeof raw === "string" && raw.trim().length > 0;
 }
 
+function renderRudderEnvNote(env: Record<string, string>): string {
+  const rudderKeys = Object.keys(env)
+    .filter((key) => key.startsWith("RUDDER_"))
+    .sort();
+  if (rudderKeys.length === 0) return "";
+  return [
+    "Rudder runtime note:",
+    `The following RUDDER_* environment variables are available in this run: ${rudderKeys.join(", ")}`,
+    "Do not assume these variables are missing without checking your shell environment.",
+    "",
+    "",
+  ].join("\n");
+}
+
+function renderApiAccessNote(env: Record<string, string>): string {
+  if (!hasNonEmptyEnvValue(env, "RUDDER_API_URL") || !hasNonEmptyEnvValue(env, "RUDDER_API_KEY")) return "";
+  return [
+    "Rudder CLI access note:",
+    "Use the runtime bash tool with the `rudder` CLI for Rudder control-plane work.",
+    "Read example:",
+    "  rudder agent me --json",
+    "Mutating example:",
+    "  rudder issue checkout {id} --json",
+    "",
+    "",
+  ].join("\n");
+}
+
 function resolveClaudeBillingType(env: Record<string, string>): "api" | "subscription" {
   // Claude uses API-key auth when ANTHROPIC_API_KEY is present; otherwise rely on local login/session auth.
   return hasNonEmptyEnvValue(env, "ANTHROPIC_API_KEY") ? "api" : "subscription";
@@ -683,13 +711,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
   /**
    * Final prompt assembly order is intentional and shared across runtimes:
-   * 1) optional bootstrap prompt (only when not resuming a prior session),
-   * 2) optional session handoff markdown,
-   * 3) heartbeat prompt selected by wake trigger (assignment, mention, retry, fallback).
+   * 1) optional injected instructions prefix,
+   * 2) runtime skill boundary,
+   * 3) optional bootstrap prompt (only when not resuming a prior session),
+   * 4) optional session handoff markdown,
+   * 5) runtime/API access notes,
+   * 6) heartbeat prompt selected by wake trigger (assignment, mention, retry, fallback).
    *
    * Prompt example (comment mention wakeup):
+   * [instructions prefix]
+   * [skill boundary]
    * [bootstrap prompt]
    * [session handoff note]
+   * [runtime/API access notes]
    * You are agent agent-456 (Backend Worker). You were mentioned in a comment and your attention is needed.
    * Issue: "Stabilize queue worker"
    * Comment: "@agent please check timeout handling in retry path."
@@ -728,11 +762,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
   const skillBoundaryPrompt = renderRudderSkillBoundaryPrompt(loadedSkills);
+  const rudderEnvNote = renderRudderEnvNote(env);
+  const apiAccessNote = renderApiAccessNote(env);
   const prompt = joinPromptSections([
     loadedInstructions.prefix,
     skillBoundaryPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
+    rudderEnvNote,
+    apiAccessNote,
     renderedPrompt,
   ]);
   const promptMetrics = {
@@ -741,6 +779,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
+    runtimeNoteChars: rudderEnvNote.length + apiAccessNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };
 

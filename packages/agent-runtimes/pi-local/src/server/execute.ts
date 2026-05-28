@@ -57,6 +57,39 @@ function parseModelId(model: string | null): string | null {
   return trimmed.slice(trimmed.indexOf("/") + 1).trim() || null;
 }
 
+function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean {
+  const raw = env[key];
+  return typeof raw === "string" && raw.trim().length > 0;
+}
+
+function renderRudderEnvNote(env: Record<string, string>): string {
+  const rudderKeys = Object.keys(env)
+    .filter((key) => key.startsWith("RUDDER_"))
+    .sort();
+  if (rudderKeys.length === 0) return "";
+  return [
+    "Rudder runtime note:",
+    `The following RUDDER_* environment variables are available in this run: ${rudderKeys.join(", ")}`,
+    "Do not assume these variables are missing without checking your shell environment.",
+    "",
+    "",
+  ].join("\n");
+}
+
+function renderApiAccessNote(env: Record<string, string>): string {
+  if (!hasNonEmptyEnvValue(env, "RUDDER_API_URL") || !hasNonEmptyEnvValue(env, "RUDDER_API_KEY")) return "";
+  return [
+    "Rudder CLI access note:",
+    "Use the runtime bash tool with the `rudder` CLI for Rudder control-plane work.",
+    "Read example:",
+    "  rudder agent me --json",
+    "Mutating example:",
+    "  rudder issue checkout {id} --json",
+    "",
+    "",
+  ].join("\n");
+}
+
 function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
@@ -391,13 +424,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   /**
    * Final prompt assembly order is intentional and shared across runtimes:
-   * 1) optional bootstrap prompt (only when not resuming a prior session),
-   * 2) optional session handoff markdown,
-   * 3) heartbeat prompt selected by wake trigger (assignment, mention, retry, fallback).
+   * 1) optional injected instructions prefix in Pi's system prompt extension,
+   * 2) runtime skill boundary in the user prompt,
+   * 3) optional bootstrap prompt (only when not resuming a prior session),
+   * 4) optional session handoff markdown,
+   * 5) runtime/API access notes,
+   * 6) heartbeat prompt selected by wake trigger (assignment, mention, retry, fallback).
    *
    * Prompt example (retry wakeup):
+   * [instructions prefix in system prompt extension]
+   * [skill boundary]
    * [bootstrap prompt]
    * [session handoff note]
+   * [runtime/API access notes]
    * You are agent agent-789 (Infra Agent). Your previous run was interrupted and is being resumed.
    * Previous Run ID: run-123
    * Reason: heartbeat_timeout
@@ -438,10 +477,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
   const skillBoundaryPrompt = renderRudderRuntimeSkillBoundaryPrompt(loadedSkills);
+  const rudderEnvNote = renderRudderEnvNote(env);
+  const apiAccessNote = renderApiAccessNote(env);
   const userPrompt = joinPromptSections([
     skillBoundaryPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
+    rudderEnvNote,
+    apiAccessNote,
     renderedHeartbeatPrompt,
   ]);
   const promptMetrics = {
@@ -451,6 +494,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
+    runtimeNoteChars: rudderEnvNote.length + apiAccessNote.length,
     heartbeatPromptChars: renderedHeartbeatPrompt.length,
   };
 

@@ -10,6 +10,21 @@ import {
   type GitIdentityCapture,
 } from "./local-runtime-git-identity-helpers";
 
+function managedOpenCodeSkillsHome(home: string, orgId: string, agentId: string) {
+  return path.join(
+    home,
+    "instances",
+    "default",
+    "organizations",
+    orgId,
+    "opencode-home",
+    "agents",
+    agentId,
+    ".claude",
+    "skills",
+  );
+}
+
 async function writeFakeOpenCodeCommand(commandPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
@@ -121,12 +136,89 @@ describe("opencode execute", () => {
       expect(capture.prompt).toContain("# Tacit Memory");
       expect(capture.prompt).toContain("# Rudder Runtime Skill Boundary");
       expect(capture.prompt).toContain("Enabled Rudder Agent Skills: none.");
+      expect(capture.prompt).toContain("Rudder runtime note:");
+      expect(capture.prompt).toContain("Rudder CLI access note:");
+      expect(capture.prompt).toContain("rudder agent me --json");
+      expect(capture.prompt).toContain("rudder issue checkout {id} --json");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
       );
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
+      expect(promptMetrics.runtimeNoteChars).toBeGreaterThan(0);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps enabled user-installed OpenCode skills in the managed skills home during execution", async () => {
+    resetOpenCodeModelsCacheForTests();
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-execute-user-skill-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "opencode");
+    const capturePath = path.join(root, "capture.json");
+    const skillsHome = managedOpenCodeSkillsHome(root, "organization-1", "agent-1");
+    const externalSkillDir = path.join(skillsHome, "build-advisor");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(externalSkillDir, { recursive: true });
+    await fs.writeFile(
+      path.join(externalSkillDir, "SKILL.md"),
+      "---\nname: build-advisor\ndescription: Review build direction.\n---\n",
+      "utf8",
+    );
+    await writeFakeOpenCodeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-opencode-user-skill",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "OpenCode Agent",
+          agentRuntimeType: "opencode_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-4.1-mini",
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_HOME: root,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          rudderSkillSync: {
+            desiredSkills: ["build-advisor"],
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        prompt: string;
+      };
+      expect(capture.prompt).toContain("Enabled Rudder Agent Skills:");
+      expect(capture.prompt).toContain("build-advisor");
+      expect(capture.prompt).toContain("Review build direction.");
+      expect((await fs.lstat(externalSkillDir)).isDirectory()).toBe(true);
+      expect((await fs.lstat(externalSkillDir)).isSymbolicLink()).toBe(false);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

@@ -725,6 +725,17 @@ export async function ensureRudderSkillSymlink(
     fs.symlink(linkSource, linkTarget),
 ): Promise<"created" | "repaired" | "skipped"> {
   const existing = await fs.lstat(target).catch(() => null);
+  if (existing) {
+    const resolvedSource = path.resolve(source);
+    const resolvedTarget = path.resolve(target);
+    if (resolvedSource === resolvedTarget) return "skipped";
+
+    const [realSource, realTarget] = await Promise.all([
+      fs.realpath(source).catch(() => resolvedSource),
+      fs.realpath(target).catch(() => resolvedTarget),
+    ]);
+    if (realSource === realTarget) return "skipped";
+  }
   if (!existing) {
     await linkSkill(source, target);
     return "created";
@@ -759,6 +770,17 @@ export async function ensureRudderManagedSkillLink(
     fs.symlink(linkSource, linkTarget),
 ): Promise<"created" | "repaired" | "skipped"> {
   const existing = await fs.lstat(target).catch(() => null);
+  if (existing) {
+    const resolvedSource = path.resolve(source);
+    const resolvedTarget = path.resolve(target);
+    if (resolvedSource === resolvedTarget) return "skipped";
+
+    const [realSource, realTarget] = await Promise.all([
+      fs.realpath(source).catch(() => resolvedSource),
+      fs.realpath(target).catch(() => resolvedTarget),
+    ]);
+    if (realSource === realTarget) return "skipped";
+  }
   if (!existing) {
     await linkSkill(source, target);
     return "created";
@@ -885,6 +907,12 @@ export async function ensureRudderRuntimeSkillSymlinks(input: {
   const desiredSet = new Set(input.desiredSkillKeys);
   const selectedEntries = input.availableEntries.filter((entry) => desiredSet.has(entry.key));
 
+  const existingSkillsHome = await fs.lstat(input.skillsHome).catch(() => null);
+  if (existingSkillsHome?.isSymbolicLink()) {
+    await fs.unlink(input.skillsHome);
+  } else if (existingSkillsHome && !existingSkillsHome.isDirectory()) {
+    await fs.rm(input.skillsHome, { recursive: true, force: true });
+  }
   await fs.mkdir(input.skillsHome, { recursive: true });
   const allowedRuntimeNames = selectedEntries.map((entry) => entry.runtimeName);
   const removedSkills = input.pruneUnselected === false

@@ -20,9 +20,11 @@ import {
   ensurePathInEnv,
   resolveLocalOperatorHome,
   syncLocalCliCredentialHomeEntries,
+  readInstalledSkillTargets,
   renderTemplate,
   runChildProcess,
   readRudderRuntimeSkillEntries,
+  readSkillMetadataFromPath,
   resolveRudderDesiredSkillNames,
   selectPromptTemplate,
   loadAgentInstructionsPrefix,
@@ -57,6 +59,39 @@ function parseModelProvider(model: string | null): string | null {
 
 function resolveOpenCodeBiller(env: Record<string, string>, provider: string | null): string {
   return inferOpenAiCompatibleBiller(env, null) ?? provider ?? "unknown";
+}
+
+function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean {
+  const raw = env[key];
+  return typeof raw === "string" && raw.trim().length > 0;
+}
+
+function renderRudderEnvNote(env: Record<string, string>): string {
+  const rudderKeys = Object.keys(env)
+    .filter((key) => key.startsWith("RUDDER_"))
+    .sort();
+  if (rudderKeys.length === 0) return "";
+  return [
+    "Rudder runtime note:",
+    `The following RUDDER_* environment variables are available in this run: ${rudderKeys.join(", ")}`,
+    "Do not assume these variables are missing without checking your shell environment.",
+    "",
+    "",
+  ].join("\n");
+}
+
+function renderApiAccessNote(env: Record<string, string>): string {
+  if (!hasNonEmptyEnvValue(env, "RUDDER_API_URL") || !hasNonEmptyEnvValue(env, "RUDDER_API_KEY")) return "";
+  return [
+    "Rudder CLI access note:",
+    "Use the runtime shell command tool with the `rudder` CLI for Rudder control-plane work.",
+    "Read example:",
+    "  rudder agent me --json",
+    "Mutating example:",
+    "  rudder issue checkout {id} --json",
+    "",
+    "",
+  ].join("\n");
 }
 
 function nonEmpty(value: string | undefined): string | null {
@@ -99,6 +134,40 @@ function resolveManagedOpenCodeHomeDir(env: NodeJS.ProcessEnv, orgId: string, ag
 
 function resolveManagedOpenCodeSkillsDir(homeDir: string): string {
   return path.join(homeDir, ".claude", "skills");
+}
+
+async function resolveOpenCodeRuntimeSkillEntries(
+  config: Record<string, unknown>,
+  moduleDir: string,
+  skillsHome: string,
+) {
+  const rudderEntries = await readRudderRuntimeSkillEntries(config, moduleDir);
+  const desiredSkillNames = resolveRudderDesiredSkillNames(config, rudderEntries);
+  const knownKeys = new Set(rudderEntries.map((entry) => entry.key));
+  const entries = [...rudderEntries];
+  const installed = await readInstalledSkillTargets(skillsHome);
+
+  for (const desiredSkillName of desiredSkillNames) {
+    if (knownKeys.has(desiredSkillName)) continue;
+    const installedEntry = installed.get(desiredSkillName);
+    if (!installedEntry) continue;
+
+    const source = installedEntry.targetPath ?? path.join(skillsHome, desiredSkillName);
+    const metadata = await readSkillMetadataFromPath(source);
+    entries.push({
+      key: desiredSkillName,
+      runtimeName: desiredSkillName,
+      source,
+      name: metadata.name ?? desiredSkillName,
+      description: metadata.description,
+    });
+    knownKeys.add(desiredSkillName);
+  }
+
+  return {
+    entries,
+    desiredSkillNames,
+  };
 }
 
 async function prepareManagedOpenCodeHome(
@@ -238,12 +307,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
   applyGitIdentityPreparationEnv(env, preparedGitIdentity);
   applyGitCredentialHelperPolicyEnv(env);
-  const openCodeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
-  const desiredOpenCodeSkillNames = resolveRudderDesiredSkillNames(config, openCodeSkillEntries);
+  const openCodeSkillsHome = resolveManagedOpenCodeSkillsDir(managedHome);
+  const {
+    entries: openCodeSkillEntries,
+    desiredSkillNames: desiredOpenCodeSkillNames,
+  } = await resolveOpenCodeRuntimeSkillEntries(config, __moduleDir, openCodeSkillsHome);
   const loadedSkills = await ensureRudderRuntimeSkillSymlinks({
     onLog,
     runtimeLabel: "OpenCode",
-    skillsHome: resolveManagedOpenCodeSkillsDir(managedHome),
+    skillsHome: openCodeSkillsHome,
     availableEntries: openCodeSkillEntries,
     desiredSkillKeys: desiredOpenCodeSkillNames,
   });
@@ -317,14 +389,18 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   /**
    * Final prompt assembly order is intentional and shared across runtimes:
    * 1) optional injected instructions prefix,
-   * 2) optional bootstrap prompt (only when not resuming a prior session),
-   * 3) optional session handoff markdown,
-   * 4) heartbeat prompt selected by wake trigger (assignment, mention, retry, fallback).
+   * 2) runtime skill boundary,
+   * 3) optional bootstrap prompt (only when not resuming a prior session),
+   * 4) optional session handoff markdown,
+   * 5) runtime/API access notes,
+   * 6) heartbeat prompt selected by wake trigger (assignment, mention, retry, fallback).
    *
    * Prompt example (assignment wakeup):
    * [instructions prefix]
+   * [skill boundary]
    * [bootstrap prompt]
    * [session handoff note]
+   * [runtime/API access notes]
    * You are agent agent-123 (Frontend Maintainer). You have been assigned to work on an issue.
    * Issue: "Fix onboarding redirect"
    *
@@ -362,11 +438,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
   const skillBoundaryPrompt = renderRudderRuntimeSkillBoundaryPrompt(loadedSkills);
+  const rudderEnvNote = renderRudderEnvNote(env);
+  const apiAccessNote = renderApiAccessNote(env);
   const prompt = joinPromptSections([
     instructionsPrefix,
     skillBoundaryPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
+    rudderEnvNote,
+    apiAccessNote,
     renderedPrompt,
   ]);
   const promptMetrics = {
@@ -375,6 +455,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
+    runtimeNoteChars: rudderEnvNote.length + apiAccessNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };
 
