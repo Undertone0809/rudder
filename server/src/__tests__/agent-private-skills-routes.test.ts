@@ -101,7 +101,7 @@ function makeAgent(id: string, overrides: Partial<Record<string, unknown>> = {})
     agentRuntimeType: "codex_local",
     agentRuntimeConfig: {},
     runtimeConfig: {},
-    permissions: { canCreateAgents: false },
+    permissions: { canCreateAgents: false, canManageSkills: true },
     updatedAt: new Date("2026-04-16T00:00:00.000Z"),
     ...overrides,
   };

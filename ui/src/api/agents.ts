@@ -58,6 +58,7 @@ export interface AgentNameSuggestion {
 
 export interface AgentPermissionUpdate {
   canCreateAgents: boolean;
+  canManageSkills: boolean;
   canAssignTasks: boolean;
 }
 

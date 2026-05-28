@@ -28,7 +28,7 @@ const baseAgent = {
   spentMonthlyCents: 0,
   pauseReason: null,
   pausedAt: null,
-  permissions: { canCreateAgents: false },
+  permissions: { canCreateAgents: false, canManageSkills: true },
   lastHeartbeatAt: null,
   metadata: null,
   createdAt: new Date("2026-04-26T00:00:00.000Z"),

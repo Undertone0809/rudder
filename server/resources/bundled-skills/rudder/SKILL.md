@@ -233,7 +233,7 @@ rudder agent skills create "$RUDDER_AGENT_ID" --name "<name>" --description "<de
 
 This creates the package under `AGENT_HOME/skills` and does not require organization skill mutation permission.
 
-When a board user, CEO, or manager asks you to find, import, inspect, or assign organization skills:
+When a board user or authorized agent asks you to find, import, inspect, or assign organization skills:
 
 1. Read `references/organization-skills.md`
 2. Use the CLI surfaces in this order:

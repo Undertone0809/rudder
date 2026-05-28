@@ -467,6 +467,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       entityId: agent.id,
       details: {
         canCreateAgents: agent.permissions?.canCreateAgents ?? false,
+        canManageSkills: agent.permissions?.canManageSkills ?? true,
         canAssignTasks: effectiveCanAssignTasks,
       },
     });

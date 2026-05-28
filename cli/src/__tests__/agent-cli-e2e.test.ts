@@ -455,7 +455,7 @@ describe("agent CLI e2e", () => {
       agentRuntimeType: "codex_local",
       agentRuntimeConfig: { cwd: tempRoot },
       runtimeConfig: {},
-      permissions: { canCreateAgents: true },
+      permissions: { canCreateAgents: true, canManageSkills: true },
     });
     peerAgentId = randomUUID();
     await db.insert(agents).values({

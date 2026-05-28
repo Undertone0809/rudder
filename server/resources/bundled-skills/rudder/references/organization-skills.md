@@ -1,6 +1,6 @@
 # Organization Skills Workflow
 
-Use this reference when a board user, CEO, or manager asks you to discover, import, inspect, or enable organization skills.
+Use this reference when a board user or authorized agent asks you to discover, import, inspect, or enable organization skills.
 
 This workflow is now **CLI-first** for the bundled `rudder` skill.
 
@@ -155,7 +155,7 @@ the full optional enabled-skill set intentionally.
 ## Permission Model
 
 - organization skill reads: any same-organization actor
-- organization skill mutations: board, CEO, or an agent with effective `agents:create`
+- organization skill mutations: local/admin board access, board users with `skills:manage`, or same-org agents with `canManageSkills` enabled. Agents default to `canManageSkills=true` unless explicitly disabled. Existing board grants for `agents:create` remain accepted as a compatibility fallback, but new grants should use `skills:manage`.
 - agent skill enable/sync: same permission model as updating that agent
 
 ## Notes
