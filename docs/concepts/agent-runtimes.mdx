@@ -1,0 +1,114 @@
+---
+title: "Agent Runtimes"
+description: "How Rudder connects agents to execution backends and keeps runtime skills scoped to the agent."
+---
+
+An agent runtime is the execution backend Rudder calls when an agent wakes up. Rudder owns the organization, issue, heartbeat, transcript, workspace context, and close-out evidence. The runtime owns the actual work: running a local CLI, launching a custom process, calling an HTTP endpoint, or forwarding the run to another gateway.
+
+This split lets Rudder stay runtime-neutral. You can move an agent from one backend to another without changing the core Rudder model of goals, issues, assignments, reviews, skills, budgets, and evidence.
+
+## Runtime contract
+
+Rudder prepares a run, then hands the runtime a bounded work cycle. The runtime should:
+
+- receive the agent role, issue context, workspace context, and run reason
+- execute one heartbeat under the configured backend
+- stream or return transcript evidence
+- leave a clear result such as progress, done, blocked, or review feedback
+- respect timeout, cancellation, budget, and workspace boundaries
+
+Rudder records what happened. The selected runtime decides how to interpret prompts, call tools, use local credentials, and perform the work.
+
+## Runtime types
+
+Rudder supports several runtime classes:
+
+| Runtime class | Runtime values | Use it when |
+| --- | --- | --- |
+| Local coding CLI | `codex_local`, `claude_local`, `gemini_local`, `opencode_local`, `pi_local`, `cursor`, `hermes_local` | The agent should work on local repositories through an existing coding-agent CLI. |
+| Shell process | `process` | You have a script, wrapper, or internal runner that performs one work cycle. |
+| HTTP webhook | `http` | The agent runs in an external service or queue worker. |
+| Gateway runtime | `openclaw_gateway` | Rudder should delegate execution to a compatible remote gateway. |
+
+The agent's `agentRuntimeType` chooses the backend. The agent's `agentRuntimeConfig` stores backend-specific settings such as model, command, URL, headers, working directory, instructions file, and environment values. Rudder-level scheduling and hosting behavior lives separately in `runtimeConfig`.
+
+For setup steps, see [Configure Your Agent Runtime](/how-to/configure-agent-runtime).
+
+## Runtime-owned state
+
+Local CLI runtimes need local state: auth files, CLI settings, tool caches, and skill directories. Rudder treats that state as runtime implementation detail. It should not change which Rudder Agent Skills are enabled.
+
+The intended model is:
+
+- Rudder decides which skills are enabled for the agent.
+- The runtime adapter realizes only those Rudder-selected skills for the current run.
+- Host-global, project-local, or adapter-bundled skills must not silently become Rudder Agent Skills.
+- Runtime homes should be managed per agent when the backend allows it, so Rudder runs do not pollute the user's normal CLI setup.
+
+This matters because agent behavior must be reproducible from the Rudder control plane. If a host CLI happens to have extra global skills installed, those skills should not change what a Rudder agent is considered to have enabled.
+
+## How Rudder selects skills
+
+Agent skill state is a control-plane decision. The source of truth is the agent's Skills page plus Rudder's built-in bundled runtime skills.
+
+Before each run, Rudder resolves the enabled skill keys for that agent and realizes the matching runtime skill entries. It then injects the prepared list into the runtime config as `rudderSkillSync.desiredSkills` and `rudderRuntimeSkills`.
+
+Adapters should consume that prepared config. They should not decide enabled Rudder Agent Skills from whatever their host CLI happens to discover.
+
+## Skill isolation by runtime
+
+Different runtimes offer different levels of physical isolation, but Rudder keeps the same semantic boundary:
+
+| Runtime | Isolation behavior |
+| --- | --- |
+| Codex local | Uses a per-agent managed `CODEX_HOME` and managed `HOME`, links enabled skills into `CODEX_HOME/skills`, prunes stale Rudder-managed skill entries, disables Codex bundled skills, and runs with plugins disabled. This is the strongest local CLI isolation Rudder currently has. |
+| Claude Code local | Uses a per-agent managed Claude `HOME`, resets that managed `.claude/skills` directory on each run, symlinks only enabled Rudder runtime skills, writes managed `.claude/settings.json` skill overrides, disables slash commands, uses strict MCP config, and reads settings from the managed user source. |
+| Gemini, OpenCode, Pi, Cursor, Hermes local | Use the shared Rudder runtime contract. Skill listing and materialization depend on what the adapter exposes; when supported, adapters should consume the prepared Rudder skill-sync config. |
+| Shell process, HTTP webhook, gateway | Rudder passes the prepared run context and skill config. The external process or service is responsible for honoring the contract. |
+
+Physical isolation is adapter-dependent because the underlying CLIs expose different controls. The product rule is not adapter-dependent: the skills shown as enabled for a Rudder agent are the skills Rudder selected for that agent.
+
+## Codex local versus Claude Code local
+
+Codex local can be isolated more aggressively because Codex exposes a managed `CODEX_HOME` model that Rudder can control for the run. Rudder uses that home to materialize selected skills, removes inherited skill configuration, disables bundled Codex skills, and starts Codex with plugins disabled.
+
+Claude Code local uses a managed Claude home as well, so Rudder should not write into the user's real `~/.claude/skills` during agent runs. The managed home lives under the active Rudder instance and agent. Rudder resets the managed `.claude/skills` directory and symlinks only the enabled Rudder runtime skills for the run.
+
+Claude Code may still report built-in or host-level skills in raw CLI initialization data depending on the installed CLI version. Rudder therefore also injects a `Rudder Runtime Skill Boundary` prompt section. That section is not a skill. It tells the model that Rudder Agent Skills are controlled only by the Rudder Agent Skills page and lists the skills enabled for this run.
+
+The practical difference is:
+
+- Codex isolation is mostly enforced through managed home, managed skills directory, config sanitization, and CLI flags.
+- Claude Code isolation combines managed home, managed settings, managed skills directory, CLI flags, and an explicit semantic boundary in the run prompt.
+
+Both adapters should preserve the same product semantics: enabling or disabling a Rudder Agent Skill is a Rudder decision, not an accidental side effect of the local CLI environment.
+
+## Design principles
+
+Rudder's runtime design follows these rules:
+
+- Runtime choice changes how work is executed, not what the agent is in Rudder.
+- Agent Skills are configured by Rudder, not by the adapter.
+- Built-in Rudder skills are product capabilities, not host CLI discoveries.
+- Host CLI state can provide credentials and settings, but should not redefine the agent's skill set.
+- Managed runtime homes should avoid polluting the user's normal Codex, Claude Code, or other CLI setup.
+- Run transcripts should make runtime behavior inspectable enough to debug mismatches.
+
+When a runtime cannot fully hide host-level behavior, Rudder still keeps the control-plane contract explicit and reports the actual run evidence so the mismatch can be reviewed.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Your Agent Runtime" icon="settings-2" href="/how-to/configure-agent-runtime">
+    Choose and test the runtime backend for an agent.
+  </Card>
+  <Card title="Agents" icon="bot" href="/concepts/agents">
+    Review the agent model and heartbeat loop.
+  </Card>
+  <Card title="Skills" icon="book-open" href="/concepts/skills">
+    Understand how reusable operating instructions are packaged.
+  </Card>
+  <Card title="Issues" icon="circle-check" href="/concepts/issues">
+    See how runtime work should leave durable issue evidence.
+  </Card>
+</CardGroup>

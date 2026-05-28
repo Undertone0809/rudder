@@ -1,0 +1,114 @@
+---
+title: "Agent Runtime"
+description: "Rudder 如何连接执行后端，并保持 agent skills 的运行边界。"
+---
+
+Agent runtime 是 Rudder 在 agent 被唤醒时调用的执行后端。Rudder 负责组织、任务、heartbeat、transcript、工作区上下文和收尾证据。Runtime 负责真正执行工作：运行本地 CLI、启动自定义进程、调用 HTTP endpoint，或把运行转交给其他 gateway。
+
+这个拆分让 Rudder 保持 runtime-neutral。你可以把同一个 agent 从一个后端切到另一个后端，但 Rudder 里的目标、任务、分配、评审、技能、预算和证据模型不需要改变。
+
+## Runtime 契约
+
+Rudder 先准备一次运行，然后把一个有边界的工作周期交给 runtime。Runtime 应该：
+
+- 接收 agent 角色、任务上下文、工作区上下文和运行原因
+- 在配置好的后端里执行一次 heartbeat
+- 流式输出或返回 transcript 证据
+- 留下清晰结果，例如有进展、已完成、被阻塞，或评审反馈
+- 遵守超时、取消、预算和工作区边界
+
+Rudder 记录发生了什么。被选中的 runtime 决定如何理解 prompt、调用工具、使用本地凭据和完成工作。
+
+## Runtime 类型
+
+Rudder 支持几类 runtime：
+
+| Runtime 类别 | Runtime 值 | 适用场景 |
+| --- | --- | --- |
+| 本地 coding CLI | `codex_local`、`claude_local`、`gemini_local`、`opencode_local`、`pi_local`、`cursor`、`hermes_local` | Agent 需要通过现有 coding-agent CLI 在本地 repo 里工作。 |
+| Shell process | `process` | 你已经有一个脚本、wrapper 或内部 runner，可以完成一次工作周期。 |
+| HTTP webhook | `http` | Agent 运行在外部服务或队列 worker 里。 |
+| Gateway runtime | `openclaw_gateway` | Rudder 要把执行委托给兼容的远程 gateway。 |
+
+Agent 的 `agentRuntimeType` 选择后端。`agentRuntimeConfig` 存放后端相关配置，例如 model、command、URL、headers、工作目录、instructions 文件和环境变量。Rudder 层面的调度与托管行为单独放在 `runtimeConfig`。
+
+具体配置步骤见 [配置 Agent Runtime](/zh/how-to/configure-agent-runtime)。
+
+## Runtime 自己的状态
+
+本地 CLI runtime 需要本地状态：认证文件、CLI settings、工具缓存和 skill 目录。Rudder 把这些当作 runtime 的实现细节。它们不应该改变 Rudder Agent Skills 的启用状态。
+
+预期模型是：
+
+- Rudder 决定这个 agent 启用哪些 skills。
+- Runtime adapter 只把 Rudder 选中的 skills materialize 到本次运行里。
+- Host global、project local 或 adapter bundled skills 不能静默变成 Rudder Agent Skills。
+- 只要后端允许，runtime home 应该按 agent 托管，避免 Rudder 运行污染用户平时使用 CLI 的环境。
+
+这一点很重要，因为 agent 行为应该能从 Rudder control plane 复现。如果宿主机 CLI 碰巧装了额外 global skills，这些 skills 不应该改变 Rudder 认为这个 agent 已启用的技能集合。
+
+## Rudder 如何选择 skills
+
+Agent skill 状态是 control-plane 决策。事实来源是 agent 的 Skills 页面，加上 Rudder 产品内置的 bundled runtime skills。
+
+每次运行前，Rudder 会解析这个 agent 已启用的 skill keys，并生成匹配的 runtime skill entries。然后 Rudder 会把准备好的列表注入 runtime config，字段是 `rudderSkillSync.desiredSkills` 和 `rudderRuntimeSkills`。
+
+Adapter 应该消费这份已经准备好的 config。它不应该根据宿主 CLI 自己发现了什么来决定 Rudder Agent Skills。
+
+## Skill 隔离方式
+
+不同 runtime 的物理隔离能力不一样，但 Rudder 保持同一个语义边界：
+
+| Runtime | 隔离行为 |
+| --- | --- |
+| Codex local | 使用按 agent 管理的 `CODEX_HOME` 和 `HOME`，把启用的 skills 链接到 `CODEX_HOME/skills`，清理过期的 Rudder-managed skill entries，禁用 Codex bundled skills，并以 plugins disabled 的方式启动 Codex。这是 Rudder 目前最强的本地 CLI 隔离。 |
+| Claude Code local | 使用按 agent 管理的 Claude `HOME`，每次运行重置这个托管 home 里的 `.claude/skills`，只 symlink 已启用的 Rudder runtime skills，写入托管的 `.claude/settings.json` skill overrides，禁用 slash commands，使用 strict MCP config，并只读取托管 user settings。 |
+| Gemini、OpenCode、Pi、Cursor、Hermes local | 使用同一套 Rudder runtime 契约。Skill listing 和 materialization 取决于 adapter 暴露的能力；支持时，adapter 应该消费 Rudder 准备好的 skill-sync config。 |
+| Shell process、HTTP webhook、gateway | Rudder 传入准备好的运行上下文和 skill config。外部进程或服务负责遵守这个契约。 |
+
+物理隔离会受 adapter 和底层 CLI 能力影响。产品规则不受 adapter 影响：在 Rudder 里显示为启用的 agent skills，只能来自 Rudder 为这个 agent 选择的 skills。
+
+## Codex local 和 Claude Code local 的区别
+
+Codex local 能做更强的隔离，因为 Codex 暴露了 Rudder 可以控制的 managed `CODEX_HOME` 模型。Rudder 用这个 home materialize 已选 skills，移除继承来的 skill config，禁用 Codex bundled skills，并以 plugins disabled 的方式启动 Codex。
+
+Claude Code local 也使用托管 Claude home，所以 Rudder 在 agent run 里不应该写用户真实的 `~/.claude/skills`。这个托管 home 位于当前 Rudder instance 和 agent 名下。Rudder 会重置托管 `.claude/skills` 目录，并只 symlink 本次运行启用的 Rudder runtime skills。
+
+但 Claude Code 可能仍然在原始 CLI 初始化数据里报告 built-in 或 host-level skills，具体取决于本机安装的 CLI 版本。因此 Rudder 还会注入一个 `Rudder Runtime Skill Boundary` prompt section。它不是一个 skill。它告诉模型：Rudder Agent Skills 只由 Rudder Agent Skills 页面控制，并列出本次运行启用的 skills。
+
+实际区别是：
+
+- Codex 的隔离主要通过 managed home、managed skills directory、config sanitization 和 CLI flags 执行。
+- Claude Code 的隔离由 managed home、managed settings、managed skills directory、CLI flags，以及 prompt 里的显式语义边界共同完成。
+
+两个 adapter 都应该保持同一个产品语义：启用或禁用 Rudder Agent Skill 是 Rudder 的决策，不是本地 CLI 环境的偶然副作用。
+
+## 设计原则
+
+Rudder 的 runtime 设计遵守这些规则：
+
+- Runtime 选择改变的是执行方式，不改变 agent 在 Rudder 里的身份。
+- Agent Skills 由 Rudder 配置，不由 adapter 配置。
+- Rudder 内置 skills 是产品能力，不是宿主 CLI 自动发现结果。
+- 宿主 CLI 状态可以提供凭据和 settings，但不应该重新定义 agent 的 skill set。
+- Managed runtime homes 应该避免污染用户平时使用的 Codex、Claude Code 或其他 CLI 环境。
+- Run transcripts 应该让 runtime 行为足够可检查，方便 debug mismatch。
+
+当某个 runtime 无法彻底隐藏 host-level 行为时，Rudder 仍然保持 control-plane contract 明确，并把实际运行证据记录下来，方便 review。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="配置 Agent Runtime" icon="settings-2" href="/zh/how-to/configure-agent-runtime">
+    选择并测试 agent 的 runtime 后端。
+  </Card>
+  <Card title="Agents" icon="bot" href="/zh/concepts/agents">
+    查看 agent 模型和 heartbeat 循环。
+  </Card>
+  <Card title="技能" icon="book-open" href="/zh/concepts/skills">
+    理解可复用操作说明如何被打包。
+  </Card>
+  <Card title="任务" icon="circle-check" href="/zh/concepts/issues">
+    查看 runtime 工作应该如何留下持久任务证据。
+  </Card>
+</CardGroup>
