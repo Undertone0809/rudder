@@ -418,6 +418,11 @@ export function formatRudderTarget(target: string | undefined): string | null {
 
 export function summarizeIssueComment(command: string): string | null {
   const tokens = tokenizeShell(command);
+  const fileComment = extractShellFlagValue(tokens, "--comment-file") ?? extractShellFlagValue(tokens, "--body-file");
+  if (fileComment) {
+    return fileComment === "-" ? "added stdin comment" : "added file-backed comment";
+  }
+
   const comment = extractShellFlagValue(tokens, "--comment");
   if (!comment) return null;
 

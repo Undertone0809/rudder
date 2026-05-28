@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { Command } from "commander";
 import {
   createApprovalSchema,
@@ -41,7 +43,7 @@ interface ApprovalResubmitOptions extends BaseClientOptions {
 }
 
 interface ApprovalCommentOptions extends BaseClientOptions {
-  body: string;
+  bodyFile: string;
 }
 
 export function registerApprovalCommands(program: Command): void {
@@ -241,12 +243,13 @@ export function registerApprovalCommands(program: Command): void {
       .command("comment")
       .description(getAgentCliCapabilityById("approval.comment").description)
       .argument("<approvalId>", "Approval ID")
-      .requiredOption("--body <text>", "Comment body")
+      .option("--body-file <path>", "Read comment body from a file, or '-' for stdin")
       .action(async (approvalId: string, opts: ApprovalCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
+          const body = await resolveBodyFile(opts.bodyFile);
           const created = await ctx.api.post<ApprovalComment>(`/api/approvals/${approvalId}/comments`, {
-            body: opts.body,
+            body,
           });
           printOutput(created, { json: ctx.json });
         } catch (err) {
@@ -254,6 +257,31 @@ export function registerApprovalCommands(program: Command): void {
         }
       }),
   );
+}
+
+async function resolveBodyFile(inputPath: string | undefined): Promise<string> {
+  if (!inputPath) {
+    throw new Error("Provide --body-file <path>; use --body-file - for stdin");
+  }
+  return readTextInputFile(inputPath, "--body-file");
+}
+
+async function readTextInputFile(inputPath: string, optionName: string): Promise<string> {
+  if (inputPath === "-") {
+    return readStdinText();
+  }
+  const resolvedPath = path.resolve(process.cwd(), inputPath);
+  return readFile(resolvedPath, "utf8").catch((err: unknown) => {
+    throw new Error(`Unable to read ${optionName} ${inputPath}: ${err instanceof Error ? err.message : String(err)}`);
+  });
+}
+
+async function readStdinText(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function parseCsv(value: string | undefined): string[] | undefined {

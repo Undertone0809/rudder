@@ -40,11 +40,11 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder issue release <issue>` | Release an issue back to todo and clear ownership. | yes | no | no | attached when available |
 | `rudder issue documents list <issue>` | List issue documents. | no | no | no | no |
 | `rudder issue documents get <issue> <key>` | Read one issue document by key. | no | no | no | no |
-| `rudder issue documents put <issue> <key> --body <text>` | Create or update an issue document. | yes | no | no | attached when available |
+| `rudder issue documents put <issue> <key> --body-file <path>` | Create or update an issue document. | yes | no | no | attached when available |
 | `rudder issue documents revisions <issue> <key>` | List revisions for an issue document. | no | no | no | no |
 | `rudder approval get <approval-id>` | Read one approval request. | no | no | no | no |
 | `rudder approval issues <approval-id>` | List the issues linked to an approval. | no | no | no | no |
-| `rudder approval comment <approval-id> --body <text>` | Add a comment to an approval. | yes | no | no | attached when available |
+| `rudder approval comment <approval-id> --body-file <path>` | Add a comment to an approval. | yes | no | no | attached when available |
 | `rudder skill list --org-id <id>` | List organization-visible skills. | no | required | no | no |
 | `rudder skill get <skill-id> --org-id <id>` | Read one organization skill detail. | no | required | no | no |
 | `rudder skill file <skill-id> --org-id <id> [--path SKILL.md]` | Read one file from an organization skill package. | no | required | no | no |
@@ -63,7 +63,7 @@ Before a successful `todo` or `in_progress` issue run exits, leave one close-out
 
 If an issue has a reviewer, moving it to `blocked` is also a reviewer handoff: the reviewer should confirm the blocker, request changes, approve, or keep explicit follow-up open with `rudder issue review`.
 
-Use file or stdin comment input for any multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence. Write the comment to a temporary Markdown file and pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin. Do not place shell-sensitive Markdown containing backticks or `$()` directly inside a shell argument.
+Issue comment and close-out commands accept comment bodies only from files or stdin. For any multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence, write the comment to a temporary Markdown file and pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin.
 
 `--image` may be repeated. The CLI uploads each local PNG/JPEG/WebP/GIF as an issue attachment and appends Markdown image links to the comment text before sending it.
 

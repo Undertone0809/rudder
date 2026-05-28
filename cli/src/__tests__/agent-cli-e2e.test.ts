@@ -29,6 +29,7 @@ import type {
   Issue,
   IssueComment,
   IssueCommitReport,
+  IssueDocument,
   IssueLabel,
   OrganizationSkillDetail,
   OrganizationSkillFileDetail,
@@ -676,7 +677,9 @@ describe("agent CLI e2e", () => {
       commitCount: 2,
     });
 
-    const done = await runCliJson<Issue>(["issue", "done", issueId, "--comment", "Completed via CLI."], {
+    const doneCommentFile = path.join(tempRoot, "commit-activity-done.md");
+    writeFileSync(doneCommentFile, "Completed via CLI.", "utf8");
+    const done = await runCliJson<Issue>(["issue", "done", issueId, "--comment-file", doneCommentFile], {
       apiBase,
       configPath,
       env,
@@ -853,8 +856,10 @@ describe("agent CLI e2e", () => {
     const imagePath = path.join(tempRoot, "comment-proof.png");
     writeFileSync(imagePath, Buffer.from(tinyPngBase64, "base64"));
 
+    const imageCommentFile = path.join(tempRoot, "comment-image-body.md");
+    writeFileSync(imageCommentFile, "Progress with image.", "utf8");
     const comment = await runCliJson<IssueComment>(
-      ["issue", "comment", imageIssueId, "--body", "Progress with image.", "--image", imagePath],
+      ["issue", "comment", imageIssueId, "--body-file", imageCommentFile, "--image", imagePath],
       {
         apiBase,
         configPath,
@@ -1039,16 +1044,73 @@ describe("agent CLI e2e", () => {
     expect(reviewed.status).toBe("done");
     expect(reviewed.comment?.body).toBe(reviewBody);
 
+    const documentBodyFile = path.join(tempRoot, "issue-plan-document.md");
+    const documentBody = "Plan document keeps `commands` and $(literal) text.";
+    writeFileSync(documentBodyFile, documentBody, "utf8");
+    const document = await runCliJson<IssueDocument>(
+      ["issue", "documents", "put", fileIssueId, "plan", "--body-file", documentBodyFile],
+      {
+        apiBase,
+        configPath,
+        env,
+      },
+    );
+    expect(document.body).toBe(documentBody);
+
     await expect(
-      runCliJson<IssueComment>(
-        ["issue", "comment", fileIssueId, "--body", "inline", "--body-file", commentFile],
+      runCliJson<IssueComment>(["issue", "comment", fileIssueId, "--body", "inline"], {
+        apiBase,
+        configPath,
+        env,
+      }),
+    ).rejects.toThrow("unknown option '--body'");
+    await expect(
+      runCliJson<Issue & { comment?: IssueComment | null }>(
+        ["issue", "update", updateIssueId, "--comment", "inline"],
         {
           apiBase,
           configPath,
           env,
         },
       ),
-    ).rejects.toThrow("Use either --body or --body-file, not both");
+    ).rejects.toThrow("unknown option '--comment'");
+    await expect(
+      runCliJson<Issue & { comment?: IssueComment | null }>(
+        ["issue", "done", fileIssueId, "--comment", "inline"],
+        {
+          apiBase,
+          configPath,
+          env,
+        },
+      ),
+    ).rejects.toThrow("unknown option '--comment'");
+    await expect(
+      runCliJson<Issue & { comment?: IssueComment | null }>(
+        ["issue", "block", blockIssueId, "--comment", "inline"],
+        {
+          apiBase,
+          configPath,
+          env,
+        },
+      ),
+    ).rejects.toThrow("unknown option '--comment'");
+    await expect(
+      runCliJson<Issue & { comment?: IssueComment | null }>(
+        ["issue", "review", reviewIssueId, "--decision", "approve", "--comment", "inline"],
+        {
+          apiBase,
+          configPath,
+          env,
+        },
+      ),
+    ).rejects.toThrow("unknown option '--comment'");
+    await expect(
+      runCliJson<IssueDocument>(["issue", "documents", "put", fileIssueId, "plan", "--body", "inline"], {
+        apiBase,
+        configPath,
+        env,
+      }),
+    ).rejects.toThrow("unknown option '--body'");
   });
 
   it("uploads images for generic update comments", { timeout: 60_000 }, async () => {
@@ -1080,8 +1142,10 @@ describe("agent CLI e2e", () => {
     const imagePath = path.join(tempRoot, "update-proof.png");
     writeFileSync(imagePath, Buffer.from(tinyPngBase64, "base64"));
 
+    const updateImageCommentFile = path.join(tempRoot, "update-image-comment.md");
+    writeFileSync(updateImageCommentFile, "Update with image.", "utf8");
     const updated = await runCliJson<Issue & { comment?: IssueComment | null }>(
-      ["issue", "update", updateIssueId, "--comment", "Update with image.", "--image", imagePath],
+      ["issue", "update", updateIssueId, "--comment-file", updateImageCommentFile, "--image", imagePath],
       {
         apiBase,
         configPath,
@@ -1130,8 +1194,10 @@ describe("agent CLI e2e", () => {
     const imagePath = path.join(tempRoot, "done-proof.png");
     writeFileSync(imagePath, Buffer.from(tinyPngBase64, "base64"));
 
+    const doneImageCommentFile = path.join(tempRoot, "done-image-comment.md");
+    writeFileSync(doneImageCommentFile, "Done with image.", "utf8");
     const done = await runCliJson<Issue & { comment?: IssueComment | null }>(
-      ["issue", "done", closeoutIssueId, "--comment", "Done with image.", "--image", imagePath],
+      ["issue", "done", closeoutIssueId, "--comment-file", doneImageCommentFile, "--image", imagePath],
       {
         apiBase,
         configPath,
@@ -1170,8 +1236,10 @@ describe("agent CLI e2e", () => {
     const blockImagePath = path.join(tempRoot, "block-proof.png");
     writeFileSync(blockImagePath, Buffer.from(tinyPngBase64, "base64"));
 
+    const blockImageCommentFile = path.join(tempRoot, "block-image-comment.md");
+    writeFileSync(blockImageCommentFile, "Blocked with image.", "utf8");
     const blocked = await runCliJson<Issue & { comment?: IssueComment | null }>(
-      ["issue", "block", blockIssueId, "--comment", "Blocked with image.", "--image", blockImagePath],
+      ["issue", "block", blockIssueId, "--comment-file", blockImageCommentFile, "--image", blockImagePath],
       {
         apiBase,
         configPath,
@@ -1416,8 +1484,10 @@ describe("agent CLI e2e", () => {
     });
     expect(approvalIssues.some((row) => row.id === issueId)).toBe(true);
 
+    const approvalCommentFile = path.join(tempRoot, "approval-comment.md");
+    writeFileSync(approvalCommentFile, "## Update\n\nWaiting on board review.", "utf8");
     const comment = await runCliJson<ApprovalComment>(
-      ["approval", "comment", approvalHire.approval!.id, "--body", "## Update\n\nWaiting on board review."],
+      ["approval", "comment", approvalHire.approval!.id, "--body-file", approvalCommentFile],
       {
         apiBase,
         configPath,
@@ -1425,5 +1495,22 @@ describe("agent CLI e2e", () => {
       },
     );
     expect(comment.body).toContain("Waiting on board review");
+    const stdinComment = await runCliJson<ApprovalComment>(
+      ["approval", "comment", approvalHire.approval!.id, "--body-file", "-"],
+      {
+        apiBase,
+        configPath,
+        env,
+        stdin: "## Stdin update\n\nApproval comment from stdin.",
+      },
+    );
+    expect(stdinComment.body).toContain("Approval comment from stdin");
+    await expect(
+      runCliJson<ApprovalComment>(["approval", "comment", approvalHire.approval!.id, "--body", "inline"], {
+        apiBase,
+        configPath,
+        env,
+      }),
+    ).rejects.toThrow("unknown option '--body'");
   });
 });

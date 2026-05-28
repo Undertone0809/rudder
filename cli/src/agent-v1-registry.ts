@@ -381,7 +381,7 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "issue.documents.put",
-    command: "rudder issue documents put <issue> <key> --body <text>",
+    command: "rudder issue documents put <issue> <key> --body-file <path>",
     category: "issue",
     description: "Create or update an issue document.",
     mutating: true,
@@ -465,7 +465,7 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   },
   {
     id: "approval.comment",
-    command: "rudder approval comment <approval-id> --body <text>",
+    command: "rudder approval comment <approval-id> --body-file <path>",
     category: "approval",
     description: "Add a comment to an approval.",
     mutating: true,
@@ -653,7 +653,7 @@ export function renderAgentCliReferenceMarkdown(): string {
     "",
     "If an issue has a reviewer, moving it to `blocked` is also a reviewer handoff: the reviewer should confirm the blocker, request changes, approve, or keep explicit follow-up open with `rudder issue review`.",
     "",
-    "Use file or stdin comment input for any multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence. Write the comment to a temporary Markdown file and pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin. Do not place shell-sensitive Markdown containing backticks or `$()` directly inside a shell argument.",
+    "Issue comment and close-out commands accept comment bodies only from files or stdin. For any multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence, write the comment to a temporary Markdown file and pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin.",
     "",
     "`--image` may be repeated. The CLI uploads each local PNG/JPEG/WebP/GIF as an issue attachment and appends Markdown image links to the comment text before sending it.",
     "",

@@ -180,10 +180,10 @@ project, updated time, and a compact match snippet when the server provides one.
 
 `--image` may be repeated. The CLI uploads each local PNG/JPEG/WebP/GIF as an
 issue attachment and appends Markdown image links to the comment body.
-Use `--body-file` or `--comment-file` for multiline Markdown, command names,
-code spans, code blocks, test summaries, and screenshot evidence. Pass `-` to
-read the body from stdin. Avoid placing shell-sensitive Markdown containing
-backticks or `$()` directly inside a shell argument.
+Issue comments, issue close-out comments, issue document bodies, and approval
+comments use file or stdin body input. Use `--body-file` or `--comment-file`
+for multiline Markdown, command names, code spans, code blocks, test summaries,
+and screenshot evidence. Pass `-` to read the body from stdin.
 If a comment cites a screenshot path or visual validation artifact, attach that
 file with `--image <path>` instead of leaving only the local path in the text.
 
@@ -244,7 +244,7 @@ pnpm rudder approval approve <approval-id> [--decision-note "..."]
 pnpm rudder approval reject <approval-id> [--decision-note "..."]
 pnpm rudder approval request-revision <approval-id> [--decision-note "..."]
 pnpm rudder approval resubmit <approval-id> [--payload '{"...":"..."}']
-pnpm rudder approval comment <approval-id> --body "..."
+pnpm rudder approval comment <approval-id> --body-file ./comment.md
 ```
 
 ## Activity Commands

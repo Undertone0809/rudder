@@ -569,14 +569,14 @@ describe("RunTranscriptView", () => {
               name: "command_execution",
               toolUseId: "cmd-close-1",
               input: {
-                command: "rudder issue done \"RUD-38\" --comment $ '## Review Summary\\n\\nCompleted validation.'",
+                command: "rudder issue done \"RUD-38\" --comment-file /tmp/review-summary.md",
               },
             },
             {
               kind: "tool_result",
               ts: "2026-03-12T00:00:02.354Z",
               toolUseId: "cmd-close-1",
-              content: "command: rudder issue done \"RUD-38\" --comment ...\nstatus: completed\nexit_code: 0\n\nIssue RUD-38 marked done.",
+              content: "command: rudder issue done \"RUD-38\" --comment-file /tmp/review-summary.md\nstatus: completed\nexit_code: 0\n\nIssue RUD-38 marked done.",
               isError: false,
             },
           ]}
@@ -585,7 +585,7 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Marked RUD-38 done");
-    expect(html).toContain("added review summary comment");
+    expect(html).toContain("added file-backed comment");
     expect(countOccurrences(html, "Marked RUD-38 done")).toBe(1);
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).not.toContain("Ran rudder issue done");
@@ -605,7 +605,7 @@ describe("RunTranscriptView", () => {
   it("customizes read-only Rudder issue commands separately from issue updates", () => {
     const html = renderCommandSummary("rudder issue context RUD-38 --json | sed -n '1,80p'");
     const commentsHtml = renderCommandSummary("rudder issue comments list RUD-38 --json");
-    const updateHtml = renderCommandSummary("rudder issue update ZST-69 --status todo --comment nope");
+    const updateHtml = renderCommandSummary("rudder issue update ZST-69 --status todo --comment-file /tmp/update.md");
 
     expect(html).toContain("Inspected RUD-38");
     expect(html).not.toContain("Updated RUD-38");

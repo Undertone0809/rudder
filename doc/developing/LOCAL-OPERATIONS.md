@@ -202,7 +202,7 @@ Quick examples:
 ```sh
 pnpm rudder issue list --org-id <org-id>
 pnpm rudder issue create --org-id <org-id> --title "Investigate checkout conflict"
-pnpm rudder issue update <issue-id> --status in_progress --comment "Started triage"
+printf '%s\n' "Started triage" | pnpm rudder issue update <issue-id> --status in_progress --comment-file -
 ```
 
 Set defaults once with context profiles:

@@ -199,12 +199,11 @@ rudder issue block "<issue-id-or-identifier>" --comment-file "<path>" [--image "
 
 - generic patch when workflow commands are not enough:
 
-Use file or stdin input for issue comments. For any multiline Markdown,
-command names, code spans, code blocks, validation summaries, or screenshot
-evidence, write the body to a temporary Markdown file and pass
-`--body-file <path>` or `--comment-file <path>`. Pass `-` to read from stdin.
-Do not place shell-sensitive Markdown containing backticks or `$()` directly
-inside a shell argument.
+Issue comment and close-out commands accept comment bodies only from files or
+stdin. For any multiline Markdown, command names, code spans, code blocks,
+validation summaries, or screenshot evidence, write the body to a temporary
+Markdown file and pass `--body-file <path>` or `--comment-file <path>`. Pass
+`-` to read from stdin.
 
 Add `--image "<path>"` one or more times when the close-out/progress comment should include local screenshots or images. Supported local image types are PNG, JPEG, WebP, and GIF; the CLI uploads them as issue attachments and appends Markdown image links.
 
@@ -275,7 +274,7 @@ Typical flow:
 ```bash
 rudder issue documents get "<issue-id-or-identifier>" plan --json
 rudder issue documents revisions "<issue-id-or-identifier>" plan --json
-rudder issue documents put "<issue-id-or-identifier>" plan --title "Plan" --format markdown --body "<markdown>" --json
+rudder issue documents put "<issue-id-or-identifier>" plan --title "Plan" --format markdown --body-file "<path>" --json
 rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" --json
 ```
 

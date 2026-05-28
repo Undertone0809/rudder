@@ -16,7 +16,7 @@ Internal/debug reference for the bundled `rudder-create-agent` skill.
 | `rudder agent config get <agentId>` | `GET /api/agents/:agentId/configuration` |
 | `rudder agent hire --org-id <orgId> --payload <json>` | `POST /api/orgs/:orgId/agent-hires` |
 | `rudder approval get <approvalId>` | `GET /api/approvals/:approvalId` |
-| `rudder approval comment <approvalId> --body <text>` | `POST /api/approvals/:approvalId/comments` |
+| `rudder approval comment <approvalId> --body-file <path>` | `POST /api/approvals/:approvalId/comments` |
 | `rudder approval resubmit <approvalId> [--payload <json>]` | `POST /api/approvals/:approvalId/resubmit` |
 | `rudder approval issues <approvalId>` | `GET /api/approvals/:approvalId/issues` |
 
