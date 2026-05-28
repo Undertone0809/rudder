@@ -546,6 +546,7 @@ describe("messengerService and issue follows", () => {
             title: "Initial proposal",
             description: "Needs more detail.",
             priority: "medium",
+            assigneeUnassignedReason: "The owner is still under review.",
           },
         },
       },
@@ -561,6 +562,7 @@ describe("messengerService and issue follows", () => {
             title: "Detailed proposal",
             description: "Includes architecture and rollout details.",
             priority: "medium",
+            assigneeUnassignedReason: "The owner is still under review.",
           },
         },
       },
@@ -709,7 +711,7 @@ describe("messengerService and issue follows", () => {
     expect(results.find((conversation) => conversation.id === messageChatId)?.searchPreview).toContain("launch-token");
   });
 
-  it("does not assign approved chat issue proposals to the selected chat agent by default", async () => {
+  it("preserves explicit approved chat issue proposal assignees", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
     const userId = "board-user-approval";
@@ -755,6 +757,7 @@ describe("messengerService and issue follows", () => {
             title: "Implement selected work",
             description: "The chat-selected agent should receive this approved issue.",
             priority: "medium",
+            assigneeAgentId: agentId,
             reviewerAgentId: agentId,
           },
         },
@@ -771,12 +774,84 @@ describe("messengerService and issue follows", () => {
 
     expect(issue).toMatchObject({
       title: "Implement selected work",
-      assigneeAgentId: null,
+      assigneeAgentId: agentId,
       reviewerAgentId: agentId,
       createdByUserId: userId,
     });
-    expect(persistedIssue?.assigneeAgentId).toBeNull();
+    expect(persistedIssue?.assigneeAgentId).toBe(agentId);
     expect(persistedIssue?.reviewerAgentId).toBe(agentId);
+  });
+
+  it("preserves explicitly unassigned approved chat issue proposals", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const userId = "board-user-explicit-unassigned-approval";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Explicit Unassigned Org",
+      urlKey: deriveOrganizationUrlKey("Chat Explicit Unassigned Org"),
+      issuePrefix: `U${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Selected Engineer",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const conversation = await chatSvc.create(orgId, {
+      title: "Plan unassigned work",
+      preferredAgentId: agentId,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+
+    const approval = await db
+      .insert(approvals)
+      .values({
+        orgId,
+        type: "chat_issue_creation",
+        status: "approved",
+        requestedByUserId: userId,
+        payload: {
+          chatConversationId: conversation!.id,
+          proposedIssue: {
+            title: "Clarify selected work",
+            description: "The operator explicitly left this proposal unassigned.",
+            priority: "medium",
+            assigneeAgentId: null,
+            assigneeUserId: null,
+            assigneeUnassignedReason: "The operator intentionally deferred ownership.",
+          },
+        },
+      })
+      .returning()
+      .then((rows) => rows[0]!);
+
+    const issue = await chatSvc.applyApprovedApproval(approval, userId);
+    const persistedIssue = await db
+      .select({ assigneeAgentId: issues.assigneeAgentId, assigneeUserId: issues.assigneeUserId })
+      .from(issues)
+      .where(eq(issues.id, (issue as { id: string }).id))
+      .then((rows) => rows[0]);
+
+    expect(issue).toMatchObject({
+      title: "Clarify selected work",
+      assigneeAgentId: null,
+      assigneeUserId: null,
+      createdByUserId: userId,
+    });
+    expect(persistedIssue?.assigneeAgentId).toBeNull();
+    expect(persistedIssue?.assigneeUserId).toBeNull();
   });
 
   it("writes a plan document only after approving a plan-mode chat issue proposal", async () => {
@@ -811,6 +886,7 @@ describe("messengerService and issue follows", () => {
             title: "Implement planned work",
             description: "Create the issue only after approval.",
             priority: "high",
+            assigneeUnassignedReason: "Plan mode should leave ownership to operator review.",
           },
           planDocument: {
             title: "Planned work rollout",
@@ -1269,6 +1345,7 @@ describe("messengerService and issue follows", () => {
             title: "Pending approval",
             description: "Needs review.",
             priority: "medium",
+            assigneeUnassignedReason: "The owner is still under review.",
           },
         },
         createdAt: new Date("2026-04-11T10:00:00.000Z"),

@@ -545,6 +545,7 @@ export {
   sanitizeChatStructuredPayload,
   createChatAttachmentMetadataSchema,
   convertChatToIssueSchema,
+  chatIssueProposalFromStructuredPayload,
   chatOperationProposalSchema,
   resolveChatOperationProposalSchema,
   updateChatConversationUserStateSchema,

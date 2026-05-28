@@ -216,10 +216,18 @@ export function issueProposalWithPrincipalSelection(
 ) {
   const keys = proposalPrincipalFieldKeys[role];
   const selection = parseAssigneeValue(value);
-  return {
+  const next = {
     ...proposal,
     [keys.agent]: selection.assigneeAgentId,
     [keys.user]: selection.assigneeUserId,
+  };
+  if (role !== "assignee") return next;
+  return {
+    ...next,
+    assigneeUnassignedReason:
+      selection.assigneeAgentId || selection.assigneeUserId
+        ? null
+        : "Operator explicitly left this proposal unassigned.",
   };
 }
 
@@ -454,6 +462,10 @@ export function ProposalCard({
   const proposalReviewerLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "reviewer", agents) : null;
   const proposalAssigneeDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "assignee", agents, currentUserId) : null;
   const proposalReviewerDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "reviewer", agents, currentUserId) : null;
+  const proposalAssigneeUnassignedReason =
+    issueProposal && typeof issueProposal.assigneeUnassignedReason === "string"
+      ? issueProposal.assigneeUnassignedReason.trim() || null
+      : null;
   const proposalDescription = issueProposal ? String(issueProposal.description) : "";
   const canEditIssueProposalPrincipals = Boolean(issueProposal && (showApprovalActions || canConvertDirectly) && onIssueProposalChange);
   const [proposalDetailsExpanded, setProposalDetailsExpanded] = useState(false);
@@ -550,17 +562,29 @@ export function ProposalCard({
                       <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
                     </ProposalFactRow>
                     <ProposalFactRow label="Owner">
-                      {canEditIssueProposalPrincipals ? (
-                        <ProposalPrincipalSelector
-                          proposal={issueProposal}
-                          role="assignee"
-                          agents={agents}
-                          currentUserId={currentUserId}
-                          onChange={(nextProposal) => onIssueProposalChange?.(message.id, nextProposal)}
-                        />
-                      ) : (
-                        <ProposalPrincipalLabel principal={proposalAssigneeDisplay} />
-                      )}
+                      <div className="flex min-w-0 flex-col items-end gap-1 text-right">
+                        {canEditIssueProposalPrincipals ? (
+                          <ProposalPrincipalSelector
+                            proposal={issueProposal}
+                            role="assignee"
+                            agents={agents}
+                            currentUserId={currentUserId}
+                            onChange={(nextProposal) => onIssueProposalChange?.(message.id, nextProposal)}
+                          />
+                        ) : (
+                          <ProposalPrincipalLabel principal={proposalAssigneeDisplay} />
+                        )}
+                        {!proposalAssigneeDisplay && proposalAssigneeUnassignedReason ? (
+                          <span className="max-w-full text-xs font-normal leading-5 text-muted-foreground">
+                            Reason: {proposalAssigneeUnassignedReason}
+                          </span>
+                        ) : null}
+                        {!proposalAssigneeDisplay && !proposalAssigneeUnassignedReason ? (
+                          <span className="max-w-full text-xs font-normal leading-5 text-amber-700 dark:text-amber-300">
+                            Owner decision missing
+                          </span>
+                        ) : null}
+                      </div>
                     </ProposalFactRow>
                     <ProposalFactRow label="Reviewer">
                       {canEditIssueProposalPrincipals ? (

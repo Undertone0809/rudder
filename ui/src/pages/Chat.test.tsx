@@ -370,6 +370,42 @@ describe("ProposalCard", () => {
     expect(html).toContain("CTO");
   });
 
+  it("renders explicit no-owner reasons on issue proposal cards", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "This should stay unassigned for now.",
+      structuredPayload: {
+        title: "Clarify execution owner",
+        priority: "medium",
+        description: "The operator should pick the owner after review.",
+        assigneeUnassignedReason: "No suitable execution owner is known yet.",
+      },
+      approvalId: "approval-1",
+      approval: {
+        id: "approval-1",
+        orgId: "org-1",
+        type: "chat_issue_creation",
+        requestedByAgentId: "agent-1",
+        requestedByUserId: null,
+        status: "pending",
+        payload: {},
+        decisionNote: null,
+        decidedByUserId: null,
+        decidedAt: null,
+        createdAt: new Date("2026-05-07T00:00:00.000Z"),
+        updatedAt: new Date("2026-05-07T00:00:00.000Z"),
+      },
+    }), conversation({}), [], "", {
+      currentUserId: "local-board",
+      onIssueProposalChange: vi.fn(),
+    });
+
+    expect(html).toContain("No owner");
+    expect(html).toContain("Reason: No suitable execution owner is known yet.");
+    expect(html).not.toContain("Owner decision missing");
+  });
+
   it("applies proposal principal overrides to approval payloads", () => {
     const proposal = {
       title: "Route proposal edits",

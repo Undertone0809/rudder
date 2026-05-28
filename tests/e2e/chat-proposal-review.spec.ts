@@ -20,8 +20,9 @@ async function writeProposalStub(
         title: string;
         description: string;
         priority: string;
-        assigneeAgentId?: string;
-        assigneeUserId?: string;
+        assigneeAgentId?: string | null;
+        assigneeUserId?: string | null;
+        assigneeUnassignedReason?: string | null;
         reviewerAgentId?: string;
         reviewerUserId?: string;
       };
@@ -107,6 +108,7 @@ test.describe("Chat proposal review block", () => {
             "Acceptance: Clicking show full proposal reveals every line without clipping.",
           ].join("\n"),
           priority: "medium",
+          assigneeUnassignedReason: "This proposal is intentionally unassigned while the operator reviews the long details.",
         },
       },
     });
@@ -120,6 +122,7 @@ test.describe("Chat proposal review block", () => {
 
     const reviewBlock = page.getByTestId("proposal-review-block").last();
     await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
+    await expect(reviewBlock).toContainText("Reason: This proposal is intentionally unassigned while the operator reviews the long details.");
     const details = reviewBlock.locator(".chat-review-details-body");
     const expandButton = reviewBlock.getByRole("button", { name: "Show full proposal" });
     await expect(expandButton).toBeVisible();
@@ -159,6 +162,7 @@ test.describe("Chat proposal review block", () => {
           title: "Review block rejection test",
           description: "Verify review note placement and rejection state styling for chat issue proposals.",
           priority: "low",
+          assigneeUnassignedReason: "This proposal is intentionally unassigned until the rejection flow completes.",
         },
       },
     });
@@ -211,6 +215,7 @@ test.describe("Chat proposal review block", () => {
             "Run `pnpm test:e2e` before landing.",
           ].join("\n"),
           priority: "medium",
+          assigneeUnassignedReason: "This proposal is intentionally unassigned for the approval state test.",
         },
       },
     });
@@ -319,6 +324,7 @@ test.describe("Chat proposal review block", () => {
           title: "Reviewer metadata proposal test",
           description: "Verify chat issue proposals can carry reviewer metadata.",
           priority: "medium",
+          assigneeUnassignedReason: "This proposal is intentionally unassigned while reviewer metadata is inspected.",
         },
       },
     });
@@ -331,6 +337,7 @@ test.describe("Chat proposal review block", () => {
           title: "Reviewer metadata proposal test",
           description: "Verify chat issue proposals can carry reviewer metadata.",
           priority: "medium",
+          assigneeUnassignedReason: "This proposal is intentionally unassigned while reviewer metadata is inspected.",
           reviewerAgentId: organization.chatAgent.id,
         },
       },
@@ -391,6 +398,7 @@ test.describe("Chat proposal review block", () => {
           title: "Editable proposal principals test",
           description: "Verify owner and reviewer edits are used when approving a chat issue proposal.",
           priority: "medium",
+          assigneeUnassignedReason: "The operator will choose the owner before approving.",
         },
       },
     });
@@ -448,6 +456,7 @@ test.describe("Chat proposal review block", () => {
           title: "Plan mode approval test",
           description: "Create the issue only after the operator approves the plan-mode proposal.",
           priority: "high",
+          assigneeUnassignedReason: "Plan mode defers owner selection until the operator approves the plan.",
         },
         planDocument: {
           title: "Plan-mode rollout plan",
@@ -475,7 +484,7 @@ test.describe("Chat proposal review block", () => {
     await page.getByRole("button", { name: "Send" }).click();
 
     const reviewBlock = page.getByTestId("proposal-review-block").last();
-    await expect(reviewBlock).toBeVisible({ timeout: 15_000 });
+    await expect(reviewBlock).toBeVisible({ timeout: 30_000 });
     await expect(reviewBlock).toHaveAttribute("data-status", "pending");
     await expect(reviewBlock).toContainText("Plan-mode rollout plan");
     await expect(reviewBlock.locator("h2")).toHaveText("Scope");

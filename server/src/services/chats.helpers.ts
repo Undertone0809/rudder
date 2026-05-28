@@ -45,6 +45,7 @@ export type ChatIssueProposalPayload = {
   parentId: string | null;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
+  assigneeUnassignedReason: string | null;
   reviewerAgentId: string | null;
   reviewerUserId: string | null;
   labelIds?: string[];
@@ -160,6 +161,9 @@ export function issueProposalFromPayload(payload: Record<string, unknown> | null
     parentId: safeTrim(typeof proposal.parentId === "string" ? proposal.parentId : null),
     assigneeAgentId: safeTrim(typeof proposal.assigneeAgentId === "string" ? proposal.assigneeAgentId : null),
     assigneeUserId: safeTrim(typeof proposal.assigneeUserId === "string" ? proposal.assigneeUserId : null),
+    assigneeUnassignedReason: safeTrim(
+      typeof proposal.assigneeUnassignedReason === "string" ? proposal.assigneeUnassignedReason : null,
+    ),
     reviewerAgentId: safeTrim(typeof proposal.reviewerAgentId === "string" ? proposal.reviewerAgentId : null),
     reviewerUserId: safeTrim(typeof proposal.reviewerUserId === "string" ? proposal.reviewerUserId : null),
     labelIds: Array.isArray(proposal.labelIds)
@@ -395,4 +399,3 @@ export async function listPrimaryIssues(db: Db, conversationRows: ConversationRo
     .where(inArray(issues.id, primaryIssueIds));
   return new Map(rows.map((row) => [row.id, row]));
 }
-
