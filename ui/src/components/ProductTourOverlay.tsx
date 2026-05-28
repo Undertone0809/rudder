@@ -264,6 +264,7 @@ export function ProductTourOverlay() {
   const [stepIndex, setStepIndex] = useState(0);
   const [targetRect, setTargetRect] = useState<TargetRect | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
+  const openedIssuesDuringTourRef = useRef(false);
   const activeStep = TOUR_STEPS[stepIndex] ?? TOUR_STEPS[0]!;
   const isLastStep = stepIndex === TOUR_STEPS.length - 1;
 
@@ -274,6 +275,7 @@ export function ProductTourOverlay() {
   useEffect(() => {
     if (!productTourOpen) return;
     setStepIndex(0);
+    openedIssuesDuringTourRef.current = false;
   }, [productTourOpen]);
 
   useEffect(() => {
@@ -307,10 +309,23 @@ export function ProductTourOverlay() {
     const shouldOpenIssuesAfterSetup = hasPendingProductTour();
     markProductTourComplete();
     closeProductTour();
-    if (shouldOpenIssuesAfterSetup) {
+    if (shouldOpenIssuesAfterSetup && !openedIssuesDuringTourRef.current) {
       navigate("/issues");
     }
   }, [closeProductTour, navigate]);
+
+  const goToStep = useCallback(
+    (nextIndex: number) => {
+      const normalizedIndex = clamp(nextIndex, 0, TOUR_STEPS.length - 1);
+      const nextStep = TOUR_STEPS[normalizedIndex] ?? TOUR_STEPS[0]!;
+      if (nextStep.id === "issues") {
+        openedIssuesDuringTourRef.current = true;
+        navigate("/issues");
+      }
+      setStepIndex(normalizedIndex);
+    },
+    [navigate],
+  );
 
   if (!productTourOpen || !targetRect || !calloutPosition || !checklistPosition) {
     return null;
@@ -411,7 +426,7 @@ export function ProductTourOverlay() {
             size="sm"
             className="h-8"
             disabled={stepIndex === 0}
-            onClick={() => setStepIndex((current) => Math.max(0, current - 1))}
+            onClick={() => goToStep(stepIndex - 1)}
           >
             <ChevronLeft className="h-4 w-4" />
             {t("productTour.back")}
@@ -429,7 +444,7 @@ export function ProductTourOverlay() {
                   dismiss();
                   return;
                 }
-                setStepIndex((current) => Math.min(TOUR_STEPS.length - 1, current + 1));
+                goToStep(stepIndex + 1);
               }}
             >
               {isLastStep ? t("productTour.finish") : t("productTour.next")}
