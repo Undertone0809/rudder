@@ -269,7 +269,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     ]);
 
     return {
-      ...(options?.restricted ? redactForRestrictedAgentView(agent) : agent),
+      ...(options?.restricted ? redactForRestrictedAgentView(agent) : redactAgentForRead(agent)),
       chainOfCommand,
       access: accessState,
     };
@@ -721,9 +721,18 @@ export function agentRoutes(db: Db, storage?: StorageService) {
   function redactForRestrictedAgentView(agent: Awaited<ReturnType<typeof svc.getById>>) {
     if (!agent) return null;
     return {
-      ...agent,
+      ...redactAgentForRead(agent),
       agentRuntimeConfig: {},
       runtimeConfig: {},
+    };
+  }
+
+  function redactAgentForRead(agent: Awaited<ReturnType<typeof svc.getById>>) {
+    if (!agent) return null;
+    return {
+      ...agent,
+      agentRuntimeConfig: redactEventPayload((agent.agentRuntimeConfig ?? {}) as Record<string, unknown>) ?? {},
+      runtimeConfig: redactEventPayload((agent.runtimeConfig ?? {}) as Record<string, unknown>) ?? {},
     };
   }
 
@@ -1062,7 +1071,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     const result = await svc.list(orgId);
     const canReadConfigs = await actorCanReadConfigurationsForCompany(req, orgId);
     if (canReadConfigs || req.actor.type === "board") {
-      res.json(result);
+      res.json(result.map((agent) => redactAgentForRead(agent)));
       return;
     }
     res.json(result.map((agent) => redactForRestrictedAgentView(agent)));
@@ -1444,6 +1453,7 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     preserveInstructionsBundleConfig,
     summarizeAgentUpdateDetails,
     redactAgentConfiguration,
+    redactAgentForRead,
     stripPersistedSkillSyncConfig,
     withRuntimeSkillEntries,
     DEFAULT_INSTRUCTIONS_PATH_KEYS,

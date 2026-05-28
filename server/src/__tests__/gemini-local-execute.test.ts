@@ -126,6 +126,8 @@ describe("gemini execute", () => {
       const promptArg = promptFlagIndex >= 0 ? capture.argv[promptFlagIndex + 1] : "";
       expect(promptArg).toContain("# Agent Instructions");
       expect(promptArg).toContain("# Tacit Memory");
+      expect(promptArg).toContain("# Rudder Runtime Skill Boundary");
+      expect(promptArg).toContain("Enabled Rudder Agent Skills: none.");
       expect(promptArg).toContain("Follow the rudder heartbeat.");
       expect(promptArg).toContain("Rudder runtime note:");
       expect(capture.rudderEnvKeys).toEqual(
@@ -139,6 +141,7 @@ describe("gemini execute", () => {
         ]),
       );
       expect(invocationPrompt).toContain("Rudder runtime note:");
+      expect(invocationPrompt).toContain("# Rudder Runtime Skill Boundary");
       expect(invocationPrompt).toContain("# Tacit Memory");
       expect(invocationPrompt).toContain("RUDDER_API_URL");
       expect(invocationPrompt).toContain("Rudder CLI access note:");

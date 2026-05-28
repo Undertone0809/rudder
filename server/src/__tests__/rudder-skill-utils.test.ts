@@ -3,7 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  ensureRudderRuntimeSkillSymlinks,
   listRudderSkillEntries,
+  renderRudderRuntimeSkillBoundaryPrompt,
   removeMaintainerOnlySkillSymlinks,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 
@@ -97,5 +99,103 @@ describe("rudder skill utils", () => {
     await expect(fs.lstat(path.join(skillsHome, "release"))).rejects.toThrow();
     expect((await fs.lstat(path.join(skillsHome, "rudder"))).isSymbolicLink()).toBe(true);
     expect((await fs.lstat(path.join(skillsHome, "release-notes"))).isSymbolicLink()).toBe(true);
+  });
+
+  it("syncs only desired runtime skills and prunes stale Rudder-managed symlinks", async () => {
+    const root = await makeTempDir("rudder-runtime-skill-sync-");
+    cleanupDirs.add(root);
+
+    const skillsHome = path.join(root, "skills-home");
+    const desiredSkill = path.join(root, "server", "resources", "bundled-skills", "rudder");
+    const staleSkill = path.join(root, "server", "resources", "bundled-skills", "rudder-create-agent");
+    await fs.mkdir(skillsHome, { recursive: true });
+    await fs.mkdir(desiredSkill, { recursive: true });
+    await fs.mkdir(staleSkill, { recursive: true });
+    await fs.symlink(staleSkill, path.join(skillsHome, "rudder-create-agent"));
+
+    const logs: string[] = [];
+    const loaded = await ensureRudderRuntimeSkillSymlinks({
+      onLog: async (_stream, chunk) => {
+        logs.push(chunk);
+      },
+      runtimeLabel: "TestRuntime",
+      skillsHome,
+      availableEntries: [
+        { key: "rudder/rudder", runtimeName: "rudder", source: desiredSkill },
+        { key: "rudder/rudder-create-agent", runtimeName: "rudder-create-agent", source: staleSkill },
+      ],
+      desiredSkillKeys: ["rudder/rudder"],
+    });
+
+    expect(loaded.map((entry) => entry.key)).toEqual(["rudder/rudder"]);
+    expect((await fs.lstat(path.join(skillsHome, "rudder"))).isSymbolicLink()).toBe(true);
+    await expect(fs.lstat(path.join(skillsHome, "rudder-create-agent"))).rejects.toThrow();
+    expect(logs.some((line) => line.includes('Removed stale TestRuntime skill "rudder-create-agent"'))).toBe(true);
+  });
+
+  it("prunes disabled adapter-home skills from managed runtime skill homes", async () => {
+    const root = await makeTempDir("rudder-runtime-adapter-prune-");
+    cleanupDirs.add(root);
+
+    const skillsHome = path.join(root, "managed-home", ".cursor", "skills");
+    const desiredSkill = path.join(root, "server", "resources", "bundled-skills", "rudder");
+    const adapterHomeSkill = path.join(root, "operator-home", ".cursor", "skills", "old-adapter-skill");
+    await fs.mkdir(skillsHome, { recursive: true });
+    await fs.mkdir(desiredSkill, { recursive: true });
+    await fs.mkdir(adapterHomeSkill, { recursive: true });
+    await fs.symlink(adapterHomeSkill, path.join(skillsHome, "old-adapter-skill"));
+
+    await ensureRudderRuntimeSkillSymlinks({
+      onLog: async () => {},
+      runtimeLabel: "Cursor",
+      skillsHome,
+      availableEntries: [
+        { key: "rudder/rudder", runtimeName: "rudder", source: desiredSkill },
+        { key: "adapter:cursor:old-adapter-skill", runtimeName: "old-adapter-skill", source: adapterHomeSkill },
+      ],
+      desiredSkillKeys: ["rudder/rudder"],
+    });
+
+    await expect(fs.lstat(path.join(skillsHome, "old-adapter-skill"))).rejects.toThrow();
+    expect((await fs.lstat(path.join(skillsHome, "rudder"))).isSymbolicLink()).toBe(true);
+  });
+
+  it("replaces conflicting managed skill entries with the selected Rudder skill link", async () => {
+    const root = await makeTempDir("rudder-runtime-conflict-replace-");
+    cleanupDirs.add(root);
+
+    const skillsHome = path.join(root, "managed-home", ".gemini", "skills");
+    const desiredSkill = path.join(root, "server", "resources", "bundled-skills", "rudder");
+    const conflict = path.join(skillsHome, "rudder");
+    await fs.mkdir(conflict, { recursive: true });
+    await fs.mkdir(desiredSkill, { recursive: true });
+    await fs.writeFile(path.join(conflict, "stale.txt"), "stale", "utf8");
+
+    await ensureRudderRuntimeSkillSymlinks({
+      onLog: async () => {},
+      runtimeLabel: "Gemini",
+      skillsHome,
+      availableEntries: [{ key: "rudder/rudder", runtimeName: "rudder", source: desiredSkill }],
+      desiredSkillKeys: ["rudder/rudder"],
+    });
+
+    expect((await fs.lstat(conflict)).isSymbolicLink()).toBe(true);
+    expect(await fs.realpath(conflict)).toBe(await fs.realpath(desiredSkill));
+  });
+
+  it("renders the shared runtime skill boundary as a self-reporting contract", () => {
+    const prompt = renderRudderRuntimeSkillBoundaryPrompt([
+      {
+        key: "rudder/rudder",
+        runtimeName: "rudder",
+        name: "Rudder",
+        description: "Use Rudder issue and comment workflows.",
+      },
+    ]);
+
+    expect(prompt).toContain("# Rudder Runtime Skill Boundary");
+    expect(prompt).toContain("Rudder Agent Skills for this run are controlled only by the Rudder Agent Skills page.");
+    expect(prompt).toContain("Do not treat adapter-owned, runtime built-in, global, project, plugin, slash-command, or host-installed skills as Rudder Agent Skills unless they are listed above.");
+    expect(prompt).toContain("When asked what agent skills you have, answer only from the Enabled Rudder Agent Skills list above.");
   });
 });

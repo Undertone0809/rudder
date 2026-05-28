@@ -147,7 +147,7 @@ function normalizeDesiredSkillSelectionRefs(agentRuntimeType: string, requested:
     const trimmed = value.trim();
     if (!trimmed) return [];
     if (trimmed === "rudder" || trimmed === "rudder/rudder" || trimmed === "bundled:rudder/rudder") {
-      return [];
+      return ["bundled:rudder/rudder"];
     }
     if (trimmed === "alpha-test" || trimmed === "organization/organization-1/alpha-test") {
       return ["org:organization/organization-1/alpha-test"];
@@ -161,7 +161,7 @@ function normalizeDesiredSkillSelectionRefs(agentRuntimeType: string, requested:
       || trimmed.startsWith("adapter:")
       || trimmed.startsWith("bundled:")
     ) {
-      return trimmed.startsWith("bundled:") ? [] : [trimmed];
+      return [trimmed];
     }
     return [];
   }))).sort((left, right) => left.localeCompare(right));
@@ -172,6 +172,7 @@ function buildMockSkillSnapshot(agentRuntimeType: string, desiredSkills: string[
     ? "ephemeral"
     : "persistent";
   const hasBuildAdvisor = desiredSkills.includes(`adapter:${agentRuntimeType}:build-advisor`);
+  const hasRudder = desiredSkills.includes("bundled:rudder/rudder");
   return {
     agentRuntimeType,
     supported: true,
@@ -183,11 +184,11 @@ function buildMockSkillSnapshot(agentRuntimeType: string, desiredSkills: string[
         selectionKey: "bundled:rudder/rudder",
         runtimeName: "rudder",
         description: "Bundled Rudder skill",
-        desired: true,
-        configurable: false,
-        alwaysEnabled: true,
+        desired: hasRudder,
+        configurable: true,
+        alwaysEnabled: false,
         managed: true,
-        state: "configured",
+        state: hasRudder ? "configured" : "available",
         sourceClass: "bundled",
         origin: "organization_managed",
         originLabel: "Bundled by Rudder",
@@ -385,7 +386,7 @@ describe("agent skill routes", () => {
     expect(mockCompanySkillService.replaceEnabledSkillKeysForAgent).toHaveBeenCalledWith(
       "organization-1",
       "11111111-1111-4111-8111-111111111111",
-      [],
+      ["bundled:rudder/rudder"],
     );
     expect(mockAdapter.syncSkills).not.toHaveBeenCalled();
   });
@@ -401,7 +402,7 @@ describe("agent skill routes", () => {
     expect(mockCompanySkillService.replaceEnabledSkillKeysForAgent).toHaveBeenCalledWith(
       "organization-1",
       "11111111-1111-4111-8111-111111111111",
-      [],
+      ["bundled:rudder/rudder"],
     );
   });
 
@@ -420,7 +421,7 @@ describe("agent skill routes", () => {
     );
   });
 
-  it("keeps bundled Rudder skills enabled when users clear optional skills", async () => {
+  it("clears bundled Rudder skills when users disable all agent skills", async () => {
     mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
 
     const res = await request(createApp())
@@ -480,7 +481,7 @@ describe("agent skill routes", () => {
     expect(mockCompanySkillService.replaceEnabledSkillKeysForAgent).toHaveBeenCalledWith(
       "organization-1",
       "11111111-1111-4111-8111-111111111111",
-      [],
+      ["bundled:rudder/rudder"],
     );
   });
 
@@ -630,15 +631,15 @@ describe("agent skill routes", () => {
     expect(mockCompanySkillService.replaceEnabledSkillKeysForAgent).toHaveBeenCalledWith(
       "organization-1",
       "11111111-1111-4111-8111-111111111111",
-      [],
+      ["bundled:rudder/rudder"],
     );
     expect(mockApprovalService.create).toHaveBeenCalledWith(
       "organization-1",
       expect.objectContaining({
         payload: expect.objectContaining({
-          desiredSkills: [],
+          desiredSkills: ["bundled:rudder/rudder"],
           requestedConfigurationSnapshot: expect.objectContaining({
-            desiredSkills: [],
+            desiredSkills: ["bundled:rudder/rudder"],
           }),
         }),
       }),

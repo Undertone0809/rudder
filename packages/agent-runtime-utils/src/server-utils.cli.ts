@@ -752,6 +752,31 @@ export async function ensureRudderSkillSymlink(
   return "repaired";
 }
 
+export async function ensureRudderManagedSkillLink(
+  source: string,
+  target: string,
+  linkSkill: (source: string, target: string) => Promise<void> = (linkSource, linkTarget) =>
+    fs.symlink(linkSource, linkTarget),
+): Promise<"created" | "repaired" | "skipped"> {
+  const existing = await fs.lstat(target).catch(() => null);
+  if (!existing) {
+    await linkSkill(source, target);
+    return "created";
+  }
+
+  if (existing.isSymbolicLink()) {
+    const linkedPath = await fs.readlink(target).catch(() => null);
+    if (linkedPath) {
+      const resolvedLinkedPath = path.resolve(path.dirname(target), linkedPath);
+      if (resolvedLinkedPath === source) return "skipped";
+    }
+  }
+
+  await fs.rm(target, { recursive: true, force: true });
+  await linkSkill(source, target);
+  return "repaired";
+}
+
 export async function removeMaintainerOnlySkillSymlinks(
   skillsHome: string,
   allowedSkillNames: Iterable<string>,
@@ -788,6 +813,114 @@ export async function removeMaintainerOnlySkillSymlinks(
   } catch {
     return [];
   }
+}
+
+export async function pruneManagedRuntimeSkillHome(
+  skillsHome: string,
+  allowedSkillNames: Iterable<string>,
+): Promise<string[]> {
+  const allowed = new Set(Array.from(allowedSkillNames));
+  try {
+    const entries = await fs.readdir(skillsHome, { withFileTypes: true });
+    const removed: string[] = [];
+    for (const entry of entries) {
+      if (allowed.has(entry.name)) continue;
+      await fs.rm(path.join(skillsHome, entry.name), { recursive: true, force: true });
+      removed.push(entry.name);
+    }
+    return removed;
+  } catch {
+    return [];
+  }
+}
+
+export type RuntimeSkillBoundaryEntry = {
+  key: string;
+  runtimeName: string;
+  name?: string | null;
+  description?: string | null;
+};
+
+export function renderRudderRuntimeSkillBoundaryPrompt(
+  loadedSkills: RuntimeSkillBoundaryEntry[],
+): string {
+  const lines = [
+    "# Rudder Runtime Skill Boundary",
+    "",
+    "Rudder Agent Skills for this run are controlled only by the Rudder Agent Skills page.",
+  ];
+
+  if (loadedSkills.length === 0) {
+    lines.push("", "Enabled Rudder Agent Skills: none.");
+  } else {
+    lines.push("", "Enabled Rudder Agent Skills:");
+    for (const skill of loadedSkills) {
+      const label = skill.name && skill.name !== skill.runtimeName
+        ? `${skill.runtimeName} (${skill.name})`
+        : skill.runtimeName;
+      lines.push(`- ${label}: ${skill.description ?? "No description provided."}`);
+    }
+  }
+
+  lines.push(
+    "",
+    "Do not treat adapter-owned, runtime built-in, global, project, plugin, slash-command, or host-installed skills as Rudder Agent Skills unless they are listed above.",
+    "When asked what agent skills you have, answer only from the Enabled Rudder Agent Skills list above.",
+  );
+
+  return lines.join("\n");
+}
+
+export async function ensureRudderRuntimeSkillSymlinks(input: {
+  onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
+  runtimeLabel: string;
+  skillsHome: string;
+  availableEntries: Array<{ key: string; runtimeName: string; source: string }>;
+  desiredSkillKeys: string[];
+  actionVerb?: string;
+  linkSkill?: (source: string, target: string) => Promise<void>;
+  pruneUnselected?: boolean;
+  replaceConflictingEntries?: boolean;
+}): Promise<RuntimeSkillBoundaryEntry[]> {
+  const desiredSet = new Set(input.desiredSkillKeys);
+  const selectedEntries = input.availableEntries.filter((entry) => desiredSet.has(entry.key));
+
+  await fs.mkdir(input.skillsHome, { recursive: true });
+  const allowedRuntimeNames = selectedEntries.map((entry) => entry.runtimeName);
+  const removedSkills = input.pruneUnselected === false
+    ? await removeMaintainerOnlySkillSymlinks(input.skillsHome, allowedRuntimeNames)
+    : await pruneManagedRuntimeSkillHome(input.skillsHome, allowedRuntimeNames);
+  for (const skillName of removedSkills) {
+    await input.onLog(
+      "stderr",
+      `[rudder] Removed stale ${input.runtimeLabel} skill "${skillName}" from ${input.skillsHome}\n`,
+    );
+  }
+
+  const actionVerb = input.actionVerb ?? "Injected";
+  const linkSkill = input.linkSkill ?? ((source: string, target: string) => fs.symlink(source, target));
+  const ensureLink = input.replaceConflictingEntries === false
+    ? ensureRudderSkillSymlink
+    : ensureRudderManagedSkillLink;
+  for (const entry of selectedEntries) {
+    const target = path.join(input.skillsHome, entry.runtimeName);
+
+    try {
+      const result = await ensureLink(entry.source, target, linkSkill);
+      if (result === "skipped") continue;
+      await input.onLog(
+        "stderr",
+        `[rudder] ${result === "repaired" ? "Repaired" : actionVerb} ${input.runtimeLabel} skill "${entry.key}" into ${input.skillsHome}\n`,
+      );
+    } catch (err) {
+      await input.onLog(
+        "stderr",
+        `[rudder] Failed to inject ${input.runtimeLabel} skill "${entry.key}" into ${input.skillsHome}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  }
+
+  return selectedEntries;
 }
 
 export async function ensureCommandResolvable(command: string, cwd: string, env: NodeJS.ProcessEnv) {

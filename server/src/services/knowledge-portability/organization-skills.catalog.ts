@@ -960,8 +960,8 @@ export function buildMissingSelectionEntry(
     runtimeName: parsed.slug ?? key,
     description: null,
     desired: true,
-    configurable: parsed.sourceClass !== "bundled",
-    alwaysEnabled: parsed.sourceClass === "bundled",
+    configurable: true,
+    alwaysEnabled: false,
     managed: parsed.sourceClass === "bundled" || parsed.sourceClass === "organization",
     state: "missing",
     sourceClass: parsed.sourceClass ?? "adapter_home",
@@ -985,22 +985,18 @@ export function applyDesiredSelectionsToCatalog(
   const desiredSet = new Set(desiredSelectionRefs);
   const warnings: string[] = [];
   const out = entries.map<AgentSkillCatalogEntry>((entry) => {
-    const desired = entry.alwaysEnabled || desiredSet.has(entry.selectionKey);
-    const state: AgentSkillState = entry.alwaysEnabled
-        ? "configured"
-        : desired
-          ? "configured"
-          : entry.sourceClass === "agent_home" || entry.sourceClass === "global" || entry.sourceClass === "adapter_home"
-            ? "external"
-            : "available";
+    const desired = desiredSet.has(entry.selectionKey);
+    const state: AgentSkillState = desired
+      ? "configured"
+      : entry.sourceClass === "agent_home" || entry.sourceClass === "global" || entry.sourceClass === "adapter_home"
+        ? "external"
+        : "available";
     return {
       ...entry,
       desired,
       state,
       detail: desired
-        ? entry.alwaysEnabled
-          ? (entry.detail ?? "Always loaded by Rudder for every agent run.")
-          : "Enabled for this agent and loaded on the next run."
+        ? "Enabled for this agent and loaded on the next run."
         : (entry.detail ?? null),
     };
   });

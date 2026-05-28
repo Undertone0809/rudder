@@ -34,6 +34,7 @@ const baseAgent = {
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
+  list: vi.fn(),
   create: vi.fn(),
   updatePermissions: vi.fn(),
   getChainOfCommand: vi.fn(),
@@ -157,6 +158,7 @@ describe("agent permission routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAgentService.getById.mockResolvedValue(baseAgent);
+    mockAgentService.list.mockResolvedValue([baseAgent]);
     mockAgentService.getChainOfCommand.mockResolvedValue([]);
     mockAgentService.resolveByReference.mockResolvedValue({ ambiguous: false, agent: baseAgent });
     mockAgentService.create.mockResolvedValue(baseAgent);
@@ -372,6 +374,48 @@ describe("agent permission routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.access.canAssignTasks).toBe(true);
     expect(res.body.access.taskAssignSource).toBe("explicit_grant");
+  });
+
+  it("redacts plain secret env bindings from agent read responses", async () => {
+    const secretAgent = {
+      ...baseAgent,
+      agentRuntimeConfig: {
+        env: {
+          OPENAI_API_KEY: { type: "plain", value: "sk-test-secret" },
+          SAFE_FLAG: { type: "plain", value: "visible" },
+        },
+      },
+    };
+    mockAgentService.getById.mockResolvedValue(secretAgent);
+    mockAgentService.list.mockResolvedValue([secretAgent]);
+
+    const boardApp = createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      orgIds: [orgId],
+    });
+
+    const detail = await request(boardApp).get(`/api/agents/${agentId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.agentRuntimeConfig.env.OPENAI_API_KEY.value).toBe("***REDACTED***");
+    expect(detail.body.agentRuntimeConfig.env.SAFE_FLAG.value).toBe("visible");
+
+    const agentApp = createApp({
+      type: "agent",
+      agentId,
+      orgId,
+      orgIds: [orgId],
+    });
+
+    const me = await request(agentApp).get("/api/agents/me");
+    expect(me.status).toBe(200);
+    expect(me.body.agentRuntimeConfig.env.OPENAI_API_KEY.value).toBe("***REDACTED***");
+
+    const list = await request(boardApp).get(`/api/orgs/${orgId}/agents`);
+    expect(list.status).toBe(200);
+    expect(list.body[0].agentRuntimeConfig.env.OPENAI_API_KEY.value).toBe("***REDACTED***");
   });
 
   it("keeps task assignment enabled when agent creation privilege is enabled", async () => {

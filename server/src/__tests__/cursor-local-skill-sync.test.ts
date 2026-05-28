@@ -22,6 +22,21 @@ describe("cursor local skill sync", () => {
   const rudderSkillKey = "rudder/rudder";
   const cleanupDirs = new Set<string>();
 
+  function managedSkillsHome(home: string, agentId: string) {
+    return path.join(
+      home,
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "cursor-home",
+      "agents",
+      agentId,
+      ".cursor",
+      "skills",
+    );
+  }
+
   afterEach(async () => {
     await Promise.all(Array.from(cleanupDirs).map((dir) => fs.rm(dir, { recursive: true, force: true })));
     cleanupDirs.clear();
@@ -37,7 +52,7 @@ describe("cursor local skill sync", () => {
       agentRuntimeType: "cursor",
       config: {
         env: {
-          HOME: home,
+          RUDDER_HOME: home,
         },
         rudderSkillSync: {
           desiredSkills: [rudderSkillKey],
@@ -52,7 +67,7 @@ describe("cursor local skill sync", () => {
 
     const after = await syncCursorSkills(ctx, [rudderSkillKey]);
     expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("installed");
-    expect((await fs.lstat(path.join(home, ".cursor", "skills", "rudder"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(managedSkillsHome(home, "agent-1"), "rudder"))).isSymbolicLink()).toBe(true);
   });
 
   it("recognizes organization-library runtime skills supplied outside the bundled Rudder directory", async () => {
@@ -70,7 +85,7 @@ describe("cursor local skill sync", () => {
       agentRuntimeType: "cursor",
       config: {
         env: {
-          HOME: home,
+          RUDDER_HOME: home,
         },
         rudderRuntimeSkills: [
           {
@@ -98,7 +113,7 @@ describe("cursor local skill sync", () => {
     const after = await syncCursorSkills(ctx, ["ascii-heart"]);
     expect(after.warnings).toEqual([]);
     expect(after.entries.find((entry) => entry.key === "ascii-heart")?.state).toBe("installed");
-    expect((await fs.lstat(path.join(home, ".cursor", "skills", "ascii-heart"))).isSymbolicLink()).toBe(true);
+    expect((await fs.lstat(path.join(managedSkillsHome(home, "agent-3"), "ascii-heart"))).isSymbolicLink()).toBe(true);
   });
 
   it("removes Rudder-managed symlinks when the desired set is emptied", async () => {
@@ -111,7 +126,7 @@ describe("cursor local skill sync", () => {
       agentRuntimeType: "cursor",
       config: {
         env: {
-          HOME: home,
+          RUDDER_HOME: home,
         },
         rudderSkillSync: {
           desiredSkills: [rudderSkillKey],
@@ -125,7 +140,7 @@ describe("cursor local skill sync", () => {
       ...configuredCtx,
       config: {
         env: {
-          HOME: home,
+          RUDDER_HOME: home,
         },
         rudderSkillSync: {
           desiredSkills: [],
@@ -136,7 +151,7 @@ describe("cursor local skill sync", () => {
     const after = await syncCursorSkills(clearedCtx, []);
     expect(after.desiredSkills).toEqual([]);
     expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("available");
-    await expect(fs.lstat(path.join(home, ".cursor", "skills", "rudder"))).rejects.toMatchObject({
+    await expect(fs.lstat(path.join(managedSkillsHome(home, "agent-2"), "rudder"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });

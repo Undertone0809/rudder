@@ -49,9 +49,9 @@ This matters because agent behavior must be reproducible from the Rudder control
 
 ## How Rudder selects skills
 
-Agent skill state is a control-plane decision. The source of truth is the agent's Skills page plus Rudder's built-in bundled runtime skills.
+Agent skill state is a control-plane decision. The source of truth is the agent's Skills page. Rudder-bundled skills appear in the catalog as read-only product skills, but they are not automatically enabled for every run.
 
-Before each run, Rudder resolves the enabled skill keys for that agent and realizes the matching runtime skill entries. It then injects the prepared list into the runtime config as `rudderSkillSync.desiredSkills` and `rudderRuntimeSkills`.
+Before each run, Rudder resolves the enabled skill keys for that agent, including any bundled skills explicitly selected on the Skills page, and realizes the matching runtime skill entries. It then injects the prepared list into the runtime config as `rudderSkillSync.desiredSkills` and `rudderRuntimeSkills`.
 
 Adapters should consume that prepared config. They should not decide enabled Rudder Agent Skills from whatever their host CLI happens to discover.
 
@@ -63,7 +63,7 @@ Different runtimes offer different levels of physical isolation, but Rudder keep
 | --- | --- |
 | Codex local | Uses a per-agent managed `CODEX_HOME` and managed `HOME`, links enabled skills into `CODEX_HOME/skills`, prunes stale Rudder-managed skill entries, disables Codex bundled skills, and runs with plugins disabled. This is the strongest local CLI isolation Rudder currently has. |
 | Claude Code local | Uses a per-agent managed Claude `HOME`, resets that managed `.claude/skills` directory on each run, symlinks only enabled Rudder runtime skills, writes managed `.claude/settings.json` skill overrides, disables slash commands, uses strict MCP config, and reads settings from the managed user source. |
-| Gemini, OpenCode, Pi, Cursor, Hermes local | Use the shared Rudder runtime contract. Skill listing and materialization depend on what the adapter exposes; when supported, adapters should consume the prepared Rudder skill-sync config. |
+| Gemini, OpenCode, Pi, Cursor, Hermes local | Use per-agent managed runtime homes where supported, materialize only enabled Rudder runtime skills into the managed skill directory, prune stale Rudder-managed entries, and inject the same `Rudder Runtime Skill Boundary` prompt used by the local CLI runtime family. |
 | Shell process, HTTP webhook, gateway | Rudder passes the prepared run context and skill config. The external process or service is responsible for honoring the contract. |
 
 Physical isolation is adapter-dependent because the underlying CLIs expose different controls. The product rule is not adapter-dependent: the skills shown as enabled for a Rudder agent are the skills Rudder selected for that agent.

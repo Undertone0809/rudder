@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { testEnvironment } from "@rudderhq/agent-runtime-cursor-local/server";
 
-async function writeFakeAgentCommand(binDir: string, argsCapturePath: string): Promise<string> {
-  const commandPath = path.join(binDir, "agent");
+async function writeFakeCursorAgentCommand(binDir: string, argsCapturePath: string): Promise<string> {
+  const commandPath = path.join(binDir, "cursor-agent");
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
 const outPath = process.env.RUDDER_TEST_ARGS_PATH;
@@ -53,7 +53,7 @@ describe("cursor environment diagnostics", () => {
     await fs.rm(path.dirname(cwd), { recursive: true, force: true });
   });
 
-  it("adds --yolo to hello probe args by default", async () => {
+  it("adds -f to hello probe args by default", async () => {
     const root = path.join(
       os.tmpdir(),
       `rudder-cursor-local-probe-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -62,13 +62,13 @@ describe("cursor environment diagnostics", () => {
     const cwd = path.join(root, "workspace");
     const argsCapturePath = path.join(root, "args.json");
     await fs.mkdir(binDir, { recursive: true });
-    await writeFakeAgentCommand(binDir, argsCapturePath);
+    await writeFakeCursorAgentCommand(binDir, argsCapturePath);
 
     const result = await testEnvironment({
       orgId: "organization-1",
       agentRuntimeType: "cursor",
       config: {
-        command: "agent",
+        command: "cursor-agent",
         cwd,
         env: {
           CURSOR_API_KEY: "test-key",
@@ -80,11 +80,13 @@ describe("cursor environment diagnostics", () => {
 
     expect(result.status).toBe("pass");
     const args = JSON.parse(await fs.readFile(argsCapturePath, "utf8")) as string[];
-    expect(args).toContain("--yolo");
+    expect(args).toContain("-f");
+    expect(args).not.toContain("--workspace");
+    expect(args).not.toContain("--mode");
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  it("does not auto-add --yolo when extraArgs already bypass trust", async () => {
+  it("does not auto-add -f when extraArgs already bypass trust", async () => {
     const root = path.join(
       os.tmpdir(),
       `rudder-cursor-local-probe-extra-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -93,15 +95,15 @@ describe("cursor environment diagnostics", () => {
     const cwd = path.join(root, "workspace");
     const argsCapturePath = path.join(root, "args.json");
     await fs.mkdir(binDir, { recursive: true });
-    await writeFakeAgentCommand(binDir, argsCapturePath);
+    await writeFakeCursorAgentCommand(binDir, argsCapturePath);
 
     const result = await testEnvironment({
       orgId: "organization-1",
       agentRuntimeType: "cursor",
       config: {
-        command: "agent",
+        command: "cursor-agent",
         cwd,
-        extraArgs: ["--yolo"],
+        extraArgs: ["-f"],
         env: {
           CURSOR_API_KEY: "test-key",
           RUDDER_TEST_ARGS_PATH: argsCapturePath,
@@ -112,8 +114,41 @@ describe("cursor environment diagnostics", () => {
 
     expect(result.status).toBe("pass");
     const args = JSON.parse(await fs.readFile(argsCapturePath, "utf8")) as string[];
-    expect(args).toContain("--yolo");
+    expect(args.filter((arg) => arg === "-f")).toHaveLength(1);
     expect(args).not.toContain("--trust");
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("classifies interactive Cursor sign-in output as auth required", async () => {
+    const root = path.join(
+      os.tmpdir(),
+      `rudder-cursor-local-auth-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const binDir = path.join(root, "bin");
+    const cwd = path.join(root, "workspace");
+    const commandPath = path.join(binDir, "cursor-agent");
+    await fs.mkdir(binDir, { recursive: true });
+    await fs.writeFile(
+      commandPath,
+      "#!/bin/sh\nprintf 'Press any key to sign in...\\n'\nexit 1\n",
+      "utf8",
+    );
+    await fs.chmod(commandPath, 0o755);
+
+    const result = await testEnvironment({
+      orgId: "organization-1",
+      agentRuntimeType: "cursor",
+      config: {
+        command: "cursor-agent",
+        cwd,
+        env: {
+          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+      },
+    });
+
+    expect(result.status).toBe("warn");
+    expect(result.checks.find((check) => check.code === "cursor_hello_probe_auth_required")).toBeTruthy();
     await fs.rm(root, { recursive: true, force: true });
   });
 });

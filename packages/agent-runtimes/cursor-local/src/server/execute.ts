@@ -14,21 +14,21 @@ import {
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensureLocalCliCredentialShimsInPath,
-  ensureRudderSkillSymlink,
+  ensureRudderRuntimeSkillSymlinks,
   ensureRudderCliInPath,
   ensurePathInEnv,
   resolveLocalOperatorHome,
   syncLocalCliCredentialHomeEntries,
   readRudderRuntimeSkillEntries,
   resolveRudderDesiredSkillNames,
-  removeMaintainerOnlySkillSymlinks,
   renderTemplate,
+  renderRudderRuntimeSkillBoundaryPrompt,
   joinPromptSections,
   loadAgentInstructionsPrefix,
   runChildProcess,
   selectPromptTemplate,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
+import { DEFAULT_CURSOR_LOCAL_COMMAND, DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
 import { parseCursorJsonl, isCursorUnknownSessionError } from "./parse.js";
 import { normalizeCursorStreamLine } from "../shared/stream.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
@@ -74,12 +74,6 @@ function resolveProviderFromModel(model: string): string | null {
   if (slash > 0) return trimmed.slice(0, slash);
   if (trimmed.includes("sonnet") || trimmed.includes("claude")) return "anthropic";
   if (trimmed.startsWith("gpt") || trimmed.startsWith("o")) return "openai";
-  return null;
-}
-
-function normalizeMode(rawMode: string): "plan" | "ask" | null {
-  const mode = rawMode.trim().toLowerCase();
-  if (mode === "plan" || mode === "ask") return mode;
   return null;
 }
 
@@ -129,10 +123,10 @@ function resolveSharedCursorHomeDir(env: NodeJS.ProcessEnv): string {
   return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
 }
 
-function resolveManagedCursorHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
+function resolveManagedCursorHomeDir(env: NodeJS.ProcessEnv, orgId: string, agentId: string): string {
   const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
   const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "cursor-home");
+  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "cursor-home", "agents", agentId);
 }
 
 function resolveManagedCursorSkillsDir(homeDir: string): string {
@@ -157,9 +151,10 @@ async function prepareManagedCursorHome(
   env: NodeJS.ProcessEnv,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
+  agentId: string,
 ): Promise<string> {
   const sourceHome = resolveSharedCursorHomeDir(env);
-  const targetHome = resolveManagedCursorHomeDir(env, orgId);
+  const targetHome = resolveManagedCursorHomeDir(env, orgId, agentId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(resolveManagedCursorSkillsDir(targetHome), { recursive: true });
@@ -181,6 +176,7 @@ function cursorSkillsHome(): string {
 type EnsureCursorSkillsInjectedOptions = {
   skillsDir?: string | null;
   skillsEntries?: Array<{ key: string; runtimeName: string; source: string }>;
+  desiredSkillKeys?: string[];
   skillsHome?: string;
   linkSkill?: (source: string, target: string) => Promise<void>;
 };
@@ -202,43 +198,16 @@ export async function ensureCursorSkillsInjected(
   if (skillsEntries.length === 0) return;
 
   const skillsHome = options.skillsHome ?? cursorSkillsHome();
-  try {
-    await fs.mkdir(skillsHome, { recursive: true });
-  } catch (err) {
-    await onLog(
-      "stderr",
-      `[rudder] Failed to prepare Cursor skills directory ${skillsHome}: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-    return;
-  }
-  const removedSkills = await removeMaintainerOnlySkillSymlinks(
+  await ensureRudderRuntimeSkillSymlinks({
+    onLog,
+    runtimeLabel: "Cursor",
     skillsHome,
-    skillsEntries.map((entry) => entry.runtimeName),
-  );
-  for (const skillName of removedSkills) {
-    await onLog(
-      "stderr",
-      `[rudder] Removed maintainer-only Cursor skill "${skillName}" from ${skillsHome}\n`,
-    );
-  }
-  const linkSkill = options.linkSkill ?? ((source: string, target: string) => fs.symlink(source, target));
-  for (const entry of skillsEntries) {
-    const target = path.join(skillsHome, entry.runtimeName);
-    try {
-      const result = await ensureRudderSkillSymlink(entry.source, target, linkSkill);
-      if (result === "skipped") continue;
-
-      await onLog(
-        "stderr",
-        `[rudder] ${result === "repaired" ? "Repaired" : "Injected"} Cursor skill "${entry.key}" into ${skillsHome}\n`,
-      );
-    } catch (err) {
-      await onLog(
-        "stderr",
-        `[rudder] Failed to inject Cursor skill "${entry.key}" into ${skillsHome}: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-    }
-  }
+    availableEntries: skillsEntries,
+    desiredSkillKeys: options.desiredSkillKeys ?? [],
+    linkSkill: options.linkSkill,
+    pruneUnselected: false,
+    replaceConflictingEntries: false,
+  });
 }
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
@@ -248,9 +217,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     asString(config.promptTemplate, ""),
     context,
   );
-  const command = asString(config.command, "agent");
+  const command = asString(config.command, DEFAULT_CURSOR_LOCAL_COMMAND);
   const model = asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL).trim();
-  const mode = normalizeMode(asString(config.mode, ""));
 
   const workspaceContext = parseObject(context.rudderWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
@@ -289,7 +257,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedCursorHome(sourceEnv, onLog, agent.orgId);
+  const managedHome = await prepareManagedCursorHome(sourceEnv, onLog, agent.orgId, agent.id);
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
@@ -299,9 +267,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
   const cursorSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredCursorSkillNames = resolveRudderDesiredSkillNames(config, cursorSkillEntries);
-  await ensureCursorSkillsInjected(onLog, {
-    skillsEntries: cursorSkillEntries.filter((entry) => desiredCursorSkillNames.includes(entry.key)),
+  const loadedSkills = await ensureRudderRuntimeSkillSymlinks({
+    onLog,
+    runtimeLabel: "Cursor",
     skillsHome: resolveManagedCursorSkillsDir(managedHome),
+    availableEntries: cursorSkillEntries,
+    desiredSkillKeys: desiredCursorSkillNames,
   });
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
@@ -439,7 +410,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const commandNotes = (() => {
     const notes: string[] = [];
     if (autoTrustEnabled) {
-      notes.push("Auto-added --yolo to bypass interactive prompts.");
+      notes.push("Auto-added -f to force non-interactive command allowance.");
     }
     notes.push("Prompt is piped to Cursor via stdin.");
     if (!instructionsFilePath) {
@@ -506,9 +477,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
+  const skillBoundaryPrompt = renderRudderRuntimeSkillBoundaryPrompt(loadedSkills);
   const rudderEnvNote = renderRudderEnvNote(env);
   const prompt = joinPromptSections([
     instructionsPrefix,
+    skillBoundaryPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     rudderEnvNote,
@@ -517,6 +490,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
+    skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     runtimeNoteChars: rudderEnvNote.length,
@@ -524,11 +498,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   };
 
   const buildArgs = (resumeSessionId: string | null) => {
-    const args = ["-p", "--output-format", "stream-json", "--workspace", cwd];
+    const args = ["-p", "--output-format", "stream-json"];
     if (resumeSessionId) args.push("--resume", resumeSessionId);
     if (model) args.push("--model", model);
-    if (mode) args.push("--mode", mode);
-    if (autoTrustEnabled) args.push("--yolo");
+    if (autoTrustEnabled) args.push("-f");
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
   };
@@ -545,6 +518,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         env: redactEnvForLogs(env),
         prompt,
         promptMetrics,
+        loadedSkills,
         context,
       });
     }

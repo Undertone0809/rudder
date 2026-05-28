@@ -1,5 +1,6 @@
 export const type = "cursor";
 export const label = "Cursor CLI (local)";
+export const DEFAULT_CURSOR_LOCAL_COMMAND = "cursor-agent";
 export const DEFAULT_CURSOR_LOCAL_MODEL = "auto";
 
 const CURSOR_FALLBACK_MODEL_IDS = [
@@ -66,8 +67,7 @@ Core fields:
 - promptTemplate (string, optional): run prompt template
 - model (string, optional): Cursor model id (for example auto or gpt-5.3-codex)
 - modelFallbacks (array, optional): ordered fallback attempts as { agentRuntimeType, model, config? }; each may use a different runtime/provider
-- mode (string, optional): Cursor execution mode passed as --mode (plan|ask). Leave unset for normal autonomous runs.
-- command (string, optional): defaults to "agent"
+- command (string, optional): defaults to "cursor-agent"
 - extraArgs (string[], optional): additional CLI args
 - env (object, optional): KEY=VALUE environment variables
 
@@ -76,10 +76,10 @@ Operational fields:
 - graceSec (number, optional): SIGTERM grace period in seconds
 
 Notes:
-- Runs are executed with: agent -p --output-format stream-json ...
+- Runs are executed with: cursor-agent -p --output-format stream-json ...
 - Prompts are piped to Cursor via stdin.
 - Sessions are resumed with --resume when stored session cwd matches current cwd.
-- Rudder realizes only the bundled Rudder skills plus the skills explicitly enabled on the agent's Skills page.
+- Rudder realizes only the skills explicitly enabled on the agent's Skills page, including bundled Rudder skills when selected there.
 - Selected skills are linked into a Rudder-managed Cursor home for the run; unselected skills already present in the real user home do not load.
-- Rudder auto-adds --yolo unless one of --trust/--yolo/-f is already present in extraArgs.
+- Rudder runs Cursor from the configured working directory and auto-adds -f unless one of --trust/--yolo/-f is already present in extraArgs.
 `;

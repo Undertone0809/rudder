@@ -15,7 +15,7 @@ import {
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensureLocalCliCredentialShimsInPath,
-  ensureRudderSkillSymlink,
+  ensureRudderRuntimeSkillSymlinks,
   ensureRudderCliInPath,
   ensurePathInEnv,
   resolveLocalOperatorHome,
@@ -26,10 +26,10 @@ import {
   resolveRudderDesiredSkillNames,
   selectPromptTemplate,
   loadAgentInstructionsPrefix,
+  renderRudderRuntimeSkillBoundaryPrompt,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";
-import { removeMaintainerOnlySkillSymlinks } from "@rudderhq/agent-runtime-utils/server-utils";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUDDER_INSTANCE_ID = "default";
@@ -91,10 +91,10 @@ function resolveSharedOpenCodeHomeDir(env: NodeJS.ProcessEnv): string {
   return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
 }
 
-function resolveManagedOpenCodeHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
+function resolveManagedOpenCodeHomeDir(env: NodeJS.ProcessEnv, orgId: string, agentId: string): string {
   const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
   const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "opencode-home");
+  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "opencode-home", "agents", agentId);
 }
 
 function resolveManagedOpenCodeSkillsDir(homeDir: string): string {
@@ -105,9 +105,10 @@ async function prepareManagedOpenCodeHome(
   env: NodeJS.ProcessEnv,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
+  agentId: string,
 ): Promise<string> {
   const sourceHome = resolveSharedOpenCodeHomeDir(env);
-  const targetHome = resolveManagedOpenCodeHomeDir(env, orgId);
+  const targetHome = resolveManagedOpenCodeHomeDir(env, orgId, agentId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(targetHome, { recursive: true });
@@ -124,44 +125,6 @@ async function prepareManagedOpenCodeHome(
     `[rudder] Using Rudder-managed OpenCode home "${targetHome}" (seeded from "${sourceHome}").\n`,
   );
   return targetHome;
-}
-
-async function ensureOpenCodeSkillsInjected(
-  onLog: AgentRuntimeExecutionContext["onLog"],
-  skillsHome: string,
-  skillsEntries: Array<{ key: string; runtimeName: string; source: string }>,
-  desiredSkillNames?: string[],
-) {
-  await fs.mkdir(skillsHome, { recursive: true });
-  const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
-  const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
-  const removedSkills = await removeMaintainerOnlySkillSymlinks(
-    skillsHome,
-    selectedEntries.map((entry) => entry.runtimeName),
-  );
-  for (const skillName of removedSkills) {
-    await onLog(
-      "stderr",
-      `[rudder] Removed maintainer-only OpenCode skill "${skillName}" from ${skillsHome}\n`,
-    );
-  }
-  for (const entry of selectedEntries) {
-    const target = path.join(skillsHome, entry.runtimeName);
-
-    try {
-      const result = await ensureRudderSkillSymlink(entry.source, target);
-      if (result === "skipped") continue;
-      await onLog(
-        "stderr",
-        `[rudder] ${result === "repaired" ? "Repaired" : "Injected"} OpenCode skill "${entry.key}" into ${skillsHome}\n`,
-      );
-    } catch (err) {
-      await onLog(
-        "stderr",
-        `[rudder] Failed to inject OpenCode skill "${entry.key}" into ${skillsHome}: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-    }
-  }
 }
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
@@ -260,7 +223,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
   const sourceEnv = { ...process.env, ...env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedOpenCodeHome(sourceEnv, onLog, agent.orgId);
+  const managedHome = await prepareManagedOpenCodeHome(sourceEnv, onLog, agent.orgId, agent.id);
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
@@ -277,20 +240,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   applyGitCredentialHelperPolicyEnv(env);
   const openCodeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredOpenCodeSkillNames = resolveRudderDesiredSkillNames(config, openCodeSkillEntries);
-  const loadedSkills = openCodeSkillEntries
-    .filter((entry) => desiredOpenCodeSkillNames.includes(entry.key))
-    .map((entry) => ({
-      key: entry.key,
-      runtimeName: entry.runtimeName,
-      name: entry.name ?? null,
-      description: entry.description ?? null,
-    }));
-  await ensureOpenCodeSkillsInjected(
+  const loadedSkills = await ensureRudderRuntimeSkillSymlinks({
     onLog,
-    resolveManagedOpenCodeSkillsDir(managedHome),
-    openCodeSkillEntries,
-    desiredOpenCodeSkillNames,
-  );
+    runtimeLabel: "OpenCode",
+    skillsHome: resolveManagedOpenCodeSkillsDir(managedHome),
+    availableEntries: openCodeSkillEntries,
+    desiredSkillKeys: desiredOpenCodeSkillNames,
+  });
   const runtimeEnv = Object.fromEntries(
     Object.entries(await ensureLocalCliCredentialShimsInPath({
       operatorHome,
@@ -405,8 +361,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
+  const skillBoundaryPrompt = renderRudderRuntimeSkillBoundaryPrompt(loadedSkills);
   const prompt = joinPromptSections([
     instructionsPrefix,
+    skillBoundaryPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedPrompt,
@@ -414,6 +372,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
+    skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,

@@ -35,7 +35,7 @@ describe("cursor local adapter skill injection", () => {
       async (_stream, chunk) => {
         logs.push(chunk);
       },
-      { skillsDir, skillsHome },
+      { skillsDir, skillsHome, desiredSkillKeys: ["rudder", "rudder-create-agent"] },
     );
 
     const injectedA = path.join(skillsHome, "rudder");
@@ -63,7 +63,10 @@ describe("cursor local adapter skill injection", () => {
     await fs.mkdir(existingTarget, { recursive: true });
     await fs.writeFile(path.join(existingTarget, "keep.txt"), "keep", "utf8");
 
-    await ensureCursorSkillsInjected(async () => {}, { skillsDir, skillsHome });
+    await ensureCursorSkillsInjected(
+      async () => {},
+      { skillsDir, skillsHome, desiredSkillKeys: ["rudder", "rudder-create-agent"] },
+    );
 
     expect((await fs.lstat(existingTarget)).isDirectory()).toBe(true);
     expect(await fs.readFile(path.join(existingTarget, "keep.txt"), "utf8")).toBe("keep");
@@ -87,6 +90,7 @@ describe("cursor local adapter skill injection", () => {
       {
         skillsDir,
         skillsHome,
+        desiredSkillKeys: ["ok-skill", "fail-skill"],
         linkSkill: async (source, target) => {
           if (target.endsWith(`${path.sep}fail-skill`)) {
             throw new Error("simulated link failure");
@@ -99,5 +103,18 @@ describe("cursor local adapter skill injection", () => {
     expect((await fs.lstat(path.join(skillsHome, "ok-skill"))).isSymbolicLink()).toBe(true);
     await expect(fs.lstat(path.join(skillsHome, "fail-skill"))).rejects.toThrow();
     expect(logs.some((line) => line.includes('Failed to inject Cursor skill "fail-skill"'))).toBe(true);
+  });
+
+  it("does not inject every discovered skill when desiredSkillKeys is omitted", async () => {
+    const skillsDir = await makeTempDir("rudder-cursor-no-default-src-");
+    const skillsHome = await makeTempDir("rudder-cursor-no-default-home-");
+    cleanupDirs.add(skillsDir);
+    cleanupDirs.add(skillsHome);
+
+    await createSkillDir(skillsDir, "rudder");
+
+    await ensureCursorSkillsInjected(async () => {}, { skillsDir, skillsHome });
+
+    await expect(fs.lstat(path.join(skillsHome, "rudder"))).rejects.toThrow();
   });
 });

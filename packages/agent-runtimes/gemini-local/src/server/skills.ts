@@ -1,4 +1,3 @@
-import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,32 +7,53 @@ import type {
 } from "@rudderhq/agent-runtime-utils";
 import {
   buildPersistentSkillSnapshot,
-  ensureRudderSkillSymlink,
+  ensureRudderRuntimeSkillSymlinks,
   readRudderRuntimeSkillEntries,
   readInstalledSkillTargets,
   resolveRudderDesiredSkillNames,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_RUDDER_INSTANCE_ID = "default";
 
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-function resolveGeminiSkillsHome(config: Record<string, unknown>) {
+function resolveStringEnv(config: Record<string, unknown>): NodeJS.ProcessEnv {
   const env =
     typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
       ? (config.env as Record<string, unknown>)
       : {};
-  const configuredHome = asString(env.HOME);
-  const home = configuredHome ? path.resolve(configuredHome) : os.homedir();
-  return path.join(home, ".gemini", "skills");
+  return {
+    ...process.env,
+    ...Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
+  };
 }
 
-async function buildGeminiSkillSnapshot(config: Record<string, unknown>): Promise<AgentRuntimeSkillSnapshot> {
+function resolveGeminiSkillsHome(ctx: Pick<AgentRuntimeSkillContext, "orgId" | "agentId" | "config">) {
+  const env = resolveStringEnv(ctx.config);
+  const rudderHome = asString(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
+  const instanceId = asString(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
+  return path.join(
+    rudderHome,
+    "instances",
+    instanceId,
+    "organizations",
+    ctx.orgId,
+    "gemini-home",
+    "agents",
+    ctx.agentId,
+    ".gemini",
+    "skills",
+  );
+}
+
+async function buildGeminiSkillSnapshot(ctx: AgentRuntimeSkillContext): Promise<AgentRuntimeSkillSnapshot> {
+  const config = ctx.config;
   const availableEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredSkills = resolveRudderDesiredSkillNames(config, availableEntries);
-  const skillsHome = resolveGeminiSkillsHome(config);
+  const skillsHome = resolveGeminiSkillsHome(ctx);
   const installed = await readInstalledSkillTargets(skillsHome);
   return buildPersistentSkillSnapshot({
     agentRuntimeType: "gemini_local",
@@ -41,7 +61,7 @@ async function buildGeminiSkillSnapshot(config: Record<string, unknown>): Promis
     desiredSkills,
     installed,
     skillsHome,
-    locationLabel: "~/.gemini/skills",
+    locationLabel: "managed Gemini skills home",
     missingDetail: "Configured but not currently linked into the Gemini skills home.",
     externalConflictDetail: "Skill name is occupied by an external installation.",
     externalDetail: "Installed outside Rudder management.",
@@ -49,7 +69,7 @@ async function buildGeminiSkillSnapshot(config: Record<string, unknown>): Promis
 }
 
 export async function listGeminiSkills(ctx: AgentRuntimeSkillContext): Promise<AgentRuntimeSkillSnapshot> {
-  return buildGeminiSkillSnapshot(ctx.config);
+  return buildGeminiSkillSnapshot(ctx);
 }
 
 export async function syncGeminiSkills(
@@ -57,27 +77,16 @@ export async function syncGeminiSkills(
   desiredSkills: string[],
 ): Promise<AgentRuntimeSkillSnapshot> {
   const availableEntries = await readRudderRuntimeSkillEntries(ctx.config, __moduleDir);
-  const desiredSet = new Set(desiredSkills);
-  const skillsHome = resolveGeminiSkillsHome(ctx.config);
-  await fs.mkdir(skillsHome, { recursive: true });
-  const installed = await readInstalledSkillTargets(skillsHome);
-  const availableByRuntimeName = new Map(availableEntries.map((entry) => [entry.runtimeName, entry]));
+  const skillsHome = resolveGeminiSkillsHome(ctx);
+  await ensureRudderRuntimeSkillSymlinks({
+    onLog: async () => {},
+    runtimeLabel: "Gemini",
+    skillsHome,
+    availableEntries,
+    desiredSkillKeys: desiredSkills,
+  });
 
-  for (const available of availableEntries) {
-    if (!desiredSet.has(available.key)) continue;
-    const target = path.join(skillsHome, available.runtimeName);
-    await ensureRudderSkillSymlink(available.source, target);
-  }
-
-  for (const [name, installedEntry] of installed.entries()) {
-    const available = availableByRuntimeName.get(name);
-    if (!available) continue;
-    if (desiredSet.has(available.key)) continue;
-    if (installedEntry.targetPath !== available.source) continue;
-    await fs.unlink(path.join(skillsHome, name)).catch(() => {});
-  }
-
-  return buildGeminiSkillSnapshot(ctx.config);
+  return buildGeminiSkillSnapshot(ctx);
 }
 
 export function resolveGeminiDesiredSkillNames(

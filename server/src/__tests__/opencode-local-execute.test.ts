@@ -119,6 +119,8 @@ describe("opencode execute", () => {
       expectPreparedGitConfigCapture(capture);
       expect(capture.prompt).toContain("# Agent Instructions");
       expect(capture.prompt).toContain("# Tacit Memory");
+      expect(capture.prompt).toContain("# Rudder Runtime Skill Boundary");
+      expect(capture.prompt).toContain("Enabled Rudder Agent Skills: none.");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
       );

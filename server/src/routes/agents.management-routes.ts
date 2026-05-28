@@ -120,6 +120,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     preserveInstructionsBundleConfig,
     summarizeAgentUpdateDetails,
     redactAgentConfiguration,
+    redactAgentForRead,
     stripPersistedSkillSyncConfig,
     withRuntimeSkillEntries,
     DEFAULT_INSTRUCTIONS_PATH_KEYS,
@@ -316,7 +317,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       });
     }
 
-    res.status(201).json({ agent, approval });
+    res.status(201).json({ agent: redactAgentForRead(agent), approval });
   });
 
   router.post("/orgs/:orgId/agents", validate(createAgentSchema), async (req, res) => {
@@ -413,7 +414,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       );
     }
 
-    res.status(201).json(agent);
+    res.status(201).json(redactAgentForRead(agent));
   });
 
   router.patch("/agents/:id/permissions", validate(updateAgentPermissionsSchema), async (req, res) => {
@@ -558,7 +559,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       },
     });
 
-    res.status(201).json(agent);
+    res.status(201).json(redactAgentForRead(agent));
   });
 
   router.patch("/agents/:id/instructions-path", validate(updateAgentInstructionsPathSchema), async (req, res) => {
@@ -929,7 +930,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       details: summarizeAgentUpdateDetails(patchData),
     });
 
-    res.json(agent);
+    res.json(redactAgentForRead(agent));
   });
 
   router.post("/agents/:id/pause", async (req, res) => {
@@ -952,7 +953,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       entityId: agent.id,
     });
 
-    res.json(agent);
+    res.json(redactAgentForRead(agent));
   });
 
   router.post("/agents/:id/resume", async (req, res) => {
@@ -975,7 +976,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       entityId: agent.id,
     });
 
-    res.json(agent);
+    res.json(redactAgentForRead(agent));
   });
 
   router.post("/agents/:id/terminate", async (req, res) => {
@@ -998,7 +999,7 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
       entityId: agent.id,
     });
 
-    res.json(agent);
+    res.json(redactAgentForRead(agent));
   });
 
   router.delete("/agents/:id", async (req, res) => {

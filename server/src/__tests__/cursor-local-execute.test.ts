@@ -158,6 +158,8 @@ describe("cursor execute", () => {
       expect(capture.argv).not.toContain("ask");
       expect(capture.prompt).toContain("# Agent Instructions");
       expect(capture.prompt).toContain("# Tacit Memory");
+      expect(capture.prompt).toContain("# Rudder Runtime Skill Boundary");
+      expect(capture.prompt).toContain("Enabled Rudder Agent Skills: none.");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining([
           "RUDDER_AGENT_ID",
@@ -169,6 +171,7 @@ describe("cursor execute", () => {
         ]),
       );
       expect(capture.prompt).toContain("Rudder runtime note:");
+      expect(invocationPrompt).toContain("# Rudder Runtime Skill Boundary");
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
@@ -182,7 +185,7 @@ describe("cursor execute", () => {
     }
   });
 
-  it("passes --mode when explicitly configured", async () => {
+  it("does not pass unsupported Cursor CLI mode or workspace flags", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-execute-mode-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "agent");
@@ -227,8 +230,10 @@ describe("cursor execute", () => {
       expect(result.errorMessage).toBeNull();
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
-      expect(capture.argv).toContain("--mode");
-      expect(capture.argv).toContain("ask");
+      expect(capture.argv).not.toContain("--mode");
+      expect(capture.argv).not.toContain("ask");
+      expect(capture.argv).not.toContain("--workspace");
+      expect(capture.argv).toContain("-f");
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });
@@ -248,6 +253,8 @@ describe("cursor execute", () => {
       "organizations",
       "organization-1",
       "cursor-home",
+      "agents",
+      "agent-1",
       ".cursor",
       "skills",
     );

@@ -291,15 +291,12 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "",
   "## Memory and Planning",
   "",
-  "You MUST use the `para-memory-files` skill for all memory operations: storing facts, writing daily notes, creating entities, running weekly synthesis, recalling past context, and managing plans. The skill defines your three-layer memory system (knowledge graph, daily notes, tacit knowledge), the PARA folder structure, atomic fact schemas, memory decay rules, and recall/planning conventions.",
+  "Use the managed memory paths when a task requires durable memory. If a memory skill is enabled for this run, follow that skill's workflow. If no memory skill is enabled, do not assume one is available.",
   "",
   "Keep stable preferences and operating lessons in `$AGENT_HOME/instructions/MEMORY.md`. Use `$AGENT_HOME/memory/YYYY-MM-DD.md` for daily notes and `$AGENT_HOME/life/` for structured long-term memory; those files are not auto-loaded.",
-  "",
-  "Invoke it whenever you need to remember, retrieve, or organize anything.",
   "",
   "## Safety Considerations",
   "",
   "- Never exfiltrate secrets or private data.",
   "- Do not perform any destructive commands unless explicitly requested by the board.",
 ].join("\n");
-

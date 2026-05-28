@@ -62,7 +62,6 @@ import {
   deriveSkillSourceInfo,
   enrichSkill,
   findMissingLocalSkillIds,
-  getRequiredBundledSkillKeys,
   getSkillMeta,
   inferLanguageFromPath,
   isBundledRudderSkillKey,
@@ -380,7 +379,7 @@ export function organizationSkillService(db: Db) {
     skills: OrganizationSkill[],
     selectionRefs: string[],
   ) {
-    const selected = new Set<string>(getRequiredBundledSkillKeys(skills));
+    const selected = new Set<string>();
     const skillKeys = new Set(skills.map((skill) => skill.key));
     for (const selectionRef of selectionRefs) {
       const parsed = parseSelectionKey(selectionRef);
@@ -404,8 +403,7 @@ export function organizationSkillService(db: Db) {
     if (!agent) return [] as string[];
     const normalized = refs
       .map((reference) => normalizeSelectionRef(reference, skills, orgId, agent.agentRuntimeType))
-      .filter((value): value is string => Boolean(value))
-      .filter((value) => parseSelectionKey(value).sourceClass !== "bundled");
+      .filter((value): value is string => Boolean(value));
     return sortUniqueSelectionRefs(normalized);
   }
 
@@ -517,11 +515,11 @@ export function organizationSkillService(db: Db) {
           : buildOrganizationSelectionKey(skill.key),
         runtimeName: skill.slug,
         description: skill.description ?? null,
-        desired: bundled,
-        configurable: !bundled,
-        alwaysEnabled: bundled,
+        desired: false,
+        configurable: true,
+        alwaysEnabled: false,
         managed: true,
-        state: bundled ? "configured" : "available",
+        state: "available",
         sourceClass: bundled ? "bundled" : "organization",
         origin: "organization_managed",
         originLabel: bundled ? "Bundled by Rudder" : "Organization skill",
@@ -530,7 +528,7 @@ export function organizationSkillService(db: Db) {
         sourcePath: normalizeSkillDirectory(skill),
         targetPath: null,
         workspaceEditPath: resolveWorkspaceEditPath(orgId, normalizeSkillDirectory(skill)),
-        detail: bundled ? "Always loaded by Rudder for every agent run." : null,
+        detail: null,
         organizationSkillKey: skill.key,
         runtimeSourcePath: null,
       });
@@ -680,10 +678,6 @@ export function organizationSkillService(db: Db) {
 
     const normalized = normalizeSelectionRef(trimmed, skills, agent.orgId, agent.agentRuntimeType);
     if (normalized) {
-      const normalizedParsed = parseSelectionKey(normalized);
-      if (normalizedParsed.sourceClass === "bundled") {
-        return { selectionKey: null, ambiguous: false };
-      }
       if (catalogEntries.some((entry) => entry.selectionKey === normalized)) {
         return { selectionKey: normalized, ambiguous: false };
       }
@@ -765,7 +759,7 @@ export function organizationSkillService(db: Db) {
     const catalogEntries = await buildAgentSkillCatalogEntries(orgId, agentId, agentRuntimeType, runtimeConfig, skills);
     const bySelectionKey = new Map(catalogEntries.map((entry) => [entry.selectionKey, entry]));
     const desiredSet = new Set(selectionRefs);
-    const activeEntries = catalogEntries.filter((entry) => entry.alwaysEnabled || desiredSet.has(entry.selectionKey));
+    const activeEntries = catalogEntries.filter((entry) => desiredSet.has(entry.selectionKey));
     const out: RudderSkillEntry[] = [];
 
     for (const entry of activeEntries) {

@@ -22,6 +22,21 @@ describe("opencode local skill sync", () => {
   const rudderSkillKey = "rudder/rudder";
   const cleanupDirs = new Set<string>();
 
+  function managedSkillsHome(home: string, agentId: string) {
+    return path.join(
+      home,
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "opencode-home",
+      "agents",
+      agentId,
+      ".claude",
+      "skills",
+    );
+  }
+
   afterEach(async () => {
     await Promise.all(Array.from(cleanupDirs).map((dir) => fs.rm(dir, { recursive: true, force: true })));
     cleanupDirs.clear();
@@ -37,7 +52,7 @@ describe("opencode local skill sync", () => {
       agentRuntimeType: "opencode_local",
       config: {
         env: {
-          HOME: home,
+          RUDDER_HOME: home,
         },
         rudderSkillSync: {
           desiredSkills: [rudderSkillKey],
@@ -56,7 +71,7 @@ describe("opencode local skill sync", () => {
     const after = await syncOpenCodeSkills(ctx, [rudderSkillKey]);
     expect(after.mode).toBe("ephemeral");
     expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("configured");
-    await expect(fs.lstat(path.join(home, ".claude", "skills", "rudder"))).rejects.toMatchObject({
+    await expect(fs.lstat(path.join(managedSkillsHome(home, "agent-1"), "rudder"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
@@ -71,7 +86,7 @@ describe("opencode local skill sync", () => {
       agentRuntimeType: "opencode_local",
       config: {
         env: {
-          HOME: home,
+          RUDDER_HOME: home,
         },
         rudderSkillSync: {
           desiredSkills: [rudderSkillKey],
@@ -83,7 +98,7 @@ describe("opencode local skill sync", () => {
       ...configuredCtx,
       config: {
         env: {
-          HOME: home,
+          RUDDER_HOME: home,
         },
         rudderSkillSync: {
           desiredSkills: [],
@@ -94,7 +109,7 @@ describe("opencode local skill sync", () => {
     const after = await syncOpenCodeSkills(clearedCtx, []);
     expect(after.desiredSkills).toEqual([]);
     expect(after.entries.find((entry) => entry.key === rudderSkillKey)?.state).toBe("available");
-    await expect(fs.lstat(path.join(home, ".claude", "skills", "rudder"))).rejects.toMatchObject({
+    await expect(fs.lstat(path.join(managedSkillsHome(home, "agent-2"), "rudder"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
@@ -102,7 +117,7 @@ describe("opencode local skill sync", () => {
   it("surfaces user-installed Claude-compatible skills as opt-in external entries", async () => {
     const home = await makeTempDir("rudder-opencode-user-skills-");
     cleanupDirs.add(home);
-    await createSkillDir(path.join(home, ".claude", "skills"), "build-advisor");
+    await createSkillDir(managedSkillsHome(home, "agent-3"), "build-advisor");
 
     const snapshot = await listOpenCodeSkills({
       agentId: "agent-3",
@@ -110,7 +125,7 @@ describe("opencode local skill sync", () => {
       agentRuntimeType: "opencode_local",
       config: {
         env: {
-          HOME: home,
+          RUDDER_HOME: home,
         },
       },
     });
@@ -123,7 +138,7 @@ describe("opencode local skill sync", () => {
       managed: false,
       state: "external",
       origin: "user_installed",
-      locationLabel: "~/.claude/skills",
+      locationLabel: "managed OpenCode skills home",
       readOnly: false,
     }));
   });
@@ -131,7 +146,7 @@ describe("opencode local skill sync", () => {
   it("keeps explicitly enabled user-installed OpenCode skills in the desired set", async () => {
     const home = await makeTempDir("rudder-opencode-enabled-user-skills-");
     cleanupDirs.add(home);
-    await createSkillDir(path.join(home, ".claude", "skills"), "build-advisor");
+    await createSkillDir(managedSkillsHome(home, "agent-4"), "build-advisor");
 
     const snapshot = await syncOpenCodeSkills({
       agentId: "agent-4",
@@ -139,7 +154,7 @@ describe("opencode local skill sync", () => {
       agentRuntimeType: "opencode_local",
       config: {
         env: {
-          HOME: home,
+          RUDDER_HOME: home,
         },
         rudderSkillSync: {
           desiredSkills: ["build-advisor"],

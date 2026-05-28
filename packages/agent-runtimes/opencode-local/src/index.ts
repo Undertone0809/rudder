@@ -36,7 +36,7 @@ Notes:
 - OpenCode supports multiple providers and models. Use \
   \`opencode models\` to list available options in provider/model format.
 - Rudder requires an explicit \`model\` value for \`opencode_local\` agents.
-- Rudder loads only the bundled Rudder skills plus the skills explicitly enabled on the agent's Skills page; user-home Claude/OpenCode skills are discovery candidates until selected there.
+- Rudder loads only the skills explicitly enabled on the agent's Skills page, including bundled Rudder skills when selected there; user-home Claude/OpenCode skills are discovery candidates until selected there.
 - Runs are executed with: opencode run --format json ...
 - Sessions are resumed with --session when stored session cwd matches current cwd.
 `;

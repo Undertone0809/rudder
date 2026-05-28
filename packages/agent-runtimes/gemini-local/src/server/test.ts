@@ -71,6 +71,9 @@ export async function testEnvironment(
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
   }
+  if (!isNonEmpty(env.GEMINI_CLI_TRUST_WORKSPACE)) {
+    env.GEMINI_CLI_TRUST_WORKSPACE = "true";
+  }
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
   try {
     await ensureCommandResolvable(command, cwd, runtimeEnv);

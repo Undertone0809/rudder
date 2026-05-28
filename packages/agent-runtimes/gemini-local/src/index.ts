@@ -43,7 +43,7 @@ Operational fields:
 Notes:
 - Runs use positional prompt arguments, not stdin.
 - Sessions resume with --resume when stored session cwd matches the current cwd.
-- Rudder realizes only the bundled Rudder skills plus the skills explicitly enabled on the agent's Skills page.
+- Rudder realizes only the skills explicitly enabled on the agent's Skills page, including bundled Rudder skills when selected there.
 - Selected skills are linked into a Rudder-managed Gemini home for the run; unselected skills already present in the real user home do not load.
 - Authentication can use GEMINI_API_KEY / GOOGLE_API_KEY or local Gemini CLI login.
 `;

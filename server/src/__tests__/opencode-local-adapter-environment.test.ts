@@ -5,7 +5,7 @@ import path from "node:path";
 import { testEnvironment } from "@rudderhq/agent-runtime-opencode-local/server";
 
 describe("opencode_local environment diagnostics", () => {
-  it("reports a missing working directory as an error when cwd is absolute", async () => {
+  it("creates a missing working directory before diagnostics when cwd is absolute", async () => {
     const cwd = path.join(
       os.tmpdir(),
       `rudder-opencode-local-cwd-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -14,18 +14,23 @@ describe("opencode_local environment diagnostics", () => {
 
     await fs.rm(path.dirname(cwd), { recursive: true, force: true });
 
-    const result = await testEnvironment({
-      orgId: "organization-1",
-      agentRuntimeType: "opencode_local",
-      config: {
-        command: process.execPath,
-        cwd,
-      },
-    });
+    try {
+      const result = await testEnvironment({
+        orgId: "organization-1",
+        agentRuntimeType: "opencode_local",
+        config: {
+          command: process.execPath,
+          cwd,
+        },
+      });
 
-    expect(result.checks.some((check) => check.code === "opencode_cwd_invalid")).toBe(true);
-    expect(result.checks.some((check) => check.level === "error")).toBe(true);
-    expect(result.status).toBe("fail");
+      expect(result.checks.some((check) => check.code === "opencode_cwd_valid")).toBe(true);
+      expect(result.checks.some((check) => check.code === "opencode_cwd_invalid")).toBe(false);
+      expect(result.checks.some((check) => check.level === "error")).toBe(false);
+      expect((await fs.stat(cwd)).isDirectory()).toBe(true);
+    } finally {
+      await fs.rm(path.dirname(cwd), { recursive: true, force: true });
+    }
   });
 
   it("treats an empty OPENAI_API_KEY override as missing", async () => {

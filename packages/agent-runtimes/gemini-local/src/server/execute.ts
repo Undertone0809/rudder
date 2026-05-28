@@ -14,7 +14,7 @@ import {
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensureLocalCliCredentialShimsInPath,
-  ensureRudderSkillSymlink,
+  ensureRudderRuntimeSkillSymlinks,
   ensureRudderCliInPath,
   joinPromptSections,
   loadAgentInstructionsPrefix,
@@ -23,9 +23,9 @@ import {
   syncLocalCliCredentialHomeEntries,
   readRudderRuntimeSkillEntries,
   resolveRudderDesiredSkillNames,
-  removeMaintainerOnlySkillSymlinks,
   parseObject,
   redactEnvForLogs,
+  renderRudderRuntimeSkillBoundaryPrompt,
   renderTemplate,
   runChildProcess,
   selectPromptTemplate,
@@ -114,10 +114,10 @@ function resolveSharedGeminiHomeDir(env: NodeJS.ProcessEnv): string {
   return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
 }
 
-function resolveManagedGeminiHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
+function resolveManagedGeminiHomeDir(env: NodeJS.ProcessEnv, orgId: string, agentId: string): string {
   const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
   const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "gemini-home");
+  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "gemini-home", "agents", agentId);
 }
 
 function resolveManagedGeminiSkillsDir(homeDir: string): string {
@@ -142,9 +142,10 @@ async function prepareManagedGeminiHome(
   env: NodeJS.ProcessEnv,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
+  agentId: string,
 ): Promise<string> {
   const sourceHome = resolveSharedGeminiHomeDir(env);
-  const targetHome = resolveManagedGeminiHomeDir(env, orgId);
+  const targetHome = resolveManagedGeminiHomeDir(env, orgId, agentId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(resolveManagedGeminiSkillsDir(targetHome), { recursive: true });
@@ -161,61 +162,6 @@ async function prepareManagedGeminiHome(
 
 function geminiSkillsHome(): string {
   return path.join(os.homedir(), ".gemini", "skills");
-}
-
-/**
- * Inject Rudder skills directly into `~/.gemini/skills/` via symlinks.
- * This avoids needing GEMINI_CLI_HOME overrides, so the CLI naturally finds
- * both its auth credentials and the injected skills in the real home directory.
- */
-async function ensureGeminiSkillsInjected(
-  onLog: AgentRuntimeExecutionContext["onLog"],
-  skillsEntries: Array<{ key: string; runtimeName: string; source: string }>,
-  desiredSkillNames?: string[],
-  targetSkillsHome?: string,
-): Promise<void> {
-  const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
-  const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
-  if (selectedEntries.length === 0) return;
-
-  const skillsHome = targetSkillsHome ?? geminiSkillsHome();
-  try {
-    await fs.mkdir(skillsHome, { recursive: true });
-  } catch (err) {
-    await onLog(
-      "stderr",
-      `[rudder] Failed to prepare Gemini skills directory ${skillsHome}: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-    return;
-  }
-  const removedSkills = await removeMaintainerOnlySkillSymlinks(
-    skillsHome,
-    selectedEntries.map((entry) => entry.runtimeName),
-  );
-  for (const skillName of removedSkills) {
-    await onLog(
-      "stderr",
-      `[rudder] Removed maintainer-only Gemini skill "${skillName}" from ${skillsHome}\n`,
-    );
-  }
-
-  for (const entry of selectedEntries) {
-    const target = path.join(skillsHome, entry.runtimeName);
-
-    try {
-      const result = await ensureRudderSkillSymlink(entry.source, target);
-      if (result === "skipped") continue;
-      await onLog(
-        "stderr",
-        `[rudder] ${result === "repaired" ? "Repaired" : "Linked"} Gemini skill: ${entry.key}\n`,
-      );
-    } catch (err) {
-      await onLog(
-        "stderr",
-        `[rudder] Failed to link Gemini skill "${entry.key}": ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-    }
-  }
 }
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
@@ -266,7 +212,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedGeminiHome(sourceEnv, onLog, agent.orgId);
+  const managedHome = await prepareManagedGeminiHome(sourceEnv, onLog, agent.orgId, agent.id);
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
@@ -276,12 +222,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
   const geminiSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredGeminiSkillNames = resolveRudderDesiredSkillNames(config, geminiSkillEntries);
-  await ensureGeminiSkillsInjected(
+  const loadedSkills = await ensureRudderRuntimeSkillSymlinks({
     onLog,
-    geminiSkillEntries,
-    desiredGeminiSkillNames,
-    resolveManagedGeminiSkillsDir(managedHome),
-  );
+    runtimeLabel: "Gemini",
+    skillsHome: resolveManagedGeminiSkillsDir(managedHome),
+    availableEntries: geminiSkillEntries,
+    desiredSkillKeys: desiredGeminiSkillNames,
+    actionVerb: "Linked",
+  });
 
   const hasExplicitApiKey =
     typeof envConfig.RUDDER_API_KEY === "string" && envConfig.RUDDER_API_KEY.trim().length > 0;
@@ -338,6 +286,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   for (const [key, value] of Object.entries(envConfig)) {
     if (key === "HOME") continue;
     if (typeof value === "string") env[key] = value;
+  }
+  if (typeof env.GEMINI_CLI_TRUST_WORKSPACE !== "string" || env.GEMINI_CLI_TRUST_WORKSPACE.trim().length === 0) {
+    env.GEMINI_CLI_TRUST_WORKSPACE = "true";
   }
   env.HOME = managedHome;
   env.RUDDER_OPERATOR_HOME = operatorHome;
@@ -459,10 +410,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
+  const skillBoundaryPrompt = renderRudderRuntimeSkillBoundaryPrompt(loadedSkills);
   const rudderEnvNote = renderRudderEnvNote(env);
   const apiAccessNote = renderApiAccessNote(env);
   const prompt = joinPromptSections([
     instructionsPrefix,
+    skillBoundaryPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     rudderEnvNote,
@@ -472,6 +425,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
+    skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     runtimeNoteChars: rudderEnvNote.length + apiAccessNote.length,
@@ -507,6 +461,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         env: redactEnvForLogs(env),
         prompt,
         promptMetrics,
+        loadedSkills,
         context,
       });
     }

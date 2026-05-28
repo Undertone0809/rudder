@@ -13,8 +13,16 @@
   },
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./*": "./src/*.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js",
+      "default": "./dist/*.js"
+    }
   },
   "publishConfig": {
     "access": "public",
@@ -42,5 +50,7 @@
   "devDependencies": {
     "@types/node": "^24.12.0",
     "typescript": "^5.9.3"
-  }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts"
 }

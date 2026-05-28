@@ -16,14 +16,14 @@ import {
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
   ensureLocalCliCredentialShimsInPath,
-  ensureRudderSkillSymlink,
+  ensureRudderRuntimeSkillSymlinks,
   ensureRudderCliInPath,
   ensurePathInEnv,
   resolveLocalOperatorHome,
   syncLocalCliCredentialHomeEntries,
   readRudderRuntimeSkillEntries,
   resolveRudderDesiredSkillNames,
-  removeMaintainerOnlySkillSymlinks,
+  renderRudderRuntimeSkillBoundaryPrompt,
   renderTemplate,
   runChildProcess,
   selectPromptTemplate,
@@ -89,10 +89,10 @@ function resolveSharedPiHomeDir(env: NodeJS.ProcessEnv): string {
   return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
 }
 
-function resolveManagedPiHomeDir(env: NodeJS.ProcessEnv, orgId: string): string {
+function resolveManagedPiHomeDir(env: NodeJS.ProcessEnv, orgId: string, agentId: string): string {
   const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
   const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "pi-home");
+  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "pi-home", "agents", agentId);
 }
 
 function resolvePiRoot(homeDir: string): string {
@@ -139,9 +139,10 @@ async function prepareManagedPiHome(
   env: NodeJS.ProcessEnv,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
+  agentId: string,
 ): Promise<string> {
   const sourceHome = resolveSharedPiHomeDir(env);
-  const targetHome = resolveManagedPiHomeDir(env, orgId);
+  const targetHome = resolveManagedPiHomeDir(env, orgId, agentId);
   if (targetHome === sourceHome) return targetHome;
 
   await fs.mkdir(resolvePiSkillsDir(targetHome), { recursive: true });
@@ -155,46 +156,6 @@ async function prepareManagedPiHome(
     `[rudder] Using Rudder-managed Pi home "${targetHome}" (seeded from "${sourceHome}").\n`,
   );
   return targetHome;
-}
-
-async function ensurePiSkillsInjected(
-  onLog: AgentRuntimeExecutionContext["onLog"],
-  skillsEntries: Array<{ key: string; runtimeName: string; source: string }>,
-  skillsDir: string,
-  desiredSkillNames?: string[],
-) {
-  const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
-  const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
-  if (selectedEntries.length === 0) return;
-  await fs.mkdir(skillsDir, { recursive: true });
-  const removedSkills = await removeMaintainerOnlySkillSymlinks(
-    skillsDir,
-    selectedEntries.map((entry) => entry.runtimeName),
-  );
-  for (const skillName of removedSkills) {
-    await onLog(
-      "stderr",
-      `[rudder] Removed maintainer-only Pi skill "${skillName}" from ${skillsDir}\n`,
-    );
-  }
-
-  for (const entry of selectedEntries) {
-    const target = path.join(skillsDir, entry.runtimeName);
-
-    try {
-      const result = await ensureRudderSkillSymlink(entry.source, target);
-      if (result === "skipped") continue;
-      await onLog(
-        "stderr",
-        `[rudder] ${result === "repaired" ? "Repaired" : "Injected"} Pi skill "${entry.runtimeName}" into ${skillsDir}\n`,
-      );
-    } catch (err) {
-      await onLog(
-        "stderr",
-        `[rudder] Failed to inject Pi skill "${entry.runtimeName}" into ${skillsDir}: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-    }
-  }
 }
 
 function resolvePiBiller(env: Record<string, string>, provider: string | null): string {
@@ -263,7 +224,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedPiHome(sourceEnv, onLog, agent.orgId);
+  const managedHome = await prepareManagedPiHome(sourceEnv, onLog, agent.orgId, agent.id);
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
@@ -280,7 +241,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   // Inject skills
   const piSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredPiSkillNames = resolveRudderDesiredSkillNames(config, piSkillEntries);
-  await ensurePiSkillsInjected(onLog, piSkillEntries, skillsDir, desiredPiSkillNames);
+  const loadedSkills = await ensureRudderRuntimeSkillSymlinks({
+    onLog,
+    runtimeLabel: "Pi",
+    skillsHome: skillsDir,
+    availableEntries: piSkillEntries,
+    desiredSkillKeys: desiredPiSkillNames,
+  });
 
   // Build environment
   const hasExplicitApiKey =
@@ -470,7 +437,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
+  const skillBoundaryPrompt = renderRudderRuntimeSkillBoundaryPrompt(loadedSkills);
   const userPrompt = joinPromptSections([
+    skillBoundaryPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedHeartbeatPrompt,
@@ -479,6 +448,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     systemPromptChars: renderedSystemPromptExtension.length,
     promptChars: userPrompt.length,
     ...loadedInstructions.metrics,
+    skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedHeartbeatPrompt.length,
@@ -543,6 +513,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         env: redactEnvForLogs(env),
         prompt: userPrompt,
         promptMetrics,
+        loadedSkills,
         context,
       });
     }

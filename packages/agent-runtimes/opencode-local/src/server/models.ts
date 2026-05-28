@@ -3,6 +3,7 @@ import os from "node:os";
 import type { AgentRuntimeModel } from "@rudderhq/agent-runtime-utils";
 import {
   asString,
+  ensureAbsoluteDirectory,
   ensurePathInEnv,
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
@@ -108,6 +109,7 @@ export async function discoverOpenCodeModels(input: {
   const command = resolveOpenCodeCommand(input.command);
   const cwd = asString(input.cwd, process.cwd());
   const env = normalizeEnv(input.env);
+  await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   // Ensure HOME points to the actual running user's home directory.
   // When the server is started via `runuser -u <user>`, HOME may still
   // reflect the parent process (e.g. /root), causing OpenCode to miss

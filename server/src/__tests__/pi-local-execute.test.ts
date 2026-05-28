@@ -133,6 +133,8 @@ describe("pi execute", () => {
       const systemPrompt = capture.argv[appendSystemPromptIndex + 1];
       expect(systemPrompt).toContain("# Agent Instructions");
       expect(systemPrompt).toContain("# Tacit Memory");
+      expect(capture.stdin).toContain("# Rudder Runtime Skill Boundary");
+      expect(capture.stdin).toContain("Enabled Rudder Agent Skills: none.");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
       );

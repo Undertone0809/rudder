@@ -23,6 +23,7 @@ import {
   ensurePathInEnv,
   resolveLocalOperatorHome,
   syncLocalCliCredentialHomeEntries,
+  renderRudderRuntimeSkillBoundaryPrompt,
   renderTemplate,
   loadAgentInstructionsPrefix,
   runChildProcess,
@@ -263,31 +264,7 @@ function stripClaudeSkillSourceArgs(args: string[]): string[] {
 }
 
 function renderRudderSkillBoundaryPrompt(loadedSkills: LoadedClaudeSkill[]): string {
-  const lines = [
-    "# Rudder Runtime Skill Boundary",
-    "",
-    "Rudder Agent Skills for this run are controlled only by the Rudder Agent Skills page.",
-  ];
-
-  if (loadedSkills.length === 0) {
-    lines.push("", "Enabled Rudder Agent Skills: none.");
-  } else {
-    lines.push("", "Enabled Rudder Agent Skills:");
-    for (const skill of loadedSkills) {
-      const label = skill.name && skill.name !== skill.runtimeName
-        ? `${skill.runtimeName} (${skill.name})`
-        : skill.runtimeName;
-      lines.push(`- ${label}: ${skill.description ?? "No description provided."}`);
-    }
-  }
-
-  lines.push(
-    "",
-    "Do not treat adapter-owned, Claude Code built-in, global, project, plugin, slash-command, or host-installed skills as Rudder Agent Skills unless they are listed above.",
-    "When asked what agent skills you have, answer only from the Enabled Rudder Agent Skills list above.",
-  );
-
-  return lines.join("\n");
+  return renderRudderRuntimeSkillBoundaryPrompt(loadedSkills);
 }
 
 interface ClaudeExecutionInput {
