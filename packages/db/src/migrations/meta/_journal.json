@@ -547,6 +547,13 @@
       "when": 1779723488902,
       "tag": "0077_thin_black_cat",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1779962953086,
+      "tag": "0078_bumpy_joystick",
+      "breakpoints": true
     }
   ]
 }
