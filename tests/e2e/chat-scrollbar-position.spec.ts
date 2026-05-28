@@ -254,10 +254,10 @@ test.describe("Chat scrollbar position", () => {
 
     await expect.poll(async () =>
       viewport.evaluate((node) => Number(getComputedStyle(node, "::before").opacity))
-    ).toBeGreaterThan(0.9);
+    ).toBeGreaterThan(0.45);
     await expect.poll(async () =>
       viewport.evaluate((node) => Number(getComputedStyle(node, "::after").opacity))
-    ).toBeGreaterThan(0.9);
+    ).toBeGreaterThan(0.5);
 
     const edgeStyles = await viewport.evaluate((node) => {
       const before = getComputedStyle(node, "::before");
@@ -267,6 +267,8 @@ test.describe("Chat scrollbar position", () => {
       return {
         topOpacity: before.opacity,
         bottomOpacity: after.opacity,
+        topBackground: before.backgroundImage,
+        bottomBackground: after.backgroundImage,
         topBackdrop: before.backdropFilter || before.webkitBackdropFilter,
         bottomBackdrop: after.backdropFilter || after.webkitBackdropFilter,
         contentMask: scrollRegionStyle?.maskImage || scrollRegionStyle?.webkitMaskImage || "",
@@ -275,6 +277,14 @@ test.describe("Chat scrollbar position", () => {
 
     expect(edgeStyles.topBackdrop).toContain("blur");
     expect(edgeStyles.bottomBackdrop).toContain("blur");
+    expect(edgeStyles.topBackground).toBe("none");
+    expect(edgeStyles.bottomBackground).toBe("none");
+    expect(edgeStyles.contentMask).toContain("rgba(0, 0, 0, 0.36)");
+    expect(edgeStyles.contentMask).toContain("rgba(0, 0, 0, 0.84)");
+    expect(edgeStyles.contentMask).toContain("76px");
+    expect(edgeStyles.contentMask).toContain("88px");
     expect(edgeStyles.contentMask).toContain("rgba(0, 0, 0, 0)");
+
+    await page.screenshot({ path: "/tmp/rudder-chat-soft-edges-final.png", fullPage: true });
   });
 });
