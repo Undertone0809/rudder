@@ -28,8 +28,13 @@ export interface LiveRunForIssue {
   issueId?: string | null;
 }
 
+export const HEARTBEAT_RUN_LIST_DEFAULT_LIMIT = 100;
+export const HEARTBEAT_RUN_LIST_COMPACT_LIMIT = 50;
+export const HEARTBEAT_RUN_LIST_AGENT_LIMIT = 200;
+export const HEARTBEAT_RUN_LIST_HISTORY_LIMIT = 1000;
+
 export const heartbeatsApi = {
-  list: (orgId: string, agentId?: string, limit?: number) => {
+  list: (orgId: string, agentId?: string, limit = HEARTBEAT_RUN_LIST_DEFAULT_LIMIT) => {
     const searchParams = new URLSearchParams();
     if (agentId) searchParams.set("agentId", agentId);
     if (limit) searchParams.set("limit", String(limit));

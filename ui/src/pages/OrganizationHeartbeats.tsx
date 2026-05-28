@@ -4,7 +4,7 @@ import type { Agent, HeartbeatRun } from "@rudderhq/shared";
 import { Activity, ArrowUpRight, Bot, Clock3, Play } from "lucide-react";
 import { Link } from "@/lib/router";
 import { agentsApi } from "@/api/agents";
-import { heartbeatsApi, type LiveRunForIssue } from "@/api/heartbeats";
+import { HEARTBEAT_RUN_LIST_HISTORY_LIMIT, heartbeatsApi, type LiveRunForIssue } from "@/api/heartbeats";
 import { HeartbeatEnabledButtons } from "@/components/HeartbeatEnabledButtons";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/EmptyState";
@@ -131,8 +131,8 @@ export function OrganizationHeartbeats() {
   });
 
   const runsQuery = useQuery({
-    queryKey: queryKeys.heartbeats(viewedOrganizationId ?? "__none__"),
-    queryFn: () => heartbeatsApi.list(viewedOrganizationId!, undefined, 1000),
+    queryKey: queryKeys.heartbeats(viewedOrganizationId ?? "__none__", undefined, HEARTBEAT_RUN_LIST_HISTORY_LIMIT),
+    queryFn: () => heartbeatsApi.list(viewedOrganizationId!, undefined, HEARTBEAT_RUN_LIST_HISTORY_LIMIT),
     enabled: !!viewedOrganizationId,
     refetchInterval: 15_000,
   });

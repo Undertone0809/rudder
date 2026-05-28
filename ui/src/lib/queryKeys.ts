@@ -179,8 +179,10 @@ export const queryKeys = {
     ["usage-window-spend", orgId] as const,
   usageQuotaWindows: (orgId: string) =>
     ["usage-quota-windows", orgId] as const,
-  heartbeats: (orgId: string, agentId?: string) =>
-    ["heartbeats", orgId, agentId] as const,
+  heartbeats: (orgId: string, agentId?: string, limit?: number) =>
+    limit === undefined
+      ? ["heartbeats", orgId, agentId] as const
+      : ["heartbeats", orgId, agentId, limit] as const,
   runDetail: (runId: string) => ["heartbeat-run", runId] as const,
   runWorkspaceOperations: (runId: string) => ["heartbeat-run", runId, "workspace-operations"] as const,
   liveRuns: (orgId: string) => ["live-runs", orgId] as const,

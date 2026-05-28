@@ -5,7 +5,7 @@ import { ApiError } from "../api/client";
 import { approvalsApi } from "../api/approvals";
 import { messengerApi } from "../api/messenger";
 import { dashboardApi } from "../api/dashboard";
-import { heartbeatsApi } from "../api/heartbeats";
+import { HEARTBEAT_RUN_LIST_DEFAULT_LIMIT, heartbeatsApi } from "../api/heartbeats";
 import { issuesApi } from "../api/issues";
 import { chatsApi } from "../api/chats";
 import { queryKeys } from "../lib/queryKeys";
@@ -96,8 +96,8 @@ export function useInboxBadge(orgId: string | null | undefined) {
   );
 
   const { data: heartbeatRuns = [] } = useQuery({
-    queryKey: queryKeys.heartbeats(orgId!),
-    queryFn: () => heartbeatsApi.list(orgId!),
+    queryKey: queryKeys.heartbeats(orgId!, undefined, HEARTBEAT_RUN_LIST_DEFAULT_LIMIT),
+    queryFn: () => heartbeatsApi.list(orgId!, undefined, HEARTBEAT_RUN_LIST_DEFAULT_LIMIT),
     enabled: !!orgId,
   });
 
