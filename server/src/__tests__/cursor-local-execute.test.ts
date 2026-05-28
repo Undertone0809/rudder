@@ -240,6 +240,56 @@ describe("cursor execute", () => {
     }
   });
 
+  it("classifies interactive sign-in output as an auth-required runtime failure", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-auth-required-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "agent");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(
+      commandPath,
+      "#!/usr/bin/env node\nprocess.stdout.write('Press any key to sign in...\\n'); process.exit(1);\n",
+      "utf8",
+    );
+    await fs.chmod(commandPath, 0o755);
+
+    const restoreEnv = setManagedCursorEnv(root);
+
+    try {
+      const result = await execute({
+        runId: "run-cursor-auth",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Cursor Coder",
+          agentRuntimeType: "cursor",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "auto",
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.errorCode).toBe("cursor_auth_required");
+      expect(result.errorMessage).toBe("Cursor CLI authentication is required.");
+    } finally {
+      restoreEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("injects organization-library runtime skills into the Cursor skills home before execution", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-execute-runtime-skill-"));
     const workspace = path.join(root, "workspace");

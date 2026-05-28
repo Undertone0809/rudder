@@ -8,6 +8,7 @@ export default defineConfig({
       "packages/agent-runtime-utils",
       "packages/agent-runtimes/claude-local",
       "packages/agent-runtimes/opencode-local",
+      "packages/agent-runtimes/pi-local",
       "server",
       "ui",
       "cli",

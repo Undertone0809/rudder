@@ -470,9 +470,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const buildArgs = (sessionFile: string): string[] => {
     const args: string[] = [];
-    
-    // Use RPC mode for proper lifecycle management (waits for agent completion)
-    args.push("--mode", "rpc");
+
+    args.push("-p", userPrompt);
+    args.push("--mode", "json");
     
     // Use --append-system-prompt to extend Pi's default system prompt
     args.push("--append-system-prompt", renderedSystemPromptExtension);
@@ -492,15 +492,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     return args;
   };
 
-  const buildRpcStdin = (): string => {
-    // Send the prompt as an RPC command
-    const promptCommand = {
-      type: "prompt",
-      message: userPrompt,
-    };
-    return JSON.stringify(promptCommand) + "\n";
-  };
-
   const runAttempt = async (sessionFile: string) => {
     const args = buildArgs(sessionFile);
     if (onMeta) {
@@ -509,7 +500,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         command,
         cwd,
         commandNotes,
-        commandArgs: args,
+        commandArgs: args.map((value, index) => index === 1 ? `<prompt ${userPrompt.length} chars>` : value),
         env: redactEnvForLogs(env),
         prompt: userPrompt,
         promptMetrics,
@@ -549,7 +540,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       onSpawn,
       abortSignal: ctx.abortSignal,
       onLog: bufferedOnLog,
-      stdin: buildRpcStdin(),
     });
     
     // Flush any remaining buffer content
@@ -589,13 +579,21 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
     const stderrLine = firstNonEmptyLine(attempt.proc.stderr);
     const rawExitCode = attempt.proc.exitCode;
-    const fallbackErrorMessage = stderrLine || `Pi exited with code ${rawExitCode ?? -1}`;
+    const summary = attempt.parsed.finalMessage ?? attempt.parsed.messages.join("\n\n").trim();
+    const emptySuccessfulResult =
+      (rawExitCode ?? 0) === 0 &&
+      !summary &&
+      attempt.parsed.toolCalls.length === 0 &&
+      attempt.parsed.errors.length === 0;
+    const fallbackErrorMessage = emptySuccessfulResult
+      ? "Pi exited successfully without producing an assistant response or tool activity."
+      : stderrLine || `Pi exited with code ${rawExitCode ?? -1}`;
 
     return {
       exitCode: rawExitCode,
       signal: attempt.proc.signal,
       timedOut: false,
-      errorMessage: (rawExitCode ?? 0) === 0 ? null : fallbackErrorMessage,
+      errorMessage: (rawExitCode ?? 0) === 0 && !emptySuccessfulResult ? null : fallbackErrorMessage,
       usage: {
         inputTokens: attempt.parsed.usage.inputTokens,
         outputTokens: attempt.parsed.usage.outputTokens,
@@ -613,7 +611,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         stdout: attempt.proc.stdout,
         stderr: attempt.proc.stderr,
       },
-      summary: attempt.parsed.finalMessage ?? attempt.parsed.messages.join("\n\n").trim(),
+      summary,
       clearSession: Boolean(clearSessionOnMissingSession),
     };
   };

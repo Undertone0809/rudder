@@ -54,4 +54,23 @@ describe("pi models", () => {
     ).resolves.toEqual([{ id: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro" }]);
     expect((await fs.stat(cwd)).isDirectory()).toBe(true);
   });
+
+  it("discovers configured models when pi writes the model table to stderr", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-models-"));
+    const command = path.join(root, "pi");
+    await fs.writeFile(
+      command,
+      "#!/bin/sh\nprintf 'provider   model\\ndeepseek   deepseek-v4-pro\\n' >&2\n",
+      "utf8",
+    );
+    await fs.chmod(command, 0o755);
+
+    await expect(
+      ensurePiModelConfiguredAndAvailable({
+        command,
+        cwd: root,
+        model: "deepseek/deepseek-v4-pro",
+      }),
+    ).resolves.toEqual([{ id: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro" }]);
+  });
 });

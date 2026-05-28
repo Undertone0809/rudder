@@ -53,6 +53,21 @@ console.log(JSON.stringify({
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeFakePiAckOnlyCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+if (process.argv.includes("--list-models")) {
+  console.log("provider  model");
+  console.log("openai    gpt-test");
+  process.exit(0);
+}
+
+console.log(JSON.stringify({ type: "response", success: true }));
+process.exit(0);
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 type CapturePayload = {
   argv: string[];
   stdin: string;
@@ -65,6 +80,50 @@ afterEach(() => {
 });
 
 describe("pi execute", () => {
+  it("fails empty successful Pi output instead of treating an ack-only run as completed work", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-empty-success-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "pi");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakePiAckOnlyCommand(commandPath);
+
+    try {
+      const result = await execute({
+        runId: "run-pi-empty-success",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Pi Agent",
+          agentRuntimeType: "pi",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-test",
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.summary).toBe("");
+      expect(result.errorMessage).toBe(
+        "Pi exited successfully without producing an assistant response or tool activity.",
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   it("appends agent memory instructions to the system prompt and reports prompt metrics", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-execute-"));
     const workspace = path.join(root, "workspace");
@@ -133,8 +192,10 @@ describe("pi execute", () => {
       const systemPrompt = capture.argv[appendSystemPromptIndex + 1];
       expect(systemPrompt).toContain("# Agent Instructions");
       expect(systemPrompt).toContain("# Tacit Memory");
-      expect(capture.stdin).toContain("# Rudder Runtime Skill Boundary");
-      expect(capture.stdin).toContain("Enabled Rudder Agent Skills: none.");
+      expect(capture.argv[0]).toBe("-p");
+      expect(capture.argv[1]).toContain("# Rudder Runtime Skill Boundary");
+      expect(capture.argv[1]).toContain("Enabled Rudder Agent Skills: none.");
+      expect(capture.stdin).toBe("");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
       );

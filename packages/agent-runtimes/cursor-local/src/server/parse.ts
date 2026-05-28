@@ -160,3 +160,15 @@ export function isCursorUnknownSessionError(stdout: string, stderr: string): boo
     haystack,
   );
 }
+
+export function detectCursorAuthRequired(stdout: string, stderr: string): boolean {
+  const haystack = `${stdout}\n${stderr}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+
+  return /press\s+any\s+key\s+to\s+sign\s+in|not\s+logged\s+in|login\s+required|authentication\s+required|cursor_api_key/i.test(
+    haystack,
+  );
+}

@@ -29,7 +29,7 @@ import {
   selectPromptTemplate,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import { DEFAULT_CURSOR_LOCAL_COMMAND, DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
-import { parseCursorJsonl, isCursorUnknownSessionError } from "./parse.js";
+import { detectCursorAuthRequired, parseCursorJsonl, isCursorUnknownSessionError } from "./parse.js";
 import { normalizeCursorStreamLine } from "../shared/stream.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
 
@@ -608,8 +608,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       : null;
     const parsedError = typeof attempt.parsed.errorMessage === "string" ? attempt.parsed.errorMessage.trim() : "";
     const stderrLine = firstNonEmptyLine(attempt.proc.stderr);
+    const authRequired = detectCursorAuthRequired(attempt.proc.stdout, attempt.proc.stderr);
     const fallbackErrorMessage =
       parsedError ||
+      (authRequired ? "Cursor CLI authentication is required." : "") ||
       stderrLine ||
       `Cursor exited with code ${attempt.proc.exitCode ?? -1}`;
 
@@ -621,6 +623,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         (attempt.proc.exitCode ?? 0) === 0
           ? null
           : fallbackErrorMessage,
+      errorCode: (attempt.proc.exitCode ?? 0) !== 0 && authRequired ? "cursor_auth_required" : null,
       usage: attempt.parsed.usage,
       sessionId: resolvedSessionId,
       sessionParams: resolvedSessionParams,
