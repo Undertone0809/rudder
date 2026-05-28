@@ -77,10 +77,16 @@ export function AssigneeLabel({
         </Avatar>
       )}
       <span className={cn(
-        "inline-flex min-w-0 max-w-full items-center gap-1.5",
-        stacked && "w-full flex-1 flex-col items-start gap-1",
+        "inline-flex min-w-0 max-w-full flex-1 items-center gap-1.5 overflow-hidden",
+        stacked && "w-full flex-col items-start gap-1",
       )}>
-        <span className={cn("min-w-0 truncate text-xs", muted && "text-muted-foreground")}>{label}</span>
+        <span
+          data-slot="assignee-label-text"
+          className={cn("block min-w-0 max-w-full truncate text-xs", muted && "text-muted-foreground")}
+          title={label}
+        >
+          {label}
+        </span>
         {badgeLabel ? <AgentTitleBadge label={badgeLabel} constrain={!stacked} /> : null}
       </span>
     </span>
