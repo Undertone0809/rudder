@@ -54,6 +54,109 @@ function chartColumnMotionStyle(index: number): CSSProperties {
 
 /* ---- Sub-components ---- */
 
+type ScaleTick = {
+  value: number;
+  label: string;
+  position: number;
+};
+
+function formatCompactScaleValue(value: number): string {
+  if (value >= 1000) {
+    const compact = value / 1000;
+    return `${Number.isInteger(compact) ? compact.toFixed(0) : compact.toFixed(1)}k`;
+  }
+  return String(value);
+}
+
+function buildCountScale(maxValue: number): ScaleTick[] {
+  const maxTick = Math.max(1, Math.ceil(maxValue));
+  const middleTick = Math.round(maxTick / 2);
+  return [maxTick, middleTick, 0]
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .map((value) => ({
+      value,
+      label: formatCompactScaleValue(value),
+      position: value / maxTick,
+    }));
+}
+
+function buildPercentScale(): ScaleTick[] {
+  return [100, 50, 0].map((value) => ({
+    value,
+    label: `${value}%`,
+    position: value / 100,
+  }));
+}
+
+function ChartScaleLabels({
+  ticks,
+  heightClassName,
+}: {
+  ticks: ScaleTick[];
+  heightClassName: string;
+}) {
+  return (
+    <div className={`relative ${heightClassName}`} aria-hidden="true" data-testid="dashboard-chart-scale">
+      {ticks.map((tick) => (
+        <span
+          key={`${tick.value}:${tick.label}`}
+          className="absolute right-0 translate-y-1/2 text-[9px] leading-none text-muted-foreground/50 tabular-nums"
+          style={{ bottom: `${tick.position * 100}%` }}
+        >
+          {tick.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ChartGridLines({ ticks }: { ticks: ScaleTick[] }) {
+  return (
+    <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+      {ticks.map((tick) => (
+        <span
+          key={`${tick.value}:${tick.label}`}
+          className="absolute left-0 right-0 border-t border-border/35"
+          style={{ bottom: `${tick.position * 100}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ScaledBarChartFrame({
+  days,
+  ticks,
+  heightClassName = "h-20",
+  children,
+  legendItems,
+}: {
+  days: string[];
+  ticks: ScaleTick[];
+  heightClassName?: string;
+  children: React.ReactNode;
+  legendItems?: { color: string; label: string }[];
+}) {
+  return (
+    <>
+      <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-1.5">
+        <ChartScaleLabels ticks={ticks} heightClassName={heightClassName} />
+        <div className={`relative min-w-0 ${heightClassName}`}>
+          <ChartGridLines ticks={ticks} />
+          <div className="relative z-10 flex h-full items-end gap-[3px]">
+            {children}
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-[2rem_minmax(0,1fr)] gap-1.5">
+        <div aria-hidden="true" />
+        <DateLabels days={days} />
+      </div>
+      {legendItems ? <ChartLegend items={legendItems} /> : null}
+    </>
+  );
+}
+
 function DateLabels({ days }: { days: string[] }) {
   const keyIndexes = new Set<number>([
     0,
@@ -354,7 +457,7 @@ export function RunActivityChart({
   return (
     <TooltipProvider delayDuration={120}>
       <div className="dashboard-chart-motion">
-        <div className="flex items-end gap-[3px] h-20">
+        <ScaledBarChartFrame days={days} ticks={buildCountScale(maxValue)} legendItems={runActivityLegendItems}>
           {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const total = entry.succeeded + entry.failed + entry.other;
@@ -395,9 +498,7 @@ export function RunActivityChart({
               />
             );
           })}
-        </div>
-        <DateLabels days={days} />
-        <ChartLegend items={runActivityLegendItems} />
+        </ScaledBarChartFrame>
       </div>
     </TooltipProvider>
   );
@@ -436,7 +537,7 @@ export function PriorityChart({
   return (
     <TooltipProvider delayDuration={120}>
       <div className="dashboard-chart-motion">
-        <div className="flex items-end gap-[3px] h-20">
+        <ScaledBarChartFrame days={days} ticks={buildCountScale(maxValue)} legendItems={priorityOrder.map(p => ({ color: priorityColors[p], label: formatPriorityLabel(p) }))}>
           {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const total = Object.values(entry).reduce((a, b) => a + b, 0);
@@ -482,9 +583,7 @@ export function PriorityChart({
               />
             );
           })}
-        </div>
-        <DateLabels days={days} />
-        <ChartLegend items={priorityOrder.map(p => ({ color: priorityColors[p], label: formatPriorityLabel(p) }))} />
+        </ScaledBarChartFrame>
       </div>
     </TooltipProvider>
   );
@@ -537,7 +636,7 @@ export function IssueStatusChart({
   return (
     <TooltipProvider delayDuration={120}>
       <div className="dashboard-chart-motion">
-        <div className="flex items-end gap-[3px] h-20">
+        <ScaledBarChartFrame days={days} ticks={buildCountScale(maxValue)} legendItems={statusOrder.map(s => ({ color: statusColors[s] ?? "#6b7280", label: statusLabels[s] ?? s }))}>
           {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const total = Object.values(entry).reduce((a, b) => a + b, 0);
@@ -583,9 +682,7 @@ export function IssueStatusChart({
               />
             );
           })}
-        </div>
-        <DateLabels days={days} />
-        <ChartLegend items={statusOrder.map(s => ({ color: statusColors[s] ?? "#6b7280", label: statusLabels[s] ?? s }))} />
+        </ScaledBarChartFrame>
       </div>
     </TooltipProvider>
   );
@@ -614,7 +711,7 @@ export function SuccessRateChart({
   return (
     <TooltipProvider delayDuration={120}>
       <div className="dashboard-chart-motion">
-        <div className="flex items-end gap-[3px] h-20">
+        <ScaledBarChartFrame days={days} ticks={buildPercentScale()} legendItems={successRateLegendItems}>
           {days.map((day, index) => {
             const entry = grouped.get(day)!;
             const rate = entry.total > 0 ? entry.succeeded / entry.total : 0;
@@ -653,9 +750,7 @@ export function SuccessRateChart({
               />
             );
           })}
-        </div>
-        <DateLabels days={days} />
-        <ChartLegend items={successRateLegendItems} />
+        </ScaledBarChartFrame>
       </div>
     </TooltipProvider>
   );
@@ -701,7 +796,11 @@ export function SkillsUsageChart({
 
         <SkillChartPanel title="Skill Usage Timeline" subtitle={`Daily skill usage over the last ${analytics.windowDays} day${analytics.windowDays === 1 ? "" : "s"}.`}>
           <div className="dashboard-chart-motion">
-            <div className="flex items-end gap-[3px] h-36">
+            <ScaledBarChartFrame
+              days={days.map((day) => day.date)}
+              ticks={buildCountScale(maxValue)}
+              heightClassName="h-36"
+            >
               {days.map((day, index) => {
                 const heightPct = (day.totalCount / maxValue) * 100;
                 const topSkills = day.skills.slice(0, 6);
@@ -766,8 +865,7 @@ export function SkillsUsageChart({
                   />
                 );
               })}
-            </div>
-            <DateLabels days={days.map((day) => day.date)} />
+            </ScaledBarChartFrame>
           </div>
         </SkillChartPanel>
       </div>

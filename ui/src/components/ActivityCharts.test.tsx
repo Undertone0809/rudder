@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
-import { RunActivityChart, SkillsUsageChart } from "./ActivityCharts";
+import { RunActivityChart, SkillsUsageChart, SuccessRateChart } from "./ActivityCharts";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -123,5 +123,41 @@ describe("RunActivityChart", () => {
 
     expect(container.querySelector(".dashboard-chart-motion")).toBeTruthy();
     expect(container.querySelector(".dashboard-chart-bar")).toBeTruthy();
+  });
+
+  it("renders a persistent low-noise value scale", () => {
+    const run = {
+      id: "run-1",
+      orgId: "org-1",
+      agentId: "agent-1",
+      status: "succeeded",
+      createdAt: new Date("2026-05-12T10:00:00Z"),
+    } as HeartbeatRun;
+
+    const container = render(<RunActivityChart runs={[run]} days={["2026-05-12"]} />);
+    const scale = container.querySelector('[data-testid="dashboard-chart-scale"]');
+
+    expect(scale).toBeTruthy();
+    expect(scale?.textContent).toContain("1");
+    expect(scale?.textContent).toContain("0");
+  });
+});
+
+describe("SuccessRateChart", () => {
+  it("renders fixed semantic percentage ticks", () => {
+    const run = {
+      id: "run-1",
+      orgId: "org-1",
+      agentId: "agent-1",
+      status: "succeeded",
+      createdAt: new Date("2026-05-12T10:00:00Z"),
+    } as HeartbeatRun;
+
+    const container = render(<SuccessRateChart runs={[run]} days={["2026-05-12"]} />);
+    const scale = container.querySelector('[data-testid="dashboard-chart-scale"]');
+
+    expect(scale?.textContent).toContain("100%");
+    expect(scale?.textContent).toContain("50%");
+    expect(scale?.textContent).toContain("0%");
   });
 });
