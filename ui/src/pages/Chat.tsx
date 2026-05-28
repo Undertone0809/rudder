@@ -934,7 +934,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                           }} >
                           <Plus className="mr-2 h-4 w-4" />
                           New chat </DropdownMenuItem> </DropdownMenuContent> </DropdownMenu> </div> </div> ) : null}
-              <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden px-4 py-4 md:px-5">
+              <div
+                className="chat-thread-frame flex min-h-0 flex-1 flex-col gap-5 overflow-hidden px-4 py-4 md:px-5"
+                data-can-scroll-up={chatScrollEdges.canScrollUp ? "true" : "false"}
+                data-can-scroll-down={chatScrollEdges.canScrollDown ? "true" : "false"}
+              >
                 <div
                   className="chat-messages-viewport min-h-0 flex-1"
                   data-can-scroll-up={chatScrollEdges.canScrollUp ? "true" : "false"}
@@ -1011,7 +1015,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                 skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick} /> </> ) : null} </>
                       )} </div> </div> </div>
                 {hasActionableApprovals || hasPendingLightweightProposal ? null : (
-                  <div className="mx-auto w-full max-w-4xl shrink-0 space-y-4">
+                  <div
+                    className="chat-composer-dock mx-auto w-full max-w-4xl shrink-0 space-y-4"
+                    data-testid="chat-composer-dock"
+                    data-can-scroll-down={chatScrollEdges.canScrollDown ? "true" : "false"}
+                  >
                     {pendingAskUserMessage && pendingAskUserRequest ? (
                       <AskUserPanel
                         message={pendingAskUserMessage}

@@ -185,7 +185,7 @@ test.describe("Chat scrollbar position", () => {
     }).toBeLessThanOrEqual(4);
   });
 
-  test("softens message viewport edges only where chat content can continue", async ({ page }) => {
+  test("keeps message viewport clean while header and footer edges soften scroll boundaries", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 760 });
 
     const orgRes = await page.request.post("/api/orgs", {
@@ -232,11 +232,15 @@ test.describe("Chat scrollbar position", () => {
 
     await page.goto(`/chat/${chat.id}`);
 
+    const frame = page.locator(".chat-thread-frame");
     const viewport = page.locator(".chat-messages-viewport");
     const scrollRegion = page.getByTestId("chat-messages-scroll-region");
+    const composerDock = page.getByTestId("chat-composer-dock");
     await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`), { timeout: 15_000 });
+    await expect(frame).toBeVisible();
     await expect(viewport).toBeVisible();
     await expect(scrollRegion).toBeVisible();
+    await expect(composerDock).toBeVisible();
 
     await expect.poll(async () =>
       scrollRegion.evaluate((node) => Math.round(node.scrollHeight - node.scrollTop - node.clientHeight))
@@ -251,39 +255,46 @@ test.describe("Chat scrollbar position", () => {
 
     await expect(viewport).toHaveAttribute("data-can-scroll-up", "true");
     await expect(viewport).toHaveAttribute("data-can-scroll-down", "true");
+    await expect(frame).toHaveAttribute("data-can-scroll-up", "true");
+    await expect(frame).toHaveAttribute("data-can-scroll-down", "true");
+    await expect(composerDock).toHaveAttribute("data-can-scroll-down", "true");
 
     await expect.poll(async () =>
-      viewport.evaluate((node) => Number(getComputedStyle(node, "::before").opacity))
+      frame.evaluate((node) => Number(getComputedStyle(node, "::before").opacity))
     ).toBeGreaterThan(0.45);
     await expect.poll(async () =>
-      viewport.evaluate((node) => Number(getComputedStyle(node, "::after").opacity))
+      composerDock.evaluate((node) => Number(getComputedStyle(node, "::before").opacity))
     ).toBeGreaterThan(0.5);
 
     const edgeStyles = await viewport.evaluate((node) => {
-      const before = getComputedStyle(node, "::before");
-      const after = getComputedStyle(node, "::after");
+      const viewportBefore = getComputedStyle(node, "::before");
+      const viewportAfter = getComputedStyle(node, "::after");
+      const frame = document.querySelector(".chat-thread-frame");
+      const composerDock = document.querySelector('[data-testid="chat-composer-dock"]');
+      const frameBefore = frame ? getComputedStyle(frame, "::before") : null;
+      const dockBefore = composerDock ? getComputedStyle(composerDock, "::before") : null;
       const scrollRegion = node.querySelector('[data-testid="chat-messages-scroll-region"]');
       const scrollRegionStyle = scrollRegion ? getComputedStyle(scrollRegion) : null;
       return {
-        topOpacity: before.opacity,
-        bottomOpacity: after.opacity,
-        topBackground: before.backgroundImage,
-        bottomBackground: after.backgroundImage,
-        topBackdrop: before.backdropFilter || before.webkitBackdropFilter,
-        bottomBackdrop: after.backdropFilter || after.webkitBackdropFilter,
+        viewportTopContent: viewportBefore.content,
+        viewportBottomContent: viewportAfter.content,
+        viewportTopBackdrop: viewportBefore.backdropFilter || viewportBefore.webkitBackdropFilter,
+        viewportBottomBackdrop: viewportAfter.backdropFilter || viewportAfter.webkitBackdropFilter,
+        frameFadeBackground: frameBefore?.backgroundImage ?? "",
+        dockFadeBackground: dockBefore?.backgroundImage ?? "",
+        dockFadeTop: dockBefore?.top ?? "",
         contentMask: scrollRegionStyle?.maskImage || scrollRegionStyle?.webkitMaskImage || "",
       };
     });
 
-    expect(edgeStyles.topBackdrop).toContain("blur");
-    expect(edgeStyles.bottomBackdrop).toContain("blur");
-    expect(edgeStyles.topBackground).toBe("none");
-    expect(edgeStyles.bottomBackground).toBe("none");
-    expect(edgeStyles.contentMask).toContain("rgba(0, 0, 0, 0.36)");
-    expect(edgeStyles.contentMask).toContain("rgba(0, 0, 0, 0.84)");
-    expect(edgeStyles.contentMask).toContain("76px");
-    expect(edgeStyles.contentMask).toContain("88px");
-    expect(edgeStyles.contentMask).toContain("rgba(0, 0, 0, 0)");
+    expect(edgeStyles.viewportTopContent).toBe("none");
+    expect(edgeStyles.viewportBottomContent).toBe("none");
+    expect(edgeStyles.viewportTopBackdrop).toBe("none");
+    expect(edgeStyles.viewportBottomBackdrop).toBe("none");
+    expect(edgeStyles.contentMask).toBe("none");
+    expect(edgeStyles.frameFadeBackground).toContain("linear-gradient");
+    expect(edgeStyles.dockFadeBackground).toContain("linear-gradient");
+    expect(edgeStyles.dockFadeTop).toContain("-");
 
     await page.screenshot({ path: "/tmp/rudder-chat-soft-edges-final.png", fullPage: true });
   });

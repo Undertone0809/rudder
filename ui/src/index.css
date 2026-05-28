@@ -1294,90 +1294,62 @@
   }
 
   .chat-messages-viewport {
-    --chat-edge-top-opacity: 0;
-    --chat-edge-bottom-opacity: 0;
-    --chat-mask-top-cut: 0px;
-    --chat-mask-top-mid: 0px;
-    --chat-mask-top-soft: 0px;
-    --chat-mask-bottom-soft: 0px;
-    --chat-mask-bottom-mid: 0px;
-    --chat-mask-bottom-cut: 0px;
     position: relative;
-    isolation: isolate;
     overflow: hidden;
   }
 
-  .chat-messages-viewport[data-can-scroll-up="true"] {
-    --chat-edge-top-opacity: 0.62;
-    --chat-mask-top-cut: 0.18rem;
-    --chat-mask-top-mid: 2rem;
-    --chat-mask-top-soft: 4.75rem;
+  .chat-thread-frame {
+    position: relative;
   }
 
-  .chat-messages-viewport[data-can-scroll-down="true"] {
-    --chat-edge-bottom-opacity: 0.68;
-    --chat-mask-bottom-soft: 5.5rem;
-    --chat-mask-bottom-mid: 2.1rem;
-    --chat-mask-bottom-cut: 0.22rem;
-  }
-
-  .chat-messages-scroll-region {
-    mask-image: linear-gradient(
-      180deg,
-      transparent 0,
-      rgba(0, 0, 0, 0.36) var(--chat-mask-top-cut),
-      rgba(0, 0, 0, 0.82) var(--chat-mask-top-mid),
-      #000 var(--chat-mask-top-soft),
-      #000 calc(100% - var(--chat-mask-bottom-soft)),
-      rgba(0, 0, 0, 0.84) calc(100% - var(--chat-mask-bottom-mid)),
-      rgba(0, 0, 0, 0.38) calc(100% - var(--chat-mask-bottom-cut)),
-      transparent 100%
-    );
-    -webkit-mask-image: linear-gradient(
-      180deg,
-      transparent 0,
-      rgba(0, 0, 0, 0.36) var(--chat-mask-top-cut),
-      rgba(0, 0, 0, 0.82) var(--chat-mask-top-mid),
-      #000 var(--chat-mask-top-soft),
-      #000 calc(100% - var(--chat-mask-bottom-soft)),
-      rgba(0, 0, 0, 0.84) calc(100% - var(--chat-mask-bottom-mid)),
-      rgba(0, 0, 0, 0.38) calc(100% - var(--chat-mask-bottom-cut)),
-      transparent 100%
-    );
-  }
-
-  .chat-messages-viewport::before,
-  .chat-messages-viewport::after {
+  .chat-thread-frame::before {
     content: "";
     position: absolute;
     left: 0;
     right: 0;
-    z-index: 2;
+    top: 1rem;
+    z-index: 1;
+    height: 1.35rem;
     pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--surface-page) 92%, transparent) 0%,
+      color-mix(in oklab, var(--surface-page) 54%, transparent) 45%,
+      transparent 100%
+    );
     opacity: 0;
     transition: opacity 160ms ease;
   }
 
-  .chat-messages-viewport::before {
-    top: 0;
-    height: 4.875rem;
-    opacity: var(--chat-edge-top-opacity);
-    background-color: rgb(255 255 255 / 0.001);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-    mask-image: linear-gradient(180deg, black 0%, rgb(0 0 0 / 0.72) 34%, transparent 100%);
-    -webkit-mask-image: linear-gradient(180deg, black 0%, rgb(0 0 0 / 0.72) 34%, transparent 100%);
+  .chat-thread-frame[data-can-scroll-up="true"]::before {
+    opacity: 0.72;
   }
 
-  .chat-messages-viewport::after {
-    bottom: 0;
-    height: 5.625rem;
-    opacity: var(--chat-edge-bottom-opacity);
-    background-color: rgb(255 255 255 / 0.001);
-    backdrop-filter: blur(5px);
-    -webkit-backdrop-filter: blur(5px);
-    mask-image: linear-gradient(0deg, black 0%, rgb(0 0 0 / 0.7) 32%, transparent 100%);
-    -webkit-mask-image: linear-gradient(0deg, black 0%, rgb(0 0 0 / 0.7) 32%, transparent 100%);
+  .chat-composer-dock {
+    position: relative;
+    z-index: 2;
+  }
+
+  .chat-composer-dock::before {
+    content: "";
+    position: absolute;
+    left: -0.125rem;
+    right: -0.125rem;
+    top: -1.45rem;
+    height: 1.45rem;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      color-mix(in oklab, var(--surface-page) 48%, transparent) 52%,
+      color-mix(in oklab, var(--surface-page) 90%, transparent) 100%
+    );
+    opacity: 0;
+    transition: opacity 160ms ease;
+  }
+
+  .chat-composer-dock[data-can-scroll-down="true"]::before {
+    opacity: 0.78;
   }
 
   .chat-composer {
