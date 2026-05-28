@@ -28,6 +28,14 @@ function extractTextContent(content: string | Array<{ type: string; text?: strin
     .join("");
 }
 
+function collectMessageError(result: ParsedPiOutput, message: Record<string, unknown> | null) {
+  if (!message) return;
+  const errorMessage = asString(message.errorMessage, "").trim();
+  if (errorMessage && !result.errors.includes(errorMessage)) {
+    result.errors.push(errorMessage);
+  }
+}
+
 export function parsePiJsonl(stdout: string): ParsedPiOutput {
   const result: ParsedPiOutput = {
     sessionId: null,
@@ -71,6 +79,7 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
         if (lastMessage?.role === "assistant") {
           const content = lastMessage.content as string | Array<{ type: string; text?: string }>;
           result.finalMessage = extractTextContent(content);
+          collectMessageError(result, lastMessage);
         }
       }
       continue;
@@ -84,6 +93,7 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
     if (eventType === "turn_end") {
       const message = asRecord(event.message);
       if (message) {
+        collectMessageError(result, message);
         const content = message.content as string | Array<{ type: string; text?: string }>;
         const text = extractTextContent(content);
         if (text) {
@@ -122,6 +132,11 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
           }
         }
       }
+      continue;
+    }
+
+    if (eventType === "message_start" || eventType === "message_end") {
+      collectMessageError(result, asRecord(event.message));
       continue;
     }
 

@@ -48,6 +48,10 @@ function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean 
   return typeof raw === "string" && raw.trim().length > 0;
 }
 
+function hasGeminiSkipTrustArg(args: string[]): boolean {
+  return args.includes("--skip-trust") || args.includes("--no-skip-trust");
+}
+
 function resolveGeminiBillingType(env: Record<string, string>): "api" | "subscription" {
   return hasNonEmptyEnvValue(env, "GEMINI_API_KEY") || hasNonEmptyEnvValue(env, "GOOGLE_API_KEY")
     ? "api"
@@ -346,6 +350,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const commandNotes = (() => {
     const notes: string[] = ["Prompt is passed to Gemini via --prompt for non-interactive execution."];
     notes.push("Added --approval-mode yolo for unattended execution.");
+    if (!hasGeminiSkipTrustArg(extraArgs)) {
+      notes.push("Added --skip-trust for unattended execution in managed runtime directories.");
+    }
     if (!instructionsFilePath) {
       notes.push(...loadedInstructions.commandNotes, "Prepended Rudder operating contract to prompt.");
       return notes;
@@ -437,6 +444,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (resumeSessionId) args.push("--resume", resumeSessionId);
     if (model && model !== DEFAULT_GEMINI_LOCAL_MODEL) args.push("--model", model);
     args.push("--approval-mode", "yolo");
+    if (!hasGeminiSkipTrustArg(extraArgs)) args.push("--skip-trust");
     if (sandbox) {
       args.push("--sandbox");
     } else {

@@ -622,6 +622,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       : null;
 
     const stderrLine = firstNonEmptyLine(attempt.proc.stderr);
+    const parsedErrorLine = attempt.parsed.errors.find((line) => line.trim().length > 0) ?? "";
     const rawExitCode = attempt.proc.exitCode;
     const summary = attempt.parsed.finalMessage ?? attempt.parsed.messages.join("\n\n").trim();
     const emptySuccessfulResult =
@@ -631,13 +632,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       attempt.parsed.errors.length === 0;
     const fallbackErrorMessage = emptySuccessfulResult
       ? "Pi exited successfully without producing an assistant response or tool activity."
-      : stderrLine || `Pi exited with code ${rawExitCode ?? -1}`;
+      : parsedErrorLine || stderrLine || `Pi exited with code ${rawExitCode ?? -1}`;
 
     return {
       exitCode: rawExitCode,
       signal: attempt.proc.signal,
       timedOut: false,
-      errorMessage: (rawExitCode ?? 0) === 0 && !emptySuccessfulResult ? null : fallbackErrorMessage,
+      errorMessage: (rawExitCode ?? 0) === 0 && !emptySuccessfulResult && !parsedErrorLine ? null : fallbackErrorMessage,
       usage: {
         inputTokens: attempt.parsed.usage.inputTokens,
         outputTokens: attempt.parsed.usage.outputTokens,

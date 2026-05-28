@@ -171,12 +171,17 @@ describe("cursor execute", () => {
         ]),
       );
       expect(capture.prompt).toContain("Rudder runtime note:");
+      expect(capture.prompt).toContain("Rudder CLI access note:");
+      expect(capture.prompt).toContain("rudder agent me --json");
+      expect(capture.prompt).toContain("rudder issue checkout {id} --json");
       expect(invocationPrompt).toContain("# Rudder Runtime Skill Boundary");
       expect(commandNotes).toContain("Loaded agent memory instructions from $AGENT_HOME/instructions/MEMORY.md");
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
+      expect(promptMetrics.runtimeNoteChars).toBeGreaterThan(0);
       expect(capture.prompt).toContain("RUDDER_API_KEY");
       expect(invocationPrompt).toContain("Rudder runtime note:");
+      expect(invocationPrompt).toContain("Rudder CLI access note:");
       expect(invocationPrompt).toContain("# Tacit Memory");
       expect(invocationPrompt).toContain("RUDDER_API_URL");
     } finally {

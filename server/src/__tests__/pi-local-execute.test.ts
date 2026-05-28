@@ -68,6 +68,29 @@ process.exit(0);
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeFakePiProviderErrorCommand(commandPath: string): Promise<void> {
+  const script = `#!/usr/bin/env node
+if (process.argv.includes("--list-models")) {
+  console.log("provider  model");
+  console.log("openai    gpt-test");
+  process.exit(0);
+}
+
+console.log(JSON.stringify({
+  type: "turn_end",
+  message: {
+    role: "assistant",
+    content: [],
+    errorMessage: "401 invalid x-api-key"
+  },
+  toolResults: []
+}));
+process.exit(0);
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 type CapturePayload = {
   argv: string[];
   stdin: string;
@@ -119,6 +142,48 @@ describe("pi execute", () => {
       expect(result.errorMessage).toBe(
         "Pi exited successfully without producing an assistant response or tool activity.",
       );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it("surfaces Pi provider errors from successful JSONL exits", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-provider-error-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "pi");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakePiProviderErrorCommand(commandPath);
+
+    try {
+      const result = await execute({
+        runId: "run-pi-provider-error",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Pi Agent",
+          agentRuntimeType: "pi",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "openai/gpt-test",
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.summary).toBe("");
+      expect(result.errorMessage).toBe("401 invalid x-api-key");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

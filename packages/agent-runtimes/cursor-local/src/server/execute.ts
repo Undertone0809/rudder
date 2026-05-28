@@ -96,6 +96,20 @@ function renderRudderEnvNote(env: Record<string, string>): string {
   ].join("\n");
 }
 
+function renderApiAccessNote(env: Record<string, string>): string {
+  if (!hasNonEmptyEnvValue(env, "RUDDER_API_URL") || !hasNonEmptyEnvValue(env, "RUDDER_API_KEY")) return "";
+  return [
+    "Rudder CLI access note:",
+    "Use Cursor's runtime shell command capability with the `rudder` CLI for Rudder control-plane work.",
+    "Read example:",
+    "  rudder agent me --json",
+    "Mutating example:",
+    "  rudder issue checkout {id} --json",
+    "",
+    "",
+  ].join("\n");
+}
+
 function hasCursorResultEvent(stdout: string): boolean {
   return parseCursorJsonl(stdout).resultSeen;
 }
@@ -525,12 +539,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
   const skillBoundaryPrompt = renderRudderRuntimeSkillBoundaryPrompt(loadedSkills);
   const rudderEnvNote = renderRudderEnvNote(env);
+  const apiAccessNote = renderApiAccessNote(env);
   const prompt = joinPromptSections([
     instructionsPrefix,
     skillBoundaryPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
     rudderEnvNote,
+    apiAccessNote,
     renderedPrompt,
   ]);
   const promptMetrics = {
@@ -539,7 +555,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
-    runtimeNoteChars: rudderEnvNote.length,
+    runtimeNoteChars: rudderEnvNote.length + apiAccessNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };
 

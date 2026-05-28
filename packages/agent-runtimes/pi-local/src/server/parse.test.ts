@@ -209,6 +209,42 @@ describe("parsePiJsonl", () => {
     expect(parsed.usage.cachedInputTokens).toBe(25);
     expect(parsed.usage.costUsd).toBe(0.003);
   });
+
+  it("extracts provider errors from assistant message events", () => {
+    const stdout = [
+      JSON.stringify({
+        type: "message_start",
+        message: {
+          role: "assistant",
+          content: [],
+          errorMessage: "401 invalid x-api-key",
+        },
+      }),
+      JSON.stringify({
+        type: "turn_end",
+        message: {
+          role: "assistant",
+          content: [],
+          errorMessage: "401 invalid x-api-key",
+        },
+      }),
+      JSON.stringify({
+        type: "agent_end",
+        messages: [
+          { role: "user", content: "hello" },
+          {
+            role: "assistant",
+            content: [],
+            errorMessage: "401 invalid x-api-key",
+          },
+        ],
+      }),
+    ].join("\n");
+
+    const parsed = parsePiJsonl(stdout);
+    expect(parsed.finalMessage).toBe("");
+    expect(parsed.errors).toEqual(["401 invalid x-api-key"]);
+  });
 });
 
 describe("isPiUnknownSessionError", () => {
