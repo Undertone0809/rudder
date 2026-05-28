@@ -19,6 +19,13 @@ async function createUiLabOrganization(page: import("@playwright/test").Page) {
 
 test.describe("UI Lab", () => {
   test("renders common components, coverage search, and legacy lab routes", async ({ page }) => {
+    const failedApiResponses: string[] = [];
+    page.on("response", (response) => {
+      if (response.url().includes("/api/") && response.status() >= 400) {
+        failedApiResponses.push(`${response.status()} ${response.url()}`);
+      }
+    });
+
     const organization = await createUiLabOrganization(page);
 
     await page.goto(`/${organization.issuePrefix}/ui-lab`);
@@ -47,6 +54,8 @@ test.describe("UI Lab", () => {
     await expect(page.getByText("Input needed")).toBeVisible();
     await expect(page.getByTestId("chat-ask-user-answer").getByText("Answered")).toBeVisible();
     await expect(page.getByText("Attachment list")).toBeVisible();
+    await expect(page.getByText("Rich reference card")).toBeVisible();
+    await expect(page.getByTestId("chat-rich-references").getByRole("link", { name: "Open issue RUD-214" })).toBeVisible();
     await page.getByRole("button", { name: "Open image preview: chat-preview.svg" }).first().click();
     await expect(page.getByTestId("chat-image-preview-dialog")).toBeVisible();
     await expect(page.getByRole("img", { name: "chat-preview.svg" })).toBeVisible();
@@ -83,5 +92,7 @@ test.describe("UI Lab", () => {
     await page.goto(`/${organization.issuePrefix}/tests/ux/runs`);
     await expect(page.getByText("Run transcript UX lab")).toBeVisible();
     await expect(page.getByText("Run Transcript Fixtures")).toBeVisible();
+
+    expect(failedApiResponses).toEqual([]);
   });
 });

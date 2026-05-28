@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowUp,
   Bot,
   Boxes,
   ChevronDown,
@@ -16,7 +17,6 @@ import {
   ListTodo,
   Paperclip,
   Search,
-  Send,
   Shapes,
   ShieldAlert,
   Sparkles,
@@ -101,6 +101,7 @@ import { SkillReferenceToken } from "@/components/SkillReferenceToken";
 import { RudderLogo } from "@/components/RudderLogo";
 import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences";
 import { runTranscriptFixtureEntries } from "@/fixtures/runTranscriptFixtures";
+import { useOrganization } from "@/context/OrganizationContext";
 import { DesignGuide } from "./DesignGuide";
 import { RunTranscriptUxLab } from "./RunTranscriptUxLab";
 import {
@@ -937,13 +938,18 @@ const fixtureChatRichReferenceMessage = fixtureChatMessage({
     richReferences: [
       {
         type: "issue",
-        issueId: "00000000-0000-4000-8000-000000000214",
+        identifier: fixtureIssue.identifier,
         display: "card",
       },
     ],
   },
   replyingAgentId: fixtureAgent.id,
 });
+
+const fixtureRichReferenceIssues: Record<string, Issue> = {
+  [fixtureIssue.id]: fixtureIssue,
+  [fixtureIssue.identifier ?? fixtureIssue.id]: fixtureIssue,
+};
 
 function LabPanel({
   title,
@@ -1147,6 +1153,7 @@ function PrimitivesSection() {
 }
 
 function CommonComponentsSection() {
+  const { selectedOrganizationId } = useOrganization();
   const [filters, setFilters] = useState<FilterValue[]>([
     { key: "status", label: "Status", value: "In review" },
     { key: "assignee", label: "Assignee", value: "Design Lead" },
@@ -1217,6 +1224,13 @@ function CommonComponentsSection() {
     title: "Technical Lead",
     icon: "person:bg-sky",
   }), []);
+  const goalPropertiesFixture = useMemo<Goal>(
+    () => ({
+      ...fixtureGoals[0]!,
+      orgId: selectedOrganizationId ?? fixtureGoals[0]!.orgId,
+    }),
+    [selectedOrganizationId],
+  );
 
   const toggleDir = (path: string) => {
     setExpandedDirs((current) => {
@@ -1554,7 +1568,7 @@ function CommonComponentsSection() {
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)+2px)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
                     aria-label="Add files and options"
                   >
                     <Paperclip className="h-4 w-4" />
@@ -1597,10 +1611,10 @@ function CommonComponentsSection() {
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Send" className="rounded-full bg-white text-black hover:bg-zinc-100 dark:bg-white dark:text-black">
-                    <Send className="h-[17px] w-[17px]" />
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Send" className="rounded-[calc(var(--radius-sm)+2px)] border border-[color:color-mix(in_oklab,var(--accent-base)_30%,var(--border-base))] bg-[color:var(--accent-base)] text-primary-foreground hover:bg-[color:color-mix(in_oklab,var(--accent-base)_88%,black)]">
+                    <ArrowUp className="h-[17px] w-[17px]" />
                   </Button>
-                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Stop streaming" className="rounded-full border border-border">
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Stop streaming" className="rounded-[calc(var(--radius-sm)+2px)] border border-border">
                     <Square className="h-3.5 w-3.5 fill-current" />
                   </Button>
                 </div>
@@ -1630,8 +1644,8 @@ function CommonComponentsSection() {
                     No active agent
                   </span>
                 </div>
-                <Button type="button" variant="ghost" size="icon-sm" aria-label="Send disabled" disabled className="rounded-full bg-white text-black dark:bg-white dark:text-black">
-                  <Send className="h-[17px] w-[17px]" />
+                <Button type="button" variant="ghost" size="icon-sm" aria-label="Send disabled" disabled className="rounded-[calc(var(--radius-sm)+2px)] border border-[color:color-mix(in_oklab,var(--accent-base)_30%,var(--border-base))] bg-[color:var(--accent-base)] text-primary-foreground">
+                  <ArrowUp className="h-[17px] w-[17px]" />
                 </Button>
               </div>
             </div>
@@ -1670,8 +1684,8 @@ function CommonComponentsSection() {
             </div>
 
             <div>
-              <p className="mb-2 text-xs font-medium text-muted-foreground">Rich reference fallback</p>
-              <ChatRichReferences message={fixtureChatRichReferenceMessage} />
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Rich reference card</p>
+              <ChatRichReferences message={fixtureChatRichReferenceMessage} resolvedIssues={fixtureRichReferenceIssues} />
             </div>
 
             <AskUserHistoryRecord
@@ -1843,7 +1857,7 @@ function CommonComponentsSection() {
         <LabExample title="Goal and project properties">
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-md border border-border p-3">
-              <GoalProperties goal={fixtureGoals[0]!} />
+              <GoalProperties goal={goalPropertiesFixture} />
             </div>
             <div className="rounded-md border border-border p-3">
               <ProjectProperties project={fixtureProject} />
@@ -1880,7 +1894,7 @@ function CommonComponentsSection() {
         <LabPanel title="Empty and loading states">
           <div className="grid gap-3 md:grid-cols-2">
             <div className="rounded-md border border-border">
-              <EmptyState icon={Inbox} message="No pending approvals." action="Create issue" onAction={() => {}} />
+              <EmptyState icon={Inbox} message="No pending approvals." action="Create issue" onAction={() => {}} size="compact" />
             </div>
             <div className="rounded-md border border-border p-4">
               <PageSkeleton variant="list" />

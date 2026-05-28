@@ -13,8 +13,15 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { cn, relativeTime } from "@/lib/utils";
 
 type CardReference = ChatRichReference & { display: "card" };
+type ResolvedIssueReferences = Record<string, Issue | undefined>;
 
-export function ChatRichReferences({ message }: { message: ChatMessage }) {
+export function ChatRichReferences({
+  message,
+  resolvedIssues,
+}: {
+  message: ChatMessage;
+  resolvedIssues?: ResolvedIssueReferences;
+}) {
   const references = useMemo(
     () => chatRichReferencesFromStructuredPayload(message.structuredPayload)
       .filter((reference): reference is CardReference => reference.display === "card"),
@@ -29,28 +36,45 @@ export function ChatRichReferences({ message }: { message: ChatMessage }) {
         <ChatRichReferenceCard
           key={`${reference.type}:${reference.issueId ?? reference.identifier ?? "issue"}:${reference.type === "issue_comment" ? reference.commentId : index}`}
           reference={reference}
+          resolvedIssues={resolvedIssues}
         />
       ))}
     </div>
   );
 }
 
-function ChatRichReferenceCard({ reference }: { reference: CardReference }) {
+function ChatRichReferenceCard({
+  reference,
+  resolvedIssues,
+}: {
+  reference: CardReference;
+  resolvedIssues?: ResolvedIssueReferences;
+}) {
   if (reference.type === "issue") {
-    return <IssueReferenceCard reference={reference} />;
+    return <IssueReferenceCard reference={reference} resolvedIssues={resolvedIssues} />;
   }
-  return <IssueCommentReferenceCard reference={reference} />;
+  return <IssueCommentReferenceCard reference={reference} resolvedIssues={resolvedIssues} />;
 }
 
-function IssueReferenceCard({ reference }: { reference: Extract<CardReference, { type: "issue" }> }) {
+function IssueReferenceCard({
+  reference,
+  resolvedIssues,
+}: {
+  reference: Extract<CardReference, { type: "issue" }>;
+  resolvedIssues?: ResolvedIssueReferences;
+}) {
   const issueRef = issueReferenceKey(reference);
+  const resolvedIssue = resolveIssueReference(resolvedIssues, reference);
   const query = useQuery({
     queryKey: queryKeys.issues.detail(issueRef),
     queryFn: () => issuesApi.get(issueRef),
     retry: false,
-    enabled: Boolean(issueRef),
+    enabled: Boolean(issueRef) && !resolvedIssue,
   });
 
+  if (resolvedIssue) {
+    return <IssueCard issue={resolvedIssue} />;
+  }
   if (query.isLoading) {
     return <ReferenceFallbackCard icon="issue" title="Loading issue" detail={issueRef} tone="loading" />;
   }
@@ -64,13 +88,20 @@ function IssueReferenceCard({ reference }: { reference: Extract<CardReference, {
   return <IssueCard issue={query.data} />;
 }
 
-function IssueCommentReferenceCard({ reference }: { reference: Extract<CardReference, { type: "issue_comment" }> }) {
+function IssueCommentReferenceCard({
+  reference,
+  resolvedIssues,
+}: {
+  reference: Extract<CardReference, { type: "issue_comment" }>;
+  resolvedIssues?: ResolvedIssueReferences;
+}) {
   const issueRef = issueReferenceKey(reference);
+  const resolvedIssue = resolveIssueReference(resolvedIssues, reference);
   const issueQuery = useQuery({
     queryKey: queryKeys.issues.detail(issueRef),
     queryFn: () => issuesApi.get(issueRef),
     retry: false,
-    enabled: Boolean(issueRef),
+    enabled: Boolean(issueRef) && !resolvedIssue,
   });
   const commentQuery = useQuery({
     queryKey: queryKeys.issues.comment(issueRef, reference.commentId),
@@ -88,11 +119,12 @@ function IssueCommentReferenceCard({ reference }: { reference: Extract<CardRefer
   if (commentQuery.isError) {
     return <ReferenceErrorCard error={commentQuery.error} kind="comment" />;
   }
-  if (!issueQuery.data || !commentQuery.data) {
+  const issue = resolvedIssue ?? issueQuery.data;
+  if (!issue || !commentQuery.data) {
     return <ReferenceFallbackCard icon="comment" title="Comment unavailable" detail="The comment could not be loaded." tone="muted" />;
   }
 
-  return <IssueCommentCard issue={issueQuery.data} comment={commentQuery.data} />;
+  return <IssueCommentCard issue={issue} comment={commentQuery.data} />;
 }
 
 function IssueCard({ issue }: { issue: Issue }) {
@@ -218,6 +250,16 @@ function ReferenceFallbackCard({
 
 function issueReferenceKey(reference: Pick<ChatRichReference, "issueId" | "identifier">) {
   return reference.issueId ?? reference.identifier ?? "";
+}
+
+function resolveIssueReference(
+  resolvedIssues: ResolvedIssueReferences | undefined,
+  reference: Pick<ChatRichReference, "issueId" | "identifier">,
+) {
+  if (!resolvedIssues) return undefined;
+  if (reference.issueId && resolvedIssues[reference.issueId]) return resolvedIssues[reference.issueId];
+  if (reference.identifier && resolvedIssues[reference.identifier]) return resolvedIssues[reference.identifier];
+  return undefined;
 }
 
 export function markdownPreview(value: string) {

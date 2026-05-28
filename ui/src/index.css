@@ -1030,7 +1030,7 @@
   }
 
   .chat-review-block {
-    --chat-review-fold-size: 2.625rem;
+    --chat-review-fold-size: 2.25rem;
     position: relative;
     isolation: isolate;
     overflow: hidden;
@@ -1073,9 +1073,9 @@
     content: "";
     position: absolute;
     z-index: 5;
-    top: 1.31rem;
-    right: -0.54rem;
-    width: 3.7rem;
+    top: 1.12rem;
+    right: -0.46rem;
+    width: 3.2rem;
     height: 1px;
     background: linear-gradient(
       90deg,
@@ -1140,8 +1140,17 @@
   }
 
   .chat-review-fact-ledger {
-    border-left: 1px solid color-mix(in oklab, var(--border-soft) 88%, transparent);
-    padding-left: 1.25rem;
+    border-top: 1px solid color-mix(in oklab, var(--border-soft) 88%, transparent);
+    padding-top: 0.25rem;
+  }
+
+  @media (min-width: 1024px) {
+    .chat-review-fact-ledger {
+      border-top: 0;
+      border-left: 1px solid color-mix(in oklab, var(--border-soft) 88%, transparent);
+      padding-top: 0;
+      padding-left: 1.25rem;
+    }
   }
 
   .chat-review-details-body {

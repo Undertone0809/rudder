@@ -108,7 +108,7 @@ function baseComment(overrides: Partial<IssueComment> = {}): IssueComment {
   };
 }
 
-function renderHarness(message: ChatMessage) {
+function renderHarness(message: ChatMessage, resolvedIssues?: Record<string, Issue>) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -121,7 +121,7 @@ function renderHarness(message: ChatMessage) {
   act(() => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <ChatRichReferences message={message} />
+        <ChatRichReferences message={message} resolvedIssues={resolvedIssues} />
       </QueryClientProvider>,
     );
   });
@@ -217,6 +217,26 @@ describe("ChatRichReferences", () => {
     expect(container.textContent).toContain("Permission denied");
     expect(container.textContent).toContain("You do not have access to this reference.");
     expect(container.querySelector("a")).toBeNull();
+  });
+
+  it("uses pre-resolved issue fixtures without requesting the issue API", async () => {
+    const issue = baseIssue({ title: "Fixture-backed issue", identifier: "ZST-214" });
+
+    const container = renderHarness(baseMessage({
+      structuredPayload: {
+        richReferences: [
+          { type: "issue", identifier: "ZST-214", display: "card" },
+        ],
+      },
+    }), {
+      "ZST-214": issue,
+    });
+
+    await flushQueries();
+
+    expect(container.textContent).toContain("Fixture-backed issue");
+    expect(container.querySelector("a")?.getAttribute("href")).toBe("/issues/ZST-214");
+    expect(issuesApi.get).not.toHaveBeenCalled();
   });
 });
 

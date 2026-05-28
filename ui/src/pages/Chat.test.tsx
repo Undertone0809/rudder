@@ -364,7 +364,9 @@ describe("ProposalCard", () => {
 
     expect(html).toContain('aria-label="Edit owner"');
     expect(html).toContain('aria-label="Edit reviewer"');
-    expect(html).toContain("grid-cols-[4.5rem_minmax(0,1fr)]");
+    expect(html).toContain("lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)]");
+    expect(html).toContain("grid-cols-[minmax(4.25rem,auto)_minmax(0,1fr)]");
+    expect(html).toContain("max-[420px]:grid-cols-1");
     expect(html).toContain("w-full max-w-full justify-end");
     expect(html).toContain("Wesley");
     expect(html).toContain("CTO");

@@ -796,7 +796,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5" data-testid="chat-composer-toolbar">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <DropdownMenu open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
-            <DropdownMenuTrigger type="button" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-sm font-medium text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Add files and options" >
+            <DropdownMenuTrigger type="button" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)+2px)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_52%,transparent)] text-sm font-medium text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40" aria-label="Add files and options" >
               <Plus className="h-4 w-4" /> </DropdownMenuTrigger>
             <DropdownMenuContent align="start"
               sideOffset={8} className="surface-overlay w-80 max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border p-1.5 text-foreground" >
@@ -875,10 +875,10 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           }} disabled={sendButtonDisabled} aria-busy={sendButtonMode === "sending" ? true : undefined} aria-label={
             sendButtonMode === "sending" ? "Sending" : sendButtonMode === "stop" ? "Stop streaming" : "Send"
           } className={cn(
-            "shrink-0 rounded-full border-0 bg-white text-black shadow-sm",
-            "hover:bg-zinc-100 dark:bg-white dark:text-black dark:hover:bg-zinc-100",
+            "shrink-0 rounded-[calc(var(--radius-sm)+2px)] border border-[color:color-mix(in_oklab,var(--accent-base)_30%,var(--border-base))] bg-[color:var(--accent-base)] text-primary-foreground shadow-sm",
+            "hover:bg-[color:color-mix(in_oklab,var(--accent-base)_88%,black)] dark:hover:bg-[color:color-mix(in_oklab,var(--accent-base)_92%,white)]",
             "disabled:pointer-events-none disabled:opacity-35",
-            "focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--surface-page)]",
+            "focus-visible:ring-2 focus-visible:ring-[color:var(--accent-base)]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--surface-page)]",
             sendButtonMode === "sending" && "disabled:opacity-100",
           )} >
           {sendButtonMode === "sending" ? (

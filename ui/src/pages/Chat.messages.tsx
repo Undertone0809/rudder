@@ -304,9 +304,11 @@ function ProposalFactRow({
   children: ReactNode;
 }) {
   return (
-    <div className="grid min-h-9 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-3 border-b border-[color:var(--border-soft)] py-2 last:border-b-0">
+    <div className="grid min-h-9 grid-cols-[minmax(4.25rem,auto)_minmax(0,1fr)] items-center gap-x-3 gap-y-1 border-b border-[color:var(--border-soft)] py-2 last:border-b-0 max-[420px]:grid-cols-1">
       <div className="text-sm text-muted-foreground">{label}</div>
-      <div className="flex min-w-0 justify-end text-sm font-medium text-foreground">{children}</div>
+      <div className="flex min-w-0 justify-start text-sm font-medium text-foreground min-[421px]:justify-end [&>*]:min-w-0">
+        {children}
+      </div>
     </div>
   );
 }
@@ -541,9 +543,9 @@ export function ProposalCard({
           <div className="min-w-0">
             {issueProposal ? (
               <>
-                <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(15rem,22rem)]">
-                  <div className="flex min-w-0 items-center border-b border-[color:var(--border-soft)] pb-5 md:border-b-0 md:pb-0">
-                    <div className="text-[26px] font-semibold leading-tight text-foreground">{String(issueProposal.title)}</div>
+                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)]">
+                  <div className="flex min-w-0 items-center border-b border-[color:var(--border-soft)] pb-5 lg:border-b-0 lg:pb-0">
+                    <div className="min-w-0 break-words text-xl font-semibold leading-tight text-foreground sm:text-2xl">{String(issueProposal.title)}</div>
                   </div>
                   <div className="chat-review-fact-ledger">
                     <ProposalFactRow label="Priority">
