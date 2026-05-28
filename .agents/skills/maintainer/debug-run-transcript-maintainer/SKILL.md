@@ -27,6 +27,11 @@ Runs fail for several different reasons:
 
 This skill helps diagnose those cases without getting stuck on the wrong data source.
 
+Debugging proves what happened in a run; it does not by itself prove that a
+product fix works. When a transcript diagnosis leads to a code, CLI, skill,
+runtime, or UI change, hand the work back to the lifecycle verification path and
+require product proof for the affected actor and terminal surface.
+
 ## Source Priority
 
 Always use sources in this order:
@@ -109,6 +114,23 @@ do not stop. Pivot to filesystem-side evidence:
 
 State which sources were unavailable and label any conclusions that are based
 on fallback evidence rather than live API/DB reads.
+
+### 1.2 Separate root cause evidence from fix proof
+
+When the user is debugging a concrete failure that may need a fix, keep two
+ledgers separate:
+
+- Root cause evidence: run metadata, transcript entries, stdout/stderr, events,
+  source code, config, database rows, or runtime state that explains why the run
+  behaved that way.
+- Product proof required after a fix: actor, trigger, system effect, terminal
+  surface, seed/mutation data, screenshots, API readback, or CLI output needed
+  to show the workflow now behaves correctly.
+
+If the debug stage finds the likely fix but the terminal workflow has not been
+rerun, say `fix proof missing` instead of calling the issue resolved. For
+agent-facing bugs, prefer rerunning a disposable agent issue or heartbeat path
+after implementation rather than only checking stored excerpts or database rows.
 
 ### 2. Preferred path: run-intelligence CLI helpers
 

@@ -7,12 +7,14 @@ description: >
   when the user gives an ambiguous or end-to-end development request, asks which
   workflow or skill should handle a task, wants to enter at any lifecycle stage,
   wants reviewer subagents after each stage, or expects review by default before
-  handoff. Review gates require spawned reviewers by default. Also use for
-  component-lab/catalog work, performance benchmark-to-implementation work, and
-  destructive cleanup or dirty-worktree recovery where the safe route is not yet
-  clear. Prefer narrower maintainer skills directly when the user clearly asks
-  for a release, UI polish, run transcript debug, local preview, data diagnosis,
-  PR preview, or review-only task.
+  handoff. Review gates require spawned reviewers by default. Verification gates
+  must prove the terminal product workflow when the task affects an operator,
+  agent, Desktop, release, or UI path. Also use for component-lab/catalog work,
+  performance benchmark-to-implementation work, and destructive cleanup or
+  dirty-worktree recovery where the safe route is not yet clear. Prefer narrower
+  maintainer skills directly when the user clearly asks for a release, UI
+  polish, run transcript debug, local preview, data diagnosis, PR preview, or
+  review-only task.
 ---
 
 # Development Lifecycle Router Maintainer
@@ -67,6 +69,13 @@ state the lifecycle stage and the acceptance bar for leaving that stage. The
 router fails when it silently jumps from a user complaint to implementation, or
 when it claims review happened without real reviewer evidence.
 
+The object being protected is not the diff, test suite, screenshot, or review
+artifact by itself. The object is the Rudder work loop the change is supposed to
+improve: an operator or agent acts, Rudder records and routes the work, the
+right surface shows the result, and the next actor can trust what happened.
+When those terminal effects are cheap to exercise, they are required evidence,
+not optional polish.
+
 Default to review with real spawned reviewers. Do not use self-review or a
 serial two-role simulation as a substitute for the reviewer gate; those modes
 overfit to the author's own reasoning and cannot close a routed stage as
@@ -96,7 +105,7 @@ Classify the prompt into one primary stage:
   or screenshot-based product/design judgment before code.
 - `implementation`: user approved a direction or directly asks to fix/build.
 - `verification`: user asks whether tests, CI, E2E, screenshot, Desktop smoke,
-  or release checks prove the work.
+  actor-run-chain, or release checks prove the work.
 - `review`: user asks for review, PM judgment, first-principles critique, or a
   Codex/session/PR/commit verdict.
 - `debug`: user asks why a run, UI path, data path, CI job, Desktop app, or
@@ -217,7 +226,8 @@ concrete artifact:
 - advisor: diagnosis, options, recommendation, decision boundary
 - UI design: wireframe, screenshot criteria, or approved direction
 - implementation: scoped diff, tests, docs or contract updates as needed
-- verification: passing checks, screenshots, logs, or explicit blockers
+- verification: passing checks, terminal product proof, screenshots, logs, or
+  explicit blockers
 - review: verdict, blocking gaps, smallest fixes, residual risk
 - release: locked source ref, live publish/asset/dist-tag evidence
 - handoff: files, validation, commit/push state, unverified items
@@ -318,6 +328,56 @@ Do not promise full validation if dependency install, registry, browser, or
 runtime setup is already blocked. Report validation readiness before starting a
 long implementation phase.
 
+### 3.5 Require terminal product proof for workflow changes
+
+For any change that affects a user-visible, agent-visible, Desktop, release, or
+control-plane workflow, identify the terminal product surface before calling
+verification complete.
+
+Start from the work loop, not from the implementation layer:
+
+- actor: board operator, reviewer, assignee agent, runtime agent, CLI user,
+  Desktop user, release consumer, or automation
+- trigger: click, command, wakeup, API action, scheduled run, release workflow,
+  or packaged startup
+- system effect: issue state, comment, review decision, activity, run log,
+  cost, approval, release artifact, or persisted setting
+- terminal surface: current dev web app, packaged Desktop shell, CLI output,
+  run-intelligence view, npm/GitHub release state, or another final consumer
+
+Choose proof that follows that loop:
+
+- For CLI or agent-runtime changes, prefer an actor-run-chain: seed a disposable
+  org/issue/agent when needed, trigger the runtime or CLI as that actor, then
+  read back the API/DB state and observe the final app or CLI surface.
+- For UI and workflow changes, use Browser or Computer Use to exercise the
+  actual route when practical, plus API/log readback when state matters.
+- For Desktop-native behavior, packaged startup, menus, update prompts,
+  drag/drop, native dialogs, or resident shell behavior, use Computer Use or
+  packaged Desktop verification. Browser proof is only a substitute when the
+  behavior is truly web-surface equivalent.
+- For release work, live npm, GitHub, tag, asset, workflow, and install-smoke
+  state is the terminal surface. Local build output is supporting evidence.
+- For debug-derived fixes, transcript or log evidence proves the root cause; it
+  does not prove the fix until the terminal workflow is rerun or the missing
+  workflow proof is explicitly recorded as blocked.
+
+When a realistic product proof requires seed or mutation data, record a
+mutation ledger:
+
+- target runtime and `/api/health` or equivalent source of truth
+- organization, issue, agent, run, approval, release, or other records created
+- which writes used public APIs and which used direct database writes
+- final URL, run id, screenshot path, log path, or release URL inspected
+- cleanup status, or why the evidence data was intentionally left in place
+
+Substitutions must be named. Example: if packaged Desktop capture fails and a
+current-dev browser path is used instead, call it `substituted: Browser current
+dev app for Desktop shell capture`; do not present it as full Desktop proof.
+
+Missing terminal product proof blocks handoff for workflow changes unless the
+user explicitly lowers the acceptance bar for this turn.
+
 ### 4. Run default review gates
 
 Use review gates by default for every routed stage that produces an artifact,
@@ -376,9 +436,11 @@ Use .agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md.
 
 Review the stage artifact as the implementation, validation, and handoff
 reviewer. Focus on object model, scope discipline, org scoping, contracts,
-tests, visual/Desktop/release evidence when relevant, git safety, and handoff
-quality. Give accept / conditional accept / reject, blockers, and smallest
-changes needed.
+tests, terminal product proof, visual/Desktop/release evidence when relevant,
+git safety, and handoff quality. If the work affects a user-visible or
+agent-visible workflow, verify whether the actor-run-chain or terminal product
+surface was actually exercised. Give accept / conditional accept / reject,
+blockers, and smallest changes needed.
 ```
 
 If either reviewer rejects or names a blocker, rework before final handoff or
@@ -390,14 +452,17 @@ Before handoff, include a compact evidence ledger:
 
 - Required: the checks or artifacts this route requires, including spawned
   reviewer verdicts
+- Scenario: the actor, trigger, system effect, and terminal surface the work was
+  supposed to prove
 - Proven: commands, screenshots, browser/Desktop checks, live release evidence,
-  or reviewer outputs that actually ran
+  actor-run-chain results, readbacks, mutation ledger entries, or reviewer
+  outputs that actually ran
 - Missing or substituted: anything not proven, why it is missing, and whether it
   blocks completion
 
 For user-visible UI, workflow, Desktop, release, and cross-contract changes,
-missing required evidence blocks the handoff unless the user explicitly changes
-the acceptance bar.
+missing required terminal product evidence blocks the handoff unless the user
+explicitly changes the acceptance bar.
 
 ### 5. Keep git safe in shared worktrees
 
@@ -443,6 +508,8 @@ Do not hand off as complete when any of these are true:
   diff, validation bundle, or handoff
 - "review" only means the author reread their own diff without findings
 - user-visible UI lacks rendered or screenshot evidence when required
+- agent-visible, CLI, runtime, Desktop, release, or control-plane workflow work
+  lacks terminal product proof or a named blocked/substituted proof
 - feature/workflow changes skip required E2E coverage without explicit approval
 - Desktop/release/package work lacks the repo-required packaged or live checks
 - git history includes unrelated files or an unsafe amend in a shared worktree
@@ -496,6 +563,19 @@ Route: `debug -> review or implementation`.
 
 Use `debug-run-transcript-maintainer` first to reconstruct what happened. Only
 switch to implementation after the root cause and target fix are clear.
+After a fix, do not treat the transcript as proof that the product behavior is
+fixed. Move through verification with terminal product proof for the affected
+actor and surface.
+
+### Agent-visible CLI or runtime workflow regression
+
+Route: `debug or implementation -> verification -> review -> handoff`.
+
+When the bug affects how an agent uses Rudder, verify through the agent's real
+work loop when practical: seed a disposable issue, trigger the agent/runtime or
+CLI as that actor, read back persisted issue/run/comment state, and inspect the
+terminal app or CLI surface. Unit tests and direct DB assertions are supporting
+evidence, not the whole review.
 
 ### Release request
 
@@ -523,6 +603,7 @@ Validation:
 
 Evidence:
 - Required: ...
+- Scenario: ...
 - Proven: ...
 - Missing or substituted: ...
 

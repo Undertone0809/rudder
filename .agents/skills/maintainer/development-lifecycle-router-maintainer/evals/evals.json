@@ -163,6 +163,31 @@
       ]
     },
     {
+      "id": 18,
+      "prompt": "prod Z Studio 的 issue ZST-308 为什么把一堆 log 评论进来了？修完之后你 review 一下是不是产品上真的好了。",
+      "expected_output": "Routes through debug or implementation into verification, identifies the affected actor-run-chain, fixes the safe-comment path if needed, then proves the behavior through a current-dev actor workflow such as a disposable org/issue/agent run that writes a comment through the same CLI or runtime path and verifies the terminal app surface.",
+      "files": [],
+      "expectations": [
+        "The result does not treat transcript diagnosis, CLI unit tests, or direct database assertions as full product proof.",
+        "The result names the actor, trigger, system effect, and terminal surface for the workflow.",
+        "The result records a seed or mutation ledger for disposable orgs, issues, agents, runs, and comments used in proof.",
+        "The result uses Browser, Computer Use, CLI output, API readback, or screenshot evidence appropriate to the terminal surface.",
+        "The result marks any substituted proof, such as Browser current-dev instead of packaged Desktop, as substituted rather than fully equivalent."
+      ]
+    },
+    {
+      "id": 19,
+      "prompt": "你都没真实跑过一次看看效果，没有直观感受，怎么能叫 review 通过？",
+      "expected_output": "Treats the user correction as a verification-stage blocker, rebuilds the evidence ledger, identifies the missing terminal product proof, runs the real workflow when safe, and downgrades the prior review verdict until observed product evidence exists.",
+      "files": [],
+      "expectations": [
+        "The result does not defend artifact-level tests as sufficient when terminal product proof was available.",
+        "The result separates already-proven checks from missing or substituted proof.",
+        "The result runs or proposes the smallest realistic workflow that exercises the final actor path.",
+        "The result updates the review/handoff verdict based on the new evidence instead of leaving the previous review status unchanged."
+      ]
+    },
+    {
       "id": 7,
       "prompt": "organization-portability 这个文件太大了，一口气做完架构优化，但可以分批 commit，不要一下子来一个很大的 commit。",
       "expected_output": "Routes the long refactor through phased implementation, creates a visible phase checklist, commits coherent phases separately when safe, keeps checkpoint evidence after each phase, and requires spawned reviewers before each phase handoff or final completion.",
