@@ -1293,6 +1293,95 @@
     background: color-mix(in oklab, var(--surface-active) 62%, transparent);
   }
 
+  .chat-messages-viewport {
+    --chat-edge-top-opacity: 0;
+    --chat-edge-bottom-opacity: 0;
+    --chat-mask-top-alpha: 1;
+    --chat-mask-bottom-alpha: 1;
+    --chat-mask-top-size: 0px;
+    --chat-mask-bottom-size: 0px;
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+  }
+
+  .chat-messages-viewport[data-can-scroll-up="true"] {
+    --chat-edge-top-opacity: 1;
+    --chat-mask-top-alpha: 0;
+    --chat-mask-top-size: 3.25rem;
+  }
+
+  .chat-messages-viewport[data-can-scroll-down="true"] {
+    --chat-edge-bottom-opacity: 1;
+    --chat-mask-bottom-alpha: 0;
+    --chat-mask-bottom-size: 4.25rem;
+  }
+
+  .chat-messages-scroll-region {
+    mask-image: linear-gradient(
+      180deg,
+      rgba(0, 0, 0, var(--chat-mask-top-alpha)) 0,
+      #000 var(--chat-mask-top-size),
+      #000 calc(100% - var(--chat-mask-bottom-size)),
+      rgba(0, 0, 0, var(--chat-mask-bottom-alpha)) 100%
+    );
+    -webkit-mask-image: linear-gradient(
+      180deg,
+      rgba(0, 0, 0, var(--chat-mask-top-alpha)) 0,
+      #000 var(--chat-mask-top-size),
+      #000 calc(100% - var(--chat-mask-bottom-size)),
+      rgba(0, 0, 0, var(--chat-mask-bottom-alpha)) 100%
+    );
+  }
+
+  .chat-messages-viewport::before,
+  .chat-messages-viewport::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 2;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 160ms ease;
+  }
+
+  .chat-messages-viewport::before {
+    top: 0;
+    height: 5rem;
+    opacity: var(--chat-edge-top-opacity);
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      color-mix(in oklab, var(--surface-page) 24%, transparent) 18%,
+      color-mix(in oklab, var(--surface-page) 72%, transparent) 48%,
+      color-mix(in oklab, var(--surface-page) 20%, transparent) 78%,
+      transparent 100%
+    );
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    mask-image: linear-gradient(180deg, transparent 0%, black 18%, black 58%, transparent 100%);
+    -webkit-mask-image: linear-gradient(180deg, transparent 0%, black 18%, black 58%, transparent 100%);
+  }
+
+  .chat-messages-viewport::after {
+    bottom: 0;
+    height: 6rem;
+    opacity: var(--chat-edge-bottom-opacity);
+    background: linear-gradient(
+      0deg,
+      transparent 0%,
+      color-mix(in oklab, var(--surface-page) 30%, transparent) 20%,
+      color-mix(in oklab, var(--surface-page) 78%, transparent) 50%,
+      color-mix(in oklab, var(--surface-page) 22%, transparent) 80%,
+      transparent 100%
+    );
+    backdrop-filter: blur(9px);
+    -webkit-backdrop-filter: blur(9px);
+    mask-image: linear-gradient(0deg, transparent 0%, black 20%, black 60%, transparent 100%);
+    -webkit-mask-image: linear-gradient(0deg, transparent 0%, black 20%, black 60%, transparent 100%);
+  }
+
   .chat-composer {
     background: color-mix(in oklab, var(--surface-elevated) 98%, transparent);
     border: 1px solid color-mix(in oklab, var(--border-base) 88%, transparent);

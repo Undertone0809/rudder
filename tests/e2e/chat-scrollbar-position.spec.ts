@@ -184,4 +184,97 @@ test.describe("Chat scrollbar position", () => {
       );
     }).toBeLessThanOrEqual(4);
   });
+
+  test("softens message viewport edges only where chat content can continue", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 760 });
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Chat-Soft-Edges-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+
+    const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+      data: {
+        title: "Soft scroll edges",
+        summary: "Regression coverage for chat message viewport edge treatment.",
+        issueCreationMode: "manual_approval",
+        planMode: false,
+      },
+    });
+    expect(chatRes.ok()).toBe(true);
+    const chat = await chatRes.json();
+    const now = Date.now();
+
+    await e2eDb.insert(chatMessages).values(
+      Array.from({ length: 14 }, (_, index) => {
+        const createdAt = new Date(now + index * 1000);
+        return {
+          id: randomUUID(),
+          orgId: organization.id,
+          conversationId: chat.id,
+          role: index % 2 === 0 ? "user" : "assistant",
+          kind: "message",
+          status: "completed",
+          body: `Scrollable chat message ${index + 1}. ${"This message creates enough height for fade edges. ".repeat(12)}`,
+          createdAt,
+          updatedAt: createdAt,
+        };
+      }),
+    );
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    await page.goto(`/chat/${chat.id}`);
+
+    const viewport = page.locator(".chat-messages-viewport");
+    const scrollRegion = page.getByTestId("chat-messages-scroll-region");
+    await expect(page).toHaveURL(new RegExp(`/messenger/chat/${chat.id}$`), { timeout: 15_000 });
+    await expect(viewport).toBeVisible();
+    await expect(scrollRegion).toBeVisible();
+
+    await expect.poll(async () =>
+      scrollRegion.evaluate((node) => Math.round(node.scrollHeight - node.scrollTop - node.clientHeight))
+    ).toBeLessThanOrEqual(4);
+    await expect(viewport).toHaveAttribute("data-can-scroll-up", "true");
+    await expect(viewport).toHaveAttribute("data-can-scroll-down", "false");
+
+    await scrollRegion.evaluate((node) => {
+      node.scrollTop = Math.max(1, (node.scrollHeight - node.clientHeight) / 2);
+      node.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+
+    await expect(viewport).toHaveAttribute("data-can-scroll-up", "true");
+    await expect(viewport).toHaveAttribute("data-can-scroll-down", "true");
+
+    await expect.poll(async () =>
+      viewport.evaluate((node) => Number(getComputedStyle(node, "::before").opacity))
+    ).toBeGreaterThan(0.9);
+    await expect.poll(async () =>
+      viewport.evaluate((node) => Number(getComputedStyle(node, "::after").opacity))
+    ).toBeGreaterThan(0.9);
+
+    const edgeStyles = await viewport.evaluate((node) => {
+      const before = getComputedStyle(node, "::before");
+      const after = getComputedStyle(node, "::after");
+      const scrollRegion = node.querySelector('[data-testid="chat-messages-scroll-region"]');
+      const scrollRegionStyle = scrollRegion ? getComputedStyle(scrollRegion) : null;
+      return {
+        topOpacity: before.opacity,
+        bottomOpacity: after.opacity,
+        topBackdrop: before.backdropFilter || before.webkitBackdropFilter,
+        bottomBackdrop: after.backdropFilter || after.webkitBackdropFilter,
+        contentMask: scrollRegionStyle?.maskImage || scrollRegionStyle?.webkitMaskImage || "",
+      };
+    });
+
+    expect(edgeStyles.topBackdrop).toContain("blur");
+    expect(edgeStyles.bottomBackdrop).toContain("blur");
+    expect(edgeStyles.contentMask).toContain("rgba(0, 0, 0, 0)");
+  });
 });
