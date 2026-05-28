@@ -71,12 +71,14 @@ interface IssueUpdateOptions extends BaseClientOptions {
   requestDepth?: string;
   billingCode?: string;
   comment?: string;
+  commentFile?: string;
   image?: string[];
   hiddenAt?: string;
 }
 
 interface IssueCommentOptions extends BaseClientOptions {
-  body: string;
+  body?: string;
+  bodyFile?: string;
   image?: string[];
   reopen?: boolean;
 }
@@ -96,13 +98,15 @@ interface IssueCheckoutOptions extends BaseClientOptions {
 }
 
 interface IssueStatusCommentOptions extends BaseClientOptions {
-  comment: string;
+  comment?: string;
+  commentFile?: string;
   image?: string[];
 }
 
 interface IssueReviewOptions extends BaseClientOptions {
   decision: "approve" | "request_changes" | "needs_followup" | "blocked";
-  comment: string;
+  comment?: string;
+  commentFile?: string;
 }
 
 type CommandContext = ReturnType<typeof resolveCommandContext>;
@@ -335,12 +339,20 @@ export function registerIssueCommands(program: Command): void {
       .option("--request-depth <n>", "Request depth integer")
       .option("--billing-code <code>", "Billing code")
       .option("--comment <text>", "Optional comment to add with update")
+      .option("--comment-file <path>", "Read optional update comment from a file, or '-' for stdin")
       .option("--image <path>", "Image file to upload and append to the update comment; may be repeated", collectImagePath, [] as string[])
       .option("--hidden-at <iso8601|null>", "Set hiddenAt timestamp or literal 'null'")
       .action(async (issueId: string, opts: IssueUpdateOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const comment = await appendUploadedIssueImages(ctx, issueId, opts.comment, opts.image);
+          const commentText = await resolveTextInput({
+            text: opts.comment,
+            file: opts.commentFile,
+            textOption: "--comment",
+            fileOption: "--comment-file",
+            required: false,
+          });
+          const comment = await appendUploadedIssueImages(ctx, issueId, commentText, opts.image);
           const payload = updateIssueSchema.parse({
             title: opts.title,
             description: opts.description,
@@ -369,13 +381,21 @@ export function registerIssueCommands(program: Command): void {
       .command("comment")
       .description(getAgentCliCapabilityById("issue.comment").description)
       .argument("<issueId>", "Issue ID")
-      .requiredOption("--body <text>", "Comment body")
+      .option("--body <text>", "Comment body")
+      .option("--body-file <path>", "Read comment body from a file, or '-' for stdin")
       .option("--image <path>", "Image file to upload and append to the comment; may be repeated", collectImagePath, [] as string[])
       .option("--reopen", "Reopen if issue is done/cancelled")
       .action(async (issueId: string, opts: IssueCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const body = await appendUploadedIssueImages(ctx, issueId, opts.body, opts.image);
+          const bodyText = await resolveTextInput({
+            text: opts.body,
+            file: opts.bodyFile,
+            textOption: "--body",
+            fileOption: "--body-file",
+            required: true,
+          });
+          const body = await appendUploadedIssueImages(ctx, issueId, bodyText, opts.image);
           const payload = addIssueCommentSchema.parse({
             body,
             reopen: opts.reopen,
@@ -400,14 +420,22 @@ export function registerIssueCommands(program: Command): void {
         "--decision <decision>",
         "Review decision: approve, request_changes, needs_followup, or blocked",
       )
-      .requiredOption("--comment <text>", "Required review comment")
+      .option("--comment <text>", "Required review comment")
+      .option("--comment-file <path>", "Read required review comment from a file, or '-' for stdin")
       .action(async (issueId: string, opts: IssueReviewOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
           const decision = parseReviewDecision(opts.decision);
+          const comment = await resolveTextInput({
+            text: opts.comment,
+            file: opts.commentFile,
+            textOption: "--comment",
+            fileOption: "--comment-file",
+            required: true,
+          });
           const updated = await ctx.api.patch<Issue & { comment?: IssueComment | null }>(`/api/issues/${issueId}`, {
             reviewDecision: decision,
-            comment: opts.comment,
+            comment,
           });
           printOutput(updated, { json: ctx.json });
         } catch (err) {
@@ -451,12 +479,20 @@ export function registerIssueCommands(program: Command): void {
       .command("done")
       .description(getAgentCliCapabilityById("issue.done").description)
       .argument("<issueId>", "Issue ID")
-      .requiredOption("--comment <text>", "Required completion comment")
+      .option("--comment <text>", "Required completion comment")
+      .option("--comment-file <path>", "Read required completion comment from a file, or '-' for stdin")
       .option("--image <path>", "Image file to upload and append to the completion comment; may be repeated", collectImagePath, [] as string[])
       .action(async (issueId: string, opts: IssueStatusCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const comment = await appendUploadedIssueImages(ctx, issueId, opts.comment, opts.image);
+          const commentText = await resolveTextInput({
+            text: opts.comment,
+            file: opts.commentFile,
+            textOption: "--comment",
+            fileOption: "--comment-file",
+            required: true,
+          });
+          const comment = await appendUploadedIssueImages(ctx, issueId, commentText, opts.image);
           const updated = await ctx.api.patch<Issue>(`/api/issues/${issueId}`, {
             status: "done",
             comment,
@@ -473,12 +509,20 @@ export function registerIssueCommands(program: Command): void {
       .command("block")
       .description(getAgentCliCapabilityById("issue.block").description)
       .argument("<issueId>", "Issue ID")
-      .requiredOption("--comment <text>", "Required blocker comment")
+      .option("--comment <text>", "Required blocker comment")
+      .option("--comment-file <path>", "Read required blocker comment from a file, or '-' for stdin")
       .option("--image <path>", "Image file to upload and append to the blocker comment; may be repeated", collectImagePath, [] as string[])
       .action(async (issueId: string, opts: IssueStatusCommentOptions) => {
         try {
           const ctx = resolveCommandContext(opts);
-          const comment = await appendUploadedIssueImages(ctx, issueId, opts.comment, opts.image);
+          const commentText = await resolveTextInput({
+            text: opts.comment,
+            file: opts.commentFile,
+            textOption: "--comment",
+            fileOption: "--comment-file",
+            required: true,
+          });
+          const comment = await appendUploadedIssueImages(ctx, issueId, commentText, opts.image);
           const updated = await ctx.api.patch<Issue>(`/api/issues/${issueId}`, {
             status: "blocked",
             comment,
@@ -677,6 +721,44 @@ function collectNonEmptyOption(optionName: string) {
     }
     return [...previous, trimmed];
   };
+}
+
+async function resolveTextInput(opts: {
+  text: string | undefined;
+  file: string | undefined;
+  textOption: string;
+  fileOption: string;
+  required: boolean;
+}): Promise<string | undefined> {
+  const hasText = opts.text !== undefined;
+  const hasFile = opts.file !== undefined;
+  if (hasText && hasFile) {
+    throw new Error(`Use either ${opts.textOption} or ${opts.fileOption}, not both`);
+  }
+  if (hasText) return opts.text;
+  if (hasFile) return readTextInputFile(opts.file!, opts.fileOption);
+  if (opts.required) {
+    throw new Error(`Provide ${opts.textOption} <text> or ${opts.fileOption} <path>; use ${opts.fileOption} - for stdin`);
+  }
+  return undefined;
+}
+
+async function readTextInputFile(inputPath: string, optionName: string): Promise<string> {
+  if (inputPath === "-") {
+    return readStdinText();
+  }
+  const resolvedPath = path.resolve(process.cwd(), inputPath);
+  return readFile(resolvedPath, "utf8").catch((err: unknown) => {
+    throw new Error(`Unable to read ${optionName} ${inputPath}: ${err instanceof Error ? err.message : String(err)}`);
+  });
+}
+
+async function readStdinText(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function resolveIssueLabelIds(

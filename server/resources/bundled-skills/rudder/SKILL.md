@@ -155,26 +155,26 @@ permission to take over implementation unless explicitly asked:
 - approve:
 
 ```bash
-rudder issue review "<issue-id-or-identifier>" --decision approve --comment "<markdown>" --json
+rudder issue review "<issue-id-or-identifier>" --decision approve --comment-file "<path>" --json
 ```
 
 - request changes and return the issue to the assignee:
 
 ```bash
-rudder issue review "<issue-id-or-identifier>" --decision request_changes --comment "<markdown>" --json
+rudder issue review "<issue-id-or-identifier>" --decision request_changes --comment-file "<path>" --json
 ```
 
 - keep the issue in its current review/blocker state because specific evidence
   or follow-up is still missing:
 
 ```bash
-rudder issue review "<issue-id-or-identifier>" --decision needs_followup --comment "<markdown>" --json
+rudder issue review "<issue-id-or-identifier>" --decision needs_followup --comment-file "<path>" --json
 ```
 
 - block the issue:
 
 ```bash
-rudder issue review "<issue-id-or-identifier>" --decision blocked --comment "<markdown>" --json
+rudder issue review "<issue-id-or-identifier>" --decision blocked --comment-file "<path>" --json
 ```
 
 Use `blocked` to confirm a human/external blocker. The comment must name the next human action; Rudder records a human handoff and removes the issue from repeated reviewer pickup until the board changes the issue.
@@ -182,22 +182,29 @@ Use `blocked` to confirm a human/external blocker. The comment must name the nex
 - progress-only update:
 
 ```bash
-rudder issue comment "<issue-id-or-identifier>" --body "<markdown>" [--image "<path>"] --json
+rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" [--image "<path>"] --json
 ```
 
 - completion:
 
 ```bash
-rudder issue done "<issue-id-or-identifier>" --comment "<markdown>" [--image "<path>"] --json
+rudder issue done "<issue-id-or-identifier>" --comment-file "<path>" [--image "<path>"] --json
 ```
 
 - blocker:
 
 ```bash
-rudder issue block "<issue-id-or-identifier>" --comment "<markdown>" [--image "<path>"] --json
+rudder issue block "<issue-id-or-identifier>" --comment-file "<path>" [--image "<path>"] --json
 ```
 
 - generic patch when workflow commands are not enough:
+
+Use file or stdin input for issue comments. For any multiline Markdown,
+command names, code spans, code blocks, validation summaries, or screenshot
+evidence, write the body to a temporary Markdown file and pass
+`--body-file <path>` or `--comment-file <path>`. Pass `-` to read from stdin.
+Do not place shell-sensitive Markdown containing backticks or `$()` directly
+inside a shell argument.
 
 Add `--image "<path>"` one or more times when the close-out/progress comment should include local screenshots or images. Supported local image types are PNG, JPEG, WebP, and GIF; the CLI uploads them as issue attachments and appends Markdown image links.
 
@@ -269,7 +276,7 @@ Typical flow:
 rudder issue documents get "<issue-id-or-identifier>" plan --json
 rudder issue documents revisions "<issue-id-or-identifier>" plan --json
 rudder issue documents put "<issue-id-or-identifier>" plan --title "Plan" --format markdown --body "<markdown>" --json
-rudder issue comment "<issue-id-or-identifier>" --body "<mention that the plan document was updated>" --json
+rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" --json
 ```
 
 Planning rules:

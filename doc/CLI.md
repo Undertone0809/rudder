@@ -164,10 +164,10 @@ pnpm rudder issue list --org-id <org-id> [--status todo,in_progress] [--assignee
 pnpm rudder issue search "keyword or phrase" --org-id <org-id>
 pnpm rudder issue get <issue-id-or-identifier>
 pnpm rudder issue create --org-id <org-id> --title "..." [--description "..."] [--status todo] [--priority high]
-pnpm rudder issue update <issue-id> [--status in_progress] [--comment "..."] [--image ./screenshot.png]
-pnpm rudder issue comment <issue-id> --body "..." [--image ./screenshot.png] [--reopen]
-pnpm rudder issue done <issue-id> --comment "..." [--image ./screenshot.png]
-pnpm rudder issue block <issue-id> --comment "..." [--image ./screenshot.png]
+pnpm rudder issue update <issue-id> [--status in_progress] [--comment-file ./comment.md] [--image ./screenshot.png]
+pnpm rudder issue comment <issue-id> --body-file ./comment.md [--image ./screenshot.png] [--reopen]
+pnpm rudder issue done <issue-id> --comment-file ./comment.md [--image ./screenshot.png]
+pnpm rudder issue block <issue-id> --comment-file ./comment.md [--image ./screenshot.png]
 pnpm rudder issue checkout <issue-id> --agent-id <agent-id> [--expected-statuses todo,backlog,blocked]
 pnpm rudder issue release <issue-id>
 ```
@@ -180,6 +180,10 @@ project, updated time, and a compact match snippet when the server provides one.
 
 `--image` may be repeated. The CLI uploads each local PNG/JPEG/WebP/GIF as an
 issue attachment and appends Markdown image links to the comment body.
+Use `--body-file` or `--comment-file` for multiline Markdown, command names,
+code spans, code blocks, test summaries, and screenshot evidence. Pass `-` to
+read the body from stdin. Avoid placing shell-sensitive Markdown containing
+backticks or `$()` directly inside a shell argument.
 If a comment cites a screenshot path or visual validation artifact, attach that
 file with `--image <path>` instead of leaving only the local path in the text.
 
