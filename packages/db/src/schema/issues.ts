@@ -88,6 +88,12 @@ export const issues = pgTable(
       table.reviewerUserId,
       table.status,
     ),
+    createdByUserUpdatedIdx: index("issues_company_created_by_user_updated_idx").on(
+      table.orgId,
+      table.createdByUserId,
+      table.updatedAt,
+      table.id,
+    ),
     parentIdx: index("issues_company_parent_idx").on(table.orgId, table.parentId),
     projectIdx: index("issues_company_project_idx").on(table.orgId, table.projectId),
     originIdx: index("issues_company_origin_idx").on(table.orgId, table.originKind, table.originId),

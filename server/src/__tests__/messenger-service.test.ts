@@ -1040,11 +1040,16 @@ describe("messengerService and issue follows", () => {
     const issuesSummary = summaries.find((item) => item.threadKey === "issues");
 
     expect(thread.detail.items.map((item) => item.issueId)).toEqual([createdIssueId]);
-    expect(thread.detail.items[0]?.preview).toBeNull();
-    expect(thread.detail.items[0]?.body).not.toContain("I already handled this");
-    expect(thread.detail.items[0]?.sourceCommentId).toBeNull();
-    expect(thread.detail.items[0]?.sourceCommentAuthorLabel).toBeNull();
-    expect(thread.detail.items[0]?.sourceCommentBody).toBeNull();
+    expect(thread.detail.items[0]?.preview).toBe("I already handled this");
+    expect(thread.detail.items[0]?.body).toContain("I already handled this");
+    expect(thread.detail.items[0]?.sourceCommentId).toBeTruthy();
+    expect(thread.detail.items[0]?.sourceCommentAuthorLabel).toBe("You");
+    expect(thread.detail.items[0]?.sourceCommentBody).toBe("I already handled this");
+    expect(thread.detail.items[0]?.metadata).toMatchObject({
+      sourceCommentAuthorKind: "user",
+      sourceCommentByMe: true,
+      sourceCommentAuthorLabel: "You",
+    });
     expect(thread.detail.unreadCount).toBe(0);
     expect(thread.detail.needsAttention).toBe(false);
     expect(thread.summary.latestActivityAt).toBeNull();
@@ -1256,6 +1261,186 @@ describe("messengerService and issue follows", () => {
     expect(thread.detail.items.map((item) => item.issueId)).toEqual([olderIssueId, newerIssueId]);
     expect(thread.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
     expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+  });
+
+  it("paginates Messenger issue detail items by latest activity", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-issue-page";
+    const olderIssueId = randomUUID();
+    const middleIssueId = randomUUID();
+    const newerIssueId = randomUUID();
+    const olderActivityAt = new Date("2026-04-10T09:00:00.000Z");
+    const middleActivityAt = new Date("2026-04-10T10:00:00.000Z");
+    const newerActivityAt = new Date("2026-04-10T11:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Issue Page Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Issue Page Org"),
+      issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: olderIssueId,
+        orgId,
+        title: "Older paginated issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: olderActivityAt,
+        updatedAt: olderActivityAt,
+      },
+      {
+        id: middleIssueId,
+        orgId,
+        title: "Middle paginated issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: middleActivityAt,
+        updatedAt: middleActivityAt,
+      },
+      {
+        id: newerIssueId,
+        orgId,
+        title: "Newer paginated issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: newerActivityAt,
+        updatedAt: newerActivityAt,
+      },
+    ]);
+
+    const firstPage = await messengerSvc.getIssuesThread(orgId, userId, { limit: 2 });
+
+    expect(firstPage.detail.items.map((item) => item.issueId)).toEqual([middleIssueId, newerIssueId]);
+    expect(firstPage.detail.pageInfo).toEqual({
+      limit: 2,
+      hasMore: true,
+      nextCursor: expect.any(String),
+    });
+    expect(firstPage.summary.subtitle).toBe("3 tracked issues");
+    expect(firstPage.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+
+    const secondPage = await messengerSvc.getIssuesThread(orgId, userId, {
+      limit: 2,
+      cursor: firstPage.detail.pageInfo?.nextCursor,
+    });
+
+    expect(secondPage.detail.items.map((item) => item.issueId)).toEqual([olderIssueId]);
+    expect(secondPage.detail.pageInfo).toEqual({
+      limit: 2,
+      hasMore: false,
+      nextCursor: null,
+    });
+    expect(secondPage.summary.subtitle).toBe("3 tracked issues");
+    expect(secondPage.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+  });
+
+  it("uses stable issue pagination cursors when the cursor issue changes activity", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-issue-page-stale";
+    const olderIssueId = randomUUID();
+    const middleIssueId = randomUUID();
+    const newerIssueId = randomUUID();
+    const olderActivityAt = new Date("2026-04-10T09:00:00.000Z");
+    const middleActivityAt = new Date("2026-04-10T10:00:00.000Z");
+    const newerActivityAt = new Date("2026-04-10T11:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Issue Stable Cursor Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Issue Stable Cursor Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: olderIssueId,
+        orgId,
+        title: "Older stable cursor issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: olderActivityAt,
+        updatedAt: olderActivityAt,
+      },
+      {
+        id: middleIssueId,
+        orgId,
+        title: "Middle stable cursor issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: middleActivityAt,
+        updatedAt: middleActivityAt,
+      },
+      {
+        id: newerIssueId,
+        orgId,
+        title: "Newer stable cursor issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: newerActivityAt,
+        updatedAt: newerActivityAt,
+      },
+    ]);
+
+    const firstPage = await messengerSvc.getIssuesThread(orgId, userId, { limit: 1 });
+    expect(firstPage.detail.items.map((item) => item.issueId)).toEqual([newerIssueId]);
+
+    await db
+      .update(issues)
+      .set({ updatedAt: new Date("2026-04-10T12:00:00.000Z") })
+      .where(eq(issues.id, newerIssueId));
+
+    const secondPage = await messengerSvc.getIssuesThread(orgId, userId, {
+      limit: 2,
+      cursor: firstPage.detail.pageInfo?.nextCursor,
+    });
+
+    expect(secondPage.detail.items.map((item) => item.issueId)).toEqual([olderIssueId, middleIssueId]);
+    expect(secondPage.detail.items.map((item) => item.issueId)).not.toContain(newerIssueId);
+    expect(secondPage.detail.pageInfo).toEqual({
+      limit: 2,
+      hasMore: false,
+      nextCursor: null,
+    });
+  });
+
+  it("rejects malformed Messenger issue cursors instead of restarting from page one", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-issue-page-invalid";
+    const issueId = randomUUID();
+    const activityAt = new Date("2026-04-10T09:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Issue Invalid Cursor Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Issue Invalid Cursor Org"),
+      issuePrefix: `I${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Invalid cursor issue",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: userId,
+      createdAt: activityAt,
+      updatedAt: activityAt,
+    });
+
+    await expect(messengerSvc.getIssuesThread(orgId, userId, { cursor: "not-a-cursor" })).rejects.toMatchObject({
+      status: 409,
+      message: "Messenger issues cursor is invalid or expired",
+    });
   });
 
   it("returns Messenger approval detail items in chronological order while keeping the summary pinned to latest activity", async () => {

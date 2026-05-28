@@ -95,7 +95,12 @@ export function messengerRoutes(db: Db) {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const userId = boardUserId(req);
-    res.json(await svc.getIssuesThread(orgId, userId));
+    const rawLimit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : undefined;
+    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
+    res.json(await svc.getIssuesThread(orgId, userId, {
+      cursor,
+      limit: Number.isFinite(rawLimit) ? rawLimit : undefined,
+    }));
   });
 
   router.get("/orgs/:orgId/messenger/approvals", async (req, res) => {

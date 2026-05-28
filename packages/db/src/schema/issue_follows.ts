@@ -14,6 +14,7 @@ export const issueFollows = pgTable(
   (table) => ({
     orgIssueIdx: index("issue_follows_org_issue_idx").on(table.orgId, table.issueId),
     orgUserIdx: index("issue_follows_org_user_idx").on(table.orgId, table.userId),
+    orgUserIssueIdx: index("issue_follows_org_user_issue_idx").on(table.orgId, table.userId, table.issueId),
     orgIssueUserUnique: uniqueIndex("issue_follows_org_issue_user_idx").on(
       table.orgId,
       table.issueId,
