@@ -1309,12 +1309,12 @@
     right: 0;
     top: 1rem;
     z-index: 1;
-    height: 1.35rem;
+    height: 2rem;
     pointer-events: none;
     background: linear-gradient(
       180deg,
-      color-mix(in oklab, var(--surface-page) 92%, transparent) 0%,
-      color-mix(in oklab, var(--surface-page) 54%, transparent) 45%,
+      color-mix(in oklab, var(--surface-page) 34%, transparent) 0%,
+      color-mix(in oklab, var(--surface-page) 20%, transparent) 42%,
       transparent 100%
     );
     opacity: 0;
@@ -1322,7 +1322,7 @@
   }
 
   .chat-thread-frame[data-can-scroll-up="true"]::before {
-    opacity: 0.72;
+    opacity: 0.68;
   }
 
   .chat-composer-dock {
@@ -1335,21 +1335,21 @@
     position: absolute;
     left: -0.125rem;
     right: -0.125rem;
-    top: -1.45rem;
-    height: 1.45rem;
+    top: -2.35rem;
+    height: 2.35rem;
     pointer-events: none;
     background: linear-gradient(
       180deg,
       transparent 0%,
-      color-mix(in oklab, var(--surface-page) 48%, transparent) 52%,
-      color-mix(in oklab, var(--surface-page) 90%, transparent) 100%
+      color-mix(in oklab, var(--surface-page) 10%, transparent) 40%,
+      color-mix(in oklab, var(--surface-page) 26%, transparent) 100%
     );
     opacity: 0;
     transition: opacity 160ms ease;
   }
 
   .chat-composer-dock[data-can-scroll-down="true"]::before {
-    opacity: 0.78;
+    opacity: 0.74;
   }
 
   .chat-composer {

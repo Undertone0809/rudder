@@ -280,7 +280,9 @@ test.describe("Chat scrollbar position", () => {
         viewportBottomContent: viewportAfter.content,
         viewportTopBackdrop: viewportBefore.backdropFilter || viewportBefore.webkitBackdropFilter,
         viewportBottomBackdrop: viewportAfter.backdropFilter || viewportAfter.webkitBackdropFilter,
+        frameBackdrop: frameBefore?.backdropFilter || frameBefore?.webkitBackdropFilter,
         frameFadeBackground: frameBefore?.backgroundImage ?? "",
+        dockBackdrop: dockBefore?.backdropFilter || dockBefore?.webkitBackdropFilter,
         dockFadeBackground: dockBefore?.backgroundImage ?? "",
         dockFadeTop: dockBefore?.top ?? "",
         contentMask: scrollRegionStyle?.maskImage || scrollRegionStyle?.webkitMaskImage || "",
@@ -292,6 +294,8 @@ test.describe("Chat scrollbar position", () => {
     expect(edgeStyles.viewportTopBackdrop).toBe("none");
     expect(edgeStyles.viewportBottomBackdrop).toBe("none");
     expect(edgeStyles.contentMask).toBe("none");
+    expect(edgeStyles.frameBackdrop).toBe("none");
+    expect(edgeStyles.dockBackdrop).toBe("none");
     expect(edgeStyles.frameFadeBackground).toContain("linear-gradient");
     expect(edgeStyles.dockFadeBackground).toContain("linear-gradient");
     expect(edgeStyles.dockFadeTop).toContain("-");
