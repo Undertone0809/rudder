@@ -1,12 +1,19 @@
-// @vitest-environment node
+// @vitest-environment jsdom
 
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BreadcrumbBar } from "./BreadcrumbBar";
+
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 let pathname = "/RUD/messenger/issues";
 let search = "";
 let sidebarOpen = true;
+let cleanupFn: (() => void) | null = null;
 
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: import("react").ReactNode }) => (
@@ -62,6 +69,18 @@ describe("BreadcrumbBar", () => {
     pathname = "/RUD/messenger/issues";
     search = "";
     sidebarOpen = true;
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    }) as typeof globalThis.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = vi.fn();
+  });
+
+  afterEach(() => {
+    cleanupFn?.();
+    cleanupFn = null;
+    document.body.innerHTML = "";
+    vi.restoreAllMocks();
   });
 
   it("hides the integrated card header on messenger routes", () => {
@@ -105,6 +124,42 @@ describe("BreadcrumbBar", () => {
     expect(html).not.toContain("Issue Tracker");
     expect(html).toContain("Search Linear issues...");
     expect(html).not.toContain("Create Issue");
+  });
+
+  it("does not let the issue search retain focus after the native find shortcut", async () => {
+    pathname = "/RUD/issues";
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<BreadcrumbBar variant="card" />);
+      await Promise.resolve();
+    });
+
+    const input = container.querySelector<HTMLInputElement>("input[placeholder='Search issues...']");
+    expect(input).not.toBeNull();
+    input!.focus();
+    expect(document.activeElement).toBe(input);
+
+    const event = new KeyboardEvent("keydown", {
+      key: "f",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    await act(async () => {
+      document.dispatchEvent(event);
+      await Promise.resolve();
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.activeElement).not.toBe(input);
   });
 
   it("renders a Dashboard and Calendar switcher on the dashboard page", () => {
