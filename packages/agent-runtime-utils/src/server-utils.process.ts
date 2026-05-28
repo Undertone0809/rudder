@@ -12,6 +12,7 @@ export interface RunProcessResult {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  terminatedEarly?: boolean;
   stdout: string;
   stderr: string;
   pid: number | null;
@@ -373,4 +374,3 @@ export function buildIssueDocumentsPrompt(input: IssueDocumentPromptInput | null
   if (sections.length === 0) return "";
   return ["## Issue Documents", ...sections].join("\n\n");
 }
-

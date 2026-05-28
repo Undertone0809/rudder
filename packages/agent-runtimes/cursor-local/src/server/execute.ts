@@ -29,7 +29,12 @@ import {
   selectPromptTemplate,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import { DEFAULT_CURSOR_LOCAL_COMMAND, DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
-import { detectCursorAuthRequired, parseCursorJsonl, isCursorUnknownSessionError } from "./parse.js";
+import {
+  detectCursorAuthRequired,
+  detectCursorToolHandlerUnsupported,
+  parseCursorJsonl,
+  isCursorUnknownSessionError,
+} from "./parse.js";
 import { normalizeCursorStreamLine } from "../shared/stream.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
 
@@ -91,6 +96,10 @@ function renderRudderEnvNote(env: Record<string, string>): string {
   ].join("\n");
 }
 
+function hasCursorResultEvent(stdout: string): boolean {
+  return parseCursorJsonl(stdout).resultSeen;
+}
+
 function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
@@ -133,18 +142,48 @@ function resolveManagedCursorSkillsDir(homeDir: string): string {
   return path.join(homeDir, ".cursor", "skills");
 }
 
+const CURSOR_SKILL_HOME_ENTRIES = new Set(["skills", "skills-cursor"]);
+
+async function removeManagedCursorSkillEntry(targetCursorDir: string, entryName: string): Promise<void> {
+  const target = path.join(targetCursorDir, entryName);
+  const existing = await fs.lstat(target).catch(() => null);
+  if (!existing) return;
+
+  if (entryName === "skills" && existing.isDirectory() && !existing.isSymbolicLink()) {
+    return;
+  }
+
+  await fs.rm(target, { recursive: true, force: true });
+}
+
 async function syncCursorSharedHomeEntries(sourceHome: string, targetHome: string) {
   const sourceCursorDir = path.join(sourceHome, ".cursor");
   const entries = await fs.readdir(sourceCursorDir, { withFileTypes: true }).catch(() => []);
   const targetCursorDir = path.join(targetHome, ".cursor");
   await fs.mkdir(targetCursorDir, { recursive: true });
+  for (const entryName of CURSOR_SKILL_HOME_ENTRIES) {
+    await removeManagedCursorSkillEntry(targetCursorDir, entryName);
+  }
   for (const entry of entries) {
-    if (entry.name === "skills") continue;
+    if (CURSOR_SKILL_HOME_ENTRIES.has(entry.name)) continue;
     await ensureSymlink(
       path.join(targetCursorDir, entry.name),
       path.join(sourceCursorDir, entry.name),
     );
   }
+}
+
+async function syncCursorMacOSKeychainSearchPath(sourceHome: string, targetHome: string): Promise<boolean> {
+  if (process.platform !== "darwin") return false;
+
+  const sourceKeychainsDir = path.join(sourceHome, "Library", "Keychains");
+  if (!(await pathExists(sourceKeychainsDir))) return false;
+
+  await ensureSymlink(
+    path.join(targetHome, "Library", "Keychains"),
+    sourceKeychainsDir,
+  );
+  return true;
 }
 
 async function prepareManagedCursorHome(
@@ -161,11 +200,18 @@ async function prepareManagedCursorHome(
   if (await pathExists(path.join(sourceHome, ".cursor"))) {
     await syncCursorSharedHomeEntries(sourceHome, targetHome);
   }
+  const keychainLinked = await syncCursorMacOSKeychainSearchPath(sourceHome, targetHome);
 
   await onLog(
     "stdout",
     `[rudder] Using Rudder-managed Cursor home "${targetHome}" (seeded from "${sourceHome}").\n`,
   );
+  if (keychainLinked) {
+    await onLog(
+      "stdout",
+      "[rudder] Shared macOS Keychain search path into managed Cursor home for subscription authentication.\n",
+    );
+  }
   return targetHome;
 }
 
@@ -555,6 +601,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       stdin: prompt,
       onSpawn,
       abortSignal: ctx.abortSignal,
+      shouldTerminate: (event) =>
+        (event.stream === "stdout" && hasCursorResultEvent(event.stdout)) ||
+        detectCursorToolHandlerUnsupported(event.stdout, event.stderr),
       onLog: async (stream, chunk) => {
         if (stream !== "stdout") {
           await onLog(stream, chunk);
@@ -579,6 +628,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         exitCode: number | null;
         signal: string | null;
         timedOut: boolean;
+        terminatedEarly?: boolean;
         stdout: string;
         stderr: string;
       };
@@ -609,21 +659,36 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     const parsedError = typeof attempt.parsed.errorMessage === "string" ? attempt.parsed.errorMessage.trim() : "";
     const stderrLine = firstNonEmptyLine(attempt.proc.stderr);
     const authRequired = detectCursorAuthRequired(attempt.proc.stdout, attempt.proc.stderr);
+    const toolHandlerUnsupported = detectCursorToolHandlerUnsupported(attempt.proc.stdout, attempt.proc.stderr);
+    const completedBeforeTermination =
+      attempt.parsed.resultSeen &&
+      !attempt.parsed.resultIsError &&
+      attempt.proc.terminatedEarly === true;
+    const resolvedExitCode = completedBeforeTermination ? 0 : attempt.proc.exitCode;
+    const failed =
+      resolvedExitCode !== 0 &&
+      !(resolvedExitCode === null && attempt.proc.signal === null);
     const fallbackErrorMessage =
       parsedError ||
       (authRequired ? "Cursor CLI authentication is required." : "") ||
+      (toolHandlerUnsupported ? "Cursor CLI tool execution failed: no handler found for a server tool message." : "") ||
       stderrLine ||
       `Cursor exited with code ${attempt.proc.exitCode ?? -1}`;
 
     return {
-      exitCode: attempt.proc.exitCode,
+      exitCode: resolvedExitCode,
       signal: attempt.proc.signal,
       timedOut: false,
       errorMessage:
-        (attempt.proc.exitCode ?? 0) === 0
+        !failed
           ? null
           : fallbackErrorMessage,
-      errorCode: (attempt.proc.exitCode ?? 0) !== 0 && authRequired ? "cursor_auth_required" : null,
+      errorCode:
+        failed && authRequired
+          ? "cursor_auth_required"
+          : failed && toolHandlerUnsupported
+            ? "cursor_tool_handler_unsupported"
+            : null,
       usage: attempt.parsed.usage,
       sessionId: resolvedSessionId,
       sessionParams: resolvedSessionParams,

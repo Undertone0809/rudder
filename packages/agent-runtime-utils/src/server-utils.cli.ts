@@ -947,6 +947,12 @@ export async function runChildProcess(
     onSpawn?: (meta: { pid: number; startedAt: string }) => Promise<void>;
     stdin?: string;
     abortSignal?: AbortSignal;
+    shouldTerminate?: (event: {
+      stream: "stdout" | "stderr";
+      chunk: string;
+      stdout: string;
+      stderr: string;
+    }) => boolean;
   },
 ): Promise<RunProcessResult> {
   const onLogError = opts.onLogError ?? ((err, id, msg) => console.warn({ err, runId: id }, msg));
@@ -1006,6 +1012,7 @@ export async function runChildProcess(
             exitCode: null,
             signal: "SIGTERM",
             timedOut: false,
+            terminatedEarly: false,
             stdout: "",
             stderr: "",
             pid: null,
@@ -1037,9 +1044,22 @@ export async function runChildProcess(
 
         let timedOut = false;
         let aborted = false;
+        let terminatedEarly = false;
         let stdout = "";
         let stderr = "";
         let logChain: Promise<void> = Promise.resolve();
+
+        const terminateIfRequested = (stream: "stdout" | "stderr", chunk: string) => {
+          if (terminatedEarly || timedOut || aborted) return;
+          if (!opts.shouldTerminate?.({ stream, chunk, stdout, stderr })) return;
+          terminatedEarly = true;
+          child.kill("SIGTERM");
+          setTimeout(() => {
+            if (isChildProcessAlive(child)) {
+              child.kill("SIGKILL");
+            }
+          }, Math.max(1, opts.graceSec) * 1000);
+        };
 
         const timeout =
           opts.timeoutSec > 0
@@ -1076,6 +1096,7 @@ export async function runChildProcess(
           logChain = logChain
             .then(() => opts.onLog("stdout", text))
             .catch((err) => onLogError(err, runId, "failed to append stdout log chunk"));
+          terminateIfRequested("stdout", text);
         });
 
         child.stderr?.on("data", (chunk: unknown) => {
@@ -1084,6 +1105,7 @@ export async function runChildProcess(
           logChain = logChain
             .then(() => opts.onLog("stderr", text))
             .catch((err) => onLogError(err, runId, "failed to append stderr log chunk"));
+          terminateIfRequested("stderr", text);
         });
 
         child.on("error", (err: Error) => {
@@ -1108,6 +1130,7 @@ export async function runChildProcess(
               exitCode: code,
               signal: aborted ? "SIGTERM" : signal,
               timedOut,
+              terminatedEarly,
               stdout,
               stderr,
               pid: child.pid ?? null,

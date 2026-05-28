@@ -68,6 +68,10 @@ Different runtimes offer different levels of physical isolation, but Rudder keep
 
 Physical isolation is adapter-dependent because the underlying CLIs expose different controls. The product rule is not adapter-dependent: the skills shown as enabled for a Rudder agent are the skills Rudder selected for that agent.
 
+Cursor local uses a managed per-agent `HOME` and writes only Rudder-selected skills into that home's `.cursor/skills`. Rudder does not share the host `.cursor/skills` or `.cursor/skills-cursor` directories into the managed home. On macOS, Rudder may bridge the operator Keychain search path so subscription login continues to work under the managed home; that bridge is for authentication state, not for skill selection.
+
+If a Cursor run fails with `cursor_tool_handler_unsupported`, Rudder reached the Cursor CLI but Cursor reported that it could not handle a server tool message. In that state, Rudder records a precise failed run instead of leaving the heartbeat stuck. Tool-using Rudder workflows such as commenting on an issue, closing an issue, or creating another agent still depend on the installed Cursor CLI supporting the required tool execution path.
+
 ## Codex local versus Claude Code local
 
 Codex local can be isolated more aggressively because Codex exposes a managed `CODEX_HOME` model that Rudder can control for the run. Rudder uses that home to materialize selected skills, removes inherited skill configuration, disables bundled Codex skills, and starts Codex with plugins disabled.

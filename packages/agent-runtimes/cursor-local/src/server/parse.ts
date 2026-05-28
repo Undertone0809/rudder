@@ -53,6 +53,8 @@ export function parseCursorJsonl(stdout: string) {
   let sessionId: string | null = null;
   const messages: string[] = [];
   let errorMessage: string | null = null;
+  let resultSeen = false;
+  let resultIsError = false;
   let totalCostUsd = 0;
   const usage = {
     inputTokens: 0,
@@ -78,6 +80,7 @@ export function parseCursorJsonl(stdout: string) {
     }
 
     if (type === "result") {
+      resultSeen = true;
       const usageObj = parseObject(event.usage);
       usage.inputTokens += asNumber(
         usageObj.input_tokens,
@@ -94,6 +97,7 @@ export function parseCursorJsonl(stdout: string) {
       totalCostUsd += asNumber(event.total_cost_usd, asNumber(event.cost_usd, asNumber(event.cost, 0)));
 
       const isError = event.is_error === true || asString(event.subtype, "").toLowerCase() === "error";
+      if (isError) resultIsError = true;
       const resultText = asString(event.result, "").trim();
       if (resultText && messages.length === 0) {
         messages.push(resultText);
@@ -146,6 +150,8 @@ export function parseCursorJsonl(stdout: string) {
     usage,
     costUsd: totalCostUsd > 0 ? totalCostUsd : null,
     errorMessage,
+    resultSeen,
+    resultIsError,
   };
 }
 
@@ -171,4 +177,14 @@ export function detectCursorAuthRequired(stdout: string, stderr: string): boolea
   return /press\s+any\s+key\s+to\s+sign\s+in|not\s+logged\s+in|login\s+required|authentication\s+required|cursor_api_key/i.test(
     haystack,
   );
+}
+
+export function detectCursorToolHandlerUnsupported(stdout: string, stderr: string): boolean {
+  const haystack = `${stdout}\n${stderr}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+
+  return /No handler found for server message|NoHandlerFoundError/i.test(haystack);
 }

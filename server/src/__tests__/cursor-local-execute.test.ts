@@ -290,6 +290,124 @@ describe("cursor execute", () => {
     }
   });
 
+  it("treats a Cursor result event as completion even when the CLI process stays open", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-result-hang-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "agent");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(
+      commandPath,
+      [
+        "#!/usr/bin/env node",
+        "console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'cursor-session-1' }));",
+        "console.log(JSON.stringify({ type: 'result', subtype: 'success', session_id: 'cursor-session-1', result: 'done' }));",
+        "setInterval(() => {}, 1000);",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.chmod(commandPath, 0o755);
+
+    const restoreEnv = setManagedCursorEnv(root);
+
+    try {
+      const result = await execute({
+        runId: "run-cursor-result-hang",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Cursor Coder",
+          agentRuntimeType: "cursor",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "auto",
+          timeoutSec: 30,
+          graceSec: 1,
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.timedOut).toBe(false);
+      expect(result.errorMessage).toBeNull();
+      expect(result.summary).toBe("done");
+      expect(result.signal).toBe("SIGTERM");
+    } finally {
+      restoreEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails fast when Cursor CLI reports an unsupported server tool message and stays open", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-tool-handler-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "agent");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(
+      commandPath,
+      [
+        "#!/usr/bin/env node",
+        "console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'cursor-session-1' }));",
+        "process.stderr.write('\\nError (unhandledRejection): No handler found for server message\\nNoHandlerFoundError: No handler found for server message\\n');",
+        "setInterval(() => {}, 1000);",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.chmod(commandPath, 0o755);
+
+    const restoreEnv = setManagedCursorEnv(root);
+
+    try {
+      const result = await execute({
+        runId: "run-cursor-tool-handler",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Cursor Coder",
+          agentRuntimeType: "cursor",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "auto",
+          timeoutSec: 30,
+          graceSec: 1,
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.timedOut).toBe(false);
+      expect(result.errorCode).toBe("cursor_tool_handler_unsupported");
+      expect(result.errorMessage).toBe("Cursor CLI tool execution failed: no handler found for a server tool message.");
+      expect(result.signal).toBe("SIGTERM");
+    } finally {
+      restoreEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("injects organization-library runtime skills into the Cursor skills home before execution", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-execute-runtime-skill-"));
     const workspace = path.join(root, "workspace");
@@ -308,11 +426,27 @@ describe("cursor execute", () => {
       ".cursor",
       "skills",
     );
+    const managedSkillsCursorHome = path.join(
+      root,
+      ".rudder",
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "cursor-home",
+      "agents",
+      "agent-1",
+      ".cursor",
+      "skills-cursor",
+    );
     await fs.mkdir(workspace, { recursive: true });
     await writeFakeCursorCommand(commandPath);
 
     const rudderDir = await createSkillDir(runtimeSkillsRoot, "rudder");
     const asciiHeartDir = await createSkillDir(runtimeSkillsRoot, "ascii-heart");
+    await createSkillDir(path.join(root, ".cursor", "skills"), "host-global-skill");
+    await createSkillDir(path.join(root, ".cursor", "skills-cursor"), "shell");
+    await fs.writeFile(path.join(root, ".cursor", "config.json"), "{}", "utf8");
 
     const restoreEnv = setManagedCursorEnv(root);
 
@@ -363,6 +497,83 @@ describe("cursor execute", () => {
       expect(await fs.realpath(path.join(managedSkillsHome, "ascii-heart"))).toBe(
         await fs.realpath(asciiHeartDir),
       );
+      await expect(fs.lstat(path.join(managedSkillsHome, "host-global-skill"))).rejects.toThrow();
+      await expect(fs.lstat(managedSkillsCursorHome)).rejects.toThrow();
+      const bridgedCursorConfig = path.join(
+        root,
+        ".rudder",
+        "instances",
+        "default",
+        "organizations",
+        "organization-1",
+        "cursor-home",
+        "agents",
+        "agent-1",
+        ".cursor",
+        "config.json",
+      );
+      expect((await fs.lstat(bridgedCursorConfig)).isSymbolicLink()).toBe(true);
+    } finally {
+      restoreEnv();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform === "darwin")("bridges the macOS Keychain search path into the managed Cursor home", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-keychain-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "agent");
+    const sourceKeychainsDir = path.join(root, "Library", "Keychains");
+    const managedKeychainsDir = path.join(
+      root,
+      ".rudder",
+      "instances",
+      "default",
+      "organizations",
+      "organization-1",
+      "cursor-home",
+      "agents",
+      "agent-1",
+      "Library",
+      "Keychains",
+    );
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(sourceKeychainsDir, { recursive: true });
+    await fs.writeFile(path.join(sourceKeychainsDir, "login.keychain-db"), "", "utf8");
+    await writeFakeCursorCommand(commandPath);
+
+    const restoreEnv = setManagedCursorEnv(root);
+
+    try {
+      const result = await execute({
+        runId: "run-cursor-keychain",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Cursor Coder",
+          agentRuntimeType: "cursor",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "auto",
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect((await fs.lstat(managedKeychainsDir)).isSymbolicLink()).toBe(true);
+      expect(await fs.realpath(managedKeychainsDir)).toBe(await fs.realpath(sourceKeychainsDir));
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });

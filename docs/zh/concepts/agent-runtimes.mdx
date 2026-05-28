@@ -68,6 +68,10 @@ Adapter 应该消费这份已经准备好的 config。它不应该根据宿主 C
 
 物理隔离会受 adapter 和底层 CLI 能力影响。产品规则不受 adapter 影响：在 Rudder 里显示为启用的 agent skills，只能来自 Rudder 为这个 agent 选择的 skills。
 
+Cursor local 使用按 agent 托管的 `HOME`，并且只把 Rudder 选中的 skills 写入这个 home 里的 `.cursor/skills`。Rudder 不会把宿主机的 `.cursor/skills` 或 `.cursor/skills-cursor` 目录共享到托管 home。macOS 上，Rudder 可能会桥接 operator 的 Keychain search path，让订阅登录在托管 home 下继续可用；这个桥接只用于认证状态，不用于 skill 选择。
+
+如果 Cursor run 失败并显示 `cursor_tool_handler_unsupported`，说明 Rudder 已经成功调用 Cursor CLI，但 Cursor 报告自己无法处理 server tool message。这个状态下，Rudder 会记录一个明确失败的 run，而不是让 heartbeat 卡住。评论 issue、关闭 issue、创建新 agent 这类需要工具调用的 Rudder 工作流，仍然依赖当前安装的 Cursor CLI 支持对应的 tool execution path。
+
 ## Codex local 和 Claude Code local 的区别
 
 Codex local 能做更强的隔离，因为 Codex 暴露了 Rudder 可以控制的 managed `CODEX_HOME` 模型。Rudder 用这个 home materialize 已选 skills，移除继承来的 skill config，禁用 Codex bundled skills，并以 plugins disabled 的方式启动 Codex。
