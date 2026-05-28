@@ -304,7 +304,7 @@ function ProposalFactRow({
   children: ReactNode;
 }) {
   return (
-    <div className="grid min-h-9 grid-cols-[minmax(5rem,0.8fr)_minmax(0,1.2fr)] items-center gap-4 border-b border-[color:var(--border-soft)] py-2 last:border-b-0">
+    <div className="grid min-h-9 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-3 border-b border-[color:var(--border-soft)] py-2 last:border-b-0">
       <div className="text-sm text-muted-foreground">{label}</div>
       <div className="flex min-w-0 justify-end text-sm font-medium text-foreground">{children}</div>
     </div>
@@ -376,7 +376,7 @@ function ProposalPrincipalSelector({
       searchPlaceholder={role === "assignee" ? "Search owners..." : "Search reviewers..."}
       emptyMessage={role === "assignee" ? "No owners found." : "No reviewers found."}
       ariaLabel={role === "assignee" ? "Edit owner" : "Edit reviewer"}
-      className="max-w-full justify-end rounded-[var(--radius-sm)] border-transparent bg-transparent px-1.5 py-1 hover:border-border hover:bg-accent/50"
+      className="w-full max-w-full justify-end rounded-[var(--radius-sm)] border-transparent bg-transparent px-1.5 py-1 hover:border-border hover:bg-accent/50"
       contentClassName="min-w-64"
       onChange={(nextValue) => onChange(issueProposalWithPrincipalSelection(proposal, role, nextValue))}
       renderTriggerValue={(option) =>

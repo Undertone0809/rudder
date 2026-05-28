@@ -59,7 +59,7 @@ export function AssigneeLabel({
       data-slot="assignee-label"
       data-kind={kind}
       data-layout={layout}
-      className={cn("inline-flex min-w-0 items-center gap-1.5", stacked && "w-full", className)}
+      className={cn("inline-flex min-w-0 max-w-full items-center gap-1.5", stacked && "w-full", className)}
     >
       {kind === "agent" ? (
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
@@ -80,7 +80,7 @@ export function AssigneeLabel({
         "inline-flex min-w-0 max-w-full items-center gap-1.5",
         stacked && "w-full flex-1 flex-col items-start gap-1",
       )}>
-        <span className={cn("truncate text-xs", muted && "text-muted-foreground")}>{label}</span>
+        <span className={cn("min-w-0 truncate text-xs", muted && "text-muted-foreground")}>{label}</span>
         {badgeLabel ? <AgentTitleBadge label={badgeLabel} constrain={!stacked} /> : null}
       </span>
     </span>
