@@ -1395,6 +1395,8 @@ async function bootstrap(): Promise<void> {
       const cliInstall = await ensureDesktopCliLink();
       if (cliInstall.status === "installed") {
         console.info("[rudder-desktop] installed CLI wrapper", cliInstall.targetPath);
+      } else if (cliInstall.status === "skipped_temporary_install") {
+        console.info("[rudder-desktop] CLI wrapper not installed:", cliInstall.detail);
       } else if (cliInstall.status === "skipped_existing_file" || cliInstall.status === "unavailable") {
         console.warn("[rudder-desktop] CLI wrapper not installed:", cliInstall.detail);
       }

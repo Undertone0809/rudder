@@ -1,9 +1,11 @@
 import os from "node:os";
 import path from "node:path";
+import fs from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   DESKTOP_CLI_FLAG,
   buildDesktopCliWrapper,
+  ensureDesktopCliLink,
   resolveDesktopCliArgv,
   shouldInstallDesktopCliLink,
 } from "./cli-link.js";
@@ -47,6 +49,35 @@ describe("desktop cli link helpers", () => {
   it("only installs the desktop cli wrapper for packaged desktop builds", () => {
     expect(shouldInstallDesktopCliLink(false)).toBe(false);
     expect(shouldInstallDesktopCliLink(true)).toBe(true);
+  });
+
+  it("does not install the desktop cli wrapper for smoke or explicitly disabled launches", () => {
+    expect(shouldInstallDesktopCliLink(true, { RUDDER_DESKTOP_APP_NAME: "Rudder-smoke-packaged-3100" })).toBe(false);
+    expect(shouldInstallDesktopCliLink(true, { RUDDER_DESKTOP_DISABLE_CLI_LINK: "1" })).toBe(false);
+  });
+
+  it("does not write global wrappers for temporary desktop executables", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cli-link-test-"));
+    const binDir = path.join(root, "bin");
+    const tempAppExecutable = path.join(root, "desktop-install", "Rudder.app", "Contents", "MacOS", "Rudder");
+    const existingWrapper = path.join(binDir, "rudder");
+    await fs.mkdir(path.dirname(tempAppExecutable), { recursive: true });
+    await fs.mkdir(binDir, { recursive: true });
+    await fs.writeFile(tempAppExecutable, "", "utf8");
+    await fs.writeFile(existingWrapper, "#!/bin/sh\n# rudder-desktop-cli-managed\necho old\n", "utf8");
+
+    try {
+      const result = await ensureDesktopCliLink({
+        executablePath: tempAppExecutable,
+        pathValue: binDir,
+        homeDir: path.join(root, "home"),
+      });
+
+      expect(result.status).toBe("skipped_temporary_install");
+      expect(await fs.readFile(existingWrapper, "utf8")).toContain("echo old");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it("keeps home-relative wrapper targets shell-safe", () => {
