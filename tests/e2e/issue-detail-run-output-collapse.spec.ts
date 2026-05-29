@@ -106,8 +106,12 @@ test("collapses failed issue run output by default and keeps non-failed output e
     .filter({ hasText: failedRunId.slice(0, 8) });
   await expect(failedRunCard.getByRole("button", { name: "Show details" })).toBeVisible();
   await expect(failedRunCard).not.toContainText("No run output captured.");
+  const collapsedRunBox = await failedRunCard.boundingBox();
+  expect(collapsedRunBox?.height).toBeLessThan(48);
 
   await failedRunCard.getByRole("button", { name: "Show details" }).click();
   await expect(failedRunCard.getByRole("button", { name: "Hide details" })).toBeVisible();
   await expect(failedRunCard).toContainText("No run output captured.");
+  const expandedRunBox = await failedRunCard.boundingBox();
+  expect(expandedRunBox?.height).toBeGreaterThan((collapsedRunBox?.height ?? 0) + 24);
 });

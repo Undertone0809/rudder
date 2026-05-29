@@ -36,6 +36,7 @@ import {
 import { Boxes } from "lucide-react";
 import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref, type AgentRole } from "@rudderhq/shared";
 import { useI18n } from "@/context/I18nContext";
+import { useNavigate } from "@/lib/router";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { ImagePreviewDialog, type ImagePreviewState } from "@/components/ImagePreviewDialog";
 import { AgentIcon } from "./AgentIconPicker";
@@ -104,8 +105,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
   onSubmit,
   submitShortcut = "mod-enter",
   plainText = false,
+  onInlineTokenClick,
 }: MarkdownEditorProps, forwardedRef) {
   const { locale } = useI18n();
+  const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
   const ref = useRef<MDXEditorMethods>(null);
   const lexicalEditorRef = useRef<LexicalEditor | null>(null);
@@ -151,6 +154,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
     }
     return map;
   }, [mentions]);
+  const skillDetailsHrefByTarget = useMemo(
+    () => new Map(
+      (mentions ?? [])
+        .filter((mention) => mention.kind === "skill" && mention.skillMarkdownTarget && mention.skillDetailsHref)
+        .map((mention) => [mention.skillMarkdownTarget!, mention.skillDetailsHref!] as const),
+    ),
+    [mentions],
+  );
 
   const filteredMentions = useMemo(() => {
     if (!mentionState || !mentions) return [];
@@ -722,6 +733,35 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 
   const canDropImage = Boolean(imageUploadHandler);
 
+  const handleDefaultInlineTokenClick = useCallback((token: AtomicInlineTokenElement) => {
+    if (token.kind === "mention") {
+      const parsed = parseMentionChipHref(token.href);
+      if (!parsed) return;
+      const target = parsed.kind === "agent"
+        ? `/agents/${parsed.agentId}`
+        : parsed.kind === "issue"
+          ? `/issues/${parsed.ref ?? parsed.issueId}`
+          : parsed.kind === "chat"
+            ? `/messenger/chat/${parsed.conversationId}`
+            : `/projects/${parsed.projectId}`;
+      navigate(target);
+      return;
+    }
+
+    const detailsHref = skillDetailsHrefByTarget.get(token.href);
+    if (detailsHref) {
+      navigate(detailsHref);
+    }
+  }, [navigate, skillDetailsHrefByTarget]);
+
+  const activateInlineToken = useCallback((event: AtomicInlineTokenEvent) => {
+    const token = readAtomicInlineTokenElement(event.target instanceof Node ? event.target : null);
+    if (!token) return false;
+    stopAtomicInlineTokenEvent(event);
+    (onInlineTokenClick ?? handleDefaultInlineTokenClick)(token);
+    return true;
+  }, [handleDefaultInlineTokenClick, onInlineTokenClick]);
+
   return (
     <div
       ref={containerRef}
@@ -877,6 +917,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         stopAtomicInlineTokenEvent(event);
       }}
       onClickCapture={(event) => {
+        if (activateInlineToken(event)) return;
         stopAtomicInlineTokenEvent(event);
       }}
       onCopyCapture={(event) => {

@@ -212,6 +212,70 @@ describe("MarkdownBody", () => {
     expect(html).not.toContain(">@Rudder App</a>");
   });
 
+  it("renders bare agent @mentions as chips when agent metadata is provided", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody agentMentions={[{ name: "Holden", agentId: "agent-123", agentIcon: "code" }]}>
+          {"@Holden please review this.\n\n`@Holden stays literal in code`"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/agents/agent-123"');
+    expect(html).toContain('data-mention-kind="agent"');
+    expect(html).toContain(">Holden</a>");
+    expect(html).toContain("@Holden stays literal in code");
+  });
+
+  it("does not rewrite bare agent names inside inline code or existing links", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody agentMentions={[{ name: "Holden", agentId: "agent-123", agentIcon: "code" }]}>
+          {"`please @Holden review` and [ask @Holden](https://example.com), then @Holden should review."}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("please @Holden review");
+    expect(html).toContain(">ask @Holden</a>");
+    expect(html).toContain('href="https://example.com"');
+    expect(html).toContain('href="/agents/agent-123"');
+    expect(html.match(/data-mention-kind="agent"/g)).toHaveLength(1);
+  });
+
+  it("uses backend-compatible punctuation boundaries for bare agent mentions", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody agentMentions={[{ name: "Holden", agentId: "agent-123", agentIcon: "code" }]}>
+          {"@Holden, please look. @Holden: should stay text. @Holden) should stay text."}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html.match(/data-mention-kind="agent"/g)).toHaveLength(1);
+    expect(html).toContain('href="/agents/agent-123"');
+    expect(html).toContain("@Holden: should stay text");
+    expect(html).toContain("@Holden) should stay text");
+  });
+
+  it("keeps multi-word bare agent names as text while structured links still render as chips", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody
+          agentMentions={[
+            { name: "Holden Reviewer", agentId: "agent-long", agentIcon: "search" },
+          ]}
+        >
+          {`@Holden Reviewer needs a structured link: [@Holden Reviewer](${buildAgentMentionHref("agent-long", "search")}).`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/agents/agent-long"');
+    expect(html).toContain(">Holden Reviewer</a>");
+    expect(html).toContain("@Holden Reviewer needs a structured link");
+  });
+
   it("renders issue mentions as chips that link to the issue route", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>

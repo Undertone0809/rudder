@@ -2,14 +2,16 @@
 
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { Agent, ChatConversation, ChatMessage, Issue } from "@rudderhq/shared";
-import { describe, expect, it, vi } from "vitest";
+import type { Agent, ChatConversation, ChatMessage, Issue, Project } from "@rudderhq/shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@/context/ThemeContext";
 import {
   ChatSystemMessageBody,
   ChatMessageItem,
   INTERRUPTED_CHAT_CONTINUATION_PROMPT,
   ProposalCard,
+  CHAT_PROJECT_BY_AGENT_STORAGE_KEY,
+  NO_PROJECT_ID,
   askUserAnswerFromMessage,
   assistantStateLabel,
   buildChatProposalRevisionPrompt,
@@ -31,6 +33,9 @@ import {
   issueProposalPrincipalSelectionValue,
   issueProposalWithPrincipalSelection,
   parseAskUserAnswerMessage,
+  rememberChatProjectId,
+  rememberChatProjectIdForAgent,
+  resolveDefaultDraftChatProjectId,
   resolveDraftIssueContext,
   scrollChatMessagesToBottom,
   statusChipClassName,
@@ -55,6 +60,10 @@ vi.mock("@/lib/router", () => ({
   useParams: () => ({}),
   useSearchParams: () => [new URLSearchParams()],
 }));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function message(overrides: Partial<ChatMessage>): ChatMessage {
   return {
@@ -116,6 +125,26 @@ function conversation(overrides: Partial<ChatConversation>): ChatConversation {
     updatedAt: new Date("2020-01-01T00:00:00.000Z"),
     ...overrides,
   };
+}
+
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key: string) => values.get(key) ?? null,
+    key: (index: number) => Array.from(values.keys())[index] ?? null,
+    removeItem: (key: string) => { values.delete(key); },
+    setItem: (key: string, value: string) => { values.set(key, value); },
+  };
+}
+
+function withMockWindowStorage() {
+  const storage = createMemoryStorage();
+  vi.stubGlobal("window", { localStorage: storage });
+  return storage;
 }
 
 function renderSystemMessageBody(message: ChatMessage) {
@@ -264,6 +293,54 @@ describe("draft issue chat context", () => {
       { entityType: "project", entityId: "project-1" },
     ]);
     expect(draftIssueContextLabel({ identifier: null, title: "Untitled fix" })).toBe("Untitled fix");
+  });
+});
+
+describe("draft chat project defaults", () => {
+  const projects = [
+    { id: "project-alpha" },
+    { id: "project-beta" },
+    { id: "project-gamma" },
+  ] as Project[];
+
+  it("prefers the pending issue project over remembered defaults", () => {
+    withMockWindowStorage();
+    rememberChatProjectId("org-1", "project-gamma");
+    rememberChatProjectIdForAgent("org-1", "agent-1", "project-beta");
+
+    expect(resolveDefaultDraftChatProjectId({
+      orgId: "org-1",
+      projects,
+      issue: { projectId: "project-alpha" },
+      agentId: "agent-1",
+    })).toBe("project-alpha");
+  });
+
+  it("uses an agent-specific recent project before the organization recent project", () => {
+    withMockWindowStorage();
+    rememberChatProjectId("org-1", "project-gamma");
+    rememberChatProjectIdForAgent("org-1", "agent-1", "project-beta");
+
+    expect(resolveDefaultDraftChatProjectId({
+      orgId: "org-1",
+      projects,
+      issue: null,
+      agentId: "agent-1",
+    })).toBe("project-beta");
+  });
+
+  it("honors an agent-specific no-project choice", () => {
+    const storage = withMockWindowStorage();
+    rememberChatProjectId("org-1", "project-gamma");
+    rememberChatProjectIdForAgent("org-1", "agent-1", null);
+
+    expect(resolveDefaultDraftChatProjectId({
+      orgId: "org-1",
+      projects,
+      issue: null,
+      agentId: "agent-1",
+    })).toBe(NO_PROJECT_ID);
+    expect(storage.getItem(CHAT_PROJECT_BY_AGENT_STORAGE_KEY)).toContain('"agent-1":null');
   });
 });
 

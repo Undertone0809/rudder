@@ -1,6 +1,7 @@
 import { isValidElement, useEffect, useId, useState, type MouseEvent, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { buildAgentMentionHref } from "@rudderhq/shared";
 import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
 import { mentionChipInlineStyle, parseMentionChipHref, stripMentionChipLabelPrefix } from "../lib/mention-chips";
@@ -15,8 +16,15 @@ interface MarkdownBodyProps {
   /** Optional resolver for relative image paths (e.g. within export packages) */
   resolveImageSrc?: (src: string) => string | null;
   onLinkClick?: MarkdownLinkClickHandler;
+  agentMentions?: MarkdownAgentMentionPreview[];
   skillReferences?: MarkdownSkillReferencePreview[];
   enableImagePreview?: boolean;
+}
+
+export interface MarkdownAgentMentionPreview {
+  name: string;
+  agentId: string;
+  agentIcon?: string | null;
 }
 
 export type MarkdownLinkClickHandler = (input: {
@@ -43,6 +51,141 @@ function flattenText(value: ReactNode): string {
 
 function normalizeSkillReferenceLookupKey(value: string | null | undefined) {
   return value?.trim().replace(/\/+$/u, "").toLowerCase() ?? "";
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function escapeMarkdownLinkLabel(value: string) {
+  return value.replace(/([\\[\]])/g, "\\$1");
+}
+
+function normalizeAgentMentionName(value: string) {
+  return value.trim().replace(/^@+/u, "");
+}
+
+function isBackendResolvableBareAgentName(value: string) {
+  return /^[^\s@,!?.]+$/u.test(value);
+}
+
+function findClosingMarkdownToken(source: string, token: string, fromIndex: number) {
+  const index = source.indexOf(token, fromIndex);
+  return index >= 0 ? index : null;
+}
+
+function findClosingMarkdownParen(source: string, fromIndex: number) {
+  let escaped = false;
+  for (let index = fromIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === ")") return index;
+  }
+  return null;
+}
+
+function splitUnprotectedMarkdownText(source: string): Array<{ text: string; protected: boolean }> {
+  const parts: Array<{ text: string; protected: boolean }> = [];
+  let cursor = 0;
+  let plainStart = 0;
+
+  function pushPlain(end: number) {
+    if (end > plainStart) parts.push({ text: source.slice(plainStart, end), protected: false });
+  }
+
+  function pushProtected(end: number) {
+    pushPlain(cursor);
+    parts.push({ text: source.slice(cursor, end), protected: true });
+    cursor = end;
+    plainStart = end;
+  }
+
+  while (cursor < source.length) {
+    const char = source[cursor];
+
+    if (char === "`") {
+      const fence = source.slice(cursor).match(/^`+/u)?.[0] ?? "`";
+      const closing = findClosingMarkdownToken(source, fence, cursor + fence.length);
+      if (closing !== null) {
+        pushProtected(closing + fence.length);
+        continue;
+      }
+    }
+
+    const linkStart = char === "[" ? cursor : char === "!" && source[cursor + 1] === "[" ? cursor + 1 : null;
+    if (linkStart !== null) {
+      const closeBracket = findClosingMarkdownToken(source, "]", linkStart + 1);
+      if (closeBracket !== null && source[closeBracket + 1] === "(") {
+        const closeParen = findClosingMarkdownParen(source, closeBracket + 2);
+        if (closeParen !== null) {
+          pushProtected(closeParen + 1);
+          continue;
+        }
+      }
+    }
+
+    if (char === "<") {
+      const closeAngle = findClosingMarkdownToken(source, ">", cursor + 1);
+      if (closeAngle !== null) {
+        pushProtected(closeAngle + 1);
+        continue;
+      }
+    }
+
+    cursor += 1;
+  }
+
+  pushPlain(source.length);
+  return parts;
+}
+
+export function linkBareAgentMentions(
+  source: string,
+  agentMentions: MarkdownAgentMentionPreview[] | null | undefined,
+) {
+  if (!source.includes("@") || !agentMentions?.length) return source;
+
+  const mentionEntries = agentMentions
+    .map((mention) => ({
+      ...mention,
+      name: normalizeAgentMentionName(mention.name),
+    }))
+    .filter((mention) => mention.name && mention.agentId && isBackendResolvableBareAgentName(mention.name))
+    .sort((a, b) => b.name.length - a.name.length);
+  if (mentionEntries.length === 0) return source;
+
+  const mentionRe = new RegExp(
+    `(^|[^\\w/[\\]\`])@(${mentionEntries.map((mention) => escapeRegExp(mention.name)).join("|")})(?=$|[\\s@,!?.])`,
+    "giu",
+  );
+  const fencedCodeRe = /^(```|~~~)/;
+  let inFence = false;
+
+  return source.split(/(\n)/).map((part) => {
+    if (part === "\n") return part;
+    if (fencedCodeRe.test(part.trimStart())) {
+      inFence = !inFence;
+      return part;
+    }
+    if (inFence) return part;
+
+    return splitUnprotectedMarkdownText(part).map((segment) => {
+      if (segment.protected) return segment.text;
+      return segment.text.replace(mentionRe, (match, prefix: string, rawName: string) => {
+        const found = mentionEntries.find((mention) => mention.name.toLowerCase() === rawName.toLowerCase());
+        if (!found) return match;
+        const href = buildAgentMentionHref(found.agentId, found.agentIcon);
+        return `${prefix}[@${escapeMarkdownLinkLabel(found.name)}](${href})`;
+      });
+    }).join("");
+  }).join("");
 }
 
 function isExternalMarkdownHref(value: string | null | undefined) {
@@ -165,6 +308,7 @@ export function MarkdownBody({
   className,
   resolveImageSrc,
   onLinkClick,
+  agentMentions,
   skillReferences,
   enableImagePreview = true,
 }: MarkdownBodyProps) {
@@ -180,7 +324,10 @@ export function MarkdownBody({
       .map((preview) => [normalizeSkillReferenceLookupKey(preview.label), preview] as const)
       .filter(([key]) => key.length > 0),
   );
-  const normalizedChildren = normalizeEscapedMarkdownNewlines(children);
+  const normalizedChildren = linkBareAgentMentions(
+    normalizeEscapedMarkdownNewlines(children),
+    agentMentions,
+  );
   const handleImageInspect = (image: HTMLImageElement) => {
     if (!enableImagePreview) return;
     const src = image.currentSrc || image.src;

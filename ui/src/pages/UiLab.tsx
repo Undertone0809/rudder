@@ -1815,9 +1815,11 @@ function CommonComponentsSection() {
 
         <LabExample title="Markdown, skill token, and goal tree">
           <div className="space-y-4">
-            <MarkdownBody>
+            <MarkdownBody agentMentions={[{ name: "Holden", agentId: "ui-lab-agent-holden", agentIcon: "code" }]}>
               {[
                 "A component lab entry should include **real rendered state**, compact fixture data, and a clear coverage row.",
+                "",
+                "@Holden should render as an agent mention chip when a comment calls for agent attention.",
                 "",
                 "- Keep examples deterministic.",
                 "- Use workflow E2E for behavior-heavy surfaces.",

@@ -134,9 +134,14 @@ test.describe("Agent runs filter menu", () => {
     await mainContent.getByRole("button", { name: "Sort runs: Newest" }).click();
     const sortPopover = page.getByTestId("run-sort-popover");
     await expect(sortPopover).toBeVisible();
-    await sortPopover.getByRole("radio", { name: /Longest duration/ }).click();
+    await expect(sortPopover.getByRole("menuitemradio", { name: "Created ↓" })).toBeVisible();
+    await sortPopover.getByRole("menuitemradio", { name: "Duration" }).click();
+    await expect(page).toHaveURL(/runSort=duration_asc/);
+    await expect(sortPopover.getByRole("menuitemradio", { name: "Duration ↑" })).toBeVisible();
+    await expect(listPane.getByRole("link").first()).toContainText(newestShortRunId.slice(0, 8));
+    await sortPopover.getByRole("menuitemradio", { name: "Duration ↑" }).click();
     await expect(page).toHaveURL(/runSort=duration_desc/);
-    await expect(sortPopover).toBeHidden();
+    await expect(sortPopover.getByRole("menuitemradio", { name: "Duration ↓" })).toBeVisible();
     await expect(listPane.getByRole("link").first()).toContainText(failedRunId.slice(0, 8));
 
     await mainContent.getByRole("button", { name: "Filter" }).click();
