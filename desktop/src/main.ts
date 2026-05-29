@@ -246,11 +246,34 @@ function resolveResidentTrayTemplatePath(): string | null {
   return fs.existsSync(candidate) ? candidate : null;
 }
 
+function resolveDesktopResourceAssetPath(fileName: string): string | null {
+  const candidates = app.isPackaged
+    ? [
+        path.resolve(process.resourcesPath, fileName),
+        path.resolve(process.resourcesPath, "app", "build", fileName),
+      ]
+    : [
+        path.resolve(MODULE_DIR, "..", "build", fileName),
+      ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
 function createResidentTrayIcon(): string | Electron.NativeImage {
   if (process.platform === "darwin") {
     const templatePath = resolveResidentTrayTemplatePath();
     if (templatePath) {
       return templatePath;
+    }
+  }
+
+  const iconPath = process.platform === "win32"
+    ? resolveDesktopResourceAssetPath("icon.ico") ?? resolveDesktopResourceAssetPath("icon.png")
+    : resolveDesktopResourceAssetPath("icon.png");
+  if (iconPath) {
+    const image = nativeImage.createFromPath(iconPath);
+    if (!image.isEmpty()) {
+      return process.platform === "win32" ? image : image.resize({ width: 16, height: 16 });
     }
   }
 
@@ -460,9 +483,10 @@ function resolveSharedInstancePaths(instanceId: string): NonNullable<BootState["
 }
 
 function resolveDesktopRuntimeIconPath(profile: LocalEnvProfile): string | null {
-  const iconFile = profile.name === "dev" ? "icon-dev.png" : "icon.png";
-  const candidate = path.resolve(MODULE_DIR, "..", "build", iconFile);
-  return fs.existsSync(candidate) ? candidate : null;
+  if (process.platform === "win32" && profile.name !== "dev") {
+    return resolveDesktopResourceAssetPath("icon.ico") ?? resolveDesktopResourceAssetPath("icon.png");
+  }
+  return resolveDesktopResourceAssetPath(profile.name === "dev" ? "icon-dev.png" : "icon.png");
 }
 
 function applyDesktopRuntimeIcon(profile: LocalEnvProfile): Electron.NativeImage | null {
