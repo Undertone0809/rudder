@@ -300,6 +300,70 @@ describe("automation service live-execution coalescing", () => {
     expect(automationIssues.map((issue) => issue.id)).toContain(run.linkedIssueId);
   });
 
+  it("creates a fresh execution issue when the previous automation issue has a completed execution run", async () => {
+    const { agentId, orgId, issueSvc, automation, svc } = await seedFixture();
+    const previousRunId = randomUUID();
+    const completedHeartbeatRunId = randomUUID();
+    const previousIssue = await issueSvc.create(orgId, {
+      projectId: automation.projectId,
+      title: automation.title,
+      description: automation.description,
+      status: "todo",
+      priority: automation.priority,
+      assigneeAgentId: automation.assigneeAgentId,
+      originKind: "automation_execution",
+      originId: automation.id,
+      originRunId: previousRunId,
+    });
+
+    await db.insert(automationRuns).values({
+      id: previousRunId,
+      orgId,
+      automationId: automation.id,
+      triggerId: null,
+      source: "manual",
+      status: "issue_created",
+      triggeredAt: new Date("2026-03-20T12:00:00.000Z"),
+      linkedIssueId: previousIssue.id,
+      completedAt: new Date("2026-03-20T12:00:00.000Z"),
+    });
+
+    await db.insert(heartbeatRuns).values({
+      id: completedHeartbeatRunId,
+      orgId,
+      agentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "completed",
+      contextSnapshot: { issueId: previousIssue.id },
+      startedAt: new Date("2026-03-20T12:01:00.000Z"),
+      finishedAt: new Date("2026-03-20T12:05:00.000Z"),
+    });
+
+    await db
+      .update(issues)
+      .set({
+        executionRunId: completedHeartbeatRunId,
+        executionLockedAt: new Date("2026-03-20T12:01:00.000Z"),
+      })
+      .where(eq(issues.id, previousIssue.id));
+
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+    expect(run.status).toBe("issue_created");
+    expect(run.failureReason).toBeNull();
+    expect(run.linkedIssueId).toBeTruthy();
+    expect(run.linkedIssueId).not.toBe(previousIssue.id);
+
+    const automationIssues = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(eq(issues.originId, automation.id));
+
+    expect(automationIssues).toHaveLength(2);
+    expect(automationIssues.map((issue) => issue.id)).toContain(previousIssue.id);
+    expect(automationIssues.map((issue) => issue.id)).toContain(run.linkedIssueId);
+  });
+
   it("wakes the assignee when an automation creates a fresh execution issue", async () => {
     const { agentId, automation, svc, wakeups } = await seedFixture();
 
@@ -829,6 +893,31 @@ describe("automation service live-execution coalescing", () => {
 
     expect(automationIssues).toHaveLength(1);
     expect(automationIssues[0]?.id).toBe(previousIssue.id);
+  });
+
+  it("creates distinct execution issues for always-enqueue dispatches", async () => {
+    const { automation, svc } = await seedFixture();
+    await svc.update(automation.id, { concurrencyPolicy: "always_enqueue" }, {});
+
+    const first = await svc.runAutomation(automation.id, { source: "manual" });
+    const second = await svc.runAutomation(automation.id, { source: "manual" });
+
+    expect(first.status).toBe("issue_created");
+    expect(second.status).toBe("issue_created");
+    expect(first.failureReason).toBeNull();
+    expect(second.failureReason).toBeNull();
+    expect(first.linkedIssueId).toBeTruthy();
+    expect(second.linkedIssueId).toBeTruthy();
+    expect(first.linkedIssueId).not.toBe(second.linkedIssueId);
+
+    const automationIssues = await db
+      .select({ id: issues.id, originRunId: issues.originRunId, executionRunId: issues.executionRunId })
+      .from(issues)
+      .where(eq(issues.originId, automation.id));
+
+    expect(automationIssues).toHaveLength(2);
+    expect(automationIssues.map((issue) => issue.originRunId).sort()).toEqual([first.id, second.id].sort());
+    expect(automationIssues.every((issue) => Boolean(issue.executionRunId))).toBe(true);
   });
 
   it("serializes concurrent dispatches until the first execution issue is linked to a queued run", async () => {

@@ -11,6 +11,7 @@ import {
   agents,
   applyPendingMigrations,
   budgetPolicies,
+  costMonthlySpendRollups,
   createDb,
   documentRevisions,
   documents,
@@ -140,6 +141,7 @@ describe("organization service", () => {
     await db.delete(agentConfigRevisions);
     await db.delete(organizationSkills);
     await db.delete(budgetPolicies);
+    await db.delete(costMonthlySpendRollups);
     await db.delete(agents);
     await db.delete(organizations);
     if (rudderHome) {
@@ -254,6 +256,15 @@ describe("organization service", () => {
       agentRuntimeConfig: {},
       runtimeConfig: {},
       permissions: {},
+    });
+
+    await db.insert(costMonthlySpendRollups).values({
+      id: randomUUID(),
+      orgId,
+      scopeType: "organization",
+      scopeId: orgId,
+      monthStart: new Date("2026-04-01T00:00:00.000Z"),
+      spendCents: 123,
     });
 
     await db.insert(agentConfigRevisions).values({

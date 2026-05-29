@@ -200,6 +200,8 @@ test.describe("Agent dashboard skills analytics", () => {
     await expect(mainContent.getByText("2 runs with skill usage")).toBeVisible();
     await expect(mainContent.getByText("Skill Usage Distribution")).toBeVisible();
     await expect(mainContent.getByText("Skill Usage Timeline")).toBeVisible();
+    await expect(mainContent.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "100%" })).toBeVisible();
+    await expect(mainContent.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "4" })).toBeVisible();
     const distributionPie = mainContent.getByRole("button", { name: /Skill usage distribution: 4 skill uses across 3 skills/ });
     await expect(distributionPie).toBeVisible();
     await distributionPie.hover();
@@ -362,6 +364,8 @@ test.describe("Agent dashboard skills analytics", () => {
     await expect(mainContent.getByText("Skill usage per run for Last 7 days across all agents. Hover a day to inspect the breakdown.")).toBeVisible();
     await expect(mainContent.getByText("4 skill uses")).toBeVisible();
     await expect(mainContent.getByText("2 runs with skill usage")).toBeVisible();
+    await expect(mainContent.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "100%" })).toBeVisible();
+    await expect(mainContent.locator('[data-testid="dashboard-chart-scale"]').filter({ hasText: "4" })).toBeVisible();
 
     const distributionPie = mainContent.getByRole("button", { name: /Skill usage distribution: 4 skill uses across 3 skills/ });
     await expect(distributionPie).toBeVisible();

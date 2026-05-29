@@ -62,4 +62,12 @@ describe("AgentIcon", () => {
     expect(container.textContent).toBe("");
     expect(container.querySelector("svg")).toBeTruthy();
   });
+
+  it("uses a generated fallback avatar when an agent seed is available", () => {
+    const container = render(<AgentIcon icon={null} role="general" fallbackSeed="agent-1" />);
+
+    const img = container.querySelector("img");
+    expect(img?.getAttribute("src")).toMatch(/^data:image\/svg\+xml/);
+    expect(container.querySelector("svg")).toBeNull();
+  });
 });

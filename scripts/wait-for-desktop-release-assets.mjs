@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 const args = process.argv.slice(2);
 let repo = process.env.GITHUB_REPOSITORY || "Undertone0809/rudder";
@@ -41,23 +44,30 @@ if (!Number.isFinite(delaySeconds) || delaySeconds <= 0) delaySeconds = 10;
 const expectedAssets = [
   `Rudder-${version}-linux-x64.AppImage`,
   `Rudder-${version}-macos-arm64-portable.zip`,
+  `Rudder-${version}-macos-arm64-shell.zip`,
   `Rudder-${version}-macos-x64-portable.zip`,
+  `Rudder-${version}-macos-x64-shell.zip`,
   `Rudder-${version}-windows-x64-portable.zip`,
+  `Rudder-${version}-windows-x64-shell.zip`,
   "SHASUMS256.txt",
 ];
+const expectedChecksummedAssets = expectedAssets.filter((assetName) => assetName !== "SHASUMS256.txt");
 
 for (let attempt = 1; attempt <= attempts; attempt += 1) {
   const release = readRelease(repo, tag);
   if (release) {
     const assetNames = new Set((release.assets ?? []).map((asset) => asset.name));
     const missing = expectedAssets.filter((assetName) => !assetNames.has(assetName));
-    if (missing.length === 0 && release.isDraft === false) {
+    const checksumMissing = missing.length === 0 && release.isDraft === false
+      ? missingChecksumEntries(repo, tag, expectedChecksummedAssets)
+      : [];
+    if (missing.length === 0 && checksumMissing.length === 0 && release.isDraft === false) {
       console.log(`ok\t${repo}@${tag}\tassets=${expectedAssets.length}`);
       process.exit(0);
     }
 
     console.log(
-      `[${attempt}/${attempts}] waiting for ${repo}@${tag}: missing ${missing.join(", ") || "<none>"}`,
+      `[${attempt}/${attempts}] waiting for ${repo}@${tag}: missing ${missing.join(", ") || "<none>"}; missing checksums ${checksumMissing.join(", ") || "<none>"}`,
     );
   } else {
     console.log(`[${attempt}/${attempts}] waiting for ${repo}@${tag}: release not visible yet`);
@@ -81,6 +91,27 @@ function readRelease(repoName, releaseTag) {
     );
   } catch {
     return null;
+  }
+}
+
+function missingChecksumEntries(repoName, releaseTag, assetNames) {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "rudder-desktop-release-checksums."));
+  try {
+    execFileSync(
+      "gh",
+      ["release", "download", releaseTag, "--repo", repoName, "--pattern", "SHASUMS256.txt", "--dir", tempDir],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const checksumText = readFileSync(path.join(tempDir, "SHASUMS256.txt"), "utf8");
+    const checksummedNames = new Set(checksumText
+      .split(/\r?\n/)
+      .map((line) => line.trim().split(/\s+/).pop())
+      .filter(Boolean));
+    return assetNames.filter((assetName) => !checksummedNames.has(assetName));
+  } catch {
+    return assetNames;
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
   }
 }
 

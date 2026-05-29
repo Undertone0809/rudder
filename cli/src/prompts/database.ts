@@ -1,5 +1,5 @@
 import * as p from "@clack/prompts";
-import type { DatabaseConfig } from "../config/schema.js";
+import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type DatabaseConfig } from "../config/schema.js";
 import {
   resolveDefaultBackupDir,
   resolveDefaultEmbeddedPostgresDir,
@@ -23,6 +23,7 @@ export async function promptDatabase(current?: DatabaseConfig): Promise<Database
       enabled: true,
       intervalMinutes: 60,
       retentionDays: 30,
+      maxEstimatedBytes: DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
       dir: defaultBackupDir,
     },
   };
@@ -147,6 +148,21 @@ export async function promptDatabase(current?: DatabaseConfig): Promise<Database
     process.exit(0);
   }
 
+  const backupMaxEstimatedInput = await p.text({
+    message: "Scheduled backup max database estimate (bytes)",
+    defaultValue: String(base.backup.maxEstimatedBytes || DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES),
+    placeholder: String(DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES),
+    validate: (val) => {
+      const n = Number(val);
+      if (!Number.isInteger(n) || n < 1) return "Max estimate must be a positive integer byte count";
+      return undefined;
+    },
+  });
+  if (p.isCancel(backupMaxEstimatedInput)) {
+    p.cancel("Setup cancelled.");
+    process.exit(0);
+  }
+
   return {
     mode,
     connectionString,
@@ -156,6 +172,7 @@ export async function promptDatabase(current?: DatabaseConfig): Promise<Database
       enabled: backupEnabled,
       intervalMinutes: Number(backupIntervalInput || "60"),
       retentionDays: Number(backupRetentionInput || "30"),
+      maxEstimatedBytes: Number(backupMaxEstimatedInput || String(DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES)),
       dir: backupDirInput || defaultBackupDir,
     },
   };

@@ -1,0 +1,90 @@
+name: Feature request
+description: Propose a new capability or product behavior.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for new capabilities, meaningful workflow changes, or product improvements.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the feature in one or two concise paragraphs.
+      placeholder: What should Rudder support, and why now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Explain the user or agent workflow that is currently painful, missing, or impossible.
+      placeholder: What job cannot be completed well today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed solution
+      description: Describe the expected product behavior.
+      placeholder: What should the user, agent, or reviewer be able to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Mention simpler workarounds or different designs.
+      placeholder: What else could solve this, and why is it weaker?
+
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Affected area
+      description: Pick the closest area.
+      options:
+        - Product workflow
+        - UI
+        - Server/API
+        - Database
+        - Desktop app
+        - CLI
+        - Agent runtime/heartbeat
+        - Docs
+        - Release/packaging
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: List the concrete checks that would make this feature done.
+      placeholder: |
+        - A user can ...
+        - The system prevents ...
+        - The reviewer can verify ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or context
+      description: Add screenshots, user examples, traces, links, prior issues, or docs.
+      placeholder: Paste concise context here.
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: Optional. Clarify what this request should not include.
+      placeholder: This should not attempt to ...
+

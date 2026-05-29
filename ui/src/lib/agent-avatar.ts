@@ -114,6 +114,22 @@ export function getAgentAvatarImageSrc(icon: string | null | undefined): string 
   return dataUri;
 }
 
+export function getAgentFallbackAvatarImageSrc(seed: string | null | undefined): string | null {
+  const normalizedSeed = seed?.trim();
+  if (!normalizedSeed) return null;
+
+  const cacheKey = `fallback:${normalizedSeed}`;
+  const cached = diceBearAvatarCache.get(cacheKey);
+  if (cached) return cached;
+
+  const dataUri = createAvatar(notionists, {
+    seed: normalizedSeed,
+    size: 256,
+  }).toDataUri();
+  diceBearAvatarCache.set(cacheKey, dataUri);
+  return dataUri;
+}
+
 export function getAgentAvatarBackgroundPreset(icon: string | null | undefined) {
   const presetId = readAgentAvatarBackgroundId(icon) ?? DEFAULT_BACKGROUND_ID;
   return (

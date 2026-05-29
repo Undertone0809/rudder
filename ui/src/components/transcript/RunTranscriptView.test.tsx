@@ -569,14 +569,14 @@ describe("RunTranscriptView", () => {
               name: "command_execution",
               toolUseId: "cmd-close-1",
               input: {
-                command: "rudder issue done \"RUD-38\" --comment $ '## Review Summary\\n\\nCompleted validation.'",
+                command: "rudder issue done \"RUD-38\" --comment-file /tmp/review-summary.md",
               },
             },
             {
               kind: "tool_result",
               ts: "2026-03-12T00:00:02.354Z",
               toolUseId: "cmd-close-1",
-              content: "command: rudder issue done \"RUD-38\" --comment ...\nstatus: completed\nexit_code: 0\n\nIssue RUD-38 marked done.",
+              content: "command: rudder issue done \"RUD-38\" --comment-file /tmp/review-summary.md\nstatus: completed\nexit_code: 0\n\nIssue RUD-38 marked done.",
               isError: false,
             },
           ]}
@@ -585,7 +585,7 @@ describe("RunTranscriptView", () => {
     );
 
     expect(html).toContain("Marked RUD-38 done");
-    expect(html).toContain("added review summary comment");
+    expect(html).toContain("added file-backed comment");
     expect(countOccurrences(html, "Marked RUD-38 done")).toBe(1);
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).not.toContain("Ran rudder issue done");
@@ -605,7 +605,7 @@ describe("RunTranscriptView", () => {
   it("customizes read-only Rudder issue commands separately from issue updates", () => {
     const html = renderCommandSummary("rudder issue context RUD-38 --json | sed -n '1,80p'");
     const commentsHtml = renderCommandSummary("rudder issue comments list RUD-38 --json");
-    const updateHtml = renderCommandSummary("rudder issue update ZST-69 --status todo --comment nope");
+    const updateHtml = renderCommandSummary("rudder issue update ZST-69 --status todo --comment-file /tmp/update.md");
 
     expect(html).toContain("Inspected RUD-38");
     expect(html).not.toContain("Updated RUD-38");
@@ -1327,6 +1327,82 @@ describe("RunTranscriptView", () => {
 
     expect(html).toContain("Use flomo-local-api skill");
     expect(html).not.toContain("Read /Users/zeeland/.codex/skills/flomo-local-api/SKILL.md");
+  });
+
+  it("folds Claude Code skill context user injections into the skill tool card", () => {
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "tool_call",
+        ts: "2026-05-25T09:56:02.245Z",
+        name: "Skill",
+        toolUseId: "tool-skill-1",
+        input: {
+          skill: "rudder-create-agent",
+          args: "create COO agent",
+        },
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-05-25T09:56:02.254Z",
+        toolUseId: "tool-skill-1",
+        content: "Launching skill: rudder-create-agent",
+        isError: false,
+      },
+      {
+        kind: "user",
+        ts: "2026-05-25T09:56:02.255Z",
+        text: [
+          "Base directory for this skill: /var/folders/example/T/rudder-skills/.claude/skills/rudder-create-agent",
+          "",
+          "# Rudder Create Agent Skill",
+          "",
+          "Use this skill when you are asked to hire or create an agent in Rudder.",
+          "",
+          "ARGUMENTS: create COO agent",
+        ].join("\n"),
+      },
+    ];
+
+    const blocks = normalizeTranscript(entries, false);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      type: "tool",
+      name: "Skill",
+      status: "completed",
+      result: expect.stringContaining("Loaded skill context: rudder-create-agent"),
+    });
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView density="compact" entries={entries} />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Use rudder-create-agent skill");
+    expect(html).not.toContain("User</span>");
+    expect(html).not.toContain("Base directory for this skill");
+  });
+
+  it("labels Claude Code skill context clearly in raw transcript mode", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <RunTranscriptView
+          mode="raw"
+          density="compact"
+          entries={[
+            {
+              kind: "user",
+              ts: "2026-05-25T09:56:02.255Z",
+              text: "Base directory for this skill: /tmp/rudder-skills/.claude/skills/rudder-create-agent\n\n# Rudder Create Agent Skill",
+            },
+          ]}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Skill Context");
+    expect(html).not.toContain(">User<");
   });
 
   it("decodes shell-escaped search queries in chat activity summaries", () => {

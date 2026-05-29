@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -27,6 +27,7 @@ import { approvalsApi } from "@/api/approvals";
 import { chatsApi } from "@/api/chats";
 import { heartbeatsApi } from "@/api/heartbeats";
 import { issuesApi } from "@/api/issues";
+import { messengerApi } from "@/api/messenger";
 import { projectsApi } from "@/api/projects";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { ApprovalDetailDialog } from "@/components/ApprovalDetailDialog";
@@ -584,6 +585,50 @@ function MessengerIssueCard({
 
 export function MessengerIssuesView() {
   const { selectedOrganizationId, issueThreadDetail } = useMessengerModel();
+  const queryClient = useQueryClient();
+  const { pushToast } = useToast();
+  const [olderIssuePages, setOlderIssuePages] = useState<NonNullable<typeof issueThreadDetail>[]>([]);
+  const [olderIssuesLoading, setOlderIssuesLoading] = useState(false);
+  const baseIssuePageSignature = useMemo(
+    () => (issueThreadDetail?.items ?? [])
+      .map((item) => `${item.issueId}:${new Date(item.latestActivityAt).getTime()}`)
+      .join("|"),
+    [issueThreadDetail?.items],
+  );
+
+  useEffect(() => {
+    setOlderIssuePages([]);
+  }, [selectedOrganizationId, baseIssuePageSignature, issueThreadDetail?.pageInfo?.nextCursor]);
+
+  const issueItems = useMemo(() => {
+    const olderItems = [...olderIssuePages]
+      .reverse()
+      .flatMap((page) => page.items);
+    return [...olderItems, ...(issueThreadDetail?.items ?? [])];
+  }, [issueThreadDetail?.items, olderIssuePages]);
+  const oldestLoadedPage = olderIssuePages.at(-1) ?? issueThreadDetail;
+  const nextCursor = oldestLoadedPage?.pageInfo?.nextCursor ?? null;
+  const hasOlderIssues = Boolean(oldestLoadedPage?.pageInfo?.hasMore && nextCursor);
+
+  const loadOlderIssues = async () => {
+    if (!selectedOrganizationId || !nextCursor || olderIssuesLoading) return;
+    setOlderIssuesLoading(true);
+    try {
+      const response = await queryClient.fetchQuery({
+        queryKey: [...queryKeys.messenger.issues(selectedOrganizationId), "older", nextCursor],
+        queryFn: () => messengerApi.getIssuesThread(selectedOrganizationId, { cursor: nextCursor }),
+      });
+      setOlderIssuePages((current) => [...current, response.detail]);
+    } catch (error) {
+      pushToast({
+        title: "Failed to load older issues",
+        body: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    } finally {
+      setOlderIssuesLoading(false);
+    }
+  };
 
   if (!selectedOrganizationId) return null;
 
@@ -593,11 +638,24 @@ export function MessengerIssuesView() {
         title="Issues"
         description={issueThreadDetail?.description ?? "Followed issues, issues I created, and issues assigned to me."}
       />
+      {hasOlderIssues ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => void loadOlderIssues()}
+            disabled={olderIssuesLoading}
+          >
+            {olderIssuesLoading ? "Loading older issues..." : "Load older issues"}
+          </Button>
+        </div>
+      ) : null}
       <TimelineStream
-        items={issueThreadDetail?.items ?? []}
+        items={issueItems}
         renderItem={(item) => <MessengerIssueCard key={item.id} item={item} orgId={selectedOrganizationId} />}
       />
-      {!issueThreadDetail?.items.length ? (
+      {!issueItems.length ? (
         <ThreadEmptyStateMessage
           icon={<CircleCheckBig className="h-5 w-5" />}
           assistantLabel="Issues"

@@ -26,6 +26,8 @@ import {
   agentTaskSessions,
   agentWakeupRequests,
   activityLog,
+  automationRuns,
+  automations,
   authUsers,
   heartbeatRunEvents,
   heartbeatRuns,
@@ -124,6 +126,93 @@ const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTo
 export function createHeartbeatReleaseHandlers(context: any) {
   const { db, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, documentsSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatObservabilityContext, emitHeartbeatObservationEvent, emitHeartbeatLiveEval, setRunStatus, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, nextRunEventSeq, persistRunProcessMetadata, clearDetachedRunWarning, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasConfirmedBlockedReviewerHandoff, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, executeRun, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = context;
 
+  async function completeChatOutputAutomationIssueIfEligible(input: {
+    tx: any;
+    run: typeof heartbeatRuns.$inferSelect;
+    issue: typeof issues.$inferSelect;
+    now: Date;
+  }) {
+    const { tx, run, issue, now } = input;
+    if (
+      run.status !== "succeeded" ||
+      issue.originKind !== "automation_execution" ||
+      !issue.originRunId ||
+      (issue.status !== "todo" && issue.status !== "in_progress")
+    ) {
+      return null;
+    }
+
+    const execution = await tx
+      .select({
+        automationId: automations.id,
+        automationTitle: automations.title,
+        outputMode: automations.outputMode,
+        runId: automationRuns.id,
+      })
+      .from(automationRuns)
+      .innerJoin(automations, eq(automationRuns.automationId, automations.id))
+      .where(
+        and(
+          eq(automationRuns.orgId, issue.orgId),
+          sql`${automationRuns.id}::text = ${issue.originRunId}`,
+        ),
+      )
+      .limit(1)
+      .then((rows: Array<{
+        automationId: string;
+        automationTitle: string;
+        outputMode: string;
+        runId: string;
+      }>) => rows[0] ?? null);
+
+    if (!execution || execution.outputMode !== "chat_output") return null;
+
+    await tx
+      .update(issues)
+      .set({
+        status: "done",
+        completedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(issues.id, issue.id));
+
+    await tx
+      .update(automationRuns)
+      .set({
+        status: "completed",
+        completedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(automationRuns.id, execution.runId));
+
+    await tx.insert(activityLog).values({
+      orgId: issue.orgId,
+      actorType: "system",
+      actorId: "automation_chat_output",
+      agentId: run.agentId,
+      runId: run.id,
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        status: "done",
+        identifier: issue.identifier,
+        automationId: execution.automationId,
+        automationTitle: execution.automationTitle,
+        automationRunId: execution.runId,
+        closeoutReason: "chat_output_run_succeeded",
+        _previous: { status: issue.status },
+      },
+    });
+
+    return {
+      issueId: issue.id,
+      automationId: execution.automationId,
+      automationRunId: execution.runId,
+      previousStatus: issue.status,
+    };
+  }
+
   async function releaseIssueExecutionAndPromote(run: typeof heartbeatRuns.$inferSelect) {
     const outcome = await db.transaction(async (tx) => {
       await tx.execute(
@@ -140,6 +229,9 @@ export function createHeartbeatReleaseHandlers(context: any) {
           status: issues.status,
           priority: issues.priority,
           projectId: issues.projectId,
+          originKind: issues.originKind,
+          originId: issues.originId,
+          originRunId: issues.originRunId,
           assigneeAgentId: issues.assigneeAgentId,
           reviewerAgentId: issues.reviewerAgentId,
           reviewerUserId: issues.reviewerUserId,
@@ -151,15 +243,18 @@ export function createHeartbeatReleaseHandlers(context: any) {
       if (!issue) return { promotedRun: null, passiveClosure: null };
 
       const now = new Date();
-      const passiveClosure = await evaluatePassiveIssueClosureForLockedIssue({
-        tx,
-        run,
-        issue,
-        now,
-      });
+      const chatOutputCompletion = await completeChatOutputAutomationIssueIfEligible({ tx, run, issue, now });
+      const passiveClosure = chatOutputCompletion
+        ? { kind: "none", reason: "chat_output_run_succeeded" }
+        : await evaluatePassiveIssueClosureForLockedIssue({
+            tx,
+            run,
+            issue,
+            now,
+          });
 
       if (passiveClosure.kind === "queued") {
-        return { promotedRun: passiveClosure.run, passiveClosure };
+        return { promotedRun: passiveClosure.run, passiveClosure, chatOutputCompletion };
       }
 
       await tx
@@ -187,7 +282,7 @@ export function createHeartbeatReleaseHandlers(context: any) {
           .limit(1)
           .then((rows) => rows[0] ?? null);
 
-        if (!deferred) return { promotedRun: null, passiveClosure };
+        if (!deferred) return { promotedRun: null, passiveClosure, chatOutputCompletion };
 
         const deferredAgent = await tx
           .select()

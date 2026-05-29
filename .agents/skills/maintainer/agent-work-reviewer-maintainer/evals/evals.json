@@ -68,6 +68,31 @@
         "The result treats unrelated skill rename or broad maintenance churn inside a narrow product fix as a review finding.",
         "The result recommends splitting or justifying the scope before calling the work cleanly accepted."
       ]
+    },
+    {
+      "id": 6,
+      "prompt": "你作为 spawned reviewer review 一下这个 UI Lab diff。实现方向看起来对，但当前 worktree 还有 run-filter 和 docs 的 unrelated dirty changes，E2E 也还没跑完。",
+      "expected_output": "Preserves reviewer read-only mode and parent task scope, gives a mixed-state verdict such as conditional accept or needs more evidence, accepts or rejects the artifact direction separately from merge/handoff readiness, and names unrelated dirty work plus pending validation as blockers instead of a simple pass/fail.",
+      "files": [],
+      "expectations": [
+        "The result does not edit files or continue implementation during the reviewer pass.",
+        "The result separates artifact/product direction from merge or handoff readiness.",
+        "The result identifies unrelated dirty feature groups as hygiene blockers when they affect trust.",
+        "The result treats pending E2E/browser evidence as unverified rather than passed.",
+        "The result keeps the spawned child-review boundary and returns parent-readable blockers."
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "review 一下这个 agent CLI 修复。测试都过了，但还没让 agent 自己跑一次链路，也没看最终 app 效果。",
+      "expected_output": "Returns conditional accept or needs more evidence, because the implementation may be correct but the agent-visible workflow lacks terminal product proof. The review names the missing actor-run-chain and the smallest realistic product scenario needed before full acceptance.",
+      "files": [],
+      "expectations": [
+        "The result does not give unconditional accept from unit, integration, or CLI tests alone when an actor-run-chain is available.",
+        "The result names the actor, trigger, persisted effect, and terminal surface that need proof.",
+        "The result treats API or database checks as supporting evidence, not a replacement for the agent-visible path.",
+        "The result recommends Browser, Computer Use, CLI, API readback, screenshot, or run evidence according to the terminal surface."
+      ]
     }
   ]
 }

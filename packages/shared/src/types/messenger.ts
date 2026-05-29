@@ -56,9 +56,16 @@ export interface MessengerThreadSummary {
   href: string;
 }
 
+export interface MessengerThreadPageInfo {
+  limit: number;
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export interface MessengerThreadDetail<TItem = MessengerThreadItem> extends MessengerThreadSummary {
   description: string | null;
   items: TItem[];
+  pageInfo?: MessengerThreadPageInfo;
 }
 
 export interface MessengerEvent {

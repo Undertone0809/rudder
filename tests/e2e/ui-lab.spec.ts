@@ -33,13 +33,48 @@ test.describe("UI Lab", () => {
     await expect(page.getByText("Activity, timestamps, copy, and progress")).toBeVisible();
     await expect(page.getByText("Issue rows and agent actions")).toBeVisible();
     await expect(page.getByText("Approval card")).toBeVisible();
+    await expect(page.getByText("Agent avatar, picker, and properties")).toBeVisible();
+    await expect(page.getByText("Charts, selectors, and sidebar rows")).toBeVisible();
+    await expect(page.getByText("Schema form")).toBeVisible();
+    await expect(page.getByText("File tree")).toBeVisible();
+    await expect(page.getByText("Chat prompts, messages, and process states")).toBeVisible();
+    await expect(page.getByText("Chat composer surface")).toBeVisible();
+    await expect(page.getByRole("switch", { name: "Plan mode" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Stop streaming" })).toBeVisible();
+    await expect(page.getByText("Create or activate an agent before sending messages.")).toBeVisible();
+    await expect(page.getByText("Chat attachments, rich references, and input requests")).toBeVisible();
+    await expect(page.getByText("Input needed")).toBeVisible();
+    await expect(page.getByTestId("chat-ask-user-answer").getByText("Answered")).toBeVisible();
+    await expect(page.getByText("Attachment list")).toBeVisible();
+    await page.getByRole("button", { name: "Open image preview: chat-preview.svg" }).first().click();
+    await expect(page.getByTestId("chat-image-preview-dialog")).toBeVisible();
+    await expect(page.getByRole("img", { name: "chat-preview.svg" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByText("Goal and project properties")).toBeVisible();
+    await expect(page.getByText("Budget and finance cards")).toBeVisible();
     await expect(page.getByText("RUD-214").first()).toBeVisible();
-    await expect(page.getByText("Reviewer Agent", { exact: true })).toBeVisible();
+    await expect(page.getByText("Reviewer Agent", { exact: true }).first()).toBeVisible();
 
     await page.getByRole("button", { name: /Coverage/ }).click();
     await page.getByPlaceholder("Search components, paths, or statuses").fill("RunTranscriptView");
     await expect(page.getByRole("cell", { name: "RunTranscriptView", exact: true })).toBeVisible();
     await expect(page.getByRole("cell", { name: "Fixture-backed" })).toBeVisible();
+
+    await page.getByPlaceholder("Search components, paths, or statuses").fill("JsonSchemaForm");
+    await expect(page.getByRole("cell", { name: "JsonSchemaForm", exact: true })).toBeVisible();
+
+    await page.getByPlaceholder("Search components, paths, or statuses").fill("WorkspaceBackupFilesSidebar");
+    await expect(page.getByRole("cell", { name: "WorkspaceBackupFilesSidebar", exact: true })).toBeVisible();
+
+    await page.getByPlaceholder("Search components, paths, or statuses").fill("ChatMessageItem");
+    await expect(page.getByRole("cell", { name: "ChatMessageItem", exact: true })).toBeVisible();
+
+    await page.getByPlaceholder("Search components, paths, or statuses").fill("ChatAttachmentList");
+    await expect(page.getByRole("cell", { name: "ChatAttachmentList", exact: true })).toBeVisible();
+
+    await page.getByPlaceholder("Search components, paths, or statuses").fill("ChatComposerSurface");
+    await expect(page.getByRole("cell", { name: "ChatComposerSurface", exact: true })).toBeVisible();
 
     await page.goto(`/${organization.issuePrefix}/design-guide`);
     await expect(page.getByText("Existing design guide")).toBeVisible();

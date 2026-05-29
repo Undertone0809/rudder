@@ -172,10 +172,28 @@ Record which evidence exists:
 Treat timed-out, skipped, or attempted checks as unverified. Do not convert
 "looked plausible in code" into product proof.
 
+When reviewing in-progress work, spawned reviewer child sessions, or a branch
+with unrelated dirty feature groups, use a mixed-state verdict instead of a
+binary pass/fail. Examples:
+
+- `accept`: no blocking product, behavior, validation, or handoff gaps remain
+  for the requested scope.
+- `conditional accept`: the artifact direction is sound, but merge/handoff is
+  blocked by missing proof, unrelated dirty work, or explicit reviewer follow-up.
+- `needs more evidence`: the required scenario, diff, source data, or validation
+  is not available enough to judge.
+- `reject`: the artifact solves the wrong problem or introduces a blocking
+  regression.
+
+For child-reviewer outputs, preserve the parent task boundary. Do not turn the
+review into implementation and do not judge sibling or unrelated dirty work as
+part of the artifact unless it affects merge/handoff safety.
+
 ### 4.1 Run The Real Scenario When It Matters
 
-For functional review, UI review, Desktop review, or workflow-regression review,
-prefer direct scenario verification over code-only inference:
+For functional review, UI review, Desktop review, agent-visible workflow review,
+or workflow-regression review, prefer direct scenario verification over
+code-only inference:
 
 - Use Browser for local web targets such as `localhost`, `127.0.0.1`, or file
   previews when the browser can exercise the path.
@@ -184,6 +202,10 @@ prefer direct scenario verification over code-only inference:
   visible in the local Mac UI.
 - Use API/log/database checks as supporting evidence, not a replacement for the
   real operator path when the user's question is about behavior.
+- For CLI or runtime-agent changes, ask whether the actor that will use the
+  feature actually exercised it. A realistic proof usually includes a disposable
+  org/issue/agent or equivalent fixture, the actor command or wakeup, persisted
+  issue/run/comment readback, and the terminal app or CLI surface.
 - If the app is not running, start the appropriate local or packaged Rudder path
   when that is safe and within the review scope. If startup would be expensive
   or risky, say exactly why the review is limited.
@@ -195,6 +217,12 @@ For user-visible work, do not accept "tests pass" as enough proof when Computer
 Use or Browser could cheaply verify the actual Rudder interaction. The minimum
 credible evidence is the observed workflow state plus any relevant logs, API
 responses, screenshots, or failure messages.
+
+For agent-visible or control-plane work, do not accept direct database
+assertions, unit tests, or docs updates as the whole proof when a realistic
+actor-run-chain could cheaply exercise the behavior. Missing terminal product
+proof should usually make the verdict `conditional accept` or
+`needs more evidence`, even if the diff itself looks correct.
 
 If the user explicitly says the reviewer can use Computer Use or Browser to
 test a real scenario, treat that as part of the review assignment. If direct
@@ -215,6 +243,8 @@ the relevant subset:
   browser/Desktop state, release artifacts, or sub-reviewer notes
 - validation status: what passed, what failed, what timed out, what was skipped,
   and what was only inferred
+- product proof status: actor, trigger, system effect, terminal surface, and any
+  seed/mutation records created for the review
 - unresolved evidence gaps: missing screenshots, missing E2E, unchecked
   downstream consumers, branch/CI uncertainty, or unverified public surfaces
 
@@ -303,6 +333,9 @@ Look for:
   points disagree
 - branch mismatch: work landed somewhere but not on `main`
 - handoff mismatch: URL exists but screenshot or real flow evidence is missing
+- hygiene mismatch: the implementation artifact is plausible, but unrelated
+  dirty files, child-session duplication, or pending validation means it cannot
+  be safely merged or handed off as complete
 
 ## Multi-Round Review
 

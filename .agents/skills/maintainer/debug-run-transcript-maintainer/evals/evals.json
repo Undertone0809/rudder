@@ -45,6 +45,18 @@
         "The result pivots to filesystem-side run logs or artifacts when API/Postgres access is blocked instead of stopping.",
         "The proposal ties each optimization to observed run evidence and names confidence limits from unavailable sources."
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "这个 run 解释清楚之后你顺手修一下，然后告诉我是不是好了。run 里看起来是 CLI 评论把 log 混进 issue 了。",
+      "expected_output": "Separates debug root-cause evidence from post-fix product proof. It reconstructs the run and likely CLI/comment failure, but after any fix it requires lifecycle verification through the affected actor workflow before claiming the product behavior is resolved.",
+      "files": [],
+      "expectations": [
+        "The result identifies transcript, run log, event, or source evidence for the root cause.",
+        "The result does not treat the original failing transcript as proof that the fix works.",
+        "The result names the product proof required after implementation, such as a disposable agent issue closeout or CLI actor-run-chain.",
+        "The result says `fix proof missing` or equivalent if the terminal workflow has not been rerun."
+      ]
     }
   ]
 }

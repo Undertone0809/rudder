@@ -1282,7 +1282,7 @@ export function OnboardingWizard() {
                           ) : (
                             <p className="text-muted-foreground">
                               If login is required, run{" "}
-                              <span className="font-mono">claude login</span>{" "}
+                              <span className="font-mono">claude auth login</span>{" "}
                               and retry.
                             </p>
                           )} </div>

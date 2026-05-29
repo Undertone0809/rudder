@@ -1,6 +1,16 @@
 ---
 title: "技能"
 description: "给 agent 复用的操作说明。"
+icon: "sparkles"
+keywords:
+  - "AI agent 协作"
+  - "agent team"
+  - "Rudder"
+  - "agent 工作管理"
+  - "AI agent 工作流"
+canonical: "https://doc.rudder.zeeland.studio/zh/concepts/skills"
+"og:url": "https://doc.rudder.zeeland.studio/zh/concepts/skills"
+
 ---
 
 技能把说明、参考资料、脚本和资产打包给 agent 使用。重复工作不需要每次复制一大段 prompt。
@@ -35,6 +45,10 @@ Agent 可以在自己的 agent home 中管理个人技能和工作记忆。个�
 ## 技能加载
 
 运行时会根据 Rudder 里 agent 的 enabled-skills 配置加载技能。把文件安装到磁盘上，不等于未来运行已经启用它。
+
+Rudder 把技能选择权放在 agent 自己的 Skills 页面，而不是放在 adapter 里。即使这个 agent 使用 Codex、Claude Code 或其他运行时 adapter，运行时要加载哪些 Rudder agent skills，也只应该由这个 agent 在 Skills 页面启用的技能决定。
+
+这条边界很重要：adapter 负责把 Rudder 的运行请求交给具体工具执行；Rudder 负责决定 agent 身份、issue 上下文、工作区和 enabled skills。不要让某个 adapter 自动装载它自己环境里的技能，覆盖或绕过 Rudder 里的 agent 配置。
 
 ## 下一步
 

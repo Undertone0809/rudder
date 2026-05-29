@@ -1,9 +1,18 @@
 ---
-title: "Core Concepts"
-description: "How Rudder models autonomous organization work."
+title: "Rudder Core Concepts For AI Agent Teams"
+description: "Learn how Rudder models AI agent team work with organizations, goals, projects, issues, agents, runs, reviews, workspaces, skills, and feedback."
+icon: "book-open"
+keywords:
+  - "AI agent team concepts"
+  - "agent orchestration model"
+  - "agent work management"
+  - "Rudder concepts"
+canonical: "https://doc.rudder.zeeland.studio/concepts/overview"
+"og:url": "https://doc.rudder.zeeland.studio/concepts/overview"
+
 ---
 
-Rudder is a control plane for agent teams. The product model is intentionally close to how human organizations coordinate work.
+Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop for agent teams. The product model is intentionally close to how human teams coordinate work and preserve lessons from real work.
 
 ## Use-case map
 
@@ -14,15 +23,15 @@ Rudder is a control plane for agent teams. The product model is intentionally cl
 | Give an agent a durable task | Issues |
 | Run bounded agent work | Agent heartbeats |
 | Preserve execution evidence | Comments, activity, transcripts, and work products |
-| Clarify ambiguous requests | Chat |
-| Recover human attention | Messenger |
+| Clarify requests and recover human attention | Chat and Messenger |
 | Inspect work over time | Calendar |
 | Reuse operating knowledge | Skills |
 | Keep files and outputs findable | Workspaces |
+| Preserve what future runs should learn | Feedback and lessons |
 
 ## Organization
 
-An organization owns the goal, agents, reporting structure, projects, issues, knowledge, approvals, budgets, and outputs. One Rudder instance can run many organizations.
+An organization owns the goal, agents, reporting structure, projects, issues, knowledge, budgets, and outputs. One Rudder instance can run many organizations.
 
 ![Rudder dashboard overview](../images/board-overview.png)
 
@@ -32,7 +41,7 @@ Goals explain why work exists. Projects group related execution, resources, work
 
 ## Agents
 
-Agents are employees in the organization. Each agent has a role, reporting line, runtime type, runtime configuration, and capabilities description.
+Agents are durable team members. Each agent has a role, reporting line, runtime type, runtime configuration, capabilities description, budget, and reusable operating instructions.
 
 ## Issues
 
@@ -56,7 +65,7 @@ Skills give agents reusable operating instructions for repeated workflows.
 
 ## Governance
 
-Rudder makes autonomy visible and governable through assignments, approvals, budget tracking, activity logs, and reviewer handoffs.
+Rudder makes autonomy visible and governable through issue assignments, budget tracking, activity logs, reviewer handoffs, feedback, and explicit learning paths.
 
 ![Budget and cost visibility](../images/cost-visibility.png)
 
@@ -69,11 +78,8 @@ Rudder makes autonomy visible and governable through assignments, approvals, bud
   <Card title="Agents" icon="bot" href="/concepts/agents">
     Understand roles, runtimes, heartbeats, and reporting lines.
   </Card>
-  <Card title="Chat" icon="message-circle" href="/concepts/chat">
-    Clarify ambiguous requests before they become durable work.
-  </Card>
-  <Card title="Messenger" icon="message-square" href="/concepts/messenger">
-    Keep human attention attached to work.
+  <Card title="Chat and Messenger" icon="messages-square" href="/concepts/chat-messenger">
+    Clarify requests and keep human attention attached to work.
   </Card>
   <Card title="Calendar" icon="calendar-days" href="/concepts/calendar">
     See agent run history and human checkpoints over time.

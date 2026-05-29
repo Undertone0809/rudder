@@ -735,6 +735,7 @@ export function ConfigurationTab({
   }, [onSavingChange, isConfigSaving]);
 
   const canCreateAgents = Boolean(agent.permissions?.canCreateAgents);
+  const canManageSkills = agent.permissions?.canManageSkills ?? true;
   const canAssignTasks = Boolean(agent.access?.canAssignTasks);
   const taskAssignSource = agent.access?.taskAssignSource ?? "none";
   const taskAssignLocked = agent.role === "ceo" || canCreateAgents;
@@ -783,7 +784,31 @@ export function ConfigurationTab({
               onClick={() =>
                 updatePermissions.mutate({
                   canCreateAgents: !canCreateAgents,
+                  canManageSkills,
                   canAssignTasks: !canCreateAgents ? true : canAssignTasks,
+                })
+              }
+              disabled={updatePermissions.isPending}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4 text-sm">
+            <div className="space-y-1">
+              <div>Can manage skills</div>
+              <p className="text-xs text-muted-foreground">
+                Lets this agent import, scan, and maintain organization skill packages.
+              </p>
+            </div>
+            <ToggleSwitch
+              checked={canManageSkills}
+              size="sm"
+              tone="success"
+              aria-label="Can manage skills"
+              className="shrink-0"
+              onClick={() =>
+                updatePermissions.mutate({
+                  canCreateAgents,
+                  canManageSkills: !canManageSkills,
+                  canAssignTasks,
                 })
               }
               disabled={updatePermissions.isPending}
@@ -805,6 +830,7 @@ export function ConfigurationTab({
               onClick={() =>
                 updatePermissions.mutate({
                   canCreateAgents,
+                  canManageSkills,
                   canAssignTasks: !canAssignTasks,
                 })
               }

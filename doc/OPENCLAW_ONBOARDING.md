@@ -28,7 +28,7 @@ Security/control note:
 - The OpenClaw invite prompt is created from a controlled endpoint:
   - `POST /api/orgs/{orgId}/openclaw/invite-prompt`
   - board users with invite permission can call it
-  - agent callers are limited to the organization CEO agent
+  - agent callers are limited to the organization lead/default agent for this flow
 
 5. Approve the join request in Rudder UI, then confirm the OpenClaw agent appears in CLA agents.
 

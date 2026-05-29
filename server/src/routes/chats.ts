@@ -6,6 +6,7 @@ import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import {
   addChatMessageSchema,
+  chatAutomationCreateFromStructuredPayload,
   updateChatConversationUserStateSchema,
   type ChatContextLink,
   type ChatConversation,
@@ -24,7 +25,7 @@ import {
 import type { StorageService } from "../storage/types.js";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { forbidden, HttpError, unauthorized } from "../errors.js";
+import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
 import {
   observeExecutionEvent,
   updateExecutionObservation,
@@ -44,6 +45,7 @@ import { cancelActiveChatGeneration, claimChatGeneration, hasActiveChatGeneratio
 import {
   accessService,
   agentService,
+  automationService,
   chatService,
   operatorProfileService,
   organizationService,
@@ -52,6 +54,8 @@ import {
   logActivity,
   projectService,
 } from "../services/index.js";
+import { assertTimeZone } from "../services/automations.scheduler.js";
+import { validateCron } from "../services/cron.js";
 import { summarizeRuntimeSkillsForTrace } from "../services/runtime-trace-metadata.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { registerChatStreamRoutes } from "./chats.stream-routes.js";
@@ -63,6 +67,7 @@ export function chatRoutes(db: Db, storage: StorageService) {
   const issuesSvc = issueService(db);
   const projectsSvc = projectService(db);
   const agentsSvc = agentService(db);
+  const automationsSvc = automationService(db);
   const goalsSvc = goalService(db);
   const access = accessService(db);
   const assistantSvc = chatAssistantService(db, storage);
@@ -651,6 +656,133 @@ export function chatRoutes(db: Db, storage: StorageService) {
         turnVariant,
       }) as Promise<ChatMessage>;
     };
+
+    if (assistantReply.kind === "automation_create") {
+      if (conversation.planMode) {
+        throw new Error("Plan mode cannot create automations");
+      }
+      const automationCreate = chatAutomationCreateFromStructuredPayload(assistantReply.structuredPayload);
+      if (!automationCreate) {
+        throw new Error("automation_create assistant response is missing a valid automationCreate payload");
+      }
+      if (!replyingAgentId) {
+        throw new Error("automation_create requires a selected chat agent");
+      }
+      assertTimeZone(automationCreate.schedule.timezone);
+      const scheduleError = validateCron(automationCreate.schedule.cronExpression);
+      if (scheduleError) throw unprocessable(scheduleError);
+      const scheduleTrigger = {
+        kind: "schedule" as const,
+        label: automationCreate.schedule.label ?? "chat-requested schedule",
+        enabled: automationCreate.schedule.enabled,
+        cronExpression: automationCreate.schedule.cronExpression,
+        timezone: automationCreate.schedule.timezone,
+      };
+      const assigneeAgentId = replyingAgentId;
+      const automation = await automationsSvc.create(conversation.orgId, {
+        projectId: automationCreate.projectId ?? null,
+        goalId: automationCreate.goalId ?? null,
+        parentIssueId: automationCreate.parentIssueId ?? null,
+        title: automationCreate.title,
+        description: automationCreate.description ?? null,
+        assigneeAgentId,
+        priority: automationCreate.priority,
+        status: automationCreate.status,
+        concurrencyPolicy: automationCreate.concurrencyPolicy,
+        catchUpPolicy: automationCreate.catchUpPolicy,
+        outputMode: automationCreate.outputMode,
+        chatConversationId: null,
+      }, {
+        agentId: replyingAgentId,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+      });
+      const triggerResult = await automationsSvc.createTrigger(automation.id, scheduleTrigger, {
+        agentId: replyingAgentId,
+        userId: actor.actorType === "user" ? actor.actorId : null,
+      });
+
+      const assistantMessage = await saveAssistantMessage({
+        kind: "message",
+        body: assistantReply.body,
+        structuredPayload: {
+          ...(assistantReply.structuredPayload ?? {}),
+          automationCreated: {
+            automationId: automation.id,
+            triggerId: triggerResult.trigger.id,
+          },
+        },
+      });
+      createdMessages.push(await attachGeneratedFiles(assistantMessage as ChatMessage, assistantReply.generatedAttachments));
+
+      const systemMessage = await svc.addMessage(conversation.id, {
+        orgId: conversation.orgId,
+        role: "system",
+        kind: "system_event",
+        body: `Created automation "${automation.title}" from this chat conversation.`,
+        structuredPayload: {
+          eventType: "automation_created",
+          automationId: automation.id,
+          automationTitle: automation.title,
+          triggerId: triggerResult.trigger.id,
+          triggerKind: triggerResult.trigger.kind,
+          cronExpression: triggerResult.trigger.cronExpression,
+          timezone: triggerResult.trigger.timezone,
+        },
+        chatTurnId,
+        turnVariant,
+      });
+      createdMessages.push(systemMessage as ChatMessage);
+
+      await Promise.all([
+        logActivity(db, {
+          orgId: conversation.orgId,
+          actorType: "agent",
+          actorId: replyingAgentId,
+          agentId: replyingAgentId,
+          runId: actor.runId,
+          action: "automation.created",
+          entityType: "automation",
+          entityId: automation.id,
+          details: {
+            title: automation.title,
+            assigneeAgentId: automation.assigneeAgentId,
+            source: "chat_automation_create",
+            chatConversationId: conversation.id,
+          },
+        }),
+        logActivity(db, {
+          orgId: conversation.orgId,
+          actorType: "agent",
+          actorId: replyingAgentId,
+          agentId: replyingAgentId,
+          runId: actor.runId,
+          action: "automation.trigger_created",
+          entityType: "automation_trigger",
+          entityId: triggerResult.trigger.id,
+          details: {
+            automationId: automation.id,
+            kind: triggerResult.trigger.kind,
+            source: "chat_automation_create",
+            chatConversationId: conversation.id,
+          },
+        }),
+        logActivity(db, {
+          orgId: conversation.orgId,
+          actorType: "system",
+          actorId: "chat-assistant",
+          action: "chat.automation_created",
+          entityType: "chat",
+          entityId: conversation.id,
+          details: {
+            automationId: automation.id,
+            triggerId: triggerResult.trigger.id,
+            source: "automation_create",
+          },
+        }),
+      ]);
+
+      return createdMessages;
+    }
 
     if (assistantReply.kind === "issue_proposal") {
       const issueProposalStructuredPayload = assistantReply.structuredPayload ?? null;

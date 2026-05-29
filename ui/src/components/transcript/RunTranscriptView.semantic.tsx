@@ -418,6 +418,11 @@ export function formatRudderTarget(target: string | undefined): string | null {
 
 export function summarizeIssueComment(command: string): string | null {
   const tokens = tokenizeShell(command);
+  const fileComment = extractShellFlagValue(tokens, "--comment-file") ?? extractShellFlagValue(tokens, "--body-file");
+  if (fileComment) {
+    return fileComment === "-" ? "added stdin comment" : "added file-backed comment";
+  }
+
   const comment = extractShellFlagValue(tokens, "--comment");
   if (!comment) return null;
 
@@ -849,6 +854,22 @@ export function isCommandTool(name: string, input: unknown): boolean {
 }
 
 export function describeToolSemanticInfo(name: string, input: unknown): TranscriptToolSemanticInfo {
+  const normalizedName = name.trim().toLowerCase();
+  const record = asRecord(input);
+
+  if (normalizedName === "skill") {
+    const skill = readStringField(record, ["skill", "name"]);
+    const skillAction = skill ? formatSkillUseAction([skill]) : null;
+    return {
+      category: "skill",
+      label: "Use skill",
+      summary: skillAction?.summary ?? "Use skill",
+      bucket: "explore",
+      quantity: 1,
+      noun: "skill",
+    };
+  }
+
   if (isCommandTool(name, input)) {
     const command =
       typeof input === "string"
@@ -889,7 +910,6 @@ export function describeToolSemanticInfo(name: string, input: unknown): Transcri
   }
 
   const invocation = describeToolInvocation(name, input);
-  const record = asRecord(input);
   const paths = extractRecordPaths(record);
   const query = extractRecordQuery(record);
 
@@ -963,4 +983,3 @@ export function describeToolSemanticInfo(name: string, input: unknown): Transcri
     noun: "tool",
   };
 }
-

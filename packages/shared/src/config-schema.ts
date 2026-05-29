@@ -7,6 +7,8 @@ import {
   STORAGE_PROVIDERS,
 } from "./constants.js";
 
+export const DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES = 256 * 1024 * 1024;
+
 export const configMetaSchema = z.object({
   version: z.literal(1),
   updatedAt: z.string(),
@@ -22,6 +24,7 @@ export const databaseBackupConfigSchema = z.object({
   enabled: z.boolean().default(true),
   intervalMinutes: z.number().int().min(1).max(7 * 24 * 60).default(60),
   retentionDays: z.number().int().min(1).max(3650).default(30),
+  maxEstimatedBytes: z.number().int().min(1).default(DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES),
   dir: z.string().default("~/.rudder/instances/default/data/backups"),
 });
 
@@ -34,6 +37,7 @@ export const databaseConfigSchema = z.object({
     enabled: true,
     intervalMinutes: 60,
     retentionDays: 30,
+    maxEstimatedBytes: DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
     dir: "~/.rudder/instances/default/data/backups",
   }),
 });

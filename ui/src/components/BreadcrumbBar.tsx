@@ -16,7 +16,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { PluginLauncherOutlet, usePluginLaunchers } from "@/plugins/launchers";
@@ -24,6 +24,7 @@ import { useI18n } from "@/context/I18nContext";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { projectsApi } from "@/api/projects";
 import { queryKeys } from "@/lib/queryKeys";
+import { DashboardCalendarSwitcher } from "@/components/DashboardCalendarSwitcher";
 
 type GlobalToolbarContext = { orgId: string | null; orgPrefix: string | null };
 
@@ -31,6 +32,13 @@ type BreadcrumbBarProps = {
   desktopChrome?: boolean;
   variant?: "shell" | "card";
 };
+
+function isNativeFindShortcut(event: KeyboardEvent) {
+  if (event.defaultPrevented) return false;
+  if (event.key.toLowerCase() !== "f") return false;
+  if (!event.metaKey && !event.ctrlKey) return false;
+  return !event.altKey && !event.shiftKey;
+}
 
 function GlobalToolbarPlugins({ context }: { context: GlobalToolbarContext }) {
   const { slots } = usePluginSlots({ slotTypes: ["globalToolbarButton"], orgId: context.orgId });
@@ -56,8 +64,10 @@ export function BreadcrumbBar({
   const location = useLocation();
   const navigate = useNavigate();
   const [issueSearch, setIssueSearch] = useState("");
+  const issueSearchInputRef = useRef<HTMLInputElement | null>(null);
   const relativePath = useMemo(() => toOrganizationRelativePath(location.pathname), [location.pathname]);
   const activeIssueSource = useMemo(() => new URLSearchParams(location.search).get("source") ?? "", [location.search]);
+  const isIssuesRoute = useMemo(() => /^\/issues(?:\/|$)/.test(relativePath), [relativePath]);
   const isPrimaryRailPage = useMemo(
     () => /^\/(?:dashboard|inbox|chat|messenger|issues|agents|projects|goals|automations|calendar)(?:\/|$)/.test(relativePath),
     [relativePath],
@@ -67,6 +77,7 @@ export function BreadcrumbBar({
     [relativePath],
   );
   const threeColumnTitle = useMemo(() => {
+    if (/^\/dashboard\/calendar(?:\/|$)/.test(relativePath)) return null;
     if (/^\/dashboard(?:\/|$)/.test(relativePath)) return "Dashboard";
     if (/^\/messenger(?:\/|$)/.test(relativePath)) return "Messenger";
     if (/^\/inbox(?:\/|$)/.test(relativePath)) return "Inbox";
@@ -111,13 +122,13 @@ export function BreadcrumbBar({
   ) : null;
 
   useEffect(() => {
-    if (!/^\/issues(?:\/|$)/.test(relativePath)) return;
+    if (!isIssuesRoute) return;
     const query = new URLSearchParams(location.search).get("q") ?? "";
     setIssueSearch(query);
-  }, [location.search, relativePath]);
+  }, [isIssuesRoute, location.search]);
 
   useEffect(() => {
-    if (!/^\/issues(?:\/|$)/.test(relativePath)) return;
+    if (!isIssuesRoute) return;
     const timeoutId = window.setTimeout(() => {
       const currentParams = new URLSearchParams(location.search);
       const nextValue = issueSearch.trim();
@@ -134,7 +145,27 @@ export function BreadcrumbBar({
       );
     }, 250);
     return () => window.clearTimeout(timeoutId);
-  }, [issueSearch, location.pathname, location.search, navigate, relativePath]);
+  }, [isIssuesRoute, issueSearch, location.pathname, location.search, navigate]);
+
+  useEffect(() => {
+    if (!isIssuesRoute) return;
+
+    const releaseIssueSearchFocus = () => {
+      const input = issueSearchInputRef.current;
+      if (input && document.activeElement === input) {
+        input.blur();
+      }
+    };
+
+    const handleNativeFind = (event: KeyboardEvent) => {
+      if (!isNativeFindShortcut(event)) return;
+      window.requestAnimationFrame(releaseIssueSearchFocus);
+      window.setTimeout(releaseIssueSearchFocus, 0);
+    };
+
+    document.addEventListener("keydown", handleNativeFind, true);
+    return () => document.removeEventListener("keydown", handleNativeFind, true);
+  }, [isIssuesRoute]);
 
   const menuButton = isMobile && (
     <Button
@@ -202,10 +233,10 @@ export function BreadcrumbBar({
   }
 
   if (threeColumnTitle) {
-    const isIssuesRoute = /^\/issues(?:\/|$)/.test(relativePath);
     const isLinearIssueSource = isIssuesRoute && activeIssueSource === "linear";
     const isProjectsRoute = /^\/projects(?:\/|$)/.test(relativePath);
     const isProjectsIndex = isProjectsRoute && !/^\/projects\/[^/]+/.test(relativePath);
+    const isDashboardIndex = /^\/dashboard\/?$/.test(relativePath);
     return (
       <div
         className={cn(
@@ -218,15 +249,20 @@ export function BreadcrumbBar({
       >
         {menuButton}
         {openWorkspaceSidebarButton}
-        <div className="min-w-0 shrink-0">
-          <h1 className="truncate text-[15px] font-semibold tracking-tight text-foreground">{threeColumnTitle}</h1>
-        </div>
+        {isDashboardIndex ? (
+          <DashboardCalendarSwitcher />
+        ) : (
+          <div className="min-w-0 shrink-0">
+            <h1 className="truncate text-[15px] font-semibold tracking-tight text-foreground">{threeColumnTitle}</h1>
+          </div>
+        )}
         {desktopChrome ? <div className="desktop-window-drag hidden min-h-full flex-1 md:block" /> : null}
         {isIssuesRoute ? (
           <div className={cn("hidden items-center gap-3 md:flex", desktopChrome && "desktop-window-no-drag")}>
             <div className="relative w-80">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
+                ref={issueSearchInputRef}
                 value={issueSearch}
                 onChange={(event) => setIssueSearch(event.target.value)}
                 placeholder={isLinearIssueSource ? "Search Linear issues..." : "Search issues..."}

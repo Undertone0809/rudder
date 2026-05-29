@@ -253,21 +253,29 @@ function LabelsField({
   const selectedLabels = labelIds.map((id) => labelById.get(id)).filter((label): label is IssueLabel => Boolean(label));
   const unresolvedIds = labelIds.filter((id) => !labelById.has(id));
   const editable = Boolean(onChange && labels && labels.length > 0);
+  const renderLabelItems = (variant: "plain" | "chip") => (
+    <>
+      {selectedLabels.map((label) => (
+        <span
+          key={label.id}
+          className={cn(
+            "inline-flex min-w-0 max-w-full items-center gap-1.5 text-xs font-medium",
+            variant === "chip" && "rounded-md border border-border/70 bg-background/70 px-2 py-1",
+          )}
+        >
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: label.color }} />
+          <span className="truncate">{label.name}</span>
+        </span>
+      ))}
+      {unresolvedIds.map((id) => (
+        <ApprovalInlineCode key={id}>{id}</ApprovalInlineCode>
+      ))}
+    </>
+  );
   const renderedLabels =
     selectedLabels.length > 0 || unresolvedIds.length > 0 ? (
       <span className="flex flex-wrap gap-1.5">
-        {selectedLabels.map((label) => (
-          <span
-            key={label.id}
-            className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 py-1 text-xs font-medium"
-          >
-            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: label.color }} />
-            <span className="truncate">{label.name}</span>
-          </span>
-        ))}
-        {unresolvedIds.map((id) => (
-          <ApprovalInlineCode key={id}>{id}</ApprovalInlineCode>
-        ))}
+        {renderLabelItems(editable ? "plain" : "chip")}
       </span>
     ) : (
       <span className="text-xs font-medium text-destructive">

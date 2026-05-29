@@ -12,6 +12,7 @@ import { IssueProperties } from "./IssueProperties";
 
 const openNewIssue = vi.hoisted(() => vi.fn());
 const mockIssues = vi.hoisted(() => ({ current: [] as Issue[] }));
+const longAgentName = "ZST Runtime Smoke Agent With A Very Long Operational Name";
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
@@ -27,7 +28,7 @@ vi.mock("@tanstack/react-query", () => ({
         data: [
           {
             id: "agent-1",
-            name: "Ella",
+            name: longAgentName,
             role: "cto",
             title: "Chief Technology Officer",
             icon: null,
@@ -157,9 +158,11 @@ describe("IssueProperties", () => {
     const trigger = label?.closest("button");
     const row = label?.closest('[data-slot="issue-property-row"]');
 
-    expect(label?.textContent).toContain("Ella");
+    const labelText = label?.querySelector('[data-slot="assignee-label-text"]');
+
+    expect(label?.textContent).toContain(longAgentName);
     expect(label?.textContent).toContain("Chief Technology Officer");
-    expect(label?.textContent).not.toContain("Ella (Chief Technology Officer)");
+    expect(label?.textContent).not.toContain(`${longAgentName} (Chief Technology Officer)`);
     expect(trigger?.classList.contains("min-w-0")).toBe(true);
     expect(trigger?.classList.contains("w-full")).toBe(true);
     expect(trigger?.classList.contains("max-w-full")).toBe(true);
@@ -171,6 +174,9 @@ describe("IssueProperties", () => {
     expect(label?.classList.contains("w-full")).toBe(true);
     expect(label?.classList.contains("items-center")).toBe(true);
     expect(label?.classList.contains("items-start")).toBe(false);
+    expect(labelText?.classList.contains("truncate")).toBe(true);
+    expect(labelText?.classList.contains("max-w-full")).toBe(true);
+    expect(labelText?.getAttribute("title")).toBe(longAgentName);
     expect(label?.querySelector('[data-slot="agent-title-badge"]')).toBeTruthy();
     expect(label?.querySelector('[data-slot="agent-title-badge"]')?.classList.contains("max-w-full")).toBe(true);
     expect(label?.querySelector('[data-slot="agent-title-badge"]')?.classList.contains("w-full")).toBe(false);
@@ -272,7 +278,7 @@ describe("IssueProperties", () => {
     const supportingLabel = container.querySelector('[data-slot="agent-menu-supporting-label"]');
     const scrollRegion = container.querySelector('[data-testid="issue-properties-assignee-scroll"]');
 
-    expect(menuLabel?.textContent).toContain("Ella");
+    expect(menuLabel?.textContent).toContain(longAgentName);
     expect(supportingLabel?.textContent).toBe("Chief Technology Officer");
     expect(menuLabel?.querySelector('[data-slot="agent-title-badge"]')).toBeNull();
     expect(supportingLabel?.classList.contains("truncate")).toBe(true);

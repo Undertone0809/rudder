@@ -1,9 +1,19 @@
 ---
 title: "核心概念"
 description: "Rudder 如何组织 agent 工作。"
+icon: "book-open"
+keywords:
+  - "AI agent 协作"
+  - "agent team"
+  - "Rudder"
+  - "agent 工作管理"
+  - "AI agent 工作流"
+canonical: "https://doc.rudder.zeeland.studio/zh/concepts/overview"
+"og:url": "https://doc.rudder.zeeland.studio/zh/concepts/overview"
+
 ---
 
-Rudder 是 agent 团队的控制台。它的产品模型贴近人类组织协调工作的方式。
+Rudder 把目标、issue、agent run、review 和 feedback 串成 agent team 的工作循环。它的产品模型贴近人类团队协调工作、沉淀经验的方式。
 
 ## 场景地图
 
@@ -14,11 +24,11 @@ Rudder 是 agent 团队的控制台。它的产品模型贴近人类组织协调
 | 给 agent 一个持久 issue | 任务 |
 | 运行一次有边界的 agent 工作 | Agent heartbeat |
 | 保存执行证据 | 评论、活动、transcript 和工作产物 |
-| 澄清模糊请求 | Chat |
-| 恢复人类注意力 | Messenger |
+| 澄清请求并恢复人类注意力 | Chat 和 Messenger |
 | 按时间检查工作 | Calendar |
 | 复用操作知识 | 技能 |
 | 让文件和输出可查找 | 工作区 |
+| 保存未来 run 应该学习的东西 | Feedback 和 lessons |
 
 ## 组织
 
@@ -32,7 +42,7 @@ Rudder 是 agent 团队的控制台。它的产品模型贴近人类组织协调
 
 ## Agents
 
-Agent 是组织里的员工。每个 agent 都有角色、汇报线、运行时类型、运行时配置和能力描述。
+Agent 是稳定的团队成员。每个 agent 都有角色、汇报线、运行时类型、运行时配置、能力描述、预算和可复用操作说明。
 
 ## 任务
 
@@ -56,7 +66,7 @@ Calendar 显示 agent runs、issue 工作和人类检查点如何占据时间。
 
 ## 治理
 
-Rudder 通过 issue 分配、预算追踪、活动日志和 reviewer 交接，让自治工作可见、可管理。
+Rudder 通过 issue 分配、预算追踪、活动日志、reviewer 交接、feedback 和显式学习路径，让自治工作可见、可管理。
 
 ![预算和成本可见性](../../images/cost-visibility.png)
 
@@ -69,11 +79,8 @@ Rudder 通过 issue 分配、预算追踪、活动日志和 reviewer 交接，�
   <Card title="Agents" icon="bot" href="/zh/concepts/agents">
     理解角色、运行时、heartbeat 和汇报线。
   </Card>
-  <Card title="Chat" icon="message-circle" href="/zh/concepts/chat">
-    在请求变成持久工作前先澄清。
-  </Card>
-  <Card title="Messenger" icon="message-square" href="/zh/concepts/messenger">
-    把人的注意力带回对应工作。
+  <Card title="Chat 和 Messenger" icon="messages-square" href="/zh/concepts/chat-messenger">
+    先澄清请求，再把人的注意力带回对应工作。
   </Card>
   <Card title="Calendar" icon="calendar-days" href="/zh/concepts/calendar">
     按时间查看 agent 运行历史和人的检查点。

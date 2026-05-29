@@ -4,9 +4,10 @@ description: >
   Execute screenshot-driven Rudder UI polish and narrow visible interaction
   fixes. Use when the user points at a Rudder screen or screenshot and asks to
   adjust density, alignment, badges, labels, cards, menus, hover affordances,
-  empty states, redundant pages, onboarding steps, or other small-to-medium UI
-  behavior, especially with Chinese prompts like "这里有点丑", "对齐一下",
-  "去掉这个页面", "改成这个 UI", "先说说/优化一下", or "弄个截图给我看".
+  empty states, redundant pages, onboarding steps, or other narrow
+  small-to-medium UI behavior, especially with Chinese prompts like "这里有点丑",
+  "对齐一下", "去掉这个页面", "改成这个 UI", "先说说/优化一下", or
+  "弄个截图给我看".
   Also use for narrow UI fixes even when the user mentions an advisor/reviewer
   skill, unless they explicitly ask for reviewer agents, repeated review rounds,
   or an acceptance gate.
@@ -63,6 +64,10 @@ Do not use this skill for:
 - screenshot/demo data creation; use `mock-data-maintainer` and then
   `landing-proof-shots-maintainer` when needed
 - release, CI, Desktop packaging, or browser automation infrastructure issues
+- UI Lab, component inventory, component fixture coverage, or design-system
+  catalog work where the main deliverable is coverage and classification rather
+  than a narrow rendered-state polish fix; route through
+  `development-lifecycle-router-maintainer` first
 
 ## Default Workflow
 
@@ -76,12 +81,19 @@ Classify the prompt before editing:
 - `implement`: user asks to fix, optimize, remove, add, or "改一下".
 - `screenshot`: user wants the current rendered UI captured.
 - `review-gated`: user invokes reviewers or says the result must pass review.
+- `component-lab`: user asks to build, expand, or audit UI Lab/component
+  inventory; route out to the lifecycle/component-lab workflow first.
 
 In `advice-only`, produce the smallest useful UI direction and stop. In
 `explain-only`, trace the rendered reason from screenshot to component/CSS/data
 source and stop with the likely fix direction, not a patch. In `implement`,
 make the code change. If the user gives screenshots plus vague language, infer
 the concrete pain from the image and surrounding product state.
+
+In `component-lab`, do not start a narrow polish pass. The owning workflow must
+first define component coverage, context-required labeling, route behavior,
+tests, and browser proof. Return to this skill only for a concrete visual fix
+inside an already-scoped component-lab task.
 
 ### 2. Build a small evidence packet
 
@@ -187,3 +199,5 @@ For advice-only tasks, hand off with:
 - Mixing unrelated dirty files into the commit.
 - Using `advisor-review-loop-maintainer` for every small UI tweak, slowing down
   work that only needed a focused polish pass.
+- Treating UI Lab or component-inventory work as a small cosmetic issue and
+  stopping after screenshots or style tweaks without coverage and fixture proof.

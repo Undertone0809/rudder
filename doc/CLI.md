@@ -31,6 +31,16 @@ setup, and launch. The first `npx` package fetch and its "Ok to proceed?"
 prompt are controlled by npm itself, so Rudder progress output starts after
 npm has handed execution to the CLI.
 
+First-run speed depends on three separate network paths: npm for the thin CLI,
+npm for the cached server runtime, and GitHub Releases for the portable Desktop
+asset. On Windows, the Desktop zip is usually the largest asset. If the initial
+`npx` phase is slow before Rudder prints its banner, check npm's active registry
+and proxy settings with `npm config get registry`, `npm config get proxy`, and
+`npm config get https-proxy`. If the slowdown starts at `Downloading
+Rudder-...-portable.zip`, the bottleneck is the GitHub Release asset path;
+Rudder uses the public release download URL first and falls back to the GitHub
+asset API URL if needed.
+
 Invocation forms are equivalent once they resolve to the same CLI version:
 
 ```sh
@@ -154,10 +164,10 @@ pnpm rudder issue list --org-id <org-id> [--status todo,in_progress] [--assignee
 pnpm rudder issue search "keyword or phrase" --org-id <org-id>
 pnpm rudder issue get <issue-id-or-identifier>
 pnpm rudder issue create --org-id <org-id> --title "..." [--description "..."] [--status todo] [--priority high]
-pnpm rudder issue update <issue-id> [--status in_progress] [--comment "..."] [--image ./screenshot.png]
-pnpm rudder issue comment <issue-id> --body "..." [--image ./screenshot.png] [--reopen]
-pnpm rudder issue done <issue-id> --comment "..." [--image ./screenshot.png]
-pnpm rudder issue block <issue-id> --comment "..." [--image ./screenshot.png]
+pnpm rudder issue update <issue-id> [--status in_progress] [--comment-file ./comment.md] [--image ./screenshot.png]
+pnpm rudder issue comment <issue-id> --body-file ./comment.md [--image ./screenshot.png] [--reopen]
+pnpm rudder issue done <issue-id> --comment-file ./comment.md [--image ./screenshot.png]
+pnpm rudder issue block <issue-id> --comment-file ./comment.md [--image ./screenshot.png]
 pnpm rudder issue checkout <issue-id> --agent-id <agent-id> [--expected-statuses todo,backlog,blocked]
 pnpm rudder issue release <issue-id>
 ```
@@ -170,6 +180,10 @@ project, updated time, and a compact match snippet when the server provides one.
 
 `--image` may be repeated. The CLI uploads each local PNG/JPEG/WebP/GIF as an
 issue attachment and appends Markdown image links to the comment body.
+Issue comments, issue close-out comments, issue document bodies, and approval
+comments use file or stdin body input. Use `--body-file` or `--comment-file`
+for multiline Markdown, command names, code spans, code blocks, test summaries,
+and screenshot evidence. Pass `-` to read the body from stdin.
 If a comment cites a screenshot path or visual validation artifact, attach that
 file with `--image <path>` instead of leaving only the local path in the text.
 
@@ -230,7 +244,7 @@ pnpm rudder approval approve <approval-id> [--decision-note "..."]
 pnpm rudder approval reject <approval-id> [--decision-note "..."]
 pnpm rudder approval request-revision <approval-id> [--decision-note "..."]
 pnpm rudder approval resubmit <approval-id> [--payload '{"...":"..."}']
-pnpm rudder approval comment <approval-id> --body "..."
+pnpm rudder approval comment <approval-id> --body-file ./comment.md
 ```
 
 ## Activity Commands

@@ -5,6 +5,7 @@ import { parse as parseEnvFileContents } from "dotenv";
 import { resolveRudderEnvPath } from "./paths.js";
 import {
   AUTH_BASE_URL_MODES,
+  DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
   DEPLOYMENT_EXPOSURES,
   DEPLOYMENT_MODES,
   SECRET_PROVIDERS,
@@ -110,6 +111,7 @@ export interface Config {
   databaseBackupIntervalMinutes: number;
   databaseBackupRetentionDays: number;
   databaseBackupDir: string;
+  databaseBackupMaxEstimatedBytes: number;
   serveUi: boolean;
   uiDevMiddleware: boolean;
   secretsProvider: SecretProvider;
@@ -138,6 +140,26 @@ function parsePositiveInt(rawValue: string | undefined): number | null {
   if (!rawValue) return null;
   const parsed = Number(rawValue);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) return null;
+  return parsed;
+}
+
+function parsePositiveBytes(rawValue: string | undefined): number | null {
+  const value = rawValue?.trim();
+  if (!value) return null;
+  const match = value.match(/^(\d+(?:\.\d+)?)\s*(b|kb|kib|mb|mib|gb|gib)?$/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2]?.toLowerCase() ?? "b";
+  const multiplier =
+    unit === "gb" || unit === "gib"
+      ? 1024 ** 3
+      : unit === "mb" || unit === "mib"
+        ? 1024 ** 2
+        : unit === "kb" || unit === "kib"
+          ? 1024
+          : 1;
+  const parsed = Math.floor(amount * multiplier);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) return null;
   return parsed;
 }
 
@@ -279,6 +301,10 @@ export function loadConfig(): Config {
       fileDatabaseBackup?.dir ??
       resolveDefaultBackupDir(),
   );
+  const databaseBackupMaxEstimatedBytes =
+    parsePositiveBytes(process.env.RUDDER_DB_BACKUP_MAX_ESTIMATED_BYTES) ??
+    fileDatabaseBackup?.maxEstimatedBytes ??
+    DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES;
   const embeddedPostgresPort = parsePositiveInt(process.env.RUDDER_EMBEDDED_POSTGRES_PORT)
     ?? fileConfig?.database.embeddedPostgresPort
     ?? 54329;
@@ -312,6 +338,7 @@ export function loadConfig(): Config {
     databaseBackupIntervalMinutes,
     databaseBackupRetentionDays,
     databaseBackupDir,
+    databaseBackupMaxEstimatedBytes,
     serveUi:
       process.env.SERVE_UI !== undefined
         ? process.env.SERVE_UI === "true"

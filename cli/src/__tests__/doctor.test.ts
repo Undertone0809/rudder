@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { doctor } from "../commands/doctor.js";
 import { writeConfig } from "../config/store.js";
-import type { RudderConfig } from "../config/schema.js";
+import { DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES, type RudderConfig } from "../config/schema.js";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -27,6 +27,7 @@ function createTempConfig(): string {
         enabled: true,
         intervalMinutes: 60,
         retentionDays: 30,
+        maxEstimatedBytes: DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
         dir: path.join(runtimeRoot, "backups"),
       },
     },

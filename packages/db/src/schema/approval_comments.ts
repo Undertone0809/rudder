@@ -22,5 +22,14 @@ export const approvalComments = pgTable(
       table.approvalId,
       table.createdAt,
     ),
+    orgApprovalCreatedIdx: index("approval_comments_company_approval_created_idx").on(
+      table.orgId,
+      table.approvalId,
+      table.createdAt,
+    ),
+    orgCreatedIdx: index("approval_comments_company_created_idx").on(
+      table.orgId,
+      table.createdAt,
+    ),
   }),
 );

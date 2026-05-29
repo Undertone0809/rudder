@@ -22,5 +22,11 @@ export const activityLog = pgTable(
     companyCreatedIdx: index("activity_log_company_created_idx").on(table.orgId, table.createdAt),
     runIdIdx: index("activity_log_run_id_idx").on(table.runId),
     entityIdx: index("activity_log_entity_type_id_idx").on(table.entityType, table.entityId),
+    orgEntityCreatedIdx: index("activity_log_org_entity_created_idx").on(
+      table.orgId,
+      table.entityType,
+      table.entityId,
+      table.createdAt,
+    ),
   }),
 );

@@ -68,6 +68,11 @@ const mockAccessService = vi.hoisted(() => ({
   hasPermission: vi.fn(),
 }));
 
+const mockAutomationService = vi.hoisted(() => ({
+  create: vi.fn(),
+  createTrigger: vi.fn(),
+}));
+
 const mockGoalService = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
@@ -92,6 +97,7 @@ const mockStorage = vi.hoisted(() => ({
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
+  automationService: () => mockAutomationService,
   chatService: () => mockChatService,
   organizationService: () => mockCompanyService,
   goalService: () => mockGoalService,
@@ -108,6 +114,7 @@ vi.mock("../services/index.js", () => ({
 }));
 
 vi.mock("../services/chat-assistant.js", () => ({
+  ChatAssistantStreamError: class ChatAssistantStreamError extends Error {},
   chatAssistantService: () => mockChatAssistantService,
 }));
 
@@ -243,6 +250,57 @@ describe("chat routes", () => {
     mockLogActivity.mockResolvedValue(undefined);
     mockAccessService.canUser.mockResolvedValue(true);
     mockAccessService.hasPermission.mockResolvedValue(true);
+    mockAutomationService.create.mockResolvedValue({
+      id: "automation-1",
+      orgId: "organization-1",
+      title: "每天中午 12 点发送 AI HOT 日报",
+      description: "每天北京时间 12:00 使用 aihot 生成中文短日报并发送到 chat。",
+      assigneeAgentId: "agent-1",
+      projectId: null,
+      goalId: null,
+      parentIssueId: null,
+      outputMode: "chat_output",
+      chatConversationId: null,
+      priority: "medium",
+      status: "active",
+      concurrencyPolicy: "coalesce_if_active",
+      catchUpPolicy: "skip_missed",
+      createdByAgentId: "agent-1",
+      createdByUserId: "user-1",
+      updatedByAgentId: "agent-1",
+      updatedByUserId: "user-1",
+      lastTriggeredAt: null,
+      lastEnqueuedAt: null,
+      createdAt: new Date("2026-03-26T08:02:00.000Z"),
+      updatedAt: new Date("2026-03-26T08:02:00.000Z"),
+    });
+    mockAutomationService.createTrigger.mockResolvedValue({
+      trigger: {
+        id: "trigger-1",
+        orgId: "organization-1",
+        automationId: "automation-1",
+        kind: "schedule",
+        label: "daily noon",
+        enabled: true,
+        cronExpression: "0 12 * * *",
+        timezone: "Asia/Shanghai",
+        nextRunAt: new Date("2026-03-27T04:00:00.000Z"),
+        lastFiredAt: null,
+        publicId: null,
+        secretId: null,
+        signingMode: null,
+        replayWindowSec: null,
+        lastRotatedAt: null,
+        lastResult: null,
+        createdByAgentId: "agent-1",
+        createdByUserId: "user-1",
+        updatedByAgentId: "agent-1",
+        updatedByUserId: "user-1",
+        createdAt: new Date("2026-03-26T08:02:00.000Z"),
+        updatedAt: new Date("2026-03-26T08:02:00.000Z"),
+      },
+      secretMaterial: null,
+    });
     mockIssueService.listLabels.mockResolvedValue([]);
     mockOperatorProfileService.get.mockResolvedValue({
       nickname: "Zee",
@@ -521,6 +579,7 @@ describe("chat routes", () => {
           title: "Implement auth flow",
           description: "Create a tracked auth implementation task.",
           priority: "high",
+          assigneeUnassignedReason: "The operator needs to select the owner during approval.",
           reviewerAgentId: "10000000-0000-4000-8000-000000000077",
         },
       },
@@ -679,7 +738,7 @@ describe("chat routes", () => {
     expect(res.body.messages).toHaveLength(2);
   });
 
-  it("does not default manual approval-backed issue proposals to the selected chat agent", async () => {
+  it("preserves an explicit selected-agent owner on manual approval-backed issue proposals", async () => {
     const conversation = createConversation({
       preferredAgentId: "agent-1",
       chatRuntime: {
@@ -700,6 +759,7 @@ describe("chat routes", () => {
           title: "Implement owned flow",
           description: "Create a tracked implementation task for the selected agent.",
           priority: "medium",
+          assigneeAgentId: "agent-1",
         },
       },
     };
@@ -734,6 +794,7 @@ describe("chat routes", () => {
             title: "Implement owned flow",
             description: "Create a tracked implementation task for the selected agent.",
             priority: "medium",
+            assigneeAgentId: "agent-1",
           },
         },
         replyingAgentId: "agent-1",
@@ -746,13 +807,88 @@ describe("chat routes", () => {
 
     expect(res.status).toBe(201);
     const approvalInput = mockChatService.createProposalApproval.mock.calls[0]?.[1] as any;
-    expect(approvalInput.payload.proposedIssue.assigneeAgentId).toBeUndefined();
+    expect(approvalInput.payload.proposedIssue.assigneeAgentId).toBe("agent-1");
     expect(approvalInput.payload.proposedIssue.assigneeUserId).toBeUndefined();
 
     const savedMessage = mockChatService.addMessage.mock.calls[0]?.[1] as any;
-    expect(savedMessage.structuredPayload.issueProposal.assigneeAgentId).toBeUndefined();
+    expect(savedMessage.structuredPayload.issueProposal.assigneeAgentId).toBe("agent-1");
     expect(savedMessage.structuredPayload.issueProposal.assigneeUserId).toBeUndefined();
     expect(mockAgentService.getById).not.toHaveBeenCalledWith("agent-1");
+  });
+
+  it("preserves explicitly unassigned manual approval-backed issue proposals", async () => {
+    const conversation = createConversation({
+      preferredAgentId: "agent-1",
+      chatRuntime: {
+        sourceType: "agent",
+        sourceLabel: "Chat Specialist",
+        runtimeAgentId: "agent-1",
+        agentRuntimeType: "codex_local",
+        model: "gpt-5",
+        available: true,
+        error: null,
+      },
+    });
+    const userMessage = createMessage("message-user", "user", "message", "Draft this but do not assign it yet");
+    const proposalMessage = {
+      ...createMessage("message-proposal", "assistant", "issue_proposal", "This should stay unassigned until scope is confirmed.", "approval-1"),
+      structuredPayload: {
+        issueProposal: {
+          title: "Clarify owned flow",
+          description: "Keep this unassigned until the operator confirms the execution owner.",
+          priority: "medium",
+          assigneeAgentId: null,
+          assigneeUserId: null,
+          assigneeUnassignedReason: "The operator asked to confirm scope before choosing an owner.",
+        },
+      },
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockAgentService.getById.mockResolvedValue({ id: "agent-1", orgId: "organization-1", status: "idle" });
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(proposalMessage);
+    mockChatService.createProposalApproval.mockResolvedValue({
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "chat_issue_creation",
+      status: "pending",
+      payload: {},
+      requestedByAgentId: null,
+      requestedByUserId: "user-1",
+      decisionNote: null,
+      decidedByUserId: null,
+      decidedAt: null,
+      createdAt: new Date("2026-03-26T08:01:00.000Z"),
+      updatedAt: new Date("2026-03-26T08:01:00.000Z"),
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "This should stay unassigned until scope is confirmed.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "issue_proposal",
+        body: "This should stay unassigned until scope is confirmed.",
+        structuredPayload: proposalMessage.structuredPayload,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Draft this but do not assign it yet" });
+
+    expect(res.status).toBe(201);
+    const approvalInput = mockChatService.createProposalApproval.mock.calls[0]?.[1] as any;
+    expect(approvalInput.payload.proposedIssue.assigneeAgentId).toBeNull();
+    expect(approvalInput.payload.proposedIssue.assigneeUserId).toBeNull();
+    expect(approvalInput.payload.proposedIssue.assigneeUnassignedReason).toBe("The operator asked to confirm scope before choosing an owner.");
+
+    const savedMessage = mockChatService.addMessage.mock.calls[0]?.[1] as any;
+    expect(savedMessage.structuredPayload.issueProposal.assigneeAgentId).toBeNull();
+    expect(savedMessage.structuredPayload.issueProposal.assigneeUserId).toBeNull();
+    expect(savedMessage.structuredPayload.issueProposal.assigneeUnassignedReason).toBe("The operator asked to confirm scope before choosing an owner.");
   });
 
   it("keeps plan-mode issue proposals approval-backed and preserves the plan document", async () => {
@@ -765,6 +901,7 @@ describe("chat routes", () => {
           title: "Implement auth flow",
           description: "Track the auth rollout plan in an issue.",
           priority: "high",
+          assigneeUnassignedReason: "Plan mode should leave the execution owner for operator review.",
         },
         planDocument: {
           title: "Auth rollout plan",
@@ -855,6 +992,7 @@ describe("chat routes", () => {
           title: "Implement direct issue flow",
           description: "Track the direct issue creation path.",
           priority: "medium",
+          assigneeUnassignedReason: "The issue is created directly before an owner is chosen.",
         },
       },
     };
@@ -922,6 +1060,157 @@ describe("chat routes", () => {
       }),
     );
     expect(res.body.messages).toHaveLength(3);
+  });
+
+  it("creates scheduled automations directly from chat assistant automation_create results", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "每天中午 12 点自动发 AI HOT 日报");
+    const assistantMessage = {
+      ...createMessage("message-assistant", "assistant", "message", "已创建每日中午 12 点的 AI HOT 日报自动化。"),
+      structuredPayload: {
+        automationCreate: {
+          title: "每天中午 12 点发送 AI HOT 日报",
+          description: "每天北京时间 12:00 使用 aihot 生成中文短日报并发送到 chat。",
+          outputMode: "chat_output",
+          schedule: {
+            cronExpression: "0 12 * * *",
+            timezone: "Asia/Shanghai",
+            label: "daily noon",
+          },
+        },
+        automationCreated: {
+          automationId: "automation-1",
+          triggerId: "trigger-1",
+        },
+      },
+    };
+    const systemMessage = {
+      ...createMessage("message-system", "system", "system_event", 'Created automation "每天中午 12 点发送 AI HOT 日报" from this chat conversation.'),
+      structuredPayload: {
+        eventType: "automation_created",
+        automationId: "automation-1",
+        automationTitle: "每天中午 12 点发送 AI HOT 日报",
+        triggerId: "trigger-1",
+      },
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(systemMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "已创建每日中午 12 点的 AI HOT 日报自动化。",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "automation_create",
+        body: "已创建每日中午 12 点的 AI HOT 日报自动化。",
+        structuredPayload: {
+          automationCreate: {
+            title: "每天中午 12 点发送 AI HOT 日报",
+            description: "每天北京时间 12:00 使用 aihot 生成中文短日报并发送到 chat。",
+            assigneeAgentId: "00000000-0000-4000-8000-000000000999",
+            outputMode: "chat_output",
+            schedule: {
+              cronExpression: "0 12 * * *",
+              timezone: "Asia/Shanghai",
+              label: "daily noon",
+            },
+          },
+        },
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "每天中午 12 点自动发 AI HOT 日报" });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.createProposalApproval).not.toHaveBeenCalled();
+    expect(mockAutomationService.create).toHaveBeenCalledWith(
+      "organization-1",
+      expect.objectContaining({
+        title: "每天中午 12 点发送 AI HOT 日报",
+        assigneeAgentId: "agent-1",
+        outputMode: "chat_output",
+      }),
+      { agentId: "agent-1", userId: "user-1" },
+    );
+    expect(mockAutomationService.createTrigger).toHaveBeenCalledWith(
+      "automation-1",
+      expect.objectContaining({
+        kind: "schedule",
+        cronExpression: "0 12 * * *",
+        timezone: "Asia/Shanghai",
+      }),
+      { agentId: "agent-1", userId: "user-1" },
+    );
+    expect(mockChatService.addMessage).toHaveBeenNthCalledWith(
+      2,
+      "chat-1",
+      expect.objectContaining({
+        role: "system",
+        kind: "system_event",
+        structuredPayload: expect.objectContaining({
+          eventType: "automation_created",
+          automationId: "automation-1",
+          triggerId: "trigger-1",
+        }),
+      }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "chat.automation_created",
+        details: expect.objectContaining({
+          automationId: "automation-1",
+          source: "automation_create",
+        }),
+      }),
+    );
+    expect(res.body.messages).toHaveLength(3);
+  });
+
+  it("rejects invalid automation_create schedules before creating an automation", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "每天中午 12 点自动发 AI HOT 日报");
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "我来创建自动化。",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "automation_create",
+        body: "我来创建自动化。",
+        structuredPayload: {
+          automationCreate: {
+            title: "每天中午 12 点发送 AI HOT 日报",
+            description: "每天北京时间 12:00 使用 aihot 生成中文短日报并发送到 chat。",
+            outputMode: "chat_output",
+            schedule: {
+              cronExpression: "not a cron",
+              timezone: "Asia/Shanghai",
+              label: "daily noon",
+            },
+          },
+        },
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "每天中午 12 点自动发 AI HOT 日报" });
+
+    expect(res.status).toBe(422);
+    expect(mockAutomationService.create).not.toHaveBeenCalled();
+    expect(mockAutomationService.createTrigger).not.toHaveBeenCalled();
+    expect(mockChatService.createProposalApproval).not.toHaveBeenCalled();
   });
 
   it("passes the current operator profile into chat assistant generation", async () => {
@@ -1803,6 +2092,7 @@ describe("chat routes", () => {
           title: "Implement reviewed work",
           description: "Create a reviewed issue from chat.",
           priority: "medium",
+          assigneeUnassignedReason: "The reviewer is selected before the execution owner.",
           reviewerAgentId: "10000000-0000-4000-8000-000000000077",
         },
       });

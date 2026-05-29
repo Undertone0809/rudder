@@ -164,7 +164,7 @@ export function buildIssueReviewCloseoutWakeupOptions(input: {
         maxAttempts: input.maxAttempts,
       },
       reviewInstructions:
-        "Your previous reviewer run ended without a structured decision. Inspect the current issue state and record exactly one outcome with `rudder issue review --decision approve|request_changes|needs_followup|blocked --comment ...`.",
+        "Your previous reviewer run ended without a structured decision. Inspect the current issue state and record exactly one outcome with `rudder issue review --decision approve|request_changes|needs_followup|blocked --comment-file <path>`.",
     },
   };
 }

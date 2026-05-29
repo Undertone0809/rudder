@@ -540,9 +540,12 @@ export {
   chatRichReferenceSchema,
   chatRichReferencesSchema,
   chatRichReferencesFromStructuredPayload,
+  chatAutomationCreateSchema,
+  chatAutomationCreateFromStructuredPayload,
   sanitizeChatStructuredPayload,
   createChatAttachmentMetadataSchema,
   convertChatToIssueSchema,
+  chatIssueProposalFromStructuredPayload,
   chatOperationProposalSchema,
   resolveChatOperationProposalSchema,
   updateChatConversationUserStateSchema,
@@ -551,6 +554,7 @@ export {
   type SetChatProjectContext,
   type UpdateChatConversation,
   type AddChatMessage,
+  type ChatAutomationCreate,
   type CreateChatAttachmentMetadata,
   type ConvertChatToIssue,
   type ChatOperationProposal,
@@ -845,6 +849,7 @@ export {
 } from "./project-mentions.js";
 
 export {
+  DEFAULT_DATABASE_BACKUP_MAX_ESTIMATED_BYTES,
   rudderConfigSchema,
   configMetaSchema,
   llmConfigSchema,
