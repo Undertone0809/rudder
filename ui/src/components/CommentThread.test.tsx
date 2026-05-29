@@ -229,7 +229,7 @@ describe("CommentThread", () => {
     expect(html.indexOf("Middle comment.")).toBeLessThan(html.indexOf("Last activity"));
   });
 
-  it("labels linked run transcript cards as run output", () => {
+  it("presents linked run transcript cards as agent runs", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <CommentThread
@@ -248,12 +248,13 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain("Run output");
+    expect(html).toContain("Run");
+    expect(html).not.toContain("Run output");
     expect(html).not.toContain("Not an issue comment");
-    expect(html).toContain('aria-label="Agent run output"');
+    expect(html).toContain('aria-label="Agent run"');
   });
 
-  it("collapses failed linked run details by default", () => {
+  it("collapses inactive linked run details by default", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <CommentThread
@@ -266,6 +267,13 @@ describe("CommentThread", () => {
               createdAt: new Date("2026-05-07T00:02:00.000Z"),
               startedAt: new Date("2026-05-07T00:02:00.000Z"),
             },
+            {
+              runId: "66666666-6666-4666-8666-666666666666",
+              status: "succeeded",
+              agentId: "22222222-2222-4222-8222-222222222222",
+              createdAt: new Date("2026-05-07T00:03:00.000Z"),
+              startedAt: new Date("2026-05-07T00:03:00.000Z"),
+            },
           ]}
           onAdd={async () => undefined}
         />
@@ -274,10 +282,11 @@ describe("CommentThread", () => {
 
     expect(html).toContain("Show details");
     expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("succeeded");
     expect(html).not.toContain("Transcript details");
   });
 
-  it("keeps non-failed linked run details expanded by default", () => {
+  it("keeps only active linked run details expanded by default", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <CommentThread
@@ -285,7 +294,7 @@ describe("CommentThread", () => {
           linkedRuns={[
             {
               runId: "55555555-5555-4555-8555-555555555555",
-              status: "succeeded",
+              status: "running",
               agentId: "22222222-2222-4222-8222-222222222222",
               createdAt: new Date("2026-05-07T00:02:00.000Z"),
               startedAt: new Date("2026-05-07T00:02:00.000Z"),

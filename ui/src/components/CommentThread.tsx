@@ -113,8 +113,8 @@ function passiveFollowupLabel(contextSnapshot: Record<string, unknown> | null | 
   return attempt && maxAttempts ? `Passive follow-up ${attempt}/${maxAttempts}` : "Passive follow-up";
 }
 
-function shouldCollapseRunByDefault(status: string): boolean {
-  return status === "failed" || status === "timed_out" || status === "cancelled";
+function shouldExpandRunByDefault(status: string): boolean {
+  return status === "queued" || status === "running";
 }
 
 function CopyMarkdownButton({ text }: { text: string }) {
@@ -189,7 +189,7 @@ const TimelineList = memo(function TimelineList({
           const transcript = runTranscriptById.get(run.runId) ?? [];
           const hasOutput = runHasOutput(run.runId);
           const passiveLabel = passiveFollowupLabel(run.contextSnapshot);
-          const runExpanded = runExpandedOverrides[run.runId] ?? !shouldCollapseRunByDefault(run.status);
+          const runExpanded = runExpandedOverrides[run.runId] ?? shouldExpandRunByDefault(run.status);
           const toggleLabel = runExpanded ? "Hide details" : "Show details";
           const agent = agentMap?.get(run.agentId);
           const agentName = agent?.name ?? run.agentId.slice(0, 8);
@@ -198,7 +198,7 @@ const TimelineList = memo(function TimelineList({
               type="button"
               aria-expanded={runExpanded}
               aria-controls={`run-output-${run.runId}`}
-              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-border bg-background/70 px-2 py-1 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background/70 px-2 py-0 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               onClick={() => {
                 setRunExpandedOverrides((current) => ({
                   ...current,
@@ -215,35 +215,38 @@ const TimelineList = memo(function TimelineList({
             return (
               <div
                 key={`run:${run.runId}`}
-                aria-label="Agent run output"
+                aria-label="Agent run"
                 className="overflow-hidden rounded-sm border border-dashed border-border bg-muted/35 px-3 py-1"
               >
-                <div className="flex min-w-0 items-center gap-2 text-xs">
-                  <Link to={`/agents/${run.agentId}`} className="min-w-0 shrink hover:underline">
-                    <AgentIdentity
-                      name={agentName}
-                      icon={agent?.icon}
-                      role={agent?.role}
-                      size="xs"
-                    />
-                  </Link>
-                  <span className="inline-flex shrink-0 items-center gap-1 font-medium text-muted-foreground">
-                    <TerminalSquare className="h-3.5 w-3.5" />
-                    Run output
-                  </span>
-                  <Link
-                    to={`/agents/${run.agentId}/runs/${run.runId}`}
-                    className="inline-flex shrink-0 items-center rounded-md border border-border bg-accent/40 px-2 py-1 font-mono text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
-                  >
-                    {run.runId.slice(0, 8)}
-                  </Link>
-                  <StatusBadge status={run.status} />
-                  {passiveLabel && (
-                    <span className="shrink-0 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                      {passiveLabel}
+                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 text-xs">
+                  <div className="flex h-7 min-w-0 items-center gap-2">
+                    <Link to={`/agents/${run.agentId}`} className="min-w-0 shrink hover:underline">
+                      <AgentIdentity
+                        name={agentName}
+                        icon={agent?.icon}
+                        role={agent?.role}
+                        size="xs"
+                        className="h-7 max-w-[12rem] items-center"
+                      />
+                    </Link>
+                    <span className="inline-flex h-7 shrink-0 items-center gap-1 font-medium text-muted-foreground">
+                      <TerminalSquare className="h-3.5 w-3.5" />
+                      Run
                     </span>
-                  )}
-                  <span className="ml-auto hidden shrink-0 text-muted-foreground sm:inline">
+                    <Link
+                      to={`/agents/${run.agentId}/runs/${run.runId}`}
+                      className="inline-flex h-7 shrink-0 items-center rounded-md border border-border bg-accent/40 px-2 font-mono text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
+                    >
+                      {run.runId.slice(0, 8)}
+                    </Link>
+                    <StatusBadge status={run.status} />
+                    {passiveLabel && (
+                      <span className="inline-flex h-7 shrink-0 items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                        {passiveLabel}
+                      </span>
+                    )}
+                  </div>
+                  <span className="hidden h-7 shrink-0 items-center text-muted-foreground sm:inline-flex">
                     {formatDateTime(run.startedAt ?? run.createdAt)}
                   </span>
                   {toggleButton}
@@ -255,7 +258,7 @@ const TimelineList = memo(function TimelineList({
           return (
             <div
               key={`run:${run.runId}`}
-              aria-label="Agent run output"
+              aria-label="Agent run"
               className="overflow-hidden rounded-sm border border-dashed border-border bg-muted/35 p-3"
             >
               <div className="mb-3 flex items-start justify-between gap-3">
@@ -276,7 +279,7 @@ const TimelineList = memo(function TimelineList({
               <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
                 <span className="inline-flex items-center gap-1 font-medium text-muted-foreground">
                   <TerminalSquare className="h-3.5 w-3.5" />
-                  Run output
+                  Run
                 </span>
                 <Link
                   to={`/agents/${run.agentId}/runs/${run.runId}`}
