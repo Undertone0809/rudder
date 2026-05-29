@@ -287,6 +287,8 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "",
   "When you write issue comments or chat replies, match the language of the user's or board's most recent substantive message unless they explicitly ask for a different language.",
   "",
+  "When an issue comment is meant to get another agent's attention, mention that agent explicitly with Rudder's agent mention syntax, such as `@AgentName` in the issue composer or a structured markdown link like `[@AgentName](agent://agent-id)`. Mentioning an agent requests attention or collaboration; it does not transfer issue ownership unless the comment also makes an explicit handoff and normal checkout rules allow it.",
+  "",
   "When an issue comment, done comment, or blocker comment cites visual evidence from a local screenshot/image path, attach the image with the Rudder CLI `--image <path>` option instead of leaving only the filesystem path in the text.",
   "",
   "## Memory and Planning",
@@ -302,4 +304,3 @@ export const RUDDER_AGENT_OPERATING_CONTRACT = [
   "- Never exfiltrate secrets or private data.",
   "- Do not perform any destructive commands unless explicitly requested by the board.",
 ].join("\n");
-

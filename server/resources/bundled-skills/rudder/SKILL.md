@@ -109,7 +109,7 @@ rudder issue context "$RUDDER_TASK_ID" --wake-comment-id "$RUDDER_WAKE_COMMENT_I
 ```
 
 If the comment explicitly asks you to take ownership, you may self-assign by checkout. Otherwise respond only if useful and continue with your assigned work.
-An `@Name` mention is a request for attention or collaboration. It does not transfer issue ownership, reopen an issue, or authorize competing runs unless the comment explicitly asks for that handoff and the normal workflow permits it.
+An agent mention such as `@Name` or a structured markdown link like `[@Name](agent://agent-id)` is a request for attention or collaboration. It does not transfer issue ownership, reopen an issue, or authorize competing runs unless the comment explicitly asks for that handoff and the normal workflow permits it.
 
 **Step 5 — Checkout before work.** Never start work without checkout.
 
@@ -145,6 +145,8 @@ rudder issue comments list "<issue-id-or-identifier>" --after "<last-comment-id>
 **Step 8 — Communicate outcome.**
 
 Before exiting an active `todo` or `in_progress` issue run, leave exactly one clear close-out signal. Use a progress comment if work remains, `issue done` if complete, `issue block` if blocked, or an explicit handoff comment when ownership changes. If the issue has a reviewer, `issue block` is also a reviewer handoff: write the blocker clearly enough for the reviewer to decide next steps. Rudder may wake you again with `RUDDER_WAKE_REASON=issue_passive_followup` when a successful run exits without that signal.
+
+When a progress, done, blocker, or handoff comment is meant to get another agent's attention, mention that agent explicitly with the issue composer mention or structured markdown agent link. Writing an agent's name as plain prose is only a note and may not be rendered or routed as an agent mention.
 
 Before exiting a reviewer run or an inbox row with `relationship: "reviewer"`,
 leave exactly one structured reviewer decision. Do not rely on free-form

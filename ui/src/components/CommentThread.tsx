@@ -65,6 +65,7 @@ interface CommentThreadProps {
 }
 
 const DRAFT_DEBOUNCE_MS = 800;
+const BARE_AGENT_MENTION_NAME_RE = /^[^\s@,!?.]+$/u;
 
 export function shouldOfferReopen(issueStatus?: string) {
   return issueStatus === "done";
@@ -150,6 +151,7 @@ const TimelineList = memo(function TimelineList({
   runHasOutput,
   operatorDisplayName,
   skillReferences,
+  agentMentionPreviews,
   emptyMessage,
 }: {
   timeline: TimelineItem[];
@@ -161,6 +163,7 @@ const TimelineList = memo(function TimelineList({
   runHasOutput: (runId: string) => boolean;
   operatorDisplayName?: string | null;
   skillReferences?: MarkdownSkillReferencePreview[];
+  agentMentionPreviews?: Array<{ name: string; agentId: string; agentIcon?: string | null }>;
   emptyMessage: string;
 }) {
   const [runExpandedOverrides, setRunExpandedOverrides] = useState<Record<string, boolean>>({});
@@ -311,7 +314,13 @@ const TimelineList = memo(function TimelineList({
                 <CopyMarkdownButton text={comment.body} />
               </span>
             </div>
-            <MarkdownBody className="text-sm" skillReferences={skillReferences}>{comment.body}</MarkdownBody>
+            <MarkdownBody
+              className="text-sm"
+              agentMentions={agentMentionPreviews}
+              skillReferences={skillReferences}
+            >
+              {comment.body}
+            </MarkdownBody>
             {orgId ? (
               <div className="mt-2 space-y-2">
                 <PluginSlotOutlet
@@ -474,6 +483,23 @@ export function CommentThread({
       }))
   ), [mentions]);
 
+  const agentMentionPreviews = useMemo(
+    () => mentions
+      .filter((mention) => mention.kind === "agent" && mention.agentId)
+      .flatMap((mention) => {
+        const baseName = mention.name.replace(/\s+\([^)]*\)$/u, "").trim();
+        const preview = {
+          agentId: mention.agentId!,
+          agentIcon: mention.agentIcon,
+        };
+        const names = baseName && baseName !== mention.name
+          ? [{ ...preview, name: mention.name }, { ...preview, name: baseName }]
+          : [{ ...preview, name: mention.name }];
+        return names.filter((candidate) => BARE_AGENT_MENTION_NAME_RE.test(candidate.name));
+      }),
+    [mentions],
+  );
+
   useEffect(() => {
     if (!draftKey) return;
     setBody(loadDraft(draftKey));
@@ -573,6 +599,7 @@ export function CommentThread({
         runHasOutput={hasOutputForRun}
         operatorDisplayName={operatorDisplayName}
         skillReferences={skillReferences}
+        agentMentionPreviews={agentMentionPreviews}
         emptyMessage={emptyMessage}
       />
 
