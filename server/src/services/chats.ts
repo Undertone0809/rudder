@@ -1078,6 +1078,21 @@ export function chatService(db: Db) {
       });
   }
 
+  function assertIssueProposalOwnerDecision(issueProposal: {
+    assigneeAgentId?: string | null;
+    assigneeUserId?: string | null;
+    assigneeUnassignedReason?: string | null;
+  }) {
+    const hasAssignee = Boolean(safeTrim(issueProposal.assigneeAgentId) || safeTrim(issueProposal.assigneeUserId));
+    const hasUnassignedReason = Boolean(safeTrim(issueProposal.assigneeUnassignedReason));
+    if (hasAssignee && hasUnassignedReason) {
+      throw unprocessable("Issue proposals with an owner must not also include assigneeUnassignedReason");
+    }
+    if (!hasAssignee && !hasUnassignedReason) {
+      throw unprocessable("Issue proposals without an owner must include assigneeUnassignedReason");
+    }
+  }
+
     async function convertToIssue(
       conversationId: string,
       input: {
@@ -1122,8 +1137,10 @@ export function chatService(db: Db) {
         throw unprocessable("Issue proposal payload was incomplete");
       }
 
+      assertIssueProposalOwnerDecision(issueProposal);
+      const { assigneeUnassignedReason: _assigneeUnassignedReason, ...issueCreateData } = issueProposal;
       const issue = await issuesSvc.create(conversation.orgId, {
-        ...issueProposal,
+        ...issueCreateData,
         createdByAgentId: input.createdByAgentId ?? sourceMessage?.replyingAgentId ?? null,
         createdByUserId: input.actorUserId,
       });

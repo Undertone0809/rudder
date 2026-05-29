@@ -48,6 +48,10 @@ import {
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
 } from "./update-check.js";
+import {
+  resolveExternalRuntimeServerEntrypoint,
+  resolveSharedRudderHomeDir,
+} from "./runtime-cache.js";
 
 import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
 import { createDesktopQuitFlow } from "./desktop-quit-flow.js";
@@ -442,16 +446,6 @@ function applyDesktopThemePreference(preference: DesktopThemePreference): void {
 function refreshDesktopAppearanceFromSystem(): void {
   if (currentThemePreference !== "system") return;
   applyDesktopAppearance(resolveAppearanceForThemePreference("system", nativeTheme.shouldUseDarkColors));
-}
-
-function resolveSharedRudderHomeDir(): string {
-  const envHome = process.env.RUDDER_HOME?.trim();
-  if (envHome) {
-    if (envHome === "~") return os.homedir();
-    if (envHome.startsWith("~/")) return path.resolve(os.homedir(), envHome.slice(2));
-    return path.resolve(envHome);
-  }
-  return path.resolve(os.homedir(), ".rudder");
 }
 
 function resolveSharedInstancePaths(instanceId: string): NonNullable<BootState["paths"]> {
@@ -1135,12 +1129,32 @@ async function startLocalRudder(): Promise<void> {
 
 async function importServerModule(): Promise<ServerModule> {
   if (app.isPackaged) {
+    const externalRuntime = resolveExternalRuntimeServerEntrypoint({
+      version: app.getVersion(),
+      onWarning: (message, error) => console.warn(`[rudder-desktop] ${message}`, error),
+    });
+    if (externalRuntime) {
+      console.info("[rudder-desktop] loading server runtime from shared cache", {
+        entrypoint: externalRuntime.entrypoint,
+      });
+      try {
+        return await import(pathToFileURL(externalRuntime.entrypoint).href) as ServerModule;
+      } catch (error) {
+        console.warn("[rudder-desktop] failed to load shared server runtime cache, falling back to bundled runtime", error);
+      }
+    }
+
     const packagedServerEntry = path.resolve(
       process.resourcesPath,
       "server-package",
       "dist",
       "index.js",
     );
+    if (!fs.existsSync(packagedServerEntry)) {
+      throw new Error(
+        "This Rudder Desktop shell install requires a prepared server runtime cache. Re-run `rudder start` to install the matching runtime, or install the full portable Desktop asset.",
+      );
+    }
     return import(pathToFileURL(packagedServerEntry).href) as Promise<ServerModule>;
   }
 
@@ -1381,6 +1395,8 @@ async function bootstrap(): Promise<void> {
       const cliInstall = await ensureDesktopCliLink();
       if (cliInstall.status === "installed") {
         console.info("[rudder-desktop] installed CLI wrapper", cliInstall.targetPath);
+      } else if (cliInstall.status === "skipped_temporary_install") {
+        console.info("[rudder-desktop] CLI wrapper not installed:", cliInstall.detail);
       } else if (cliInstall.status === "skipped_existing_file" || cliInstall.status === "unavailable") {
         console.warn("[rudder-desktop] CLI wrapper not installed:", cliInstall.detail);
       }

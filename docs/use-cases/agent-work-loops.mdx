@@ -1,0 +1,67 @@
+---
+title: "AI Agent Work Loops In Rudder"
+description: "Use Rudder to turn agent requests into issue-based work loops with ownership, runtime execution, evidence, review, and reusable feedback."
+icon: "workflow"
+keywords:
+  - "AI agent work loops"
+  - "agent orchestration use cases"
+  - "agent team workflow"
+  - "Rudder use cases"
+canonical: "https://doc.rudder.zeeland.studio/use-cases/agent-work-loops"
+"og:url": "https://doc.rudder.zeeland.studio/use-cases/agent-work-loops"
+
+---
+
+Rudder is built for repeated AI agent work loops: a human or agent captures intent, turns it into an issue, assigns one owner, runs an agent runtime, reviews evidence, closes the work, and keeps the lessons that should improve the next run.
+
+## What is an agent work loop?
+
+An agent work loop is a repeatable path for getting useful work out of an AI agent without losing ownership, context, or evidence. In Rudder, the loop is:
+
+1. Capture a request in Chat or directly as an issue.
+2. Shape the issue until the outcome and acceptance criteria are clear.
+3. Assign one agent or human owner.
+4. Run the agent through a configured runtime.
+5. Preserve transcript, comments, artifacts, costs, and status changes.
+6. Send the result to review when judgment is needed.
+7. Close the issue only after the evidence is accepted.
+8. Promote reusable operating knowledge into skills or feedback.
+
+## Common use cases
+
+| Use case | Rudder surface | What good evidence looks like |
+| --- | --- | --- |
+| Code maintenance | Issues, agent runs, comments, workspaces | changed files, tests, preview links, remaining risks |
+| Docs and content operations | Chat, issues, reviews, skills | proposed outline, edited files, screenshots, validation commands |
+| Release preparation | Issues, Calendar, Messenger, reviewers | release checklist, smoke checks, published artifacts, rollback notes |
+| Product research | Chat, issue documents, workspaces | source notes, decision memo, open questions, follow-up issues |
+| Reviewer agents | Agents, issue reviewers, Messenger | approve, request changes, blocked, or needs follow-up with reasons |
+
+## When Rudder is a good fit
+
+Use Rudder when agent work needs to be repeatable, reviewable, and bounded. It is especially useful when multiple agents, humans, runtimes, repositories, or review roles are involved.
+
+Rudder is less useful for a one-off prompt that creates no durable output, needs no review, and will not be reused.
+
+## How Rudder differs from a chat-only workflow
+
+Chat is good for intake and clarification. Rudder keeps the actual work loop on durable objects: organizations, goals, projects, issues, agents, runs, comments, workspaces, skills, budgets, and feedback.
+
+That difference matters because agent work often fails at the boundaries: unclear ownership, missing context, invisible costs, weak evidence, no reviewer, or no reusable lesson after the run. Rudder gives each of those signals a place to live.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Create Your First Organization" icon="building-2" href="/get-started/first-organization">
+    Walk through the first useful human-agent work loop.
+  </Card>
+  <Card title="Issue Lifecycle Guide" icon="route" href="/how-to/issue-lifecycle">
+    Learn when to assign, review, block, and close agent work.
+  </Card>
+  <Card title="Configure Agent Runtime" icon="terminal" href="/how-to/configure-agent-runtime">
+    Connect Codex, Claude Code, shell process, webhook, or gateway-backed agents.
+  </Card>
+  <Card title="FAQ" icon="circle-help" href="/faq">
+    Answer common setup, runtime, and product-fit questions.
+  </Card>
+</CardGroup>

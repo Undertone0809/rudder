@@ -74,7 +74,7 @@ describe("organization skill mutation permissions", () => {
     );
   });
 
-  it("blocks same-organization agents without management permission from mutating organization skills", async () => {
+  it("allows same-organization agents to mutate organization skills by default", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
       orgId: "organization-1",
@@ -90,15 +90,39 @@ describe("organization skill mutation permissions", () => {
       .post("/api/orgs/organization-1/skills/import")
       .send({ source: "https://github.com/vercel-labs/agent-browser" });
 
-    expect(res.status, JSON.stringify(res.body)).toBe(403);
-    expect(mockCompanySkillService.importFromSource).not.toHaveBeenCalled();
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockCompanySkillService.importFromSource).toHaveBeenCalledWith(
+      "organization-1",
+      "https://github.com/vercel-labs/agent-browser",
+    );
   });
 
-  it("allows agents with canCreateAgents to mutate organization skills", async () => {
+  it("blocks same-organization agents when skill management is explicitly disabled", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
       orgId: "organization-1",
-      permissions: { canCreateAgents: true },
+      permissions: { canCreateAgents: true, canManageSkills: false },
+    });
+
+    const res = await request(createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: "run-1",
+    }))
+      .post("/api/orgs/organization-1/skills/import")
+      .send({ source: "https://github.com/vercel-labs/agent-browser" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Missing permission: can manage skills");
+    expect(mockCompanySkillService.importFromSource).not.toHaveBeenCalled();
+  });
+
+  it("allows agents with canManageSkills to mutate organization skills", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      id: "agent-1",
+      orgId: "organization-1",
+      permissions: { canCreateAgents: false, canManageSkills: true },
     });
 
     const res = await request(createApp({
@@ -111,6 +135,47 @@ describe("organization skill mutation permissions", () => {
       .send({ source: "https://github.com/vercel-labs/agent-browser" });
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockCompanySkillService.importFromSource).toHaveBeenCalledWith(
+      "organization-1",
+      "https://github.com/vercel-labs/agent-browser",
+    );
+  });
+
+  it("requires skills:manage for non-admin board users", async () => {
+    mockAccessService.canUser.mockResolvedValue(false);
+
+    const res = await request(createApp({
+      type: "board",
+      userId: "board-user",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    }))
+      .post("/api/orgs/organization-1/skills/import")
+      .send({ source: "https://github.com/vercel-labs/agent-browser" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toBe("Missing permission: skills:manage");
+    expect(mockAccessService.canUser).toHaveBeenCalledWith("organization-1", "board-user", "skills:manage");
+    expect(mockCompanySkillService.importFromSource).not.toHaveBeenCalled();
+  });
+
+  it("keeps legacy agents:create board grants compatible for organization skill mutation", async () => {
+    mockAccessService.canUser.mockImplementation(async (_orgId, _userId, permission) => permission === "agents:create");
+
+    const res = await request(createApp({
+      type: "board",
+      userId: "board-user",
+      orgIds: ["organization-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    }))
+      .post("/api/orgs/organization-1/skills/import")
+      .send({ source: "https://github.com/vercel-labs/agent-browser" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAccessService.canUser).toHaveBeenCalledWith("organization-1", "board-user", "skills:manage");
+    expect(mockAccessService.canUser).toHaveBeenCalledWith("organization-1", "board-user", "agents:create");
     expect(mockCompanySkillService.importFromSource).toHaveBeenCalledWith(
       "organization-1",
       "https://github.com/vercel-labs/agent-browser",

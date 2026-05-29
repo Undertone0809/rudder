@@ -1,0 +1,34 @@
+# Rudder Docs
+
+> Rudder is an open-source control plane for AI agent teams. It coordinates goals, issues, agent runs, reviews, budgets, workspaces, skills, and feedback loops so humans can run agent work with clear ownership and evidence.
+
+Rudder is useful when agent work needs to be assigned, run, reviewed, budgeted, and improved over repeated loops. The product is local-first and supports local CLI-backed runtimes such as Codex and Claude Code, shell process runtimes, HTTP webhooks, and gateway-backed agents.
+
+## Start here
+
+- [Rudder overview](https://doc.rudder.zeeland.studio): Product introduction and path selector.
+- [Quick Start](https://doc.rudder.zeeland.studio/get-started/installation): Install Rudder Desktop and the CLI.
+- [Create Your First AI Agent Team Organization](https://doc.rudder.zeeland.studio/get-started/first-organization): First end-to-end human-agent work loop.
+- [AI Agent Work Loops In Rudder](https://doc.rudder.zeeland.studio/use-cases/agent-work-loops): Common use cases and workflow shape.
+- [Rudder FAQ](https://doc.rudder.zeeland.studio/faq): Common setup, runtime, and product-fit answers.
+
+## Core concepts
+
+- [Core Concepts](https://doc.rudder.zeeland.studio/concepts/overview): Organizations, goals, projects, issues, agents, runs, reviews, workspaces, skills, and feedback.
+- [Agents In Rudder](https://doc.rudder.zeeland.studio/concepts/agents): Durable AI team members with roles, runtime configuration, capabilities, budgets, skills, and reporting boundaries.
+- [Issues For AI Agent Work](https://doc.rudder.zeeland.studio/concepts/issues): Durable execution objects for context, ownership, status, runs, blockers, reviews, and outputs.
+- [Chat And Messenger For Agent Work](https://doc.rudder.zeeland.studio/concepts/chat-messenger): Chat for intake and Messenger for attention recovery.
+- [Workspaces For Agent Files And Outputs](https://doc.rudder.zeeland.studio/concepts/workspaces): Project resources, agent-private files, organization artifacts, and durable outputs.
+- [Skills For Reusable Agent Workflows](https://doc.rudder.zeeland.studio/concepts/skills): Reusable operating instructions for repeated agent workflows.
+
+## How-to guides
+
+- [Run An AI Agent Issue From Intake To Done](https://doc.rudder.zeeland.studio/how-to/issue-lifecycle): Status, assignee, reviewer, evidence, and close-out guidance.
+- [Create An AI Agent In Rudder](https://doc.rudder.zeeland.studio/how-to/create-agent): Create an agent with role, responsibility, runtime, capabilities, and boundaries.
+- [Configure Codex, Claude Code, Or Another Agent Runtime](https://doc.rudder.zeeland.studio/how-to/configure-agent-runtime): Connect local CLI, shell process, webhook, or gateway-backed runtimes.
+
+## Chinese docs
+
+- [Rudder 中文首页](https://doc.rudder.zeeland.studio/zh): 中文产品介绍和入口。
+- [安装 Rudder](https://doc.rudder.zeeland.studio/zh/get-started/installation): 用 CLI 安装并启动 Rudder Desktop。
+- [创建第一个组织](https://doc.rudder.zeeland.studio/zh/get-started/first-organization): 用真实任务走通第一条人类-agent 协作循环。

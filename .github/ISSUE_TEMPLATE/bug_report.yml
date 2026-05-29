@@ -1,0 +1,125 @@
+name: Bug report
+description: Report a reproducible problem or regression.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for broken behavior, regressions, crashes, incorrect data, or workflows that no longer work as expected.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the problem in one or two concise paragraphs.
+      placeholder: What is broken, and who is affected?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest sequence that reproduces the issue.
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: Actual behavior
+      description: What happens today?
+      placeholder: Describe the observed behavior, error, crash, or incorrect result.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: What should happen instead?
+      placeholder: Describe the correct behavior.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Affected area
+      description: Pick the closest area.
+      options:
+        - UI
+        - Server/API
+        - Database
+        - Desktop app
+        - CLI
+        - Agent runtime/heartbeat
+        - Docs
+        - Release/packaging
+        - Unknown
+    validations:
+      required: true
+
+  - type: input
+    id: rudder_version
+    attributes:
+      label: Rudder version
+      description: If you can find it, enter the Rudder version or release tag. Leave this blank if you are not sure.
+      placeholder: v0.2.6
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Which operating system are you using? If you choose Other, describe it in Environment details below.
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Other (please describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment_details
+    attributes:
+      label: Environment details
+      description: Add anything about your setup that may matter. If Platform is Other, please write the exact platform here.
+      placeholder: |
+        - OS version:
+        - If Platform is Other, what is it?
+        - How are you running Rudder? Desktop app, local development server, npm package, Docker/container, or something else?
+        - Browser:
+        - Node version:
+        - pnpm version:
+        - Database mode:
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, screenshots, or other evidence
+      description: |
+        Please add screenshots or the most relevant log lines around the error. You can paste a short log snippet or attach a small log file.
+
+        Local log locations:
+        - Desktop app or normal CLI runs: `~/.rudder/instances/default/logs/`
+        - Agent run logs: `~/.rudder/instances/default/data/run-logs/`
+        - Local development server: `~/.rudder/instances/dev/logs/` and `~/.rudder/instances/dev/data/run-logs/`
+        - If you set `RUDDER_HOME` or `RUDDER_INSTANCE_ID`, use `$RUDDER_HOME/instances/$RUDDER_INSTANCE_ID/` instead.
+
+        Before posting logs, please remove secrets such as API keys, tokens, cookies, passwords, private URLs, and anything from private code or prompts that you do not want public. Rudder redacts known secret fields in its own config/event logs, but third-party CLI output and raw run logs may still contain private paths, prompts, command output, or provider messages.
+      placeholder: |
+        Paste the few lines before and after the error here, or attach a small log file after checking it for private data.
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Explain severity and whether this blocks a real workflow.
+      placeholder: Who is blocked? Is there a workaround?

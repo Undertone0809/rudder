@@ -147,6 +147,22 @@ export function approvalRoutes(db: Db) {
     );
   }
 
+  function assertChatIssueProposalOwnerDecision(proposal: Record<string, unknown> | null | undefined) {
+    const hasAssignee = Boolean(
+      (typeof proposal?.assigneeAgentId === "string" && proposal.assigneeAgentId.trim().length > 0)
+      || (typeof proposal?.assigneeUserId === "string" && proposal.assigneeUserId.trim().length > 0),
+    );
+    const hasUnassignedReason =
+      typeof proposal?.assigneeUnassignedReason === "string"
+      && proposal.assigneeUnassignedReason.trim().length > 0;
+    if (hasAssignee && hasUnassignedReason) {
+      throw unprocessable("Issue proposals with an owner must not also include assigneeUnassignedReason");
+    }
+    if (!hasAssignee && !hasUnassignedReason) {
+      throw unprocessable("Issue proposals without an owner must include assigneeUnassignedReason");
+    }
+  }
+
   async function assertCanApproveChatIssueConversion(req: Request, approval: { orgId: string; payload: Record<string, unknown> }) {
     const proposedIssue =
       approval.payload?.proposedIssue
@@ -154,6 +170,7 @@ export function approvalRoutes(db: Db) {
       && !Array.isArray(approval.payload.proposedIssue)
         ? (approval.payload.proposedIssue as Record<string, unknown>)
         : null;
+    assertChatIssueProposalOwnerDecision(proposedIssue);
     if (!proposalAssignsOrReviewsIssue(proposedIssue)) return;
     assertCompanyAccess(req, approval.orgId);
     if (req.actor.type === "board" && (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) return;

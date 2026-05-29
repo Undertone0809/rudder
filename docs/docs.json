@@ -2,6 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "Rudder",
+  "description": "Rudder is an open-source control plane for AI agent teams. It coordinates goals, issues, agent runs, reviews, budgets, workspaces, and feedback loops.",
   "logo": "/logo.png",
   "favicon": "/favicon.svg",
   "icons": {
@@ -14,8 +15,12 @@
   },
   "seo": {
     "metatags": {
-      "canonical": "https://doc.rudder.zeeland.studio"
+      "robots": "index,follow",
+      "author": "Rudder"
     }
+  },
+  "metadata": {
+    "timestamp": true
   },
   "integrations": {
     "ga4": {
@@ -43,7 +48,15 @@
             "pages": [
               "index",
               "get-started/installation",
-              "get-started/first-organization"
+              "get-started/first-organization",
+              "faq"
+            ]
+          },
+          {
+            "group": "Use Cases",
+            "icon": "workflow",
+            "pages": [
+              "use-cases/agent-work-loops"
             ]
           },
           {
@@ -54,8 +67,7 @@
               "concepts/goals-projects-issues",
               "concepts/agents",
               "concepts/issues",
-              "concepts/chat",
-              "concepts/messenger",
+              "concepts/chat-messenger",
               "concepts/calendar",
               "concepts/workspaces",
               "concepts/skills"
@@ -66,6 +78,7 @@
             "icon": "route",
             "pages": [
               "how-to/issue-lifecycle",
+              "how-to/create-agent",
               "how-to/configure-agent-runtime"
             ]
           }
@@ -78,7 +91,7 @@
             "group": "开始使用",
             "icon": "rocket",
             "pages": [
-              "zh/index",
+              "zh",
               "zh/get-started/installation",
               "zh/get-started/first-organization"
             ]
@@ -91,8 +104,7 @@
               "zh/concepts/goals-projects-issues",
               "zh/concepts/agents",
               "zh/concepts/issues",
-              "zh/concepts/chat",
-              "zh/concepts/messenger",
+              "zh/concepts/chat-messenger",
               "zh/concepts/calendar",
               "zh/concepts/workspaces",
               "zh/concepts/skills"
@@ -141,12 +153,8 @@
         "header": "Product",
         "items": [
           {
-            "label": "Chat",
-            "href": "/concepts/chat"
-          },
-          {
-            "label": "Messenger",
-            "href": "/concepts/messenger"
+            "label": "Chat and Messenger",
+            "href": "/concepts/chat-messenger"
           },
           {
             "label": "Calendar",
@@ -172,11 +180,11 @@
   "redirects": [
     {
       "source": "/concepts/messenger-approvals",
-      "destination": "/concepts/messenger"
+      "destination": "/concepts/chat-messenger"
     },
     {
       "source": "/zh/concepts/messenger-approvals",
-      "destination": "/zh/concepts/messenger"
+      "destination": "/zh/concepts/chat-messenger"
     }
   ]
 }

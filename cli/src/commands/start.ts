@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { clearTimeout, setTimeout } from "node:timers";
 import { setTimeout as delay } from "node:timers/promises";
 import * as p from "@clack/prompts";
 import pc from "picocolors";
@@ -16,7 +17,7 @@ import {
   resolvePersistentCliInstallSpec,
 } from "../install.js";
 import { resolveRudderHomeDir } from "../config/home.js";
-import { ensureRuntimeInstalled, RuntimeInstallError } from "../runtime/install.js";
+import { ensureRuntimeInstalled, resolveRuntimePackageSpec, RuntimeInstallError } from "../runtime/install.js";
 import { createByteProgress, type ByteProgressReporter } from "../utils/progress.js";
 import { resolveCliVersion } from "../version.js";
 
@@ -49,6 +50,16 @@ interface GithubRelease {
   assets: GithubReleaseAsset[];
 }
 
+export type DesktopAssetCandidate = {
+  asset: GithubReleaseAsset;
+  kind: "shell" | "full";
+};
+
+export type ChecksummedDesktopAssetCandidate = DesktopAssetCandidate & {
+  expectedChecksum: string;
+  warnings: string[];
+};
+
 interface StartCommandOptions {
   cli?: boolean;
   desktop?: boolean;
@@ -71,6 +82,7 @@ export interface DesktopInstallMetadata {
   releaseTag: string;
   assetName: string;
   assetChecksum: string;
+  assetKind?: "full" | "shell";
   installedAt: string;
 }
 
@@ -295,6 +307,10 @@ export function resolveDesktopReleaseTag(version: string): string {
   );
 }
 
+export function isExactRuntimePackageSpec(version: string, packageSpec: string): boolean {
+  return version !== "latest" && packageSpec === resolveRuntimePackageSpec(version);
+}
+
 export function resolveDesktopAssetTarget(
   platform: NodeJS.Platform = process.platform,
   arch: NodeJS.Architecture = process.arch,
@@ -369,6 +385,7 @@ function scoreDesktopAsset(asset: GithubReleaseAsset, target: DesktopAssetTarget
   const expectedExtension = target.extension.toLowerCase();
   if (!normalized.endsWith(expectedExtension.toLowerCase())) return -1;
   if (normalized.includes("blockmap") || normalized.includes("shasum")) return -1;
+  if (normalized.includes("shell")) return -1;
 
   let score = 1;
   if (normalized.includes("rudder")) score += 2;
@@ -410,8 +427,109 @@ export function selectDesktopAsset(
   return exactArch?.asset ?? best.asset;
 }
 
+export function selectDesktopShellAsset(
+  assets: GithubReleaseAsset[],
+  target: DesktopAssetTarget,
+): GithubReleaseAsset | null {
+  if (!resolveDesktopShellAssetName("", target)) return null;
+
+  const scored = assets
+    .map((asset) => {
+      const normalized = normalizeAssetName(asset.name);
+      if (!normalized.endsWith(".zip")) return { asset, score: -1 };
+      if (!normalized.includes("shell")) return { asset, score: -1 };
+      if (!normalized.includes("rudder")) return { asset, score: -1 };
+      if (!normalized.includes(target.platform)) return { asset, score: -1 };
+
+      let score = 1;
+      if (target.arch === "arm64" && normalized.includes("arm64")) score += 4;
+      if (target.arch === "x64" && (normalized.includes("x64") || normalized.includes("amd64"))) score += 4;
+      if (target.platform === "macos" && target.arch === "x64" && normalized.includes("arm64")) score -= 10;
+      if (target.arch === "arm64" && normalized.includes("x64")) score -= 10;
+      return { asset, score };
+    })
+    .filter((item) => item.score >= 0)
+    .sort((a, b) => b.score - a.score || a.asset.name.localeCompare(b.asset.name));
+
+  return scored[0]?.asset ?? null;
+}
+
+export function resolveDesktopAssetCandidates(options: {
+  releaseAssets: GithubReleaseAsset[];
+  target: DesktopAssetTarget;
+  repo: string;
+  tag: string;
+  directReleaseVersion: string | null;
+  allowShellAssets?: boolean;
+}): DesktopAssetCandidate[] {
+  const candidates: DesktopAssetCandidate[] = [];
+  const deterministicShellName = options.directReleaseVersion
+    ? resolveDesktopShellAssetName(options.directReleaseVersion, options.target)
+    : null;
+  if (options.allowShellAssets !== false) {
+    const shellAsset = selectDesktopShellAsset(options.releaseAssets, options.target)
+      ?? (
+        options.releaseAssets.length === 0 && deterministicShellName
+          ? buildGithubReleaseAsset(options.repo, options.tag, deterministicShellName)
+          : null
+      );
+    if (shellAsset) candidates.push({ asset: shellAsset, kind: "shell" });
+  }
+
+  const fullAsset = selectDesktopAsset(options.releaseAssets, options.target)
+    ?? (
+      options.directReleaseVersion
+        ? buildGithubReleaseAsset(options.repo, options.tag, resolveDesktopAssetName(options.directReleaseVersion, options.target))
+        : null
+    );
+  if (fullAsset) candidates.push({ asset: fullAsset, kind: "full" });
+
+  return candidates;
+}
+
+export function selectChecksummedDesktopAssetCandidate(
+  candidates: DesktopAssetCandidate[],
+  checksums: Map<string, string>,
+): ChecksummedDesktopAssetCandidate {
+  const warnings: string[] = [];
+
+  for (const candidate of candidates) {
+    try {
+      return {
+        ...candidate,
+        expectedChecksum: resolveAssetChecksum(checksums, candidate.asset.name),
+        warnings,
+      };
+    } catch (error) {
+      if (candidate.kind === "shell") {
+        warnings.push(
+          `Layered Desktop shell asset is missing from ${DESKTOP_CHECKSUM_ASSET_NAME}; falling back to the full portable asset.`,
+        );
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error("No checksummed Rudder Desktop asset candidate is available.");
+}
+
 export function selectChecksumAsset(assets: GithubReleaseAsset[]): GithubReleaseAsset | null {
   return assets.find((asset) => asset.name.toLowerCase() === DESKTOP_CHECKSUM_ASSET_NAME.toLowerCase()) ?? null;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function githubApiHeaders(): HeadersInit {
@@ -421,12 +539,14 @@ function githubApiHeaders(): HeadersInit {
   };
 }
 
+const GITHUB_API_TIMEOUT_MS = 15_000;
+
 async function fetchGithubRelease(repo: string, tag: string): Promise<GithubRelease> {
   const endpoint =
     tag === "latest"
       ? `https://api.github.com/repos/${repo}/releases/latest`
       : `https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`;
-  const response = await fetch(endpoint, { headers: githubApiHeaders() });
+  const response = await fetchWithTimeout(endpoint, { headers: githubApiHeaders() }, GITHUB_API_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(`GitHub Release ${tag} was not found in ${repo} (${response.status}).`);
   }
@@ -451,6 +571,12 @@ export function resolveDesktopAssetName(version: string, target: DesktopAssetTar
   return `${DESKTOP_APP_NAME}-${version}-linux-x64.AppImage`;
 }
 
+export function resolveDesktopShellAssetName(version: string, target: DesktopAssetTarget): string | null {
+  if (target.platform === "macos") return `${DESKTOP_APP_NAME}-${version}-macos-${target.arch}-shell.zip`;
+  if (target.platform === "windows") return `${DESKTOP_APP_NAME}-${version}-windows-x64-shell.zip`;
+  return null;
+}
+
 function encodeReleaseTagForDownloadUrl(tag: string): string {
   return tag.split("/").map((segment) => encodeURIComponent(segment)).join("/");
 }
@@ -468,7 +594,7 @@ function buildGithubReleaseAsset(repo: string, tag: string, assetName: string): 
 }
 
 function uniqueAssetDownloadUrls(asset: GithubReleaseAsset): string[] {
-  const urls = [asset.url, asset.browser_download_url].filter((url): url is string => Boolean(url));
+  const urls = [asset.browser_download_url, asset.url].filter((url): url is string => Boolean(url));
   return Array.from(new Set(urls));
 }
 
@@ -507,13 +633,16 @@ export async function downloadAsset(
   mkdirSync(outputDir, { recursive: true });
   const outputPath = path.join(outputDir, path.basename(asset.name));
 
+  const ASSET_DOWNLOAD_TIMEOUT_MS = 600_000;
   let response: Response | null = null;
   const failures: string[] = [];
   for (const url of uniqueAssetDownloadUrls(asset)) {
     try {
-      const candidate = await fetch(url, {
-        headers: downloadHeadersForAssetUrl(asset, url),
-      });
+      const candidate = await fetchWithTimeout(
+        url,
+        { headers: downloadHeadersForAssetUrl(asset, url) },
+        ASSET_DOWNLOAD_TIMEOUT_MS,
+      );
       if (candidate.ok && candidate.body) {
         response = candidate;
         break;
@@ -1078,6 +1207,7 @@ async function writeInstallMetadata(
   releaseTag: string,
   assetName: string,
   assetChecksum: string,
+  assetKind: "full" | "shell" = "full",
 ): Promise<void> {
   mkdirSync(path.dirname(paths.metadataPath), { recursive: true });
   const metadata: DesktopInstallMetadata = {
@@ -1085,6 +1215,7 @@ async function writeInstallMetadata(
     releaseTag,
     assetName,
     assetChecksum,
+    assetKind,
     installedAt: new Date().toISOString(),
   };
   mkdirSync(paths.installRoot, { recursive: true });
@@ -1130,6 +1261,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
   const version = opts.targetVersion?.trim() || opts.version?.trim() || resolveCurrentCliVersion();
   const dryRun = opts.dryRun === true;
   const desktopProgressJson = opts.desktopProgressJson === true;
+  let runtimeSupportsShellAssets = false;
 
   if (desktopProgressJson) {
     process.stdout.on("error", (error: NodeJS.ErrnoException) => {
@@ -1157,11 +1289,15 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
       spinner.start("Installing or reusing Rudder runtime...");
       try {
         const runtime = await ensureRuntimeInstalled({ version });
+        runtimeSupportsShellAssets = isExactRuntimePackageSpec(version, runtime.packageSpec);
         spinner.stop(
           runtime.status === "hit"
             ? `Rudder runtime cache hit at ${pc.cyan(runtime.cacheDir)}.`
             : `Rudder runtime installed at ${pc.cyan(runtime.cacheDir)}.`,
         );
+        if (!runtimeSupportsShellAssets && installDesktop) {
+          p.log.warn("Rudder runtime did not resolve to the exact Desktop version; the full portable Desktop asset will be used.");
+        }
       } catch (error) {
         spinner.stop(pc.red("Rudder runtime installation failed."));
         if (error instanceof RuntimeInstallError && error.output) {
@@ -1247,13 +1383,15 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
       throw new Error(`Unable to resolve Rudder Desktop release tag for ${repo}@${tag}.`);
     }
 
-    const asset = selectDesktopAsset(release?.assets ?? [], target)
-      ?? (
-        directReleaseVersion
-          ? buildGithubReleaseAsset(repo, tag, resolveDesktopAssetName(directReleaseVersion, target))
-          : null
-      );
-    if (!asset) {
+    const assetCandidates = resolveDesktopAssetCandidates({
+      releaseAssets: release?.assets ?? [],
+      target,
+      repo,
+      tag,
+      directReleaseVersion,
+      allowShellAssets: runtimeSupportsShellAssets,
+    });
+    if (assetCandidates.length === 0) {
       throw new Error(`No Rudder Desktop portable asset found for ${target.platform}/${target.arch} in ${repo}@${releaseTag}.`);
     }
 
@@ -1264,11 +1402,20 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
           : null
       );
     const checksums = await downloadChecksums(checksumAsset, outputDir, progressFactory);
-    const expectedChecksum = resolveAssetChecksum(checksums, asset.name);
+    let selectedCandidate: ChecksummedDesktopAssetCandidate;
+    try {
+      selectedCandidate = selectChecksummedDesktopAssetCandidate(assetCandidates, checksums);
+    } catch (error) {
+      throw new Error(`No checksummed Rudder Desktop asset found for ${target.platform}/${target.arch} in ${repo}@${releaseTag}.`);
+    }
+    for (const warning of selectedCandidate.warnings) p.log.warn(warning);
+    let selectedAsset = selectedCandidate.asset;
+    let selectedAssetKind = selectedCandidate.kind;
+    let expectedChecksum = selectedCandidate.expectedChecksum;
 
     const metadata = await readInstallMetadata(installPaths.metadataPath);
     if (
-      isInstalledDesktopCurrent(metadata, releaseTag, asset.name, expectedChecksum) &&
+      isInstalledDesktopCurrent(metadata, releaseTag, selectedAsset.name, expectedChecksum) &&
       await pathExists(installPaths.executablePath)
     ) {
       p.log.success(`Rudder Desktop is already installed at ${pc.cyan(installPaths.appPath)}.`);
@@ -1282,16 +1429,32 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         desktopProgressJson ? "preparing_restart" : null,
       );
     } else {
-      const cachedAsset = await downloadDesktopAssetWithCache(asset, expectedChecksum, {
-        outputDir,
-        progressFactory,
-      });
+      let cachedAsset: Awaited<ReturnType<typeof downloadDesktopAssetWithCache>>;
+      try {
+        cachedAsset = await downloadDesktopAssetWithCache(selectedAsset, expectedChecksum, {
+          outputDir,
+          progressFactory,
+        });
+      } catch (error) {
+        const fullCandidate = assetCandidates.find((candidate) => candidate.kind === "full");
+        if (selectedAssetKind !== "shell" || !fullCandidate) throw error;
+        p.log.warn(
+          `Layered Desktop shell asset download failed; falling back to the full portable asset. ${formatFetchError(error)}`,
+        );
+        selectedAsset = fullCandidate.asset;
+        selectedAssetKind = fullCandidate.kind;
+        expectedChecksum = resolveAssetChecksum(checksums, selectedAsset.name);
+        cachedAsset = await downloadDesktopAssetWithCache(selectedAsset, expectedChecksum, {
+          outputDir,
+          progressFactory,
+        });
+      }
       if (cachedAsset.cacheStatus === "hit") {
         p.log.success(`Desktop asset cache hit at ${pc.cyan(cachedAsset.path)}.`);
         if (desktopProgressJson) {
           writeDesktopProgress({
             phase: "downloading_asset",
-            message: `Desktop asset cache hit for ${asset.name}.`,
+            message: `Desktop asset cache hit for ${selectedAsset.name}.`,
             percent: 100,
           });
         }
@@ -1337,7 +1500,7 @@ export async function startCommand(opts: StartCommandOptions): Promise<void> {
         },
         desktopProgressJson ? "preparing_restart" : null,
       );
-      await writeInstallMetadata(installPaths, releaseTag, asset.name, checksum);
+      await writeInstallMetadata(installPaths, releaseTag, selectedAsset.name, checksum, selectedAssetKind);
     }
 
     if (opts.open !== false) {

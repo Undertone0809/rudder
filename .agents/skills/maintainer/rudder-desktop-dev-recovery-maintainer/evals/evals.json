@@ -30,6 +30,12 @@
       "prompt": "Rudder 更新下载完点 Restart to update 后，旧 app 退出，过一会儿新 app 弹 Electron main process write EPIPE。你先 debug，不要直接说 release 坏了。",
       "expected_output": "Classifies the failure as an update restart / closed progress pipe candidate, records installed app path plus old/new versions, inspects progress JSON/stdout/stderr writer paths and child-process handoff, treats EPIPE or ERR_STREAM_DESTROYED from a closed parent pipe as expected shutdown only when narrowly identified, adds or recommends a regression test that destroys the progress reader before writes or flushes, and finishes with packaged or installed-app verification rather than a dry-run.",
       "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "pnpm dev 好像运行不起来了。API health 是 OK，但 Electron 没起来，日志里是 @rudderhq/ui build 的 TypeScript fixture 报错，而且相关文件都是 untracked。",
+      "expected_output": "Classifies the blocker as a dirty-WIP UI build/typecheck failure rather than Desktop/Postgres corruption, builds a changed-file ownership packet for the failing fixture and companion untracked files, applies only a safe narrow repair or reports the ownership blocker, reruns the failing build/startup path, and avoids committing a lone file from a broader unrelated feature set.",
+      "files": []
     }
   ]
 }

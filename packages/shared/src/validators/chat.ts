@@ -201,7 +201,7 @@ export const createChatAttachmentMetadataSchema = z.object({
   messageId: z.string().uuid(),
 });
 
-const chatIssueProposalSchema = z.object({
+export const chatIssueProposalSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().min(1).max(20000),
   priority: z.enum(["critical", "high", "medium", "low"]).optional().default("medium"),
@@ -210,15 +210,44 @@ const chatIssueProposalSchema = z.object({
   parentId: z.string().uuid().optional().nullable(),
   assigneeAgentId: z.string().uuid().optional().nullable(),
   assigneeUserId: z.string().trim().optional().nullable(),
+  assigneeUnassignedReason: z.string().trim().min(1).max(500).optional().nullable(),
   reviewerAgentId: z.string().uuid().optional().nullable(),
   reviewerUserId: z.string().trim().optional().nullable(),
   labelIds: z.array(z.string().uuid()).optional(),
+}).superRefine((proposal, ctx) => {
+  const hasAssignee = Boolean(proposal.assigneeAgentId || proposal.assigneeUserId);
+  const hasUnassignedReason = Boolean(proposal.assigneeUnassignedReason?.trim());
+  if (hasAssignee && hasUnassignedReason) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Issue proposals with an assignee must not also declare an unassigned reason",
+      path: ["assigneeUnassignedReason"],
+    });
+  }
+  if (!hasAssignee && !hasUnassignedReason) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Issue proposals without an owner must include assigneeUnassignedReason",
+      path: ["assigneeUnassignedReason"],
+    });
+  }
 });
 
 export const convertChatToIssueSchema = z.object({
   messageId: z.string().uuid().optional().nullable(),
   proposal: chatIssueProposalSchema.optional(),
 });
+
+export function chatIssueProposalFromStructuredPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const root = payload as Record<string, unknown>;
+  const rawProposal =
+    root.issueProposal && typeof root.issueProposal === "object" && !Array.isArray(root.issueProposal)
+      ? root.issueProposal
+      : root;
+  const parsed = chatIssueProposalSchema.safeParse(rawProposal);
+  return parsed.success ? parsed.data : null;
+}
 
 export const chatOperationProposalSchema = z.object({
   targetType: z.enum(["organization", "agent"]),

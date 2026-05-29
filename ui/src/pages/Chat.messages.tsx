@@ -1,17 +1,15 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
   Boxes,
-  Bot,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
   Folder,
-  ListChecks,
   Loader2,
   Paperclip,
   Pencil,
@@ -56,7 +54,9 @@ import { TextDots } from "@/components/TextDots";
 import { ImagePreviewDialog } from "@/components/ImagePreviewDialog";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
-import { AgentIcon, getAgentAvatarImageSrc } from "@/components/AgentIconPicker";
+import { AgentIcon } from "@/components/AgentIconPicker";
+import { AgentMenuLabel, AssigneeLabel } from "@/components/AssigneeLabel";
+import { InlineEntitySelector, type InlineEntityOption } from "@/components/InlineEntitySelector";
 import { HoverTimestampLabel } from "@/components/HoverTimestamp";
 import { PriorityIcon } from "@/components/PriorityIcon";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -92,7 +92,7 @@ import {
 import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state";
 import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options";
 import { displayChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title";
-import { formatChatAgentLabel } from "@/lib/agent-labels";
+import { agentTitleBadgeLabel, formatChatAgentLabel } from "@/lib/agent-labels";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import { projectColorCssVars } from "@/lib/project-colors";
 import { queryKeys } from "@/lib/queryKeys";
@@ -111,7 +111,12 @@ import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
   appendSkillReferencesToDraft,
 } from "@/lib/organization-skill-picker";
-import { formatAssigneeUserLabel } from "@/lib/assignees";
+import {
+  assigneeValueFromSelection,
+  currentUserAssigneeOption,
+  formatAssigneeUserLabel,
+  parseAssigneeValue,
+} from "@/lib/assignees";
 import { readDesktopShell } from "@/lib/desktop-shell";
 import {
   canShowImageInFolder,
@@ -120,7 +125,7 @@ import {
   showImageInFolder as showImageInFolderAction,
 } from "@/lib/image-actions";
 import { resolveLocalFileTarget } from "@/lib/local-file-targets";
-import { cn, relativeTime } from "@/lib/utils";
+import { agentUrl, cn, relativeTime } from "@/lib/utils";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useI18n } from "@/context/I18nContext";
 import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, AskUserAnswerValue, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName } from "./Chat.parts";
@@ -137,25 +142,268 @@ export function ChatAssistantAttributionRow({
   const agent = replyingAgentId ? agents?.find((a) => a.id === replyingAgentId) : null;
   const fallbackLabel = replyingAgentId ? conversation.chatRuntime?.sourceLabel ?? "Unknown agent" : "Assistant";
   const label = agent?.name ?? fallbackLabel;
-  const agentImageSrc = agent ? getAgentAvatarImageSrc(agent.icon) : null;
-
-  return (
-    <div className="mb-2 flex items-center gap-2.5">
-      {agent && agentImageSrc ? (
-        <AgentIcon icon={agent.icon} role={agent.role} className="h-8 w-8 shrink-0" />
+  const content = (
+    <>
+      {agent || replyingAgentId ? (
+        <AgentIcon
+          icon={agent?.icon}
+          role={agent?.role}
+          fallbackSeed={agent?.id ?? replyingAgentId}
+          className="h-8 w-8 shrink-0"
+        />
       ) : (
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/90 text-foreground shadow-sm">
-          {agent ? (
-            <AgentIcon icon={agent.icon} role={agent.role} className="h-4 w-4" />
-          ) : replyingAgentId ? (
-            <Bot className="h-4 w-4 text-muted-foreground" />
-          ) : (
-            <Sparkles className="h-4 w-4 text-muted-foreground" />
-          )}
+          <Sparkles className="h-4 w-4 text-muted-foreground" />
         </span>
       )}
       <span className="text-sm font-semibold tracking-tight text-foreground">{label}</span>
+    </>
+  );
+
+  return (
+    <div className="mb-2 flex items-center gap-2.5">
+      {agent ? (
+        <Link
+          to={agentUrl(agent)}
+          className="inline-flex items-center gap-2.5 rounded-[calc(var(--radius-sm)-1px)] pr-1 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/45"
+          aria-label={`Open ${label} agent detail`}
+        >
+          {content}
+        </Link>
+      ) : (
+        content
+      )}
     </div>
+  );
+}
+
+type ProposalPrincipalDisplay =
+  | { kind: "agent"; label: string; agent?: Agent | null }
+  | { kind: "user"; label: string }
+  | null;
+
+type ProposalPrincipalRole = "assignee" | "reviewer";
+
+const proposalPrincipalFieldKeys = {
+  assignee: {
+    agent: "assigneeAgentId",
+    user: "assigneeUserId",
+  },
+  reviewer: {
+    agent: "reviewerAgentId",
+    user: "reviewerUserId",
+  },
+} as const;
+
+export function issueProposalPrincipalSelectionValue(
+  proposal: Record<string, unknown>,
+  role: ProposalPrincipalRole,
+) {
+  const keys = proposalPrincipalFieldKeys[role];
+  const rawAgentId = proposal[keys.agent];
+  const agentId = typeof rawAgentId === "string" ? rawAgentId.trim() : "";
+  if (agentId) return assigneeValueFromSelection({ assigneeAgentId: agentId });
+  const rawUserId = proposal[keys.user];
+  const userId = typeof rawUserId === "string" ? rawUserId.trim() : "";
+  if (userId) return assigneeValueFromSelection({ assigneeUserId: userId });
+  return "";
+}
+
+export function issueProposalWithPrincipalSelection(
+  proposal: Record<string, unknown>,
+  role: ProposalPrincipalRole,
+  value: string,
+) {
+  const keys = proposalPrincipalFieldKeys[role];
+  const selection = parseAssigneeValue(value);
+  const next = {
+    ...proposal,
+    [keys.agent]: selection.assigneeAgentId,
+    [keys.user]: selection.assigneeUserId,
+  };
+  if (role !== "assignee") return next;
+  return {
+    ...next,
+    assigneeUnassignedReason:
+      selection.assigneeAgentId || selection.assigneeUserId
+        ? null
+        : "Operator explicitly left this proposal unassigned.",
+  };
+}
+
+export function chatIssueApprovalPayloadWithProposalOverride(
+  payload: Record<string, unknown>,
+  proposalOverride: Record<string, unknown>,
+) {
+  const proposedIssue =
+    payload.proposedIssue && typeof payload.proposedIssue === "object" && !Array.isArray(payload.proposedIssue)
+      ? (payload.proposedIssue as Record<string, unknown>)
+      : {};
+  return {
+    ...payload,
+    proposedIssue: {
+      ...proposedIssue,
+      ...proposalOverride,
+    },
+  };
+}
+
+function issueProposalPrincipalDisplay(
+  proposal: Record<string, unknown>,
+  role: ProposalPrincipalRole,
+  agents: Agent[] | undefined,
+  currentUserId?: string | null,
+): ProposalPrincipalDisplay {
+  const keys = proposalPrincipalFieldKeys[role];
+  const rawAgentId = proposal[keys.agent];
+  const agentId = typeof rawAgentId === "string" ? rawAgentId.trim() : "";
+  if (agentId) {
+    const agent = agents?.find((candidate) => candidate.id === agentId) ?? null;
+    return {
+      kind: "agent",
+      label: agent?.name ?? (role === "assignee" ? "Unknown agent" : "Unknown reviewer"),
+      agent,
+    };
+  }
+
+  const rawUserId = proposal[keys.user];
+  const userId = typeof rawUserId === "string" ? rawUserId.trim() : "";
+  if (userId) {
+    return {
+      kind: "user",
+      label: formatAssigneeUserLabel(userId, currentUserId) ?? (role === "assignee" ? "Human assignee" : "Human reviewer"),
+    };
+  }
+
+  return null;
+}
+
+function proposalPrincipalOptionDisplay(
+  option: InlineEntityOption,
+  role: ProposalPrincipalRole,
+  agents: Agent[] | undefined,
+  currentUserId?: string | null,
+): ProposalPrincipalDisplay {
+  const selection = parseAssigneeValue(option.id);
+  if (selection.assigneeAgentId) {
+    const agent = agents?.find((candidate) => candidate.id === selection.assigneeAgentId) ?? null;
+    return {
+      kind: "agent",
+      label: agent?.name ?? option.label,
+      agent,
+    };
+  }
+  if (selection.assigneeUserId) {
+    return {
+      kind: "user",
+      label: formatAssigneeUserLabel(selection.assigneeUserId, currentUserId) ?? option.label,
+    };
+  }
+  return role === "assignee"
+    ? { kind: "user", label: "No owner" }
+    : { kind: "user", label: "No reviewer" };
+}
+
+function ProposalFactRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid min-h-9 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-3 border-b border-[color:var(--border-soft)] py-2 last:border-b-0">
+      <div className="text-sm text-muted-foreground">{label}</div>
+      <div className="flex min-w-0 justify-end text-sm font-medium text-foreground">{children}</div>
+    </div>
+  );
+}
+
+function ProposalPrincipalLabel({ principal }: { principal: ProposalPrincipalDisplay }) {
+  if (!principal) return <span className="text-muted-foreground">None</span>;
+  if (principal.kind === "agent") {
+    return (
+      <AssigneeLabel
+        kind="agent"
+        label={principal.label}
+        badgeLabel={principal.agent ? agentTitleBadgeLabel(principal.agent) : null}
+        agentIcon={principal.agent?.icon ?? null}
+        agentRole={principal.agent?.role ?? null}
+      />
+    );
+  }
+  return <AssigneeLabel kind="user" label={principal.label} />;
+}
+
+function ProposalPrincipalSelector({
+  proposal,
+  role,
+  agents,
+  currentUserId,
+  onChange,
+}: {
+  proposal: Record<string, unknown>;
+  role: ProposalPrincipalRole;
+  agents: Agent[] | undefined;
+  currentUserId?: string | null;
+  onChange: (nextProposal: Record<string, unknown>) => void;
+}) {
+  const value = issueProposalPrincipalSelectionValue(proposal, role);
+  const currentUserOptions = useMemo(() => currentUserAssigneeOption(currentUserId), [currentUserId]);
+  const options = useMemo<InlineEntityOption[]>(() => {
+    const agentOptions = (agents ?? [])
+      .filter((agent) => agent.status !== "terminated")
+      .map((agent) => ({
+        id: assigneeValueFromSelection({ assigneeAgentId: agent.id }),
+        label: agent.name,
+        searchText: `${agent.name} ${agent.role} ${agent.title ?? ""}`,
+      }));
+    const combined = [...currentUserOptions, ...agentOptions];
+    if (value && !combined.some((option) => option.id === value)) {
+      const currentDisplay = proposalPrincipalOptionDisplay(
+        { id: value, label: role === "assignee" ? "Current owner" : "Current reviewer" },
+        role,
+        agents,
+        currentUserId,
+      );
+      combined.unshift({
+        id: value,
+        label: currentDisplay?.label ?? (role === "assignee" ? "Current owner" : "Current reviewer"),
+      });
+    }
+    return combined;
+  }, [agents, currentUserId, currentUserOptions, role, value]);
+  const noneLabel = role === "assignee" ? "No owner" : "No reviewer";
+
+  return (
+    <InlineEntitySelector
+      value={value}
+      options={options}
+      placeholder={noneLabel}
+      noneLabel={noneLabel}
+      searchPlaceholder={role === "assignee" ? "Search owners..." : "Search reviewers..."}
+      emptyMessage={role === "assignee" ? "No owners found." : "No reviewers found."}
+      ariaLabel={role === "assignee" ? "Edit owner" : "Edit reviewer"}
+      className="w-full max-w-full justify-end rounded-[var(--radius-sm)] border-transparent bg-transparent px-1.5 py-1 hover:border-border hover:bg-accent/50"
+      contentClassName="min-w-64"
+      onChange={(nextValue) => onChange(issueProposalWithPrincipalSelection(proposal, role, nextValue))}
+      renderTriggerValue={(option) =>
+        option ? (
+          <ProposalPrincipalLabel principal={proposalPrincipalOptionDisplay(option, role, agents, currentUserId)} />
+        ) : (
+          <AssigneeLabel kind="unassigned" label={noneLabel} muted />
+        )
+      }
+      renderOption={(option) => {
+        if (!option.id) return <AssigneeLabel kind="unassigned" label={option.label} muted />;
+        const selection = parseAssigneeValue(option.id);
+        const agent = selection.assigneeAgentId
+          ? (agents ?? []).find((candidate) => candidate.id === selection.assigneeAgentId) ?? null
+          : null;
+        if (agent) return <AgentMenuLabel agent={agent} />;
+        return <ProposalPrincipalLabel principal={proposalPrincipalOptionDisplay(option, role, agents, currentUserId)} />;
+      }}
+    />
   );
 }
 
@@ -163,6 +411,9 @@ export function ProposalCard({
   conversation,
   message,
   agents,
+  currentUserId,
+  issueProposalOverride,
+  onIssueProposalChange,
   decisionNote,
   onDecisionNoteChange,
   onApprovalAction,
@@ -175,6 +426,9 @@ export function ProposalCard({
   conversation: ChatConversation;
   message: ChatMessage;
   agents: Agent[] | undefined;
+  currentUserId?: string | null;
+  issueProposalOverride?: Record<string, unknown>;
+  onIssueProposalChange?: (messageId: string, nextProposal: Record<string, unknown>) => void;
   decisionNote: string;
   onDecisionNoteChange: (value: string) => void;
   onApprovalAction: (approvalId: string, action: ApprovalAction, messageId: string) => void;
@@ -184,7 +438,8 @@ export function ProposalCard({
   skillReferences: MarkdownSkillReferencePreview[];
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
 }) {
-  const issueProposal = message.kind === "issue_proposal" ? issueProposalFromMessage(message) : null;
+  const baseIssueProposal = message.kind === "issue_proposal" ? issueProposalFromMessage(message) : null;
+  const issueProposal = baseIssueProposal ? (issueProposalOverride ?? baseIssueProposal) : null;
   const planDocument = message.kind === "issue_proposal" ? planDocumentFromMessage(message) : null;
   const operationProposal = message.kind === "operation_proposal" ? operationProposalFromMessage(message) : null;
   const operationProposalStatus = message.kind === "operation_proposal"
@@ -199,11 +454,23 @@ export function ProposalCard({
   const showDecisionNote = showApprovalActions || showOperationActions;
   const showRevisionAction = message.approval?.status === "pending";
   const decisionNoteId = `proposal-review-note-${message.id}`;
+  const proposalDetailsId = `proposal-details-${message.id}`;
   const resolvedDecisionNote = message.approval?.decisionNote ?? operationProposalDecisionNoteFromMessage(message);
   const showReviewControls = showDecisionNote || canConvertDirectly || Boolean(resolvedDecisionNote);
   const resolvedDecisionNoteLabel = reviewStatus === "revision_requested" ? "Requested changes" : "Decision note";
   const proposalAssigneeLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "assignee", agents) : null;
   const proposalReviewerLabel = issueProposal ? issueProposalPrincipalLabel(issueProposal, "reviewer", agents) : null;
+  const proposalAssigneeDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "assignee", agents, currentUserId) : null;
+  const proposalReviewerDisplay = issueProposal ? issueProposalPrincipalDisplay(issueProposal, "reviewer", agents, currentUserId) : null;
+  const proposalAssigneeUnassignedReason =
+    issueProposal && typeof issueProposal.assigneeUnassignedReason === "string"
+      ? issueProposal.assigneeUnassignedReason.trim() || null
+      : null;
+  const proposalDescription = issueProposal ? String(issueProposal.description) : "";
+  const canEditIssueProposalPrincipals = Boolean(issueProposal && (showApprovalActions || canConvertDirectly) && onIssueProposalChange);
+  const [proposalDetailsExpanded, setProposalDetailsExpanded] = useState(false);
+  const [proposalDetailsCanExpand, setProposalDetailsCanExpand] = useState(false);
+  const proposalDetailsRef = useRef<HTMLDivElement | null>(null);
   const proposalKind = issueProposal ? "issue" : operationProposal ? "operation" : planDocument ? "plan" : "default";
   const proposalKindLabel = issueProposal
     ? "Issue proposal"
@@ -212,6 +479,32 @@ export function ProposalCard({
       : planDocument
         ? "Plan proposal"
         : "Proposal";
+
+  useEffect(() => {
+    setProposalDetailsExpanded(false);
+  }, [message.id, proposalDescription]);
+
+  useEffect(() => {
+    const details = proposalDetailsRef.current;
+    if (!details || !issueProposal) {
+      setProposalDetailsCanExpand(false);
+      return;
+    }
+
+    const updateCanExpand = () => {
+      const computedStyle = window.getComputedStyle(details);
+      const lineHeight = Number.parseFloat(computedStyle.lineHeight);
+      const collapsedTenLineHeight = Number.isFinite(lineHeight) ? lineHeight * 10 : 240;
+      setProposalDetailsCanExpand(details.scrollHeight > collapsedTenLineHeight + 1);
+    };
+
+    updateCanExpand();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateCanExpand);
+    observer.observe(details);
+    return () => observer.disconnect();
+  }, [issueProposal, proposalDescription, proposalDetailsExpanded]);
 
   return (
     <div className="text-foreground">
@@ -234,39 +527,82 @@ export function ProposalCard({
         data-testid="proposal-review-block"
         data-status={reviewStatus ?? "default"}
         data-kind={proposalKind}
-        className="chat-review-block mt-4 rounded-[var(--radius-xl)] p-5 text-foreground transition-all duration-200"
+        className="chat-review-block mt-4 max-w-[860px] rounded-[var(--radius-lg)] text-foreground transition-all duration-200"
       >
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border-soft)] pb-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[color:color-mix(in_oklab,var(--accent-base)_28%,var(--border-base))] bg-[color:color-mix(in_oklab,var(--surface-proposal)_86%,var(--surface-elevated))] text-[color:var(--accent-strong)]">
-              <ListChecks className="h-5 w-5" aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <div className="text-lg font-semibold leading-6 text-[color:var(--accent-strong)]">
-                {proposalKindLabel}
-              </div>
-            </div>
+        <div
+          className={cn(
+            "chat-review-docket-header grid border-b border-[color:var(--border-soft)]",
+            reviewStatus ? "grid-cols-1 sm:grid-cols-[1fr_minmax(9rem,13rem)]" : "grid-cols-1",
+          )}
+        >
+          <div className="flex min-w-0 items-center gap-3 px-5 py-4">
+            <span className="h-6 w-1 rounded-full bg-[color:var(--accent-strong)]" aria-hidden="true" />
+            <span className="truncate text-sm font-semibold leading-5 text-foreground">{proposalKindLabel}</span>
           </div>
           {reviewStatus ? (
-            <div data-testid="proposal-review-status">
+            <div
+              data-testid="proposal-review-status"
+              className="relative z-[6] flex min-w-0 items-center justify-start border-t border-[color:var(--border-soft)] px-5 py-4 sm:justify-end sm:border-t-0 sm:pr-10"
+            >
               <StatusBadge status={reviewStatus} />
             </div>
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="px-5 py-5">
           <div className="min-w-0">
             {issueProposal ? (
               <>
-                <div className="text-xl font-semibold leading-7 text-foreground">{String(issueProposal.title)}</div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-shell)_78%,transparent)] px-2.5 py-1 text-xs text-muted-foreground">
-                    <span>Priority</span>
-                    <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
-                  </span>
+                <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(15rem,22rem)]">
+                  <div className="flex min-w-0 items-center border-b border-[color:var(--border-soft)] pb-5 md:border-b-0 md:pb-0">
+                    <div className="text-[26px] font-semibold leading-tight text-foreground">{String(issueProposal.title)}</div>
+                  </div>
+                  <div className="chat-review-fact-ledger">
+                    <ProposalFactRow label="Priority">
+                      <PriorityIcon priority={String(issueProposal.priority ?? "medium")} showLabel />
+                    </ProposalFactRow>
+                    <ProposalFactRow label="Owner">
+                      <div className="flex min-w-0 flex-col items-end gap-1 text-right">
+                        {canEditIssueProposalPrincipals ? (
+                          <ProposalPrincipalSelector
+                            proposal={issueProposal}
+                            role="assignee"
+                            agents={agents}
+                            currentUserId={currentUserId}
+                            onChange={(nextProposal) => onIssueProposalChange?.(message.id, nextProposal)}
+                          />
+                        ) : (
+                          <ProposalPrincipalLabel principal={proposalAssigneeDisplay} />
+                        )}
+                        {!proposalAssigneeDisplay && proposalAssigneeUnassignedReason ? (
+                          <span className="max-w-full text-xs font-normal leading-5 text-muted-foreground">
+                            Reason: {proposalAssigneeUnassignedReason}
+                          </span>
+                        ) : null}
+                        {!proposalAssigneeDisplay && !proposalAssigneeUnassignedReason ? (
+                          <span className="max-w-full text-xs font-normal leading-5 text-amber-700 dark:text-amber-300">
+                            Owner decision missing
+                          </span>
+                        ) : null}
+                      </div>
+                    </ProposalFactRow>
+                    <ProposalFactRow label="Reviewer">
+                      {canEditIssueProposalPrincipals ? (
+                        <ProposalPrincipalSelector
+                          proposal={issueProposal}
+                          role="reviewer"
+                          agents={agents}
+                          currentUserId={currentUserId}
+                          onChange={(nextProposal) => onIssueProposalChange?.(message.id, nextProposal)}
+                        />
+                      ) : (
+                        <ProposalPrincipalLabel principal={proposalReviewerDisplay} />
+                      )}
+                    </ProposalFactRow>
+                  </div>
                 </div>
                 {proposalAssigneeLabel || proposalReviewerLabel ? (
-                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <div className="sr-only">
                     {proposalAssigneeLabel ? <span>Assignee · {proposalAssigneeLabel}</span> : null}
                     {proposalReviewerLabel ? <span>Reviewer · {proposalReviewerLabel}</span> : null}
                   </div>
@@ -291,15 +627,46 @@ export function ProposalCard({
         </div>
 
         {issueProposal ? (
-          <div className="mt-4 border-t border-[color:var(--border-soft)] pt-4 text-sm leading-6 text-muted-foreground">
-            <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
-              {String(issueProposal.description)}
-            </MarkdownBody>
-          </div>
+          <section className="border-t border-[color:var(--border-soft)] px-5 py-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-foreground">Proposal details</div>
+              {proposalDetailsCanExpand ? (
+                <button
+                  type="button"
+                  aria-controls={proposalDetailsId}
+                  aria-expanded={proposalDetailsExpanded}
+                  className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] px-1.5 py-1 text-xs font-medium text-[color:var(--accent-strong)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-proposal)_55%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]"
+                  onClick={() => setProposalDetailsExpanded((current) => !current)}
+                >
+                  {proposalDetailsExpanded ? "Show less" : "Show full proposal"}
+                  <ChevronDown
+                    className={cn(
+                      "h-3.5 w-3.5 transition-transform duration-200",
+                      proposalDetailsExpanded && "rotate-180",
+                    )}
+                    aria-hidden="true"
+                  />
+                </button>
+              ) : null}
+            </div>
+            <div
+              id={proposalDetailsId}
+              ref={proposalDetailsRef}
+              className={cn(
+                "chat-review-details-body text-sm leading-6 text-muted-foreground",
+                !proposalDetailsExpanded && "chat-review-details-body--collapsed",
+                proposalDetailsCanExpand && !proposalDetailsExpanded && "chat-review-details-body--can-expand",
+              )}
+            >
+              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick}>
+                {proposalDescription}
+              </MarkdownBody>
+            </div>
+          </section>
         ) : null}
 
         {planDocument ? (
-          <div className="mt-4 border-t border-[color:var(--border-soft)] pt-4">
+          <div className="border-t border-[color:var(--border-soft)] px-5 py-4">
             {issueProposal ? (
               <div className="text-[11px] font-medium text-muted-foreground">{planDocument.title}</div>
             ) : null}
@@ -312,13 +679,15 @@ export function ProposalCard({
         ) : null}
 
         {operationProposal?.patch && typeof operationProposal.patch === "object" ? (
-          <pre className="mt-4 overflow-x-auto rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-shell)_88%,transparent)] p-3 text-xs text-muted-foreground">
-            {JSON.stringify(operationProposal.patch, null, 2)}
-          </pre>
+          <div className="border-t border-[color:var(--border-soft)] px-5 py-4">
+            <pre className="overflow-x-auto rounded-[var(--radius-lg)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-shell)_88%,transparent)] p-3 text-xs text-muted-foreground">
+              {JSON.stringify(operationProposal.patch, null, 2)}
+            </pre>
+          </div>
         ) : null}
 
         {showReviewControls ? (
-          <div className="mt-5 border-t border-[color:var(--border-soft)] pt-4">
+          <div className="border-t border-[color:var(--border-soft)] px-5 py-5">
             {showDecisionNote ? (
               <label className="block space-y-2">
                 <span className="text-xs font-medium text-muted-foreground">
@@ -341,8 +710,10 @@ export function ProposalCard({
 
             {!showDecisionNote && resolvedDecisionNote ? (
               <div className="chat-review-note mt-1 rounded-[var(--radius-lg)] px-4 py-3">
-                <div className="text-[11px] font-medium text-muted-foreground">{resolvedDecisionNoteLabel}</div>
-                <p className="mt-2 text-sm leading-6 text-foreground/90">{resolvedDecisionNote}</p>
+                <div className="chat-review-note-header text-[11px] font-medium text-muted-foreground">
+                  {resolvedDecisionNoteLabel}
+                </div>
+                <p className="chat-review-note-body mt-2 text-sm leading-6 text-foreground/90">{resolvedDecisionNote}</p>
               </div>
             ) : null}
 
@@ -981,9 +1352,12 @@ export function ChatMessageItem({
   conversation,
   message,
   agents,
+  currentUserId,
+  issueProposalOverride,
   decisionNote,
   onDecisionNoteChange,
   onApprovalAction,
+  onIssueProposalChange,
   onResolveOperationProposal,
   onConvertToIssue,
   actionPending,
@@ -1002,9 +1376,12 @@ export function ChatMessageItem({
   conversation: ChatConversation;
   message: ChatMessage;
   agents: Agent[] | undefined;
+  currentUserId?: string | null;
+  issueProposalOverride?: Record<string, unknown>;
   decisionNote: string;
   onDecisionNoteChange: (value: string) => void;
   onApprovalAction: (approvalId: string, action: ApprovalAction, messageId: string) => void;
+  onIssueProposalChange?: (messageId: string, nextProposal: Record<string, unknown>) => void;
   onResolveOperationProposal: (messageId: string, action: ChatOperationProposalDecisionAction, decisionNote: string) => void;
   onConvertToIssue: (message: ChatMessage) => void;
   actionPending: boolean;
@@ -1033,6 +1410,9 @@ export function ChatMessageItem({
         conversation={conversation}
         message={message}
         agents={agents}
+        currentUserId={currentUserId}
+        issueProposalOverride={issueProposalOverride}
+        onIssueProposalChange={onIssueProposalChange}
         decisionNote={decisionNote}
         onDecisionNoteChange={onDecisionNoteChange}
         onApprovalAction={onApprovalAction}

@@ -1,7 +1,7 @@
 import type { UsageSummary } from "@rudderhq/agent-runtime-utils";
 import { asString, asNumber, parseObject, parseJson } from "@rudderhq/agent-runtime-utils/server-utils";
 
-const CLAUDE_AUTH_REQUIRED_RE = /(?:not\s+logged\s+in|please\s+log\s+in|please\s+run\s+`?claude\s+login`?|login\s+required|requires\s+login|unauthorized|authentication\s+required)/i;
+const CLAUDE_AUTH_REQUIRED_RE = /(?:not\s+logged\s+in|please\s+log\s+in|please\s+run\s+(?:`?(?:claude\s+)?(?:auth\s+)?login`?|\/login)|login\s+required|requires\s+login|unauthorized|authentication\s+required)/i;
 const URL_RE = /(https?:\/\/[^\s'"`<>()[\]{};,!?]+[^\s'"`<>()[\]{};,!.?:]+)/gi;
 
 export function parseClaudeStreamJson(stdout: string) {

@@ -10,6 +10,7 @@ import {
   getAgentAvatarBackgroundPreset,
   getAgentAvatarBackgroundStyle,
   getAgentAvatarImageSrc,
+  getAgentFallbackAvatarImageSrc,
   normalizeAgentAvatarIconValue,
   withAgentAvatarBackground,
 } from "../lib/agent-avatar";
@@ -19,21 +20,26 @@ export { getAgentAvatarImageSrc } from "../lib/agent-avatar";
 interface AgentIconProps {
   icon: string | null | undefined;
   role?: AgentRole | null;
+  fallbackSeed?: string | null;
   className?: string;
   style?: CSSProperties;
 }
 
-export function AgentIcon({ icon, role, className, style }: AgentIconProps) {
+export function AgentIcon({ icon, role, fallbackSeed, className, style }: AgentIconProps) {
   const normalized = normalizeAgentAvatarIconValue(icon);
   const effectiveIcon = normalized ?? getDefaultAgentIconForRole(role);
-  const imageSrc = getAgentAvatarImageSrc(effectiveIcon);
+  const imageSrc = getAgentAvatarImageSrc(effectiveIcon) ?? getAgentFallbackAvatarImageSrc(fallbackSeed);
   if (imageSrc) {
     return (
       <img
         src={imageSrc}
         alt=""
         className={cn("inline-flex rounded-full object-cover", className)}
-        style={{ ...getAgentAvatarBackgroundStyle(effectiveIcon), ...style }}
+        style={{
+          background: getAgentAvatarBackgroundPreset(effectiveIcon).background,
+          ...getAgentAvatarBackgroundStyle(effectiveIcon),
+          ...style,
+        }}
         loading="lazy"
       />
     );

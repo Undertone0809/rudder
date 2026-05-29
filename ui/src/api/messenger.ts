@@ -13,6 +13,11 @@ type MessengerThreadDetailResponse<TItem> = {
   detail: MessengerThreadDetail<TItem>;
 };
 
+type MessengerIssuesThreadOptions = {
+  cursor?: string | null;
+  limit?: number;
+};
+
 export const messengerApi = {
   listThreads: (orgId: string) =>
     api.get<MessengerThreadSummary[]>(`/orgs/${orgId}/messenger/threads`),
@@ -21,8 +26,15 @@ export const messengerApi = {
       `/orgs/${orgId}/messenger/threads/${encodeURIComponent(threadKey)}/read`,
       lastReadAt ? { lastReadAt } : {},
     ),
-  getIssuesThread: (orgId: string) =>
-    api.get<MessengerThreadDetailResponse<MessengerIssueThreadItem>>(`/orgs/${orgId}/messenger/issues`),
+  getIssuesThread: (orgId: string, options: MessengerIssuesThreadOptions = {}) => {
+    const params = new URLSearchParams();
+    if (options.cursor) params.set("cursor", options.cursor);
+    if (typeof options.limit === "number") params.set("limit", String(options.limit));
+    const query = params.toString();
+    return api.get<MessengerThreadDetailResponse<MessengerIssueThreadItem>>(
+      `/orgs/${orgId}/messenger/issues${query ? `?${query}` : ""}`,
+    );
+  },
   getApprovalsThread: (orgId: string) =>
     api.get<MessengerThreadDetailResponse<MessengerApprovalThreadItem>>(`/orgs/${orgId}/messenger/approvals`),
   getSystemThread: (orgId: string, threadKind: MessengerSystemThreadKind) =>

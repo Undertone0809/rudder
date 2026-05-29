@@ -11,6 +11,7 @@ export type DesktopCliInstallStatus =
   | "installed"
   | "already_installed"
   | "skipped_existing_file"
+  | "skipped_temporary_install"
   | "unavailable";
 
 export type DesktopCliInstallResult = {
@@ -33,6 +34,15 @@ function isExcludedDirectory(dirPath: string): boolean {
 
 function isNonEmptyString(value: string | null | undefined): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isInsidePath(childPath: string, parentPath: string): boolean {
+  const relative = path.relative(parentPath, childPath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isTemporaryDesktopExecutable(executablePath: string): boolean {
+  return isInsidePath(path.resolve(executablePath), path.resolve(os.tmpdir()));
 }
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -146,8 +156,15 @@ export function buildDesktopCliWrapper(executablePath: string, platform: NodeJS.
     : buildUnixWrapper(executablePath);
 }
 
-export function shouldInstallDesktopCliLink(isPackaged: boolean): boolean {
-  return isPackaged;
+export function shouldInstallDesktopCliLink(
+  isPackaged: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!isPackaged) return false;
+  if (env.RUDDER_DESKTOP_DISABLE_CLI_LINK === "1") return false;
+  const appName = env.RUDDER_DESKTOP_APP_NAME?.trim();
+  if (appName?.startsWith("Rudder-smoke-")) return false;
+  return true;
 }
 
 function wrapperFileName(platform: NodeJS.Platform = process.platform): string {
@@ -200,6 +217,13 @@ export async function ensureDesktopCliLink(options: {
   const platform = options.platform ?? process.platform;
   const homeDir = path.resolve(options.homeDir ?? os.homedir());
   const executablePath = path.resolve(options.executablePath ?? await resolveDesktopCliExecutablePath(process.execPath, platform));
+  if (isTemporaryDesktopExecutable(executablePath)) {
+    return {
+      status: "skipped_temporary_install",
+      detail: "Desktop CLI wrapper is not installed for temporary Desktop app paths.",
+      needsPathUpdate: false,
+    };
+  }
   const installDir = await chooseInstallDirectory(options.pathValue ?? process.env.PATH, homeDir);
 
   if (!installDir) {

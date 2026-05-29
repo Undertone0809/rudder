@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { execute } from "@rudderhq/agent-runtime-claude-local/server";
+import { execute, runClaudeLogin } from "@rudderhq/agent-runtime-claude-local/server";
 import {
   clearInheritedGitIdentityEnv,
   expectPreparedGitConfigCapture,
@@ -84,6 +84,51 @@ type LogEntry = {
 };
 
 describe("claude execute", () => {
+  it("runs the current Claude auth login subcommand", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-login-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "claude");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeClaudeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const result = await runClaudeLogin({
+        runId: "claude-login-test",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Claude Coder",
+          agentRuntimeType: "claude_local",
+          agentRuntimeConfig: {},
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        argv: string[];
+      };
+      expect(capture.argv).toEqual(["auth", "login"]);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("logs a loaded instructions file as stdout instead of stderr", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-execute-"));
     const workspace = path.join(root, "workspace");

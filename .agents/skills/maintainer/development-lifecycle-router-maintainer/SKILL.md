@@ -7,7 +7,11 @@ description: >
   when the user gives an ambiguous or end-to-end development request, asks which
   workflow or skill should handle a task, wants to enter at any lifecycle stage,
   wants reviewer subagents after each stage, or expects review by default before
-  handoff. Review gates require spawned reviewers by default. Prefer narrower
+  handoff. Review gates require spawned reviewers by default. Verification gates
+  must prove the terminal product workflow when the task affects an operator,
+  agent, Desktop, release, or UI path. Also use for component-lab/catalog work,
+  performance benchmark-to-implementation work, and destructive cleanup or
+  dirty-worktree recovery where the safe route is not yet clear. Prefer narrower
   maintainer skills directly when the user clearly asks for a release, UI
   polish, run transcript debug, local preview, data diagnosis, PR preview, or
   review-only task.
@@ -41,6 +45,14 @@ Use this skill when the user asks for any of:
 - continuation after `turn_aborted`, rollback, stash/worktree confusion, or a
   long `/goal` run where the agent must recover the real current state before
   resuming
+- destructive or ambiguous worktree cleanup requests such as "这些删了", "what are
+  these changes", or "is this old Codex work" where file ownership must be
+  reconstructed before removing or restoring anything
+- component lab, UI Lab, component inventory, or design-system catalog work that
+  needs fixture coverage, context-required classification, browser proof, and
+  E2E rather than a small visual polish pass
+- performance benchmark or control-plane optimization work that must start from
+  measured workload evidence and a scoped first slice before implementation
 - creating or improving a reusable workflow for development tasks
 
 Do not use this skill as a substitute for a clearly matched narrow skill. If
@@ -56,6 +68,13 @@ Before editing files, running long validation, spawning reviewers, or committing
 state the lifecycle stage and the acceptance bar for leaving that stage. The
 router fails when it silently jumps from a user complaint to implementation, or
 when it claims review happened without real reviewer evidence.
+
+The object being protected is not the diff, test suite, screenshot, or review
+artifact by itself. The object is the Rudder work loop the change is supposed to
+improve: an operator or agent acts, Rudder records and routes the work, the
+right surface shows the result, and the next actor can trust what happened.
+When those terminal effects are cheap to exercise, they are required evidence,
+not optional polish.
 
 Default to review with real spawned reviewers. Do not use self-review or a
 serial two-role simulation as a substitute for the reviewer gate; those modes
@@ -86,7 +105,7 @@ Classify the prompt into one primary stage:
   or screenshot-based product/design judgment before code.
 - `implementation`: user approved a direction or directly asks to fix/build.
 - `verification`: user asks whether tests, CI, E2E, screenshot, Desktop smoke,
-  or release checks prove the work.
+  actor-run-chain, or release checks prove the work.
 - `review`: user asks for review, PM judgment, first-principles critique, or a
   Codex/session/PR/commit verdict.
 - `debug`: user asks why a run, UI path, data path, CI job, Desktop app, or
@@ -95,6 +114,12 @@ Classify the prompt into one primary stage:
   GitHub Release state.
 - `handoff`: work is implemented and needs final summary, validation, commit,
   push, residual risk, or PR.
+- `recovery`: the user asks to clean, delete, restore, classify, or continue
+  from a dirty worktree, stash, interrupted run, or suspected old Codex work.
+- `component_lab`: the user asks to build or expand UI Lab, component inventory,
+  component fixtures, or design-system coverage.
+- `performance_benchmark`: the user asks to benchmark Rudder, analyze
+  performance, or optimize a bottleneck before the exact fix is known.
 
 If multiple stages are present, choose the earliest blocking stage. Example:
 "fix this and review it" starts at `implementation`, then must pass
@@ -114,12 +139,24 @@ Use the smallest matching workflow:
 - Codex session benchmarking against recent local session history, efficiency,
   follow-up rate, token/cost hints, or problem-resolution proxy metrics:
   `codex-session-benchmark-maintainer`.
+- Cohort-only Codex session review whose goal is to decide which skills need
+  optimization, with no target session to benchmark: route to `skill-optimizer`
+  with a clean recent-session evidence packet instead of forcing a benchmark.
 - Screenshot-driven visible UI polish or small UI interaction fix:
   `rudder-ui-polish-maintainer`.
+- UI Lab, component inventory, fixture catalog, component coverage, or design
+  system surface work: keep this router as the owner of the component-lab route,
+  then use normal implementation plus UI/browser/E2E evidence. Do not route it
+  directly to narrow UI polish.
 - Wrong, missing, stale, or sparse data on a Rudder surface:
   `rudder-data-path-diagnostician-maintainer`.
 - Rudder agent run failure, transcript, logs, stdout/stderr, or run id:
-  `debug-run-transcript`.
+  `debug-run-transcript-maintainer`.
+- Rudder performance benchmark, control-plane bottleneck analysis, or app/API
+  optimization: first collect measured workload evidence and current validation
+  readiness, then route to implementation or
+  `architecture-refactor-driver-maintainer` only if the first slice requires
+  architectural change.
 - Local Rudder Desktop dev startup, Electron shell, embedded Postgres,
   prod-local instance confusion, or update/install failure before release:
   `rudder-desktop-dev-recovery-maintainer`.
@@ -148,6 +185,8 @@ Collect only the evidence needed to choose the route:
 - named files, screenshots, session ids, run ids, PRs, commits, or plans
 - relevant repo docs based on `AGENTS.md`
 - nearby skill contracts when choosing between skills
+- changed-file ownership when the prompt asks to delete, restore, clean up, or
+  identify old agent work
 
 Ignore injected environment text and broad repo scanning unless it affects the
 route. If the user gave a Codex session id, extract the real user prompts and
@@ -187,7 +226,8 @@ concrete artifact:
 - advisor: diagnosis, options, recommendation, decision boundary
 - UI design: wireframe, screenshot criteria, or approved direction
 - implementation: scoped diff, tests, docs or contract updates as needed
-- verification: passing checks, screenshots, logs, or explicit blockers
+- verification: passing checks, terminal product proof, screenshots, logs, or
+  explicit blockers
 - review: verdict, blocking gaps, smallest fixes, residual risk
 - release: locked source ref, live publish/asset/dist-tag evidence
 - handoff: files, validation, commit/push state, unverified items
@@ -233,6 +273,110 @@ sessions, rebuild state before editing or handing off:
 If a stash exists, classify it before applying or dropping it: source session,
 files included, overlap with current task, and whether applying it would
 overwrite unrelated work. Do not drop or pop a stash just to clean up state.
+
+### 3.2 Handle dirty-worktree cleanup as recovery first
+
+For prompts like "这些删了", "no, only delete package.json changes", "what is this
+code", or "is this previous Codex uncommitted work", enter `recovery` before
+any destructive action.
+
+Build a changed-file ownership packet:
+
+- current branch, upstream, and ahead/behind state
+- every modified and untracked path grouped by likely feature or source session
+- relevant recent Codex sessions, branch names, commits, and screenshots when
+  the user references previous work
+- which files are safe to restore, which must be preserved, and which are
+  unknown
+
+Do not delete, restore, stash-pop, or commit until the target group is clear.
+If the user narrows the scope mid-run, stop and reclassify the file groups
+before touching more paths.
+
+### 3.3 Treat component labs as workflow features
+
+UI Lab, component catalog, fixture coverage, and design-system inventory work is
+not narrow UI polish, even when the user says the surface should look better.
+
+The component-lab route must define:
+
+- the coverage target: hand-authored fixtures, auto-discovered components,
+  context-required components, or all of them
+- how context-required components are labeled instead of faked
+- the user-visible route and browser proof
+- focused page/unit tests and E2E coverage when navigation or filtering changes
+- a reviewer gate for coverage quality before handoff
+
+Use `rudder-ui-polish-maintainer` only after the component-lab scope is already
+settled and the remaining task is a concrete rendered-state fix.
+
+### 3.4 Require measured evidence for performance work
+
+For "做一下 Rudder 性能优化分析", app benchmark, control-plane optimization, or
+similar prompts, start with `performance_benchmark` unless the user names an
+already-proven bottleneck.
+
+Before implementation, record:
+
+- workload shape, dataset size, route/API surface, and user scenario
+- baseline measurement and the tool or script that produced it
+- dependency/cache readiness for the checks you intend to run
+- one scoped first slice with expected impact and rollback boundary
+- verification plan, including what will be measured again after the change
+
+Do not promise full validation if dependency install, registry, browser, or
+runtime setup is already blocked. Report validation readiness before starting a
+long implementation phase.
+
+### 3.5 Require terminal product proof for workflow changes
+
+For any change that affects a user-visible, agent-visible, Desktop, release, or
+control-plane workflow, identify the terminal product surface before calling
+verification complete.
+
+Start from the work loop, not from the implementation layer:
+
+- actor: board operator, reviewer, assignee agent, runtime agent, CLI user,
+  Desktop user, release consumer, or automation
+- trigger: click, command, wakeup, API action, scheduled run, release workflow,
+  or packaged startup
+- system effect: issue state, comment, review decision, activity, run log,
+  cost, approval, release artifact, or persisted setting
+- terminal surface: current dev web app, packaged Desktop shell, CLI output,
+  run-intelligence view, npm/GitHub release state, or another final consumer
+
+Choose proof that follows that loop:
+
+- For CLI or agent-runtime changes, prefer an actor-run-chain: seed a disposable
+  org/issue/agent when needed, trigger the runtime or CLI as that actor, then
+  read back the API/DB state and observe the final app or CLI surface.
+- For UI and workflow changes, use Browser or Computer Use to exercise the
+  actual route when practical, plus API/log readback when state matters.
+- For Desktop-native behavior, packaged startup, menus, update prompts,
+  drag/drop, native dialogs, or resident shell behavior, use Computer Use or
+  packaged Desktop verification. Browser proof is only a substitute when the
+  behavior is truly web-surface equivalent.
+- For release work, live npm, GitHub, tag, asset, workflow, and install-smoke
+  state is the terminal surface. Local build output is supporting evidence.
+- For debug-derived fixes, transcript or log evidence proves the root cause; it
+  does not prove the fix until the terminal workflow is rerun or the missing
+  workflow proof is explicitly recorded as blocked.
+
+When a realistic product proof requires seed or mutation data, record a
+mutation ledger:
+
+- target runtime and `/api/health` or equivalent source of truth
+- organization, issue, agent, run, approval, release, or other records created
+- which writes used public APIs and which used direct database writes
+- final URL, run id, screenshot path, log path, or release URL inspected
+- cleanup status, or why the evidence data was intentionally left in place
+
+Substitutions must be named. Example: if packaged Desktop capture fails and a
+current-dev browser path is used instead, call it `substituted: Browser current
+dev app for Desktop shell capture`; do not present it as full Desktop proof.
+
+Missing terminal product proof blocks handoff for workflow changes unless the
+user explicitly lowers the acceptance bar for this turn.
 
 ### 4. Run default review gates
 
@@ -292,9 +436,11 @@ Use .agents/skills/maintainer/agent-work-reviewer-maintainer/SKILL.md.
 
 Review the stage artifact as the implementation, validation, and handoff
 reviewer. Focus on object model, scope discipline, org scoping, contracts,
-tests, visual/Desktop/release evidence when relevant, git safety, and handoff
-quality. Give accept / conditional accept / reject, blockers, and smallest
-changes needed.
+tests, terminal product proof, visual/Desktop/release evidence when relevant,
+git safety, and handoff quality. If the work affects a user-visible or
+agent-visible workflow, verify whether the actor-run-chain or terminal product
+surface was actually exercised. Give accept / conditional accept / reject,
+blockers, and smallest changes needed.
 ```
 
 If either reviewer rejects or names a blocker, rework before final handoff or
@@ -306,14 +452,17 @@ Before handoff, include a compact evidence ledger:
 
 - Required: the checks or artifacts this route requires, including spawned
   reviewer verdicts
+- Scenario: the actor, trigger, system effect, and terminal surface the work was
+  supposed to prove
 - Proven: commands, screenshots, browser/Desktop checks, live release evidence,
-  or reviewer outputs that actually ran
+  actor-run-chain results, readbacks, mutation ledger entries, or reviewer
+  outputs that actually ran
 - Missing or substituted: anything not proven, why it is missing, and whether it
   blocks completion
 
 For user-visible UI, workflow, Desktop, release, and cross-contract changes,
-missing required evidence blocks the handoff unless the user explicitly changes
-the acceptance bar.
+missing required terminal product evidence blocks the handoff unless the user
+explicitly changes the acceptance bar.
 
 ### 5. Keep git safe in shared worktrees
 
@@ -359,6 +508,8 @@ Do not hand off as complete when any of these are true:
   diff, validation bundle, or handoff
 - "review" only means the author reread their own diff without findings
 - user-visible UI lacks rendered or screenshot evidence when required
+- agent-visible, CLI, runtime, Desktop, release, or control-plane workflow work
+  lacks terminal product proof or a named blocked/substituted proof
 - feature/workflow changes skip required E2E coverage without explicit approval
 - Desktop/release/package work lacks the repo-required packaged or live checks
 - git history includes unrelated files or an unsafe amend in a shared worktree
@@ -410,8 +561,21 @@ unless the user later switches to rework.
 
 Route: `debug -> review or implementation`.
 
-Use `debug-run-transcript` first to reconstruct what happened. Only switch to
-implementation after the root cause and target fix are clear.
+Use `debug-run-transcript-maintainer` first to reconstruct what happened. Only
+switch to implementation after the root cause and target fix are clear.
+After a fix, do not treat the transcript as proof that the product behavior is
+fixed. Move through verification with terminal product proof for the affected
+actor and surface.
+
+### Agent-visible CLI or runtime workflow regression
+
+Route: `debug or implementation -> verification -> review -> handoff`.
+
+When the bug affects how an agent uses Rudder, verify through the agent's real
+work loop when practical: seed a disposable issue, trigger the agent/runtime or
+CLI as that actor, read back persisted issue/run/comment state, and inspect the
+terminal app or CLI surface. Unit tests and direct DB assertions are supporting
+evidence, not the whole review.
 
 ### Release request
 
@@ -439,6 +603,7 @@ Validation:
 
 Evidence:
 - Required: ...
+- Scenario: ...
 - Proven: ...
 - Missing or substituted: ...
 

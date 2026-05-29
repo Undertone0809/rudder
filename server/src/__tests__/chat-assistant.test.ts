@@ -79,6 +79,7 @@ vi.mock("../services/agent-run-context.js", () => ({
 }));
 
 const { chatAssistantService } = await import("../services/chat-assistant.js");
+const { validateAssistantResult } = await import("../services/chat-assistant.helpers.js");
 
 let currentAgentHome = "";
 const cleanupDirs = new Set<string>();
@@ -867,6 +868,36 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt).toContain("- Engineering (11111111-1111-4111-8111-111111111111)");
     expect(prompt).toContain("include labelIds with at least one best-fit label id");
     expect(prompt).toContain('"labelIds": [');
+    expect(prompt).toContain("assigneeUnassignedReason");
+  });
+
+  it("rejects issue proposal results without an explicit owner decision", () => {
+    expect(() => validateAssistantResult({
+      kind: "issue_proposal",
+      body: "This should become an issue.",
+      structuredPayload: {
+        issueProposal: {
+          title: "Investigate unclear work",
+          description: "The proposal omits owner assignment.",
+          priority: "medium",
+        },
+      },
+    })).toThrow("explicit owner decision");
+
+    expect(validateAssistantResult({
+      kind: "issue_proposal",
+      body: "This should become an issue.",
+      structuredPayload: {
+        issueProposal: {
+          title: "Investigate unclear work",
+          description: "The proposal explicitly leaves ownership for review.",
+          priority: "medium",
+          assigneeUnassignedReason: "No suitable execution owner is known from the conversation.",
+        },
+      },
+    })).toMatchObject({
+      kind: "issue_proposal",
+    });
   });
 
   it("injects selected project context and project resources into chat prompts", async () => {

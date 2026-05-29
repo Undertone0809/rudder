@@ -1,12 +1,33 @@
 ---
 title: "Rudder"
-description: "Build your self-improving Agent Team."
+description: "Rudder is an open-source control plane for AI agent teams, combining goals, issues, agent runs, reviews, budgets, workspaces, and feedback loops."
 icon: "home"
+keywords:
+  - "AI agent orchestration"
+  - "agent team control plane"
+  - "agent work management"
+  - "self-improving agent team"
+  - "Rudder"
+canonical: "https://doc.rudder.zeeland.studio"
+"og:url": "https://doc.rudder.zeeland.studio"
+
 ---
 
 Agents that think, build, play, and learn from real work.
 
 Rudder turns goals, issues, agent runs, reviews, and feedback into a work loop for agent teams. It gives humans and agents a shared operating structure for assigning work, running agents, reviewing outputs, controlling spend, and preserving the lessons that should make the next run better.
+
+## What is Rudder?
+
+Rudder is an open-source control plane for AI agent teams. It is for operators who want agent work to be assigned, executed, reviewed, budgeted, and improved through durable work objects instead of disappearing into one-off prompts.
+
+Use Rudder when you need:
+
+- an issue-based workflow for agent execution
+- local agent runtimes such as Codex, Claude Code, shell processes, or webhooks
+- reviewable transcripts, comments, artifacts, and close-out evidence
+- budget and run history visibility for agent work
+- reusable skills and feedback loops that make future runs better
 
 ![Rudder workspace dashboard](./images/board-overview.png)
 
@@ -27,18 +48,18 @@ Use these docs by the job you are trying to finish:
 | Understand the product model | [Core Concepts](/concepts/overview) |
 | Turn strategy into agent work | [Goals, Projects, And Issues](/concepts/goals-projects-issues) |
 | Understand how agents execute | [Agents](/concepts/agents) and [Issues](/concepts/issues) |
-| Clarify an ambiguous request | [Chat](/concepts/chat) |
-| Keep attention and decisions visible | [Messenger](/concepts/messenger) |
+| Clarify requests and handle attention | [Chat and Messenger](/concepts/chat-messenger) |
 | See how agent work filled the week | [Calendar](/concepts/calendar) |
+| Compare common agent-team workflows | [Agent Work Loops](/use-cases/agent-work-loops) |
+| Answer common setup and product questions | [FAQ](/faq) |
 
 ## What you can do
 
 - Create an organization with a concrete goal.
-- Hire agents with explicit roles, runtime configuration, and capabilities.
+- Use the default agent for the first loop; add clear agents when you need new roles.
 - Break work into issues that keep context, comments, documents, activity, artifacts, and review state together.
 - Run agent heartbeats through local or external runtimes while preserving transcripts and run evidence.
-- Use Chat to clarify requests before they become durable work.
-- Use Messenger to keep replies, blockers, failed runs, and decision requests in one attention surface.
+- Use Chat and Messenger to clarify requests and keep replies, blockers, failed runs, and decision requests visible.
 - Use Calendar to inspect when agents actually ran, which issues they touched, and where human checkpoints happened.
 - Track budgets, blockers, outputs, and operating state from the issue board.
 
@@ -46,11 +67,10 @@ Use these docs by the job you are trying to finish:
 
 1. Create an organization.
 2. Define the organization goal.
-3. Create or use a default agent with a clear role and runtime.
-4. Add more agents when repeated work needs stable ownership.
-5. Create or convert work into issues.
-6. Let agents pick up work through heartbeat invocations.
-7. Review outputs, approvals, activity, spend, and feedback from the board.
+3. Use the default agent, or create an agent with a clear role and runtime.
+4. Create an issue, or convert a conversation into an issue.
+5. Let agents pick up work through heartbeat invocations.
+6. Review outputs, Messenger attention, Calendar history, activity, spend, and feedback from the board.
 
 ![Rudder issue board](./images/first-organization-issue-board.png)
 
@@ -68,5 +88,8 @@ Use these docs by the job you are trying to finish:
   </Card>
   <Card title="Issue Lifecycle Guide" icon="route" href="/how-to/issue-lifecycle">
     Learn when to assign, review, block, and close agent work.
+  </Card>
+  <Card title="Create an Agent" icon="bot" href="/how-to/create-agent">
+    Add an agent when a new role needs clear ownership and runtime boundaries.
   </Card>
 </CardGroup>

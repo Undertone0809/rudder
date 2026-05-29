@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import {
   activityLog,
@@ -9,6 +9,7 @@ import {
   chatConversations,
   heartbeatRuns,
   issueComments,
+  issueFollows,
   issues,
   joinRequests,
   messengerThreadUserStates,
@@ -33,10 +34,10 @@ import {
   type MessengerThreadDetail,
   type MessengerThreadSummary,
 } from "@rudderhq/shared";
-import { issueService } from "./issues.js";
 import { chatService } from "./chats.js";
 import { budgetService } from "./budgets.js";
 import { redactEventPayload } from "../redaction.js";
+import { conflict } from "../errors.js";
 
 const ISSUE_ACTIVITY_ACTIONS = [
   "issue.updated",
@@ -52,17 +53,8 @@ const ISSUE_ACTIVITY_ACTIONS = [
 ] as const;
 
 const ACTIONABLE_APPROVAL_STATUSES = new Set(["pending"]);
-const ISSUE_UPDATE_METADATA_KEYS = new Set([
-  "identifier",
-  "issueIdentifier",
-  "_previous",
-  "source",
-  "reopened",
-  "reopenedFrom",
-  "normalizedFromStatus",
-  "normalizedReason",
-]);
-
+const DEFAULT_ISSUE_THREAD_DETAIL_LIMIT = 50;
+const MAX_ISSUE_THREAD_DETAIL_LIMIT = 100;
 type ThreadStateRow = typeof messengerThreadUserStates.$inferSelect;
 type ThreadReadState = {
   lastReadAt: Date;
@@ -75,6 +67,49 @@ type SystemSummaryData = {
 };
 type IssueThreadData = SystemSummaryData & {
   detail?: MessengerThreadDetail<MessengerIssueThreadItem>;
+};
+type IssueThreadDetailOptions = {
+  includeDetail: boolean;
+  limit?: number;
+  cursor?: string | null;
+};
+type IssueThreadCursor = {
+  activityAt: string;
+  issueId: string;
+};
+type IssueThreadEntry = {
+  issue: IssueUniverseRow & { followed: boolean; assigned: boolean };
+  latestActivityAt: Date;
+  latestActivity: IssueActivityRow | null;
+  attentionActivityAt: Date | null;
+  attentionPreview: string | null;
+};
+type IssueThreadStats = {
+  itemCount: number;
+  unreadCount: number;
+  latestActivityAt: Date | null;
+};
+type IssueThreadEntryRow = IssueUniverseRow & {
+  followed: boolean;
+  assigned: boolean;
+  latestActivityAt: Date;
+  latestActivityId: string | null;
+  latestActivityAction: string | null;
+  latestActivityActorType: string | null;
+  latestActivityActorId: string | null;
+  latestActivityDetails: Record<string, unknown> | null;
+  latestActivityCreatedAt: Date | null;
+  latestActivityRunId: string | null;
+  attentionActivityAt: Date | null;
+  latestExternalCommentBody: string | null;
+  latestExternalCommentCreatedAt: Date | null;
+  latestExternalActivityId: string | null;
+  latestExternalActivityAction: string | null;
+  latestExternalActivityActorType: string | null;
+  latestExternalActivityActorId: string | null;
+  latestExternalActivityDetails: Record<string, unknown> | null;
+  latestExternalActivityCreatedAt: Date | null;
+  latestExternalActivityRunId: string | null;
 };
 
 type IssueUniverseRow = {
@@ -115,22 +150,6 @@ type IssueStatusChange = {
   from: string | null;
   to: string;
 };
-
-function issueUpdatedChangedKeys(details: Record<string, unknown> | null | undefined): string[] {
-  if (!details) return [];
-  return Object.keys(details).filter((key) => !ISSUE_UPDATE_METADATA_KEYS.has(key));
-}
-
-function isDescriptionOnlyIssueUpdate(activity: IssueActivityRow): boolean {
-  if (activity.action !== "issue.updated") return false;
-  const changedKeys = issueUpdatedChangedKeys(activity.details);
-  return changedKeys.length === 1 && changedKeys[0] === "description";
-}
-
-function shouldNotifyIssueActivity(activity: IssueActivityRow): boolean {
-  if (isDescriptionOnlyIssueUpdate(activity)) return false;
-  return true;
-}
 
 type ApprovalRow = {
   id: string;
@@ -252,6 +271,38 @@ function compareChronologicalActivity<T extends { latestActivityAt: Date | null;
   return a.title.localeCompare(b.title);
 }
 
+function normalizeIssueThreadLimit(limit: number | null | undefined) {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) return DEFAULT_ISSUE_THREAD_DETAIL_LIMIT;
+  return Math.min(MAX_ISSUE_THREAD_DETAIL_LIMIT, Math.max(1, Math.floor(limit)));
+}
+
+function encodeIssueThreadCursor(entry: IssueThreadEntry) {
+  const payload: IssueThreadCursor = {
+    activityAt: entry.latestActivityAt.toISOString(),
+    issueId: entry.issue.id,
+  };
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeIssueThreadCursor(cursor: string | null | undefined): IssueThreadCursor | null {
+  if (!cursor) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<IssueThreadCursor>;
+    if (typeof decoded.activityAt !== "string" || Number.isNaN(new Date(decoded.activityAt).getTime())) return null;
+    if (typeof decoded.issueId !== "string" || decoded.issueId.length === 0) return null;
+    return { activityAt: decoded.activityAt, issueId: decoded.issueId };
+  } catch {
+    return null;
+  }
+}
+
+function compareIssueThreadEntriesChronological(a: IssueThreadEntry, b: IssueThreadEntry) {
+  const aTime = a.latestActivityAt.getTime();
+  const bTime = b.latestActivityAt.getTime();
+  if (aTime !== bTime) return aTime - bTime;
+  return a.issue.id.localeCompare(b.issue.id);
+}
+
 function threadKeyForChat(conversationId: string) {
   return `chat:${conversationId}`;
 }
@@ -367,10 +418,6 @@ function summarizeIssueActivity(activity: IssueActivityRow, issue: IssueUniverse
   }
 }
 
-function isSelfAuthoredComment(comment: IssueCommentRow, userId: string) {
-  return comment.authorUserId === userId;
-}
-
 function issueCommentAuthorLabel(
   comment: Pick<IssueCommentRow, "authorAgentId" | "authorUserId" | "authorAgentName" | "authorUserName"> | null,
   currentUserId: string | null,
@@ -382,10 +429,6 @@ function issueCommentAuthorLabel(
     return comment.authorUserName?.trim() || `User ${comment.authorUserId.slice(0, 8)}`;
   }
   return "System";
-}
-
-function isSelfAuthoredActivity(activity: IssueActivityRow, userId: string) {
-  return activity.actorType === "user" && activity.actorId === userId;
 }
 
 function summarizeApprovalPayload(approval: ApprovalRow) {
@@ -749,286 +792,449 @@ async function lastReadAtForThread(
 }
 
 export function messengerService(db: Db) {
-  const issuesSvc = issueService(db);
   const chatsSvc = chatService(db);
   const budgetsSvc = budgetService(db);
 
-  async function loadIssueUniverse(orgId: string, userId: string) {
-    const [followRows, trackedRows] = await Promise.all([
-      issuesSvc.listFollows(orgId, userId),
-      db
-        .select({
-          id: issues.id,
-          orgId: issues.orgId,
-          title: issues.title,
-          status: issues.status,
-          priority: issues.priority,
-          assigneeUserId: issues.assigneeUserId,
-          reviewerUserId: issues.reviewerUserId,
-          createdByUserId: issues.createdByUserId,
-          identifier: issues.identifier,
-          updatedAt: issues.updatedAt,
-        })
-        .from(issues)
-        .where(
-          and(
-            eq(issues.orgId, orgId),
-            or(eq(issues.assigneeUserId, userId), eq(issues.createdByUserId, userId), eq(issues.reviewerUserId, userId)),
-            isNull(issues.hiddenAt),
-          ),
-        )
-        .orderBy(desc(issues.updatedAt)),
-    ]);
+  const issueActionSqlList = sql.join(ISSUE_ACTIVITY_ACTIONS.map((action) => sql`${action}`), sql`, `);
 
-    const universe = new Map<string, IssueUniverseRow & { followed: boolean; assigned: boolean }>();
-    for (const row of followRows) {
-      universe.set(row.issueId, {
-        ...row.issue,
-        followed: true,
-        assigned: row.issue.assigneeUserId === userId,
-      });
-    }
-    for (const row of trackedRows) {
-      const existing = universe.get(row.id);
-      universe.set(row.id, {
-        ...row,
-        followed: existing?.followed ?? false,
-        assigned: row.assigneeUserId === userId,
-      });
-    }
-    return Array.from(universe.values());
+  function issueDescriptionOnlyActivitySql(alias: string) {
+    return sql<boolean>`(
+      ${sql.raw(`${alias}.action`)} = 'issue.updated'
+      and jsonb_typeof(${sql.raw(`${alias}.details`)}) = 'object'
+      and ${sql.raw(`${alias}.details`)} ? 'description'
+      and not exists (
+        select 1
+        from jsonb_object_keys(${sql.raw(`${alias}.details`)}) as detail_key(key)
+        where detail_key.key not in (
+          'description',
+          'identifier',
+          'issueIdentifier',
+          '_previous',
+          'source',
+          'reopened',
+          'reopenedFrom',
+          'normalizedFromStatus',
+          'normalizedReason'
+        )
+      )
+    )`;
+  }
+
+  function issueEntryRowsQuery(orgId: string, userId: string, tail = sql``) {
+    const descriptionOnlyActivity = issueDescriptionOnlyActivitySql("activity_row");
+    const externalDescriptionOnlyActivity = issueDescriptionOnlyActivitySql("external_activity_row");
+    return sql<IssueThreadEntryRow>`
+      with tracked_issue_ids as (
+        select ${issues.id} as id
+        from ${issues}
+        where ${issues.orgId} = ${orgId}
+          and ${issues.hiddenAt} is null
+          and ${issues.assigneeUserId} = ${userId}
+        union
+        select ${issues.id} as id
+        from ${issues}
+        where ${issues.orgId} = ${orgId}
+          and ${issues.hiddenAt} is null
+          and ${issues.createdByUserId} = ${userId}
+        union
+        select ${issues.id} as id
+        from ${issues}
+        where ${issues.orgId} = ${orgId}
+          and ${issues.hiddenAt} is null
+          and ${issues.reviewerUserId} = ${userId}
+        union
+        select ${issueFollows.issueId} as id
+        from ${issueFollows}
+        inner join ${issues} followed_issue
+          on followed_issue.id = ${issueFollows.issueId}
+          and followed_issue.org_id = ${issueFollows.orgId}
+        where ${issueFollows.orgId} = ${orgId}
+          and ${issueFollows.userId} = ${userId}
+          and followed_issue.hidden_at is null
+      ),
+      issue_entries as (
+        select
+          issue_row.id as id,
+          issue_row.title as title,
+          issue_row.status as status,
+          issue_row.priority as priority,
+          issue_row.assignee_user_id as "assigneeUserId",
+          issue_row.reviewer_user_id as "reviewerUserId",
+          issue_row.created_by_user_id as "createdByUserId",
+          issue_row.identifier as identifier,
+          issue_row.updated_at as "updatedAt",
+          exists (
+            select 1
+            from ${issueFollows} follow_row
+            where follow_row.org_id = ${orgId}
+              and follow_row.user_id = ${userId}
+              and follow_row.issue_id = issue_row.id
+          ) as followed,
+          (issue_row.assignee_user_id = ${userId}) as assigned,
+          greatest(
+            issue_row.updated_at,
+            coalesce(latest_external_comment.created_at, issue_row.updated_at),
+            coalesce(latest_activity.created_at, issue_row.updated_at)
+          ) as "latestActivityAt",
+          latest_activity.id as "latestActivityId",
+          latest_activity.action as "latestActivityAction",
+          latest_activity.actor_type as "latestActivityActorType",
+          latest_activity.actor_id as "latestActivityActorId",
+          latest_activity.details as "latestActivityDetails",
+          latest_activity.created_at as "latestActivityCreatedAt",
+          latest_activity.run_id as "latestActivityRunId",
+          case
+            when latest_external_comment.created_at is not null
+              and (latest_external_activity.created_at is null or latest_external_comment.created_at >= latest_external_activity.created_at)
+              then latest_external_comment.created_at
+            when latest_external_activity.created_at is not null
+              then latest_external_activity.created_at
+            when latest_activity.id is null
+              and (
+                latest_suppressed_activity.created_at is null
+                or latest_suppressed_activity.created_at < issue_row.updated_at - interval '5 seconds'
+              )
+              and (
+                issue_row.assignee_user_id = ${userId}
+                or (issue_row.reviewer_user_id = ${userId} and issue_row.status = 'in_review')
+              )
+              then issue_row.updated_at
+            else null
+          end as "attentionActivityAt",
+          latest_external_comment.body as "latestExternalCommentBody",
+          latest_external_comment.created_at as "latestExternalCommentCreatedAt",
+          latest_external_activity.id as "latestExternalActivityId",
+          latest_external_activity.action as "latestExternalActivityAction",
+          latest_external_activity.actor_type as "latestExternalActivityActorType",
+          latest_external_activity.actor_id as "latestExternalActivityActorId",
+          latest_external_activity.details as "latestExternalActivityDetails",
+          latest_external_activity.created_at as "latestExternalActivityCreatedAt",
+          latest_external_activity.run_id as "latestExternalActivityRunId"
+        from tracked_issue_ids
+        inner join ${issues} issue_row on issue_row.id = tracked_issue_ids.id
+        left join lateral (
+          select
+            comment_row.body,
+            comment_row.created_at
+          from ${issueComments} comment_row
+          where comment_row.org_id = ${orgId}
+            and comment_row.issue_id = issue_row.id
+            and (comment_row.author_user_id is null or comment_row.author_user_id <> ${userId})
+          order by comment_row.created_at desc, comment_row.id desc
+          limit 1
+        ) latest_external_comment on true
+        left join lateral (
+          select
+            activity_row.id,
+            activity_row.action,
+            activity_row.actor_type,
+            activity_row.actor_id,
+            activity_row.details,
+            activity_row.created_at,
+            activity_row.run_id
+          from ${activityLog} activity_row
+          where activity_row.org_id = ${orgId}
+            and activity_row.entity_type = 'issue'
+            and activity_row.entity_id = issue_row.id::text
+            and activity_row.action in (${issueActionSqlList})
+            and not ${descriptionOnlyActivity}
+          order by activity_row.created_at desc, activity_row.id desc
+          limit 1
+        ) latest_activity on true
+        left join lateral (
+          select
+            external_activity_row.id,
+            external_activity_row.action,
+            external_activity_row.actor_type,
+            external_activity_row.actor_id,
+            external_activity_row.details,
+            external_activity_row.created_at,
+            external_activity_row.run_id
+          from ${activityLog} external_activity_row
+          where external_activity_row.org_id = ${orgId}
+            and external_activity_row.entity_type = 'issue'
+            and external_activity_row.entity_id = issue_row.id::text
+            and external_activity_row.action in (${issueActionSqlList})
+            and not ${externalDescriptionOnlyActivity}
+            and (external_activity_row.actor_type <> 'user' or external_activity_row.actor_id <> ${userId})
+          order by external_activity_row.created_at desc, external_activity_row.id desc
+          limit 1
+        ) latest_external_activity on true
+        left join lateral (
+          select suppressed_activity_row.created_at
+          from ${activityLog} suppressed_activity_row
+          where suppressed_activity_row.org_id = ${orgId}
+            and suppressed_activity_row.entity_type = 'issue'
+            and suppressed_activity_row.entity_id = issue_row.id::text
+            and suppressed_activity_row.action in (${issueActionSqlList})
+            and ${issueDescriptionOnlyActivitySql("suppressed_activity_row")}
+          order by suppressed_activity_row.created_at desc, suppressed_activity_row.id desc
+          limit 1
+        ) latest_suppressed_activity on true
+      )
+      select *
+      from issue_entries
+      ${tail}
+    `;
+  }
+
+  async function loadLatestIssueCommentsForDisplay(orgId: string, issueIds: string[]) {
+    if (issueIds.length === 0) return [] as IssueCommentRow[];
+    return (await db
+      .selectDistinctOn([issueComments.issueId], {
+        id: issueComments.id,
+        issueId: issueComments.issueId,
+        body: issueComments.body,
+        authorAgentId: issueComments.authorAgentId,
+        authorUserId: issueComments.authorUserId,
+        authorAgentName: agents.name,
+        authorUserName: authUsers.name,
+        createdAt: issueComments.createdAt,
+      })
+      .from(issueComments)
+      .leftJoin(agents, eq(issueComments.authorAgentId, agents.id))
+      .leftJoin(authUsers, eq(issueComments.authorUserId, authUsers.id))
+      .where(and(eq(issueComments.orgId, orgId), inArray(issueComments.issueId, issueIds)))
+      .orderBy(issueComments.issueId, desc(issueComments.createdAt), desc(issueComments.id))) as IssueCommentRow[];
+  }
+
+  function issueThreadEntryFromRow(row: IssueThreadEntryRow, userId: string): IssueThreadEntry {
+    const updatedAt = normalizeDate(row.updatedAt) ?? new Date(row.updatedAt);
+    const latestActivityAt = normalizeDate(row.latestActivityAt) ?? updatedAt;
+    const latestActivityCreatedAt = normalizeDate(row.latestActivityCreatedAt);
+    const latestExternalActivityCreatedAt = normalizeDate(row.latestExternalActivityCreatedAt);
+    const issue = {
+      id: row.id,
+      title: row.title,
+      status: row.status,
+      priority: row.priority,
+      assigneeUserId: row.assigneeUserId,
+      reviewerUserId: row.reviewerUserId,
+      createdByUserId: row.createdByUserId,
+      identifier: row.identifier,
+      updatedAt,
+      followed: row.followed,
+      assigned: row.assigned,
+    };
+    const latestActivity = row.latestActivityId && row.latestActivityAction && row.latestActivityActorType && row.latestActivityActorId && latestActivityCreatedAt
+      ? {
+        id: row.latestActivityId,
+        action: row.latestActivityAction,
+        entityId: row.id,
+        actorType: row.latestActivityActorType,
+        actorId: row.latestActivityActorId,
+        details: row.latestActivityDetails,
+        createdAt: latestActivityCreatedAt,
+        runId: row.latestActivityRunId,
+      }
+      : null;
+    const latestExternalActivity =
+      row.latestExternalActivityId &&
+      row.latestExternalActivityAction &&
+      row.latestExternalActivityActorType &&
+      row.latestExternalActivityActorId &&
+      latestExternalActivityCreatedAt
+        ? {
+          id: row.latestExternalActivityId,
+          action: row.latestExternalActivityAction,
+          entityId: row.id,
+          actorType: row.latestExternalActivityActorType,
+          actorId: row.latestExternalActivityActorId,
+          details: row.latestExternalActivityDetails,
+          createdAt: latestExternalActivityCreatedAt,
+          runId: row.latestExternalActivityRunId,
+        }
+        : null;
+    const latestExternalCommentAt = normalizeDate(row.latestExternalCommentCreatedAt);
+    const attentionActivityAt = normalizeDate(row.attentionActivityAt);
+    const latestExternalActivityAt = normalizeDate(latestExternalActivity?.createdAt ?? null);
+    const attentionPreview =
+      latestExternalCommentAt &&
+      (!latestExternalActivityAt || latestExternalCommentAt.getTime() >= latestExternalActivityAt.getTime())
+        ? truncate(row.latestExternalCommentBody)
+        : latestExternalActivity
+          ? summarizeIssueActivity(latestExternalActivity, issue)
+          : null;
+    const fallbackPreview = attentionPreview
+      ?? (attentionActivityAt
+        ? issueBodyFromSnapshot(
+          issue,
+          null,
+          row.followed,
+          row.createdByUserId === userId,
+          row.assigneeUserId === userId,
+          row.reviewerUserId === userId && row.status === "in_review",
+        )
+        : null);
+
+    return {
+      issue,
+      latestActivityAt,
+      latestActivity,
+      attentionActivityAt,
+      attentionPreview: attentionActivityAt ? issueThreadPreview(issue, fallbackPreview) : null,
+    };
+  }
+
+  async function loadIssueThreadStats(orgId: string, userId: string, lastReadAt: Date | null): Promise<IssueThreadStats> {
+    const lastReadAtIso = lastReadAt?.toISOString() ?? null;
+    const rows = (await db.execute(sql<IssueThreadStats>`
+      select
+        count(*)::int as "itemCount",
+        count(*) filter (
+          where "attentionActivityAt" is not null
+            and (${lastReadAtIso}::timestamptz is null or "attentionActivityAt" > ${lastReadAtIso}::timestamptz)
+        )::int as "unreadCount",
+        max("attentionActivityAt") filter (
+          where ${lastReadAtIso}::timestamptz is null or "attentionActivityAt" > ${lastReadAtIso}::timestamptz
+        ) as "latestActivityAt"
+      from (${issueEntryRowsQuery(orgId, userId)}) issue_entry_stats
+    `)) as IssueThreadStats[];
+    const row = rows[0];
+    return row
+      ? {
+        itemCount: Number(row.itemCount),
+        unreadCount: Number(row.unreadCount),
+        latestActivityAt: normalizeDate(row.latestActivityAt),
+      }
+      : { itemCount: 0, unreadCount: 0, latestActivityAt: null };
+  }
+
+  async function loadLatestUnreadIssueEntry(orgId: string, userId: string, lastReadAt: Date | null) {
+    const lastReadAtIso = lastReadAt?.toISOString() ?? null;
+    const rows = (await db.execute(issueEntryRowsQuery(
+      orgId,
+      userId,
+      sql`
+        where "attentionActivityAt" is not null
+          and (${lastReadAtIso}::timestamptz is null or "attentionActivityAt" > ${lastReadAtIso}::timestamptz)
+        order by "attentionActivityAt" desc, id asc
+        limit 1
+      `,
+    ))) as IssueThreadEntryRow[];
+    return rows[0] ? issueThreadEntryFromRow(rows[0], userId) : null;
+  }
+
+  async function loadIssueDetailEntries(
+    orgId: string,
+    userId: string,
+    limit: number,
+    cursor: IssueThreadCursor | null,
+  ) {
+    const cursorActivityAt = cursor ? new Date(cursor.activityAt).toISOString() : null;
+    const rows = (await db.execute(issueEntryRowsQuery(
+      orgId,
+      userId,
+      sql`
+        ${cursor
+          ? sql`
+            where (
+              "latestActivityAt" < ${cursorActivityAt}::timestamptz
+              or ("latestActivityAt" = ${cursorActivityAt}::timestamptz and id > ${cursor.issueId})
+            )
+          `
+          : sql``}
+        order by "latestActivityAt" desc, id asc
+        limit ${limit + 1}
+      `,
+    ))) as IssueThreadEntryRow[];
+    return rows.map((row) => issueThreadEntryFromRow(row, userId));
   }
 
   async function loadIssueData(
     orgId: string,
     userId: string,
     threadStates: ThreadStateSource | undefined,
-    options: { includeDetail: boolean },
+    options: IssueThreadDetailOptions,
   ): Promise<IssueThreadData> {
     const lastReadAtPromise = lastReadAtForThread(db, orgId, userId, "issues", threadStates);
-    const issuesUniverse = await loadIssueUniverse(orgId, userId);
-    const issueIds = issuesUniverse.map((row) => row.id);
     const lastReadAt = await lastReadAtPromise;
+    const detailLimit = normalizeIssueThreadLimit(options.limit);
+    const decodedCursor = decodeIssueThreadCursor(options.cursor);
+    if (options.cursor && !decodedCursor) {
+      throw conflict("Messenger issues cursor is invalid or expired");
+    }
 
-    const [commentRows, activityRows] = await Promise.all([
-      issueIds.length === 0
-        ? Promise.resolve([] as IssueCommentRow[])
-        : options.includeDetail
-          ? db
-            .select({
-              id: issueComments.id,
-              issueId: issueComments.issueId,
-              body: issueComments.body,
-              authorAgentId: issueComments.authorAgentId,
-              authorUserId: issueComments.authorUserId,
-              authorAgentName: agents.name,
-              authorUserName: authUsers.name,
-              createdAt: issueComments.createdAt,
-            })
-            .from(issueComments)
-            .leftJoin(agents, eq(issueComments.authorAgentId, agents.id))
-            .leftJoin(authUsers, eq(issueComments.authorUserId, authUsers.id))
-            .where(and(eq(issueComments.orgId, orgId), inArray(issueComments.issueId, issueIds)))
-            .orderBy(desc(issueComments.createdAt))
-          : db
-          .select({
-            id: issueComments.id,
-            issueId: issueComments.issueId,
-            body: issueComments.body,
-            authorAgentId: issueComments.authorAgentId,
-            authorUserId: issueComments.authorUserId,
-            authorAgentName: sql<string | null>`null`,
-            authorUserName: sql<string | null>`null`,
-            createdAt: issueComments.createdAt,
-          })
-          .from(issueComments)
-          .where(
-            and(
-              eq(issueComments.orgId, orgId),
-              inArray(issueComments.issueId, issueIds),
-              sql<boolean>`(${issueComments.authorUserId} is null or ${issueComments.authorUserId} <> ${userId})`,
-            ),
-          )
-          .orderBy(desc(issueComments.createdAt)),
-      issueIds.length === 0
-        ? Promise.resolve([] as IssueActivityRow[])
-        : db
-          .select({
-            id: activityLog.id,
-            action: activityLog.action,
-            entityId: activityLog.entityId,
-            actorType: activityLog.actorType,
-            actorId: activityLog.actorId,
-            details: activityLog.details,
-            createdAt: activityLog.createdAt,
-            runId: activityLog.runId,
-          })
-          .from(activityLog)
-          .where(
-            and(
-              eq(activityLog.orgId, orgId),
-              eq(activityLog.entityType, "issue"),
-              inArray(activityLog.entityId, issueIds),
-              inArray(activityLog.action, ISSUE_ACTIVITY_ACTIONS as unknown as string[]),
-            ),
-          )
-          .orderBy(desc(activityLog.createdAt)),
+    const [stats, latestAttentionEntry, detailEntries] = await Promise.all([
+      loadIssueThreadStats(orgId, userId, lastReadAt),
+      loadLatestUnreadIssueEntry(orgId, userId, lastReadAt),
+      options.includeDetail
+        ? loadIssueDetailEntries(orgId, userId, detailLimit, decodedCursor)
+        : Promise.resolve([] as IssueThreadEntry[]),
     ]);
-
-    const latestCommentByIssue = new Map<string, IssueCommentRow>();
-    const latestExternalCommentByIssue = new Map<string, IssueCommentRow>();
-    for (const row of commentRows) {
-      if (options.includeDetail && !latestCommentByIssue.has(row.issueId)) {
-        latestCommentByIssue.set(row.issueId, row);
-      }
-      if (!isSelfAuthoredComment(row, userId) && !latestExternalCommentByIssue.has(row.issueId)) {
-        latestExternalCommentByIssue.set(row.issueId, row);
-      }
+    const hasMoreDetailEntries = options.includeDetail && detailEntries.length > detailLimit;
+    const pageEntries = hasMoreDetailEntries ? detailEntries.slice(0, detailLimit) : detailEntries;
+    const cursorEntry = hasMoreDetailEntries ? pageEntries.at(-1) ?? null : null;
+    const latestDisplayCommentRows = await loadLatestIssueCommentsForDisplay(orgId, pageEntries.map((entry) => entry.issue.id));
+    const latestDisplayCommentByIssue = new Map<string, IssueCommentRow>();
+    for (const row of latestDisplayCommentRows) {
+      latestDisplayCommentByIssue.set(row.issueId, row);
     }
-    const latestActivityByIssue = new Map<string, IssueActivityRow>();
-    const latestExternalActivityByIssue = new Map<string, IssueActivityRow>();
-    const latestSuppressedActivityByIssue = new Map<string, IssueActivityRow>();
-    for (const row of activityRows) {
-      if (!shouldNotifyIssueActivity(row)) {
-        if (!latestSuppressedActivityByIssue.has(row.entityId)) {
-          latestSuppressedActivityByIssue.set(row.entityId, row);
-        }
-        continue;
-      }
-      if (!latestActivityByIssue.has(row.entityId)) {
-        latestActivityByIssue.set(row.entityId, row);
-      }
-      if (!isSelfAuthoredActivity(row, userId) && !latestExternalActivityByIssue.has(row.entityId)) {
-        latestExternalActivityByIssue.set(row.entityId, row);
-      }
-    }
-
-    const unsortedEntries = issuesUniverse.map((issue) => {
-      const latestComment = latestCommentByIssue.get(issue.id) ?? null;
-      const latestExternalComment = latestExternalCommentByIssue.get(issue.id) ?? null;
-      const latestActivity = latestActivityByIssue.get(issue.id) ?? null;
-      const latestVisibleComment = latestExternalComment;
-      const latestVisibleCommentAt = normalizeDate(latestVisibleComment?.createdAt ?? null);
-      const latestEventAt = maxDate(latestVisibleCommentAt, latestActivity?.createdAt);
-      const latestActivityAt = maxDate(issue.updatedAt, latestEventAt);
-      const latestSourceIsComment =
-        latestVisibleCommentAt &&
-        (!latestActivity?.createdAt || latestVisibleCommentAt.getTime() >= new Date(latestActivity.createdAt).getTime());
-      const latestPreview = latestSourceIsComment
-        ? truncate(latestVisibleComment?.body)
-        : latestActivity
-          ? summarizeIssueActivity(latestActivity, issue)
-          : null;
-      const statusChangeActivity = latestSourceIsComment
-        ? (issueStatusActivityMatchesSourceComment(latestActivity, latestVisibleComment) ? latestActivity : null)
-        : latestActivity;
-
-      const latestExternalActivity = latestExternalActivityByIssue.get(issue.id) ?? null;
-      const latestExternalCommentAt = normalizeDate(latestExternalComment?.createdAt ?? null);
-      const latestSuppressedActivityAt = normalizeDate(latestSuppressedActivityByIssue.get(issue.id)?.createdAt ?? null);
-      const issueUpdatedAt = normalizeDate(issue.updatedAt);
-      const suppressedActivityMatchesIssueUpdate = Boolean(
-        latestSuppressedActivityAt &&
-        issueUpdatedAt &&
-        latestSuppressedActivityAt.getTime() >= issueUpdatedAt.getTime() - 5_000,
-      );
-      const fallbackAssignedActivityAt =
-        issue.assigneeUserId === userId && !latestActivityByIssue.has(issue.id) && !suppressedActivityMatchesIssueUpdate
-          ? issueUpdatedAt
-          : null;
-      const fallbackReviewerActivityAt =
-        issue.reviewerUserId === userId && issue.status === "in_review" && !latestActivityByIssue.has(issue.id) && !suppressedActivityMatchesIssueUpdate
-          ? issueUpdatedAt
-          : null;
-      const attentionActivityAt = maxDate(
-        latestExternalCommentAt,
-        latestExternalActivity?.createdAt,
-        fallbackAssignedActivityAt,
-        fallbackReviewerActivityAt,
-      );
-      const attentionPreview =
-        latestExternalCommentAt &&
-        (!latestExternalActivity?.createdAt || latestExternalCommentAt.getTime() >= new Date(latestExternalActivity.createdAt).getTime())
-          ? truncate(latestExternalComment?.body)
-          : latestExternalActivity
-            ? summarizeIssueActivity(latestExternalActivity, issue)
-            : fallbackAssignedActivityAt || fallbackReviewerActivityAt
-              ? issueBodyFromSnapshot(
-                issue,
-                null,
-                issue.followed,
-                issue.createdByUserId === userId,
-                issue.assigneeUserId === userId,
-                issue.reviewerUserId === userId && issue.status === "in_review",
-              )
-              : null;
-      const summaryPreview = attentionActivityAt ? issueThreadPreview(issue, attentionPreview) : null;
-
-      return {
-        issue,
-        item: options.includeDetail
-          ? issueCard(
-            issue,
-            userId,
-            issue.followed,
-            latestPreview,
-            latestActivityAt ?? issue.updatedAt,
-            latestSourceIsComment ? latestVisibleComment : null,
-            statusChangeActivity,
-          )
-          : null,
-        attentionActivityAt,
-        attentionPreview: summaryPreview,
-      };
-    });
-
-    const latestFirstEntries = [...unsortedEntries].sort((a, b) => {
-      const aTime = a.attentionActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
-      const bTime = b.attentionActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
-      if (aTime !== bTime) return bTime - aTime;
-      return issueDisplayLabel(a.issue).localeCompare(issueDisplayLabel(b.issue));
-    });
-    const chronologicalItems = options.includeDetail
-      ? unsortedEntries
-        .flatMap((entry) => entry.item ? [entry.item] : [])
-        .sort(compareChronologicalActivity)
-      : [];
-
-    const latestAttentionEntry = latestFirstEntries.find((entry) => entry.attentionActivityAt);
-    const latestActivityAt = latestAttentionEntry?.attentionActivityAt ?? null;
-    const unreadCount = unsortedEntries.filter((entry) => {
-      const itemActivity = entry.attentionActivityAt;
-      if (!itemActivity) return false;
-      if (!lastReadAt) return true;
-      return itemActivity.getTime() > lastReadAt.getTime();
-    }).length;
+    const chronologicalItems = pageEntries
+      .sort(compareIssueThreadEntriesChronological)
+      .map((entry) => {
+        const latestDisplayComment = latestDisplayCommentByIssue.get(entry.issue.id) ?? null;
+        const latestDisplayCommentAt = normalizeDate(latestDisplayComment?.createdAt ?? null);
+        const latestSourceIsComment = Boolean(
+          latestDisplayCommentAt &&
+          (!entry.latestActivity?.createdAt || latestDisplayCommentAt.getTime() >= new Date(entry.latestActivity.createdAt).getTime()),
+        );
+        const sourceComment = latestSourceIsComment ? latestDisplayComment : null;
+        const latestPreview = sourceComment
+          ? truncate(sourceComment.body)
+          : entry.latestActivity
+            ? summarizeIssueActivity(entry.latestActivity, entry.issue)
+            : null;
+        const statusChangeActivity = sourceComment
+          ? (issueStatusActivityMatchesSourceComment(entry.latestActivity, sourceComment) ? entry.latestActivity : null)
+          : entry.latestActivity;
+        return issueCard(
+          entry.issue,
+          userId,
+          entry.issue.followed,
+          latestPreview,
+          entry.latestActivityAt,
+          sourceComment,
+          statusChangeActivity,
+        );
+      });
 
     const data: IssueThreadData = {
-      summary: issueSummary(issuesUniverse.length, latestActivityAt, unreadCount, lastReadAt, latestAttentionEntry?.attentionPreview ?? null),
-      itemCount: issuesUniverse.length,
+      summary: issueSummary(stats.itemCount, stats.latestActivityAt, stats.unreadCount, lastReadAt, latestAttentionEntry?.attentionPreview ?? null),
+      itemCount: stats.itemCount,
     };
     if (options.includeDetail) {
       data.detail = {
         threadKey: "issues",
         kind: "issues",
         title: "Issues",
-        subtitle: `${issuesUniverse.length} tracked issue${issuesUniverse.length === 1 ? "" : "s"}`,
+        subtitle: `${stats.itemCount} tracked issue${stats.itemCount === 1 ? "" : "s"}`,
         preview: latestAttentionEntry?.attentionPreview ?? null,
-        latestActivityAt,
+        latestActivityAt: stats.latestActivityAt,
         lastReadAt,
-        unreadCount,
-        needsAttention: unreadCount > 0,
+        unreadCount: stats.unreadCount,
+        needsAttention: stats.unreadCount > 0,
         isPinned: false,
         href: "/messenger/issues",
         description: "Followed issues, issues I created, issues assigned to me, and issues ready for my review",
         items: chronologicalItems,
+        pageInfo: {
+          limit: detailLimit,
+          nextCursor: cursorEntry ? encodeIssueThreadCursor(cursorEntry) : null,
+          hasMore: hasMoreDetailEntries,
+        },
       };
     }
     return data;
   }
 
-  async function loadIssueSummaryData(orgId: string, userId: string, threadStates?: ThreadStateSource) {
-    const data = await loadIssueData(orgId, userId, threadStates, { includeDetail: true });
+  async function loadIssueSummaryData(
+    orgId: string,
+    userId: string,
+    threadStates?: ThreadStateSource,
+    options: Pick<IssueThreadDetailOptions, "limit" | "cursor"> = {},
+  ) {
+    const data = await loadIssueData(orgId, userId, threadStates, { includeDetail: true, ...options });
     return {
       summary: data.summary,
       detail: data.detail!,
@@ -1484,8 +1690,12 @@ export function messengerService(db: Db) {
     return threadSummaries;
   }
 
-  async function getIssuesThread(orgId: string, userId: string) {
-    return loadIssueSummaryData(orgId, userId);
+  async function getIssuesThread(
+    orgId: string,
+    userId: string,
+    options: Pick<IssueThreadDetailOptions, "limit" | "cursor"> = {},
+  ) {
+    return loadIssueSummaryData(orgId, userId, undefined, options);
   }
 
   async function getApprovalsThread(orgId: string, userId: string) {

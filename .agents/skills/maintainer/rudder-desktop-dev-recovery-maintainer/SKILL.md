@@ -5,10 +5,11 @@ description: >
   failures. Use when `pnpm dev` or the Electron Desktop shell cannot start,
   the API/UI works but Desktop does not, embedded Postgres or `~/.rudder`
   instance state is confusing, a Desktop update/install path fails during local
-  validation, or a release is blocked by local Desktop dev/runtime breakage.
-  Separates local dev recovery from publishing work, verifies the active
-  runtime, preserves unrelated dirty files, and escalates to release-maintainer
-  only after local Desktop state is understood.
+  validation, a dev startup command is blocked by dirty-WIP compile failures, or
+  a release is blocked by local Desktop dev/runtime breakage. Separates local
+  dev recovery from publishing work, verifies the active runtime, preserves
+  unrelated dirty files, and escalates to release-maintainer only after local
+  Desktop state is understood.
 ---
 
 # Rudder Desktop Dev Recovery Maintainer
@@ -27,6 +28,7 @@ Use this skill for prompts like:
 - "`pnpm dev` 好像桌面端跑不起来了"
 - "Desktop dev shell 起不来"
 - "API 能访问，但桌面端没起来"
+- "`pnpm dev` starts the API but Electron exits during a UI build/typecheck"
 - "embedded Postgres / `~/.rudder` 状态是不是乱了"
 - "update 最新版失败，先 debug 一下"
 - "桌面端问题修完之后再发版"
@@ -61,10 +63,12 @@ Start with a short state packet:
 - requested command, for example `pnpm dev`, `pnpm desktop:dev`, or
   `pnpm desktop:verify`
 - whether the failure is API server, Vite middleware, Electron shell, embedded
-  Postgres, packaged smoke, update download, or app launch
+  Postgres, UI build/typecheck, packaged smoke, update download, or app launch
 - exact stderr/stdout excerpt and exit code
 - currently listening ports around `3100`
 - relevant `~/.rudder/instances/*` path when the process prints one
+- whether the failing file is committed, modified, untracked, or part of a
+  broader dirty feature set
 
 Do not guess from memory when the command can be rerun safely.
 
@@ -102,6 +106,9 @@ Common causes to distinguish:
 - embedded Postgres failed to initialize
 - dev server is up but Electron did not launch
 - Electron launched but cannot reach the server
+- API/server is healthy, but Desktop launch is blocked because `@rudderhq/ui`
+  build/typecheck fails on dirty WIP, incomplete fixtures, or an untracked
+  companion feature file
 - Desktop profile or instance id points to unexpected data
 - update metadata resolves but asset download/checksum/install fails
 - update helper or CLI child process writes progress after its parent pipe is
@@ -117,6 +124,10 @@ Prefer the smallest repair that matches the cause:
 - reinstall dependencies only when package state or lockfile evidence points
   there
 - fix script/config code when the failure is reproducible from a clean command
+- for dirty-WIP compile failures, build a changed-file ownership packet before
+  editing: failing path, related untracked files, likely source session or
+  feature group, and whether a narrow fixture repair would leave a companion
+  feature half-committed
 - reset `~/.rudder/instances/dev` only when the user accepts data loss or the
   instance is disposable and the task explicitly targets dev state
 - keep release publishing untouched until local Desktop state is green
@@ -124,12 +135,20 @@ Prefer the smallest repair that matches the cause:
 Do not delete `~/.rudder`, change npm auth, move GitHub dist-tags, or install a
 new app globally as a "dev recovery" shortcut.
 
+If the compile blocker belongs to a larger unrelated feature already dirty in
+the worktree, fix only the minimum needed to unblock the requested dev run, and
+do not commit a lone companion file unless the whole feature group is in scope.
+If a safe narrow repair is not possible, report the ownership packet and the
+exact blocked command instead of sweeping unrelated WIP into the recovery.
+
 ### 5. Validate the right path
 
 Validation depends on what failed:
 
 - dev server/API: health and org API calls
 - Desktop dev shell: launch evidence plus logs that the shell reached the API
+- dirty-WIP compile failure: rerun the failing package build or typecheck and
+  the original startup command far enough to prove the blocked layer has moved
 - packaged startup, profile isolation, migrations, installer assets, or
   prod-local data path: `pnpm desktop:verify`
 - update/download path: dry-run is not enough when the issue is download,
@@ -216,6 +235,8 @@ Next route:
   launches the app.
 - Treating `EPIPE` during update restart as a generic release failure before
   checking whether the parent progress pipe intentionally closed.
+- Treating a dirty-WIP TypeScript or fixture failure as Desktop/Postgres
+  corruption just because it surfaced during `pnpm dev`.
 - Mixing unrelated dirty package changes into a Desktop recovery commit.
 
 ## Safety Rules

@@ -546,6 +546,7 @@ describe("messengerService and issue follows", () => {
             title: "Initial proposal",
             description: "Needs more detail.",
             priority: "medium",
+            assigneeUnassignedReason: "The owner is still under review.",
           },
         },
       },
@@ -561,6 +562,7 @@ describe("messengerService and issue follows", () => {
             title: "Detailed proposal",
             description: "Includes architecture and rollout details.",
             priority: "medium",
+            assigneeUnassignedReason: "The owner is still under review.",
           },
         },
       },
@@ -709,7 +711,7 @@ describe("messengerService and issue follows", () => {
     expect(results.find((conversation) => conversation.id === messageChatId)?.searchPreview).toContain("launch-token");
   });
 
-  it("does not assign approved chat issue proposals to the selected chat agent by default", async () => {
+  it("preserves explicit approved chat issue proposal assignees", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
     const userId = "board-user-approval";
@@ -755,6 +757,7 @@ describe("messengerService and issue follows", () => {
             title: "Implement selected work",
             description: "The chat-selected agent should receive this approved issue.",
             priority: "medium",
+            assigneeAgentId: agentId,
             reviewerAgentId: agentId,
           },
         },
@@ -771,12 +774,84 @@ describe("messengerService and issue follows", () => {
 
     expect(issue).toMatchObject({
       title: "Implement selected work",
-      assigneeAgentId: null,
+      assigneeAgentId: agentId,
       reviewerAgentId: agentId,
       createdByUserId: userId,
     });
-    expect(persistedIssue?.assigneeAgentId).toBeNull();
+    expect(persistedIssue?.assigneeAgentId).toBe(agentId);
     expect(persistedIssue?.reviewerAgentId).toBe(agentId);
+  });
+
+  it("preserves explicitly unassigned approved chat issue proposals", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const userId = "board-user-explicit-unassigned-approval";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Explicit Unassigned Org",
+      urlKey: deriveOrganizationUrlKey("Chat Explicit Unassigned Org"),
+      issuePrefix: `U${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Selected Engineer",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const conversation = await chatSvc.create(orgId, {
+      title: "Plan unassigned work",
+      preferredAgentId: agentId,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+
+    const approval = await db
+      .insert(approvals)
+      .values({
+        orgId,
+        type: "chat_issue_creation",
+        status: "approved",
+        requestedByUserId: userId,
+        payload: {
+          chatConversationId: conversation!.id,
+          proposedIssue: {
+            title: "Clarify selected work",
+            description: "The operator explicitly left this proposal unassigned.",
+            priority: "medium",
+            assigneeAgentId: null,
+            assigneeUserId: null,
+            assigneeUnassignedReason: "The operator intentionally deferred ownership.",
+          },
+        },
+      })
+      .returning()
+      .then((rows) => rows[0]!);
+
+    const issue = await chatSvc.applyApprovedApproval(approval, userId);
+    const persistedIssue = await db
+      .select({ assigneeAgentId: issues.assigneeAgentId, assigneeUserId: issues.assigneeUserId })
+      .from(issues)
+      .where(eq(issues.id, (issue as { id: string }).id))
+      .then((rows) => rows[0]);
+
+    expect(issue).toMatchObject({
+      title: "Clarify selected work",
+      assigneeAgentId: null,
+      assigneeUserId: null,
+      createdByUserId: userId,
+    });
+    expect(persistedIssue?.assigneeAgentId).toBeNull();
+    expect(persistedIssue?.assigneeUserId).toBeNull();
   });
 
   it("writes a plan document only after approving a plan-mode chat issue proposal", async () => {
@@ -811,6 +886,7 @@ describe("messengerService and issue follows", () => {
             title: "Implement planned work",
             description: "Create the issue only after approval.",
             priority: "high",
+            assigneeUnassignedReason: "Plan mode should leave ownership to operator review.",
           },
           planDocument: {
             title: "Planned work rollout",
@@ -964,11 +1040,16 @@ describe("messengerService and issue follows", () => {
     const issuesSummary = summaries.find((item) => item.threadKey === "issues");
 
     expect(thread.detail.items.map((item) => item.issueId)).toEqual([createdIssueId]);
-    expect(thread.detail.items[0]?.preview).toBeNull();
-    expect(thread.detail.items[0]?.body).not.toContain("I already handled this");
-    expect(thread.detail.items[0]?.sourceCommentId).toBeNull();
-    expect(thread.detail.items[0]?.sourceCommentAuthorLabel).toBeNull();
-    expect(thread.detail.items[0]?.sourceCommentBody).toBeNull();
+    expect(thread.detail.items[0]?.preview).toBe("I already handled this");
+    expect(thread.detail.items[0]?.body).toContain("I already handled this");
+    expect(thread.detail.items[0]?.sourceCommentId).toBeTruthy();
+    expect(thread.detail.items[0]?.sourceCommentAuthorLabel).toBe("You");
+    expect(thread.detail.items[0]?.sourceCommentBody).toBe("I already handled this");
+    expect(thread.detail.items[0]?.metadata).toMatchObject({
+      sourceCommentAuthorKind: "user",
+      sourceCommentByMe: true,
+      sourceCommentAuthorLabel: "You",
+    });
     expect(thread.detail.unreadCount).toBe(0);
     expect(thread.detail.needsAttention).toBe(false);
     expect(thread.summary.latestActivityAt).toBeNull();
@@ -1182,6 +1263,186 @@ describe("messengerService and issue follows", () => {
     expect(issuesSummary?.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
   });
 
+  it("paginates Messenger issue detail items by latest activity", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-issue-page";
+    const olderIssueId = randomUUID();
+    const middleIssueId = randomUUID();
+    const newerIssueId = randomUUID();
+    const olderActivityAt = new Date("2026-04-10T09:00:00.000Z");
+    const middleActivityAt = new Date("2026-04-10T10:00:00.000Z");
+    const newerActivityAt = new Date("2026-04-10T11:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Issue Page Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Issue Page Org"),
+      issuePrefix: `P${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: olderIssueId,
+        orgId,
+        title: "Older paginated issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: olderActivityAt,
+        updatedAt: olderActivityAt,
+      },
+      {
+        id: middleIssueId,
+        orgId,
+        title: "Middle paginated issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: middleActivityAt,
+        updatedAt: middleActivityAt,
+      },
+      {
+        id: newerIssueId,
+        orgId,
+        title: "Newer paginated issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: newerActivityAt,
+        updatedAt: newerActivityAt,
+      },
+    ]);
+
+    const firstPage = await messengerSvc.getIssuesThread(orgId, userId, { limit: 2 });
+
+    expect(firstPage.detail.items.map((item) => item.issueId)).toEqual([middleIssueId, newerIssueId]);
+    expect(firstPage.detail.pageInfo).toEqual({
+      limit: 2,
+      hasMore: true,
+      nextCursor: expect.any(String),
+    });
+    expect(firstPage.summary.subtitle).toBe("3 tracked issues");
+    expect(firstPage.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+
+    const secondPage = await messengerSvc.getIssuesThread(orgId, userId, {
+      limit: 2,
+      cursor: firstPage.detail.pageInfo?.nextCursor,
+    });
+
+    expect(secondPage.detail.items.map((item) => item.issueId)).toEqual([olderIssueId]);
+    expect(secondPage.detail.pageInfo).toEqual({
+      limit: 2,
+      hasMore: false,
+      nextCursor: null,
+    });
+    expect(secondPage.summary.subtitle).toBe("3 tracked issues");
+    expect(secondPage.summary.latestActivityAt?.toISOString()).toBe(newerActivityAt.toISOString());
+  });
+
+  it("uses stable issue pagination cursors when the cursor issue changes activity", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-issue-page-stale";
+    const olderIssueId = randomUUID();
+    const middleIssueId = randomUUID();
+    const newerIssueId = randomUUID();
+    const olderActivityAt = new Date("2026-04-10T09:00:00.000Z");
+    const middleActivityAt = new Date("2026-04-10T10:00:00.000Z");
+    const newerActivityAt = new Date("2026-04-10T11:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Issue Stable Cursor Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Issue Stable Cursor Org"),
+      issuePrefix: `C${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: olderIssueId,
+        orgId,
+        title: "Older stable cursor issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: olderActivityAt,
+        updatedAt: olderActivityAt,
+      },
+      {
+        id: middleIssueId,
+        orgId,
+        title: "Middle stable cursor issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: middleActivityAt,
+        updatedAt: middleActivityAt,
+      },
+      {
+        id: newerIssueId,
+        orgId,
+        title: "Newer stable cursor issue",
+        status: "todo",
+        priority: "medium",
+        assigneeUserId: userId,
+        createdAt: newerActivityAt,
+        updatedAt: newerActivityAt,
+      },
+    ]);
+
+    const firstPage = await messengerSvc.getIssuesThread(orgId, userId, { limit: 1 });
+    expect(firstPage.detail.items.map((item) => item.issueId)).toEqual([newerIssueId]);
+
+    await db
+      .update(issues)
+      .set({ updatedAt: new Date("2026-04-10T12:00:00.000Z") })
+      .where(eq(issues.id, newerIssueId));
+
+    const secondPage = await messengerSvc.getIssuesThread(orgId, userId, {
+      limit: 2,
+      cursor: firstPage.detail.pageInfo?.nextCursor,
+    });
+
+    expect(secondPage.detail.items.map((item) => item.issueId)).toEqual([olderIssueId, middleIssueId]);
+    expect(secondPage.detail.items.map((item) => item.issueId)).not.toContain(newerIssueId);
+    expect(secondPage.detail.pageInfo).toEqual({
+      limit: 2,
+      hasMore: false,
+      nextCursor: null,
+    });
+  });
+
+  it("rejects malformed Messenger issue cursors instead of restarting from page one", async () => {
+    const orgId = randomUUID();
+    const userId = "board-user-issue-page-invalid";
+    const issueId = randomUUID();
+    const activityAt = new Date("2026-04-10T09:00:00.000Z");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Messenger Issue Invalid Cursor Org",
+      urlKey: deriveOrganizationUrlKey("Messenger Issue Invalid Cursor Org"),
+      issuePrefix: `I${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      orgId,
+      title: "Invalid cursor issue",
+      status: "todo",
+      priority: "medium",
+      assigneeUserId: userId,
+      createdAt: activityAt,
+      updatedAt: activityAt,
+    });
+
+    await expect(messengerSvc.getIssuesThread(orgId, userId, { cursor: "not-a-cursor" })).rejects.toMatchObject({
+      status: 409,
+      message: "Messenger issues cursor is invalid or expired",
+    });
+  });
+
   it("returns Messenger approval detail items in chronological order while keeping the summary pinned to latest activity", async () => {
     const orgId = randomUUID();
     const userId = "board-user-approvals";
@@ -1269,6 +1530,7 @@ describe("messengerService and issue follows", () => {
             title: "Pending approval",
             description: "Needs review.",
             priority: "medium",
+            assigneeUnassignedReason: "The owner is still under review.",
           },
         },
         createdAt: new Date("2026-04-11T10:00:00.000Z"),

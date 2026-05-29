@@ -38,7 +38,7 @@ If `RUDDER_APPROVAL_ID` is set:
 - Use `rudder issue context "<issue-id-or-identifier>" --json` to load compact context.
 - Do the work. Use `rudder issue comment`, `rudder issue done`, or `rudder issue block` to communicate outcome. If a reviewed issue is blocked, write the blocker clearly enough for reviewer triage.
 - If `RUDDER_WAKE_REASON=issue_passive_followup`, treat the wake as close-out governance, not a fresh assignment: inspect state and leave a progress comment, completion, blocker, or explicit handoff.
-- If you are the reviewer, including for a `blocked` issue, record one structured decision with `rudder issue review --decision approve|request_changes|needs_followup|blocked --comment ...`. Use `blocked` only to confirm a human/external blocker, and name the next human action in the comment.
+- If you are the reviewer, including for a `blocked` issue, record one structured decision with `rudder issue review --decision approve|request_changes|needs_followup|blocked --comment-file <path>`. Use `blocked` only to confirm a human/external blocker, and name the next human action in the comment.
 - If `RUDDER_WAKE_REASON=issue_review_closeout_missing`, treat the wake as reviewer close-out governance and record one structured review decision.
 
 ## 6. Delegation

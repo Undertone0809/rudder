@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseClaudeStreamJson } from "./parse.js";
+import { detectClaudeLoginRequired, parseClaudeStreamJson } from "./parse.js";
 
 describe("parseClaudeStreamJson", () => {
   it("includes Claude cache creation tokens in cached input totals", () => {
@@ -23,5 +23,27 @@ describe("parseClaudeStreamJson", () => {
       cachedInputTokens: 750,
       outputTokens: 25,
     });
+  });
+});
+
+describe("detectClaudeLoginRequired", () => {
+  it("detects Claude Code slash-command login prompts", () => {
+    const detected = detectClaudeLoginRequired({
+      parsed: null,
+      stdout: "",
+      stderr: "Not logged in · Please run /login",
+    });
+
+    expect(detected.requiresLogin).toBe(true);
+  });
+
+  it("detects current Claude auth login prompts", () => {
+    const detected = detectClaudeLoginRequired({
+      parsed: null,
+      stdout: "",
+      stderr: "Authentication required. Please run claude auth login.",
+    });
+
+    expect(detected.requiresLogin).toBe(true);
   });
 });

@@ -210,6 +210,47 @@ test.describe("Messenger unified threads contract", () => {
     }).toBe("archived");
   });
 
+  test("loads older issue messages on demand instead of rendering the full issue feed", async ({ page }) => {
+    const sessionRes = await page.request.get("/api/auth/get-session");
+    expect(sessionRes.ok()).toBe(true);
+    const session = await sessionRes.json();
+    const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+    expect(currentUserId).toBeTruthy();
+
+    const organization = await createOrganization(page, `Messenger-Issue-Pagination-${Date.now()}`);
+    const baseTime = new Date("2026-04-20T10:00:00.000Z").getTime();
+    const issueRows = Array.from({ length: 52 }, (_, index) => {
+      const activityAt = new Date(baseTime + index * 60_000);
+      return {
+        id: randomUUID(),
+        orgId: organization.id,
+        title: `Messenger paged issue ${String(index + 1).padStart(2, "0")}`,
+        status: "todo" as const,
+        priority: "medium" as const,
+        assigneeUserId: currentUserId,
+        createdAt: activityAt,
+        updatedAt: activityAt,
+      };
+    });
+    await e2eDb.insert(issues).values(issueRows);
+
+    const oldestIssue = issueRows[0]!;
+    const newestIssue = issueRows.at(-1)!;
+
+    await page.goto("/");
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+    await page.goto(`/${organization.issuePrefix}/messenger/issues`, { waitUntil: "commit" });
+
+    await expect(page.getByTestId(`messenger-issue-card-${newestIssue.id}`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId(`messenger-issue-card-${oldestIssue.id}`)).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Load older issues" }).click();
+
+    await expect(page.getByTestId(`messenger-issue-card-${oldestIssue.id}`)).toBeVisible({ timeout: 15_000 });
+  });
+
   test("pins a Messenger chat from the sidebar and promotes it above recent threads", async ({ page }) => {
     const organization = await createOrganization(page, `Messenger-Pin-${Date.now()}`);
 

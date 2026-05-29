@@ -199,6 +199,7 @@ describe("chat issue proposals", () => {
       proposal: {
         title: "Classify agent-created issue",
         description: "The issue proposal already selected the best-fit label.",
+        assigneeUnassignedReason: "No execution owner is known yet.",
         labelIds: [labelId],
       },
     })).toMatchObject({
@@ -206,8 +207,30 @@ describe("chat issue proposals", () => {
       data: {
         proposal: expect.objectContaining({
           labelIds: [labelId],
+          assigneeUnassignedReason: "No execution owner is known yet.",
         }),
       },
+    });
+  });
+
+  it("requires an explicit owner decision when converting chat proposals into issues", () => {
+    expect(convertChatToIssueSchema.safeParse({
+      proposal: {
+        title: "Missing owner",
+        description: "This proposal does not say who owns the work.",
+      },
+    })).toMatchObject({
+      success: false,
+    });
+
+    expect(convertChatToIssueSchema.safeParse({
+      proposal: {
+        title: "Intentionally unassigned",
+        description: "This proposal explains why there is no owner yet.",
+        assigneeUnassignedReason: "The operator needs to choose an execution owner after review.",
+      },
+    })).toMatchObject({
+      success: true,
     });
   });
 });

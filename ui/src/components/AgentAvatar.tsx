@@ -4,8 +4,10 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { getAgentIcon, getDefaultAgentIconForRole } from "../lib/agent-icons";
 import {
+  getAgentAvatarBackgroundPreset,
   getAgentAvatarBackgroundStyle,
   getAgentAvatarImageSrc,
+  getAgentFallbackAvatarImageSrc,
   normalizeAgentAvatarIconValue,
 } from "../lib/agent-avatar";
 
@@ -28,21 +30,26 @@ const iconSize: Record<IdentitySize, string> = {
 interface AgentIconProps {
   icon: string | null | undefined;
   role?: AgentRole | null;
+  fallbackSeed?: string | null;
   className?: string;
   style?: CSSProperties;
 }
 
-export function AgentIcon({ icon, role, className, style }: AgentIconProps) {
+export function AgentIcon({ icon, role, fallbackSeed, className, style }: AgentIconProps) {
   const normalized = normalizeAgentAvatarIconValue(icon);
   const effectiveIcon = normalized ?? getDefaultAgentIconForRole(role);
-  const imageSrc = getAgentAvatarImageSrc(effectiveIcon);
+  const imageSrc = getAgentAvatarImageSrc(effectiveIcon) ?? getAgentFallbackAvatarImageSrc(fallbackSeed);
   if (imageSrc) {
     return (
       <img
         src={imageSrc}
         alt=""
         className={cn("inline-flex rounded-full object-cover", className)}
-        style={{ ...getAgentAvatarBackgroundStyle(effectiveIcon), ...style }}
+        style={{
+          background: getAgentAvatarBackgroundPreset(effectiveIcon).background,
+          ...getAgentAvatarBackgroundStyle(effectiveIcon),
+          ...style,
+        }}
         loading="lazy"
       />
     );
@@ -67,7 +74,7 @@ export function AgentIdentity({
   className,
 }: AgentIdentityProps) {
   const normalizedIcon = normalizeAgentAvatarIconValue(icon) ?? getDefaultAgentIconForRole(role);
-  const imageSrc = getAgentAvatarImageSrc(normalizedIcon);
+  const imageSrc = getAgentAvatarImageSrc(normalizedIcon) ?? getAgentFallbackAvatarImageSrc(name);
 
   return (
     <span
@@ -80,7 +87,7 @@ export function AgentIdentity({
     >
       <Avatar size={size} className={size === "xs" ? "relative -top-px" : undefined}>
         {imageSrc ? (
-          <AgentIcon icon={normalizedIcon} className="size-full" />
+          <AgentIcon icon={normalizedIcon} fallbackSeed={name} className="size-full" />
         ) : (
           <AvatarFallback>
             <AgentIcon icon={normalizedIcon} className={iconSize[size]} />

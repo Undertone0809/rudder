@@ -312,6 +312,7 @@ async function launchDesktop(userDataDir, mode, ports) {
     env: {
       ...process.env,
       RUDDER_DESKTOP_APP_NAME: smokeAppName,
+      RUDDER_DESKTOP_DISABLE_CLI_LINK: "1",
       RUDDER_HOME: paths.rudderHome,
       RUDDER_DESKTOP_USER_DATA_DIR: paths.electronUserDataDir,
       RUDDER_LOCAL_ENV: "prod_local",

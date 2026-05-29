@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -37,6 +37,15 @@ function expectedExtension(platform) {
   throw new Error(`Unsupported desktop platform: ${platform}`);
 }
 
+function expectedPortableAssetName(version, platform, arch) {
+  if (platform === "linux") return `Rudder-${version}-${platform}-${arch}.AppImage`;
+  return `Rudder-${version}-${platform}-${arch}-portable.zip`;
+}
+
+function expectedShellAssetName(version, platform, arch) {
+  return `Rudder-${version}-${platform}-${arch}-shell.zip`;
+}
+
 function walkFiles(dir) {
   const files = [];
   const pending = [dir];
@@ -58,23 +67,36 @@ function walkFiles(dir) {
   return files;
 }
 
-function findDesktopAsset(releaseDir, platform) {
-  const extension = expectedExtension(platform);
-  const candidates = walkFiles(releaseDir)
-    .filter((filePath) => {
-      const base = path.basename(filePath);
-      if (base.includes("blockmap")) return false;
-      if (base.startsWith("builder-")) return false;
-      return base.endsWith(extension);
-    })
-    .map((filePath) => ({ filePath, size: statSync(filePath).size }))
-    .sort((a, b) => b.size - a.size || a.filePath.localeCompare(b.filePath));
+function findDesktopAsset(releaseDir, platform, arch, version) {
+  const files = walkFiles(releaseDir);
+  const exactName = expectedPortableAssetName(version, platform, arch);
+  const exactMatch = files.find((filePath) => path.basename(filePath) === exactName);
+  if (exactMatch) return exactMatch;
 
-  const match = candidates[0];
-  if (!match) {
-    throw new Error(`No ${extension} desktop artifact found under ${releaseDir}`);
+  if (platform === "linux") {
+    const candidates = files
+      .filter((filePath) => {
+        const base = path.basename(filePath);
+        if (base.includes("blockmap")) return false;
+        if (base.startsWith("builder-")) return false;
+        return base.endsWith(".AppImage");
+      })
+      .sort((a, b) => a.localeCompare(b));
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) {
+      throw new Error(
+        `Found multiple Linux AppImage artifacts under ${releaseDir}; expected ${exactName}: ${candidates.map((candidate) => path.basename(candidate)).join(", ")}`,
+      );
+    }
   }
-  return match.filePath;
+
+  throw new Error(`Missing expected desktop artifact ${exactName} under ${releaseDir}`);
+}
+
+function findShellDesktopAsset(releaseDir, platform, arch, version) {
+  if (platform !== "macos" && platform !== "windows") return null;
+  const exactName = expectedShellAssetName(version, platform, arch);
+  return walkFiles(releaseDir).find((filePath) => path.basename(filePath) === exactName) ?? null;
 }
 
 function main() {
@@ -90,7 +112,7 @@ function main() {
   }
 
   const releaseDir = path.join(repoRoot, "desktop", "release");
-  const source = findDesktopAsset(releaseDir, platform);
+  const source = findDesktopAsset(releaseDir, platform, arch, version);
   const extension = expectedExtension(platform);
   const outputDir = path.resolve(repoRoot, outDir);
   const portableSuffix = platform === "linux" ? "" : "-portable";
@@ -100,6 +122,16 @@ function main() {
   mkdirSync(outputDir, { recursive: true });
   copyFileSync(source, outputPath);
   console.log(outputPath);
+
+  const shellSource = findShellDesktopAsset(releaseDir, platform, arch, version);
+  if (platform === "macos" || platform === "windows") {
+    if (!shellSource) {
+      throw new Error(`Missing expected Desktop shell artifact ${expectedShellAssetName(version, platform, arch)} under ${releaseDir}`);
+    }
+    const shellOutputPath = path.join(outputDir, expectedShellAssetName(version, platform, arch));
+    copyFileSync(shellSource, shellOutputPath);
+    console.log(shellOutputPath);
+  }
 }
 
 try {

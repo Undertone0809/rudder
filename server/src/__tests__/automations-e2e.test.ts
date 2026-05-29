@@ -361,6 +361,58 @@ describe("automation routes end-to-end", () => {
     );
   }, 20_000);
 
+  it("supports always-enqueue automation runs through the API", async () => {
+    const { orgId, agentId, projectId, userId } = await seedFixture();
+    const app = await createApp({
+      type: "board",
+      userId,
+      source: "session",
+      isInstanceAdmin: false,
+      orgIds: [orgId],
+    });
+
+    const createRes = await request(app)
+      .post(`/api/orgs/${orgId}/automations`)
+      .send({
+        projectId,
+        title: "Parallel report prep",
+        description: "Prepare report slices independently",
+        assigneeAgentId: agentId,
+        priority: "medium",
+        concurrencyPolicy: "always_enqueue",
+        catchUpPolicy: "skip_missed",
+      });
+
+    expect(createRes.status).toBe(201);
+    const automationId = createRes.body.id as string;
+
+    const firstRun = await request(app).post(`/api/automations/${automationId}/run`).send({ source: "manual" });
+    const secondRun = await request(app).post(`/api/automations/${automationId}/run`).send({ source: "manual" });
+
+    expect(firstRun.status).toBe(202);
+    expect(secondRun.status).toBe(202);
+    expect(firstRun.body.status).toBe("issue_created");
+    expect(secondRun.body.status).toBe("issue_created");
+    expect(firstRun.body.linkedIssueId).toBeTruthy();
+    expect(secondRun.body.linkedIssueId).toBeTruthy();
+    expect(firstRun.body.linkedIssueId).not.toBe(secondRun.body.linkedIssueId);
+
+    const automationIssues = await db
+      .select({
+        id: issues.id,
+        originRunId: issues.originRunId,
+        executionRunId: issues.executionRunId,
+      })
+      .from(issues)
+      .where(eq(issues.originId, automationId));
+
+    expect(automationIssues).toHaveLength(2);
+    expect(automationIssues.map((issue) => issue.originRunId).sort()).toEqual(
+      [firstRun.body.id, secondRun.body.id].sort(),
+    );
+    expect(automationIssues.every((issue) => Boolean(issue.executionRunId))).toBe(true);
+  }, 20_000);
+
   it("creates a chat-output automation result chat and publishes the final output", async () => {
     const { orgId, agentId, projectId, userId } = await seedFixture();
     const app = await createApp({
