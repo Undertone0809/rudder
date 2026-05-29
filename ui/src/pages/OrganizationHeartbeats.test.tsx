@@ -193,6 +193,8 @@ describe("OrganizationHeartbeats", () => {
     expect(html).toContain("Nia");
     expect(html).toContain("Rosalie");
     expect(html).toContain("Blake");
+    expect(html).toContain('data-testid="org-heartbeat-agent-avatar-agent-live"');
+    expect(html).toMatch(/data-testid="org-heartbeat-agent-avatar-agent-live"[\s\S]*?<img/);
     expect(html).toContain("Live now");
     expect(html).toContain("Configured, inactive");
     expect(html).toContain("Disabled");
