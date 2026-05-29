@@ -256,5 +256,12 @@ test.describe("Chat options menu", () => {
     await page.goto(`/chat?agentId=${agentB.id}`);
     await expect(selector).toContainText(beta.name, { timeout: 15_000 });
     await expect(page.getByTestId("chat-agent-selector")).toContainText("Mira");
+
+    await page.goto(`/chat?agentId=${agentA.id}`);
+    await expect(selector).toContainText(alpha.name, { timeout: 15_000 });
+    await page.getByTestId("chat-agent-selector").click();
+    await page.getByRole("menuitemradio", { name: /Mira/ }).click();
+    await expect(page.getByTestId("chat-agent-selector")).toContainText("Mira");
+    await expect(selector).toContainText(beta.name, { timeout: 15_000 });
   });
 });

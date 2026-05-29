@@ -174,7 +174,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     projects,
     searchParams,
     selectedOrganizationId, visibleProjects, draftPreferredAgentId, ]); const selectedConversation = conversationQuery.data ?? conversationsQuery.data?.find((conversation) => conversation.id === conversationId) ?? null; const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
-  const pendingSelectedConversationProjectId = selectedConversation && pendingProjectContextOverride?.chatId === selectedConversation.id ? pendingProjectContextOverride.projectId : undefined; const activeProjectId = selectedConversation ? (pendingSelectedConversationProjectId ?? selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId; const activePlanMode = pendingPlanModeOverride ?? selectedConversation?.planMode ?? draftPlanMode; const activeSkillAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const activeSkillAgent = activeSkillAgentId ? (agents ?? []).find((agent) => agent.id === activeSkillAgentId) ?? null : null; const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue__"}`; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}`;
+  const pendingSelectedConversationProjectId = selectedConversation && pendingProjectContextOverride?.chatId === selectedConversation.id ? pendingProjectContextOverride.projectId : undefined; const activeProjectId = selectedConversation ? (pendingSelectedConversationProjectId ?? selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId; const activePlanMode = pendingPlanModeOverride ?? selectedConversation?.planMode ?? draftPlanMode; const activeSkillAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const activeSkillAgent = activeSkillAgentId ? (agents ?? []).find((agent) => agent.id === activeSkillAgentId) ?? null : null; const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue__"}`; const draftIssueProjectKey = draftIssueContext?.projectId ?? "__no_issue_project__"; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}:${draftIssueProjectKey}`;
   const {
     data: organizationSkills,
     error: organizationSkillsError,
@@ -233,13 +233,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     selectedConversation?.id, selectedConversation?.contextLinks, selectedConversation?.preferredAgentId, ]);
   useEffect(() => { if (draftProjectScopeKeyRef.current === draftProjectScopeKey) return; draftProjectScopeKeyRef.current = draftProjectScopeKey; draftProjectDefaultKeyRef.current = null; draftProjectManuallySelectedRef.current = false; }, [draftProjectScopeKey]);
   useEffect(() => { if (!selectedOrganizationId || selectedConversation || !projects || pendingProjectPrefill || !draftProjectDefaultKey) return;
+    if (pendingIssueId && !issues) return;
     if (draftProjectManuallySelectedRef.current || draftProjectDefaultKeyRef.current === draftProjectDefaultKey) return;
     draftProjectDefaultKeyRef.current = draftProjectDefaultKey; setDraftProjectId(resolveDefaultDraftChatProjectId({
       orgId: selectedOrganizationId,
       projects: visibleProjects,
       issue: draftIssueContext,
       agentId: activeSkillAgentId,
-    })); }, [activeSkillAgentId, draftIssueContext, draftProjectDefaultKey, pendingProjectPrefill, projects, selectedConversation, selectedOrganizationId, visibleProjects]);
+    })); }, [activeSkillAgentId, draftIssueContext, draftProjectDefaultKey, issues, pendingIssueId, pendingProjectPrefill, projects, selectedConversation, selectedOrganizationId, visibleProjects]);
   useEffect(() => { if (!selectedOrganizationId) return; if (!relativePath.startsWith("/messenger/chat")) return; rememberMessengerPath(selectedOrganizationId, relativePath); }, [relativePath, selectedOrganizationId]); const refreshChat = async (chatId?: string | null) => { if (!selectedOrganizationId) return;
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(selectedOrganizationId, "active") }),
@@ -610,9 +611,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!isSelectableChatAgentId(value, agents)) { setAgentMenuOpen(false);
       return; } setDraftPreferredAgentId(value); setAgentMenuOpen(false);
     if (selectedOrganizationId) {
-      rememberChatAgentId(selectedOrganizationId, value);
-      if (draftProjectId !== NO_PROJECT_ID) {
-        rememberChatProjectIdForAgent(selectedOrganizationId, value, draftProjectId); } }
+      rememberChatAgentId(selectedOrganizationId, value); }
     if (selectedConversation) {
       updateConversationMutation.mutate({
         chatId: selectedConversation.id,
