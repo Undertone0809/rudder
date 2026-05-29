@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const TOKEN_TYPES = ["agent", "project", "issue", "library_file", "skill"] as const;
-const SURFACES = ["editor", "markdown"] as const;
+const SURFACES = ["editor", "milkdown", "markdown"] as const;
 
 test("mention tokens align with surrounding text on every rendered surface", async ({ page }) => {
   await page.goto("/");
@@ -29,6 +29,17 @@ test("mention tokens align with surrounding text on every rendered surface", asy
         <div class="rudder-mdxeditor-content">
           <p class="alignment-row" data-surface="editor">
             <span data-reference-text="editor">Before text</span>
+            <a class="rudder-mention-chip rudder-mention-chip--agent" data-token-kind="agent" data-mention-kind="agent" style="--rudder-mention-icon-mask: none;">Wesley</a>
+            <a class="rudder-mention-chip rudder-mention-chip--project rudder-project-mention-chip" data-token-kind="project" data-mention-kind="project" style="--rudder-mention-project-color: #f59e0b;">Rudder mkt</a>
+            <a class="rudder-mention-chip rudder-mention-chip--issue" data-token-kind="issue" data-mention-kind="issue">ZST-24</a>
+            <a class="rudder-mention-chip rudder-mention-chip--library_file" data-token-kind="library_file" data-mention-kind="library_file">product-brief.md</a>
+            <span class="rudder-skill-token" data-token-kind="skill" data-skill-token="true">build-advisor</span>
+            after text.
+          </p>
+        </div>
+        <div class="rudder-milkdown-content">
+          <p class="alignment-row" data-surface="milkdown">
+            <span data-reference-text="milkdown">Before text</span>
             <a class="rudder-mention-chip rudder-mention-chip--agent" data-token-kind="agent" data-mention-kind="agent" style="--rudder-mention-icon-mask: none;">Wesley</a>
             <a class="rudder-mention-chip rudder-mention-chip--project rudder-project-mention-chip" data-token-kind="project" data-mention-kind="project" style="--rudder-mention-project-color: #f59e0b;">Rudder mkt</a>
             <a class="rudder-mention-chip rudder-mention-chip--issue" data-token-kind="issue" data-mention-kind="issue">ZST-24</a>

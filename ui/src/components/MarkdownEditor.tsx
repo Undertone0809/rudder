@@ -157,6 +157,7 @@ export interface MarkdownEditorProps {
 
 export interface MarkdownEditorRef {
   focus: () => void;
+  getMarkdown?: () => string;
 }
 
 type CaretTarget =
@@ -1170,6 +1171,7 @@ const LegacyMarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>(
     focus: () => {
       focusEditorAtEnd();
     },
+    getMarkdown: () => latestValueRef.current,
   }), [focusEditorAtEnd]);
 
   // Whether the image plugin should be included (boolean is stable across renders

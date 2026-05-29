@@ -12,6 +12,8 @@ import {
 import {
   applyMention,
   hasRudderMarkdownReference,
+  insertMissingRudderTokenBoundarySpaces,
+  insertTextAfterRudderTokenBoundary,
   isRudderTokenHref,
   mentionMarkdown,
   readCanonicalFragmentMarkdown,
@@ -149,6 +151,221 @@ describe("MilkdownMarkdownEditor mention serialization", () => {
 
     expect(markdown).toBe(`first [Dylan](${buildAgentMentionHref("agent-1", null)}) second @dyl`);
     editable.remove();
+  });
+
+  it("keeps a space between an inserted mention and following plain text", () => {
+    const editable = document.createElement("div");
+    const textNode = document.createTextNode("@ceo我们");
+    editable.append(textNode);
+    document.body.append(editable);
+
+    const option: MentionOption = {
+      id: "agent:agent-1",
+      name: "Griffin (CEO)",
+      kind: "agent",
+      agentId: "agent-1",
+    };
+
+    const markdown = applyMention(
+      "@ceo我们",
+      {
+        trigger: "@",
+        query: "ceo",
+        top: 0,
+        left: 0,
+        viewportTop: 0,
+        viewportBottom: 0,
+        viewportLeft: 0,
+        textNode,
+        atPos: 0,
+        endPos: 4,
+      },
+      option,
+      editable,
+    );
+
+    expect(markdown).toBe(`[Griffin (CEO)](${buildAgentMentionHref("agent-1", null)}) 我们`);
+    editable.remove();
+  });
+
+  it("moves typed text outside a mention when the boundary space was deleted", () => {
+    const label = "Griffin (CEO)";
+    const inserted: Array<{ pos: number; content: unknown }> = [];
+    const tr = {
+      delete() {
+        return this;
+      },
+      insert(pos: number, content: unknown) {
+        inserted.push({ pos, content });
+        return this;
+      },
+      insertText() {
+        return this;
+      },
+      replaceWith() {
+        return this;
+      },
+      setSelection() {
+        return this;
+      },
+      setStoredMarks() {
+        return this;
+      },
+    };
+    const doc = {
+      content: { size: label.length },
+      descendants(callback: (node: {
+        isText?: boolean;
+        nodeSize: number;
+        text?: string;
+        marks?: Array<{ type?: { name?: string }; attrs?: { href?: string | null } }>;
+      }, pos: number) => boolean | void) {
+        callback({
+          isText: true,
+          nodeSize: label.length,
+          text: label,
+          marks: [{ type: { name: "link" }, attrs: { href: "agent://agent-1" } }],
+        }, 0);
+      },
+      textBetween() {
+        return "";
+      },
+    };
+    const view = {
+      state: {
+        doc,
+        schema: {
+          marks: {},
+          text: (text: string) => ({ text, marks: [] }),
+        },
+        selection: { empty: true, from: label.length, to: label.length },
+        tr,
+      },
+      dispatch: () => undefined,
+    };
+
+    expect(insertTextAfterRudderTokenBoundary(view, "我")).toBe(true);
+    expect(inserted).toEqual([{ pos: label.length, content: { text: " 我", marks: [] } }]);
+  });
+
+  it("restores a missing space after input when text lands next to a mention token", () => {
+    const label = "Griffin (CEO)";
+    const inserted: Array<{ pos: number; content: unknown }> = [];
+    const tr = {
+      delete() {
+        return this;
+      },
+      insert(pos: number, content: unknown) {
+        inserted.push({ pos, content });
+        return this;
+      },
+      insertText() {
+        return this;
+      },
+      replaceWith() {
+        return this;
+      },
+      setSelection() {
+        return this;
+      },
+      setStoredMarks() {
+        return this;
+      },
+    };
+    const doc = {
+      content: { size: label.length + 1 },
+      descendants(callback: (node: {
+        isText?: boolean;
+        nodeSize: number;
+        text?: string;
+        marks?: Array<{ type?: { name?: string }; attrs?: { href?: string | null } }>;
+      }, pos: number) => boolean | void) {
+        callback({
+          isText: true,
+          nodeSize: label.length,
+          text: label,
+          marks: [{ type: { name: "link" }, attrs: { href: "agent://agent-1" } }],
+        }, 0);
+      },
+      textBetween(from: number, to: number) {
+        return from === label.length && to === label.length + 1 ? "我" : "";
+      },
+    };
+    const view = {
+      state: {
+        doc,
+        schema: {
+          marks: {},
+          text: (text: string) => ({ text, marks: [] }),
+        },
+        selection: { empty: true, from: label.length + 1, to: label.length + 1 },
+        tr,
+      },
+      dispatch: () => undefined,
+    };
+
+    expect(insertMissingRudderTokenBoundarySpaces(view)).toBe(true);
+    expect(inserted).toEqual([{ pos: label.length, content: { text: " ", marks: [] } }]);
+  });
+
+  it("does not insert a boundary space before punctuation typed after a mention", () => {
+    const label = "Griffin (CEO)";
+    const inserted: Array<{ pos: number; content: unknown }> = [];
+    const tr = {
+      delete() {
+        return this;
+      },
+      insert(pos: number, content: unknown) {
+        inserted.push({ pos, content });
+        return this;
+      },
+      insertText() {
+        return this;
+      },
+      replaceWith() {
+        return this;
+      },
+      setSelection() {
+        return this;
+      },
+      setStoredMarks() {
+        return this;
+      },
+    };
+    const doc = {
+      content: { size: label.length },
+      descendants(callback: (node: {
+        isText?: boolean;
+        nodeSize: number;
+        text?: string;
+        marks?: Array<{ type?: { name?: string }; attrs?: { href?: string | null } }>;
+      }, pos: number) => boolean | void) {
+        callback({
+          isText: true,
+          nodeSize: label.length,
+          text: label,
+          marks: [{ type: { name: "link" }, attrs: { href: "agent://agent-1" } }],
+        }, 0);
+      },
+      textBetween() {
+        return "";
+      },
+    };
+    const view = {
+      state: {
+        doc,
+        schema: {
+          marks: {},
+          text: (text: string) => ({ text, marks: [] }),
+        },
+        selection: { empty: true, from: label.length, to: label.length },
+        tr,
+      },
+      dispatch: () => undefined,
+    };
+
+    expect(insertTextAfterRudderTokenBoundary(view, "，")).toBe(true);
+    expect(inserted).toEqual([{ pos: label.length, content: { text: "，", marks: [] } }]);
   });
 
   it("copies selected Rudder token links as canonical Markdown", () => {

@@ -2102,7 +2102,7 @@ button[draggable="false"] {
   font-size: inherit;
   font-weight: 500;
   line-height: inherit;
-  vertical-align: -0.04em;
+  vertical-align: -0.16em;
 }
 
 .rudder-milkdown-content a[href^="library-doc://"]:hover,
@@ -2144,7 +2144,7 @@ button[draggable="false"] {
   line-height: 1;
   letter-spacing: 0;
   text-decoration: none;
-  vertical-align: baseline;
+  vertical-align: -0.16em;
   white-space: nowrap;
 }
 
@@ -2773,7 +2773,7 @@ a.rudder-skill-token {
   line-height: 1;
   letter-spacing: 0;
   text-decoration: none;
-  vertical-align: baseline;
+  vertical-align: -0.16em;
   white-space: nowrap;
   user-select: none;
   -webkit-user-select: none;
@@ -2798,7 +2798,7 @@ a.rudder-skill-token::before {
   display: inline-flex;
   max-width: 100%;
   line-height: 1;
-  vertical-align: baseline;
+  vertical-align: -0.16em;
 }
 
 .rudder-skill-token-wrap--preview {
@@ -3135,7 +3135,7 @@ a.rudder-mention-chip[data-mention-kind="library_file"] {
   font-size: inherit;
   font-weight: 500;
   line-height: inherit;
-  vertical-align: -0.04em;
+  vertical-align: -0.16em;
 }
 
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="library_doc"]:hover,
@@ -3167,7 +3167,7 @@ a.rudder-project-mention-chip {
   line-height: 1;
   letter-spacing: 0;
   text-decoration: none;
-  vertical-align: baseline;
+  vertical-align: -0.16em;
   white-space: nowrap;
 }
 
@@ -3228,6 +3228,12 @@ a.rudder-mention-chip[data-mention-kind="project"]::before {
   height: 0.74em;
   border-radius: 999px;
   background: currentColor;
+}
+
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="project"],
+.rudder-milkdown-content .rudder-mention-chip[data-mention-kind="project"],
+a.rudder-mention-chip[data-mention-kind="project"] {
+  vertical-align: baseline;
 }
 
 .rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="issue"]::before,

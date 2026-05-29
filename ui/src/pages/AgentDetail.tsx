@@ -2420,6 +2420,7 @@ function ConfigurationTab({
   }, [onSavingChange, isConfigSaving]);
 
   const canCreateAgents = Boolean(agent.permissions?.canCreateAgents);
+  const canManageSkills = agent.permissions?.canManageSkills ?? true;
   const canAssignTasks = Boolean(agent.access?.canAssignTasks);
   const taskAssignSource = agent.access?.taskAssignSource ?? "none";
   const taskAssignLocked = agent.role === "ceo" || canCreateAgents;
@@ -2468,6 +2469,7 @@ function ConfigurationTab({
               onClick={() =>
                 updatePermissions.mutate({
                   canCreateAgents: !canCreateAgents,
+                  canManageSkills,
                   canAssignTasks: !canCreateAgents ? true : canAssignTasks,
                 })
               }
@@ -2490,6 +2492,7 @@ function ConfigurationTab({
               onClick={() =>
                 updatePermissions.mutate({
                   canCreateAgents,
+                  canManageSkills,
                   canAssignTasks: !canAssignTasks,
                 })
               }

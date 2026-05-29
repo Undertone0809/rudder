@@ -496,7 +496,8 @@ export function CommentThread({
   }, [location.hash, location.key, comments.length]);
 
   async function handleSubmit() {
-    const trimmed = body.trim();
+    const currentMarkdown = editorRef.current?.getMarkdown?.() ?? body;
+    const trimmed = currentMarkdown.trim();
     if (!trimmed) return;
     const reopenRequested = canReopen && reopen ? true : undefined;
 
