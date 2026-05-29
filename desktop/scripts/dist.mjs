@@ -225,7 +225,15 @@ async function hidePackagingNodeModules() {
 
     try {
       const electronLinkTarget = await fs.readlink(path.join(hiddenPackagingNodeModulesDir, "electron"));
-      await fs.symlink(electronLinkTarget, path.join(packagingNodeModulesDir, "electron"));
+      if (process.platform === "win32") {
+        await fs.cp(
+          path.resolve(hiddenPackagingNodeModulesDir, electronLinkTarget),
+          path.join(packagingNodeModulesDir, "electron"),
+          { recursive: true, dereference: true },
+        );
+      } else {
+        await fs.symlink(electronLinkTarget, path.join(packagingNodeModulesDir, "electron"));
+      }
     } catch (error) {
       const code = /** @type {{ code?: string }} */ (error).code;
       if (code !== "ENOENT") throw error;
