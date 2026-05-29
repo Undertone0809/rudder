@@ -105,10 +105,12 @@ export async function discoverOpenCodeModels(input: {
   command?: unknown;
   cwd?: unknown;
   env?: unknown;
+  provider?: unknown;
 } = {}): Promise<AgentRuntimeModel[]> {
   const command = resolveOpenCodeCommand(input.command);
   const cwd = asString(input.cwd, process.cwd());
   const env = normalizeEnv(input.env);
+  const provider = asString(input.provider, "").trim();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   // Ensure HOME points to the actual running user's home directory.
   // When the server is started via `runuser -u <user>`, HOME may still
@@ -127,7 +129,7 @@ export async function discoverOpenCodeModels(input: {
   const result = await runChildProcess(
     `opencode-models-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     command,
-    ["models"],
+    provider ? ["models", provider] : ["models"],
     {
       cwd,
       env: runtimeEnv,
@@ -152,17 +154,19 @@ export async function discoverOpenCodeModelsCached(input: {
   command?: unknown;
   cwd?: unknown;
   env?: unknown;
+  provider?: unknown;
 } = {}): Promise<AgentRuntimeModel[]> {
   const command = resolveOpenCodeCommand(input.command);
   const cwd = asString(input.cwd, process.cwd());
   const env = normalizeEnv(input.env);
-  const key = discoveryCacheKey(command, cwd, env);
+  const provider = asString(input.provider, "").trim();
+  const key = `${discoveryCacheKey(command, cwd, env)}\nprovider=${provider}`;
   const now = Date.now();
   pruneExpiredDiscoveryCache(now);
   const cached = discoveryCache.get(key);
   if (cached && cached.expiresAt > now) return cached.models;
 
-  const models = await discoverOpenCodeModels({ command, cwd, env });
+  const models = await discoverOpenCodeModels({ command, cwd, env, provider });
   discoveryCache.set(key, { expiresAt: now + MODELS_CACHE_TTL_MS, models });
   return models;
 }
@@ -177,11 +181,13 @@ export async function ensureOpenCodeModelConfiguredAndAvailable(input: {
   if (!model) {
     throw new Error("OpenCode requires `agentRuntimeConfig.model` in provider/model format.");
   }
+  const provider = model.includes("/") ? model.slice(0, model.indexOf("/")).trim() : "";
 
   const models = await discoverOpenCodeModelsCached({
     command: input.command,
     cwd: input.cwd,
     env: input.env,
+    provider,
   });
 
   if (models.length === 0) {

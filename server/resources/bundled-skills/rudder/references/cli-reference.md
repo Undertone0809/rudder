@@ -15,6 +15,19 @@ Stable CLI contract for agents using the bundled `rudder` skill. Prefer these co
 
 Direct API fallback is allowed for heartbeat close-out only when a required CLI command fails diagnostically or returns exit 0 with empty stdout. When using fallback, note the affected command and reason in the issue comment or run notes so the CLI path can be fixed.
 
+## Fast Path
+
+For a normal assigned issue:
+
+```sh
+rudder issue checkout "$RUDDER_TASK_ID" --json
+rudder issue comment "$RUDDER_TASK_ID" --body "progress update" --json
+rudder issue done "$RUDDER_TASK_ID" --comment "completion note" --json
+```
+
+Do not use `rudder issue comment add`; `comment` is the command and the issue
+id is its only positional argument.
+
 ## Agent V1 Commands
 
 | Command | Description | Mutating | Org | Agent | Run ID |

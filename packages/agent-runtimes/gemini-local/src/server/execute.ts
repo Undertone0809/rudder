@@ -79,8 +79,11 @@ function renderApiAccessNote(env: Record<string, string>): string {
     "Use run_shell_command with the `rudder` CLI for Rudder control-plane work.",
     "Read example:",
     `  run_shell_command({ command: "rudder agent me --json" })`,
-    "Mutating example:",
+    "Common mutating examples:",
     `  run_shell_command({ command: "rudder issue checkout {id} --json" })`,
+    `  run_shell_command({ command: "rudder issue comment {id} --body \\"progress\\" --json" })`,
+    `  run_shell_command({ command: "rudder issue done {id} --comment \\"done\\" --json" })`,
+    `  run_shell_command({ command: "rudder agent hire --org-id \\"$RUDDER_ORG_ID\\" --payload '{...}' --json" })`,
     "",
     "",
   ].join("\n");

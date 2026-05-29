@@ -9,6 +9,33 @@ Canonical CLI contract for the bundled `rudder-create-agent` skill. Prefer these
 - Mutating commands attach `RUDDER_RUN_ID` automatically when available.
 - `agent config index` and `agent config doc` print plain text by default. With `--json`, they emit that text as a JSON string.
 
+## Fast Path
+
+For a simple helper-agent request where the issue already supplies the name and
+capability, this is the minimal canonical flow. Replace the placeholder `name`,
+`title`, and `capabilities` values with the issue-requested values before
+running the command:
+
+```sh
+rudder agent me --json
+rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
+  "name": "<issue-requested agent name>",
+  "role": "general",
+  "title": "<issue-requested agent title or name>",
+  "capabilities": "<issue-requested agent capabilities>",
+  "desiredSkills": ["rudder/rudder"],
+  "agentRuntimeType": "codex_local",
+  "agentRuntimeConfig": {
+    "promptTemplate": "# SOUL.md -- <issue-requested agent name>\n\nYou are a helper agent for the current Rudder organization.\n\n## Mission\nHelp with the specific work described by the source issue.\n\n## Boundaries\nUse Rudder issue comments and close-out signals for coordination."
+  },
+  "sourceIssueId": "'"$RUDDER_TASK_ID"'"
+}' --json
+rudder issue done "$RUDDER_TASK_ID" --comment "created/requested helper agent <agent-id-or-name>; approval <approval-id/status if present>" --json
+```
+
+Use the full discovery flow below when the request needs specific runtime
+configuration, reporting lines, org skills, budgets, or approval handling.
+
 ## Core CLI Surface
 
 ### Identity and discovery

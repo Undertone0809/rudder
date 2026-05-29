@@ -50,4 +50,37 @@ describe("openCode models", () => {
     ).resolves.toEqual([{ id: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro" }]);
     expect((await fs.stat(cwd)).isDirectory()).toBe(true);
   });
+
+  it("scopes configured model discovery to the provider", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-models-provider-"));
+    const command = path.join(root, "opencode");
+    const capturePath = path.join(root, "argv.json");
+    await fs.writeFile(
+      command,
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify(process.argv.slice(2)), "utf8");
+if (process.argv[2] === "models" && process.argv[3] === "deepseek") {
+  console.log("deepseek/deepseek-v4-pro");
+  process.exit(0);
+}
+console.error("unexpected argv", process.argv.slice(2).join(" "));
+process.exit(1);
+`,
+      "utf8",
+    );
+    await fs.chmod(command, 0o755);
+
+    await expect(
+      ensureOpenCodeModelConfiguredAndAvailable({
+        command,
+        cwd: root,
+        model: "deepseek/deepseek-v4-pro",
+      }),
+    ).resolves.toEqual([{ id: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro" }]);
+    await expect(fs.readFile(capturePath, "utf8").then(JSON.parse)).resolves.toEqual([
+      "models",
+      "deepseek",
+    ]);
+  });
 });

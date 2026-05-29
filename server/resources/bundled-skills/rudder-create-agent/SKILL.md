@@ -24,6 +24,41 @@ This workflow is **CLI-first**.
 - Do not create agent directories, instruction files, or org metadata manually as a fallback.
 - If CLI auth is unavailable in a heartbeat run, stop and report the auth problem instead of mutating the filesystem.
 
+## Fast Path For Simple Hire Requests
+
+When an issue explicitly asks you to create one helper agent and gives the
+agent name/capability, use this minimal sequence. Replace the placeholder
+`name`, `title`, and `capabilities` values with the values requested by the
+issue before running the command.
+
+```bash
+rudder agent me --json
+rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
+  "name": "<issue-requested agent name>",
+  "role": "general",
+  "title": "<issue-requested agent title or name>",
+  "capabilities": "<issue-requested agent capabilities>",
+  "desiredSkills": ["rudder/rudder"],
+  "agentRuntimeType": "codex_local",
+  "agentRuntimeConfig": {
+    "promptTemplate": "# SOUL.md -- <issue-requested agent name>\n\nYou are a helper agent for the current Rudder organization.\n\n## Mission\nHelp with the specific work described by the source issue.\n\n## Boundaries\nUse Rudder issue comments and close-out signals for coordination."
+  },
+  "sourceIssueId": "'"$RUDDER_TASK_ID"'"
+}' --json
+```
+
+After `rudder agent hire` succeeds, finish the source issue with the created
+agent id/name. If the CLI response includes a non-null `approval`, also include
+the approval id/status so the requester knows the hire is pending governance
+approval:
+
+```bash
+rudder issue done "$RUDDER_TASK_ID" --comment "created/requested helper agent <agent-id-or-name>; approval <approval-id/status if present>" --json
+```
+
+Only read the full adapter docs when the task asks for a specific runtime,
+budget, reporting line, skills, or non-default configuration.
+
 ## Workflow
 
 1. Confirm identity and organization context.

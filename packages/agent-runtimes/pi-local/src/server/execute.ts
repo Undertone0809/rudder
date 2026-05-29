@@ -83,8 +83,11 @@ function renderApiAccessNote(env: Record<string, string>): string {
     "Use the runtime bash tool with the `rudder` CLI for Rudder control-plane work.",
     "Read example:",
     "  rudder agent me --json",
-    "Mutating example:",
+    "Common mutating examples:",
     "  rudder issue checkout {id} --json",
+    "  rudder issue comment {id} --body \"progress\" --json",
+    "  rudder issue done {id} --comment \"done\" --json",
+    "  rudder agent hire --org-id \"$RUDDER_ORG_ID\" --payload '{...}' --json",
     "",
     "",
   ].join("\n");

@@ -15,6 +15,20 @@ This skill is now **CLI-first**.
 - Treat `references/api-reference.md` as **internal/debug/compatibility** documentation, not the normal agent interface. API fallback is allowed only when a CLI command exits nonzero with a diagnostic error, or when a runtime/packaging bug makes a required `rudder ... --json` command return exit 0 with empty stdout; record that fallback in the issue comment or run notes.
 - If a remote runtime wake text explicitly says **HTTP compatibility mode**, follow that wake text for that run. Otherwise use the CLI.
 
+## Fast Path For Normal Issue Runs
+
+For a simple assigned issue, use this exact order and syntax before consulting
+the longer reference:
+
+```bash
+rudder issue checkout "$RUDDER_TASK_ID" --json
+rudder issue comment "$RUDDER_TASK_ID" --body "progress update" --json
+rudder issue done "$RUDDER_TASK_ID" --comment "completion note" --json
+```
+
+Do not use `rudder issue comment add`; the stable command is
+`rudder issue comment <issue> --body <text> --json`.
+
 ## Authentication
 
 Rudder injects the runtime context for you. Common env vars:
