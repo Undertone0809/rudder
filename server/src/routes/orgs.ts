@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Router, type Request } from "express";
 import type { Db } from "@rudderhq/db";
 import {
@@ -82,6 +83,30 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
     }
     if (actorAgent.role !== "ceo") {
       throw forbidden(`Only CEO agents can manage organization ${capability}`);
+    }
+  }
+
+  async function assertCanWriteWorkspaceFile(req: Request, orgId: string) {
+    assertCompanyAccess(req, orgId);
+    if (req.actor.type === "board") return;
+    if (!req.actor.agentId) throw forbidden("Agent authentication required");
+
+    const actorAgent = await agents.getById(req.actor.agentId);
+    if (!actorAgent || actorAgent.orgId !== orgId) {
+      throw forbidden("Agent key cannot access another organization");
+    }
+  }
+
+  function assertAgentLibraryDocsPath(req: Request, requestedPath: string, mode: "directory" | "file") {
+    if (req.actor.type !== "agent") return;
+    const rawPath = requestedPath.trim().replaceAll("\\", "/").replace(/^\/+/, "");
+    const normalizedPath = path.posix.normalize(rawPath);
+    const safePath = normalizedPath === "." ? "" : normalizedPath;
+    const allowed = mode === "directory"
+      ? safePath === "docs" || safePath.startsWith("docs/")
+      : safePath.startsWith("docs/");
+    if (!allowed) {
+      throw forbidden("Agent Library file access is limited to docs/ paths");
     }
   }
 
@@ -417,6 +442,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       assertBoard(req);
     }
     const directoryPath = typeof req.query.path === "string" ? req.query.path : "";
+    assertAgentLibraryDocsPath(req, directoryPath, "directory");
     const result = await workspaceBrowser.listFiles(orgId, directoryPath);
     res.json(result);
   });
@@ -428,6 +454,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       assertBoard(req);
     }
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
+    assertAgentLibraryDocsPath(req, filePath, "file");
     const result = await workspaceBrowser.readFile(orgId, filePath);
     res.json(result);
   });
@@ -439,6 +466,7 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
       assertBoard(req);
     }
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
+    assertAgentLibraryDocsPath(req, filePath, "file");
     const workspaceFile = await workspaceBrowser.readAttachmentFile(orgId, filePath);
     if (!workspaceFile.contentType.toLowerCase().startsWith("image/")) {
       res.status(415).json({ error: "Workspace file is not an image preview" });
@@ -471,8 +499,8 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
 
   router.post("/:orgId/workspace/file", validate(createOrganizationWorkspaceFileSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    assertBoard(req);
+    await assertCanWriteWorkspaceFile(req, orgId);
+    assertAgentLibraryDocsPath(req, req.body.filePath, "file");
     const result = await workspaceBrowser.createFile(orgId, req.body.filePath, req.body.content ?? "");
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -515,9 +543,9 @@ export function organizationRoutes(db: Db, storage?: StorageService) {
 
   router.patch("/:orgId/workspace/file", validate(updateOrganizationWorkspaceFileSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    assertBoard(req);
+    await assertCanWriteWorkspaceFile(req, orgId);
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
+    assertAgentLibraryDocsPath(req, filePath, "file");
     const result = await workspaceBrowser.writeFile(orgId, filePath, req.body.content);
     await organizationSkills.syncWorkspaceFileChange(orgId, result.filePath, req.body.content);
     const actor = getActorInfo(req);

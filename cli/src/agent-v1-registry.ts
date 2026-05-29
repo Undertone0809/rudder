@@ -1,4 +1,4 @@
-export type AgentCliCapabilityCategory = "agent" | "issue" | "approval" | "skill";
+export type AgentCliCapabilityCategory = "agent" | "issue" | "approval" | "skill" | "library";
 export type AgentCliCapabilityContract = "agent-v1" | "compat";
 
 export interface AgentCliCapability {
@@ -383,9 +383,9 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     id: "issue.documents.put",
     command: "rudder issue documents put <issue> <key> --body-file <path>",
     category: "issue",
-    description: "Create or update an issue document.",
+    description: "Legacy create or update of a DB-backed issue document; prefer `rudder library file put` for new docs.",
     mutating: true,
-    contract: "agent-v1",
+    contract: "compat",
     requiresOrgId: false,
     requiresAgentId: false,
     requiresRunId: false,
@@ -402,6 +402,42 @@ const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     requiresAgentId: false,
     requiresRunId: false,
     attachesRunIdWhenAvailable: false,
+  },
+  {
+    id: "library.file.list",
+    command: "rudder library file list [directory]",
+    category: "library",
+    description: "List path-based Library files and folders.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: false,
+  },
+  {
+    id: "library.file.get",
+    command: "rudder library file get <path>",
+    category: "library",
+    description: "Read one path-based Library file.",
+    mutating: false,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: false,
+  },
+  {
+    id: "library.file.put",
+    command: "rudder library file put <path> --body-file <path>",
+    category: "library",
+    description: "Create or update one path-based Library file.",
+    mutating: true,
+    contract: "agent-v1",
+    requiresOrgId: true,
+    requiresAgentId: false,
+    requiresRunId: false,
+    attachesRunIdWhenAvailable: true,
   },
   {
     id: "issue.create",
@@ -567,6 +603,7 @@ const CATEGORY_TITLES: Record<AgentCliCapabilityCategory, string> = {
   issue: "Issue",
   approval: "Approval",
   skill: "Skill",
+  library: "Library",
 };
 
 export function getAgentCliCapabilities(): AgentCliCapability[] {

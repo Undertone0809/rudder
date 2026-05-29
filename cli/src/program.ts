@@ -16,6 +16,7 @@ import { registerApprovalCommands } from "./commands/client/approval.js";
 import { registerActivityCommands } from "./commands/client/activity.js";
 import { registerDashboardCommands } from "./commands/client/dashboard.js";
 import { registerSkillCommands } from "./commands/client/skill.js";
+import { registerLibraryCommands } from "./commands/client/library.js";
 import { applyDataDirOverride, type DataDirOptionLike } from "./config/data-dir.js";
 import { loadRudderEnvFile } from "./config/env.js";
 import { applyLocalEnvProfile } from "./config/local-env.js";
@@ -194,6 +195,7 @@ export function createProgram(): Command {
   registerActivityCommands(program);
   registerDashboardCommands(program);
   registerSkillCommands(program);
+  registerLibraryCommands(program);
   registerLazyWorktreeCommands(program);
   registerPluginCommands(program);
   registerLazyBenchmarkCommands(program);

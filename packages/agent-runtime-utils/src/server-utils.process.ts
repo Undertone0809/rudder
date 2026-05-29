@@ -348,7 +348,7 @@ export function formatIssueDocumentReference(input: {
   const title = input.title?.trim();
   const titlePart = title ? ` — ${title}` : "";
   const revision = typeof input.latestRevisionNumber === "number" ? `, revision ${input.latestRevisionNumber}` : "";
-  return `- \`${key}\`${titlePart}${revision}. Fetch with \`rudder issue documents get ${input.issueId} ${key} --json\`.`;
+  return `- \`${key}\`${titlePart}${revision}. Legacy issue document; fetch with \`rudder issue documents get ${input.issueId} ${key} --json\`.`;
 }
 
 export function buildIssueDocumentsPrompt(input: IssueDocumentPromptInput | null | undefined) {
@@ -384,8 +384,9 @@ export function buildIssueDocumentsPrompt(input: IssueDocumentPromptInput | null
 
   if (references.length === 0) return "";
   return [
-    "## Linked Documents",
-    "Document bodies are not inlined automatically. Fetch a linked document explicitly only when you need its contents.",
+    "## Legacy Issue Documents",
+    "These legacy issue documents are not inlined automatically. Fetch one only when you need its contents.",
+    "For new or revised durable docs, write a path-based Library file with `rudder library file put docs/<file>.md --body-file <path> --json`, then link it in issue text or comments with `library-file://file?p=docs%2F<file>.md`.",
     "",
     ...references,
   ].join("\n");

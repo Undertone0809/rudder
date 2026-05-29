@@ -241,3 +241,76 @@ describe("PATCH /api/orgs/:orgId/branding", () => {
     expect(mockCompanyService.update).not.toHaveBeenCalled();
   });
 });
+
+describe("organization workspace file agent access", () => {
+  beforeEach(() => {
+    mockAgentService.getById.mockReset();
+    mockLogActivity.mockReset();
+  });
+
+  it("limits agent workspace file reads to docs paths", async () => {
+    const app = createApp({
+      type: "agent",
+      orgId: "organization-1",
+      agentId: "agent-1",
+    });
+
+    const res = await request(app).get("/api/orgs/organization-1/workspace/files?path=agents");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Agent Library file access is limited to docs/ paths");
+  });
+
+  it("rejects agent workspace file reads that traverse out of docs", async () => {
+    const app = createApp({
+      type: "agent",
+      orgId: "organization-1",
+      agentId: "agent-1",
+    });
+
+    const res = await request(app).get("/api/orgs/organization-1/workspace/files?path=docs/../agents");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Agent Library file access is limited to docs/ paths");
+  });
+
+  it("limits agent workspace file writes to docs paths", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      id: "agent-1",
+      orgId: "organization-1",
+      role: "engineer",
+    });
+    const app = createApp({
+      type: "agent",
+      orgId: "organization-1",
+      agentId: "agent-1",
+    });
+
+    const res = await request(app)
+      .post("/api/orgs/organization-1/workspace/file")
+      .send({ filePath: "skills/agent-team-design.md", content: "# Design\n" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Agent Library file access is limited to docs/ paths");
+  });
+
+  it("rejects agent workspace file writes that traverse out of docs", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      id: "agent-1",
+      orgId: "organization-1",
+      role: "engineer",
+    });
+    const app = createApp({
+      type: "agent",
+      orgId: "organization-1",
+      agentId: "agent-1",
+    });
+
+    const res = await request(app)
+      .post("/api/orgs/organization-1/workspace/file")
+      .send({ filePath: "docs/../skills/agent-team-design.md", content: "# Design\n" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Agent Library file access is limited to docs/ paths");
+  });
+});

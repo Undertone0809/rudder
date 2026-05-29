@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@rudderhq/db";
 import { documentRevisions, documents, issueDocuments, issues } from "@rudderhq/db";
 import { issueDocumentKeySchema } from "@rudderhq/shared";
@@ -99,58 +99,78 @@ function mapLibraryDocumentRow(
   };
 }
 
+async function listIssueLinksByDocumentId(db: Db, orgId: string, documentIds?: string[]) {
+  if (documentIds && documentIds.length === 0) return new Map<string, Array<{
+    issueId: string;
+    issueIdentifier: string | null;
+    issueTitle: string;
+    key: string;
+  }>>();
+
+  const conditions = [eq(issueDocuments.orgId, orgId)];
+  if (documentIds) {
+    conditions.push(inArray(issueDocuments.documentId, documentIds));
+  }
+
+  const issueLinkRows = await db
+    .select({
+      documentId: issueDocuments.documentId,
+      issueId: issues.id,
+      issueIdentifier: issues.identifier,
+      issueTitle: issues.title,
+      key: issueDocuments.key,
+    })
+    .from(issueDocuments)
+    .innerJoin(issues, eq(issueDocuments.issueId, issues.id))
+    .where(and(...conditions));
+
+  const issueLinksByDocumentId = new Map<string, Array<{
+    issueId: string;
+    issueIdentifier: string | null;
+    issueTitle: string;
+    key: string;
+  }>>();
+  for (const row of issueLinkRows) {
+    const current = issueLinksByDocumentId.get(row.documentId) ?? [];
+    current.push({
+      issueId: row.issueId,
+      issueIdentifier: row.issueIdentifier,
+      issueTitle: row.issueTitle,
+      key: row.key,
+    });
+    issueLinksByDocumentId.set(row.documentId, current);
+  }
+  return issueLinksByDocumentId;
+}
+
 export function documentService(db: Db) {
   return {
     listLibraryDocuments: async (orgId: string) => {
-      const [documentRows, issueLinkRows] = await Promise.all([
-        db
-          .select({
-            id: documents.id,
-            orgId: documents.orgId,
-            title: documents.title,
-            format: documents.format,
-            latestBody: documents.latestBody,
-            latestRevisionId: documents.latestRevisionId,
-            latestRevisionNumber: documents.latestRevisionNumber,
-            createdByAgentId: documents.createdByAgentId,
-            createdByUserId: documents.createdByUserId,
-            updatedByAgentId: documents.updatedByAgentId,
-            updatedByUserId: documents.updatedByUserId,
-            createdAt: documents.createdAt,
-            updatedAt: documents.updatedAt,
-          })
-          .from(documents)
-          .where(eq(documents.orgId, orgId))
-          .orderBy(desc(documents.updatedAt)),
-        db
-          .select({
-            documentId: issueDocuments.documentId,
-            issueId: issues.id,
-            issueIdentifier: issues.identifier,
-            issueTitle: issues.title,
-            key: issueDocuments.key,
-          })
-          .from(issueDocuments)
-          .innerJoin(issues, eq(issueDocuments.issueId, issues.id))
-          .where(eq(issueDocuments.orgId, orgId)),
-      ]);
+      const documentRows = await db
+        .select({
+          id: documents.id,
+          orgId: documents.orgId,
+          title: documents.title,
+          format: documents.format,
+          latestBody: documents.latestBody,
+          latestRevisionId: documents.latestRevisionId,
+          latestRevisionNumber: documents.latestRevisionNumber,
+          createdByAgentId: documents.createdByAgentId,
+          createdByUserId: documents.createdByUserId,
+          updatedByAgentId: documents.updatedByAgentId,
+          updatedByUserId: documents.updatedByUserId,
+          createdAt: documents.createdAt,
+          updatedAt: documents.updatedAt,
+        })
+        .from(documents)
+        .where(eq(documents.orgId, orgId))
+        .orderBy(desc(documents.updatedAt));
 
-      const issueLinksByDocumentId = new Map<string, Array<{
-        issueId: string;
-        issueIdentifier: string | null;
-        issueTitle: string;
-        key: string;
-      }>>();
-      for (const row of issueLinkRows) {
-        const current = issueLinksByDocumentId.get(row.documentId) ?? [];
-        current.push({
-          issueId: row.issueId,
-          issueIdentifier: row.issueIdentifier,
-          issueTitle: row.issueTitle,
-          key: row.key,
-        });
-        issueLinksByDocumentId.set(row.documentId, current);
-      }
+      const issueLinksByDocumentId = await listIssueLinksByDocumentId(
+        db,
+        orgId,
+        documentRows.map((row) => row.id),
+      );
 
       return documentRows.map((row) => ({
         ...mapLibraryDocumentRow(row, false),
@@ -237,9 +257,10 @@ export function documentService(db: Db) {
         .where(and(eq(documents.orgId, orgId), eq(documents.id, documentId)))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
+      const issueLinksByDocumentId = await listIssueLinksByDocumentId(db, orgId, [documentId]);
       return {
         ...mapLibraryDocumentRow(row, true),
-        issueLinks: [],
+        issueLinks: issueLinksByDocumentId.get(row.id) ?? [],
       };
     },
 

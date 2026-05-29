@@ -677,6 +677,9 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, issue.orgId);
+    if (req.actor.type === "agent") {
+      throw forbidden("Agents must write new durable docs with `rudder library file put docs/<file>.md`");
+    }
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });

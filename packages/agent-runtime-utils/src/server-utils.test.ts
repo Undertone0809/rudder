@@ -278,13 +278,14 @@ describe("selectPromptTemplate", () => {
       issue: context.issue,
     });
 
-    expect(issueDocumentsPrompt).toContain("## Linked Documents");
-    expect(issueDocumentsPrompt).toContain("Document bodies are not inlined automatically.");
+    expect(issueDocumentsPrompt).toContain("## Legacy Issue Documents");
+    expect(issueDocumentsPrompt).toContain("These legacy issue documents are not inlined automatically.");
+    expect(issueDocumentsPrompt).toContain("rudder library file put docs/<file>.md --body-file <path> --json");
     expect(issueDocumentsPrompt).toContain("rudder issue documents get issue-3 plan --json");
     expect(issueDocumentsPrompt).toContain("rudder issue documents get issue-3 design --json");
     expect(issueDocumentsPrompt).not.toContain("Check the document-backed requirements.");
     expect(rendered).toContain("Use issue docs");
-    expect(rendered).toContain("## Linked Documents");
+    expect(rendered).toContain("## Legacy Issue Documents");
     expect(rendered).not.toContain("Check the document-backed requirements.");
   });
 

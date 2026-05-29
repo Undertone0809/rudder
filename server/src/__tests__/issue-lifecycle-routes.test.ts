@@ -246,6 +246,22 @@ describe("issue lifecycle routes", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
+  it("rejects agent writes to legacy issue documents", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+
+    const res = await request(createApp(createAgentActor()))
+      .put("/api/issues/11111111-1111-4111-8111-111111111111/documents/plan")
+      .send({
+        title: "Plan",
+        format: "markdown",
+        body: "# Plan\n",
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Agents must write new durable docs with `rudder library file put docs/<file>.md`");
+    expect(mockDocumentService.upsertIssueDocument).not.toHaveBeenCalled();
+  });
+
   it("includes issue document references in heartbeat context without prompt body inlining", async () => {
     const issue = makeIssue({
       description: "Short issue summary",
@@ -305,8 +321,8 @@ describe("issue lifecycle routes", () => {
       body: "# Plan\n\nConfirm whether agents can see issue docs.",
     });
     expect(res.body.documentSummaries).toHaveLength(1);
-    expect(res.body.issueDocumentsPrompt).toContain("## Linked Documents");
-    expect(res.body.issueDocumentsPrompt).toContain("Document bodies are not inlined automatically.");
+    expect(res.body.issueDocumentsPrompt).toContain("## Legacy Issue Documents");
+    expect(res.body.issueDocumentsPrompt).toContain("rudder library file put docs/<file>.md --body-file <path> --json");
     expect(res.body.issueDocumentsPrompt).toContain(`rudder issue documents get ${issue.id} plan --json`);
     expect(res.body.issueDocumentsPrompt).not.toContain("Confirm whether agents can see issue docs.");
   });
