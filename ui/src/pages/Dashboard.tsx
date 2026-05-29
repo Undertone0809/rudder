@@ -9,7 +9,7 @@ import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
 import { goalsApi } from "../api/goals";
 import { accessApi } from "../api/access";
-import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
+import { HEARTBEAT_RUN_LIST_COMPACT_LIMIT, heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { useOrganization } from "../context/OrganizationContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -185,8 +185,8 @@ export function Dashboard() {
   });
 
   const { data: runs } = useQuery({
-    queryKey: queryKeys.heartbeats(selectedOrganizationId!),
-    queryFn: () => heartbeatsApi.list(selectedOrganizationId!),
+    queryKey: queryKeys.heartbeats(selectedOrganizationId!, undefined, HEARTBEAT_RUN_LIST_COMPACT_LIMIT),
+    queryFn: () => heartbeatsApi.list(selectedOrganizationId!, undefined, HEARTBEAT_RUN_LIST_COMPACT_LIMIT),
     enabled: !!selectedOrganizationId,
   });
 

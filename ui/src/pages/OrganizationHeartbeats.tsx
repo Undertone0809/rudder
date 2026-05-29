@@ -4,7 +4,8 @@ import type { Agent, HeartbeatRun } from "@rudderhq/shared";
 import { Activity, ArrowUpRight, Bot, Clock3, Play } from "lucide-react";
 import { Link } from "@/lib/router";
 import { agentsApi } from "@/api/agents";
-import { heartbeatsApi, type LiveRunForIssue } from "@/api/heartbeats";
+import { HEARTBEAT_RUN_LIST_HISTORY_LIMIT, heartbeatsApi, type LiveRunForIssue } from "@/api/heartbeats";
+import { AgentIcon } from "@/components/AgentAvatar";
 import { HeartbeatEnabledButtons } from "@/components/HeartbeatEnabledButtons";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/EmptyState";
@@ -131,8 +132,8 @@ export function OrganizationHeartbeats() {
   });
 
   const runsQuery = useQuery({
-    queryKey: queryKeys.heartbeats(viewedOrganizationId ?? "__none__"),
-    queryFn: () => heartbeatsApi.list(viewedOrganizationId!, undefined, 1000),
+    queryKey: queryKeys.heartbeats(viewedOrganizationId ?? "__none__", undefined, HEARTBEAT_RUN_LIST_HISTORY_LIMIT),
+    queryFn: () => heartbeatsApi.list(viewedOrganizationId!, undefined, HEARTBEAT_RUN_LIST_HISTORY_LIMIT),
     enabled: !!viewedOrganizationId,
     refetchInterval: 15_000,
   });
@@ -292,19 +293,32 @@ export function OrganizationHeartbeats() {
                     data-testid="org-heartbeat-row"
                     className="grid gap-4 px-4 py-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.8fr)_minmax(0,1fr)_auto] xl:items-center"
                   >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Link to={agentUrl(row.agent)} className="truncate text-sm font-semibold text-foreground hover:underline">
-                          {row.agent.name}
-                        </Link>
-                        {row.liveCount > 0 ? (
-                          <span className="inline-flex items-center rounded-full bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-700 dark:text-blue-300">
-                            Live
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="mt-1 truncate text-xs text-muted-foreground">
-                        {humanizeUnderscore(row.agent.title ?? row.agent.role)} · {humanizeUnderscore(row.agent.status)}
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span
+                        className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted ring-1 ring-border/80"
+                        data-testid={`org-heartbeat-agent-avatar-${row.agent.id}`}
+                      >
+                        <AgentIcon
+                          icon={row.agent.icon}
+                          role={row.agent.role}
+                          fallbackSeed={row.agent.name}
+                          className="h-full w-full object-cover"
+                        />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <Link to={agentUrl(row.agent)} className="truncate text-sm font-semibold text-foreground hover:underline">
+                            {row.agent.name}
+                          </Link>
+                          {row.liveCount > 0 ? (
+                            <span className="inline-flex items-center rounded-full bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-700 dark:text-blue-300">
+                              Live
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 truncate text-xs text-muted-foreground">
+                          {humanizeUnderscore(row.agent.title ?? row.agent.role)} · {humanizeUnderscore(row.agent.status)}
+                        </div>
                       </div>
                     </div>
 

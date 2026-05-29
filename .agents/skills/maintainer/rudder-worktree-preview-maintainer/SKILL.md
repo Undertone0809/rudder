@@ -26,6 +26,13 @@ PostgreSQL port, and worktree branding when no repo-local `.rudder/` config
 exists. Use this preview skill only when the user wants a managed background
 preview handoff with health verification, logs, and a stop command.
 
+Preview readiness is environment proof, not product proof. A healthy URL means
+the checkout can be opened; it does not prove that a feature, workflow, agent
+path, or UI regression is fixed. When this skill is used inside a lifecycle
+handoff or review gate, the owning workflow must still exercise the relevant
+route, command, agent run, or Desktop/browser interaction and report the
+observed terminal state.
+
 ## Use This Skill When
 
 - The user asks to run the current branch or current worktree locally.
@@ -154,6 +161,10 @@ For visible UI work, also open the URL in a browser when practical. If browser
 automation is unavailable or hangs, say that clearly and still provide the
 health-checked URL.
 
+If the user asked whether a feature works, do not stop at this readiness check.
+Run or hand back the concrete scenario proof needed for that feature, and label
+the preview URL as only the environment that made the proof possible.
+
 ### 6. Hand off the preview
 
 Keep the response short and concrete:
@@ -192,6 +203,8 @@ databases, or stop other Rudder sessions unless the user explicitly asks.
   from the normal `pnpm dev` instance for the same checkout.
 - A health-checked URL is the minimum hand-off; logs and a stop command make it
   usable.
+- Do not present preview readiness as review or validation of the changed
+  workflow unless a separate scenario was exercised and reported.
 - Never stop unrelated Rudder sessions just because they occupy `3100`.
 - Do not leave a foreground command running when the user needs a preview after
   the assistant turn ends; use `tmux` or a user-level managed process.

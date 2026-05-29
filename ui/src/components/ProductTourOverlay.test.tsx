@@ -166,11 +166,33 @@ describe("ProductTourOverlay", () => {
     });
 
     expect(closeProductTour).toHaveBeenCalledTimes(1);
-    expect(navigate).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith("/issues");
     expect(hasCompletedProductTour()).toBe(true);
   });
 
-  it("opens the issue tracker after the first pending setup tour ends", async () => {
+  it("opens the issue tracker when the issue step becomes active", async () => {
+    setViewport(1280, 800);
+    renderOverlay();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    for (let index = 0; index < 2; index += 1) {
+      const nextButton = Array.from(document.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Next"));
+      expect(nextButton).toBeTruthy();
+      act(() => {
+        click(nextButton!);
+      });
+    }
+
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith("/issues");
+  });
+
+  it("clears pending setup tour state without reopening issues after the issue step already opened it", async () => {
     setViewport(1280, 800);
     const container = renderOverlay();
     window.localStorage.setItem("rudder.productTour.pendingAfterSetup.v1", "true");
@@ -199,6 +221,7 @@ describe("ProductTourOverlay", () => {
     });
 
     expect(closeProductTour).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledTimes(1);
     expect(navigate).toHaveBeenCalledWith("/issues");
     expect(hasCompletedProductTour()).toBe(true);
     expect(window.localStorage.getItem("rudder.productTour.pendingAfterSetup.v1")).toBeNull();

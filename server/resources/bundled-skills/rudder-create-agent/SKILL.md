@@ -136,13 +136,16 @@ If the hire response includes `approval`, monitor and discuss on the approval th
 
 ```sh
 rudder approval get "<approval-id>" --json
-rudder approval comment "<approval-id>" --body "## CTO hire request submitted
+cat > /tmp/rudder-approval-comment.md <<'EOF'
+## CTO hire request submitted
 
 - Approval: [<approval-id>](/<prefix>/messenger/approvals/<approval-id>)
 - Pending agent: [<agent-ref>](/<prefix>/agents/<agent-url-key-or-id>)
 - Source issue: [<issue-ref>](/<prefix>/issues/<issue-identifier-or-id>)
 
-Updated prompt and adapter config per board feedback." --json
+Updated prompt and adapter config per board feedback.
+EOF
+rudder approval comment "<approval-id>" --body-file /tmp/rudder-approval-comment.md --json
 rudder approval resubmit "<approval-id>" --payload '{"title":"Revised title","agentRuntimeConfig":{"cwd":"/abs/path/to/repo","model":"o4-mini"}}' --json
 rudder approval issues "<approval-id>" --json
 ```

@@ -1,0 +1,84 @@
+---
+title: "Rudder FAQ"
+description: "Answers to common questions about Rudder, AI agent orchestration, local runtimes, issues, reviews, workspaces, skills, and when to use the product."
+icon: "circle-help"
+keywords:
+  - "Rudder FAQ"
+  - "AI agent orchestration FAQ"
+  - "agent work management"
+  - "Codex Claude Code runtime"
+canonical: "https://doc.rudder.zeeland.studio/faq"
+"og:url": "https://doc.rudder.zeeland.studio/faq"
+
+---
+
+Rudder is an open-source control plane for AI agent teams. It helps humans turn requests into assigned issues, run agents through local or external runtimes, preserve evidence, route review, and reuse lessons through skills and feedback.
+
+## What is Rudder?
+
+Rudder is a local-first agent work platform for coordinating AI agent teams. It organizes goals, projects, issues, agents, runs, comments, workspaces, budgets, reviews, and feedback into one inspectable operating loop.
+
+## Who is Rudder for?
+
+Rudder is for operators, founders, maintainers, and engineering teams who use coding agents or workflow agents for real work and need ownership, review, traceability, and reusable operating knowledge.
+
+## Is Rudder only for coding agents?
+
+No. Rudder works well with coding agents such as Codex and Claude Code, but the core model is broader: an agent can own docs, research, QA, release checks, product review, or any repeated workflow that benefits from issue ownership and evidence.
+
+## Which runtimes can Rudder use?
+
+Rudder can call local CLI-backed runtimes, shell process runtimes, HTTP webhooks, and gateway-backed runtimes. The docs currently describe local Codex, Claude Code, Gemini, OpenCode, Pi, Cursor, Shell Process, HTTP Webhook, and OpenClaw Gateway options.
+
+## How is Rudder different from a chat app?
+
+Chat is only the intake surface. Rudder moves executable work into issues with owners, status, context, runtime evidence, comments, artifacts, blockers, reviewers, and close-out decisions.
+
+Use a chat app when you only need a conversation. Use Rudder when the conversation should become assigned work with a run history, reviewer, artifact, or future learning loop.
+
+## How is Rudder different from a task tracker?
+
+A task tracker records work items. Rudder also invokes agent runtimes, stores run evidence, connects outputs to reviews, shows work history, and helps turn repeated operating procedures into skills.
+
+Use a task tracker when humans are doing the work elsewhere. Use Rudder when the task object should also coordinate agent execution, capture transcripts, route close-out evidence, and preserve reusable operating instructions.
+
+## How does Rudder work with Codex or Claude Code?
+
+Rudder can wake a Codex-backed or Claude Code-backed local agent from an assigned issue. The coding agent does the repository work; Rudder keeps the durable context around it: who owns the issue, why it matters, what runtime ran, what transcript and artifacts were produced, what evidence was reviewed, and what should improve next time.
+
+## Is Rudder local-first?
+
+Yes. Rudder is designed around local operation and local agent runtimes. The recommended quick start installs the CLI and portable Desktop app, while development mode can run with embedded PostgreSQL when `DATABASE_URL` is unset.
+
+Local-first does not mean every runtime must be local. Rudder can also call shell processes, HTTP webhooks, or gateway-backed services when an organization wants an external execution backend.
+
+## When should I not use Rudder?
+
+Do not use Rudder for a disposable prompt that needs no owner, no run evidence, no budget tracking, no review, and no reusable lesson. A normal chat or direct CLI session is simpler for one-off exploration.
+
+Use Rudder when the work should survive the prompt: it needs assignment, recovery, review, history, artifacts, or a feedback loop.
+
+## Does Rudder run locally?
+
+Yes. The recommended quick start installs the Rudder CLI and portable Desktop app. Development mode uses embedded PostgreSQL by default when `DATABASE_URL` is unset.
+
+## What should I try first?
+
+Start with one concrete issue. Create an organization, write a real goal, assign the issue to the default agent, run a heartbeat, inspect the evidence, and close the work only after the result is reviewable.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="download" href="/get-started/installation">
+    Install Rudder and start the local app.
+  </Card>
+  <Card title="Agent Work Loops" icon="workflow" href="/use-cases/agent-work-loops">
+    See common workflows for agent teams.
+  </Card>
+  <Card title="Configure Agent Runtime" icon="terminal" href="/how-to/configure-agent-runtime">
+    Connect local or external runtime backends.
+  </Card>
+  <Card title="Core Concepts" icon="book-open" href="/concepts/overview">
+    Understand Rudder's product model.
+  </Card>
+</CardGroup>

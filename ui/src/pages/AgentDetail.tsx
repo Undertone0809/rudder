@@ -18,7 +18,7 @@ import {
 } from "../api/agents";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { budgetsApi } from "../api/budgets";
-import { heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
+import { HEARTBEAT_RUN_LIST_AGENT_LIMIT, heartbeatsApi, type LiveRunForIssue } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { ApiError } from "../api/client";
 import {
@@ -1091,8 +1091,8 @@ export function AgentDetail() {
   });
 
   const { data: heartbeats, isLoading: isHeartbeatsLoading } = useQuery({
-    queryKey: queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined),
-    queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined),
+    queryKey: queryKeys.heartbeats(resolvedCompanyId!, agent?.id ?? undefined, HEARTBEAT_RUN_LIST_AGENT_LIMIT),
+    queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined, HEARTBEAT_RUN_LIST_AGENT_LIMIT),
     enabled: !!resolvedCompanyId && !!agent?.id && shouldLoadHeartbeats,
   });
 

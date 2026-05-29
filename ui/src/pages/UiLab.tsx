@@ -390,7 +390,7 @@ const fixtureAgent: Agent = {
   spentMonthlyCents: 12400,
   pauseReason: null,
   pausedAt: null,
-  permissions: { canCreateAgents: true },
+  permissions: { canCreateAgents: true, canManageSkills: true },
   lastHeartbeatAt: new Date(Date.now() - 1000 * 60 * 12),
   metadata: null,
   createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30),

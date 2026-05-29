@@ -172,10 +172,19 @@ Include the same evidence packet, target artifact, user request, and evaluation
 rubric in both prompts. Tell reviewers they are not implementers; they should
 judge and identify gaps.
 
-If subagents are unavailable, run the two reviews serially yourself. Record the
-review execution mode as `serial two-role fallback`, do not claim that two
-agents were spawned, and treat independence confidence as lower. Keep the roles
-separate and label them so the author pass does not silently grade itself.
+If subagents are unavailable, distinguish two cases:
+
+- When the user explicitly required spawned reviewer agents, repeated reviewer
+  rounds, or an acceptance gate, record
+  `blocked: spawned reviewers unavailable`. You may still provide an advisor
+  artifact and local validation evidence, but do not call the review gate
+  passed unless the user explicitly lowers the bar for this turn.
+- When the task only needs advisory pressure and the user did not require a
+  spawned-reviewer gate, you may run the two reviews serially yourself. Record
+  the review execution mode as `serial two-role fallback`, do not claim that two
+  agents were spawned, and treat independence confidence as lower. Keep the
+  roles separate and label them so the author pass does not silently grade
+  itself.
 
 ### 4. Merge findings into a rework list
 
@@ -248,6 +257,8 @@ Treat the result as not ready when any of these are true:
   requires it
 - the final handoff does not disclose whether review used spawned subagents or
   a serial fallback
+- a serial fallback is presented as satisfying an explicit spawned-reviewer
+  acceptance gate
 - the handoff hides skipped checks or presents unverified behavior as proven
 
 ## Common Corner Cases

@@ -693,14 +693,19 @@ export function agentService(db: Db) {
       return updated ? normalizeAgentRow(updated) : null;
     },
 
-    updatePermissions: async (id: string, permissions: { canCreateAgents: boolean }) => {
+    updatePermissions: async (id: string, permissions: { canCreateAgents: boolean; canManageSkills?: boolean }) => {
       const existing = await getById(id);
       if (!existing) return null;
+
+      const nextPermissions = {
+        ...existing.permissions,
+        ...permissions,
+      };
 
       const updated = await db
         .update(agents)
         .set({
-          permissions: normalizeAgentPermissions(permissions, existing.role),
+          permissions: normalizeAgentPermissions(nextPermissions, existing.role),
           updatedAt: new Date(),
         })
         .where(eq(agents.id, id))

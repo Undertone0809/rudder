@@ -7,7 +7,7 @@ import { ApiError } from "../api/client";
 import { dashboardApi } from "../api/dashboard";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
-import { heartbeatsApi } from "../api/heartbeats";
+import { HEARTBEAT_RUN_LIST_DEFAULT_LIMIT, heartbeatsApi } from "../api/heartbeats";
 import { chatsApi } from "../api/chats";
 import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -538,8 +538,8 @@ export function Inbox() {
   });
 
   const { data: heartbeatRuns, isLoading: isRunsLoading } = useQuery({
-    queryKey: queryKeys.heartbeats(selectedOrganizationId!),
-    queryFn: () => heartbeatsApi.list(selectedOrganizationId!),
+    queryKey: queryKeys.heartbeats(selectedOrganizationId!, undefined, HEARTBEAT_RUN_LIST_DEFAULT_LIMIT),
+    queryFn: () => heartbeatsApi.list(selectedOrganizationId!, undefined, HEARTBEAT_RUN_LIST_DEFAULT_LIMIT),
     enabled: !!selectedOrganizationId,
   });
 

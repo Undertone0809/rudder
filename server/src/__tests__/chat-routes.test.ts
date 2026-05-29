@@ -579,6 +579,7 @@ describe("chat routes", () => {
           title: "Implement auth flow",
           description: "Create a tracked auth implementation task.",
           priority: "high",
+          assigneeUnassignedReason: "The operator needs to select the owner during approval.",
           reviewerAgentId: "10000000-0000-4000-8000-000000000077",
         },
       },
@@ -737,7 +738,7 @@ describe("chat routes", () => {
     expect(res.body.messages).toHaveLength(2);
   });
 
-  it("does not default manual approval-backed issue proposals to the selected chat agent", async () => {
+  it("preserves an explicit selected-agent owner on manual approval-backed issue proposals", async () => {
     const conversation = createConversation({
       preferredAgentId: "agent-1",
       chatRuntime: {
@@ -758,6 +759,7 @@ describe("chat routes", () => {
           title: "Implement owned flow",
           description: "Create a tracked implementation task for the selected agent.",
           priority: "medium",
+          assigneeAgentId: "agent-1",
         },
       },
     };
@@ -792,6 +794,7 @@ describe("chat routes", () => {
             title: "Implement owned flow",
             description: "Create a tracked implementation task for the selected agent.",
             priority: "medium",
+            assigneeAgentId: "agent-1",
           },
         },
         replyingAgentId: "agent-1",
@@ -804,13 +807,88 @@ describe("chat routes", () => {
 
     expect(res.status).toBe(201);
     const approvalInput = mockChatService.createProposalApproval.mock.calls[0]?.[1] as any;
-    expect(approvalInput.payload.proposedIssue.assigneeAgentId).toBeUndefined();
+    expect(approvalInput.payload.proposedIssue.assigneeAgentId).toBe("agent-1");
     expect(approvalInput.payload.proposedIssue.assigneeUserId).toBeUndefined();
 
     const savedMessage = mockChatService.addMessage.mock.calls[0]?.[1] as any;
-    expect(savedMessage.structuredPayload.issueProposal.assigneeAgentId).toBeUndefined();
+    expect(savedMessage.structuredPayload.issueProposal.assigneeAgentId).toBe("agent-1");
     expect(savedMessage.structuredPayload.issueProposal.assigneeUserId).toBeUndefined();
     expect(mockAgentService.getById).not.toHaveBeenCalledWith("agent-1");
+  });
+
+  it("preserves explicitly unassigned manual approval-backed issue proposals", async () => {
+    const conversation = createConversation({
+      preferredAgentId: "agent-1",
+      chatRuntime: {
+        sourceType: "agent",
+        sourceLabel: "Chat Specialist",
+        runtimeAgentId: "agent-1",
+        agentRuntimeType: "codex_local",
+        model: "gpt-5",
+        available: true,
+        error: null,
+      },
+    });
+    const userMessage = createMessage("message-user", "user", "message", "Draft this but do not assign it yet");
+    const proposalMessage = {
+      ...createMessage("message-proposal", "assistant", "issue_proposal", "This should stay unassigned until scope is confirmed.", "approval-1"),
+      structuredPayload: {
+        issueProposal: {
+          title: "Clarify owned flow",
+          description: "Keep this unassigned until the operator confirms the execution owner.",
+          priority: "medium",
+          assigneeAgentId: null,
+          assigneeUserId: null,
+          assigneeUnassignedReason: "The operator asked to confirm scope before choosing an owner.",
+        },
+      },
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockAgentService.getById.mockResolvedValue({ id: "agent-1", orgId: "organization-1", status: "idle" });
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(proposalMessage);
+    mockChatService.createProposalApproval.mockResolvedValue({
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "chat_issue_creation",
+      status: "pending",
+      payload: {},
+      requestedByAgentId: null,
+      requestedByUserId: "user-1",
+      decisionNote: null,
+      decidedByUserId: null,
+      decidedAt: null,
+      createdAt: new Date("2026-03-26T08:01:00.000Z"),
+      updatedAt: new Date("2026-03-26T08:01:00.000Z"),
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: "This should stay unassigned until scope is confirmed.",
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "issue_proposal",
+        body: "This should stay unassigned until scope is confirmed.",
+        structuredPayload: proposalMessage.structuredPayload,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Draft this but do not assign it yet" });
+
+    expect(res.status).toBe(201);
+    const approvalInput = mockChatService.createProposalApproval.mock.calls[0]?.[1] as any;
+    expect(approvalInput.payload.proposedIssue.assigneeAgentId).toBeNull();
+    expect(approvalInput.payload.proposedIssue.assigneeUserId).toBeNull();
+    expect(approvalInput.payload.proposedIssue.assigneeUnassignedReason).toBe("The operator asked to confirm scope before choosing an owner.");
+
+    const savedMessage = mockChatService.addMessage.mock.calls[0]?.[1] as any;
+    expect(savedMessage.structuredPayload.issueProposal.assigneeAgentId).toBeNull();
+    expect(savedMessage.structuredPayload.issueProposal.assigneeUserId).toBeNull();
+    expect(savedMessage.structuredPayload.issueProposal.assigneeUnassignedReason).toBe("The operator asked to confirm scope before choosing an owner.");
   });
 
   it("keeps plan-mode issue proposals approval-backed and preserves the plan document", async () => {
@@ -823,6 +901,7 @@ describe("chat routes", () => {
           title: "Implement auth flow",
           description: "Track the auth rollout plan in an issue.",
           priority: "high",
+          assigneeUnassignedReason: "Plan mode should leave the execution owner for operator review.",
         },
         planDocument: {
           title: "Auth rollout plan",
@@ -913,6 +992,7 @@ describe("chat routes", () => {
           title: "Implement direct issue flow",
           description: "Track the direct issue creation path.",
           priority: "medium",
+          assigneeUnassignedReason: "The issue is created directly before an owner is chosen.",
         },
       },
     };
@@ -2012,6 +2092,7 @@ describe("chat routes", () => {
           title: "Implement reviewed work",
           description: "Create a reviewed issue from chat.",
           priority: "medium",
+          assigneeUnassignedReason: "The reviewer is selected before the execution owner.",
           reviewerAgentId: "10000000-0000-4000-8000-000000000077",
         },
       });

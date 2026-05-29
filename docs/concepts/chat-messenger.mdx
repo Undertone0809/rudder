@@ -1,0 +1,81 @@
+---
+title: "Chat And Messenger For Agent Work"
+description: "Use Rudder Chat for intake and clarification, then use Messenger to recover attention for replies, blockers, failed runs, reviews, and decisions."
+icon: "messages-square"
+keywords:
+  - "AI agent chat"
+  - "agent work messenger"
+  - "agent decision requests"
+  - "Rudder Messenger"
+canonical: "https://doc.rudder.zeeland.studio/concepts/chat-messenger"
+"og:url": "https://doc.rudder.zeeland.studio/concepts/chat-messenger"
+
+---
+
+Chat and Messenger are one communication system with two jobs: Chat turns unclear intent into executable work, and Messenger brings attention back to the right thread, issue, run, or decision.
+
+Use Chat when the next step is still conversational. Use Messenger when something needs attention after work has started.
+
+![Messenger attention surface](../images/messenger-approvals.png)
+
+## How they fit together
+
+| Surface | Use it for | Move forward by |
+| --- | --- | --- |
+| Chat | Intake, clarification, context gathering, and issue proposals | Creating or updating an issue when the request becomes executable |
+| Messenger | Replies, issue threads, failed runs, blockers, reviews, budget alerts, and decisions | Returning to the linked issue, run, or thread with a clear next action |
+
+The boundary is simple: Chat helps make the work clear. Messenger helps keep live work from losing human attention.
+
+## When Chat should become an issue
+
+Convert a conversation into an issue when it needs any of these:
+
+- one owner to execute the next step
+- agent runtime budget
+- review or approval
+- a recovery point after failure or blocking
+- a durable history the team can inspect later
+
+If the request can be answered immediately and creates no follow-up work, keep it in Chat. If it becomes work to assign, run, review, or revisit, create an issue.
+
+![Chat issue proposal](../images/chat-create-issue-proposal.png)
+
+## What Messenger should bring back
+
+Messenger answers one operator question:
+
+> What needs my attention right now, and which durable work object does it belong to?
+
+Use it to move from signal back to action:
+
+| Attention signal | Durable next step |
+| --- | --- |
+| Agent asks a question | Reply, then keep the decision on the issue |
+| Run fails | Open the linked issue or run and decide recovery |
+| Work is blocked | Name the missing input or owner |
+| Review is waiting | Approve, request changes, or mark blocked |
+| Chat proposes an issue | Accept, edit, or reject before execution |
+
+Messenger should not become a second task tracker. If a thread creates real work, put the next step on an issue.
+
+## Anti-patterns
+
+Avoid using Chat or Messenger as:
+
+- a hidden backlog
+- a replacement for issue status
+- a place to run long work without ownership
+- the only record of a review decision
+- a generic chat app disconnected from Rudder work
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Issue Lifecycle Guide" icon="route" href="/how-to/issue-lifecycle">
+    Learn when a request is ready for assignment and review.
+  </Card>
+  <Card title="Issues" icon="circle-check" href="/concepts/issues">
+    See the durable execution object Chat and Messenger point back to.
+  </Card>
+</CardGroup>

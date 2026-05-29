@@ -349,7 +349,7 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
     name: "command_execution",
     toolUseId: "item_8",
     input: {
-      command: "rudder issue done \"PAP-473\" --comment $ '## Review Summary\\n\\nCompleted transcript rollout with shared nice/raw rendering.'",
+      command: "rudder issue done \"PAP-473\" --comment-file /tmp/review-summary.md",
       cwd: "/workspace/rudder",
     },
   },
@@ -357,7 +357,7 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
     kind: "tool_result",
     ts: "2026-03-11T15:25:02.858Z",
     toolUseId: "item_8",
-    content: "command: rudder issue done \"PAP-473\" --comment ...\nstatus: completed\nexit_code: 0\n\nIssue PAP-473 marked done.",
+    content: "command: rudder issue done \"PAP-473\" --comment-file /tmp/review-summary.md\nstatus: completed\nexit_code: 0\n\nIssue PAP-473 marked done.",
     isError: false,
   },
   {

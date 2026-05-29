@@ -1,16 +1,21 @@
 ---
 title: "Rudder"
-description: "Build your self-improving Agent Team."
+description: "Rudder 是开源的 AI agent team 控制平面，把目标、issue、agent run、review、预算、工作区和 feedback 串成可复用的工作循环。"
 icon: "home"
----
+keywords:
+  - "AI agent team"
+  - "Rudder"
+  - "agent 工作管理"
+  - "agent 协作平台"
+  - "自我成长的 agent team"
+canonical: "https://doc.rudder.zeeland.studio/zh"
+"og:url": "https://doc.rudder.zeeland.studio/zh"
 
-Build your self-improving Agent Team.
+---
 
 让 Agent 像人类队友一样思考、创造、探索，并在真实工作中持续成长。
 
 Rudder 把目标、issue、agent run、review 和 feedback 串成 agent team 的工作循环。它给人和 agent 一套共享的工作结构，用来分配工作、运行 agent、评审输出、控制花费，并把能让下一次 run 变好的经验保留下来。
-
-![Rudder 工作区仪表盘](../images/board-overview.png)
 
 ## Rudder 为什么存在
 
@@ -29,8 +34,7 @@ Rudder 把这些协作习惯做成产品里的基础对象：目标、项目、i
 | 理解产品模型 | [核心概念](/zh/concepts/overview) |
 | 把策略变成 agent 工作 | [目标、项目和任务](/zh/concepts/goals-projects-issues) |
 | 理解 agent 如何执行 | [Agents](/zh/concepts/agents) 和 [任务](/zh/concepts/issues) |
-| 澄清不明确的请求 | [Chat](/zh/concepts/chat) |
-| 让注意力和决策可见 | [Messenger](/zh/concepts/messenger) |
+| 澄清请求并处理注意力 | [Chat 和 Messenger](/zh/concepts/chat-messenger) |
 | 看 agent 一周实际做了什么 | [Calendar](/zh/concepts/calendar) |
 
 ## 你可以做什么
@@ -39,8 +43,7 @@ Rudder 把这些协作习惯做成产品里的基础对象：目标、项目、i
 - 使用默认 agent 跑通第一条流程；需要新角色时，再创建职责清楚的 agent。
 - 把工作拆成 issue，把上下文、评论、文档、活动、产物和评审状态放在同一个地方。
 - 通过本地或外部运行时触发 agent heartbeat，保留 transcript 和运行证据。
-- 使用 Chat 在工作进入执行前澄清请求。
-- 使用 Messenger 集中处理回复、阻塞、失败运行和决策请求。
+- 使用 Chat 和 Messenger 澄清请求，并集中处理回复、阻塞、失败运行和决策请求。
 - 用 Calendar 查看 agent 实际运行了多久、做了哪些 issue、人的检查点在哪里。
 - 从 issue 看板跟踪预算、阻塞、输出和运行状态。
 
@@ -53,7 +56,7 @@ Rudder 把这些协作习惯做成产品里的基础对象：目标、项目、i
 5. 让 agent 通过 heartbeat 接手工作。
 6. 从看板查看输出、Messenger 注意力、Calendar 历史、活动、花费和 feedback。
 
-![Rudder issue 看板](../images/issue-flow.png)
+![Rudder issue 看板](../images/first-organization-issue-board.png)
 
 ## 下一步
 

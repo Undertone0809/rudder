@@ -88,6 +88,12 @@ export const issues = pgTable(
       table.reviewerUserId,
       table.status,
     ),
+    createdByUserUpdatedIdx: index("issues_company_created_by_user_updated_idx").on(
+      table.orgId,
+      table.createdByUserId,
+      table.updatedAt,
+      table.id,
+    ),
     parentIdx: index("issues_company_parent_idx").on(table.orgId, table.parentId),
     projectIdx: index("issues_company_project_idx").on(table.orgId, table.projectId),
     originIdx: index("issues_company_origin_idx").on(table.orgId, table.originKind, table.originId),
@@ -95,10 +101,11 @@ export const issues = pgTable(
     executionWorkspaceIdx: index("issues_company_execution_workspace_idx").on(table.orgId, table.executionWorkspaceId),
     identifierIdx: uniqueIndex("issues_identifier_idx").on(table.identifier),
     openAutomationExecutionIdx: uniqueIndex("issues_open_automation_execution_uq")
-      .on(table.orgId, table.originKind, table.originId)
+      .on(table.orgId, table.originKind, table.originId, table.originRunId)
       .where(
         sql`${table.originKind} = 'automation_execution'
           and ${table.originId} is not null
+          and ${table.originRunId} is not null
           and ${table.hiddenAt} is null
           and ${table.executionRunId} is not null
           and ${table.status} in ('backlog', 'todo', 'in_progress', 'in_review', 'blocked')`,

@@ -18,9 +18,9 @@ export function organizationSkillRoutes(db: Db) {
   const access = accessService(db);
   const svc = organizationSkillService(db);
 
-  function canCreateAgents(agent: { permissions: Record<string, unknown> | null | undefined }) {
-    if (!agent.permissions || typeof agent.permissions !== "object") return false;
-    return Boolean((agent.permissions as Record<string, unknown>).canCreateAgents);
+  function canManageSkills(agent: { permissions: Record<string, unknown> | null | undefined }) {
+    if (!agent.permissions || typeof agent.permissions !== "object") return true;
+    return (agent.permissions as Record<string, unknown>).canManageSkills !== false;
   }
 
   async function assertCanMutateOrganizationSkills(req: Request, orgId: string) {
@@ -28,9 +28,12 @@ export function organizationSkillRoutes(db: Db) {
 
     if (req.actor.type === "board") {
       if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return;
-      const allowed = await access.canUser(orgId, req.actor.userId, "agents:create");
-      if (!allowed) {
-        throw forbidden("Missing permission: agents:create");
+      const allowed = await access.canUser(orgId, req.actor.userId, "skills:manage");
+      const allowedByLegacyAgentCreate = allowed
+        ? false
+        : await access.canUser(orgId, req.actor.userId, "agents:create");
+      if (!allowed && !allowedByLegacyAgentCreate) {
+        throw forbidden("Missing permission: skills:manage");
       }
       return;
     }
@@ -44,12 +47,12 @@ export function organizationSkillRoutes(db: Db) {
       throw forbidden("Agent key cannot access another organization");
     }
 
-    const allowedByGrant = await access.hasPermission(orgId, "agent", actorAgent.id, "agents:create");
-    if (allowedByGrant || canCreateAgents(actorAgent)) {
+    const allowedByGrant = await access.hasPermission(orgId, "agent", actorAgent.id, "skills:manage");
+    if (allowedByGrant || canManageSkills(actorAgent)) {
       return;
     }
 
-    throw forbidden("Missing permission: can create agents");
+    throw forbidden("Missing permission: can manage skills");
   }
 
   router.get("/orgs/:orgId/skills", async (req, res) => {

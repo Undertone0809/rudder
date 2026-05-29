@@ -43,6 +43,19 @@
         "data/rudder-studio/issues.json",
         "references/rudder-studio-scenario.md"
       ]
+    },
+    {
+      "id": 7,
+      "prompt": "给当前 dev app seed 一组数据来验证一个 agent issue closeout bug，最后我要 review 你具体 seed 了什么。",
+      "expected_output": "Classifies the request as testing data, verifies the target dev runtime, seeds a disposable org/issue/agent/run scenario around the real actor workflow, and reports a seed ledger with created records, write methods, proof route or run id, and cleanup status.",
+      "files": [],
+      "expectations": [
+        "The result includes the target runtime source of truth such as `/api/health`.",
+        "The result reports organization URL key/id and the issue, agent, run, comment, or activity records created.",
+        "The result distinguishes API-created records from direct database writes or script-generated data.",
+        "The result designs the seed around the actor and trigger needed for product proof rather than isolated page rows.",
+        "The result states whether seeded evidence was cleaned up or intentionally kept."
+      ]
     }
   ]
 }

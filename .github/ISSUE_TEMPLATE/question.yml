@@ -1,0 +1,53 @@
+name: Question
+description: Ask a focused question about Rudder usage, behavior, or contribution.
+title: "[Question]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for focused questions. If you found a reproducible bug or want a product change, use the bug report or feature request template instead.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Ask the question directly.
+      placeholder: What do you need to understand?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      description: Pick the closest topic.
+      options:
+        - Usage
+        - Installation/setup
+        - Desktop app
+        - Agent runtime/heartbeat
+        - API/CLI
+        - Docs
+        - Contributing
+        - Release/packaging
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Explain what you are trying to do and what you have already checked.
+      placeholder: Include links to docs, commands, screenshots, or related issues if useful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_answer
+    attributes:
+      label: What would answer this?
+      description: Optional. Describe the kind of answer that would unblock you.
+      placeholder: A doc link, example command, explanation, or design clarification would help.

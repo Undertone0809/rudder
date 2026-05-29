@@ -16,7 +16,12 @@ import type {
   ChatRuntimeDescriptor,
   OperatorProfileSettings,
 } from "@rudderhq/shared";
-import { chatAskUserRequestFromStructuredPayload, chatAutomationCreateFromStructuredPayload, sanitizeChatStructuredPayload } from "@rudderhq/shared";
+import {
+  chatAskUserRequestFromStructuredPayload,
+  chatAutomationCreateFromStructuredPayload,
+  chatIssueProposalFromStructuredPayload,
+  sanitizeChatStructuredPayload,
+} from "@rudderhq/shared";
 import { findServerAdapter } from "../agent-runtimes/index.js";
 import type { AgentRuntimeInvocationMeta, AgentRuntimeLoadedSkillMeta } from "../agent-runtimes/index.js";
 import type { AgentRuntimeExecutionContext, AgentRuntimeExecutionResult } from "../agent-runtimes/types.js";
@@ -339,10 +344,14 @@ export function buildIssueLabelsPromptSection(labels: IssueLabel[] | null | unde
 export function buildChatSpeakerPromptSection(runtimeSource: ResolvedChatRuntimeSource) {
   const name = runtimeSource.descriptor.sourceLabel;
   if (runtimeSource.descriptor.sourceType === "agent") {
+    const agentId = runtimeSource.descriptor.runtimeAgentId;
     return [
       `You are ${name}, replying inside Rudder's chat scene.`,
       "Speak as this agent, using the agent's own instructions and enabled skills as your working context.",
       "Do not claim to be a generic assistant or any agent other than the selected chat agent.",
+      agentId
+        ? `When emitting issue_proposal, use assigneeAgentId "${agentId}" only if this agent should actually own execution; otherwise choose the correct owner or set assigneeUnassignedReason.`
+        : "When emitting issue_proposal, include an explicit assignee decision; leave it unassigned only with assigneeUnassignedReason.",
     ].join("\n");
   }
 
@@ -375,6 +384,7 @@ export function buildBaseSystemPromptSections(runtimeSource: ResolvedChatRuntime
     "Use result kind 'ask_user' only when one to three short structured questions are blocked on the user's decision before the conversation can continue safely.",
     "For ask_user, each requestUserInput question id must be unique, and option ids must be unique within their question. Set question selectionMode to 'multiple' only when the user can choose more than one option; omit it for normal single-choice questions.",
     "Use result kind 'issue_proposal' for larger work that should become an issue.",
+    "For issue_proposal, include exactly one owner decision in structuredPayload.issueProposal: either assigneeAgentId/assigneeUserId for the proposed owner, or assigneeUnassignedReason explaining why the issue should intentionally remain unassigned. Do not leave ownership implicit. Do not default to the selected chat agent unless that agent should actually own execution.",
     "Use result kind 'automation_create' when the user clearly asks the selected agent to set up recurring automatic work and the schedule, assignee, and output are clear. This creates a Rudder Automation directly without a board approval proposal.",
     "For automation_create, include structuredPayload.automationCreate with title, description, schedule.cronExpression, and schedule.timezone. Omit assigneeAgentId to assign the automation to the selected chat agent. Use outputMode 'chat_output' when the user wants the result sent back in chat.",
     "Reply in two phases.",
@@ -409,6 +419,7 @@ export function buildResponseSchemaPromptSection(planMode: boolean) {
             priority: "critical|high|medium|low",
             assigneeAgentId: "optional uuid",
             assigneeUserId: "optional user id",
+            assigneeUnassignedReason: "required explanation when no assigneeAgentId or assigneeUserId is set",
             reviewerAgentId: "optional uuid",
             reviewerUserId: "optional user id",
             labelIds: ["optional label uuid"],
@@ -722,6 +733,10 @@ export function validateAssistantResult(
 
   if (kind === "ask_user" && !chatAskUserRequestFromStructuredPayload(structuredPayload)) {
     throw new Error("ask_user assistant responses require structuredPayload.requestUserInput with 1-3 valid questions");
+  }
+
+  if (kind === "issue_proposal" && !chatIssueProposalFromStructuredPayload(structuredPayload)) {
+    throw new Error("issue_proposal assistant responses require structuredPayload.issueProposal with title, description, and an explicit owner decision");
   }
 
   if (kind === "automation_create" && !chatAutomationCreateFromStructuredPayload(structuredPayload)) {

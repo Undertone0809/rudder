@@ -83,7 +83,7 @@ Do not use `rudder approval create --type hire_agent` as a replacement for `agen
 
 ```sh
 rudder approval get "<approval-id>" --json
-rudder approval comment "<approval-id>" --body "<markdown>" --json
+rudder approval comment "<approval-id>" --body-file "<path>" --json
 rudder approval resubmit "<approval-id>" --payload '{"...":"..."}' --json
 rudder approval issues "<approval-id>" --json
 ```

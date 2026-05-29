@@ -178,6 +178,47 @@ describe("Messenger page headers", () => {
     expect(html).not.toContain("Issues assistant");
   });
 
+  it("shows a load older control when the issues thread has another page", () => {
+    messengerModel.issueThreadDetail = {
+      title: "Issues",
+      description: "Followed issues, issues I created, and issues assigned to me.",
+      unreadCount: 1,
+      pageInfo: {
+        limit: 50,
+        nextCursor: "cursor-1",
+        hasMore: true,
+      },
+      items: [
+        {
+          id: "issue-item-page",
+          issueId: "issue-page",
+          issueIdentifier: "RUD-9",
+          sourceCommentId: null,
+          sourceCommentAuthorLabel: null,
+          sourceCommentBody: null,
+          title: "RUD-9 · Paginated issue feed",
+          subtitle: "todo",
+          body: "todo",
+          preview: "todo",
+          href: "/issues/RUD-9",
+          latestActivityAt: "2026-04-19T05:00:00.000Z",
+          actions: [],
+          metadata: {
+            status: "todo",
+            priority: "medium",
+            followed: true,
+            createdByMe: false,
+            assignedToMe: false,
+          },
+        },
+      ],
+    };
+
+    const html = renderIssueThread();
+
+    expect(html).toContain("Load older issues");
+  });
+
   it("renders issue update cards with from and to status badges", () => {
     messengerModel.issueThreadDetail = {
       title: "Issues",

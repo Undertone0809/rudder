@@ -215,7 +215,7 @@ export function PrimaryRail({
     {
       key: "automations",
       to: "/automations",
-      label: "Auto",
+      label: "Automations",
       icon: Repeat,
       active: /^\/automations(?:\/|$)/.test(relativePath),
     },

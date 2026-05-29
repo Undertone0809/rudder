@@ -98,6 +98,7 @@ export {
   sanitizeChatStructuredPayload,
   createChatAttachmentMetadataSchema,
   convertChatToIssueSchema,
+  chatIssueProposalFromStructuredPayload,
   chatOperationProposalSchema,
   resolveChatOperationProposalSchema,
   type CreateChatContextLink,

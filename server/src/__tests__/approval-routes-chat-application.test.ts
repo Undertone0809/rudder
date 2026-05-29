@@ -100,7 +100,14 @@ describe("approval routes chat application", () => {
       orgId: "organization-1",
       type: "chat_issue_creation",
       status: "pending",
-      payload: { chatConversationId: "chat-1" },
+      payload: {
+        chatConversationId: "chat-1",
+        proposedIssue: {
+          title: "Approved chat issue",
+          description: "Create the issue after approval.",
+          assigneeUnassignedReason: "The approver needs to choose an execution owner.",
+        },
+      },
     });
   });
 
@@ -111,7 +118,14 @@ describe("approval routes chat application", () => {
         orgId: "organization-1",
         type: "chat_issue_creation",
         status: "approved",
-        payload: { chatConversationId: "chat-1" },
+        payload: {
+          chatConversationId: "chat-1",
+          proposedIssue: {
+            title: "Approved chat issue",
+            description: "Create the issue after approval.",
+            assigneeUnassignedReason: "The approver needs to choose an execution owner.",
+          },
+        },
         requestedByAgentId: null,
       },
       applied: true,
@@ -154,6 +168,13 @@ describe("approval routes chat application", () => {
   });
 
   it("reactivates blocked linked issues and wakes their assignee after approval is applied", async () => {
+    mockApprovalService.getById.mockResolvedValue({
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "hire_agent",
+      status: "pending",
+      payload: {},
+    });
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([
       {
@@ -253,6 +274,7 @@ describe("approval routes chat application", () => {
         proposedIssue: {
           title: "Reviewed work",
           description: "Needs a reviewer.",
+          assigneeUnassignedReason: "The approver needs to choose an execution owner.",
           reviewerAgentId: "10000000-0000-4000-8000-000000000077",
         },
       },
@@ -269,6 +291,31 @@ describe("approval routes chat application", () => {
     expect(mockChatService.applyApprovedApproval).not.toHaveBeenCalled();
   });
 
+  it("requires chat issue proposals to include an owner or explicit unassigned reason before approval", async () => {
+    mockApprovalService.getById.mockResolvedValue({
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "chat_issue_creation",
+      status: "pending",
+      payload: {
+        chatConversationId: "chat-1",
+        proposedIssue: {
+          title: "Missing owner decision",
+          description: "This proposal leaves ownership implicit.",
+        },
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/approvals/approval-1/approve")
+      .send({ decisionNote: "Looks good" });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe("Issue proposals without an owner must include assigneeUnassignedReason");
+    expect(mockApprovalService.approve).not.toHaveBeenCalled();
+    expect(mockChatService.applyApprovedApproval).not.toHaveBeenCalled();
+  });
+
   it("requires labels before approving agent-proposed chat issues once the label taxonomy is mature", async () => {
     mockApprovalService.getById.mockResolvedValue({
       id: "approval-1",
@@ -281,6 +328,7 @@ describe("approval routes chat application", () => {
         proposedIssue: {
           title: "Needs label",
           description: "Agent proposed this issue from chat.",
+          assigneeUnassignedReason: "The operator needs to choose an execution owner.",
         },
       },
     });
@@ -312,6 +360,7 @@ describe("approval routes chat application", () => {
       proposedIssue: {
         title: "Needs label",
         description: "Agent proposed this issue from chat.",
+        assigneeUnassignedReason: "The operator needs to choose an execution owner.",
         labelIds: ["label-1"],
       },
     };
@@ -326,6 +375,7 @@ describe("approval routes chat application", () => {
         proposedIssue: {
           title: "Needs label",
           description: "Agent proposed this issue from chat.",
+          assigneeUnassignedReason: "The operator needs to choose an execution owner.",
         },
       },
     });
@@ -366,6 +416,13 @@ describe("approval routes chat application", () => {
   });
 
   it("wakes the requester agent with linked issue context after approval is applied", async () => {
+    mockApprovalService.getById.mockResolvedValue({
+      id: "approval-1",
+      orgId: "organization-1",
+      type: "hire_agent",
+      status: "pending",
+      payload: {},
+    });
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }, { id: "issue-2" }]);
     mockApprovalService.approve.mockResolvedValue({

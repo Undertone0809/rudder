@@ -12,6 +12,7 @@ import { validateModelFallbacksConfig } from "./model-fallbacks.js";
 
 export const agentPermissionsSchema = z.object({
   canCreateAgents: z.boolean().optional().default(false),
+  canManageSkills: z.boolean().optional().default(true),
 });
 
 export const agentInstructionsBundleModeSchema = z.enum(["managed", "external"]);
@@ -168,6 +169,7 @@ export type TestAgentRuntimeEnvironment = z.infer<typeof testAgentRuntimeEnviron
 
 export const updateAgentPermissionsSchema = z.object({
   canCreateAgents: z.boolean(),
+  canManageSkills: z.boolean().optional(),
   canAssignTasks: z.boolean(),
 });
 

@@ -104,6 +104,13 @@ For non-trivial requests, structure the answer like this:
 ## States Covered
 - ...
 
+## Seed Ledger
+- Target runtime:
+- Created or modified records:
+- Write method:
+- Proof route/run/log:
+- Cleanup status:
+
 ## Output
 ...
 
@@ -193,6 +200,23 @@ Required readback for whole-organization Rudder demo seeds:
 - heartbeat runs and cost summary exist when requested
 - primary UI route returns 200
 - report organization id, URL key, counts, and verification evidence
+
+For testing seeds, especially seeds used to prove a workflow fix, include a
+seed and mutation ledger even when the data is temporary:
+
+- target runtime and `/api/health` payload or equivalent source of truth
+- organization URL key and id
+- issue, agent, run, approval, comment, cost, activity, or release records
+  created or modified
+- whether each write used public API creation, scoped database insertion, or a
+  script
+- final route URL, run id, screenshot, log, or API readback used for proof
+- cleanup status, or why the seeded records were kept as durable evidence
+
+If the seed is meant to support a product-proof run, design it around the actor
+and trigger that will exercise the workflow. Do not create isolated rows that
+make the final page look correct while bypassing the actual operator or agent
+path being reviewed.
 
 ## Quality Bar
 

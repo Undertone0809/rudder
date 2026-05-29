@@ -29,22 +29,22 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 | `rudder issue search <query> [--org-id <id>]` | Search issues with the server-side issue index across title, identifier, description, and comments. | no | required | no | no |
 | `rudder issue context <issue>` | Read the compact heartbeat context for an issue. | no | no | no | no |
 | `rudder issue checkout <issue>` | Atomically checkout an issue for the current or specified agent. | yes | no | required | attached when available |
-| `rudder issue comment <issue> --body <text> [--image <path>]` | Add a comment to an issue, optionally uploading images and appending Markdown image links. | yes | no | no | attached when available |
+| `rudder issue comment <issue> --body-file <path> [--image <path>]` | Add a comment to an issue, optionally uploading images and appending Markdown image links. | yes | no | no | attached when available |
 | `rudder issue comments list <issue>` | List issue comments, optionally only newer comments after a cursor. | no | no | no | no |
 | `rudder issue comments get <issue> <comment-id>` | Read one issue comment by id. | no | no | no | no |
-| `rudder issue update <issue> ... [--image <path>]` | Apply generic issue updates when workflow commands are not enough, optionally uploading images for the update comment. | yes | no | no | attached when available |
-| `rudder issue review <issue> --decision <decision> --comment <text>` | Record a structured reviewer decision with a required comment. | yes | no | no | attached when available |
+| `rudder issue update <issue> ... [--comment-file <path>] [--image <path>]` | Apply generic issue updates when workflow commands are not enough, optionally uploading images for the update comment. | yes | no | no | attached when available |
+| `rudder issue review <issue> --decision <decision> --comment-file <path>` | Record a structured reviewer decision with a required comment. | yes | no | no | attached when available |
 | `rudder issue commit <issue> --sha <sha> --message <subject>` | Report a code commit created during issue work as structured issue activity. | yes | no | no | attached when available |
-| `rudder issue done <issue> --comment <text> [--image <path>]` | Mark an issue done with a required completion comment, optionally uploading images. | yes | no | no | attached when available |
-| `rudder issue block <issue> --comment <text> [--image <path>]` | Mark an issue blocked with a required blocker comment, optionally uploading images. | yes | no | no | attached when available |
+| `rudder issue done <issue> --comment-file <path> [--image <path>]` | Mark an issue done with a required completion comment, optionally uploading images. | yes | no | no | attached when available |
+| `rudder issue block <issue> --comment-file <path> [--image <path>]` | Mark an issue blocked with a required blocker comment, optionally uploading images. | yes | no | no | attached when available |
 | `rudder issue release <issue>` | Release an issue back to todo and clear ownership. | yes | no | no | attached when available |
 | `rudder issue documents list <issue>` | List issue documents. | no | no | no | no |
 | `rudder issue documents get <issue> <key>` | Read one issue document by key. | no | no | no | no |
-| `rudder issue documents put <issue> <key> --body <text>` | Create or update an issue document. | yes | no | no | attached when available |
+| `rudder issue documents put <issue> <key> --body-file <path>` | Create or update an issue document. | yes | no | no | attached when available |
 | `rudder issue documents revisions <issue> <key>` | List revisions for an issue document. | no | no | no | no |
 | `rudder approval get <approval-id>` | Read one approval request. | no | no | no | no |
 | `rudder approval issues <approval-id>` | List the issues linked to an approval. | no | no | no | no |
-| `rudder approval comment <approval-id> --body <text>` | Add a comment to an approval. | yes | no | no | attached when available |
+| `rudder approval comment <approval-id> --body-file <path>` | Add a comment to an approval. | yes | no | no | attached when available |
 | `rudder skill list --org-id <id>` | List organization-visible skills. | no | required | no | no |
 | `rudder skill get <skill-id> --org-id <id>` | Read one organization skill detail. | no | required | no | no |
 | `rudder skill file <skill-id> --org-id <id> [--path SKILL.md]` | Read one file from an organization skill package. | no | required | no | no |
@@ -56,12 +56,14 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 
 Before a successful `todo` or `in_progress` issue run exits, leave one close-out signal with the command that matches the outcome:
 
-- progress remains: `rudder issue comment <issue> --body <text> [--image <path>]`
-- work is complete: `rudder issue done <issue> --comment <text> [--image <path>]`
-- work is blocked: `rudder issue block <issue> --comment <text> [--image <path>]`
+- progress remains: `rudder issue comment <issue> --body-file <path> [--image <path>]`
+- work is complete: `rudder issue done <issue> --comment-file <path> [--image <path>]`
+- work is blocked: `rudder issue block <issue> --comment-file <path> [--image <path>]`
 - ownership changes: add an explicit handoff comment before or with the assignee update
 
 If an issue has a reviewer, moving it to `blocked` is also a reviewer handoff: the reviewer should confirm the blocker, request changes, approve, or keep explicit follow-up open with `rudder issue review`.
+
+Issue comment and close-out commands accept comment bodies only from files or stdin. For any multiline Markdown, command names, code spans, code blocks, test summaries, or screenshot evidence, write the comment to a temporary Markdown file and pass `--body-file <path>` or `--comment-file <path>`, or pass `-` to read the body from stdin.
 
 `--image` may be repeated. The CLI uploads each local PNG/JPEG/WebP/GIF as an issue attachment and appends Markdown image links to the comment text before sending it.
 
@@ -77,10 +79,10 @@ Local runtime `HOME` is isolated from the operator home. Codex local runs and ru
 
 When the inbox row or wake context says `relationship: "reviewer"`, `role: "reviewer"`, or `wakeSource: "review"`, finish the review with one structured reviewer decision. Reviewer work can be either `in_review` or `blocked`; blocked reviewer work means blocker triage, not implementation takeover.
 
-- approve: `rudder issue review <issue> --decision approve --comment <text>`
-- request changes: `rudder issue review <issue> --decision request_changes --comment <text>`
-- needs follow-up: `rudder issue review <issue> --decision needs_followup --comment <text>`
-- blocked or blocker confirmed: `rudder issue review <issue> --decision blocked --comment <text>`; use this only for a confirmed human/external blocker and name the next human action.
+- approve: `rudder issue review <issue> --decision approve --comment-file <path>`
+- request changes: `rudder issue review <issue> --decision request_changes --comment-file <path>`
+- needs follow-up: `rudder issue review <issue> --decision needs_followup --comment-file <path>`
+- blocked or blocker confirmed: `rudder issue review <issue> --decision blocked --comment-file <path>`; use this only for a confirmed human/external blocker and name the next human action.
 
 Do not rely on a free-form reject or accept comment as the review outcome. The structured decision is the durable close-out signal. A blocked reviewer decision records a human handoff and removes the issue from repeated reviewer pickup until the board changes the issue.
 

@@ -64,11 +64,11 @@ describe("AgentIdentity", () => {
     expect(container.textContent).toContain("Alice Smith");
   });
 
-  it("renders a role avatar instead of fallback initials when no custom icon is set", () => {
+  it("renders a generated avatar instead of fallback initials when no custom icon is set", () => {
     const container = render(<AgentIdentity name="Penelope (CEO)" role="ceo" size="sm" />);
 
-    const fallback = container.querySelector('[data-slot="avatar-fallback"]');
-    expect(fallback?.textContent).toBe("");
-    expect(fallback?.querySelector("svg")).toBeTruthy();
+    expect(container.querySelector('[data-slot="avatar-fallback"]')).toBeNull();
+    expect(container.querySelector("img")?.getAttribute("src")).toMatch(/^data:image\/svg\+xml/);
+    expect(container.textContent).toContain("Penelope (CEO)");
   });
 });

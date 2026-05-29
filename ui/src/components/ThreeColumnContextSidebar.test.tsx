@@ -78,7 +78,7 @@ const sidebarAgent = {
   spentMonthlyCents: 0,
   pauseReason: null,
   pausedAt: null,
-  permissions: { canCreateAgents: true, canAssignTasks: true },
+  permissions: { canCreateAgents: true, canManageSkills: true, canAssignTasks: true },
   lastHeartbeatAt: null,
   metadata: null,
   createdAt: new Date("2026-04-26T10:00:00.000Z"),

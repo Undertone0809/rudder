@@ -65,6 +65,10 @@ test.describe("Product tour", () => {
     ]) {
       await page.getByRole("button", { name: "Next" }).click();
       await expect(page.getByRole("dialog", { name: title })).toBeVisible();
+      if (title === "Issues are the executable units of work") {
+        await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues$`));
+        await expect(page.getByRole("heading", { name: "Issue Tracker" })).toBeVisible();
+      }
     }
 
     await page.getByRole("button", { name: "Finish" }).click();
@@ -123,6 +127,10 @@ test.describe("Product tour", () => {
     ]) {
       await page.getByRole("button", { name: "Next" }).click();
       await expect(page.getByRole("dialog", { name: title })).toBeVisible();
+      if (title === "Issues are the executable units of work") {
+        await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/issues$`));
+        await expect(page.getByRole("heading", { name: "Issue Tracker" })).toBeVisible();
+      }
       await expectTourChromeSeparated(page);
     }
 

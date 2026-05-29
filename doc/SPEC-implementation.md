@@ -515,6 +515,7 @@ Issue-backed run close-out:
 | Pause/resume agent | yes | no |
 | Create/update issue | yes | yes |
 | Force reassign issue | yes | limited |
+| Manage organization skills | yes | yes by default, unless disabled |
 | Approve strategy/hire requests | yes | no |
 | Report cost | yes | yes |
 | Set organization budget | yes | no |

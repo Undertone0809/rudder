@@ -18,13 +18,16 @@ pnpm docs:validate
 
 ## Deployment
 
-Configure Mintlify to use this repository with `docs/` as the docs root, then attach the production custom domain:
+The docs site has two Vercel-backed channels:
 
-```text
-doc.rudder.zeeland.studio
-```
+- `staging.doc.rudder.zeeland.studio`: automatically updated from `main` by
+  `.github/workflows/docs-staging.yml`.
+- `doc.rudder.zeeland.studio`: manually published by
+  `.github/workflows/docs-production.yml`.
 
-There is no existing Vercel or Mintlify project metadata in this repository. Domain setup requires access to the Mintlify workspace and DNS provider.
+Both workflows validate the Mintlify project, export the static site, deploy it
+through the Vercel CLI, and then assign the channel domain. Production publishes
+also create a `docs/vYYYY.MM.DD` git tag for the source commit.
 
 ## Content Scope
 

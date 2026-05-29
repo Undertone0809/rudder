@@ -27,7 +27,7 @@ import { formatDate, formatDateTime, cn, projectUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { User, Hexagon, ArrowUpRight, Tag, Plus, AlertTriangle, ListTree, Search } from "lucide-react";
+import { User, Hexagon, ArrowUpRight, Tag, Plus, AlertTriangle, ListTree, Search, ChevronDown } from "lucide-react";
 
 function defaultProjectWorkspaceIdForProject(project: {
   workspaces?: Array<{ id: string; isPrimary: boolean }>;
@@ -79,6 +79,7 @@ function PropertyPicker({
   open,
   onOpenChange,
   triggerContent,
+  triggerAriaLabel,
   triggerClassName,
   popoverClassName,
   popoverAlign = "end",
@@ -91,6 +92,7 @@ function PropertyPicker({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   triggerContent: React.ReactNode;
+  triggerAriaLabel?: string;
   triggerClassName?: string;
   popoverClassName?: string;
   popoverAlign?: "start" | "center" | "end";
@@ -107,7 +109,7 @@ function PropertyPicker({
     return (
       <div>
         <PropertyRow label={label} align={rowAlign}>
-          <button className={btnCn} onClick={() => onOpenChange(!open)}>
+          <button type="button" className={btnCn} aria-label={triggerAriaLabel} onClick={() => onOpenChange(!open)}>
             {triggerContent}
           </button>
           {extra}
@@ -125,7 +127,7 @@ function PropertyPicker({
     <PropertyRow label={label} align={rowAlign}>
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger asChild>
-          <button className={btnCn}>{triggerContent}</button>
+          <button type="button" className={btnCn} aria-label={triggerAriaLabel}>{triggerContent}</button>
         </PopoverTrigger>
         <PopoverContent className={cn("p-1", popoverClassName)} align={popoverAlign} collisionPadding={16}>
           {children}
@@ -612,11 +614,13 @@ export function IssueProperties({
         style={projectColorBackgroundStyle(orderedProjects.find((p) => p.id === issue.projectId)?.color)}
       />
       <span className="text-sm truncate">{projectName(issue.projectId)}</span>
+      <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-hidden="true" />
     </>
   ) : (
     <>
       <Hexagon className="h-3.5 w-3.5 text-muted-foreground" />
       <span className="text-sm text-muted-foreground">No project</span>
+      <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-hidden="true" />
     </>
   );
 
@@ -872,11 +876,13 @@ export function IssueProperties({
           open={projectOpen}
           onOpenChange={(open) => { setProjectOpen(open); if (!open) setProjectSearch(""); }}
           triggerContent={projectTrigger}
+          triggerAriaLabel={`Change project: ${issue.projectId ? projectName(issue.projectId) : "No project"}`}
           triggerClassName="min-w-0 max-w-full"
           popoverClassName="w-fit min-w-[11rem]"
           extra={issue.projectId ? (
             <Link
               to={projectLink(issue.projectId)!}
+              aria-label="Open project"
               className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
               onClick={(e) => e.stopPropagation()}
             >
