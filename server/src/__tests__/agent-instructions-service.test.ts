@@ -112,7 +112,7 @@ describe("agent instructions service", () => {
       "MEMORY.md": expect.stringContaining("# MEMORY.md"),
     }));
     await expect(loadDefaultAgentInstructionsBundle("ceo")).resolves.toEqual(expect.objectContaining({
-      "SOUL.md": expect.stringContaining("# SOUL.md -- CEO Persona"),
+      "SOUL.md": expect.stringContaining("# SOUL.md -- Operator Assistant Persona"),
       "MEMORY.md": expect.stringContaining("# MEMORY.md"),
     }));
   });

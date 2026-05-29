@@ -558,7 +558,7 @@ describe("agent skill routes", () => {
     });
   });
 
-  it("materializes the bundled CEO instruction set for default CEO agents", async () => {
+  it("materializes the bundled Operator Assistant instruction set for default root agents", async () => {
     const res = await request(createApp())
       .post("/api/orgs/organization-1/agents")
       .send({
@@ -576,14 +576,14 @@ describe("agent skill routes", () => {
         agentRuntimeType: "claude_local",
       }),
       expect.objectContaining({
-        "HEARTBEAT.md": expect.stringContaining("CEO Heartbeat Checklist"),
-        "SOUL.md": expect.stringContaining("You are the CEO."),
+        "HEARTBEAT.md": expect.stringContaining("Operator Assistant Heartbeat Checklist"),
+        "SOUL.md": expect.stringContaining("You are the Operator Assistant."),
         "TOOLS.md": expect.stringContaining("# TOOLS.md"),
       }),
       { entryFile: "SOUL.md", replaceExisting: false, clearLegacyPromptTemplate: true },
     );
     const ceoBundle = mockAgentInstructionsService.materializeManagedBundle.mock.calls[0]?.[1] as Record<string, string>;
-    expect(ceoBundle["SOUL.md"]).toContain("CEO Persona");
+    expect(ceoBundle["SOUL.md"]).toContain("Operator Assistant Persona");
     expect(ceoBundle).not.toHaveProperty("AGENTS.md");
   });
 
