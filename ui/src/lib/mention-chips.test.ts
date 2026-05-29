@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import { applyMentionChipDecoration, mentionChipInlineStyle, stripMentionChipLabelPrefix } from "./mention-chips";
+import { buildChatMentionHref } from "@rudderhq/shared";
+import { applyMentionChipDecoration, mentionChipInlineStyle, parseMentionChipHref, stripMentionChipLabelPrefix } from "./mention-chips";
 
 describe("mention chips", () => {
   it("strips the legacy visible at-prefix from mention labels", () => {
@@ -21,6 +22,13 @@ describe("mention chips", () => {
 
     expect(element.textContent).toBe("rudder dev");
     expect(element.dataset.mentionKind).toBe("project");
+  });
+
+  it("parses chat mention links for inline token rendering", () => {
+    expect(parseMentionChipHref(buildChatMentionHref("chat-123"))).toEqual({
+      kind: "chat",
+      conversationId: "chat-123",
+    });
   });
 
   it("keeps project color as an identity marker instead of restyling the whole chip", () => {

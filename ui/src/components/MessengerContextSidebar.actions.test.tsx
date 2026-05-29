@@ -17,6 +17,7 @@ let messengerRoute: any;
 let chatList: any[];
 let activeGeneratingChatIds: Set<string>;
 let cleanupFn: (() => void) | null = null;
+let clipboardWriteText: ReturnType<typeof vi.fn>;
 
 vi.mock("@tanstack/react-query", () => ({
   useMutation: (options: {
@@ -165,6 +166,13 @@ describe("MessengerContextSidebar chat actions", () => {
         setItem: vi.fn(),
       },
     });
+    clipboardWriteText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: clipboardWriteText,
+      },
+    });
   });
 
   afterEach(() => {
@@ -203,5 +211,22 @@ describe("MessengerContextSidebar chat actions", () => {
     });
 
     expect(mockUpdateUserState).toHaveBeenCalledWith("chat-1", { pinned: undefined, unread: false });
+  });
+
+  it("copies a canonical chat reference from the actions menu", () => {
+    chatList = [baseConversation({ title: "Planning thread" })];
+    messengerModel = baseModel();
+
+    renderSidebar();
+
+    const copyLink = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Copy Chat Link")) as HTMLButtonElement | undefined;
+
+    expect(copyLink).toBeTruthy();
+    act(() => {
+      copyLink?.click();
+    });
+
+    expect(clipboardWriteText).toHaveBeenCalledWith("[Planning thread](chat://chat-1)");
   });
 });

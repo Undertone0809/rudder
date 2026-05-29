@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildAgentMentionHref, buildIssueMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
+import { buildAgentMentionHref, buildChatMentionHref, buildIssueMentionHref, buildProjectMentionHref } from "@rudderhq/shared";
 import { ThemeProvider } from "../context/ThemeContext";
 import { MarkdownBody } from "./MarkdownBody";
 
@@ -225,6 +225,20 @@ describe("MarkdownBody", () => {
     expect(html).toContain('data-mention-kind="issue"');
     expect(html).toContain(">PAP-123 auth flow</a>");
     expect(html).not.toContain(">@PAP-123 auth flow</a>");
+  });
+
+  it("renders chat mentions as chips that link to the Messenger chat route", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`[Planning thread](${buildChatMentionHref("chat-123")})`}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain('href="/messenger/chat/chat-123"');
+    expect(html).toContain('data-mention-kind="chat"');
+    expect(html).toContain(">Planning thread</a>");
   });
 
   it("renders skill references as non-interactive tokens instead of links", () => {

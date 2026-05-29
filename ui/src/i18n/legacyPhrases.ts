@@ -700,6 +700,7 @@ const zhExactPhrases: Record<string, string> = {
   "Recent": "最近",
   "Unpin": "取消置顶",
   "Copy chat ID": "复制聊天 ID",
+  "Copy Chat Link": "复制聊天链接",
   "Chat ID copied": "聊天 ID 已复制",
   "Could not copy chat ID": "无法复制聊天 ID",
   "Failed to update chat": "更新聊天失败",

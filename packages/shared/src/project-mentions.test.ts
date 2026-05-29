@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAgentMentionHref,
+  buildChatMentionHref,
   buildIssueMentionHref,
   buildProjectMentionHref,
   extractAgentMentionIds,
   extractIssueMentionIds,
   extractProjectMentionIds,
   parseAgentMentionHref,
+  parseChatMentionHref,
   parseIssueMentionHref,
   parseProjectMentionHref,
 } from "./project-mentions.js";
@@ -47,6 +49,13 @@ describe("project-mentions", () => {
       ref: "PAP-123",
     });
     expect(extractIssueMentionIds(`[@PAP-123](${href})`)).toEqual(["issue-123"]);
+  });
+
+  it("round-trips chat mentions", () => {
+    const href = buildChatMentionHref("chat-123");
+    expect(parseChatMentionHref(href)).toEqual({
+      conversationId: "chat-123",
+    });
   });
 
   it("ignores mention-looking links inside markdown code", () => {
