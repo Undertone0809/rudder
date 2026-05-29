@@ -191,6 +191,67 @@ const TimelineList = memo(function TimelineList({
           const passiveLabel = passiveFollowupLabel(run.contextSnapshot);
           const runExpanded = runExpandedOverrides[run.runId] ?? !shouldCollapseRunByDefault(run.status);
           const toggleLabel = runExpanded ? "Hide details" : "Show details";
+          const agent = agentMap?.get(run.agentId);
+          const agentName = agent?.name ?? run.agentId.slice(0, 8);
+          const toggleButton = (
+            <button
+              type="button"
+              aria-expanded={runExpanded}
+              aria-controls={`run-output-${run.runId}`}
+              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-border bg-background/70 px-2 py-1 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onClick={() => {
+                setRunExpandedOverrides((current) => ({
+                  ...current,
+                  [run.runId]: !runExpanded,
+                }));
+              }}
+            >
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${runExpanded ? "rotate-180" : ""}`} />
+              {toggleLabel}
+            </button>
+          );
+
+          if (!runExpanded) {
+            return (
+              <div
+                key={`run:${run.runId}`}
+                aria-label="Agent run output"
+                className="overflow-hidden rounded-sm border border-dashed border-border bg-muted/35 px-3 py-1"
+              >
+                <div className="flex min-w-0 items-center gap-2 text-xs">
+                  <Link to={`/agents/${run.agentId}`} className="min-w-0 shrink hover:underline">
+                    <AgentIdentity
+                      name={agentName}
+                      icon={agent?.icon}
+                      role={agent?.role}
+                      size="xs"
+                    />
+                  </Link>
+                  <span className="inline-flex shrink-0 items-center gap-1 font-medium text-muted-foreground">
+                    <TerminalSquare className="h-3.5 w-3.5" />
+                    Run output
+                  </span>
+                  <Link
+                    to={`/agents/${run.agentId}/runs/${run.runId}`}
+                    className="inline-flex shrink-0 items-center rounded-md border border-border bg-accent/40 px-2 py-1 font-mono text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
+                  >
+                    {run.runId.slice(0, 8)}
+                  </Link>
+                  <StatusBadge status={run.status} />
+                  {passiveLabel && (
+                    <span className="shrink-0 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                      {passiveLabel}
+                    </span>
+                  )}
+                  <span className="ml-auto hidden shrink-0 text-muted-foreground sm:inline">
+                    {formatDateTime(run.startedAt ?? run.createdAt)}
+                  </span>
+                  {toggleButton}
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div
               key={`run:${run.runId}`}
@@ -200,9 +261,9 @@ const TimelineList = memo(function TimelineList({
               <div className="mb-3 flex items-start justify-between gap-3">
                 <Link to={`/agents/${run.agentId}`} className="hover:underline">
                   <AgentIdentity
-                    name={agentMap?.get(run.agentId)?.name ?? run.agentId.slice(0, 8)}
-                    icon={agentMap?.get(run.agentId)?.icon}
-                    role={agentMap?.get(run.agentId)?.role}
+                    name={agentName}
+                    icon={agent?.icon}
+                    role={agent?.role}
                     size="sm"
                   />
                 </Link>
@@ -229,21 +290,7 @@ const TimelineList = memo(function TimelineList({
                     {passiveLabel}
                   </span>
                 )}
-                <button
-                  type="button"
-                  aria-expanded={runExpanded}
-                  aria-controls={`run-output-${run.runId}`}
-                  className="ml-auto inline-flex items-center gap-1 rounded-md border border-border bg-background/70 px-2 py-1 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                  onClick={() => {
-                    setRunExpandedOverrides((current) => ({
-                      ...current,
-                      [run.runId]: !runExpanded,
-                    }));
-                  }}
-                >
-                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${runExpanded ? "rotate-180" : ""}`} />
-                  {toggleLabel}
-                </button>
+                <span className="ml-auto">{toggleButton}</span>
               </div>
               {runExpanded ? (
                 <div id={`run-output-${run.runId}`} className="max-h-56 overflow-y-auto pr-1">
