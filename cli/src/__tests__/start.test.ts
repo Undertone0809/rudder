@@ -1179,8 +1179,44 @@ describe("runtime install helpers", () => {
       ).rejects.toMatchObject({
         name: "RuntimeInstallError",
         output: "registry unavailable",
-        command: expect.stringContaining("npm install --prefix"),
+        command: expect.stringMatching(/npm install --prefix .* --include=optional/),
       } satisfies Partial<RuntimeInstallError>);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("forces optional dependencies into runtime installs for platform binaries", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rudder-runtime-install-flags-test."));
+    try {
+      const spawnSyncImpl = vi.fn(() => ({ status: 0, stdout: "added 1 package", stderr: "" }));
+
+      await expect(
+        ensureRuntimeInstalled({ version: "1.2.3", homeDir: root, spawnSyncImpl: spawnSyncImpl as never }),
+      ).resolves.toMatchObject({
+        status: "installed",
+        packageSpec: "@rudderhq/server@1.2.3",
+        command: expect.stringContaining("--include=optional"),
+      });
+
+      expect(spawnSyncImpl).toHaveBeenCalledWith(
+        npmInstallCommand,
+        [
+          "install",
+          "--prefix",
+          resolveRuntimeCacheDir("1.2.3", root),
+          "--omit=dev",
+          "--include=optional",
+          "--no-audit",
+          "--no-fund",
+          "@rudderhq/server@1.2.3",
+        ],
+        {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
+        },
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
