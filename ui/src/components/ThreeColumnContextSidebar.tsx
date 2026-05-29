@@ -75,8 +75,17 @@ import {
 import { ExactTimestampTooltip } from "@/components/HoverTimestamp";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CALENDAR_EVENT_STATUS_OPTIONS, useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
-import type { Agent, CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
+import { buildChatMentionHref, type Agent, type CalendarEventStatus, type CalendarSource, type Issue } from "@rudderhq/shared";
 import { RECENT_ISSUES_COLLAPSED_LIMIT, LINEAR_PLUGIN_KEY, LINEAR_CATALOG_DATA_KEY, LINEAR_PLUGIN_ROUTE_PATH, SidebarIssue, LinearSidebarItem, LinearSidebarCatalog, resolveLinearPageContribution, linearIssueSourceHref, SectionLabel, ContextColumnHeader, resolveContextColumnHeader, calendarStatusLabel, CALENDAR_LAYER_COLORS, CALENDAR_WEEKDAY_LABELS, calendarStartOfDay, calendarAddDays, calendarDateKey, calendarStartOfMonthGrid, calendarMonthTitle, calendarHeatClass, setStringSetValue, CalendarMiniMonth, VisibilityLayerRow, activeConversationIdFromPath, ContextItem, activeContextStyle, SlidingContextNav, SidebarLiveCount, ProjectListSection, SidebarIssueListSection } from "./ThreeColumnContextSidebar.parts";
+
+function escapeChatMarkdownLinkLabel(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/]/g, "\\]");
+}
+
+function chatReferenceMarkdown(conversation: { id: string; title: string; summary?: string | null; latestReplyPreview?: string | null }) {
+  const label = escapeChatMarkdownLinkLabel(displayChatTitle(conversation).trim() || "Chat");
+  return `[${label}](${buildChatMentionHref(conversation.id)})`;
+}
 
 export function ThreeColumnContextSidebar() {
   const location = useLocation();
@@ -460,12 +469,12 @@ export function ThreeColumnContextSidebar() {
     });
   };
 
-  const copyConversationId = async (conversationId: string) => {
+  const copyConversationLink = async (conversation: { id: string; title: string; summary?: string | null; latestReplyPreview?: string | null }) => {
     try {
-      await navigator.clipboard.writeText(conversationId);
-      pushToast({ title: "Chat ID copied", tone: "success" });
+      await navigator.clipboard.writeText(chatReferenceMarkdown(conversation));
+      pushToast({ title: "Chat link copied", tone: "success" });
     } catch {
-      pushToast({ title: "Could not copy chat ID", tone: "error" });
+      pushToast({ title: "Could not copy chat link", tone: "error" });
     }
   };
 
@@ -968,9 +977,9 @@ export function ThreeColumnContextSidebar() {
                         <PinOff className="h-4 w-4" />
                         Unpin
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => void copyConversationId(conversation.id)}>
+                      <DropdownMenuItem onClick={() => void copyConversationLink(conversation)}>
                         <Copy className="h-4 w-4" />
-                        Copy chat ID
+                        Copy Chat Link
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => {
@@ -1077,9 +1086,9 @@ export function ThreeColumnContextSidebar() {
                         <Pin className="h-4 w-4" />
                         Pin
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => void copyConversationId(conversation.id)}>
+                      <DropdownMenuItem onClick={() => void copyConversationLink(conversation)}>
                         <Copy className="h-4 w-4" />
-                        Copy chat ID
+                        Copy Chat Link
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => {

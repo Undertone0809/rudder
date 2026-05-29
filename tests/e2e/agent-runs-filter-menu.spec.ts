@@ -30,6 +30,7 @@ test.describe("Agent runs filter menu", () => {
 
     const selectedRunId = randomUUID();
     const failedRunId = randomUUID();
+    const newestShortRunId = randomUUID();
     await e2eDb.insert(heartbeatRuns).values([
       {
         id: selectedRunId,
@@ -74,6 +75,27 @@ test.describe("Agent runs filter menu", () => {
         createdAt: new Date("2026-05-23T09:00:00.000Z"),
         updatedAt: new Date("2026-05-23T09:45:00.000Z"),
       },
+      {
+        id: newestShortRunId,
+        orgId: organization.id,
+        agentId: agent.id,
+        invocationSource: "timer",
+        triggerDetail: "system",
+        status: "succeeded",
+        startedAt: new Date("2026-05-24T10:00:00.000Z"),
+        finishedAt: new Date("2026-05-24T10:01:00.000Z"),
+        usageJson: {
+          inputTokens: 2_000,
+          outputTokens: 200,
+        },
+        stdoutExcerpt: "Newest short run",
+        resultJson: { summary: "Newest short run" },
+        contextSnapshot: {
+          wakeReason: "heartbeat_timer",
+        },
+        createdAt: new Date("2026-05-24T10:00:00.000Z"),
+        updatedAt: new Date("2026-05-24T10:01:00.000Z"),
+      },
     ]);
     await e2eDb.insert(heartbeatRunEvents).values({
       orgId: organization.id,
@@ -106,6 +128,17 @@ test.describe("Agent runs filter menu", () => {
     await expect(mainContent.getByTestId("run-filter-floating-toolbar")).toBeVisible();
     await expect(mainContent.getByTestId("agent-runs-detail-pane").getByText("Selected run should stay open")).toBeVisible();
 
+    const listPane = mainContent.getByTestId("agent-runs-list-pane");
+    await expect(listPane.getByRole("link").first()).toContainText(newestShortRunId.slice(0, 8));
+
+    await mainContent.getByRole("button", { name: "Sort runs: Newest" }).click();
+    const sortPopover = page.getByTestId("run-sort-popover");
+    await expect(sortPopover).toBeVisible();
+    await sortPopover.getByRole("radio", { name: /Longest duration/ }).click();
+    await expect(page).toHaveURL(/runSort=duration_desc/);
+    await expect(sortPopover).toBeHidden();
+    await expect(listPane.getByRole("link").first()).toContainText(failedRunId.slice(0, 8));
+
     await mainContent.getByRole("button", { name: "Filter" }).click();
     const popover = page.getByTestId("run-filter-popover");
     await expect(popover).toBeVisible();
@@ -117,7 +150,6 @@ test.describe("Agent runs filter menu", () => {
     await popover.getByRole("button", { name: /build-advisor/ }).click();
     await expect(page).toHaveURL(/runSkill=build-advisor/);
 
-    const listPane = mainContent.getByTestId("agent-runs-list-pane");
     await expect(listPane.getByText("Selected run is outside the current filters.")).toBeVisible();
     await expect(listPane.getByText(failedRunId.slice(0, 8))).toBeVisible();
     await expect(mainContent.getByTestId("agent-runs-detail-pane").getByText("Selected run should stay open")).toBeVisible();

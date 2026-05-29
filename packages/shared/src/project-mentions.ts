@@ -3,6 +3,7 @@ import { PROJECT_COLORS } from "./constants.js";
 export const PROJECT_MENTION_SCHEME = "project://";
 export const AGENT_MENTION_SCHEME = "agent://";
 export const ISSUE_MENTION_SCHEME = "issue://";
+export const CHAT_MENTION_SCHEME = "chat://";
 
 const HEX_COLOR_RE = /^[0-9a-f]{6}$/i;
 const HEX_COLOR_SHORT_RE = /^[0-9a-f]{3}$/i;
@@ -27,6 +28,10 @@ export interface ParsedAgentMention {
 export interface ParsedIssueMention {
   issueId: string;
   ref: string | null;
+}
+
+export interface ParsedChatMention {
+  conversationId: string;
 }
 
 function normalizeHexColor(input: string | null | undefined): string | null {
@@ -159,6 +164,30 @@ export function parseIssueMentionHref(href: string): ParsedIssueMention | null {
   return {
     issueId,
     ref,
+  };
+}
+
+export function buildChatMentionHref(conversationId: string): string {
+  return `${CHAT_MENTION_SCHEME}${conversationId.trim()}`;
+}
+
+export function parseChatMentionHref(href: string): ParsedChatMention | null {
+  if (!href.startsWith(CHAT_MENTION_SCHEME)) return null;
+
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "chat:") return null;
+
+  const conversationId = `${url.hostname}${url.pathname}`.replace(/^\/+/, "").trim();
+  if (!conversationId) return null;
+
+  return {
+    conversationId,
   };
 }
 

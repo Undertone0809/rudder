@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { HeartbeatRun } from "@rudderhq/shared";
 import {
   applyRunFilters,
+  applyRunSort,
   parseRunFilterState,
   runFilterChips,
   runSkillOptions,
@@ -48,7 +49,7 @@ function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 
 describe("agent run filters", () => {
   it("parses and writes URL query state without dropping unrelated params", () => {
-    const original = new URLSearchParams("tab=runs&runView=failed&runStatus=failed,timed_out&runContext=retry&runSkill=build-advisor&runQ=process");
+    const original = new URLSearchParams("tab=runs&runView=failed&runStatus=failed,timed_out&runContext=retry&runSkill=build-advisor&runQ=process&runSort=duration_desc");
     const state = parseRunFilterState(original);
 
     expect(state.view).toBe("failed");
@@ -56,6 +57,7 @@ describe("agent run filters", () => {
     expect(state.contexts).toEqual(["retry"]);
     expect(state.skills).toEqual(["build-advisor"]);
     expect(state.q).toBe("process");
+    expect(state.sort).toBe("duration_desc");
 
     const next = writeRunFilterState(original, {
       view: "all",
@@ -63,6 +65,7 @@ describe("agent run filters", () => {
       statuses: [],
       contexts: [],
       skills: [],
+      sort: "newest",
     });
 
     expect(next.get("tab")).toBe("runs");
@@ -71,6 +74,7 @@ describe("agent run filters", () => {
     expect(next.get("runContext")).toBeNull();
     expect(next.get("runSkill")).toBeNull();
     expect(next.get("runQ")).toBeNull();
+    expect(next.get("runSort")).toBeNull();
   });
 
   it("filters by status, issue context, retry context, used skill, token cost, and search text", () => {
@@ -135,6 +139,7 @@ describe("agent run filters", () => {
       skills: ["build-advisor"],
       date: "all",
       cost: ["high_tokens"],
+      sort: "newest",
     });
 
     expect(filtered.map((item) => item.id)).toEqual([skillRun.id]);
@@ -172,6 +177,7 @@ describe("agent run filters", () => {
       skills: ["build-advisor", "debug-run-transcript"],
       date: "7d",
       cost: ["long"],
+      sort: "duration_desc",
     });
 
     expect(chips).toEqual([
@@ -183,6 +189,33 @@ describe("agent run filters", () => {
       "Skill: build-advisor, debug-run-transcript",
       ">30m",
       "7d",
+    ]);
+  });
+
+  it("sorts filtered runs by duration after filtering", () => {
+    const shortRun = run({
+      id: "11111111-0000-4000-8000-000000000000",
+      startedAt: new Date("2026-05-24T12:00:00.000Z"),
+      finishedAt: new Date("2026-05-24T12:03:00.000Z"),
+      createdAt: new Date("2026-05-24T12:00:00.000Z"),
+    });
+    const longRun = run({
+      id: "22222222-0000-4000-8000-000000000000",
+      startedAt: new Date("2026-05-24T11:00:00.000Z"),
+      finishedAt: new Date("2026-05-24T12:00:00.000Z"),
+      createdAt: new Date("2026-05-24T11:00:00.000Z"),
+    });
+    const mediumRun = run({
+      id: "33333333-0000-4000-8000-000000000000",
+      startedAt: new Date("2026-05-24T10:00:00.000Z"),
+      finishedAt: new Date("2026-05-24T10:20:00.000Z"),
+      createdAt: new Date("2026-05-24T10:00:00.000Z"),
+    });
+
+    expect(applyRunSort([shortRun, longRun, mediumRun], "duration_desc").map((item) => item.id)).toEqual([
+      longRun.id,
+      mediumRun.id,
+      shortRun.id,
     ]);
   });
 });

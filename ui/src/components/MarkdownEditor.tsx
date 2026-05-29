@@ -475,6 +475,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           continue;
         }
 
+        if (parsed.kind === "chat") {
+          applyMentionChipDecoration(link, parsed);
+          continue;
+        }
+
         const option = mentionOptionByKey.get(`agent:${parsed.agentId}`);
         applyMentionChipDecoration(link, {
           ...parsed,

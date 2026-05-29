@@ -21,7 +21,7 @@ import {
   UserPlus,
   XCircle,
 } from "lucide-react";
-import { formatMessengerPreview, formatMessengerTitle, type ChatConversation } from "@rudderhq/shared";
+import { buildChatMentionHref, formatMessengerPreview, formatMessengerTitle, type ChatConversation } from "@rudderhq/shared";
 import { chatsApi } from "@/api/chats";
 import { messengerApi } from "@/api/messenger";
 import { Link, useLocation, useNavigate } from "@/lib/router";
@@ -55,6 +55,15 @@ const THREAD_ORGANIZATION_OPTIONS: Array<{ value: ThreadOrganizationRule; label:
   { value: "kind", label: "Thread type" },
   { value: "attention", label: "Needs attention" },
 ];
+
+function escapeMarkdownLinkLabel(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/]/g, "\\]");
+}
+
+function chatReferenceMarkdown(conversation: Pick<ChatConversation, "id" | "title" | "summary">) {
+  const label = escapeMarkdownLinkLabel(displayChatTitle(conversation).trim() || "Chat");
+  return `[${label}](${buildChatMentionHref(conversation.id)})`;
+}
 
 function ContextColumnHeader({
   title,
@@ -258,7 +267,7 @@ function ChatThreadRow({
   onArchive,
   onTogglePin,
   onToggleUnread,
-  onCopyConversationId,
+  onCopyConversationLink,
   onSelect,
 }: {
   conversation: ChatConversation;
@@ -273,7 +282,7 @@ function ChatThreadRow({
   onArchive: () => void;
   onTogglePin: () => void;
   onToggleUnread: () => void;
-  onCopyConversationId: () => void;
+  onCopyConversationLink: () => void;
   onSelect: (href: string) => void;
 }) {
   const timeLabel = relativeTime(conversation.lastMessageAt ?? conversation.updatedAt);
@@ -416,9 +425,9 @@ function ChatThreadRow({
                   </>
                 )}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={onCopyConversationId}>
+              <DropdownMenuItem onClick={onCopyConversationLink}>
                 <Copy className="h-4 w-4" />
-                Copy chat ID
+                Copy Chat Link
               </DropdownMenuItem>
               <DropdownMenuItem onClick={onArchive}>
                 <Archive className="h-4 w-4" />
@@ -800,9 +809,9 @@ export function MessengerContextSidebar() {
     });
   };
 
-  const copyConversationId = async (conversationId: string) => {
+  const copyConversationLink = async (conversation: ChatConversation) => {
     try {
-      await navigator.clipboard.writeText(conversationId);
+      await navigator.clipboard.writeText(chatReferenceMarkdown(conversation));
     } catch {
       // Ignore clipboard failures in restricted environments.
     }
@@ -968,7 +977,7 @@ export function MessengerContextSidebar() {
                         unread: !conversation.isUnread,
                       });
                     }}
-                    onCopyConversationId={() => void copyConversationId(conversation.id)}
+                    onCopyConversationLink={() => void copyConversationLink(conversation)}
                     onSelect={handleMessengerEntrySelect}
                   />
                 );

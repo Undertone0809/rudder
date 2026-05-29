@@ -14,6 +14,7 @@ import {
   Paperclip,
   Pencil,
   Plus,
+  Repeat,
   RotateCcw,
   Settings2,
   Square,
@@ -861,6 +862,11 @@ function automationSourceSystemMessageParts(message: ChatMessage) {
   };
 }
 
+function isAutomationSystemMessage(message: ChatMessage) {
+  const eventType = message.structuredPayload?.eventType;
+  return eventType === "automation_source" || eventType === "automation_created";
+}
+
 export function ChatSystemMessageBody({
   message,
   skillReferences,
@@ -1441,10 +1447,12 @@ export function ChatMessageItem({
   }
 
   if (message.role === "system") {
+    const SystemMessageIcon = isAutomationSystemMessage(message) ? Repeat : CheckCircle2;
+
     return (
       <div className="chat-system-pill rounded-[calc(var(--radius-sm)+2px)] px-4 py-2 text-sm transition-all duration-200">
         <div className="flex items-center gap-2">
-          <CheckCircle2 className="h-4 w-4 text-[color:var(--accent-strong)]" />
+          <SystemMessageIcon className="h-4 w-4 text-[color:var(--accent-strong)]" aria-hidden />
           <ChatSystemMessageBody
             message={message}
             skillReferences={skillReferences}

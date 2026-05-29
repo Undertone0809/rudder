@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ThemeProvider } from "@/context/ThemeContext";
 import {
   ChatSystemMessageBody,
+  ChatMessageItem,
   INTERRUPTED_CHAT_CONTINUATION_PROMPT,
   ProposalCard,
   askUserAnswerFromMessage,
@@ -125,6 +126,31 @@ function renderSystemMessageBody(message: ChatMessage) {
   );
 }
 
+function renderChatMessageItem(messageToRender: ChatMessage) {
+  return renderToStaticMarkup(
+    <ThemeProvider>
+      <ChatMessageItem
+        conversation={conversation({})}
+        message={messageToRender}
+        agents={[]}
+        decisionNote=""
+        onDecisionNoteChange={vi.fn()}
+        onApprovalAction={vi.fn()}
+        onResolveOperationProposal={vi.fn()}
+        onConvertToIssue={vi.fn()}
+        actionPending={false}
+        onCopyMessageText={vi.fn()}
+        onEditUserMessage={vi.fn()}
+        onContinueInterruptedMessage={vi.fn()}
+        onRetryFailedMessage={vi.fn()}
+        onOpenImage={vi.fn()}
+        onOpenFile={vi.fn()}
+        skillReferences={[]}
+      />
+    </ThemeProvider>,
+  );
+}
+
 function renderProposalCard(
   message: ChatMessage,
   chat: ChatConversation = conversation({}),
@@ -183,19 +209,23 @@ describe("ChatSystemMessageBody", () => {
   });
 
   it("renders automation source events as links back to automation detail", () => {
-    const html = renderSystemMessageBody(message({
+    const automationMessage = message({
       body: "From automation Say hello.",
       structuredPayload: {
         eventType: "automation_source",
         automationId: "auto-1",
         automationTitle: "Say hello",
       },
-    }));
+    });
+    const html = renderSystemMessageBody(automationMessage);
+    const messageHtml = renderChatMessageItem(automationMessage);
 
     expect(html).toContain("From automation");
     expect(html).toContain('href="/automations/auto-1"');
     expect(html).toContain('aria-label="Open automation Say hello"');
     expect(html).toContain(">Say hello</a>.");
+    expect(messageHtml).toContain("lucide-repeat");
+    expect(messageHtml).not.toContain("lucide-circle-check");
   });
 
   it("renders created automation events as links back to automation detail", () => {

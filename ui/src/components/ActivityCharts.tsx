@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatPriorityLabel } from "../lib/priorities";
+import { describeRunReason } from "../lib/run-reason";
 
 /* ---- Utilities ---- */
 
@@ -285,6 +286,16 @@ const skillsPalette = [
 
 const otherSkillsColor = "#737373";
 const minimumRunsForSkillEvidenceChart = 2;
+
+const triggerPalette = [
+  "#2563eb",
+  "#f59e0b",
+  "#10b981",
+  "#ef4444",
+  "#8b5cf6",
+  "#06b6d4",
+  "#737373",
+];
 
 export function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
@@ -752,6 +763,90 @@ export function SuccessRateChart({
           })}
         </ScaledBarChartFrame>
       </div>
+    </TooltipProvider>
+  );
+}
+
+export function RunTriggerDistributionChart({
+  runs,
+}: {
+  runs: HeartbeatRun[];
+}) {
+  const counts = new Map<string, number>();
+  for (const run of runs) {
+    const label = describeRunReason(run).label;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+
+  const total = runs.length;
+  const entries = Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([label, count], index) => ({
+      label,
+      count,
+      color: triggerPalette[index % triggerPalette.length]!,
+    }));
+
+  if (total === 0) return <p className="text-xs text-muted-foreground">No runs yet</p>;
+
+  return (
+    <TooltipProvider delayDuration={120}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Run trigger distribution: ${total} runs across ${entries.length} triggers`}
+            className="w-full appearance-none rounded-md bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            <div className="flex h-4 overflow-hidden rounded-sm border border-border/70 bg-muted/30" data-testid="run-trigger-distribution-bar">
+              {entries.map((entry) => (
+                <span
+                  key={entry.label}
+                  aria-hidden="true"
+                  style={{
+                    width: `${(entry.count / total) * 100}%`,
+                    backgroundColor: entry.color,
+                  }}
+                />
+              ))}
+            </div>
+            <div className="mt-3 space-y-1.5">
+              {entries.slice(0, 4).map((entry) => (
+                <div key={entry.label} className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="min-w-0 flex items-center gap-1.5 text-muted-foreground">
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
+                    <span className="truncate">{entry.label}</span>
+                  </span>
+                  <span className="shrink-0 tabular-nums text-foreground">{entry.count}</span>
+                </div>
+              ))}
+              {entries.length > 4 ? (
+                <div className="text-[11px] text-muted-foreground">+{entries.length - 4} more trigger{entries.length - 4 === 1 ? "" : "s"}</div>
+              ) : null}
+            </div>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="min-w-[220px] px-3 py-2">
+          <div className="space-y-2">
+            <div className="border-b border-background/15 pb-2">
+              <div className="font-medium text-background">Run trigger distribution</div>
+              <div className="text-[11px] text-background/70">
+                {total} run{total === 1 ? "" : "s"} in this window
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              {entries.map((entry) => (
+                <TooltipMetricRow
+                  key={entry.label}
+                  color={entry.color}
+                  label={entry.label}
+                  value={`${entry.count} · ${formatPercent(entry.count, total)}`}
+                />
+              ))}
+            </div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
     </TooltipProvider>
   );
 }

@@ -832,18 +832,22 @@ export {
 } from "./organization-skill-reference.js";
 export {
   AGENT_MENTION_SCHEME,
+  CHAT_MENTION_SCHEME,
   ISSUE_MENTION_SCHEME,
   PROJECT_MENTION_SCHEME,
   buildAgentMentionHref,
+  buildChatMentionHref,
   buildIssueMentionHref,
   buildProjectMentionHref,
   extractAgentMentionIds,
   extractIssueMentionIds,
   parseAgentMentionHref,
+  parseChatMentionHref,
   parseIssueMentionHref,
   parseProjectMentionHref,
   extractProjectMentionIds,
   type ParsedAgentMention,
+  type ParsedChatMention,
   type ParsedIssueMention,
   type ParsedProjectMention,
 } from "./project-mentions.js";

@@ -1850,6 +1850,17 @@ a.rudder-mention-chip[data-mention-kind="agent"]::before {
   mask-size: contain;
 }
 
+.rudder-mdxeditor-content .rudder-mention-chip[data-mention-kind="chat"]::before,
+a.rudder-mention-chip[data-mention-kind="chat"]::before {
+  content: "";
+  flex: none;
+  width: 0.65rem;
+  height: 0.65rem;
+  border: 1.5px solid currentColor;
+  border-radius: 0.16rem;
+  box-shadow: -0.16rem 0.16rem 0 -0.08rem currentColor;
+}
+
 .rudder-mdxeditor-content ul,
 .rudder-mdxeditor-content ol {
   margin: 1.1em 0;
