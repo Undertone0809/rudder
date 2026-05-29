@@ -63,7 +63,8 @@ Adapter 应该消费这份已经准备好的 config。它不应该根据宿主 C
 | --- | --- |
 | Codex local | 使用按 agent 管理的 `CODEX_HOME` 和 `HOME`，把启用的 skills 链接到 `CODEX_HOME/skills`，清理过期的 Rudder-managed skill entries，禁用 Codex bundled skills，并以 plugins disabled 的方式启动 Codex。这是 Rudder 目前最强的本地 CLI 隔离。 |
 | Claude Code local | 使用按 agent 管理的 Claude `HOME`，每次运行重置这个托管 home 里的 `.claude/skills`，只 symlink 已启用的 Rudder runtime skills，写入托管的 `.claude/settings.json` skill overrides，禁用 slash commands，使用 strict MCP config，并只读取托管 user settings。 |
-| Gemini、OpenCode、Pi、Cursor、Hermes local | 在支持时使用按 agent 托管的 runtime home，只把启用的 Rudder runtime skills materialize 到托管 skill 目录，清理过期的 Rudder-managed entries，并注入和本地 CLI runtime 家族一致的 `Rudder Runtime Skill Boundary` prompt。 |
+| Gemini、OpenCode、Pi、Cursor local | 在支持时使用按 agent 托管的 runtime home，只把启用的 Rudder runtime skills materialize 到托管 skill 目录，清理过期的 Rudder-managed entries，并注入和本地 CLI runtime 家族一致的 `Rudder Runtime Skill Boundary` prompt。 |
+| Hermes local | 面向外部 Hermes/Paperclip 风格 adapter 的兼容 runtime。Rudder 会传入准备好的运行上下文和 skill config，但外部 adapter 必须自己遵守 skill-boundary contract；Rudder 目前没有为 Hermes 提供和上面本地 CLI adapters 一样的 managed-home skill materialization 保证。 |
 | Shell process、HTTP webhook、gateway | Rudder 传入准备好的运行上下文和 skill config。外部进程或服务负责遵守这个契约。 |
 
 物理隔离会受 adapter 和底层 CLI 能力影响。产品规则不受 adapter 影响：在 Rudder 里显示为启用的 agent skills，只能来自 Rudder 为这个 agent 选择的 skills。

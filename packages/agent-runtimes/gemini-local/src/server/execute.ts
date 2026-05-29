@@ -83,7 +83,7 @@ function renderApiAccessNote(env: Record<string, string>): string {
     '  run_shell_command({ command: "\\"${RUDDER_CLI:-rudder}\\" issue checkout {id} --json" })',
     '  run_shell_command({ command: "printf \'%s\\\\n\' \\"progress\\" | \\"${RUDDER_CLI:-rudder}\\" issue comment {id} --body-file - --json" })',
     '  run_shell_command({ command: "printf \'%s\\\\n\' \\"done\\" | \\"${RUDDER_CLI:-rudder}\\" issue done {id} --comment-file - --json" })',
-    '  run_shell_command({ command: "\\"${RUDDER_CLI:-rudder}\\" agent hire --org-id \\"$RUDDER_ORG_ID\\" --payload \'{\\"name\\":\\"<requested helper name>\\",\\"role\\":\\"general\\",\\"title\\":\\"<requested helper title or name>\\",\\"capabilities\\":\\"<requested helper capabilities>\\",\\"desiredSkills\\":[\\"rudder/rudder\\"],\\"agentRuntimeType\\":\\"codex_local\\",\\"agentRuntimeConfig\\":{}}\' --json" })',
+    '  run_shell_command({ command: "\\"${RUDDER_CLI:-rudder}\\" agent hire --org-id \\"$RUDDER_ORG_ID\\" --payload \'{\\"name\\":\\"<requested helper name>\\",\\"role\\":\\"<requested helper role>\\",\\"title\\":\\"<requested helper title or name>\\",\\"capabilities\\":\\"<requested helper capabilities>\\",\\"desiredSkills\\":[\\"<requested org skill ref>\\"],\\"agentRuntimeType\\":\\"<requested runtime type>\\",\\"agentRuntimeConfig\\":{}}\' --json" })',
     "",
     "",
   ].join("\n");
@@ -358,17 +358,17 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       notes.push("Added --skip-trust for unattended execution in managed runtime directories.");
     }
     if (!instructionsFilePath) {
-      notes.push(...loadedInstructions.commandNotes, "Prepended Rudder operating contract to prompt.");
+      notes.push(...loadedInstructions.commandNotes, "Prepended Rudder operating contract and runtime skill boundary to prompt.");
       return notes;
     }
     if (instructionsPrefix.length > 0) {
       notes.push(
         ...loadedInstructions.commandNotes,
-        `Prepended instructions + path directive to prompt (relative references from ${instructionsDir}).`,
+        `Prepended instructions + path directive, Rudder operating contract, and runtime skill boundary to prompt (relative references from ${instructionsDir}).`,
       );
       return notes;
     }
-    notes.push(...loadedInstructions.commandNotes);
+    notes.push(...loadedInstructions.commandNotes, "Prepended Rudder operating contract and runtime skill boundary to prompt.");
     return notes;
   })();
 

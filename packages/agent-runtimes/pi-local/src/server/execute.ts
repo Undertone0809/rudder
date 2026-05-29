@@ -87,7 +87,7 @@ function renderApiAccessNote(env: Record<string, string>): string {
     "  \"${RUDDER_CLI:-rudder}\" issue checkout {id} --json",
     "  printf '%s\\n' \"progress\" | \"${RUDDER_CLI:-rudder}\" issue comment {id} --body-file - --json",
     "  printf '%s\\n' \"done\" | \"${RUDDER_CLI:-rudder}\" issue done {id} --comment-file - --json",
-    "  \"${RUDDER_CLI:-rudder}\" agent hire --org-id \"$RUDDER_ORG_ID\" --payload '{\"name\":\"<requested helper name>\",\"role\":\"general\",\"title\":\"<requested helper title or name>\",\"capabilities\":\"<requested helper capabilities>\",\"desiredSkills\":[\"rudder/rudder\"],\"agentRuntimeType\":\"codex_local\",\"agentRuntimeConfig\":{}}' --json",
+    "  \"${RUDDER_CLI:-rudder}\" agent hire --org-id \"$RUDDER_ORG_ID\" --payload '{\"name\":\"<requested helper name>\",\"role\":\"<requested helper role>\",\"title\":\"<requested helper title or name>\",\"capabilities\":\"<requested helper capabilities>\",\"desiredSkills\":[\"<requested org skill ref>\"],\"agentRuntimeType\":\"<requested runtime type>\",\"agentRuntimeConfig\":{}}' --json",
     "",
     "",
   ].join("\n");
@@ -322,7 +322,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (approvalId) env.RUDDER_APPROVAL_ID = approvalId;
   if (approvalStatus) env.RUDDER_APPROVAL_STATUS = approvalStatus;
   if (linkedIssueIds.length > 0) env.RUDDER_LINKED_ISSUE_IDS = linkedIssueIds.join(",");
-  if (workspaceCwd) env.RUDDER_WORKSPACE_CWD = workspaceCwd;
+  if (effectiveWorkspaceCwd) env.RUDDER_WORKSPACE_CWD = effectiveWorkspaceCwd;
   if (workspaceSource) env.RUDDER_WORKSPACE_SOURCE = workspaceSource;
   if (workspaceId) env.RUDDER_WORKSPACE_ID = workspaceId;
   if (workspaceRepoUrl) env.RUDDER_WORKSPACE_REPO_URL = workspaceRepoUrl;
@@ -506,13 +506,18 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (!resolvedInstructionsFilePath) {
       return [
         ...loadedInstructions.commandNotes,
-        "Appended Rudder operating contract to system prompt.",
+        "Appended Rudder operating contract and runtime skill boundary to system prompt.",
       ];
     }
-    if (loadedInstructions.readFailed) return loadedInstructions.commandNotes;
+    if (loadedInstructions.readFailed) {
+      return [
+        ...loadedInstructions.commandNotes,
+        "Appended Rudder operating contract and runtime skill boundary to system prompt.",
+      ];
+    }
     return [
       ...loadedInstructions.commandNotes,
-      `Appended instructions + path directive to system prompt (relative references from ${instructionsFileDir}).`,
+      `Appended instructions + path directive, Rudder operating contract, and runtime skill boundary to system prompt (relative references from ${instructionsFileDir}).`,
     ];
   })();
 

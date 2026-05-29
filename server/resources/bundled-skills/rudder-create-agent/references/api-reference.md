@@ -50,10 +50,10 @@ Representative shape:
   "title": "Chief Technology Officer",
   "status": "idle",
   "reportsTo": "uuid-or-null",
-  "agentRuntimeType": "codex_local",
+  "agentRuntimeType": "<runtime-type>",
   "agentRuntimeConfig": {
     "cwd": "/absolute/path",
-    "model": "o4-mini"
+    "model": "<model-id>"
   },
   "runtimeConfig": {
     "heartbeat": {
@@ -78,16 +78,16 @@ Request body:
 
 ```json
 {
-  "role": "cto",
-  "title": "Chief Technology Officer",
+  "role": "<selected role>",
+  "title": "<selected title>",
   "reportsTo": "uuid-or-null",
-  "capabilities": "Owns architecture and engineering execution",
-  "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
-  "agentRuntimeType": "codex_local",
+  "capabilities": "<selected durable capabilities>",
+  "desiredSkills": ["<selected org skill ref>"],
+  "agentRuntimeType": "<selected runtime type>",
   "agentRuntimeConfig": {
     "cwd": "/absolute/path",
-    "model": "o4-mini",
-    "promptTemplate": "# SOUL.md -- CTO Persona\n\nYou are the CTO.\n\n## Mission\nOwn technical strategy, architecture, engineering execution, and quality bars.\n\n## Responsibilities\n- Set technical direction and execution standards.\n- Review architecture and staffing trade-offs.\n- Keep delivery risks visible and actionable.\n\n## Boundaries\n- Do not approve risky shortcuts without naming the trade-off.\n- Escalate product or budget ambiguity instead of guessing.\n\n## Decision Principles\n- Prefer simple architectures with explicit trade-offs.\n- Treat reliability, developer velocity, and product learning as linked constraints.\n\n## Voice\nDirect, specific, and evidence-led.\n\n## Continuity\nPreserve durable technical standards, repeated failure patterns, and long-running architecture decisions in memory or explicit instructions."
+    "model": "<selected model id>",
+    "promptTemplate": "# SOUL.md -- <selected persona>\n\n<full agent instructions>"
   },
   "runtimeConfig": {
     "heartbeat": {

@@ -29,10 +29,16 @@ const stdin = fs.readFileSync(0, "utf8");
 if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify({
     argv: process.argv.slice(2),
+    cwd: process.cwd(),
     stdin,
     rudderEnvKeys: Object.keys(process.env)
       .filter((key) => key.startsWith("RUDDER_"))
       .sort(),
+    rudderEnv: Object.fromEntries(
+      Object.entries(process.env)
+        .filter(([key]) => key.startsWith("RUDDER_"))
+        .sort(([left], [right]) => left.localeCompare(right)),
+    ),
     gitIdentity: captureGitIdentityEnv(),
   }), "utf8");
 }
@@ -93,8 +99,10 @@ process.exit(0);
 
 type CapturePayload = {
   argv: string[];
+  cwd: string;
   stdin: string;
   rudderEnvKeys: string[];
+  rudderEnv: Record<string, string>;
   gitIdentity: GitIdentityCapture;
 };
 
@@ -272,6 +280,68 @@ describe("pi execute", () => {
       expect(promptMetrics.memoryChars).toBeGreaterThan(0);
       expect(promptMetrics.instructionEntryChars).toBeGreaterThan(0);
       expect(promptMetrics.runtimeNoteChars).toBeGreaterThan(0);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not publish agent-home workspace cwd when config cwd overrides execution", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-pi-cwd-"));
+    const agentHome = path.join(root, "agent-home");
+    const configuredWorkspace = path.join(root, "configured-workspace");
+    const commandPath = path.join(root, "pi");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(agentHome, { recursive: true });
+    await fs.mkdir(configuredWorkspace, { recursive: true });
+    await writeFakePiCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const result = await execute({
+        runId: "run-pi-configured-cwd",
+        agent: {
+          id: "agent-1",
+          orgId: "organization-1",
+          name: "Pi Agent",
+          agentRuntimeType: "pi",
+          agentRuntimeConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: configuredWorkspace,
+          model: "openai/gpt-test",
+          env: {
+            ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the rudder heartbeat.",
+        },
+        context: {
+          rudderWorkspace: {
+            cwd: agentHome,
+            source: "agent_home",
+            agentHome,
+          },
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.rudderEnv.RUDDER_WORKSPACE_SOURCE).toBe("agent_home");
+      expect(capture.rudderEnv.RUDDER_WORKSPACE_CWD).toBeUndefined();
+      await expect(fs.realpath(capture.cwd)).resolves.toBe(await fs.realpath(configuredWorkspace));
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

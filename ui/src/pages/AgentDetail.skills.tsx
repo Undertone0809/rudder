@@ -285,8 +285,7 @@ export function AgentSkillsTab({
     getBundledRudderSkillSlug(skillKey) ? `bundled:${skillKey}` : `org:${skillKey}`
   ), []);
 
-  const getOrganizationBadgeLabel = useCallback((sourceBadge: string | null | undefined, alwaysEnabled: boolean) => {
-    if (alwaysEnabled) return "Bundled by Rudder";
+  const getOrganizationBadgeLabel = useCallback((sourceBadge: string | null | undefined, sourceLabel: string | null | undefined) => {
     switch (sourceBadge) {
       case "community":
         return "Community preset";
@@ -301,7 +300,7 @@ export function AgentSkillsTab({
       case "catalog":
         return "Catalog";
       case "rudder":
-        return "Rudder workspace";
+        return sourceLabel ?? "Bundled by Rudder";
       default:
         return null;
     }
@@ -312,18 +311,18 @@ export function AgentSkillsTab({
     slug: string;
     description?: string | null;
   }): AgentSkillEntry => {
-    const alwaysEnabled = getBundledRudderSkillSlug(skill.key) !== null;
+    const bundled = getBundledRudderSkillSlug(skill.key) !== null;
     return {
       key: skill.slug,
       selectionKey: getOrganizationSelectionKey(skill.key),
       runtimeName: skill.slug,
       description: skill.description ?? null,
-      desired: alwaysEnabled,
-      configurable: !alwaysEnabled,
-      alwaysEnabled,
+      desired: false,
+      configurable: true,
+      alwaysEnabled: false,
       managed: true,
-      state: alwaysEnabled ? "configured" : "available",
-      sourceClass: alwaysEnabled ? "bundled" : "organization",
+      state: "available",
+      sourceClass: bundled ? "bundled" : "organization",
     };
   }, [getOrganizationSelectionKey]);
 
@@ -338,7 +337,7 @@ export function AgentSkillsTab({
         .map((skill) => {
           const entry = entryBySelectionKey.get(getOrganizationSelectionKey(skill.key))
             ?? buildFallbackOrganizationEntry(skill);
-          const badgeLabel = getOrganizationBadgeLabel(skill.sourceBadge, entry.alwaysEnabled);
+          const badgeLabel = getOrganizationBadgeLabel(skill.sourceBadge, skill.sourceLabel);
           return {
             id: entry.selectionKey,
             selectionKey: entry.selectionKey,
@@ -523,9 +522,9 @@ export function AgentSkillsTab({
   const isSkillsLoading = isLoading || organizationSkillsLoading;
   const saveStatusLabel = syncSkills.isPending ? "Saving..." : null;
 
-  const controlsHelperText = "Rudder always loads the bundled Rudder skills. Agent, organization, global, and adapter skills load only when enabled on this page.";
+  const controlsHelperText = "Rudder Agent Skills load only when enabled on this page. Adapter, global, project, plugin, slash-command, and host-installed skills are discovery-only until selected.";
   const agentSectionHelperText = "Agent-private skills belong to this agent only. Edit them in Workspaces, then enable them here when you want Rudder to load them.";
-  const organizationSectionHelperText = "Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Workspaces.";
+  const organizationSectionHelperText = "Bundled, community preset, and organization skills are optional selections controlled by this page; workspace-backed skills can be edited from Workspaces.";
   const externalSectionHelperText = "Global and adapter skills are discovered from ~/.agents/skills and the current runtime adapter home. Discovery does not enable them; only the selections on this page determine runtime loading.";
 
   const updateSkillDraft = useCallback((updater: (current: string[]) => string[]) => {
@@ -924,4 +923,3 @@ export function AgentSkillsTab({
 }
 
 /* ---- Runs Tab ---- */
-

@@ -27,22 +27,22 @@ This workflow is **CLI-first**.
 ## Fast Path For Simple Hire Requests
 
 When an issue explicitly asks you to create one helper agent and gives the
-agent name/capability, use this minimal sequence. Replace the placeholder
-`name`, `title`, and `capabilities` values with the values requested by the
-issue before running the command.
+agent name, role, runtime, skills, and capability, use this minimal sequence.
+Replace every placeholder with the values requested by the issue before running
+the command. Do not silently default the helper to Codex, `general`, or
+`rudder/rudder`; inspect existing agent configs or the adapter docs when the
+request does not specify those choices.
 
 ```bash
 "${RUDDER_CLI:-rudder}" agent me --json
 "${RUDDER_CLI:-rudder}" agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "name": "<issue-requested agent name>",
-  "role": "general",
+  "role": "<issue-requested agent role>",
   "title": "<issue-requested agent title or name>",
   "capabilities": "<issue-requested agent capabilities>",
-  "desiredSkills": ["rudder/rudder"],
-  "agentRuntimeType": "codex_local",
-  "agentRuntimeConfig": {
-    "promptTemplate": "# SOUL.md -- <issue-requested agent name>\n\nYou are a helper agent for the current Rudder organization.\n\n## Mission\nHelp with the specific work described by the source issue.\n\n## Boundaries\nUse Rudder issue comments and close-out signals for coordination."
-  },
+  "desiredSkills": ["<issue-requested org skill ref>"],
+  "agentRuntimeType": "<issue-requested runtime type>",
+  "agentRuntimeConfig": {},
   "sourceIssueId": "'"$RUDDER_TASK_ID"'"
 }' --json
 ```
@@ -56,8 +56,10 @@ approval:
 printf '%s\n' "created/requested helper agent <agent-id-or-name>; approval <approval-id/status if present>" | "${RUDDER_CLI:-rudder}" issue done "$RUDDER_TASK_ID" --comment-file - --json
 ```
 
-Only read the full adapter docs when the task asks for a specific runtime,
-budget, reporting line, skills, or non-default configuration.
+Read the full adapter docs when the task omits runtime, role, skills, budget,
+reporting line, or non-default configuration. For simple helper requests that
+only provide a name and capability, mirror an appropriate existing agent config
+or state the missing choice in the issue comment instead of inventing defaults.
 
 ## Workflow
 
@@ -142,16 +144,16 @@ Draft `promptTemplate` as a durable SOUL document, not a one-line command. Use t
 
 ```sh
 "${RUDDER_CLI:-rudder}" agent hire --org-id "$RUDDER_ORG_ID" --payload '{
-  "role": "cto",
-  "title": "Chief Technology Officer",
-  "reportsTo": "<ceo-agent-id>",
-  "capabilities": "Owns technical roadmap, architecture, staffing, execution",
-  "desiredSkills": ["vercel-labs/agent-browser/agent-browser"],
-  "agentRuntimeType": "codex_local",
+  "role": "<selected role>",
+  "title": "<selected title>",
+  "reportsTo": "<reports-to-agent-id-or-null>",
+  "capabilities": "<selected durable capabilities>",
+  "desiredSkills": ["<selected org skill ref>"],
+  "agentRuntimeType": "<selected runtime type>",
   "agentRuntimeConfig": {
-    "cwd": "/abs/path/to/repo",
-    "model": "o4-mini",
-    "promptTemplate": "# SOUL.md -- CTO Persona\n\nYou are the CTO.\n\n## Mission\nOwn technical strategy, architecture, engineering execution, and quality bars.\n\n## Responsibilities\n- Set technical direction and execution standards.\n- Review architecture and staffing trade-offs.\n- Keep delivery risks visible and actionable.\n\n## Boundaries\n- Do not approve risky shortcuts without naming the trade-off.\n- Escalate product or budget ambiguity instead of guessing.\n\n## Decision Principles\n- Prefer simple architectures with explicit trade-offs.\n- Treat reliability, developer velocity, and product learning as linked constraints.\n\n## Voice\nDirect, specific, and evidence-led.\n\n## Continuity\nPreserve durable technical standards, repeated failure patterns, and long-running architecture decisions in memory or explicit instructions."
+    "cwd": "<absolute workspace path when required>",
+    "model": "<selected model id when required>",
+    "promptTemplate": "# SOUL.md -- <selected persona>\n\n<full agent instructions>"
   },
   "runtimeConfig": {"heartbeat": {"enabled": true, "intervalSec": 300, "wakeOnDemand": true, "maxConcurrentRuns": 3}},
   "sourceIssueId": "<issue-id>"

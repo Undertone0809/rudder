@@ -45,7 +45,7 @@ Notes:
 - Prompts are piped via stdin (Codex receives "-" prompt argument).
 - Rudder always prepends its shared operating contract to the stdin prompt. If instructionsFilePath is configured, Rudder also prepends that file plus sibling SOUL.md, TOOLS.md, and MEMORY.md when present.
 - Codex exec automatically applies repo-scoped AGENTS.md instructions from the active workspace. Rudder cannot suppress that discovery in exec mode, so repo AGENTS.md files may still apply even when you only configured an explicit instructionsFilePath.
-- Agent enabled-skill state is controlled only by Rudder's bundled skills plus the selections saved on the agent's Skills page.
+- Agent enabled-skill state is controlled only by the selections saved on the agent's Skills page. Bundled Rudder skills are not loaded unless selected there.
 - The codex_local adapter does not materialize skills into repo-scoped ".agents/skills"; it realizes selected skills by linking them into the Rudder-managed \`CODEX_HOME/skills\` directory that Codex discovers at runtime.
 - Unless explicitly overridden in adapter config, Rudder runs Codex with a per-agent managed CODEX_HOME under the active Rudder instance and seeds auth/config from the shared Codex home (the CODEX_HOME env var, when set, or ~/.codex).
 - Rudder uses a managed runtime HOME so Codex does not auto-discover unrelated global skills from ~/.agents/skills during agent runs, but bridges common local CLI credential directories (for example gh/ssh/npm/cloud CLIs) into that managed HOME.

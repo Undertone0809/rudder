@@ -332,7 +332,7 @@ function renderApiAccessNote(env: Record<string, string>): string {
     "  \"${RUDDER_CLI:-rudder}\" issue checkout {id} --json",
     "  printf '%s\\n' \"progress\" | \"${RUDDER_CLI:-rudder}\" issue comment {id} --body-file - --json",
     "  printf '%s\\n' \"done\" | \"${RUDDER_CLI:-rudder}\" issue done {id} --comment-file - --json",
-    "  \"${RUDDER_CLI:-rudder}\" agent hire --org-id \"$RUDDER_ORG_ID\" --payload '{\"name\":\"<requested helper name>\",\"role\":\"general\",\"title\":\"<requested helper title or name>\",\"capabilities\":\"<requested helper capabilities>\",\"desiredSkills\":[\"rudder/rudder\"],\"agentRuntimeType\":\"codex_local\",\"agentRuntimeConfig\":{}}' --json",
+    "  \"${RUDDER_CLI:-rudder}\" agent hire --org-id \"$RUDDER_ORG_ID\" --payload '{\"name\":\"<requested helper name>\",\"role\":\"<requested helper role>\",\"title\":\"<requested helper title or name>\",\"capabilities\":\"<requested helper capabilities>\",\"desiredSkills\":[\"<requested org skill ref>\"],\"agentRuntimeType\":\"<requested runtime type>\",\"agentRuntimeConfig\":{}}' --json",
     "",
     "",
   ].join("\n");

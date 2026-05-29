@@ -35,10 +35,20 @@ async function resolveSingleAgentWorkspaceRoot(orgId: string) {
   return path.join(agentsRoot, entries[0]!);
 }
 
+async function writeHostSkill(root: string, segments: string[], slug: string) {
+  const skillDir = path.join(root, ...segments, slug);
+  await fs.mkdir(skillDir, { recursive: true });
+  await fs.writeFile(
+    path.join(skillDir, "SKILL.md"),
+    `---\nname: ${slug}\ndescription: Host skill that must stay discovery-only unless selected.\n---\n\n# ${slug}\n`,
+    "utf8",
+  );
+}
+
 async function writeCodexSkillCaptureStub(commandPath: string, capturePath: string) {
   const script = `#!/usr/bin/env node
-const fs = require("node:fs");
-const path = require("node:path");
+import fs from "node:fs";
+import path from "node:path";
 
 process.stdin.resume();
 process.stdin.on("end", () => {
@@ -62,8 +72,8 @@ process.stdin.on("end", () => {
 
 async function writeClaudeSkillBoundaryCaptureStub(commandPath: string, capturePath: string) {
   const script = `#!/usr/bin/env node
-const fs = require("node:fs");
-const path = require("node:path");
+import fs from "node:fs";
+import path from "node:path";
 
 let prompt = "";
 process.stdin.setEncoding("utf8");
@@ -96,6 +106,75 @@ process.stdin.on("end", () => {
   process.stdout.write(JSON.stringify({ type: "assistant", session_id: "claude-skill-boundary", message: { content: [{ type: "text", text: "captured" }] } }) + "\\n");
   process.stdout.write(JSON.stringify({ type: "result", subtype: "success", session_id: "claude-skill-boundary", result: "captured", usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 } }) + "\\n");
 });
+`;
+  await fs.mkdir(path.dirname(commandPath), { recursive: true });
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeLocalRuntimeBoundaryCaptureStub(
+  commandPath: string,
+  capturePath: string,
+  runtime: "gemini" | "cursor" | "opencode" | "pi",
+) {
+  const skillDirByRuntime = {
+    gemini: [".gemini", "skills"],
+    cursor: [".cursor", "skills"],
+    opencode: [".claude", "skills"],
+    pi: [".pi", "agent", "skills"],
+  }[runtime];
+  const script = `#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+
+if (${JSON.stringify(runtime)} === "opencode" && process.argv[2] === "models") {
+  console.log("deepseek/deepseek-v4-pro");
+  process.exit(0);
+}
+if (${JSON.stringify(runtime)} === "pi" && process.argv.includes("--list-models")) {
+  console.log("provider  model");
+  console.log("deepseek  deepseek-v4-pro");
+  process.exit(0);
+}
+
+const stdin = fs.readFileSync(0, "utf8");
+const home = process.env.HOME || "";
+const skillsHome = home ? path.join(home, ...${JSON.stringify(skillDirByRuntime)}) : null;
+const payload = {
+  runtime: ${JSON.stringify(runtime)},
+  argv: process.argv.slice(2),
+  cwd: process.cwd(),
+  home,
+  prompt: stdin,
+  skillsHome,
+  skillEntries: skillsHome && fs.existsSync(skillsHome) ? fs.readdirSync(skillsHome).sort() : [],
+  rudderEnv: Object.fromEntries(
+    Object.entries(process.env)
+      .filter(([key]) => key.startsWith("RUDDER_"))
+      .sort(([left], [right]) => left.localeCompare(right)),
+  ),
+};
+fs.mkdirSync(path.dirname(${JSON.stringify(capturePath)}), { recursive: true });
+fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify(payload), "utf8");
+
+if (${JSON.stringify(runtime)} === "gemini") {
+  console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "gemini-e2e", model: "deepseek-v4-pro" }));
+  console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "output_text", text: "captured" }] } }));
+  console.log(JSON.stringify({ type: "result", subtype: "success", session_id: "gemini-e2e", result: "captured" }));
+} else if (${JSON.stringify(runtime)} === "cursor") {
+  console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "cursor-e2e", model: "auto" }));
+  console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "output_text", text: "captured" }] } }));
+  console.log(JSON.stringify({ type: "result", subtype: "success", session_id: "cursor-e2e", result: "captured" }));
+} else if (${JSON.stringify(runtime)} === "opencode") {
+  console.log(JSON.stringify({ type: "step_start", sessionID: "opencode-e2e" }));
+  console.log(JSON.stringify({ type: "text", part: { type: "text", text: "captured" } }));
+  console.log(JSON.stringify({ type: "step_finish", part: { reason: "stop", cost: 0, tokens: { input: 1, output: 1, cache: { read: 0, write: 0 } } } }));
+} else {
+  console.log(JSON.stringify({ type: "session", version: 3, id: "pi-e2e", timestamp: new Date().toISOString(), cwd: process.cwd() }));
+  console.log(JSON.stringify({ type: "agent_start" }));
+  console.log(JSON.stringify({ type: "turn_start" }));
+  console.log(JSON.stringify({ type: "turn_end", message: { role: "assistant", content: [{ type: "text", text: "captured" }], usage: { input: 1, output: 1, cacheRead: 0, cost: { total: 0 } } }, toolResults: [] }));
+}
 `;
   await fs.mkdir(path.dirname(commandPath), { recursive: true });
   await fs.writeFile(commandPath, script, "utf8");
@@ -175,7 +254,6 @@ test.describe("Organization and agent skills", () => {
     await expect(newAgentMain.getByRole("heading", { name: "New Agent" })).toBeVisible();
     await expect(newAgentMain.getByRole("heading", { name: "Organization skills" })).toBeVisible();
     await expect(newAgentMain.getByText("deep-research").first()).toBeVisible();
-    await expect(newAgentMain.getByText("skill-creator").first()).toBeVisible();
     await expect(newAgentMain.getByText("software-product-advisor").first()).toBeVisible();
     await expect(newAgentMain.getByText("para-memory-files")).toHaveCount(0);
     await expect(newAgentMain.getByText("rudder-create-agent")).toHaveCount(0);
@@ -197,7 +275,7 @@ test.describe("Organization and agent skills", () => {
     await expect(newAgentMain.getByText("rudder-create-agent")).toHaveCount(0);
   });
 
-  test("seeds bundled and community preset org skills and keeps bundled Rudder skills always enabled", async ({ page }) => {
+  test("seeds bundled and community preset org skills and lets agents enable only selected skills", async ({ page }) => {
     const organizationName = `Org-Skills-${Date.now()}`;
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -256,8 +334,8 @@ test.describe("Organization and agent skills", () => {
     const skillsMain = page.locator("#main-content");
     await expect(skillsMain.getByRole("heading", { name: "Skills" })).toBeVisible();
     await expect(skillsMain.getByText("Bundled, community preset, and imported skills for this organization.")).toBeVisible();
-    await expect(skillsMain.getByText("para-memory-files")).toBeVisible();
-    await expect(skillsMain.getByText("rudder-create-agent")).toBeVisible();
+    await expect(skillsMain.getByText("para-memory-files").first()).toBeVisible();
+    await expect(skillsMain.getByText("rudder-create-agent").first()).toBeVisible();
     await expect(skillsMain.getByText("deep-research").first()).toBeVisible();
     await expect(skillsMain.getByText("Community preset").first()).toBeVisible();
     await expect(skillsMain.getByText("Bundled by Rudder").first()).toBeVisible();
@@ -265,16 +343,16 @@ test.describe("Organization and agent skills", () => {
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
     const agentMain = page.locator("#main-content");
     await expect(agentMain.getByPlaceholder("Search skills")).toBeVisible();
-    await expect(agentMain.getByText("Rudder always loads the bundled Rudder skills. Agent, organization, global, and adapter skills load only when enabled on this page.")).toBeVisible();
-    await expect(agentMain.getByText("Bundled Rudder skills are locked on. Community presets and other organization skills stay optional; workspace-backed skills can be edited from Workspaces.")).toBeVisible();
+    await expect(agentMain.getByText("Rudder Agent Skills load only when enabled on this page. Adapter, global, project, plugin, slash-command, and host-installed skills are discovery-only until selected.")).toBeVisible();
+    await expect(agentMain.getByText("Bundled, community preset, and organization skills are optional selections controlled by this page; workspace-backed skills can be edited from Workspaces.")).toBeVisible();
     await expect(agentMain.getByText("Available in this organization")).toHaveCount(0);
     await expect(agentMain.getByText("Bundled by Rudder").first()).toBeVisible();
     await expect(agentMain.getByText("Community preset").first()).toBeVisible();
     await expect(agentMain.getByText("deep-research").first()).toBeVisible();
     await expect(agentMain.getByText("Alpha test skill.")).toBeVisible();
     await expect(agentMain.getByText("Will be mounted into the ephemeral Claude skill directory on the next run.")).toHaveCount(0);
-    await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toBeDisabled();
-    await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toHaveAttribute("aria-checked", "true");
+    await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toBeEnabled();
+    await expect(agentMain.getByRole("switch", { name: "para-memory-files" })).toHaveAttribute("aria-checked", "false");
 
     const deepResearchToggle = agentMain.getByRole("switch", { name: "deep-research" });
     await expect(deepResearchToggle).toBeVisible();
@@ -755,7 +833,7 @@ test.describe("Organization and agent skills", () => {
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
     const agentMain = page.locator("#main-content");
-    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "true");
+    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "false");
     await expect(agentMain.getByRole("button", { name: /External skills/ })).toBeVisible();
     await agentMain.getByRole("button", { name: /External skills/ }).click();
     await expect(agentMain.getByText("Global and adapter skills are discovered from ~/.agents/skills and the current runtime adapter home. Discovery does not enable them; only the selections on this page determine runtime loading.")).toBeVisible();
@@ -829,7 +907,7 @@ test.describe("Organization and agent skills", () => {
 
     await page.goto(`/${organization.issuePrefix}/agents/${agent.id}/skills`);
     const agentMain = page.locator("#main-content");
-    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "true");
+    await expect(agentMain.getByRole("switch", { name: "rudder", exact: true })).toHaveAttribute("aria-checked", "false");
     await expect(agentMain.getByRole("button", { name: /External skills/ })).toBeVisible();
     await agentMain.getByRole("button", { name: /External skills/ }).click();
     await expect(agentMain.getByText("Adapter skills", { exact: true })).toBeVisible();
@@ -878,14 +956,17 @@ test.describe("Organization and agent skills", () => {
         agentRuntimeConfig: {
           command: captureCommandPath,
           model: "gpt-5.4",
-          rudderSkillSync: {
-            desiredSkills: ["rudder/rudder"],
-          },
         },
       },
     });
     expect(agentRes.ok()).toBe(true);
     const agent = await agentRes.json() as { id: string };
+    const skillSyncRes = await page.request.post(`/api/agents/${agent.id}/skills/sync?orgId=${organization.id}`, {
+      data: {
+        desiredSkills: ["rudder/rudder"],
+      },
+    });
+    expect(skillSyncRes.ok()).toBe(true);
 
     const managedCodexHome = path.join(
       E2E_HOME,
@@ -915,7 +996,7 @@ test.describe("Organization and agent skills", () => {
         } catch {
           return null;
         }
-      })
+      }, { timeout: 30_000 })
       .toEqual({
         codexHome: managedCodexHome,
         rootEntries: ["rudder"],
@@ -926,11 +1007,123 @@ test.describe("Organization and agent skills", () => {
     });
   });
 
+  test("invokes non-Codex local runtimes with the Rudder skill boundary and selected org skills", async ({ page }) => {
+    const organizationName = `Org-Local-Runtime-Boundary-${Date.now()}`;
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: organizationName,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json() as {
+      id: string;
+    };
+
+    const skillRes = await page.request.post(`/api/orgs/${organization.id}/skills`, {
+      data: {
+        name: "runtime-selected",
+        slug: "runtime-selected",
+        markdown: "---\nname: runtime-selected\ndescription: Runtime selected skill.\n---\n\n# Runtime Selected\n",
+      },
+    });
+    expect(skillRes.ok()).toBe(true);
+    const skill = await skillRes.json() as { key: string };
+
+    const hostSkillDirByRuntime = {
+      gemini: [".gemini", "skills"],
+      cursor: [".cursor", "skills"],
+      opencode: [".claude", "skills"],
+      pi: [".pi", "agent", "skills"],
+    } as const;
+    for (const segments of Object.values(hostSkillDirByRuntime)) {
+      await writeHostSkill(E2E_HOME, [...segments], "build-advisor");
+      await writeHostSkill(E2E_HOME, [...segments], "code-review");
+    }
+
+    const cases = [
+      { runtime: "gemini" as const, agentRuntimeType: "gemini_local", model: "deepseek-v4-pro" },
+      { runtime: "cursor" as const, agentRuntimeType: "cursor", model: "auto" },
+      { runtime: "opencode" as const, agentRuntimeType: "opencode_local", model: "deepseek/deepseek-v4-pro" },
+      { runtime: "pi" as const, agentRuntimeType: "pi_local", model: "deepseek/deepseek-v4-pro" },
+    ];
+
+    for (const item of cases) {
+      const capturePath = path.join(E2E_HOME, "captures", `${item.runtime}-runtime-boundary-${Date.now()}.json`);
+      const commandPath = path.join(E2E_HOME, "bin", `${item.runtime}-runtime-boundary-${Date.now()}`);
+      await writeLocalRuntimeBoundaryCaptureStub(commandPath, capturePath, item.runtime);
+
+      const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+        data: {
+          name: `${item.runtime} Boundary Tester`,
+          role: "engineer",
+          agentRuntimeType: item.agentRuntimeType,
+          agentRuntimeConfig: {
+            command: commandPath,
+            model: item.model,
+            env: {
+              HOME: E2E_HOME,
+            },
+          },
+        },
+      });
+      expect(agentRes.ok()).toBe(true);
+      const agent = await agentRes.json() as { id: string };
+
+      const syncRes = await page.request.post(`/api/agents/${agent.id}/skills/sync`, {
+        data: {
+          desiredSkills: [skill.key],
+        },
+      });
+      expect(syncRes.ok()).toBe(true);
+
+      const runRes = await page.request.post(`/api/agents/${agent.id}/heartbeat/invoke?orgId=${organization.id}`);
+      expect(runRes.ok()).toBe(true);
+
+      await expect
+        .poll(async () => {
+          try {
+            return JSON.parse(await fs.readFile(capturePath, "utf8"));
+          } catch {
+            return null;
+          }
+        }, { timeout: 30_000 })
+        .not.toBeNull();
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        runtime: string;
+        argv: string[];
+        prompt: string;
+        home: string;
+        skillsHome: string;
+        skillEntries: string[];
+        rudderEnv: Record<string, string>;
+      };
+
+      const promptArgIndex = capture.argv.indexOf("--prompt");
+      const runtimePrompt = promptArgIndex >= 0 ? capture.argv[promptArgIndex + 1] : capture.prompt || capture.argv[1] || "";
+      expect(runtimePrompt).toContain("# Rudder Runtime Skill Boundary");
+      expect(runtimePrompt).toContain("Enabled Rudder Agent Skills:");
+      expect(runtimePrompt).toContain("runtime-selected");
+      expect(runtimePrompt).toContain("${RUDDER_CLI:-rudder}");
+      expect(runtimePrompt).toContain("--body-file -");
+      expect(runtimePrompt).toContain("--comment-file -");
+      expect(runtimePrompt).toContain("<requested runtime type>");
+      expect(runtimePrompt).not.toContain('"agentRuntimeType":"codex_local"');
+      expect(runtimePrompt).not.toContain('"desiredSkills":["rudder/rudder"]');
+      expect(capture.home).not.toBe(E2E_HOME);
+      expect(capture.skillsHome).not.toBe(path.join(E2E_HOME, ...hostSkillDirByRuntime[item.runtime]));
+      expect(capture.rudderEnv.RUDDER_CLI).toBeTruthy();
+      expect(capture.skillEntries).toContain("runtime-selected");
+      expect(capture.skillEntries).not.toContain("build-advisor");
+      expect(capture.skillEntries).not.toContain("code-review");
+    }
+  });
+
   test("invokes Claude with the Rudder skill boundary and isolated managed home", async ({ page }) => {
     const organizationName = `Org-Claude-Skill-Boundary-${Date.now()}`;
     const capturePath = path.join(E2E_HOME, "captures", `claude-skill-boundary-${Date.now()}.json`);
     const captureCommandPath = path.join(E2E_HOME, "bin", `claude-skill-boundary-${Date.now()}`);
     await writeClaudeSkillBoundaryCaptureStub(captureCommandPath, capturePath);
+    await writeHostSkill(E2E_HOME, [".claude", "skills"], "code-review");
     await fs.writeFile(
       path.join(E2E_HOME, ".claude.json"),
       JSON.stringify({
@@ -1017,15 +1210,20 @@ test.describe("Organization and agent skills", () => {
         managedClaudeJsonExists: true,
         managedClaudeJsonIsSymlink: false,
         managedClaudeJsonText: "{}\n",
-        managedClaudeSkillEntries: [...BUNDLED_RUDDER_SKILL_SLUGS],
+        managedClaudeSkillEntries: ["rudder"],
         prompt: expect.stringContaining("# Rudder Runtime Skill Boundary"),
       }));
 
     const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
       prompt: string;
+      managedClaudeSkillEntries: string[];
     };
     expect(capture.prompt).toContain("Enabled Rudder Agent Skills:");
     expect(capture.prompt).toContain("rudder");
     expect(capture.prompt).not.toContain("code-review");
+    expect(capture.managedClaudeSkillEntries).toContain("rudder");
+    expect(capture.managedClaudeSkillEntries).not.toContain("code-review");
+    expect(capture.managedClaudeSkillEntries).not.toContain("rudder-create-agent");
+    expect(capture.managedClaudeSkillEntries).not.toContain("skill-creator");
   });
 });

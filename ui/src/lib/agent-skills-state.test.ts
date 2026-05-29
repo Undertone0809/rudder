@@ -139,14 +139,14 @@ describe("applyAgentSkillSnapshot", () => {
       selectionKey: "bundled:rudder/para-memory-files",
       key: "para-memory-files",
       runtimeName: "para-memory-files",
-      desired: true,
-      configurable: false,
-      alwaysEnabled: true,
+      desired: false,
+      configurable: true,
+      alwaysEnabled: false,
       managed: true,
-      state: "configured",
+      state: "available",
       sourceClass: "bundled",
       origin: "organization_managed",
-    })).toBe(false);
+    })).toBe(true);
   });
 
   it("switches conflicting same-name entries instead of enabling both", () => {
@@ -197,10 +197,10 @@ describe("applyAgentSkillSnapshot", () => {
     ]);
   });
 
-  it("keeps bundled always-enabled skills above other pinned entries", () => {
+  it("keeps explicit always-enabled entries above other pinned entries", () => {
     expect(sortSkillRowsByPinnedSelectionKey([
       { selectionKey: "org:zeta-helper", name: "zeta-helper" },
-      { selectionKey: "bundled:rudder/rudder", name: "rudder", alwaysEnabled: true },
+      { selectionKey: "system:rudder", name: "rudder", alwaysEnabled: true },
       { selectionKey: "org:alpha-helper", name: "alpha-helper" },
     ], ["org:alpha-helper"]).map((row) => row.name)).toEqual([
       "rudder",
