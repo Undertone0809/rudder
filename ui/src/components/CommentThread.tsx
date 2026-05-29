@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { IssueComment, Agent } from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
@@ -89,6 +89,21 @@ function saveDraft(draftKey: string, value: string) {
   } catch {
     // Ignore localStorage failures.
   }
+}
+
+function shouldForwardComposerFocus(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  return !target.closest([
+    "a",
+    "button",
+    "input",
+    "textarea",
+    "select",
+    "[contenteditable='true']",
+    "[role='button']",
+    "[role='menuitem']",
+    "[data-chat-composer-menu-item]",
+  ].join(","));
 }
 
 function clearDraft(draftKey: string) {
@@ -534,6 +549,11 @@ export function CommentThread({
   }
 
   const canSubmit = !submitting && !!body.trim();
+  const focusComposerEditor = (event: MouseEvent<HTMLDivElement>) => {
+    if (!shouldForwardComposerFocus(event.target)) return;
+    event.preventDefault();
+    editorRef.current?.focus();
+  };
 
   return (
     <div className="space-y-4">
@@ -560,6 +580,7 @@ export function CommentThread({
         ref={composerSurfaceRef}
         className="chat-composer rounded-[var(--radius-lg)] p-3"
         data-issue-detail-escape-back={escapeBackWhenEmpty ? (body.trim() ? "dirty" : "empty") : undefined}
+        onMouseDown={focusComposerEditor}
       >
         <MarkdownEditor
           ref={editorRef}

@@ -159,3 +159,37 @@ test("issue comment mention keeps punctuation attached while ending the mention 
   await expect(composer).not.toContainText("Griffin (CEO) ，");
   await expect(token).not.toContainText("，");
 });
+
+test("issue comment composer focuses from blank surface clicks", async ({ page }) => {
+  await page.goto("/");
+
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Issue-Comment-Composer-Focus-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+
+  const issueRes = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+    data: {
+      title: "Composer blank surface focus regression",
+      status: "todo",
+      priority: "medium",
+    },
+  });
+  expect(issueRes.ok()).toBe(true);
+  const issue = await issueRes.json() as { id: string; identifier: string | null };
+
+  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+
+  const activity = page.getByRole("region", { name: "Activity" });
+  await expect(activity).toBeVisible();
+  const composerSurface = activity.locator(".chat-composer").last();
+  await expect(composerSurface).toBeVisible();
+  const surfaceBox = await composerSurface.boundingBox();
+  expect(surfaceBox).not.toBeNull();
+  await page.mouse.click(surfaceBox!.x + surfaceBox!.width / 2, surfaceBox!.y + surfaceBox!.height - 24);
+  await page.keyboard.type("blank surface focus");
+
+  const composer = activity.locator(".rudder-milkdown-content [contenteditable='true']").last();
+  await expect(composer).toContainText("blank surface focus");
+});
