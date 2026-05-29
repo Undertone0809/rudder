@@ -104,7 +104,7 @@ test("issue comment composer uses the chat-style mention panel without exposing 
   await expect(composer).toContainText(/before Dylan.*next after/);
 
   await agentChip.click();
-  await page.waitForTimeout(100);
+  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/agents/${agent.id}$`));
   await expect(page.locator('[class*="_linkDialogPopoverContent_"]')).toHaveCount(0);
   await expect(page.getByText(new RegExp(`agent://${agent.id}`))).toHaveCount(0);
 

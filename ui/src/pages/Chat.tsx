@@ -48,7 +48,7 @@ import {
   isSelectableChatAgentId,
   rememberChatAgentId,
   resolveDefaultChatAgentId,
-  selectableChatAgents, } from "@/lib/chat-agent-selection"; import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state"; import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options"; import { parseMentionChipHref } from "@/lib/mention-chips"; import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom"; import { displayChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title"; import { formatChatAgentLabel } from "@/lib/agent-labels"; import { rememberMessengerPath } from "@/lib/messenger-memory"; import { projectColorCssVars } from "@/lib/project-colors"; import { queryKeys } from "@/lib/queryKeys";
+  selectableChatAgents, } from "@/lib/chat-agent-selection"; import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state"; import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options"; import { displayChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title"; import { formatChatAgentLabel } from "@/lib/agent-labels"; import { rememberMessengerPath } from "@/lib/messenger-memory"; import { projectColorCssVars } from "@/lib/project-colors"; import { queryKeys } from "@/lib/queryKeys";
 import {
   formatChatProcessDuration,
   lastTranscriptAtMs,
@@ -501,35 +501,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       categoryLabel: skill.skillCategoryLabel,
       locationLabel: skill.skillLocationLabel,
       detailsHref: skill.skillDetailsHref,
-    })), [availableChatSkills], ); const chatSkillDetailsHrefByTarget = useMemo(
-    () => new Map(
-      availableChatSkills
-        .filter((skill) => skill.skillMarkdownTarget && skill.skillDetailsHref)
-        .map((skill) => [skill.skillMarkdownTarget, skill.skillDetailsHref!] as const),
-    ), [availableChatSkills], ); const handleComposerInlineTokenClick = useCallback((token: AtomicInlineTokenElement) => {
-    if (token.kind === "mention") {
-      const parsed = parseMentionChipHref(token.href);
-      if (!parsed) return;
-      const target = parsed.kind === "agent"
-        ? `/agents/${parsed.agentId}`
-        : parsed.kind === "issue"
-          ? `/issues/${parsed.ref ?? parsed.issueId}`
-          : parsed.kind === "chat"
-            ? `/messenger/chat/${parsed.conversationId}`
-            : `/projects/${parsed.projectId}`;
-      navigate(target);
-      return;
-    }
-    const detailsHref = chatSkillDetailsHrefByTarget.get(token.href);
-    if (detailsHref) {
-      navigate(detailsHref);
-      return;
-    }
-    pushToast({
-      title: "Skill details are not available in this organization",
-      tone: "info",
-    });
-  }, [chatSkillDetailsHrefByTarget, navigate, pushToast]); const filteredChatSkills = useMemo(
+    })), [availableChatSkills], ); const filteredChatSkills = useMemo(
     () => filterChatSkillOptions(availableChatSkills, skillSearchQuery), [availableChatSkills, skillSearchQuery], ); const chatSkillsPending = Boolean(activeSkillAgentId) && (organizationSkillsPending || activeAgentSkillsPending); const showChatSkillsPicker = Boolean(activeSkillAgentId); const projectById = useMemo(
     () => new Map((projects ?? []).map((project) => [project.id, project])), [projects], ); const agentById = useMemo(
     () => new Map((agents ?? []).map((agent) => [agent.id, agent])), [agents], ); const mentionOptions = useMemo<MentionOption[]>(() => { const options: MentionOption[] = [];
@@ -810,7 +782,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           mentionMenuAnchorRef={composerSurfaceRef}
           mentionMenuPlacement="container"
           submitShortcut="enter"
-          onInlineTokenClick={handleComposerInlineTokenClick}
           plainText className="rounded-[var(--radius-md)] bg-transparent"
           contentClassName="min-h-[88px] bg-transparent text-[15px] leading-7 text-foreground"
           bordered={false} placeholder={composerPlaceholder} onSubmit={() => {
