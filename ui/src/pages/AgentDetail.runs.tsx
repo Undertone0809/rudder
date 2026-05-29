@@ -156,6 +156,7 @@ import { runStatusIcons, REDACTED_ENV_VALUE, SECRET_ENV_KEY_RE, JWT_VALUE_RE, fo
 import { runDateToIso, LogViewer } from "./AgentDetail.run-log";
 import {
   applyRunFilters,
+  applyRunSort,
   hasRunFilters,
   parseRunFilterState,
   runFilterChips,
@@ -301,7 +302,7 @@ export function RunsTab({
   const sorted = [...runs].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
-  const filtered = applyRunFilters(sorted, filterState);
+  const filtered = applyRunSort(applyRunFilters(sorted, filterState), filterState.sort);
   const activeFilterChips = runFilterChips(filterState);
   const filtersActive = hasRunFilters(filterState);
   const updateRunFilters = (patch: Parameters<typeof writeRunFilterState>[1]) => {
