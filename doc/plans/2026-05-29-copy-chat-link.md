@@ -16,9 +16,11 @@ related_code:
   - ui/src/components/MessengerContextSidebar.tsx
   - ui/src/components/MarkdownEditor.tsx
   - ui/src/components/MarkdownBody.tsx
+  - tests/e2e/chat-composer-reference-navigation.spec.ts
   - tests/e2e/messenger-copy-chat-link.spec.ts
 commit_refs:
   - "feat: copy chat references from messenger"
+  - "feat: navigate chat composer references"
 updated_at: 2026-05-29
 ---
 
@@ -81,6 +83,9 @@ the reference into another input and see what object is being referenced.
 - The composer remains plain text; only recognized Rudder reference links are
   decorated as inline chips.
 - Rendered markdown links `chat://<chat-id>` to `/messenger/chat/<chat-id>`.
+- Chat composer inline tokens now support click navigation for `agent://`,
+  `issue://`, `project://`, `chat://`, and organization skill references with
+  a known details route.
 
 ## Validation Results
 
@@ -101,6 +106,22 @@ the reference into another input and see what object is being referenced.
   `socket hang up` during the full concurrent suite. The focused rerun
   `pnpm --filter @rudderhq/server exec vitest run src/__tests__/companies-route-path-guard.test.ts --reporter=verbose`
   passed.
+
+## Follow-Up Validation
+
+- Added `tests/e2e/chat-composer-reference-navigation.spec.ts` to verify that
+  agent, issue, chat, and skill reference tokens in the Chat composer navigate
+  to their target pages when clicked.
+- `pnpm --filter @rudderhq/ui exec vitest run src/components/MarkdownEditor.test.tsx src/lib/inline-token-dom.test.ts src/lib/mention-chips.test.ts --reporter=verbose`
+  passed.
+- `pnpm --filter @rudderhq/ui typecheck` passed.
+- `pnpm exec playwright test --config tests/e2e/playwright.config.ts tests/e2e/chat-composer-reference-navigation.spec.ts tests/e2e/chat-composer-backspace.spec.ts --project=chromium`
+  passed.
+- `pnpm -r typecheck` passed.
+- `pnpm build` passed.
+- `pnpm test:run` failed only on unrelated transient/concurrent checks:
+  two embedded PostgreSQL init suites and two credential-helper timeout tests.
+  Focused reruns of all four failed checks passed.
 
 ## Review Gate
 

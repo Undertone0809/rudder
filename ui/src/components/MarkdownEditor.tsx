@@ -104,6 +104,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
   onSubmit,
   submitShortcut = "mod-enter",
   plainText = false,
+  onInlineTokenClick,
 }: MarkdownEditorProps, forwardedRef) {
   const { locale } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -722,6 +723,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 
   const canDropImage = Boolean(imageUploadHandler);
 
+  const activateInlineToken = useCallback((event: AtomicInlineTokenEvent) => {
+    const token = readAtomicInlineTokenElement(event.target instanceof Node ? event.target : null);
+    if (!token || !onInlineTokenClick) return false;
+    stopAtomicInlineTokenEvent(event);
+    onInlineTokenClick(token);
+    return true;
+  }, [onInlineTokenClick]);
+
   return (
     <div
       ref={containerRef}
@@ -877,6 +886,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         stopAtomicInlineTokenEvent(event);
       }}
       onClickCapture={(event) => {
+        if (activateInlineToken(event)) return;
         stopAtomicInlineTokenEvent(event);
       }}
       onCopyCapture={(event) => {

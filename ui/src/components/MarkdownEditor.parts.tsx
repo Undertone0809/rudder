@@ -125,6 +125,8 @@ export interface MarkdownEditorProps {
   submitShortcut?: "mod-enter" | "enter";
   /** Composer mode that preserves normal Markdown syntax as literal text. */
   plainText?: boolean;
+  /** Optional handler for activating decorated inline reference tokens. */
+  onInlineTokenClick?: (token: AtomicInlineTokenElement) => void;
 }
 
 export interface MarkdownEditorRef {
@@ -979,4 +981,3 @@ export function rootEditorCapturePlugin(onEditor: (editor: LexicalEditor | null)
 }
 
 /* ---- Component ---- */
-

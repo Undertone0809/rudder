@@ -46,7 +46,7 @@ async function syncAgentSkills(page: Page, agentId: string, orgId: string, desir
   expect(syncRes.ok()).toBe(true);
 }
 
-test("backspace deletes a clicked mention token and keeps the composer editable", async ({ page }) => {
+test("clicking a mention token navigates and the composer remains editable after returning", async ({ page }) => {
   const organization = await createStreamingOrg(page, `Mention-Backspace-${Date.now()}`);
   const agent = await createAgent(page, organization.id, "Para Memory");
 
@@ -66,20 +66,14 @@ test("backspace deletes a clicked mention token and keeps the composer editable"
   const mentionToken = composer.locator("[data-mention-kind='agent']").filter({ hasText: "Para Memory" }).first();
   await expect(mentionToken).toBeVisible();
 
-  const mentionBox = await mentionToken.boundingBox();
-  expect(mentionBox).not.toBeNull();
-  await mentionToken.click({
-    force: true,
-    position: {
-      x: Math.max(1, mentionBox!.width - 2),
-      y: Math.max(1, mentionBox!.height / 2),
-    },
-  });
-  await page.keyboard.press("Backspace");
-  await expect(mentionToken).toHaveCount(0);
-  await expect(composer).toContainText("Ask");
+  await mentionToken.click();
+  await expect(page).toHaveURL(new RegExp(`/agents/${agent.id}$`));
 
-  await page.keyboard.type(" about launch");
+  await page.goto(`/${organization.issuePrefix}/messenger/chat`);
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.press("ControlOrMeta+A");
+
+  await page.keyboard.type("Ask about launch");
   await expect(composer).toContainText("Ask about launch");
 });
 
