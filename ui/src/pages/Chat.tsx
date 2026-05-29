@@ -48,7 +48,7 @@ import {
   isSelectableChatAgentId,
   rememberChatAgentId,
   resolveDefaultChatAgentId,
-  selectableChatAgents, } from "@/lib/chat-agent-selection"; import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state"; import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options"; import { displayChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title"; import { formatChatAgentLabel } from "@/lib/agent-labels"; import { rememberMessengerPath } from "@/lib/messenger-memory"; import { projectColorCssVars } from "@/lib/project-colors"; import { queryKeys } from "@/lib/queryKeys";
+  selectableChatAgents, } from "@/lib/chat-agent-selection"; import { resolveRequestedPreferredAgentId } from "@/lib/chat-route-state"; import { buildChatSkillOptions, filterChatSkillOptions } from "@/lib/chat-skill-options"; import { parseMentionChipHref } from "@/lib/mention-chips"; import type { AtomicInlineTokenElement } from "@/lib/inline-token-dom"; import { displayChatTitle, promoteDefaultChatTitle } from "@/lib/chat-title"; import { formatChatAgentLabel } from "@/lib/agent-labels"; import { rememberMessengerPath } from "@/lib/messenger-memory"; import { projectColorCssVars } from "@/lib/project-colors"; import { queryKeys } from "@/lib/queryKeys";
 import {
   formatChatProcessDuration,
   lastTranscriptAtMs,
@@ -64,7 +64,7 @@ import {
   canShowImageInFolder,
   copyImage as copyImageAction,
   isImageContentType,
-  showImageInFolder as showImageInFolderAction, } from "@/lib/image-actions"; import { resolveLocalFileTarget } from "@/lib/local-file-targets"; import { cn, relativeTime } from "@/lib/utils"; import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef"; import { useI18n } from "@/context/I18nContext"; import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, readRememberedChatProjectId, rememberChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, buildChatProposalRevisionPrompt, chatIssueApprovalPayloadWithProposalOverride, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName, ChatAssistantAttributionRow, ProposalCard, chatMessageHoverBarClass, ChatLongMessageBody, readStructuredPayloadString, issueCreatedSystemMessageParts, ChatSystemMessageBody, AskUserHistoryRecord, AskUserAnswerBubble, AskUserPanel, ChatMessageItem, OptimisticUserDraftItem, ChatMessagesLoadingState, StreamTranscriptItem, AssistantDraftItem } from "./Chat.parts";
+  showImageInFolder as showImageInFolderAction, } from "@/lib/image-actions"; import { resolveLocalFileTarget } from "@/lib/local-file-targets"; import { cn, relativeTime } from "@/lib/utils"; import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef"; import { useI18n } from "@/context/I18nContext"; import { ApprovalAction, AttachmentPreviewState, ChatImageContextMenuPosition, OPEN_TASK_PRIORITY_PROMPT, EMPTY_STATE_PROMPT_GROUPS, NO_PROJECT_ID, CHAT_LAST_PROJECT_STORAGE_KEY, EmptyStatePromptLabel, EmptyStatePromptGroup, ChatEmptyStatePromptOptions, rememberChatProjectId, rememberChatProjectIdForAgent, resolveDefaultDraftChatProjectId, projectContextId, resolveDraftIssueContext, draftIssueContextLabel, buildDraftChatContextLinks, issueAssigneeMentionLabel, projectDisplayName, chatEmptyStateHeading, projectContextSwatchStyle, COMPOSER_MENU_VIEWPORT_PADDING, COMPOSER_MENU_OFFSET, COMPOSER_MENU_MIN_HEIGHT, COMPOSER_MENU_MAX_HEIGHT, COMPOSER_MENU_MIN_WIDTH, composerMenuPositionForAnchor, inferAttachmentExtension, materializePendingAttachment, pendingAttachmentKey, attachmentDisplayName, clampChatImageContextMenuPosition, shouldHandlePlainChatLinkClick, ChatImageAttachmentTile, ChatFileAttachmentChip, PendingAttachmentPreview, ChatAttachmentList, ChatAttachmentPreviewDialog, NO_CHAT_AGENT_LABEL, PLAN_MODE_HELP_TEXT, ChatBranchPreview, mergeChatMessages, scrollChatMessagesToBottom, computeDisplayedChatMessages, mergeChatConversationsForStatus, conversationPreview, conversationDisplayTitle, buildMessengerChatThreadSummary, mergeMessengerThreadSummaries, withOptimisticOutgoingMessage, withOptimisticPlanMode, isChatAgentSelectionLocked, isChatProjectSelectionLocked, approvalNeedsAction, buildChatProposalRevisionPrompt, chatIssueApprovalPayloadWithProposalOverride, issueProposalFromMessage, issueProposalPrincipalLabel, planDocumentFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, proposalReviewStatus, proposalReviewBannerCopy, askUserRequestFromMessage, isAskUserMessageAnswered, findLatestUnansweredAskUserMessage, askUserQuestionTitle, AskUserAnswerRecord, ASK_USER_ANSWER_PREFIX, formatAskUserAnswerLines, formatAskUserAnswerMessage, parseAskUserAnswerMessage, askUserAnswerFromMessage, formatChatPrimaryIssueBreadcrumb, INTERRUPTED_CHAT_CONTINUATION_PROMPT, canContinueInterruptedChatMessage, canRetryFailedChatMessage, findRetrySourceUserMessage, isUserVisibleIncomingChatMessage, assistantStateLabel, statusChipClassName, ChatAssistantAttributionRow, ProposalCard, chatMessageHoverBarClass, ChatLongMessageBody, readStructuredPayloadString, issueCreatedSystemMessageParts, ChatSystemMessageBody, AskUserHistoryRecord, AskUserAnswerBubble, AskUserPanel, ChatMessageItem, OptimisticUserDraftItem, ChatMessagesLoadingState, StreamTranscriptItem, AssistantDraftItem } from "./Chat.parts";
 export * from "./Chat.parts";
 export * from "./Chat.attachments";
 export * from "./Chat.messages";
@@ -84,7 +84,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     scopeKey: draftStorageScopeKey,
     value: readChatDraft(draftStorageOrgId, draftStorageConversationId), })); const draft = draftState.scopeKey === draftStorageScopeKey ? draftState.value : ""; const setDraft = useCallback((nextDraft: string) => { setDraftState((current) => ({ ...current, value: nextDraft })); }, []); const [, refreshPendingFiles] = useState(0); const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
   const setPendingFilesForCurrentScope = useCallback((updater: (current: File[]) => File[]) => { updateChatPendingAttachmentsForScope(draftStorageScopeKey, updater); refreshPendingFiles((version) => version + 1); }, [draftStorageScopeKey]); const clearPendingFilesForCurrentScope = useCallback(() => { setPendingFilesForCurrentScope(() => []); }, [setPendingFilesForCurrentScope]); const [newConversationSendInFlight, setNewConversationSendInFlight] = useState(false); const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, true>>({}); const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>(NO_CHAT_AGENT_ID); const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
-  const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [editForkUserMessageId, setEditForkUserMessageId] = useState<string | null>(null); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [expandedEmptyStatePrompt, setExpandedEmptyStatePrompt] = useState<EmptyStatePromptLabel | null>(null); const [emptyStatePromptPanelEntered, setEmptyStatePromptPanelEntered] = useState(false); const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const stopRequestedChatIdsRef = useRef<Set<string>>(new Set()); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const projectDefaultInitializedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile } = useSidebar(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
+  const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [editForkUserMessageId, setEditForkUserMessageId] = useState<string | null>(null); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [expandedEmptyStatePrompt, setExpandedEmptyStatePrompt] = useState<EmptyStatePromptLabel | null>(null); const [emptyStatePromptPanelEntered, setEmptyStatePromptPanelEntered] = useState(false); const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewState | null>(null); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const stopRequestedChatIdsRef = useRef<Set<string>>(new Set()); const newConversationSendLockRef = useRef(false); const chatSendLocksRef = useRef<Record<string, true>>({}); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const draftProjectScopeKeyRef = useRef<string | null>(null); const draftProjectDefaultKeyRef = useRef<string | null>(null); const draftProjectManuallySelectedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { isMobile } = useSidebar(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
     if (!desktopShell) {
       pushToast({
         title: "Open from Desktop",
@@ -150,9 +150,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           if (selectedOrganizationId) {
             rememberChatAgentId(selectedOrganizationId, requestedAgentId); } } }
       if (hasProjectPrefill && !projectAlreadyApplied && projects) { const requestedProject = visibleProjects.find((project) => project.id === pendingProjectPrefill);
-        if (requestedProject) { setDraftProjectId(requestedProject.id);
+        if (requestedProject) { setDraftProjectId(requestedProject.id); draftProjectDefaultKeyRef.current = null;
           if (selectedOrganizationId) {
-            rememberChatProjectId(selectedOrganizationId, requestedProject.id); } } } } const nextSearch = new URLSearchParams(searchParams);
+            rememberChatProjectId(selectedOrganizationId, requestedProject.id);
+            const requestedAgentId = hasAgentPrefill && agents ? resolveRequestedPreferredAgentId(pendingAgentPrefill, agents) : draftPreferredAgentId === NO_CHAT_AGENT_ID ? null : draftPreferredAgentId;
+            rememberChatProjectIdForAgent(selectedOrganizationId, requestedAgentId, requestedProject.id); } } } } const nextSearch = new URLSearchParams(searchParams);
     if (hasAgentPrefill && !agentAlreadyApplied) { lastAppliedAgentPrefillRef.current = pendingAgentPrefill;
       nextSearch.delete("agentId"); }
     if (hasProjectPrefill && !projectAlreadyApplied) { lastAppliedProjectPrefillRef.current = pendingProjectPrefill;
@@ -171,8 +173,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     pendingProjectPrefill,
     projects,
     searchParams,
-    selectedOrganizationId, visibleProjects, ]); const selectedConversation = conversationQuery.data ?? conversationsQuery.data?.find((conversation) => conversation.id === conversationId) ?? null; const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
-  const pendingSelectedConversationProjectId = selectedConversation && pendingProjectContextOverride?.chatId === selectedConversation.id ? pendingProjectContextOverride.projectId : undefined; const activeProjectId = selectedConversation ? (pendingSelectedConversationProjectId ?? selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId; const activePlanMode = pendingPlanModeOverride ?? selectedConversation?.planMode ?? draftPlanMode; const activeSkillAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const activeSkillAgent = activeSkillAgentId ? (agents ?? []).find((agent) => agent.id === activeSkillAgentId) ?? null : null;
+    selectedOrganizationId, visibleProjects, draftPreferredAgentId, ]); const selectedConversation = conversationQuery.data ?? conversationsQuery.data?.find((conversation) => conversation.id === conversationId) ?? null; const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
+  const pendingSelectedConversationProjectId = selectedConversation && pendingProjectContextOverride?.chatId === selectedConversation.id ? pendingProjectContextOverride.projectId : undefined; const activeProjectId = selectedConversation ? (pendingSelectedConversationProjectId ?? selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId; const activePlanMode = pendingPlanModeOverride ?? selectedConversation?.planMode ?? draftPlanMode; const activeSkillAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const activeSkillAgent = activeSkillAgentId ? (agents ?? []).find((agent) => agent.id === activeSkillAgentId) ?? null : null; const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue__"}`; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}`;
   const {
     data: organizationSkills,
     error: organizationSkillsError,
@@ -223,13 +225,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     selectedConversation?.id,
     selectedConversation?.preferredAgentId, selectedOrganizationId, ]);
   useEffect(() => { if (!selectedOrganizationId || !selectedConversation) return; const projectId = projectContextId(selectedConversation); setDraftProjectId(projectId ?? NO_PROJECT_ID); rememberChatProjectId(selectedOrganizationId, projectId);
+    if (selectedConversation.preferredAgentId) {
+      rememberChatProjectIdForAgent(selectedOrganizationId, selectedConversation.preferredAgentId, projectId); }
+    draftProjectScopeKeyRef.current = null; draftProjectDefaultKeyRef.current = null; draftProjectManuallySelectedRef.current = false;
   }, [
     selectedOrganizationId,
-    selectedConversation?.id, selectedConversation?.contextLinks, ]);
-  useEffect(() => { if (!selectedOrganizationId || selectedConversation || projectDefaultInitializedRef.current) return; if (!projects) return; projectDefaultInitializedRef.current = true; const rememberedProjectId = readRememberedChatProjectId(selectedOrganizationId);
-    if (
-      rememberedProjectId && visibleProjects.some((project) => project.id === rememberedProjectId) ) { setDraftProjectId(rememberedProjectId);
-      return; } setDraftProjectId(NO_PROJECT_ID); }, [projects, selectedConversation, selectedOrganizationId, visibleProjects]);
+    selectedConversation?.id, selectedConversation?.contextLinks, selectedConversation?.preferredAgentId, ]);
+  useEffect(() => { if (draftProjectScopeKeyRef.current === draftProjectScopeKey) return; draftProjectScopeKeyRef.current = draftProjectScopeKey; draftProjectDefaultKeyRef.current = null; draftProjectManuallySelectedRef.current = false; }, [draftProjectScopeKey]);
+  useEffect(() => { if (!selectedOrganizationId || selectedConversation || !projects || pendingProjectPrefill || !draftProjectDefaultKey) return;
+    if (draftProjectManuallySelectedRef.current || draftProjectDefaultKeyRef.current === draftProjectDefaultKey) return;
+    draftProjectDefaultKeyRef.current = draftProjectDefaultKey; setDraftProjectId(resolveDefaultDraftChatProjectId({
+      orgId: selectedOrganizationId,
+      projects: visibleProjects,
+      issue: draftIssueContext,
+      agentId: activeSkillAgentId,
+    })); }, [activeSkillAgentId, draftIssueContext, draftProjectDefaultKey, pendingProjectPrefill, projects, selectedConversation, selectedOrganizationId, visibleProjects]);
   useEffect(() => { if (!selectedOrganizationId) return; if (!relativePath.startsWith("/messenger/chat")) return; rememberMessengerPath(selectedOrganizationId, relativePath); }, [relativePath, selectedOrganizationId]); const refreshChat = async (chatId?: string | null) => { if (!selectedOrganizationId) return;
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.chats.list(selectedOrganizationId, "active") }),
@@ -288,7 +298,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     onSuccess: async (conversation, variables) => { const nextProjectId = projectContextId(conversation);
       setPendingProjectContextOverride((current) => ( current?.chatId === variables.chatId ? null : current )); setDraftProjectId(nextProjectId ?? NO_PROJECT_ID);
       if (selectedOrganizationId) {
-        rememberChatProjectId(selectedOrganizationId, nextProjectId); } upsertConversation(conversation); upsertMessengerThreadSummary(conversation);
+        rememberChatProjectId(selectedOrganizationId, nextProjectId); rememberChatProjectIdForAgent(selectedOrganizationId, conversation.preferredAgentId, nextProjectId); } upsertConversation(conversation); upsertMessengerThreadSummary(conversation);
       await refreshChat(conversation.id); },
     onError: (error, variables) => {
       setPendingProjectContextOverride((current) => ( current?.chatId === variables.chatId ? null : current ));
@@ -377,8 +387,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           preferredAgentId: selectedDraftAgentId,
           issueCreationMode: "manual_approval",
           planMode: draftPlanMode,
-          contextLinks: buildDraftChatContextLinks(
-            draftProjectId === NO_PROJECT_ID ? null : draftProjectId, draftIssueContextId, ), }); const startedAt = new Date(); conversation = upsertOptimisticConversation(createdConversation, body, startedAt); rememberChatAgentId(selectedOrganizationId, selectedDraftAgentId);
+        contextLinks: buildDraftChatContextLinks(
+            draftProjectId === NO_PROJECT_ID ? null : draftProjectId, draftIssueContextId, ), }); const startedAt = new Date(); conversation = upsertOptimisticConversation(createdConversation, body, startedAt); rememberChatAgentId(selectedOrganizationId, selectedDraftAgentId); rememberChatProjectIdForAgent(selectedOrganizationId, selectedDraftAgentId, draftProjectId === NO_PROJECT_ID ? null : draftProjectId);
         if (usesComposerState) { setDraft(""); clearPendingFilesForCurrentScope(); setEditForkUserMessageId(null);
           setBranchPreview(null); }
         navigate(chatConversationPath(conversation.id)); } const chatId = conversation.id; if (!acquireChatSendLock(chatId)) return; chatSendLockAcquired = true; activeChatId = chatId; const selectedAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId;
@@ -501,7 +511,35 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       categoryLabel: skill.skillCategoryLabel,
       locationLabel: skill.skillLocationLabel,
       detailsHref: skill.skillDetailsHref,
-    })), [availableChatSkills], ); const filteredChatSkills = useMemo(
+    })), [availableChatSkills], ); const chatSkillDetailsHrefByTarget = useMemo(
+    () => new Map(
+      availableChatSkills
+        .filter((skill) => skill.skillMarkdownTarget && skill.skillDetailsHref)
+        .map((skill) => [skill.skillMarkdownTarget, skill.skillDetailsHref!] as const),
+    ), [availableChatSkills], ); const handleComposerInlineTokenClick = useCallback((token: AtomicInlineTokenElement) => {
+    if (token.kind === "mention") {
+      const parsed = parseMentionChipHref(token.href);
+      if (!parsed) return;
+      const target = parsed.kind === "agent"
+        ? `/agents/${parsed.agentId}`
+        : parsed.kind === "issue"
+          ? `/issues/${parsed.ref ?? parsed.issueId}`
+          : parsed.kind === "chat"
+            ? `/messenger/chat/${parsed.conversationId}`
+            : `/projects/${parsed.projectId}`;
+      navigate(target);
+      return;
+    }
+    const detailsHref = chatSkillDetailsHrefByTarget.get(token.href);
+    if (detailsHref) {
+      navigate(detailsHref);
+      return;
+    }
+    pushToast({
+      title: "Skill details are not available in this organization",
+      tone: "info",
+    });
+  }, [chatSkillDetailsHrefByTarget, navigate, pushToast]); const filteredChatSkills = useMemo(
     () => filterChatSkillOptions(availableChatSkills, skillSearchQuery), [availableChatSkills, skillSearchQuery], ); const chatSkillsPending = Boolean(activeSkillAgentId) && (organizationSkillsPending || activeAgentSkillsPending); const showChatSkillsPicker = Boolean(activeSkillAgentId); const projectById = useMemo(
     () => new Map((projects ?? []).map((project) => [project.id, project])), [projects], ); const agentById = useMemo(
     () => new Map((agents ?? []).map((agent) => [agent.id, agent])), [agents], ); const mentionOptions = useMemo<MentionOption[]>(() => { const options: MentionOption[] = [];
@@ -572,15 +610,17 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!isSelectableChatAgentId(value, agents)) { setAgentMenuOpen(false);
       return; } setDraftPreferredAgentId(value); setAgentMenuOpen(false);
     if (selectedOrganizationId) {
-      rememberChatAgentId(selectedOrganizationId, value); }
+      rememberChatAgentId(selectedOrganizationId, value);
+      if (draftProjectId !== NO_PROJECT_ID) {
+        rememberChatProjectIdForAgent(selectedOrganizationId, value, draftProjectId); } }
     if (selectedConversation) {
       updateConversationMutation.mutate({
         chatId: selectedConversation.id,
         data: { preferredAgentId: value }, }); } }; const applyProjectContext = (value: string) => {
     if (projectSelectionLocked) { setProjectMenuOpen(false);
-      return; } const projectId = value === NO_PROJECT_ID ? null : value; const previousProjectId = selectedConversation ? selectedConversationProjectId : draftProjectId === NO_PROJECT_ID ? null : draftProjectId; setDraftProjectId(value); setProjectMenuOpen(false);
+      return; } const projectId = value === NO_PROJECT_ID ? null : value; const previousProjectId = selectedConversation ? selectedConversationProjectId : draftProjectId === NO_PROJECT_ID ? null : draftProjectId; setDraftProjectId(value); draftProjectManuallySelectedRef.current = true; draftProjectDefaultKeyRef.current = draftProjectDefaultKey; setProjectMenuOpen(false);
     if (selectedOrganizationId) {
-      rememberChatProjectId(selectedOrganizationId, projectId); }
+      rememberChatProjectId(selectedOrganizationId, projectId); rememberChatProjectIdForAgent(selectedOrganizationId, activeSkillAgentId, projectId); }
     if (selectedConversation) {
       setPendingProjectContextOverride({
         chatId: selectedConversation.id, projectId, });
@@ -782,6 +822,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           mentionMenuAnchorRef={composerSurfaceRef}
           mentionMenuPlacement="container"
           submitShortcut="enter"
+          onInlineTokenClick={handleComposerInlineTokenClick}
           plainText className="rounded-[var(--radius-md)] bg-transparent"
           contentClassName="min-h-[88px] bg-transparent text-[15px] leading-7 text-foreground"
           bordered={false} placeholder={composerPlaceholder} onSubmit={() => {

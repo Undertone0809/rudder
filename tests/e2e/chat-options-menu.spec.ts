@@ -198,4 +198,63 @@ test.describe("Chat options menu", () => {
       }),
     );
   });
+
+  test("defaults new chat project context from the current agent's recent project", async ({ page }) => {
+    await page.goto("/");
+
+    const orgRes = await page.request.post("/api/orgs", {
+      data: {
+        name: `Agent-Project-Defaults-${Date.now()}`,
+      },
+    });
+    expect(orgRes.ok()).toBe(true);
+    const organization = await orgRes.json();
+    const agentA = await createE2EChatAgent(page.request, organization.id, {
+      name: "Wesley",
+      command: E2E_CODEX_STUB,
+    });
+    const agentB = await createE2EChatAgent(page.request, organization.id, {
+      name: "Mira",
+      command: E2E_CODEX_STUB,
+    });
+
+    const alphaRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Rudder Dev",
+        status: "in_progress",
+      },
+    });
+    const betaRes = await page.request.post(`/api/orgs/${organization.id}/projects`, {
+      data: {
+        name: "Release Ops",
+        status: "in_progress",
+      },
+    });
+    expect(alphaRes.ok()).toBe(true);
+    expect(betaRes.ok()).toBe(true);
+    const alpha = await alphaRes.json() as { id: string; name: string };
+    const beta = await betaRes.json() as { id: string; name: string };
+
+    await page.evaluate((orgId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
+    }, organization.id);
+
+    const selector = page.getByTestId("chat-project-selector");
+
+    await page.goto(`/chat?agentId=${agentA.id}&projectId=${alpha.id}`);
+    await expect(selector).toContainText(alpha.name, { timeout: 15_000 });
+    await expect(page.getByTestId("chat-agent-selector")).toContainText("Wesley");
+
+    await page.goto(`/chat?agentId=${agentB.id}&projectId=${beta.id}`);
+    await expect(selector).toContainText(beta.name, { timeout: 15_000 });
+    await expect(page.getByTestId("chat-agent-selector")).toContainText("Mira");
+
+    await page.goto(`/chat?agentId=${agentA.id}`);
+    await expect(selector).toContainText(alpha.name, { timeout: 15_000 });
+    await expect(page.getByTestId("chat-agent-selector")).toContainText("Wesley");
+
+    await page.goto(`/chat?agentId=${agentB.id}`);
+    await expect(selector).toContainText(beta.name, { timeout: 15_000 });
+    await expect(page.getByTestId("chat-agent-selector")).toContainText("Mira");
+  });
 });
