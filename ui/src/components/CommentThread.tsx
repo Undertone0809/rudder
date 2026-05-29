@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent, type Reac
 import { Link, useLocation } from "react-router-dom";
 import type { IssueComment, Agent } from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
-import { Check, Copy, Paperclip, TerminalSquare } from "lucide-react";
+import { Check, ChevronDown, Copy, Paperclip, TerminalSquare } from "lucide-react";
 import type { LiveRunForIssue } from "../api/heartbeats";
 import type { TranscriptEntry } from "../agent-runtimes";
 import { Identity } from "./Identity";
@@ -112,6 +112,10 @@ function passiveFollowupLabel(contextSnapshot: Record<string, unknown> | null | 
   return attempt && maxAttempts ? `Passive follow-up ${attempt}/${maxAttempts}` : "Passive follow-up";
 }
 
+function shouldCollapseRunByDefault(status: string): boolean {
+  return status === "failed" || status === "timed_out" || status === "cancelled";
+}
+
 function CopyMarkdownButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -159,6 +163,8 @@ const TimelineList = memo(function TimelineList({
   skillReferences?: MarkdownSkillReferencePreview[];
   emptyMessage: string;
 }) {
+  const [runExpandedOverrides, setRunExpandedOverrides] = useState<Record<string, boolean>>({});
+
   if (timeline.length === 0) {
     return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
   }
@@ -180,6 +186,8 @@ const TimelineList = memo(function TimelineList({
           const transcript = runTranscriptById.get(run.runId) ?? [];
           const hasOutput = runHasOutput(run.runId);
           const passiveLabel = passiveFollowupLabel(run.contextSnapshot);
+          const runExpanded = runExpandedOverrides[run.runId] ?? !shouldCollapseRunByDefault(run.status);
+          const toggleLabel = runExpanded ? "Hide details" : "Show details";
           return (
             <div
               key={`run:${run.runId}`}
@@ -218,23 +226,40 @@ const TimelineList = memo(function TimelineList({
                     {passiveLabel}
                   </span>
                 )}
+                <button
+                  type="button"
+                  aria-expanded={runExpanded}
+                  aria-controls={`run-output-${run.runId}`}
+                  className="ml-auto inline-flex items-center gap-1 rounded-md border border-border bg-background/70 px-2 py-1 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  onClick={() => {
+                    setRunExpandedOverrides((current) => ({
+                      ...current,
+                      [run.runId]: !runExpanded,
+                    }));
+                  }}
+                >
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${runExpanded ? "rotate-180" : ""}`} />
+                  {toggleLabel}
+                </button>
               </div>
-              <div className="max-h-56 overflow-y-auto pr-1">
-                <RunTranscriptView
-                  entries={transcript}
-                  density="compact"
-                  limit={4}
-                  streaming={isActive}
-                  collapseStdout
-                  emptyMessage={
-                    hasOutput
-                      ? "Waiting for transcript parsing..."
-                      : isActive
-                        ? `Run ${run.status}. Waiting for output...`
-                        : "No run output captured."
-                  }
-                />
-              </div>
+              {runExpanded ? (
+                <div id={`run-output-${run.runId}`} className="max-h-56 overflow-y-auto pr-1">
+                  <RunTranscriptView
+                    entries={transcript}
+                    density="compact"
+                    limit={4}
+                    streaming={isActive}
+                    collapseStdout
+                    emptyMessage={
+                      hasOutput
+                        ? "Waiting for transcript parsing..."
+                        : isActive
+                          ? `Run ${run.status}. Waiting for output...`
+                          : "No run output captured."
+                    }
+                  />
+                </div>
+              ) : null}
             </div>
           );
         }

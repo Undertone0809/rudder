@@ -62,7 +62,7 @@ import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { formatCents, formatDate, formatDateTime, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { cn } from "../lib/utils";
-import { formatRunDurationLabel, formatRunTimingTitle } from "../lib/run-duration-label";
+import { formatRunDurationLabel, formatRunOccurrenceLabel, formatRunTimingTitle } from "../lib/run-duration-label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs } from "@/components/ui/tabs";
@@ -178,6 +178,7 @@ export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; i
   const isActive = run.status === "running" || run.status === "queued";
   const now = useRunDurationNow(isActive);
   const durationLabel = formatRunDurationLabel(run, now) ?? relativeTime(run.createdAt);
+  const occurrenceLabel = formatRunOccurrenceLabel(run, now);
   const timingTitle = formatRunTimingTitle(run);
 
   const openRun = () => {
@@ -214,7 +215,7 @@ export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; i
     <div
       role="link"
       tabIndex={0}
-      aria-label={`Open run ${runLabel}`}
+      aria-label={`Open run ${runLabel}${occurrenceLabel ? ` from ${occurrenceLabel}` : ""}${durationLabel ? `, ${durationLabel}` : ""}`}
       className={cn(
         "flex flex-col gap-1 w-full px-3 py-2.5 text-left border-b border-border last:border-b-0 transition-colors no-underline text-inherit",
         isSelected ? "bg-accent/40" : "hover:bg-accent/20",
@@ -241,8 +242,21 @@ export function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; i
             {runReason.label}
           </span>
         </span>
-        <span className="shrink-0 whitespace-nowrap text-[11px] font-medium tabular-nums text-foreground" title={timingTitle || undefined}>
-          {durationLabel}
+        <span
+          className="flex shrink-0 flex-col items-end gap-0.5 text-right tabular-nums"
+          title={timingTitle || undefined}
+          data-testid="run-list-timing"
+        >
+          {occurrenceLabel && (
+            <span className="whitespace-nowrap text-[11px] font-semibold leading-none text-foreground">
+              {occurrenceLabel}
+            </span>
+          )}
+          {durationLabel && (
+            <span className="whitespace-nowrap text-[10px] font-medium leading-none text-muted-foreground">
+              {durationLabel}
+            </span>
+          )}
         </span>
       </div>
       {summary && (
@@ -349,7 +363,7 @@ export function RunsTab({
         {activeFilterChips.length > 0 && (
           <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
         )}
-        <div className="border border-border rounded-lg overflow-x-hidden">
+        <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
           {listRuns.length > 0 ? listRuns.map((run) => (
             <RunListItem key={run.id} run={run} isSelected={false} agentId={agentRouteId} />
           )) : (
@@ -367,7 +381,7 @@ export function RunsTab({
         {activeFilterChips.length > 0 && (
           <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
         )}
-        <div className="border border-border rounded-lg overflow-x-hidden">
+        <div className="border border-border rounded-lg overflow-x-hidden" data-testid="agent-runs-list-pane">
           {listRuns.length > 0 ? listRuns.map((run) => (
             <RunListItem key={run.id} run={run} isSelected={false} agentId={agentRouteId} />
           )) : (
