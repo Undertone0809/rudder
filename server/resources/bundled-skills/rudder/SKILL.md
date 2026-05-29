@@ -21,13 +21,15 @@ For a simple assigned issue, use this exact order and syntax before consulting
 the longer reference:
 
 ```bash
-rudder issue checkout "$RUDDER_TASK_ID" --json
-rudder issue comment "$RUDDER_TASK_ID" --body "progress update" --json
-rudder issue done "$RUDDER_TASK_ID" --comment "completion note" --json
+"${RUDDER_CLI:-rudder}" issue checkout "$RUDDER_TASK_ID" --json
+printf '%s\n' "progress update" | "${RUDDER_CLI:-rudder}" issue comment "$RUDDER_TASK_ID" --body-file - --json
+printf '%s\n' "completion note" | "${RUDDER_CLI:-rudder}" issue done "$RUDDER_TASK_ID" --comment-file - --json
 ```
 
 Do not use `rudder issue comment add`; the stable command is
-`rudder issue comment <issue> --body <text> --json`.
+`rudder issue comment <issue> --body-file <path-or-> --json`.
+When `RUDDER_CLI` is available, prefer `"${RUDDER_CLI:-rudder}"` so the run uses
+the Rudder-managed CLI shim instead of an adapter or host-installed stale binary.
 
 ## Authentication
 
@@ -80,7 +82,7 @@ Follow this order unless the wake context clearly requires a different first ste
 **Step 1 — Identity.** If identity is not already known, run:
 
 ```bash
-rudder agent me --json
+"${RUDDER_CLI:-rudder}" agent me --json
 ```
 
 Use the result for your id, org, role, budget, and `chainOfCommand`.
@@ -88,8 +90,8 @@ Use the result for your id, org, role, budget, and `chainOfCommand`.
 **Step 2 — Approval follow-up.** If `RUDDER_APPROVAL_ID` is set, review it first:
 
 ```bash
-rudder approval get "$RUDDER_APPROVAL_ID" --json
-rudder approval issues "$RUDDER_APPROVAL_ID" --json
+"${RUDDER_CLI:-rudder}" approval get "$RUDDER_APPROVAL_ID" --json
+"${RUDDER_CLI:-rudder}" approval issues "$RUDDER_APPROVAL_ID" --json
 ```
 
 For each linked issue:
@@ -100,7 +102,7 @@ For each linked issue:
 **Step 3 — Get assignments.** Prefer the compact inbox:
 
 ```bash
-rudder agent inbox --json
+"${RUDDER_CLI:-rudder}" agent inbox --json
 ```
 
 Inbox rows include a `relationship` field:
@@ -119,7 +121,7 @@ reviewer, prioritize it first.
 **Step 4 — Mention-triggered wakes.** If `RUDDER_WAKE_COMMENT_ID` is set, read the relevant issue context before doing anything else on that task:
 
 ```bash
-rudder issue context "$RUDDER_TASK_ID" --wake-comment-id "$RUDDER_WAKE_COMMENT_ID" --json
+"${RUDDER_CLI:-rudder}" issue context "$RUDDER_TASK_ID" --wake-comment-id "$RUDDER_WAKE_COMMENT_ID" --json
 ```
 
 If the comment explicitly asks you to take ownership, you may self-assign by checkout. Otherwise respond only if useful and continue with your assigned work.
@@ -128,7 +130,7 @@ An `@Name` mention is a request for attention or collaboration. It does not tran
 **Step 5 — Checkout before work.** Never start work without checkout.
 
 ```bash
-rudder issue checkout "<issue-id-or-identifier>" --json
+"${RUDDER_CLI:-rudder}" issue checkout "<issue-id-or-identifier>" --json
 ```
 
 Rules:
@@ -140,7 +142,7 @@ Rules:
 **Step 6 — Understand context.** Prefer the compact heartbeat context instead of replaying everything:
 
 ```bash
-rudder issue context "<issue-id-or-identifier>" --json
+"${RUDDER_CLI:-rudder}" issue context "<issue-id-or-identifier>" --json
 ```
 
 Comment reading rules:
@@ -149,7 +151,7 @@ Comment reading rules:
 - if you already know the thread and only need updates, use:
 
 ```bash
-rudder issue comments list "<issue-id-or-identifier>" --after "<last-comment-id>" --order asc --json
+"${RUDDER_CLI:-rudder}" issue comments list "<issue-id-or-identifier>" --after "<last-comment-id>" --order asc --json
 ```
 
 - use the full comment list only when cold-starting or when incremental context is not enough
@@ -169,26 +171,26 @@ permission to take over implementation unless explicitly asked:
 - approve:
 
 ```bash
-rudder issue review "<issue-id-or-identifier>" --decision approve --comment-file "<path>" --json
+"${RUDDER_CLI:-rudder}" issue review "<issue-id-or-identifier>" --decision approve --comment-file "<path>" --json
 ```
 
 - request changes and return the issue to the assignee:
 
 ```bash
-rudder issue review "<issue-id-or-identifier>" --decision request_changes --comment-file "<path>" --json
+"${RUDDER_CLI:-rudder}" issue review "<issue-id-or-identifier>" --decision request_changes --comment-file "<path>" --json
 ```
 
 - keep the issue in its current review/blocker state because specific evidence
   or follow-up is still missing:
 
 ```bash
-rudder issue review "<issue-id-or-identifier>" --decision needs_followup --comment-file "<path>" --json
+"${RUDDER_CLI:-rudder}" issue review "<issue-id-or-identifier>" --decision needs_followup --comment-file "<path>" --json
 ```
 
 - block the issue:
 
 ```bash
-rudder issue review "<issue-id-or-identifier>" --decision blocked --comment-file "<path>" --json
+"${RUDDER_CLI:-rudder}" issue review "<issue-id-or-identifier>" --decision blocked --comment-file "<path>" --json
 ```
 
 Use `blocked` to confirm a human/external blocker. The comment must name the next human action; Rudder records a human handoff and removes the issue from repeated reviewer pickup until the board changes the issue.
@@ -196,19 +198,19 @@ Use `blocked` to confirm a human/external blocker. The comment must name the nex
 - progress-only update:
 
 ```bash
-rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" [--image "<path>"] --json
+"${RUDDER_CLI:-rudder}" issue comment "<issue-id-or-identifier>" --body-file "<path>" [--image "<path>"] --json
 ```
 
 - completion:
 
 ```bash
-rudder issue done "<issue-id-or-identifier>" --comment-file "<path>" [--image "<path>"] --json
+"${RUDDER_CLI:-rudder}" issue done "<issue-id-or-identifier>" --comment-file "<path>" [--image "<path>"] --json
 ```
 
 - blocker:
 
 ```bash
-rudder issue block "<issue-id-or-identifier>" --comment-file "<path>" [--image "<path>"] --json
+"${RUDDER_CLI:-rudder}" issue block "<issue-id-or-identifier>" --comment-file "<path>" [--image "<path>"] --json
 ```
 
 - generic patch when workflow commands are not enough:
@@ -224,13 +226,13 @@ Add `--image "<path>"` one or more times when the close-out/progress comment sho
 If your comment mentions a screenshot path or uses a screenshot as validation evidence, attach that file with `--image "<path>"`. Do not leave only a local `/tmp/...` or workspace image path in the comment, because board users may not be able to inspect it from Rudder.
 
 ```bash
-rudder issue update "<issue-id-or-identifier>" ... --json
+"${RUDDER_CLI:-rudder}" issue update "<issue-id-or-identifier>" ... --json
 ```
 
 **Step 9 — Delegate if needed.** Create subtasks with the generic create surface only when the workflow really needs a new task:
 
 ```bash
-rudder issue create --org-id "$RUDDER_ORG_ID" ... [--label-id "<label-id>"] [--label "<label-name>"] --json
+"${RUDDER_CLI:-rudder}" issue create --org-id "$RUDDER_ORG_ID" ... [--label-id "<label-id>"] [--label "<label-name>"] --json
 ```
 
 When you create an issue as an authenticated agent without an assignee, Rudder assigns it to you by default. Pass an explicit assignee only when the new issue should belong to someone else.
@@ -238,7 +240,7 @@ When you create an issue as an authenticated agent without an assignee, Rudder a
 When the organization has a mature issue label taxonomy, agent-created issues must choose at least one label. List the available labels first when you are not sure which one applies:
 
 ```bash
-rudder issue labels list --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" issue labels list --org-id "$RUDDER_ORG_ID" --json
 ```
 
 Always set `parentId`. Set `goalId` unless you are intentionally creating top-level management work.
@@ -248,7 +250,7 @@ Always set `parentId`. Set `goalId` unless you are intentionally creating top-le
 When you need to create a skill for yourself, prefer an agent-private skill:
 
 ```bash
-rudder agent skills create "$RUDDER_AGENT_ID" --name "<name>" --description "<description>" --enable --json
+"${RUDDER_CLI:-rudder}" agent skills create "$RUDDER_AGENT_ID" --name "<name>" --description "<description>" --enable --json
 ```
 
 This creates the package under `AGENT_HOME/skills` and does not require organization skill mutation permission.
@@ -259,14 +261,14 @@ When a board user or authorized agent asks you to find, import, inspect, or assi
 2. Use the CLI surfaces in this order:
 
 ```bash
-rudder skill scan-local --org-id "$RUDDER_ORG_ID" --json
-rudder skill scan-projects --org-id "$RUDDER_ORG_ID" --json
-rudder skill import --org-id "$RUDDER_ORG_ID" --source "<source>" --json
-rudder skill list --org-id "$RUDDER_ORG_ID" --json
-rudder skill get "<skill-id>" --org-id "$RUDDER_ORG_ID" --json
-rudder skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path SKILL.md --json
-rudder agent skills enable "<agent-id>" "<selection-ref>" --json
-rudder agent skills sync "<agent-id>" --desired-skills "<csv>" --json
+"${RUDDER_CLI:-rudder}" skill scan-local --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill scan-projects --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill import --org-id "$RUDDER_ORG_ID" --source "<source>" --json
+"${RUDDER_CLI:-rudder}" skill list --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill get "<skill-id>" --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path SKILL.md --json
+"${RUDDER_CLI:-rudder}" agent skills enable "<agent-id>" "<selection-ref>" --json
+"${RUDDER_CLI:-rudder}" agent skills sync "<agent-id>" --desired-skills "<csv>" --json
 ```
 
 Use `skills enable` when adding one or more skills because it preserves the
@@ -286,10 +288,10 @@ If asked to make or revise a plan, update the issue document with key `plan` ins
 Typical flow:
 
 ```bash
-rudder issue documents get "<issue-id-or-identifier>" plan --json
-rudder issue documents revisions "<issue-id-or-identifier>" plan --json
-rudder issue documents put "<issue-id-or-identifier>" plan --title "Plan" --format markdown --body-file "<path>" --json
-rudder issue comment "<issue-id-or-identifier>" --body-file "<path>" --json
+"${RUDDER_CLI:-rudder}" issue documents get "<issue-id-or-identifier>" plan --json
+"${RUDDER_CLI:-rudder}" issue documents revisions "<issue-id-or-identifier>" plan --json
+"${RUDDER_CLI:-rudder}" issue documents put "<issue-id-or-identifier>" plan --title "Plan" --format markdown --body-file "<path>" --json
+"${RUDDER_CLI:-rudder}" issue comment "<issue-id-or-identifier>" --body-file "<path>" --json
 ```
 
 Planning rules:
@@ -360,7 +362,7 @@ Plan updated and ready for review.
 When you are unsure which Rudder commands are supported in this runtime, use:
 
 ```bash
-rudder agent capabilities --json
+"${RUDDER_CLI:-rudder}" agent capabilities --json
 ```
 
 For the human-readable command catalog, read `references/cli-reference.md`.

@@ -147,7 +147,7 @@ describe("gemini execute", () => {
       expect(invocationPrompt).toContain("RUDDER_API_URL");
       expect(invocationPrompt).toContain("Rudder CLI access note:");
       expect(invocationPrompt).toContain("run_shell_command");
-      expect(invocationPrompt).toContain("rudder agent me --json");
+      expect(invocationPrompt).toContain('\\"${RUDDER_CLI:-rudder}\\" agent me --json');
       expect(result.question).toBeNull();
     } finally {
       if (previousHome === undefined) {

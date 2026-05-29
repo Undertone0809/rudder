@@ -325,14 +325,14 @@ function renderApiAccessNote(env: Record<string, string>): string {
   if (!hasNonEmptyEnvValue(env, "RUDDER_API_URL") || !hasNonEmptyEnvValue(env, "RUDDER_API_KEY")) return "";
   return [
     "Rudder CLI access note:",
-    "Use the runtime bash tool with the `rudder` CLI for Rudder control-plane work.",
+    "Use the runtime bash tool with the Rudder-managed CLI for Rudder control-plane work.",
     "Read example:",
-    "  rudder agent me --json",
+    "  \"${RUDDER_CLI:-rudder}\" agent me --json",
     "Common mutating examples:",
-    "  rudder issue checkout {id} --json",
-    "  rudder issue comment {id} --body \"progress\" --json",
-    "  rudder issue done {id} --comment \"done\" --json",
-    "  rudder agent hire --org-id \"$RUDDER_ORG_ID\" --payload '{...}' --json",
+    "  \"${RUDDER_CLI:-rudder}\" issue checkout {id} --json",
+    "  printf '%s\\n' \"progress\" | \"${RUDDER_CLI:-rudder}\" issue comment {id} --body-file - --json",
+    "  printf '%s\\n' \"done\" | \"${RUDDER_CLI:-rudder}\" issue done {id} --comment-file - --json",
+    "  \"${RUDDER_CLI:-rudder}\" agent hire --org-id \"$RUDDER_ORG_ID\" --payload '{\"name\":\"<requested helper name>\",\"role\":\"general\",\"title\":\"<requested helper title or name>\",\"capabilities\":\"<requested helper capabilities>\",\"desiredSkills\":[\"rudder/rudder\"],\"agentRuntimeType\":\"codex_local\",\"agentRuntimeConfig\":{}}' --json",
     "",
     "",
   ].join("\n");
@@ -551,6 +551,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   });
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
+  if (typeof runtimeEnv.RUDDER_CLI === "string") env.RUDDER_CLI = runtimeEnv.RUDDER_CLI;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
   const timeoutSec = asNumber(config.timeoutSec, 0);

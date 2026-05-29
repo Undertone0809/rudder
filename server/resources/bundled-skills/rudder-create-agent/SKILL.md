@@ -32,8 +32,8 @@ agent name/capability, use this minimal sequence. Replace the placeholder
 issue before running the command.
 
 ```bash
-rudder agent me --json
-rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
+"${RUDDER_CLI:-rudder}" agent me --json
+"${RUDDER_CLI:-rudder}" agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "name": "<issue-requested agent name>",
   "role": "general",
   "title": "<issue-requested agent title or name>",
@@ -53,7 +53,7 @@ the approval id/status so the requester knows the hire is pending governance
 approval:
 
 ```bash
-rudder issue done "$RUDDER_TASK_ID" --comment "created/requested helper agent <agent-id-or-name>; approval <approval-id/status if present>" --json
+printf '%s\n' "created/requested helper agent <agent-id-or-name>; approval <approval-id/status if present>" | "${RUDDER_CLI:-rudder}" issue done "$RUDDER_TASK_ID" --comment-file - --json
 ```
 
 Only read the full adapter docs when the task asks for a specific runtime,
@@ -64,7 +64,7 @@ budget, reporting line, skills, or non-default configuration.
 1. Confirm identity and organization context.
 
 ```sh
-rudder agent me --json
+"${RUDDER_CLI:-rudder}" agent me --json
 ```
 
 If this returns `{"error":"Agent authentication required"}`, treat it as a run-auth failure:
@@ -76,33 +76,33 @@ If this returns `{"error":"Agent authentication required"}`, treat it as a run-a
 2. Discover available adapter configuration docs for this Rudder instance.
 
 ```sh
-rudder agent config index
+"${RUDDER_CLI:-rudder}" agent config index
 ```
 
 3. Read adapter-specific docs for the runtime you plan to use.
 
 ```sh
-rudder agent config doc codex_local
-rudder agent config doc claude_local
+"${RUDDER_CLI:-rudder}" agent config doc codex_local
+"${RUDDER_CLI:-rudder}" agent config doc claude_local
 ```
 
 4. Compare existing agents and redacted configurations in your organization.
 
 ```sh
-rudder agent list --org-id "$RUDDER_ORG_ID" --json
-rudder agent config list --org-id "$RUDDER_ORG_ID" --json
-rudder agent config get "<agent-id>" --json
+"${RUDDER_CLI:-rudder}" agent list --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" agent config list --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" agent config get "<agent-id>" --json
 ```
 
 5. If the role needs organization skills on day one, inspect or import them before hiring.
 
 ```sh
-rudder skill list --org-id "$RUDDER_ORG_ID" --json
-rudder skill get "<skill-id>" --org-id "$RUDDER_ORG_ID" --json
-rudder skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path SKILL.md --json
-rudder skill import --org-id "$RUDDER_ORG_ID" --source "<source>" --json
-rudder skill scan-local --org-id "$RUDDER_ORG_ID" --roots "<csv>" --json
-rudder skill scan-projects --org-id "$RUDDER_ORG_ID" --project-ids "<csv>" --workspace-ids "<csv>" --json
+"${RUDDER_CLI:-rudder}" skill list --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill get "<skill-id>" --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path SKILL.md --json
+"${RUDDER_CLI:-rudder}" skill import --org-id "$RUDDER_ORG_ID" --source "<source>" --json
+"${RUDDER_CLI:-rudder}" skill scan-local --org-id "$RUDDER_ORG_ID" --roots "<csv>" --json
+"${RUDDER_CLI:-rudder}" skill scan-projects --org-id "$RUDDER_ORG_ID" --project-ids "<csv>" --workspace-ids "<csv>" --json
 ```
 
 6. Draft the hire payload.
@@ -141,7 +141,7 @@ Draft `promptTemplate` as a durable SOUL document, not a one-line command. Use t
 7. Submit the canonical hire request.
 
 ```sh
-rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
+"${RUDDER_CLI:-rudder}" agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "role": "cto",
   "title": "Chief Technology Officer",
   "reportsTo": "<ceo-agent-id>",
@@ -170,7 +170,7 @@ Do **not** substitute `rudder approval create --type hire_agent` for this step u
 If the hire response includes `approval`, monitor and discuss on the approval thread:
 
 ```sh
-rudder approval get "<approval-id>" --json
+"${RUDDER_CLI:-rudder}" approval get "<approval-id>" --json
 cat > /tmp/rudder-approval-comment.md <<'EOF'
 ## CTO hire request submitted
 
@@ -180,16 +180,16 @@ cat > /tmp/rudder-approval-comment.md <<'EOF'
 
 Updated prompt and adapter config per board feedback.
 EOF
-rudder approval comment "<approval-id>" --body-file /tmp/rudder-approval-comment.md --json
-rudder approval resubmit "<approval-id>" --payload '{"title":"Revised title","agentRuntimeConfig":{"cwd":"/abs/path/to/repo","model":"o4-mini"}}' --json
-rudder approval issues "<approval-id>" --json
+"${RUDDER_CLI:-rudder}" approval comment "<approval-id>" --body-file /tmp/rudder-approval-comment.md --json
+"${RUDDER_CLI:-rudder}" approval resubmit "<approval-id>" --payload '{"title":"Revised title","agentRuntimeConfig":{"cwd":"/abs/path/to/repo","model":"o4-mini"}}' --json
+"${RUDDER_CLI:-rudder}" approval issues "<approval-id>" --json
 ```
 
 When the board approves, you may be woken with `RUDDER_APPROVAL_ID`:
 
 ```sh
-rudder approval get "$RUDDER_APPROVAL_ID" --json
-rudder approval issues "$RUDDER_APPROVAL_ID" --json
+"${RUDDER_CLI:-rudder}" approval get "$RUDDER_APPROVAL_ID" --json
+"${RUDDER_CLI:-rudder}" approval issues "$RUDDER_APPROVAL_ID" --json
 ```
 
 For each linked issue, either:

@@ -117,7 +117,10 @@ export async function ensureRudderCliInPath(
   }
 
   const shimPath = await materializeRudderCliShim(target);
-  return prependPathEntry(normalized, path.dirname(shimPath));
+  return {
+    ...prependPathEntry(normalized, path.dirname(shimPath)),
+    RUDDER_CLI: shimPath,
+  };
 }
 
 export async function ensureAbsoluteDirectory(

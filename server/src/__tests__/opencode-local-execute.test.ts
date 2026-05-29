@@ -138,8 +138,8 @@ describe("opencode execute", () => {
       expect(capture.prompt).toContain("Enabled Rudder Agent Skills: none.");
       expect(capture.prompt).toContain("Rudder runtime note:");
       expect(capture.prompt).toContain("Rudder CLI access note:");
-      expect(capture.prompt).toContain("rudder agent me --json");
-      expect(capture.prompt).toContain("rudder issue checkout {id} --json");
+      expect(capture.prompt).toContain('"${RUDDER_CLI:-rudder}" agent me --json');
+      expect(capture.prompt).toContain('"${RUDDER_CLI:-rudder}" issue checkout {id} --json');
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),
       );

@@ -76,14 +76,14 @@ function renderApiAccessNote(env: Record<string, string>): string {
   if (!hasNonEmptyEnvValue(env, "RUDDER_API_URL") || !hasNonEmptyEnvValue(env, "RUDDER_API_KEY")) return "";
   return [
     "Rudder CLI access note:",
-    "Use run_shell_command with the `rudder` CLI for Rudder control-plane work.",
+    "Use run_shell_command with the Rudder-managed CLI for Rudder control-plane work.",
     "Read example:",
-    `  run_shell_command({ command: "rudder agent me --json" })`,
+    '  run_shell_command({ command: "\\"${RUDDER_CLI:-rudder}\\" agent me --json" })',
     "Common mutating examples:",
-    `  run_shell_command({ command: "rudder issue checkout {id} --json" })`,
-    `  run_shell_command({ command: "rudder issue comment {id} --body \\"progress\\" --json" })`,
-    `  run_shell_command({ command: "rudder issue done {id} --comment \\"done\\" --json" })`,
-    `  run_shell_command({ command: "rudder agent hire --org-id \\"$RUDDER_ORG_ID\\" --payload '{...}' --json" })`,
+    '  run_shell_command({ command: "\\"${RUDDER_CLI:-rudder}\\" issue checkout {id} --json" })',
+    '  run_shell_command({ command: "printf \'%s\\\\n\' \\"progress\\" | \\"${RUDDER_CLI:-rudder}\\" issue comment {id} --body-file - --json" })',
+    '  run_shell_command({ command: "printf \'%s\\\\n\' \\"done\\" | \\"${RUDDER_CLI:-rudder}\\" issue done {id} --comment-file - --json" })',
+    '  run_shell_command({ command: "\\"${RUDDER_CLI:-rudder}\\" agent hire --org-id \\"$RUDDER_ORG_ID\\" --payload \'{\\"name\\":\\"<requested helper name>\\",\\"role\\":\\"general\\",\\"title\\":\\"<requested helper title or name>\\",\\"capabilities\\":\\"<requested helper capabilities>\\",\\"desiredSkills\\":[\\"rudder/rudder\\"],\\"agentRuntimeType\\":\\"codex_local\\",\\"agentRuntimeConfig\\":{}}\' --json" })',
     "",
     "",
   ].join("\n");
@@ -319,6 +319,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   });
   if (typeof runtimeEnv.PATH === "string") env.PATH = runtimeEnv.PATH;
   if (typeof runtimeEnv.Path === "string") env.Path = runtimeEnv.Path;
+  if (typeof runtimeEnv.RUDDER_CLI === "string") env.RUDDER_CLI = runtimeEnv.RUDDER_CLI;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
   const timeoutSec = asNumber(config.timeoutSec, 0);

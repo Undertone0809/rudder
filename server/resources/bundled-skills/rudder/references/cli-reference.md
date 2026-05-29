@@ -20,13 +20,16 @@ Direct API fallback is allowed for heartbeat close-out only when a required CLI 
 For a normal assigned issue:
 
 ```sh
-rudder issue checkout "$RUDDER_TASK_ID" --json
-rudder issue comment "$RUDDER_TASK_ID" --body "progress update" --json
-rudder issue done "$RUDDER_TASK_ID" --comment "completion note" --json
+"${RUDDER_CLI:-rudder}" issue checkout "$RUDDER_TASK_ID" --json
+printf '%s\n' "progress update" | "${RUDDER_CLI:-rudder}" issue comment "$RUDDER_TASK_ID" --body-file - --json
+printf '%s\n' "completion note" | "${RUDDER_CLI:-rudder}" issue done "$RUDDER_TASK_ID" --comment-file - --json
 ```
 
 Do not use `rudder issue comment add`; `comment` is the command and the issue
-id is its only positional argument.
+id is its only positional argument. Comment text is read from `--body-file` or
+stdin; completion text is read from `--comment-file` or stdin. Runtime prompts
+may expose `RUDDER_CLI` as a managed shim for the current Rudder CLI; prefer
+`"${RUDDER_CLI:-rudder}"` in shell examples.
 
 ## Agent V1 Commands
 

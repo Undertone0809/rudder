@@ -17,8 +17,8 @@ capability, this is the minimal canonical flow. Replace the placeholder `name`,
 running the command:
 
 ```sh
-rudder agent me --json
-rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
+"${RUDDER_CLI:-rudder}" agent me --json
+"${RUDDER_CLI:-rudder}" agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "name": "<issue-requested agent name>",
   "role": "general",
   "title": "<issue-requested agent title or name>",
@@ -30,7 +30,7 @@ rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   },
   "sourceIssueId": "'"$RUDDER_TASK_ID"'"
 }' --json
-rudder issue done "$RUDDER_TASK_ID" --comment "created/requested helper agent <agent-id-or-name>; approval <approval-id/status if present>" --json
+printf '%s\n' "created/requested helper agent <agent-id-or-name>; approval <approval-id/status if present>" | "${RUDDER_CLI:-rudder}" issue done "$RUDDER_TASK_ID" --comment-file - --json
 ```
 
 Use the full discovery flow below when the request needs specific runtime
@@ -41,13 +41,13 @@ configuration, reporting lines, org skills, budgets, or approval handling.
 ### Identity and discovery
 
 ```sh
-rudder agent me --json
-rudder agent list --org-id "$RUDDER_ORG_ID" --json
-rudder agent get "<agent-id-or-shortname>" --org-id "$RUDDER_ORG_ID" --json
-rudder agent config index
-rudder agent config doc "<agent-runtime-type>"
-rudder agent config list --org-id "$RUDDER_ORG_ID" --json
-rudder agent config get "<agent-id-or-shortname>" --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" agent me --json
+"${RUDDER_CLI:-rudder}" agent list --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" agent get "<agent-id-or-shortname>" --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" agent config index
+"${RUDDER_CLI:-rudder}" agent config doc "<agent-runtime-type>"
+"${RUDDER_CLI:-rudder}" agent config list --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" agent config get "<agent-id-or-shortname>" --org-id "$RUDDER_ORG_ID" --json
 ```
 
 Use these in order:
@@ -60,12 +60,12 @@ Use these in order:
 ### Organization skills
 
 ```sh
-rudder skill list --org-id "$RUDDER_ORG_ID" --json
-rudder skill get "<skill-id>" --org-id "$RUDDER_ORG_ID" --json
-rudder skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path SKILL.md --json
-rudder skill import --org-id "$RUDDER_ORG_ID" --source "<source>" --json
-rudder skill scan-local --org-id "$RUDDER_ORG_ID" --roots "<csv>" --json
-rudder skill scan-projects --org-id "$RUDDER_ORG_ID" --project-ids "<csv>" --workspace-ids "<csv>" --json
+"${RUDDER_CLI:-rudder}" skill list --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill get "<skill-id>" --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path SKILL.md --json
+"${RUDDER_CLI:-rudder}" skill import --org-id "$RUDDER_ORG_ID" --source "<source>" --json
+"${RUDDER_CLI:-rudder}" skill scan-local --org-id "$RUDDER_ORG_ID" --roots "<csv>" --json
+"${RUDDER_CLI:-rudder}" skill scan-projects --org-id "$RUDDER_ORG_ID" --project-ids "<csv>" --workspace-ids "<csv>" --json
 ```
 
 Use these before hiring when the new role needs `desiredSkills`.
@@ -79,7 +79,7 @@ Use these before hiring when the new role needs `desiredSkills`.
 ### Canonical hire flow
 
 ```sh
-rudder agent hire --org-id "$RUDDER_ORG_ID" --payload '{
+"${RUDDER_CLI:-rudder}" agent hire --org-id "$RUDDER_ORG_ID" --payload '{
   "role": "cto",
   "title": "Chief Technology Officer",
   "reportsTo": "<ceo-agent-id>",
@@ -109,10 +109,10 @@ Do not use `rudder approval create --type hire_agent` as a replacement for `agen
 ### Approval follow-up
 
 ```sh
-rudder approval get "<approval-id>" --json
-rudder approval comment "<approval-id>" --body-file "<path>" --json
-rudder approval resubmit "<approval-id>" --payload '{"...":"..."}' --json
-rudder approval issues "<approval-id>" --json
+"${RUDDER_CLI:-rudder}" approval get "<approval-id>" --json
+"${RUDDER_CLI:-rudder}" approval comment "<approval-id>" --body-file "<path>" --json
+"${RUDDER_CLI:-rudder}" approval resubmit "<approval-id>" --payload '{"...":"..."}' --json
+"${RUDDER_CLI:-rudder}" approval issues "<approval-id>" --json
 ```
 
 Notes:
@@ -152,8 +152,8 @@ Issue linkage rule:
 Post-hire adjustments use the normal agent and skill surfaces:
 
 ```sh
-rudder agent get "<agent-id-or-shortname>" --org-id "$RUDDER_ORG_ID" --json
-rudder agent skills enable "<agent-id>" "<selection-ref>" --json
-rudder agent skills sync "<agent-id>" --desired-skills "<csv>" --json
-rudder agent local-cli "<agent-id-or-shortname>" --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" agent get "<agent-id-or-shortname>" --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" agent skills enable "<agent-id>" "<selection-ref>" --json
+"${RUDDER_CLI:-rudder}" agent skills sync "<agent-id>" --desired-skills "<csv>" --json
+"${RUDDER_CLI:-rudder}" agent local-cli "<agent-id-or-shortname>" --org-id "$RUDDER_ORG_ID" --json
 ```

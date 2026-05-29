@@ -7,7 +7,7 @@ This workflow is now **CLI-first** for the bundled `rudder` skill.
 For a skill that belongs only to the running agent, do not use organization import or scan commands. Use:
 
 ```bash
-rudder agent skills create "$RUDDER_AGENT_ID" --name "<name>" --description "<description>" --enable --json
+"${RUDDER_CLI:-rudder}" agent skills create "$RUDDER_AGENT_ID" --name "<name>" --description "<description>" --enable --json
 ```
 
 Agent-private skill creation writes under `AGENT_HOME/skills` and does not require organization skill mutation permission.
@@ -21,14 +21,14 @@ Agent-private skill creation writes under `AGENT_HOME/skills` and does not requi
 ## Core CLI Surface
 
 ```bash
-rudder skill list --org-id "$RUDDER_ORG_ID" --json
-rudder skill get "<skill-id>" --org-id "$RUDDER_ORG_ID" --json
-rudder skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path SKILL.md --json
-rudder skill import --org-id "$RUDDER_ORG_ID" --source "<source>" --json
-rudder skill scan-local --org-id "$RUDDER_ORG_ID" --roots "<csv>" --json
-rudder skill scan-projects --org-id "$RUDDER_ORG_ID" --project-ids "<csv>" --workspace-ids "<csv>" --json
-rudder agent skills enable "<agent-id>" "<selection-ref>" --json
-rudder agent skills sync "<agent-id>" --desired-skills "<csv>" --json
+"${RUDDER_CLI:-rudder}" skill list --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill get "<skill-id>" --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path SKILL.md --json
+"${RUDDER_CLI:-rudder}" skill import --org-id "$RUDDER_ORG_ID" --source "<source>" --json
+"${RUDDER_CLI:-rudder}" skill scan-local --org-id "$RUDDER_ORG_ID" --roots "<csv>" --json
+"${RUDDER_CLI:-rudder}" skill scan-projects --org-id "$RUDDER_ORG_ID" --project-ids "<csv>" --workspace-ids "<csv>" --json
+"${RUDDER_CLI:-rudder}" agent skills enable "<agent-id>" "<selection-ref>" --json
+"${RUDDER_CLI:-rudder}" agent skills sync "<agent-id>" --desired-skills "<csv>" --json
 ```
 
 Defaults:
@@ -54,7 +54,7 @@ If the user gives a `skills.sh` URL, keep it as `skills.sh` or key-style. Do not
 Preferred managed import:
 
 ```bash
-rudder skill import \
+"${RUDDER_CLI:-rudder}" skill import \
   --org-id "$RUDDER_ORG_ID" \
   --source "https://skills.sh/google-labs-code/stitch-skills/design-md" \
   --json
@@ -63,7 +63,7 @@ rudder skill import \
 Equivalent key-style import:
 
 ```bash
-rudder skill import \
+"${RUDDER_CLI:-rudder}" skill import \
   --org-id "$RUDDER_ORG_ID" \
   --source "google-labs-code/stitch-skills/design-md" \
   --json
@@ -72,7 +72,7 @@ rudder skill import \
 GitHub import:
 
 ```bash
-rudder skill import \
+"${RUDDER_CLI:-rudder}" skill import \
   --org-id "$RUDDER_ORG_ID" \
   --source "https://github.com/vercel-labs/agent-browser" \
   --json
@@ -81,7 +81,7 @@ rudder skill import \
 Local skill scan:
 
 ```bash
-rudder skill scan-local \
+"${RUDDER_CLI:-rudder}" skill scan-local \
   --org-id "$RUDDER_ORG_ID" \
   --roots "/abs/path/to/.agents,/abs/path/to/other-skill-root" \
   --json
@@ -90,7 +90,7 @@ rudder skill scan-local \
 Shared workspace scan:
 
 ```bash
-rudder skill scan-projects \
+"${RUDDER_CLI:-rudder}" skill scan-projects \
   --org-id "$RUDDER_ORG_ID" \
   --project-ids "<project-id-1>,<project-id-2>" \
   --json
@@ -108,20 +108,20 @@ Notes:
 List skills:
 
 ```bash
-rudder skill list --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill list --org-id "$RUDDER_ORG_ID" --json
 ```
 
 Read one skill:
 
 ```bash
-rudder skill get "<skill-id>" --org-id "$RUDDER_ORG_ID" --json
+"${RUDDER_CLI:-rudder}" skill get "<skill-id>" --org-id "$RUDDER_ORG_ID" --json
 ```
 
 Read `SKILL.md` or another file from the package:
 
 ```bash
-rudder skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path SKILL.md --json
-rudder skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path references/notes.md --json
+"${RUDDER_CLI:-rudder}" skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path SKILL.md --json
+"${RUDDER_CLI:-rudder}" skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path references/notes.md --json
 ```
 
 ## Enable Skills On An Existing Agent
@@ -133,7 +133,7 @@ rudder skill file "<skill-id>" --org-id "$RUDDER_ORG_ID" --path references/notes
 - exact slug when it is unique in the organization
 
 ```bash
-rudder agent skills enable \
+"${RUDDER_CLI:-rudder}" agent skills enable \
   "<agent-id>" \
   "vercel-labs/agent-browser/agent-browser" \
   --json
@@ -142,7 +142,7 @@ rudder agent skills enable \
 For multiple skills:
 
 ```bash
-rudder agent skills enable \
+"${RUDDER_CLI:-rudder}" agent skills enable \
   "<agent-id>" \
   "agent-browser" "design-md" \
   --json

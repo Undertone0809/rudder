@@ -262,8 +262,8 @@ describe("pi execute", () => {
       expect(capture.argv[1]).toContain("Enabled Rudder Agent Skills: none.");
       expect(capture.argv[1]).toContain("Rudder runtime note:");
       expect(capture.argv[1]).toContain("Rudder CLI access note:");
-      expect(capture.argv[1]).toContain("rudder agent me --json");
-      expect(capture.argv[1]).toContain("rudder issue checkout {id} --json");
+      expect(capture.argv[1]).toContain('"${RUDDER_CLI:-rudder}" agent me --json');
+      expect(capture.argv[1]).toContain('"${RUDDER_CLI:-rudder}" issue checkout {id} --json');
       expect(capture.stdin).toBe("");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining(["RUDDER_ORG_ARTIFACTS_DIR"]),

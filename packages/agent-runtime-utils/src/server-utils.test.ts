@@ -74,6 +74,7 @@ describe("ensureRudderCliInPath", () => {
       const shim = await fs.readFile(shimPath, "utf8");
 
       expect(firstPathEntry).not.toBe(staleBinDir);
+      expect(env.RUDDER_CLI).toBe(shimPath);
       expect(shim).toContain(tsxEntry);
       expect(shim).toContain(cliSource);
     } finally {
@@ -98,6 +99,7 @@ describe("ensureRudderCliInPath", () => {
       const shimPath = path.join(firstPathEntry!, shimName());
       const shim = await fs.readFile(shimPath, "utf8");
 
+      expect(env.RUDDER_CLI).toBe(shimPath);
       expect(shim).toContain(desktopCli);
     } finally {
       await fs.rm(root, { recursive: true, force: true });

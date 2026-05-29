@@ -243,8 +243,8 @@ describe("claude execute", () => {
       expect(capture.prompt).toContain("Enabled Rudder Agent Skills: none.");
       expect(capture.prompt).toContain("Rudder runtime note:");
       expect(capture.prompt).toContain("Rudder CLI access note:");
-      expect(capture.prompt).toContain("rudder agent me --json");
-      expect(capture.prompt).toContain("rudder issue checkout {id} --json");
+      expect(capture.prompt).toContain('"${RUDDER_CLI:-rudder}" agent me --json');
+      expect(capture.prompt).toContain('"${RUDDER_CLI:-rudder}" issue checkout {id} --json');
       expect(capture.prompt).toContain("Follow the rudder heartbeat.");
       expect(capture.argv).toEqual(expect.arrayContaining(["--disable-slash-commands", "--strict-mcp-config"]));
       expect(capture.claudeCodeEnv.CLAUDE_CODE_DISABLE_AGENT_VIEW).toBe("1");
