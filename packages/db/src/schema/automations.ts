@@ -29,7 +29,7 @@ export const automations = pgTable(
     title: text("title").notNull(),
     description: text("description"),
     assigneeAgentId: uuid("assignee_agent_id").notNull().references(() => agents.id),
-    outputMode: text("output_mode").notNull().default("track_issue"),
+    outputMode: text("output_mode").notNull().default("chat_output"),
     chatConversationId: uuid("chat_conversation_id").references(() => chatConversations.id, { onDelete: "set null" }),
     priority: text("priority").notNull().default("medium"),
     status: text("status").notNull().default("active"),

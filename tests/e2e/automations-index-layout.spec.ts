@@ -91,7 +91,8 @@ test.describe("Automations index layout", () => {
     await createButton.click();
     await expect(page.getByPlaceholder("Automation title")).toBeVisible();
     await expect(page.getByRole("button", { name: "Use template" })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Track as issue/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Send to chat/ })).toBeVisible();
+    await expect(page.getByTestId("automation-create-chat-destination")).toContainText("New chat per run");
     await expect(page.getByRole("button", { name: /Delivery rules/ })).toBeVisible();
     await expect(page.getByText("Every day at 09:00")).toBeVisible();
     await expect(page.getByTestId("automation-composer-shell")).toBeVisible();
@@ -231,7 +232,7 @@ test.describe("Automations index layout", () => {
     await page.getByRole("button", { name: /Track as issue/ }).click();
     await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
     await page.getByRole("button", { name: /Send to chat/ }).click();
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("relevant Rudder chat conversation");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("each run's final result to a new Rudder chat");
     await expect(page.getByRole("button", { name: /Create automation/ })).toBeDisabled();
 
     await page.screenshot({
@@ -371,7 +372,7 @@ test.describe("Automations index layout", () => {
 
     await expect(page.getByPlaceholder("Automation title")).toHaveValue("日会");
     await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("上一个工作日以来更新的进行中任务");
-    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("发送到相关 Rudder chat");
+    await expect(page.locator(".rudder-mdxeditor-content").first()).toContainText("发送到新的 Rudder chat");
     await expect(page.getByRole("button", { name: /Send to chat/ })).toBeEnabled();
 
     await page.screenshot({

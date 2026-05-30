@@ -8,6 +8,18 @@ const baseAutomationInput = {
 };
 
 describe("automation validators", () => {
+  it("defaults new automations to chat output", () => {
+    const parsed = createAutomationSchema.safeParse({
+      title: "Daily result chat",
+      assigneeAgentId: "11111111-1111-4111-8111-111111111111",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.outputMode).toBe("chat_output");
+    }
+  });
+
   it("allows chat output without an existing chat destination", () => {
     const parsed = createAutomationSchema.safeParse({
       ...baseAutomationInput,

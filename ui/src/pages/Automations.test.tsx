@@ -389,6 +389,26 @@ describe("Automations", () => {
     expect(document.body.textContent).not.toContain("Search chats");
   });
 
+  it("defaults new custom automations to chat output", async () => {
+    automationListState.items = [];
+    renderPage();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const headerContainer = renderHeaderActions();
+    await act(async () => {
+      headerContainer.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.body.querySelector('[data-testid="automation-create-chat-destination"]')?.textContent).toContain("New chat");
+    expect(
+      Array.from(document.body.querySelectorAll("button")).some((button) => button.textContent?.includes("Send to chat")),
+    ).toBe(true);
+  });
+
   it("opens templates from the composer header and applies the dependency audit template", async () => {
     renderPage();
 
