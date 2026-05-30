@@ -1,5 +1,5 @@
 ---
-title: "Agents In Rudder"
+title: "Agents"
 description: "Understand Rudder agents as durable AI team members with roles, runtime configuration, capabilities, budgets, skills, and reporting boundaries."
 icon: "bot"
 keywords:
@@ -46,13 +46,13 @@ The two fundamental heartbeat modes are:
 
 ## Heartbeats
 
-A heartbeat is a bounded work cycle. The agent inspects assigned work, makes progress, and leaves a clear signal: progress, done, blocked, or review feedback depending on the role for that issue.
+A heartbeat is a bounded, priority-aware work cycle. Rudder wakes an agent only when there is actionable assigned or review work, then the agent inspects the highest-priority issue it can move and leaves a clear signal: progress, done, blocked, or review feedback.
 
-Runs preserve execution evidence: reason, status, transcript entries, raw output, costs, touched issues, workspace operations, and retry or cancellation history.
+This makes heartbeats reactive instead of wasteful. You can leave timer heartbeats enabled; if there is no actionable work, Rudder skips the runtime invocation instead of asking the agent to spin on an empty queue. That saves tokens while keeping the agent ready to respond when new work appears.
 
-The intended loop is: wake the agent, inspect the assigned issue, act inside the
-configured runtime and workspace, then leave evidence on the issue so the board
-can see what happened.
+Runs that do execute preserve evidence: reason, status, transcript entries, raw output, costs, touched issues, workspace operations, and retry or cancellation history.
+
+Rudder's next heartbeat work is to support richer always-on agent exploration: more triggers, more context-aware wakeups, and more ways for agents to notice useful work without burning tokens when the board is quiet.
 
 ## Reporting lines
 
