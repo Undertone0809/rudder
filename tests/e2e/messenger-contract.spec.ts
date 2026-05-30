@@ -1356,4 +1356,59 @@ test.describe("Messenger unified threads contract", () => {
     await approvalMessage.hover();
     await expect(page.getByTestId(`messenger-approval-message-${approval.id}-timestamp`)).toHaveText(exactTimestampPattern());
   });
+
+  test("supports chat pin, archive, and delete actions from Messenger menus", async ({ page }) => {
+    const organization = await createOrganization(page, `Messenger-Actions-${Date.now()}`);
+
+    async function createChat(title: string) {
+      const res = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+        data: {
+          title,
+          summary: `${title} summary`,
+          issueCreationMode: "manual_approval",
+          planMode: false,
+        },
+      });
+      expect(res.ok()).toBe(true);
+      return res.json();
+    }
+
+    const pinChat = await createChat("Pin action chat");
+    const archiveChat = await createChat("Archive action chat");
+    const deleteChat = await createChat("Delete action chat");
+    const sidebarDeleteChat = await createChat("Sidebar delete action chat");
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${pinChat.id}`, { waitUntil: "commit" });
+    await page.getByTestId("chat-actions-trigger").click();
+    await expect(page.getByRole("menuitem", { name: "Pin Chat" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Archive" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Pin Chat" }).click();
+    const pinnedRes = await page.request.get(`/api/chats/${pinChat.id}`);
+    expect(pinnedRes.ok()).toBe(true);
+    await expect.poll(async () => (await (await page.request.get(`/api/chats/${pinChat.id}`)).json()).isPinned).toBe(true);
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${archiveChat.id}`, { waitUntil: "commit" });
+    await page.getByTestId("chat-actions-trigger").click();
+    await page.getByRole("menuitem", { name: "Archive" }).click();
+    await expect(page).toHaveURL(/\/messenger\/chat(?:\?[^#]*)?$/, { timeout: 15_000 });
+    await expect.poll(async () => (await (await page.request.get(`/api/chats/${archiveChat.id}`)).json()).status).toBe("archived");
+
+    await page.goto(`/${organization.issuePrefix}/messenger/chat/${deleteChat.id}`, { waitUntil: "commit" });
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByTestId("chat-actions-trigger").click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+    await expect(page).toHaveURL(/\/messenger\/chat(?:\?[^#]*)?$/, { timeout: 15_000 });
+    await expect.poll(async () => (await page.request.get(`/api/chats/${deleteChat.id}`)).status()).toBe(404);
+
+    await page.goto(`/${organization.issuePrefix}/messenger`, { waitUntil: "commit" });
+    const sidebarRow = page.getByTestId(threadTestId(`chat:${sidebarDeleteChat.id}`));
+    await expect(sidebarRow).toContainText("Sidebar delete action chat");
+    await sidebarRow.hover();
+    await sidebarRow.getByRole("button", { name: "Chat actions" }).click();
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+    await expect.poll(async () => (await page.request.get(`/api/chats/${sidebarDeleteChat.id}`)).status()).toBe(404);
+    await expect(sidebarRow).toHaveCount(0);
+  });
 });

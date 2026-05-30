@@ -3,7 +3,6 @@ import { expect, test } from "@playwright/test";
 test.describe("Agent auto naming", () => {
   test("new-agent flow pre-fills a distinct name for the first agent", async ({ page }) => {
     const organizationName = `Agent-Auto-Name-${Date.now()}`;
-    const title = "Founding Engineer";
 
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -30,7 +29,12 @@ test.describe("Agent auto naming", () => {
     const suggestedName = (await nameInput.inputValue()).trim();
     expect(suggestedName.length).toBeGreaterThan(0);
 
-    await newAgentMain.getByPlaceholder("Title (e.g. VP of Engineering)").fill(title);
+    await expect(
+      newAgentMain.getByPlaceholder("Title (e.g. VP of Engineering)")
+    ).toHaveValue("Operator Assistant");
+    await expect(
+      newAgentMain.getByRole("button", { name: /Operator Assistant/ })
+    ).toBeVisible();
     await newAgentMain.getByRole("button", { name: "Create agent" }).click();
 
     await expect(page).toHaveURL(/\/agents\/(?!new(?:\/|$))[^/]+(?:\/dashboard)?$/, { timeout: 15_000 });
@@ -50,7 +54,7 @@ test.describe("Agent auto naming", () => {
         role: string;
         icon: string | null;
       };
-      expect(agent.title).toBe(title);
+      expect(agent.title).toBe("Operator Assistant");
       expect(agent.role).toBe("ceo");
       expect(agent.name).toBe(suggestedName);
       expect(agent.icon).toMatch(/^dicebear:notionists:/);

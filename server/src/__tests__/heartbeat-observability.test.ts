@@ -3,6 +3,7 @@ import {
   buildHeartbeatAdapterInvokePayload,
   buildHeartbeatRuntimeTraceMetadata,
   buildIssueRunTraceName,
+  inferUsedSkillsFromTranscript,
   resolveHeartbeatObservabilitySurface,
 } from "../services/heartbeat.js";
 
@@ -186,6 +187,44 @@ describe("heartbeat observability surface", () => {
       skillEvidenceType: "loaded",
       skillEvidenceKeys: [],
     });
+  });
+
+  it("infers used skills from provider skill tool calls", () => {
+    expect(inferUsedSkillsFromTranscript([
+      {
+        kind: "tool_call",
+        ts: "2026-05-30T10:00:00.000Z",
+        name: "Skill",
+        toolUseId: "skill-1",
+        input: { skill: "rudder-create-agent", args: "create COO agent" },
+      },
+      {
+        kind: "tool_call",
+        ts: "2026-05-30T10:00:01.000Z",
+        name: "skill",
+        toolUseId: "skill-2",
+        input: { skillName: "build-advisor" },
+      },
+      {
+        kind: "tool_call",
+        ts: "2026-05-30T10:00:01.500Z",
+        name: "activate_skill",
+        toolUseId: "skill-3",
+        input: { name: "gemini-telemetry-sentinel" },
+      },
+      {
+        kind: "tool_call",
+        ts: "2026-05-30T10:00:02.000Z",
+        name: "read_file",
+        toolUseId: "read-1",
+        input: { path: "/workspace/.agents/skills/mcp-chrome-global/SKILL.md" },
+      },
+    ])).toEqual([
+      { key: "rudder-create-agent", label: "rudder-create-agent" },
+      { key: "build-advisor", label: "build-advisor" },
+      { key: "gemini-telemetry-sentinel", label: "gemini-telemetry-sentinel" },
+      { key: "mcp-chrome-global", label: "mcp-chrome-global" },
+    ]);
   });
 
   it("separates prompt-requested skills from runtime-reported used skills", () => {

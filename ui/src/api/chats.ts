@@ -6,6 +6,7 @@ import type {
   ChatIssueCreationMode,
   ChatOperationProposalDecisionAction,
   ChatStreamEvent,
+  ChatStreamTranscriptEntry,
 } from "@rudderhq/shared";
 import { ApiError, api } from "./client";
 
@@ -45,7 +46,19 @@ export const chatsApi = {
       resolvedAt: string | null;
     }>,
   ) => api.patch<ChatConversation>(`/chats/${chatId}`, data),
-  listMessages: (chatId: string) => api.get<ChatMessage[]>(`/chats/${chatId}/messages`),
+  remove: (chatId: string) => api.delete<ChatConversation>(`/chats/${chatId}`),
+  listMessages: (chatId: string, options: { includeTranscript?: boolean } = {}) => {
+    const params = new URLSearchParams();
+    if (typeof options.includeTranscript === "boolean") {
+      params.set("includeTranscript", String(options.includeTranscript));
+    }
+    const query = params.toString();
+    return api.get<ChatMessage[]>(`/chats/${chatId}/messages${query ? `?${query}` : ""}`);
+  },
+  getMessageTranscript: (chatId: string, messageId: string) =>
+    api.get<{ messageId: string; transcript: ChatStreamTranscriptEntry[] }>(
+      `/chats/${chatId}/messages/${messageId}/transcript`,
+    ),
   sendMessage: (chatId: string, body: string) =>
     api.post<{ messages: ChatMessage[] }>(`/chats/${chatId}/messages`, { body }),
   sendMessageStream: async (

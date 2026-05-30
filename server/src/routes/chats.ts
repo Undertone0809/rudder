@@ -25,7 +25,7 @@ import {
 import type { StorageService } from "../storage/types.js";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
-import { forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
+import { conflict, forbidden, HttpError, unauthorized, unprocessable } from "../errors.js";
 import {
   observeExecutionEvent,
   updateExecutionObservation,
@@ -673,7 +673,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
       if (scheduleError) throw unprocessable(scheduleError);
       const scheduleTrigger = {
         kind: "schedule" as const,
-        label: automationCreate.schedule.label ?? "chat-requested schedule",
         enabled: automationCreate.schedule.enabled,
         cronExpression: automationCreate.schedule.cronExpression,
         timezone: automationCreate.schedule.timezone,
@@ -1127,6 +1126,50 @@ export function chatRoutes(db: Db, storage: StorageService) {
     res.json(updated ? await assistantSvc.enrichConversation(updated as ChatConversation) : null);
   });
 
+  router.delete("/chats/:id", async (req, res) => {
+    assertBoard(req);
+    const existing = await assertConversationAccess(req, req.params.id as string);
+    if (!existing) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    if (hasActiveChatGeneration(existing.id)) {
+      throw conflict("Cannot delete a chat while a reply is in progress");
+    }
+
+    const attachments = await svc.listAttachmentsForConversation(existing.id);
+    const deleted = await svc.remove(existing.id);
+    if (!deleted) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+
+    for (const attachment of attachments) {
+      try {
+        await storage.deleteObject(attachment.orgId, attachment.objectKey);
+      } catch (err) {
+        logger.warn({ err, conversationId: existing.id, attachmentId: attachment.id }, "failed to delete chat attachment object during chat delete");
+      }
+    }
+
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId: existing.orgId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "chat.deleted",
+      entityType: "chat",
+      entityId: existing.id,
+      details: {
+        title: existing.title,
+      },
+    });
+
+    res.json(deleted);
+  });
+
   router.get("/chats/:id/messages", async (req, res) => {
     const conversation = await assertConversationAccess(req, req.params.id as string);
     if (!conversation) {
@@ -1136,8 +1179,23 @@ export function chatRoutes(db: Db, storage: StorageService) {
     if (!hasActiveChatGeneration(conversation.id)) {
       await svc.markInterruptedStreamingMessages(conversation.id);
     }
-    const messages = await svc.listMessages(conversation.id);
+    const includeTranscript = req.query.includeTranscript === "true";
+    const messages = await svc.listMessages(conversation.id, { includeTranscript });
     res.json(messages);
+  });
+
+  router.get("/chats/:id/messages/:messageId/transcript", async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const transcript = await svc.getMessageTranscript(conversation.id, req.params.messageId as string);
+    if (!transcript) {
+      res.status(404).json({ error: "Chat message not found" });
+      return;
+    }
+    res.json(transcript);
   });
 
   router.post("/chats/:id/messages", validate(addChatMessageSchema), async (req, res) => {

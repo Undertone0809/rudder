@@ -53,13 +53,6 @@
             ]
           },
           {
-            "group": "Use Cases",
-            "icon": "workflow",
-            "pages": [
-              "use-cases/agent-work-loops"
-            ]
-          },
-          {
             "group": "Concepts",
             "icon": "book-open",
             "pages": [

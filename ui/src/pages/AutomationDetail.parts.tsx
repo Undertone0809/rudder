@@ -145,9 +145,9 @@ export function summarizeTrigger(trigger: Pick<AutomationTrigger, "kind" | "cron
     return describeSchedule(trigger.cronExpression);
   }
   if (trigger.kind === "webhook") {
-    return trigger.label?.trim() || "Webhook trigger";
+    return "Webhook trigger";
   }
-  return trigger.label?.trim() || trigger.kind;
+  return trigger.kind;
 }
 
 export function automationRiskLabel(input: {
@@ -274,7 +274,6 @@ export function TriggerEditor({
   const { confirm } = useDialog();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState({
-    label: trigger.label ?? "",
     cronExpression: trigger.cronExpression ?? "",
     signingMode: trigger.signingMode ?? "bearer",
     replayWindowSec: String(trigger.replayWindowSec ?? 300),
@@ -283,7 +282,6 @@ export function TriggerEditor({
 
   useEffect(() => {
     setDraft({
-      label: trigger.label ?? "",
       cronExpression: trigger.cronExpression ?? "",
       signingMode: trigger.signingMode ?? "bearer",
       replayWindowSec: String(trigger.replayWindowSec ?? 300),
@@ -292,7 +290,6 @@ export function TriggerEditor({
   }, [trigger]);
 
   const isTriggerDirty = useMemo(() => {
-    if (draft.label !== (trigger.label ?? "")) return true;
     if (trigger.kind === "schedule") {
       return draft.cronExpression !== (trigger.cronExpression ?? "");
     }
@@ -307,7 +304,6 @@ export function TriggerEditor({
 
   const canAutosaveTrigger =
     trigger.kind !== "schedule" || draft.cronExpression.trim().length > 0;
-  const triggerLabel = trigger.label?.trim() || trigger.kind;
   const triggerSummary = trigger.kind === "schedule"
     ? (trigger.cronExpression ? describeSchedule(trigger.cronExpression) : "No schedule")
     : trigger.kind === "webhook"
@@ -318,12 +314,8 @@ export function TriggerEditor({
     : trigger.kind === "webhook"
       ? "Webhook"
       : "API";
-  const primaryTriggerLabel = trigger.kind === "schedule" ? triggerSummary : triggerLabel;
-  const secondaryTriggerLabel = trigger.kind === "schedule" && trigger.label?.trim()
-    ? trigger.label.trim()
-    : trigger.kind === "schedule"
-      ? triggerTimingLabel
-      : triggerSummary;
+  const primaryTriggerLabel = triggerSummary;
+  const secondaryTriggerLabel = triggerTimingLabel;
   const syncLabel = isDeleting
     ? "Deleting..."
     : isRotating
@@ -391,7 +383,7 @@ export function TriggerEditor({
             disabled={isDeleting}
             onClick={async () => {
               const confirmed = await confirm({
-                title: `Delete trigger "${triggerLabel}"?`,
+                title: `Delete ${trigger.kind === "schedule" ? "schedule" : trigger.kind} trigger?`,
                 description: `It will stop new ${trigger.kind} activations.`,
                 confirmLabel: "Delete",
                 tone: "destructive",
@@ -416,14 +408,6 @@ export function TriggerEditor({
           {trigger.kind === "schedule" ? "Schedule" : triggerKindLabel(trigger.kind)}
         </div>
         <div className="grid gap-2">
-          <div className="grid gap-1.5">
-            <Label className="px-1 text-xs text-muted-foreground">Label</Label>
-            <Input
-              value={draft.label}
-              className="h-8"
-              onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))}
-            />
-          </div>
           {trigger.kind === "schedule" && (
             <div className="grid gap-1.5">
               <Label className="px-1 text-xs text-muted-foreground">Schedule</Label>

@@ -1025,6 +1025,7 @@ export function AskUserPanel({
   onAddAttachment,
   onRemovePendingFile,
   onOpenAttachmentPreview,
+  onPasteAttachment,
   onSubmit,
 }: {
   message: ChatMessage;
@@ -1034,6 +1035,7 @@ export function AskUserPanel({
   onAddAttachment: () => void;
   onRemovePendingFile: (fileKey: string) => void;
   onOpenAttachmentPreview: (preview: AttachmentPreviewState) => void;
+  onPasteAttachment: (event: ReactClipboardEvent<HTMLDivElement>) => void;
   onSubmit: (body: string) => void;
 }) {
   const [selectedByQuestionId, setSelectedByQuestionId] = useState<Record<string, string[]>>({});
@@ -1127,6 +1129,7 @@ export function AskUserPanel({
   return (
     <div
       data-testid="chat-ask-user-panel"
+      onPasteCapture={onPasteAttachment}
       className="rounded-[var(--radius-lg)] border border-[color:color-mix(in_oklab,var(--accent-base)_35%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_28%,var(--surface-elevated))] p-3 shadow-[var(--shadow-sm)]"
     >
       {hasMultipleQuestions ? (
@@ -1712,6 +1715,64 @@ export function ChatMessagesLoadingState() {
             <Skeleton className="h-4 w-[84%]" />
             <Skeleton className="h-4 w-[76%]" />
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function transcriptSummaryDurationMs(summary: NonNullable<ChatMessage["transcriptSummary"]>) {
+  if (!summary.startedAt) return null;
+  const start = Date.parse(summary.startedAt);
+  const end = summary.endedAt ? Date.parse(summary.endedAt) : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+export function LazyStreamTranscriptItem({
+  summary,
+  state,
+  loading,
+  onLoad,
+}: {
+  summary: NonNullable<ChatMessage["transcriptSummary"]>;
+  state: ChatStreamDraftState | ChatMessage["status"];
+  loading?: boolean;
+  onLoad: () => void;
+}) {
+  const durationMs = transcriptSummaryDurationMs(summary);
+  const statusHint =
+    state === "failed"
+      ? "Stopped with errors"
+      : state === "stopped"
+        ? "Stopped"
+        : "";
+
+  return (
+    <div data-testid="chat-transcript-item" className="flex justify-start transition-all duration-200">
+      <div className="w-full max-w-3xl px-1 py-1">
+        <div className="flex items-center gap-3">
+          <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
+          <button
+            type="button"
+            className="flex max-w-[min(100%,90%)] shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground transition-colors hover:text-foreground disabled:cursor-wait disabled:opacity-70"
+            disabled={loading}
+            onClick={onLoad}
+            aria-expanded={false}
+          >
+            {loading ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden /> : null}
+            <span className="whitespace-nowrap">
+              {durationMs === null ? "Process details" : `Worked for ${formatChatProcessDuration(durationMs)}`}
+            </span>
+            {statusHint ? (
+              <span className="truncate text-amber-700/90 dark:text-amber-400/85">· {statusHint}</span>
+            ) : null}
+            <span className="truncate text-muted-foreground/75">
+              · {summary.entryCount} event{summary.entryCount === 1 ? "" : "s"}
+            </span>
+            <ChevronDown className="h-4 w-4 shrink-0 opacity-60" aria-hidden />
+          </button>
+          <div className="h-px min-w-[1rem] flex-1 bg-border/45" aria-hidden />
         </div>
       </div>
     </div>

@@ -1691,6 +1691,7 @@ function CommonComponentsSection() {
               onAddAttachment={() => {}}
               onRemovePendingFile={() => {}}
               onOpenAttachmentPreview={setChatPreview}
+              onPasteAttachment={() => {}}
               onSubmit={() => {}}
             />
             <ChatAttachmentPreviewDialog

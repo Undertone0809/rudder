@@ -10,6 +10,7 @@ import { MessengerContextSidebar } from "./MessengerContextSidebar";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockUpdateUserState = vi.hoisted(() => vi.fn());
+const mockRemove = vi.hoisted(() => vi.fn());
 const invalidateQueries = vi.fn();
 
 let messengerModel: any;
@@ -37,6 +38,7 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("@/api/chats", () => ({
   chatsApi: {
     update: vi.fn(),
+    remove: mockRemove,
     updateUserState: mockUpdateUserState,
   },
 }));
@@ -47,12 +49,14 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuItem: ({
     children,
+    disabled,
     onClick,
   }: {
     children: ReactNode;
+    disabled?: boolean;
     onClick?: () => void;
   }) => (
-    <button type="button" onClick={onClick}>
+    <button type="button" disabled={disabled} onClick={onClick}>
       {children}
     </button>
   ),
@@ -159,6 +163,11 @@ describe("MessengerContextSidebar chat actions", () => {
       isUnread: Boolean(data.unread),
       unreadCount: data.unread ? 1 : 0,
     }));
+    mockRemove.mockImplementation(async (chatId: string) => ({
+      ...baseConversation(),
+      id: chatId,
+    }));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     Object.defineProperty(window, "localStorage", {
       configurable: true,
       value: {
@@ -228,5 +237,37 @@ describe("MessengerContextSidebar chat actions", () => {
     });
 
     expect(clipboardWriteText).toHaveBeenCalledWith("[Planning thread](chat://chat-1)");
+  });
+
+  it("deletes a chat thread from the actions menu", () => {
+    renderSidebar();
+
+    const deleteButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Delete")) as HTMLButtonElement | undefined;
+
+    expect(deleteButton).toBeTruthy();
+    act(() => {
+      deleteButton?.click();
+    });
+
+    expect(window.confirm).toHaveBeenCalledWith('Delete "hi"? This cannot be undone.');
+    expect(mockRemove).toHaveBeenCalledWith("chat-1");
+  });
+
+  it("disables deleting a chat thread while it is generating", () => {
+    activeGeneratingChatIds = new Set(["chat-1"]);
+    renderSidebar();
+
+    const deleteButton = Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Delete")) as HTMLButtonElement | undefined;
+
+    expect(deleteButton).toBeTruthy();
+    expect(deleteButton?.disabled).toBe(true);
+    act(() => {
+      deleteButton?.click();
+    });
+
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(mockRemove).not.toHaveBeenCalled();
   });
 });

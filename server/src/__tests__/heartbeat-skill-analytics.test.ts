@@ -555,4 +555,162 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
       },
     ]);
   });
+
+  it("infers used skills from provider Skill tool calls in stored local runtime logs", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const logRef = path.join(orgId, agentId, `${runId}.ndjson`);
+    const chunk = `${JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_skill_1",
+            name: "Skill",
+            input: {
+              skill: "rudder-create-agent",
+              args: "create COO agent",
+            },
+          },
+        ],
+      },
+    })}\n`;
+    const logContent = `${JSON.stringify({
+      ts: "2026-04-21T10:00:05.000Z",
+      stream: "stdout",
+      chunk,
+    })}\n`;
+
+    fs.mkdirSync(path.dirname(path.join(runLogDir, logRef)), { recursive: true });
+    fs.writeFileSync(path.join(runLogDir, logRef), logContent, "utf8");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RUD",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Claude",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "claude_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "succeeded",
+      createdAt: new Date("2026-04-21T10:00:00.000Z"),
+      updatedAt: new Date("2026-04-21T10:05:00.000Z"),
+      logStore: "local_file",
+      logRef,
+      logBytes: Buffer.byteLength(logContent, "utf8"),
+    });
+
+    const analytics = await svc.getAgentSkillAnalytics(agentId, {
+      startDate: "2026-04-21",
+      endDate: "2026-04-21",
+    });
+
+    expect(analytics.totalCount).toBe(1);
+    expect(analytics.totalRunsWithSkills).toBe(1);
+    expect(analytics.evidenceCounts).toEqual({ used: 1, requested: 0, loaded: 0 });
+    expect(analytics.skills).toEqual([
+      { key: "rudder-create-agent", label: "rudder-create-agent", count: 1, evidence: "used", evidenceCounts: { used: 1, requested: 0, loaded: 0 } },
+    ]);
+  });
+
+  it("infers used skills from Gemini activate_skill tool calls in stored local runtime logs", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const logRef = path.join(orgId, agentId, `${runId}.ndjson`);
+    const chunk = [
+      JSON.stringify({
+        type: "init",
+        session_id: "gemini-session-1",
+        model: "gemini-3-flash-preview",
+      }),
+      JSON.stringify({
+        type: "tool_use",
+        timestamp: "2026-04-21T10:00:05.000Z",
+        tool_name: "activate_skill",
+        tool_id: "activate_skill_1",
+        parameters: { name: "gemini-telemetry-sentinel" },
+      }),
+      JSON.stringify({
+        type: "tool_result",
+        timestamp: "2026-04-21T10:00:06.000Z",
+        tool_id: "activate_skill_1",
+        status: "success",
+        output: "Skill activated",
+      }),
+      "",
+    ].join("\n");
+    const logContent = `${JSON.stringify({
+      ts: "2026-04-21T10:00:05.000Z",
+      stream: "stdout",
+      chunk,
+    })}\n`;
+
+    fs.mkdirSync(path.dirname(path.join(runLogDir, logRef)), { recursive: true });
+    fs.writeFileSync(path.join(runLogDir, logRef), logContent, "utf8");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder",
+      urlKey: deriveOrganizationUrlKey("Rudder"),
+      issuePrefix: "RUD",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Gemini",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "gemini_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "succeeded",
+      createdAt: new Date("2026-04-21T10:00:00.000Z"),
+      updatedAt: new Date("2026-04-21T10:05:00.000Z"),
+      logStore: "local_file",
+      logRef,
+      logBytes: Buffer.byteLength(logContent, "utf8"),
+    });
+
+    const analytics = await svc.getAgentSkillAnalytics(agentId, {
+      startDate: "2026-04-21",
+      endDate: "2026-04-21",
+    });
+
+    expect(analytics.totalCount).toBe(1);
+    expect(analytics.totalRunsWithSkills).toBe(1);
+    expect(analytics.evidenceCounts).toEqual({ used: 1, requested: 0, loaded: 0 });
+    expect(analytics.skills).toEqual([
+      { key: "gemini-telemetry-sentinel", label: "gemini-telemetry-sentinel", count: 1, evidence: "used", evidenceCounts: { used: 1, requested: 0, loaded: 0 } },
+    ]);
+  });
 });

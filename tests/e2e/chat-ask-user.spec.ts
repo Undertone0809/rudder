@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createE2EChatAgent } from "./support/chat-agent";
@@ -41,10 +41,14 @@ process.stdin.on("data", (chunk) => {
 process.stdin.on("end", () => {
   const sentinel = prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
   const answered = prompt.includes("Answering the requested input:");
+  const answeredWithAttachments = answered
+    && prompt.includes("Current user message attachments:")
+    && prompt.includes("ask-user-screenshot.png")
+    && prompt.includes("receipt.txt");
   const result = answered
     ? {
         kind: "message",
-        body: "Continuing with the narrow path.",
+        body: answeredWithAttachments ? "Continuing with pasted attachments." : "Continuing with the narrow path.",
         structuredPayload: null,
       }
     : {
@@ -88,6 +92,44 @@ async function createAskUserOrg(page: Page, name: string, command: string) {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
   }, organization.id);
   return { ...organization, chatAgent };
+}
+
+async function pasteAskUserFiles(panel: Locator) {
+  const textarea = panel.getByPlaceholder("Type your answer...");
+  await expect(textarea).toBeVisible();
+  await textarea.evaluate(async (element) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 640;
+    canvas.height = 360;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Failed to create canvas context for ask_user paste test");
+    }
+    context.fillStyle = "#f8fafc";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#0f766e";
+    context.fillRect(40, 40, canvas.width - 80, canvas.height - 80);
+    context.fillStyle = "#ffffff";
+    context.font = "bold 42px sans-serif";
+    context.fillText("ASK USER", 188, 194);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/png");
+    });
+    if (!blob) {
+      throw new Error("Failed to create PNG blob for ask_user paste test");
+    }
+
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([blob], "ask-user-screenshot.png", { type: "image/png" }));
+    dataTransfer.items.add(new File(["paid"], "receipt.txt", { type: "text/plain" }));
+
+    const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEvent, "clipboardData", {
+      value: dataTransfer,
+    });
+    element.dispatchEvent(pasteEvent);
+  });
 }
 
 test("ask_user focuses the answer panel until the user responds", async ({ page }) => {
@@ -233,4 +275,39 @@ test("ask_user supports multi-select questions", async ({ page }) => {
   const answer = page.getByTestId("chat-ask-user-answer").last();
   await expect(answer).toContainText("Evidence");
   await expect(answer).toContainText("Test output, Screenshots");
+});
+
+test("ask_user Other answer accepts pasted image and file attachments", async ({ page }) => {
+  const command = await writeAskUserStub(`ask-user-paste-${Date.now()}`);
+  const organization = await createAskUserOrg(page, `AskUserPaste-${Date.now()}`, command);
+
+  await page.goto(`/chat?agentId=${organization.chatAgent.id}`);
+  const composer = page.locator(".rudder-mdxeditor-content").first();
+  await expect(composer).toBeVisible({ timeout: 15_000 });
+  await composer.fill("I will need to paste payment evidence");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const panel = page.getByTestId("chat-ask-user-panel");
+  await expect(panel).toBeVisible({ timeout: 15_000 });
+  await panel.getByRole("button", { name: "Other" }).click();
+  await pasteAskUserFiles(panel);
+
+  const pendingAttachments = panel.getByTestId("chat-ask-user-pending-attachment");
+  await expect(pendingAttachments).toHaveCount(2);
+  const pendingImage = panel.getByTestId("chat-pending-image-attachment");
+  await expect(pendingImage).toBeVisible();
+  await expect(pendingImage.getByAltText("ask-user-screenshot.png")).toBeVisible();
+  await expect(pendingAttachments.filter({ hasText: "receipt.txt" })).toBeVisible();
+
+  await panel.getByRole("button", { name: "Submit answer" }).click();
+  await expect(page.getByTestId("chat-ask-user-panel")).toHaveCount(0, { timeout: 15_000 });
+
+  const answer = page.getByTestId("chat-ask-user-answer").last();
+  await expect(answer).toContainText("Scope");
+  await expect(answer).toContainText("See attached files.");
+
+  await expect(page.getByRole("button", { name: "Open image preview: ask-user-screenshot.png" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("link", { name: "receipt.txt" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("chat-pending-attachment")).toHaveCount(0);
+  await expect(page.getByText("Continuing with pasted attachments.")).toBeVisible({ timeout: 15_000 });
 });

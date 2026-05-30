@@ -78,10 +78,17 @@ export type AdapterType =
   | "http"
   | "openclaw_gateway";
 
-export const DEFAULT_TASK_DESCRIPTION = `You are the CEO. You set the direction for the organization.
+export const DEFAULT_FIRST_AGENT_TITLE = "Operator Assistant";
 
-- hire a founding engineer
-- write a hiring plan`;
+export const DEFAULT_TASK_TITLE = "Start your first real work loop";
+
+export const DEFAULT_TASK_DESCRIPTION = `Help the operator start the first real work loop.
+
+- review the organization goal
+- identify one bounded issue the operator wants to move
+- make the issue clear enough to assign
+- run or route the work when ready
+- leave evidence, validation, and the next review step`;
 
 export const ONBOARDING_PROJECT_NAME = "Getting Started";
 export const ONBOARDING_DRAFT_ORGANIZATION_STORAGE_KEY =
@@ -100,4 +107,3 @@ export function upsertOrganization(
   }
   return current.map((entry) => (entry.id === organization.id ? organization : entry));
 }
-

@@ -145,21 +145,21 @@ export function ActivityRow({
   const entityLabel = activityEntityLabel(event.entityType);
 
   const inner = (
-    <div className="flex gap-3">
-      <p className="flex-1 min-w-0 truncate">
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+      <p className="min-w-0 truncate leading-5">
         {actor ? (
           <AgentIdentity
             name={actorName}
             icon={actor.icon}
             role={actor.role}
             size="xs"
-            className="align-baseline"
+            className="items-center align-middle [&_[data-slot=avatar]]:top-0"
           />
         ) : (
           <Identity
             name={actorName}
             size="xs"
-            className="align-baseline"
+            className="items-center align-middle [&_[data-slot=avatar]]:top-0"
           />
         )}
         <span className="text-muted-foreground ml-1">{verb} </span>
@@ -167,7 +167,7 @@ export function ActivityRow({
         {name && <span className="font-medium">{name}</span>}
         {entityTitle && entityTitle !== name && <span className="text-muted-foreground ml-1">— {entityTitle}</span>}
       </p>
-      <span className="text-xs text-muted-foreground shrink-0 pt-0.5">{timeAgo(event.createdAt)}</span>
+      <span className="shrink-0 text-xs leading-5 text-muted-foreground tabular-nums">{timeAgo(event.createdAt)}</span>
     </div>
   );
 

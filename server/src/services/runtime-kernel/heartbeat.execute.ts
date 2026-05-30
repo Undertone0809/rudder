@@ -1022,7 +1022,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
             level: "info",
             message: "skill usage inferred from transcript",
             payload: {
-              source: "transcript.skill_file_read",
+              source: "transcript.skill_usage",
               usedSkillCount: transcriptUsedSkills.length,
               usedSkillKeys: transcriptUsedSkills.map((entry) => entry.key),
               usedSkills: transcriptUsedSkills,

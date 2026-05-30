@@ -43,6 +43,7 @@ const SUPPORTED_ADVANCED_ADAPTER_TYPES = new Set<CreateConfigValues["agentRuntim
   "cursor",
   "openclaw_gateway",
 ]);
+const DEFAULT_FIRST_AGENT_TITLE = "Operator Assistant";
 
 function createValuesForAdapterType(
   agentRuntimeType: CreateConfigValues["agentRuntimeType"],
@@ -137,6 +138,9 @@ export function NewAgent() {
   const hasLoadedAgents = Array.isArray(agents);
   const isFirstAgent = hasLoadedAgents && agents.length === 0;
   const effectiveRole = isFirstAgent ? "ceo" : role;
+  const effectiveRoleLabel = isFirstAgent
+    ? DEFAULT_FIRST_AGENT_TITLE
+    : roleLabels[effectiveRole] ?? effectiveRole;
   const { data: nameSuggestion } = useQuery({
     queryKey: queryKeys.agents.nameSuggestion(selectedOrganizationId!),
     queryFn: () => agentsApi.suggestName(selectedOrganizationId!),
@@ -157,7 +161,7 @@ export function NewAgent() {
 
   useEffect(() => {
     if (hasLoadedAgents && isFirstAgent) {
-      if (!title) setTitle("CEO");
+      if (!title) setTitle(DEFAULT_FIRST_AGENT_TITLE);
     }
   }, [hasLoadedAgents, isFirstAgent]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -333,7 +337,7 @@ export function NewAgent() {
                 disabled={isFirstAgent || !hasLoadedAgents}
               >
                 <Shield className="h-3 w-3 text-muted-foreground" />
-                {roleLabels[effectiveRole] ?? effectiveRole}
+                {effectiveRoleLabel}
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-36 p-1" align="start">
@@ -427,7 +431,9 @@ export function NewAgent() {
         {/* Footer */}
         <div className="border-t border-border px-4 py-3">
           {isFirstAgent && (
-            <p className="text-xs text-muted-foreground mb-2">This will be the CEO</p>
+            <p className="text-xs text-muted-foreground mb-2">
+              This will be the root agent for the organization.
+            </p>
           )}
           {formError && (
             <p className="text-xs text-destructive mb-2">{formError}</p>

@@ -463,7 +463,7 @@ const zhExactPhrases: Record<string, string> = {
   "What each agent consumed in the selected period.": "所选时间段内各智能体的消耗情况。",
   "Run costs attributed through project-linked issues.": "按关联项目任务归因的运行成本。",
   "stdout excerpt": "stdout 摘要",
-  "This will be the CEO": "这会成为 CEO",
+  "This will be the root agent for the organization.": "这会成为组织的根 agent。",
   "Task": "任务",
   "Threads": "话题",
   "Threads sorted by latest activity": "话题按最近活动排序",

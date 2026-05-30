@@ -35,7 +35,6 @@ describe("buildAutomationTriggerPatch", () => {
     const patch = buildAutomationTriggerPatch(
       makeScheduleTrigger({ timezone: "UTC" }),
       {
-        label: "Daily label edit",
         cronExpression: "0 10 * * *",
         signingMode: "bearer",
         replayWindowSec: "300",
@@ -44,7 +43,6 @@ describe("buildAutomationTriggerPatch", () => {
     );
 
     expect(patch).toEqual({
-      label: "Daily label edit",
       cronExpression: "0 10 * * *",
       timezone: "UTC",
     });
@@ -54,7 +52,6 @@ describe("buildAutomationTriggerPatch", () => {
     const patch = buildAutomationTriggerPatch(
       makeScheduleTrigger({ timezone: null }),
       {
-        label: "",
         cronExpression: "15 9 * * 1-5",
         signingMode: "bearer",
         replayWindowSec: "300",
@@ -63,7 +60,6 @@ describe("buildAutomationTriggerPatch", () => {
     );
 
     expect(patch).toEqual({
-      label: null,
       cronExpression: "15 9 * * 1-5",
       timezone: "America/Chicago",
     });

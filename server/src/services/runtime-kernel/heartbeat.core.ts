@@ -576,10 +576,41 @@ export function isReadTranscriptTool(name: string) {
   return false;
 }
 
+export function isSkillTranscriptTool(name: string) {
+  const normalized = name.trim().toLowerCase().replace(/[\s_-]+/gu, "");
+  return ["skill", "activateskill", "loadskill", "useskill"].includes(normalized);
+}
+
+export function readSkillToolInput(input: unknown): { key: string; label: string } | null {
+  if (typeof input === "string") {
+    const value = input.trim();
+    return value ? { key: value, label: fallbackSkillLabel(value) } : null;
+  }
+
+  const record = parseObject(input);
+  const rawValue =
+    readNonEmptyString(record.skill) ??
+    readNonEmptyString(record.skillName) ??
+    readNonEmptyString(record.skill_name) ??
+    readNonEmptyString(record.name) ??
+    readNonEmptyString(record.slug);
+  if (rawValue) return { key: rawValue, label: fallbackSkillLabel(rawValue) };
+
+  const nestedSkill = normalizeLoadedSkill(record.skill);
+  if (nestedSkill) return nestedSkill;
+
+  return null;
+}
+
 export function inferUsedSkillsFromTranscript(transcript: TranscriptEntry[]) {
   const skills: Array<{ key: string; label: string }> = [];
   for (const entry of transcript) {
     if (entry.kind !== "tool_call") continue;
+    if (isSkillTranscriptTool(entry.name)) {
+      const skill = readSkillToolInput(entry.input);
+      if (skill) skills.push(skill);
+      continue;
+    }
     if (!isReadTranscriptTool(entry.name)) continue;
 
     const command = readToolCommandInput(entry.input);
@@ -744,4 +775,3 @@ export async function resolveLedgerScopeForRun(
     projectId: issue?.projectId ?? contextProjectId,
   };
 }
-
