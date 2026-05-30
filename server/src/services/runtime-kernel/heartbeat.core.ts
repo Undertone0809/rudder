@@ -577,7 +577,8 @@ export function isReadTranscriptTool(name: string) {
 }
 
 export function isSkillTranscriptTool(name: string) {
-  return name.trim().toLowerCase().replace(/[\s_-]+/gu, "") === "skill";
+  const normalized = name.trim().toLowerCase().replace(/[\s_-]+/gu, "");
+  return ["skill", "activateskill", "loadskill", "useskill"].includes(normalized);
 }
 
 export function readSkillToolInput(input: unknown): { key: string; label: string } | null {

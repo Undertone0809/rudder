@@ -136,6 +136,76 @@ describe("gemini_local ui stdout parser", () => {
       },
     ]);
   });
+
+  it("parses current Gemini stream-json init, message, tool_use, and tool_result events", () => {
+    const ts = "2026-03-08T00:00:00.000Z";
+
+    expect(
+      parseGeminiStdoutLine(
+        JSON.stringify({
+          type: "init",
+          session_id: "gemini-session-2",
+          model: "gemini-3-flash-preview",
+        }),
+        ts,
+      ),
+    ).toEqual([
+      { kind: "init", ts, model: "gemini-3-flash-preview", sessionId: "gemini-session-2" },
+    ]);
+
+    expect(
+      parseGeminiStdoutLine(
+        JSON.stringify({
+          type: "message",
+          role: "assistant",
+          content: "I checked the repo.",
+        }),
+        ts,
+      ),
+    ).toEqual([
+      { kind: "assistant", ts, text: "I checked the repo." },
+    ]);
+
+    expect(
+      parseGeminiStdoutLine(
+        JSON.stringify({
+          type: "tool_use",
+          tool_name: "activate_skill",
+          tool_id: "activate_skill_1",
+          parameters: { name: "build-advisor" },
+        }),
+        ts,
+      ),
+    ).toEqual([
+      {
+        kind: "tool_call",
+        ts,
+        name: "activate_skill",
+        toolUseId: "activate_skill_1",
+        input: { name: "build-advisor" },
+      },
+    ]);
+
+    expect(
+      parseGeminiStdoutLine(
+        JSON.stringify({
+          type: "tool_result",
+          tool_id: "activate_skill_1",
+          status: "success",
+          output: "Skill activated",
+        }),
+        ts,
+      ),
+    ).toEqual([
+      {
+        kind: "tool_result",
+        ts,
+        toolUseId: "activate_skill_1",
+        content: "Skill activated",
+        isError: false,
+      },
+    ]);
+  });
 });
 
 function stripAnsi(value: string): string {
