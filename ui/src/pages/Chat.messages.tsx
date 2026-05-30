@@ -1025,6 +1025,7 @@ export function AskUserPanel({
   onAddAttachment,
   onRemovePendingFile,
   onOpenAttachmentPreview,
+  onPasteAttachment,
   onSubmit,
 }: {
   message: ChatMessage;
@@ -1034,6 +1035,7 @@ export function AskUserPanel({
   onAddAttachment: () => void;
   onRemovePendingFile: (fileKey: string) => void;
   onOpenAttachmentPreview: (preview: AttachmentPreviewState) => void;
+  onPasteAttachment: (event: ReactClipboardEvent<HTMLDivElement>) => void;
   onSubmit: (body: string) => void;
 }) {
   const [selectedByQuestionId, setSelectedByQuestionId] = useState<Record<string, string[]>>({});
@@ -1127,6 +1129,7 @@ export function AskUserPanel({
   return (
     <div
       data-testid="chat-ask-user-panel"
+      onPasteCapture={onPasteAttachment}
       className="rounded-[var(--radius-lg)] border border-[color:color-mix(in_oklab,var(--accent-base)_35%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_28%,var(--surface-elevated))] p-3 shadow-[var(--shadow-sm)]"
     >
       {hasMultipleQuestions ? (

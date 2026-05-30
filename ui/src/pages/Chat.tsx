@@ -114,7 +114,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           body: error instanceof Error ? error.message : undefined,
           tone: "error",
         }); } }, [pushToast, setPendingFilesForCurrentScope], ); const removePendingFile = useCallback((targetKey: string) => { setPendingFilesForCurrentScope((current) => current.filter((file) => pendingAttachmentKey(file) !== targetKey)); }, [setPendingFilesForCurrentScope]);
-  const handleComposerPasteCapture = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => { const files = Array.from(event.clipboardData?.items ?? []) .filter((item) => item.kind === "file") .map((item) => item.getAsFile()) .filter((file): file is File => file instanceof File); if (files.length === 0) return; event.preventDefault(); event.stopPropagation(); void appendPendingFiles(files); }, [appendPendingFiles]);
+  const handlePendingAttachmentPasteCapture = useCallback((event: ReactClipboardEvent<HTMLElement>) => { const clipboardData = event.clipboardData; const filesFromItems = Array.from(clipboardData?.items ?? []) .filter((item) => item.kind === "file") .map((item) => item.getAsFile()) .filter((file): file is File => file instanceof File); const seenFiles = new Set(filesFromItems.map((file) => pendingAttachmentKey(file))); const filesFromList = Array.from(clipboardData?.files ?? []) .filter((file) => !seenFiles.has(pendingAttachmentKey(file))); const files = [...filesFromItems, ...filesFromList]; if (files.length === 0) return; event.preventDefault(); event.stopPropagation(); void appendPendingFiles(files); }, [appendPendingFiles]);
   useEffect(() => { if (draftState.scopeKey === draftStorageScopeKey) return;
     setDraftState({
       scopeKey: draftStorageScopeKey, value: readChatDraft(draftStorageOrgId, draftStorageConversationId), }); }, [draftState.scopeKey, draftStorageConversationId, draftStorageOrgId, draftStorageScopeKey]);
@@ -427,7 +427,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     if (!selectedOrganizationId) { pushToast({ title: "Select a organization first", tone: "error" });
       return; } const usesComposerState = options?.bodyOverride === undefined && options?.filesOverride === undefined; const body = (options?.bodyOverride ?? draft).trim();
     if (!body) { pushToast({ title: "Message cannot be empty", tone: "error" });
-      return; } const filesToUpload = [...(options?.filesOverride ?? pendingFiles)]; const submittedComposerDraft = usesComposerState ? {
+      return; } const filesToUpload = [...(options?.filesOverride ?? pendingFiles)]; let pendingFilesClearedAfterAck = false; const submittedComposerDraft = usesComposerState ? {
           body,
           files: filesToUpload,
           orgId: draftStorageOrgId, conversationId: draftStorageConversationId, } : null; const editUserMessageId = options?.editUserMessageIdOverride ?? (usesComposerState ? editForkUserMessageId : null); const editTargetMessage = editUserMessageId ? rawMessages.find((message) => message.id === editUserMessageId) ?? null : null; let conversation = options?.conversationOverride ?? selectedConversation; let activeChatId: string | null = null; let newConversationLockAcquired = false; let chatSendLockAcquired = false; let userMessageAcknowledged = false;
@@ -471,6 +471,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         files: filesToUpload,
         onEvent: async (event) => {
           if (event.type === "ack") { userMessageAcknowledged = true; upsertMessages(chatId, [event.userMessage]);
+            if (options?.clearPendingFilesOnSuccess && !pendingFilesClearedAfterAck) { clearPendingFilesForCurrentScope(); pendingFilesClearedAfterAck = true; }
             setStreamDraftForChat(
               chatId,
               (current) => (current ? { ...current,
@@ -870,7 +871,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         "chat-composer rounded-[var(--radius-lg)] p-3 transition-all duration-300",
         centered ? "mx-auto w-full max-w-3xl" : "w-full",
       )} >
-      <div ref={composerEditorScrollRef} data-testid="chat-composer-editor-scroll" className="chat-composer-editor-scroll scrollbar-auto-hide overflow-y-auto overscroll-contain pr-1" onPasteCapture={handleComposerPasteCapture} >
+      <div ref={composerEditorScrollRef} data-testid="chat-composer-editor-scroll" className="chat-composer-editor-scroll scrollbar-auto-hide overflow-y-auto overscroll-contain pr-1" onPasteCapture={handlePendingAttachmentPasteCapture} >
         <MarkdownEditor ref={composerEditorRef} value={draft} onChange={setDraft}
           mentions={mentionOptions}
           mentionMenuAnchorRef={composerSurfaceRef}
@@ -1170,6 +1171,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                         onAddAttachment={() => fileInputRef.current?.click()}
                         onRemovePendingFile={removePendingFile}
                         onOpenAttachmentPreview={setAttachmentPreview}
+                        onPasteAttachment={handlePendingAttachmentPasteCapture}
                         onSubmit={(body) => { if (!selectedConversation) return;
                           void sendMessage({
                             bodyOverride: body,
