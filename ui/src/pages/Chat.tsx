@@ -973,14 +973,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           {!selectedOrganizationId ? (
             <div className="flex flex-1 items-center justify-center px-6 py-12 text-sm text-muted-foreground">
               Select a organization first. </div> ) : selectedConversation ? ( <>
-              <div className="pointer-events-none absolute right-4 top-14 z-20 flex justify-end md:right-5 md:top-4">
+              <div className="pointer-events-none absolute right-3 top-12 z-20 flex justify-end md:right-3 md:top-2">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
                       data-testid="chat-actions-trigger"
                       aria-label="Chat actions"
-                      className="pointer-events-auto inline-flex h-8 w-8 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                      className="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
                     >
                       <MoreHorizontal className="h-4 w-4" />
                     </button>
@@ -1005,6 +1005,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       )}
                     </DropdownMenuItem>
                     <DropdownMenuItem
+                      variant="destructive"
                       disabled={selectedConversationGenerating}
                       onClick={() => {
                         if (typeof window !== "undefined" && !window.confirm(`Delete "${conversationDisplayTitle(selectedConversation)}"? This cannot be undone.`)) return;

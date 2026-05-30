@@ -436,7 +436,7 @@ function ChatThreadRow({
                 <Archive className="h-4 w-4" />
                 Archive
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={generating} onClick={onDelete}>
+              <DropdownMenuItem variant="destructive" disabled={generating} onClick={onDelete}>
                 <Trash2 className="h-4 w-4" />
                 Delete
               </DropdownMenuItem>

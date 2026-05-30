@@ -107,6 +107,7 @@ export interface ChatMessage {
   approval: Approval | null;
   attachments: ChatAttachment[];
   transcript?: ChatStreamTranscriptEntry[];
+  transcriptSummary?: ChatTranscriptSummary | null;
   /** Agent whose runtime produced this assistant message. */
   replyingAgentId: string | null;
   /** Groups user+assistant rows for one logical turn; new variant on edit/regenerate. */
@@ -115,6 +116,12 @@ export interface ChatMessage {
   supersededAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ChatTranscriptSummary {
+  entryCount: number;
+  startedAt: string | null;
+  endedAt: string | null;
 }
 
 export type ChatRichReferenceDisplay = "card" | "inline";

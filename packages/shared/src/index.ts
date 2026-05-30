@@ -215,6 +215,7 @@ export type {
   ChatOperationProposalDecision,
   ChatOperationProposalDecisionAction,
   ChatOperationProposalDecisionStatus,
+  ChatTranscriptSummary,
   ChatStreamTranscriptEntry,
   ChatStreamTranscriptTodoItem,
   ChatStreamTranscriptTodoItemStatus,

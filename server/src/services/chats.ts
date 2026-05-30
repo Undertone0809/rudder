@@ -27,10 +27,18 @@ import { issueService } from "./issues.js";
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
 type MessageRow = typeof chatMessages.$inferSelect;
+type MessageHydrationRow = MessageRow & {
+  transcriptSummary?: {
+    entryCount: number;
+    startedAt: string | null;
+    endedAt: string | null;
+  } | null;
+};
 type ContextLinkRow = typeof chatContextLinks.$inferSelect;
 type ApprovalRow = typeof approvals.$inferSelect;
 
 import {
+  CHAT_TRANSCRIPT_KEY,
   safeTrim,
   contentPath,
   isVisibleIncomingChatMessage,
@@ -44,6 +52,7 @@ import {
   listContextLinksForConversationIds,
   listPrimaryIssues,
   chatTranscriptFromPayload,
+  chatTranscriptSummaryFromEntries,
   stripChatMetadataFromPayload,
   withPersistedTranscript,
   issueProposalFromPayload,
@@ -387,19 +396,27 @@ export function chatService(db: Db) {
     return new Map(approvalRows.map((row) => [row.id, row]));
   }
 
-  async function hydrateMessages(rows: MessageRow[]) {
+  async function hydrateMessages(rows: MessageHydrationRow[], options: { includeTranscript?: boolean } = {}) {
+    const includeTranscript = options.includeTranscript !== false;
     const [attachmentsByMessageId, approvalsById] = await Promise.all([
       listAttachmentsForMessageIds(rows.map((row) => row.id)),
       listApprovalsForMessages(rows),
     ]);
 
-    return rows.map((row) => ({
-      ...row,
-      structuredPayload: stripChatMetadataFromPayload(row.structuredPayload),
-      transcript: chatTranscriptFromPayload(row.structuredPayload),
-      approval: row.approvalId ? (approvalsById.get(row.approvalId) ?? null) : null,
-      attachments: attachmentsByMessageId.get(row.id) ?? [],
-    }));
+    return rows.map((row) => {
+      const transcript = includeTranscript ? chatTranscriptFromPayload(row.structuredPayload) : [];
+      const transcriptSummary = includeTranscript
+        ? chatTranscriptSummaryFromEntries(transcript)
+        : row.transcriptSummary ?? null;
+      return {
+        ...row,
+        structuredPayload: stripChatMetadataFromPayload(row.structuredPayload),
+        transcript: includeTranscript ? transcript : undefined,
+        transcriptSummary,
+        approval: row.approvalId ? (approvalsById.get(row.approvalId) ?? null) : null,
+        attachments: attachmentsByMessageId.get(row.id) ?? [],
+      };
+    });
   }
 
   async function refreshConversationTouch(conversationId: string, at = new Date()) {
