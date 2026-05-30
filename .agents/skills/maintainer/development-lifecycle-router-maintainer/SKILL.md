@@ -1,20 +1,14 @@
 ---
 name: development-lifecycle-router-maintainer
 description: >
-  Route Rudder development work across the full lifecycle: intake, requirement
-  framing, product/advisor analysis, UI design, implementation, testing,
-  evidence collection, review gates, rework, commit, push, and handoff. Use
-  when the user gives an ambiguous or end-to-end development request, asks which
-  workflow or skill should handle a task, wants to enter at any lifecycle stage,
-  wants reviewer subagents after each stage, or expects review by default before
-  handoff. Review gates require spawned reviewers by default. Verification gates
-  must prove the terminal product workflow when the task affects an operator,
-  agent, Desktop, release, or UI path. Also use for component-lab/catalog work,
-  performance benchmark-to-implementation work, and destructive cleanup or
-  dirty-worktree recovery where the safe route is not yet clear. Keep this
-  router thin: prefer narrower maintainer skills directly when the prompt
-  already names a release, UI polish, run/debug investigation, local preview,
-  data-path question, Desktop recovery, PR preview, or review-only task.
+  Route Rudder development work when a request is ambiguous or spans lifecycle
+  stages: requirements, advisor/product analysis, UI design, implementation,
+  verification, review, commit/push, and handoff. Use for stage selection,
+  reviewer gates, aborted-run recovery, component-lab work, scoped performance
+  optimization, and risky dirty-worktree cleanup. Keep thin: if the prompt
+  clearly names release, UI polish, run/debug, local preview, data path, Desktop
+  recovery, PR preview, mock data, or review-only work, use the narrower
+  maintainer skill directly.
 ---
 
 # Development Lifecycle Router Maintainer
