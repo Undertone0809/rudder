@@ -153,13 +153,13 @@ export function ActivityRow({
             icon={actor.icon}
             role={actor.role}
             size="xs"
-            className="align-middle"
+            className="items-center align-middle [&_[data-slot=avatar]]:top-0"
           />
         ) : (
           <Identity
             name={actorName}
             size="xs"
-            className="align-middle"
+            className="items-center align-middle [&_[data-slot=avatar]]:top-0"
           />
         )}
         <span className="text-muted-foreground ml-1">{verb} </span>

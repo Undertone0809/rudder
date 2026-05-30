@@ -137,6 +137,9 @@ describe("ActivityRow", () => {
     expect(html).toContain("<img");
     expect(html).toContain("data:image/svg+xml");
     expect(html).toContain("grid-cols-[minmax(0,1fr)_auto]");
+    expect(html).toContain("items-center");
+    expect(html).toContain("data-slot=\"avatar");
+    expect(html).toContain("top-0");
     expect(html).toContain("leading-5");
     expect(html).toContain("tabular-nums");
   });
