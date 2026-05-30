@@ -1,5 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import type { IssueComment, Agent } from "@rudderhq/shared";
 import { Button } from "@/components/ui/button";
 import { Check, ChevronDown, Copy, Paperclip, TerminalSquare } from "lucide-react";
@@ -17,6 +17,7 @@ import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
 import { formatDateTime } from "../lib/utils";
 import { resolveOperatorDisplayName } from "../lib/operator-display";
 import { PluginSlotOutlet } from "@/plugins/slots";
+import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
 
 const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 
@@ -117,6 +118,12 @@ function shouldExpandRunByDefault(status: string): boolean {
   return status === "queued" || status === "running";
 }
 
+function shouldSkipRunRowNavigation(target: EventTarget | null): boolean {
+  return target instanceof Element
+    ? Boolean(target.closest("a, button, [data-run-details]"))
+    : false;
+}
+
 function CopyMarkdownButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -133,6 +140,46 @@ function CopyMarkdownButton({ text }: { text: string }) {
     >
       {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
     </button>
+  );
+}
+
+function AnimatedRunDetails({
+  expanded,
+  id,
+  children,
+}: {
+  expanded: boolean;
+  id: string;
+  children: ReactNode;
+}) {
+  const [rendered, setRendered] = useState(expanded);
+  const showContent = expanded || rendered;
+
+  useEffect(() => {
+    if (expanded) {
+      setRendered(true);
+    }
+  }, [expanded]);
+
+  return (
+    <div
+      id={id}
+      data-run-details
+      aria-hidden={!expanded}
+      className={`grid motion-safe:transition-[grid-template-rows,opacity,margin-top] motion-safe:duration-200 motion-safe:ease-out motion-reduce:transition-none ${expanded ? "mt-3 grid-rows-[1fr] opacity-100" : "mt-0 grid-rows-[0fr] opacity-0"}`}
+      onTransitionEnd={(event) => {
+        if (event.currentTarget !== event.target) return;
+        if (!expanded) {
+          setRendered(false);
+        }
+      }}
+    >
+      <div className="min-h-0 overflow-hidden">
+        <div className="max-h-56 overflow-y-auto pr-1">
+          {showContent ? children : null}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -166,6 +213,9 @@ const TimelineList = memo(function TimelineList({
   agentMentionPreviews?: Array<{ name: string; agentId: string; agentIcon?: string | null }>;
   emptyMessage: string;
 }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const organizationPrefix = extractOrganizationPrefixFromPath(location.pathname);
   const [runExpandedOverrides, setRunExpandedOverrides] = useState<Record<string, boolean>>({});
 
   if (timeline.length === 0) {
@@ -193,12 +243,35 @@ const TimelineList = memo(function TimelineList({
           const toggleLabel = runExpanded ? "Hide details" : "Show details";
           const agent = agentMap?.get(run.agentId);
           const agentName = agent?.name ?? run.agentId.slice(0, 8);
+          const runDetailPath = applyOrganizationPrefix(`/agents/${run.agentId}/runs/${run.runId}`, organizationPrefix);
+          const openRunDetail = () => {
+            navigate(runDetailPath);
+          };
+          const handleRunRowClick = (event: MouseEvent<HTMLElement>) => {
+            if (shouldSkipRunRowNavigation(event.target)) return;
+            openRunDetail();
+          };
+          const handleRunRowKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            openRunDetail();
+          };
+          const statusBadge = (
+            <Link
+              to={runDetailPath}
+              className="inline-flex shrink-0 rounded-[calc(var(--radius-sm)-1px)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              aria-label={`Open ${run.status.replace("_", " ")} run details`}
+            >
+              <StatusBadge status={run.status} />
+            </Link>
+          );
           const toggleButton = (
             <button
               type="button"
               aria-expanded={runExpanded}
               aria-controls={`run-output-${run.runId}`}
-              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background/70 px-2 py-0 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background/70 px-2 py-0 font-medium text-muted-foreground motion-safe:transition-colors hover:bg-accent hover:text-foreground motion-reduce:transition-none"
               onClick={() => {
                 setRunExpandedOverrides((current) => ({
                   ...current,
@@ -206,18 +279,54 @@ const TimelineList = memo(function TimelineList({
                 }));
               }}
             >
-              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${runExpanded ? "rotate-180" : ""}`} />
+              <ChevronDown className={`h-3.5 w-3.5 motion-safe:transition-transform motion-reduce:transition-none ${runExpanded ? "rotate-180" : ""}`} />
               {toggleLabel}
             </button>
           );
 
-          if (!runExpanded) {
-            return (
-              <div
-                key={`run:${run.runId}`}
-                aria-label="Agent run"
-                className="overflow-hidden rounded-sm border border-dashed border-border bg-muted/35 px-3 py-1"
-              >
+          return (
+            <div
+              key={`run:${run.runId}`}
+              aria-label="Agent run"
+              data-run-id={run.runId}
+              role="link"
+              tabIndex={0}
+              className={`overflow-hidden rounded-sm border border-dashed border-border bg-muted/35 motion-safe:transition-[padding,background-color,border-color] motion-safe:duration-200 motion-safe:ease-out hover:border-border/80 hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none ${runExpanded ? "p-3" : "px-3 py-1"}`}
+              onClick={handleRunRowClick}
+              onKeyDown={handleRunRowKeyDown}
+            >
+              {runExpanded ? (
+                <>
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <Link to={`/agents/${run.agentId}`} className="hover:underline">
+                      <AgentIdentity
+                        name={agentName}
+                        icon={agent?.icon}
+                        role={agent?.role}
+                        size="sm"
+                      />
+                    </Link>
+                    <div className="shrink-0 text-right">
+                      <span className="block text-xs text-muted-foreground">
+                        {formatDateTime(run.startedAt ?? run.createdAt)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="inline-flex items-center gap-1 font-medium text-muted-foreground">
+                      <TerminalSquare className="h-3.5 w-3.5" />
+                      Run
+                    </span>
+                    {statusBadge}
+                    {passiveLabel && (
+                      <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                        {passiveLabel}
+                      </span>
+                    )}
+                    <span className="ml-auto">{toggleButton}</span>
+                  </div>
+                </>
+              ) : (
                 <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 text-xs">
                   <div className="flex h-7 min-w-0 items-center gap-2">
                     <Link to={`/agents/${run.agentId}`} className="min-w-0 shrink hover:underline">
@@ -233,13 +342,7 @@ const TimelineList = memo(function TimelineList({
                       <TerminalSquare className="h-3.5 w-3.5" />
                       Run
                     </span>
-                    <Link
-                      to={`/agents/${run.agentId}/runs/${run.runId}`}
-                      className="inline-flex h-7 shrink-0 items-center rounded-md border border-border bg-accent/40 px-2 font-mono text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
-                    >
-                      {run.runId.slice(0, 8)}
-                    </Link>
-                    <StatusBadge status={run.status} />
+                    {statusBadge}
                     {passiveLabel && (
                       <span className="inline-flex h-7 shrink-0 items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 text-[11px] font-medium text-amber-700 dark:text-amber-300">
                         {passiveLabel}
@@ -251,68 +354,23 @@ const TimelineList = memo(function TimelineList({
                   </span>
                   {toggleButton}
                 </div>
-              </div>
-            );
-          }
-
-          return (
-            <div
-              key={`run:${run.runId}`}
-              aria-label="Agent run"
-              className="overflow-hidden rounded-sm border border-dashed border-border bg-muted/35 p-3"
-            >
-              <div className="mb-3 flex items-start justify-between gap-3">
-                <Link to={`/agents/${run.agentId}`} className="hover:underline">
-                  <AgentIdentity
-                    name={agentName}
-                    icon={agent?.icon}
-                    role={agent?.role}
-                    size="sm"
-                  />
-                </Link>
-                <div className="shrink-0 text-right">
-                  <span className="block text-xs text-muted-foreground">
-                    {formatDateTime(run.startedAt ?? run.createdAt)}
-                  </span>
-                </div>
-              </div>
-              <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-                <span className="inline-flex items-center gap-1 font-medium text-muted-foreground">
-                  <TerminalSquare className="h-3.5 w-3.5" />
-                  Run
-                </span>
-                <Link
-                  to={`/agents/${run.agentId}/runs/${run.runId}`}
-                  className="inline-flex items-center rounded-md border border-border bg-accent/40 px-2 py-1 font-mono text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
-                >
-                  {run.runId.slice(0, 8)}
-                </Link>
-                <StatusBadge status={run.status} />
-                {passiveLabel && (
-                  <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                    {passiveLabel}
-                  </span>
-                )}
-                <span className="ml-auto">{toggleButton}</span>
-              </div>
-              {runExpanded ? (
-                <div id={`run-output-${run.runId}`} className="max-h-56 overflow-y-auto pr-1">
-                  <RunTranscriptView
-                    entries={transcript}
-                    density="compact"
-                    limit={4}
-                    streaming={isActive}
-                    collapseStdout
-                    emptyMessage={
-                      hasOutput
-                        ? "Waiting for transcript parsing..."
-                        : isActive
-                          ? `Run ${run.status}. Waiting for output...`
-                          : "No run output captured."
-                    }
-                  />
-                </div>
-              ) : null}
+              )}
+              <AnimatedRunDetails expanded={runExpanded} id={`run-output-${run.runId}`}>
+                <RunTranscriptView
+                  entries={transcript}
+                  density="compact"
+                  limit={4}
+                  streaming={isActive}
+                  collapseStdout
+                  emptyMessage={
+                    hasOutput
+                      ? "Waiting for transcript parsing..."
+                      : isActive
+                        ? `Run ${run.status}. Waiting for output...`
+                        : "No run output captured."
+                  }
+                />
+              </AnimatedRunDetails>
             </div>
           );
         }
