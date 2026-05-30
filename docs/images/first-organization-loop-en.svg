@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="780" viewBox="0 0 1440 780" role="img" aria-labelledby="title desc">
+  <title id="title">Rudder first organization real work loop</title>
+  <desc id="desc">Start from one real task: create an issue, assign it to the default agent, run the agent, inspect evidence, and write the decision back to the issue.</desc>
+  <defs>
+    <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L8,4.5 L1,8 Z" fill="#0f766e"/>
+    </marker>
+    <style>
+      .title { font: 760 38px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .subtitle { font: 400 21px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .lane { font: 760 18px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: .08em; fill: #0f766e; }
+      .step { font: 760 20px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f766e; }
+      .head { font: 760 28px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .body { font: 400 20px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .small { font: 400 18px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #64748b; }
+      .pill { font: 700 18px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="780" rx="36" fill="#f8fafc"/>
+  <rect x="48" y="48" width="1344" height="684" rx="32" fill="#ffffff" stroke="#dbe3ea" stroke-width="2"/>
+
+  <text x="86" y="116" class="title">First organization: finish one real piece of work</text>
+  <text x="86" y="158" class="subtitle">Set the goal, write the issue, hand it to the default agent. After the run, inspect evidence and decide.</text>
+
+  <text x="86" y="212" class="lane">MAIN LINE: ALL WORK RETURNS TO THE ISSUE</text>
+
+  <g filter="url(#cardShadow)">
+    <rect x="86" y="238" width="330" height="138" rx="22" fill="#ecfdf5" stroke="#99f6e4" stroke-width="2"/>
+    <text x="116" y="280" class="step">1. Pick a real task</text>
+    <text x="116" y="319" class="head">What to do</text>
+    <text x="116" y="350" class="body">Do not start from an empty test</text>
+  </g>
+
+  <g filter="url(#cardShadow)">
+    <rect x="520" y="238" width="330" height="138" rx="22" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+    <text x="550" y="280" class="step">2. Create the issue</text>
+    <text x="550" y="319" class="head">Write it clearly</text>
+    <text x="550" y="350" class="body">Outcome, context, acceptance</text>
+  </g>
+
+  <g filter="url(#cardShadow)">
+    <rect x="954" y="238" width="330" height="138" rx="22" fill="#fff7ed" stroke="#fed7aa" stroke-width="2"/>
+    <text x="984" y="280" class="step">3. Assign the issue</text>
+    <text x="984" y="319" class="head">Use the default agent</text>
+    <text x="984" y="350" class="body">One issue, one owner</text>
+  </g>
+
+  <g filter="url(#cardShadow)">
+    <rect x="954" y="430" width="330" height="148" rx="22" fill="#fdf2f8" stroke="#fbcfe8" stroke-width="2"/>
+    <text x="984" y="473" class="step">4. Agent run</text>
+    <text x="984" y="512" class="head">Agent starts work</text>
+    <text x="984" y="544" class="body">Run from the issue, leave a record</text>
+  </g>
+
+  <path d="M416 307 H512" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M850 307 H946" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M1119 386 V422" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+  <g filter="url(#cardShadow)">
+    <rect x="520" y="430" width="330" height="148" rx="22" fill="#fefce8" stroke="#fde68a" stroke-width="2"/>
+    <text x="550" y="473" class="step">5. Inspect evidence</text>
+    <text x="550" y="512" class="head">Can it be accepted?</text>
+    <text x="550" y="544" class="body">Check comments, files, validation</text>
+  </g>
+
+  <g filter="url(#cardShadow)">
+    <rect x="86" y="430" width="330" height="148" rx="22" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="116" y="473" class="step">6. Leave a decision</text>
+    <text x="116" y="512" class="head">Accept / revise</text>
+    <text x="116" y="544" class="body">Done, what changed, or blocked</text>
+  </g>
+
+  <path d="M954 504 H858" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M520 504 H424" stroke="#0f766e" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+  <rect x="86" y="625" width="582" height="70" rx="20" fill="#f8fafc" stroke="#dbe3ea" stroke-width="2"/>
+  <text x="116" y="655" class="pill">Messenger</text>
+  <text x="220" y="655" class="small">See who is waiting: agent questions, reviews, blockers, failed runs.</text>
+  <text x="116" y="680" class="small">After you click through, return to the related issue.</text>
+
+  <rect x="710" y="625" width="630" height="70" rx="20" fill="#f8fafc" stroke="#dbe3ea" stroke-width="2"/>
+  <text x="740" y="655" class="pill">Calendar</text>
+  <text x="832" y="655" class="small">Review when agents ran, when review happened, and which issues used time.</text>
+  <text x="740" y="680" class="small">This is real work history, not a manually filled schedule.</text>
+</svg>
