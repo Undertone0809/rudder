@@ -38,6 +38,7 @@ import { useToast } from "../context/ToastContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { retryHeartbeatRun } from "../lib/heartbeat-retry";
+import { agentSupportingLabel } from "../lib/agent-labels";
 import { queryKeys } from "../lib/queryKeys";
 import { findOrganizationByPrefix } from "../lib/organization-routes";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
@@ -622,8 +623,7 @@ export function AgentDetail() {
           <div className="min-w-0">
             <h2 className="text-2xl font-bold truncate">{agent.name}</h2>
             <p className="text-sm text-muted-foreground truncate">
-              {roleLabels[agent.role] ?? agent.role}
-              {agent.title ? ` - ${agent.title}` : ""}
+              {agentSupportingLabel(agent)}
             </p>
           </div>
         </div>

@@ -8,6 +8,7 @@ import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useSidebar } from "../context/SidebarContext";
 import { queryKeys } from "../lib/queryKeys";
+import { agentSupportingLabel } from "../lib/agent-labels";
 import { StatusBadge } from "../components/StatusBadge";
 import { agentStatusDot, agentStatusDotDefault } from "../lib/status-colors";
 import { EmptyState } from "../components/EmptyState";
@@ -299,8 +300,7 @@ function AgentListRow({
             <span className="truncate font-medium text-foreground">{agent.name}</span>
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {roleLabels[agent.role] ?? agent.role}
-            {agent.title ? ` - ${agent.title}` : ""}
+            {agentSupportingLabel(agent)}
           </p>
         </div>
       </Link>
@@ -389,8 +389,7 @@ function OrgTreeNode({
           <div className="min-w-0 flex-1">
             <span className="text-sm font-medium">{node.name}</span>
             <span className="text-xs text-muted-foreground ml-2">
-              {roleLabels[node.role] ?? node.role}
-              {agent?.title ? ` - ${agent.title}` : ""}
+              {agent ? agentSupportingLabel(agent) : roleLabels[node.role] ?? node.role}
             </span>
           </div>
         </Link>

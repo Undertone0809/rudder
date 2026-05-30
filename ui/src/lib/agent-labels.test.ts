@@ -17,6 +17,15 @@ describe("agentSupportingLabel", () => {
     ).toBe("Founding Engineer");
   });
 
+  it("does not expose the compatibility CEO role when the default assistant has a title", () => {
+    expect(
+      agentSupportingLabel({
+        role: "ceo",
+        title: "Operator Assistant",
+      }),
+    ).toBe("Operator Assistant");
+  });
+
   it("falls back to the role label when no custom title is set", () => {
     expect(
       agentSupportingLabel({
