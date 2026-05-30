@@ -1,20 +1,14 @@
 ---
 name: development-lifecycle-router-maintainer
 description: >
-  Route Rudder development work across the full lifecycle: intake, requirement
-  framing, product/advisor analysis, UI design, implementation, testing,
-  evidence collection, review gates, rework, commit, push, and handoff. Use
-  when the user gives an ambiguous or end-to-end development request, asks which
-  workflow or skill should handle a task, wants to enter at any lifecycle stage,
-  wants reviewer subagents after each stage, or expects review by default before
-  handoff. Review gates require spawned reviewers by default. Verification gates
-  must prove the terminal product workflow when the task affects an operator,
-  agent, Desktop, release, or UI path. Also use for component-lab/catalog work,
-  performance benchmark-to-implementation work, and destructive cleanup or
-  dirty-worktree recovery where the safe route is not yet clear. Prefer narrower
-  maintainer skills directly when the user clearly asks for a release, UI
-  polish, run transcript debug, local preview, data diagnosis, PR preview, or
-  review-only task.
+  Route Rudder development work when a request is ambiguous or spans lifecycle
+  stages: requirements, advisor/product analysis, UI design, implementation,
+  verification, review, commit/push, and handoff. Use for stage selection,
+  reviewer gates, aborted-run recovery, component-lab work, scoped performance
+  optimization, and risky dirty-worktree cleanup. Keep thin: if the prompt
+  clearly names release, UI polish, run/debug, local preview, data path, Desktop
+  recovery, PR preview, mock data, or review-only work, use the narrower
+  maintainer skill directly.
 ---
 
 # Development Lifecycle Router Maintainer
@@ -413,10 +407,19 @@ produced by spawned reviewer agents.
 When subagents are available, spawn reviewers after the stage artifact exists.
 Record execution mode as `spawned reviewers`.
 
-If subagents are unavailable, do not run a serial fallback. Record execution mode
-as `blocked: spawned reviewers unavailable`, include the artifact and validation
-evidence gathered so far, and stop before complete handoff unless the user
-explicitly changes the review policy.
+Before recording `blocked: spawned reviewers unavailable`, perform an explicit
+spawn availability probe. Absence of a visible spawn tool in the first tool list,
+uncertainty about the active harness, or not having used multi-agent tools yet is
+not enough. Probe the runtime by using the available tool-discovery path or the
+runtime's spawn mechanism directly. If the probe succeeds, spawn the reviewers
+and wait for verdicts. If the probe fails, include the failed probe evidence in
+the evidence ledger.
+
+If subagents are unavailable after that probe, do not run a serial fallback.
+Record execution mode as `blocked: spawned reviewers unavailable`, include the
+artifact, validation evidence gathered so far, and the failed probe evidence, and
+stop before complete handoff unless the user explicitly changes the review
+policy.
 
 Reviewer A owns scenario correctness:
 

@@ -17,7 +17,7 @@ async function createOrganization(page: Page) {
   return orgRes.json() as Promise<{ id: string; issuePrefix: string }>;
 }
 
-test("collapses failed issue run output by default and keeps non-failed output expanded", async ({ page }) => {
+test("collapses inactive issue runs by default and keeps active runs expanded", async ({ page }) => {
   const organization = await createOrganization(page);
 
   const agentRes = await page.request.post(`/api/orgs/${organization.id}/agents`, {
@@ -46,21 +46,23 @@ test("collapses failed issue run output by default and keeps non-failed output e
   expect(issueRes.ok()).toBe(true);
   const issue = await issueRes.json() as { id: string; identifier: string | null };
 
+  const runningRunId = randomUUID();
   const succeededRunId = randomUUID();
   const failedRunId = randomUUID();
   const now = new Date("2026-05-07T00:02:00.000Z");
   const later = new Date("2026-05-07T00:03:00.000Z");
+  const latest = new Date("2026-05-07T00:04:00.000Z");
 
   await e2eDb.insert(heartbeatRuns).values([
     {
-      id: succeededRunId,
+      id: runningRunId,
       orgId: organization.id,
       agentId: agent.id,
       invocationSource: "assignment",
       triggerDetail: "system",
-      status: "succeeded",
+      status: "running",
       startedAt: now,
-      finishedAt: now,
+      finishedAt: null,
       contextSnapshot: {
         issueId: issue.id,
         issue: { id: issue.id, title: "Review failed run folding", status: "in_progress", priority: "medium" },
@@ -69,22 +71,38 @@ test("collapses failed issue run output by default and keeps non-failed output e
       updatedAt: now,
     },
     {
-      id: failedRunId,
+      id: succeededRunId,
       orgId: organization.id,
       agentId: agent.id,
       invocationSource: "assignment",
       triggerDetail: "system",
-      status: "failed",
+      status: "succeeded",
       startedAt: later,
       finishedAt: later,
-      error: "Runtime stopped before final deliverables.",
-      errorCode: "adapter_failed",
       contextSnapshot: {
         issueId: issue.id,
         issue: { id: issue.id, title: "Review failed run folding", status: "in_progress", priority: "medium" },
       },
       createdAt: later,
       updatedAt: later,
+    },
+    {
+      id: failedRunId,
+      orgId: organization.id,
+      agentId: agent.id,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "failed",
+      startedAt: latest,
+      finishedAt: latest,
+      error: "Runtime stopped before final deliverables.",
+      errorCode: "adapter_failed",
+      contextSnapshot: {
+        issueId: issue.id,
+        issue: { id: issue.id, title: "Review failed run folding", status: "in_progress", priority: "medium" },
+      },
+      createdAt: latest,
+      updatedAt: latest,
     },
   ]);
 
@@ -93,25 +111,40 @@ test("collapses failed issue run output by default and keeps non-failed output e
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
   }, organization.id);
 
-  await page.goto(`/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
+  const issueUrl = `/${organization.issuePrefix}/issues/${issue.identifier ?? issue.id}`;
+  await page.goto(issueUrl);
 
-  const succeededRunCard = page
-    .getByLabel("Agent run output")
-    .filter({ hasText: succeededRunId.slice(0, 8) });
-  await expect(succeededRunCard.getByRole("button", { name: "Hide details" })).toBeVisible({ timeout: 15_000 });
-  await expect(succeededRunCard).toContainText("No run output captured.");
+  await expect(page.getByText("Live Runs")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(runningRunId.slice(0, 8))).toBeVisible();
+  await expect(page.getByText("Waiting for run output...").first()).toBeVisible();
 
-  const failedRunCard = page
-    .getByLabel("Agent run output")
-    .filter({ hasText: failedRunId.slice(0, 8) });
+  const succeededRunCard = page.locator(`[data-run-id="${succeededRunId}"]`);
+  await expect(succeededRunCard.getByRole("button", { name: "Show details" })).toBeVisible();
+  await expect(succeededRunCard).not.toContainText("Show details");
+  await expect(succeededRunCard).not.toContainText("No run output captured.");
+  const succeededRunBox = await succeededRunCard.boundingBox();
+  expect(succeededRunBox?.height).toBeLessThan(42);
+  await expect(succeededRunCard).not.toContainText(succeededRunId.slice(0, 8));
+  await succeededRunCard.getByRole("link", { name: "Open succeeded run details" }).click();
+  await expect(page).toHaveURL(new RegExp(`/agents/[^/]+/runs/${succeededRunId}$`));
+
+  await page.goto(issueUrl);
+  const failedRunCard = page.locator(`[data-run-id="${failedRunId}"]`);
   await expect(failedRunCard.getByRole("button", { name: "Show details" })).toBeVisible();
+  await expect(failedRunCard).not.toContainText("Show details");
   await expect(failedRunCard).not.toContainText("No run output captured.");
   const collapsedRunBox = await failedRunCard.boundingBox();
-  expect(collapsedRunBox?.height).toBeLessThan(48);
+  expect(collapsedRunBox?.height).toBeLessThan(42);
+  await expect(failedRunCard).not.toContainText(failedRunId.slice(0, 8));
+  await failedRunCard.click({ position: { x: 420, y: 20 } });
+  await expect(page).toHaveURL(new RegExp(`/agents/[^/]+/runs/${failedRunId}$`));
 
-  await failedRunCard.getByRole("button", { name: "Show details" }).click();
-  await expect(failedRunCard.getByRole("button", { name: "Hide details" })).toBeVisible();
-  await expect(failedRunCard).toContainText("No run output captured.");
-  const expandedRunBox = await failedRunCard.boundingBox();
+  await page.goto(issueUrl);
+  const failedRunCardForExpand = page.locator(`[data-run-id="${failedRunId}"]`);
+  await failedRunCardForExpand.getByRole("button", { name: "Show details" }).click();
+  await expect(failedRunCardForExpand.getByRole("button", { name: "Hide details" })).toBeVisible();
+  await expect(failedRunCardForExpand).not.toContainText("Hide details");
+  await expect(failedRunCardForExpand).toContainText("No run output captured.");
+  const expandedRunBox = await failedRunCardForExpand.boundingBox();
   expect(expandedRunBox?.height).toBeGreaterThan((collapsedRunBox?.height ?? 0) + 24);
 });
