@@ -698,13 +698,88 @@ export function chatService(db: Db) {
     return row;
   }
 
-  async function listMessages(conversationId: string) {
-      const rows = await db
-        .select()
+  function transcriptSummarySql() {
+    const transcript = sql`${chatMessages.structuredPayload}->${CHAT_TRANSCRIPT_KEY}`;
+    return sql<MessageHydrationRow["transcriptSummary"]>`
+      case
+        when jsonb_typeof(${transcript}) = 'array'
+          and jsonb_array_length(${transcript}) > 0
+        then jsonb_build_object(
+          'entryCount', jsonb_array_length(${transcript}),
+          'startedAt', (
+            select min(entry.value->>'ts')
+            from jsonb_array_elements(${transcript}) as entry(value)
+            where entry.value ? 'ts'
+          ),
+          'endedAt', (
+            select max(entry.value->>'ts')
+            from jsonb_array_elements(${transcript}) as entry(value)
+            where entry.value ? 'ts'
+          )
+        )
+        else null
+      end
+    `;
+  }
+
+  function structuredPayloadWithoutTranscriptSql() {
+    return sql<Record<string, unknown> | null>`
+      case
+        when ${chatMessages.structuredPayload} is null then null
+        when ${chatMessages.structuredPayload} ? ${CHAT_TRANSCRIPT_KEY}
+        then nullif(${chatMessages.structuredPayload} - ${CHAT_TRANSCRIPT_KEY}, '{}'::jsonb)
+        else ${chatMessages.structuredPayload}
+      end
+    `;
+  }
+
+  async function listMessages(conversationId: string, options: { includeTranscript?: boolean } = {}) {
+      const includeTranscript = options.includeTranscript !== false;
+      const rows = includeTranscript
+        ? await db
+          .select()
+          .from(chatMessages)
+          .where(eq(chatMessages.conversationId, conversationId))
+          .orderBy(chatMessages.createdAt, chatMessages.id)
+        : await db
+          .select({
+            id: chatMessages.id,
+            orgId: chatMessages.orgId,
+            conversationId: chatMessages.conversationId,
+            role: chatMessages.role,
+            kind: chatMessages.kind,
+            status: chatMessages.status,
+            body: chatMessages.body,
+            structuredPayload: structuredPayloadWithoutTranscriptSql(),
+            approvalId: chatMessages.approvalId,
+            replyingAgentId: chatMessages.replyingAgentId,
+            chatTurnId: chatMessages.chatTurnId,
+            turnVariant: chatMessages.turnVariant,
+            supersededAt: chatMessages.supersededAt,
+            createdAt: chatMessages.createdAt,
+            updatedAt: chatMessages.updatedAt,
+            transcriptSummary: transcriptSummarySql(),
+          })
+          .from(chatMessages)
+          .where(eq(chatMessages.conversationId, conversationId))
+          .orderBy(chatMessages.createdAt, chatMessages.id);
+      return hydrateMessages(rows, { includeTranscript });
+  }
+
+  async function getMessageTranscript(conversationId: string, messageId: string) {
+      const row = await db
+        .select({
+          id: chatMessages.id,
+          structuredPayload: chatMessages.structuredPayload,
+        })
         .from(chatMessages)
-        .where(eq(chatMessages.conversationId, conversationId))
-        .orderBy(chatMessages.createdAt);
-      return hydrateMessages(rows);
+        .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
+        .then((rows) => rows[0] ?? null);
+      if (!row) return null;
+      return {
+        messageId: row.id,
+        transcript: chatTranscriptFromPayload(row.structuredPayload),
+      };
   }
 
   async function getMessage(conversationId: string, messageId: string) {
@@ -1601,6 +1676,7 @@ export function chatService(db: Db) {
     markUnread,
     setPinned,
     listMessages,
+    getMessageTranscript,
     addMessage,
     updateMessage,
     markInterruptedStreamingMessages,

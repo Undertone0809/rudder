@@ -83,9 +83,10 @@ test.describe("Chat streaming", () => {
     });
     expect(chatRes.ok()).toBe(true);
     const chat = await chatRes.json();
+    const assistantMessageId = randomUUID();
 
     await e2eDb.insert(chatMessages).values({
-      id: randomUUID(),
+      id: assistantMessageId,
       orgId: organization.id,
       conversationId: chat.id,
       role: "assistant",
@@ -136,14 +137,30 @@ test.describe("Chat streaming", () => {
       window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
     }, organization.id);
 
+    const lightweightMessagesResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/chats/${chat.id}/messages?includeTranscript=false`),
+    );
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+    const lightweightMessages = await (await lightweightMessagesResponse).json();
+    expect(lightweightMessages[0].transcript).toBeUndefined();
+    expect(lightweightMessages[0].transcriptSummary).toMatchObject({ entryCount: 5 });
+    expect(lightweightMessages[0].structuredPayload).toBeNull();
+
     await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
       "Final answer shown in the assistant message.",
       { timeout: 15_000 },
     );
     const transcriptToggle = page.getByRole("button", { name: /Worked for/ }).last();
     await expect(transcriptToggle).toBeVisible({ timeout: 15_000 });
+
+    const lazyTranscriptResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/chats/${chat.id}/messages/${assistantMessageId}/transcript`),
+    );
     await transcriptToggle.click();
+    const lazyTranscript = await (await lazyTranscriptResponse).json();
+    expect(lazyTranscript.transcript).toHaveLength(5);
 
     const transcriptItem = page.getByTestId("chat-transcript-item").last();
     await expect(transcriptItem.getByText("I am checking the chat surface first.", { exact: false })).toBeVisible({ timeout: 15_000 });

@@ -1179,8 +1179,23 @@ export function chatRoutes(db: Db, storage: StorageService) {
     if (!hasActiveChatGeneration(conversation.id)) {
       await svc.markInterruptedStreamingMessages(conversation.id);
     }
-    const messages = await svc.listMessages(conversation.id);
+    const includeTranscript = req.query.includeTranscript === "true";
+    const messages = await svc.listMessages(conversation.id, { includeTranscript });
     res.json(messages);
+  });
+
+  router.get("/chats/:id/messages/:messageId/transcript", async (req, res) => {
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const transcript = await svc.getMessageTranscript(conversation.id, req.params.messageId as string);
+    if (!transcript) {
+      res.status(404).json({ error: "Chat message not found" });
+      return;
+    }
+    res.json(transcript);
   });
 
   router.post("/chats/:id/messages", validate(addChatMessageSchema), async (req, res) => {

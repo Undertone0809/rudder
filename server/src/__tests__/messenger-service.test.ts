@@ -415,6 +415,52 @@ describe("messengerService and issue follows", () => {
     expect(editedAfterEdit?.attachments[0]?.contentPath).toBe(originalAfterEdit?.attachments[0]?.contentPath);
   });
 
+  it("can list chat messages without hydrating full persisted transcripts", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const userId = "board-user-light-messages";
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Chat Lightweight Messages Org",
+      urlKey: deriveOrganizationUrlKey("Chat Lightweight Messages Org"),
+      issuePrefix: `L${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Transcript payload",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+
+    const message = await chatSvc.addMessage(conversationId, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Done",
+      transcript: [
+        { kind: "stdout", ts: "2026-03-26T08:00:00.000Z", text: "large output" },
+        { kind: "result", ts: "2026-03-26T08:01:30.000Z", text: "done", inputTokens: 1, outputTokens: 1, cachedTokens: 0, costUsd: 0, subtype: "success", isError: false, errors: [] },
+      ],
+    });
+
+    const [lightweight] = await chatSvc.listMessages(conversationId, { includeTranscript: false });
+    const transcript = await chatSvc.getMessageTranscript(conversationId, message.id);
+
+    expect(lightweight?.transcript).toBeUndefined();
+    expect(lightweight?.transcriptSummary).toEqual({
+      entryCount: 2,
+      startedAt: "2026-03-26T08:00:00.000Z",
+      endedAt: "2026-03-26T08:01:30.000Z",
+    });
+    expect(lightweight?.structuredPayload).toBeNull();
+    expect(transcript?.transcript).toHaveLength(2);
+  });
+
   it("does not mark a chat unread until an incoming message has visible content", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();

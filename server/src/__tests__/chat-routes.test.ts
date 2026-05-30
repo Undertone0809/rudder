@@ -35,6 +35,7 @@ const mockChatService = vi.hoisted(() => ({
   markUnread: vi.fn(),
   setPinned: vi.fn(),
   listMessages: vi.fn(),
+  getMessageTranscript: vi.fn(),
   getMessage: vi.fn(),
   addMessage: vi.fn(),
   updateMessage: vi.fn(),
@@ -524,12 +525,51 @@ describe("chat routes", () => {
 
     expect(res.status).toBe(200);
     expect(mockChatService.markInterruptedStreamingMessages).toHaveBeenCalledWith("chat-1");
-    expect(mockChatService.listMessages).toHaveBeenCalledWith("chat-1");
+    expect(mockChatService.listMessages).toHaveBeenCalledWith("chat-1", { includeTranscript: false });
     expect(res.body[0]).toEqual(expect.objectContaining({
       id: "message-streaming",
       status: "interrupted",
       body: "Partial preserved reply",
     }));
+  });
+
+  it("can include full chat transcripts when explicitly requested", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValueOnce([]);
+
+    const res = await request(createApp())
+      .get("/api/chats/chat-1/messages?includeTranscript=true");
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.listMessages).toHaveBeenCalledWith("chat-1", { includeTranscript: true });
+  });
+
+  it("returns a single chat message transcript for lazy loading", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessageTranscript.mockResolvedValueOnce({
+      messageId: "message-1",
+      transcript: [{ kind: "stdout", ts: "2026-03-26T08:01:00.000Z", text: "output" }],
+    });
+
+    const res = await request(createApp())
+      .get("/api/chats/chat-1/messages/message-1/transcript");
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.getMessageTranscript).toHaveBeenCalledWith("chat-1", "message-1");
+    expect(res.body.transcript).toHaveLength(1);
+  });
+
+  it("does not return a lazy chat transcript without conversation access", async () => {
+    mockChatService.getById.mockResolvedValue(null);
+
+    const res = await request(createApp())
+      .get("/api/chats/chat-1/messages/message-1/transcript");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Chat conversation not found" });
+    expect(mockChatService.getMessageTranscript).not.toHaveBeenCalled();
   });
 
   it("updates a chat project context after validating organization ownership", async () => {

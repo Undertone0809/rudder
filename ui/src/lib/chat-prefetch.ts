@@ -10,7 +10,7 @@ export function prefetchChatConversation(queryClient: QueryClient, chatId: strin
     }),
     queryClient.prefetchQuery({
       queryKey: queryKeys.chats.messages(chatId),
-      queryFn: () => chatsApi.listMessages(chatId),
+      queryFn: () => chatsApi.listMessages(chatId, { includeTranscript: false }),
     }),
   ]);
 }
