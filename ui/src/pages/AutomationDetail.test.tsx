@@ -639,7 +639,8 @@ describe("AutomationDetail", () => {
     expect((container.textContent?.match(/In sync/g) ?? []).length).toBe(1);
     const triggersList = container.querySelector('[data-testid="automation-triggers-list"]');
     expect(triggersList?.textContent).toContain("Schedule 0 10 * * *");
-    expect(triggersList?.textContent).toContain("daily-check");
+    expect(triggersList?.textContent).toContain("Next:");
+    expect(triggersList?.textContent).not.toContain("daily-check");
     expect(triggersList?.textContent).not.toContain("In sync");
     expect(document.querySelector('[data-testid="automation-trigger-editor-body"]')).toBeNull();
 
@@ -652,6 +653,9 @@ describe("AutomationDetail", () => {
     });
 
     expect(document.querySelector('[data-testid="automation-trigger-editor-body"]')).toBeTruthy();
+    const triggerEditorBody = document.querySelector('[data-testid="automation-trigger-editor-body"]');
+    expect(triggerEditorBody?.textContent).not.toContain("Label");
+    expect(triggerEditorBody?.textContent).not.toContain("daily-check");
     expect(document.querySelector('[data-testid="automation-trigger-editor-body"] [data-testid="schedule-editor"]')?.getAttribute("data-variant")).toBe("compact");
     expect(container.querySelector('button[aria-label="Collapse trigger editor"]')).toBeNull();
 
@@ -663,7 +667,7 @@ describe("AutomationDetail", () => {
     });
 
     expect(mockConfirm).toHaveBeenCalledWith({
-      title: 'Delete trigger "daily-check"?',
+      title: "Delete schedule trigger?",
       description: "It will stop new schedule activations.",
       confirmLabel: "Delete",
       tone: "destructive",

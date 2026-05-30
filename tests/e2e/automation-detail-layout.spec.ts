@@ -108,6 +108,7 @@ test.describe("Automation detail layout", () => {
     await expect(page.getByText("Send to chat")).toBeVisible();
     await expect(page.getByText("Run status")).toBeVisible();
     await expect(configurationCard.getByText("Triggers")).toBeVisible();
+    await expect(triggersList).not.toContainText("daily-check");
     await expect(page.getByText("Details")).toHaveCount(0);
     await expect(addTriggerButton).toHaveText("Add trigger");
     await addTriggerButton.click();
@@ -118,6 +119,8 @@ test.describe("Automation detail layout", () => {
     expect(addTriggerBox).not.toBeNull();
     await triggersList.getByRole("button", { name: "Edit trigger" }).click();
     await expect(triggerEditorBody).toBeVisible();
+    await expect(triggerEditorBody.getByText("Label")).toHaveCount(0);
+    await expect(triggerEditorBody).not.toContainText("daily-check");
 
     const assigneeSelector = agentControl.getByRole("button", { name: /Automation Layout Agent/ });
     const projectSelector = projectControl.getByRole("button", { name: /Onboarding/ });

@@ -1075,7 +1075,6 @@ describe("chat routes", () => {
           schedule: {
             cronExpression: "0 12 * * *",
             timezone: "Asia/Shanghai",
-            label: "daily noon",
           },
         },
         automationCreated: {
@@ -1115,7 +1114,6 @@ describe("chat routes", () => {
             schedule: {
               cronExpression: "0 12 * * *",
               timezone: "Asia/Shanghai",
-              label: "daily noon",
             },
           },
         },
@@ -1147,6 +1145,7 @@ describe("chat routes", () => {
       }),
       { agentId: "agent-1", userId: "user-1" },
     );
+    expect(mockAutomationService.createTrigger.mock.calls[0]?.[1]).not.toHaveProperty("label");
     expect(mockChatService.addMessage).toHaveBeenNthCalledWith(
       2,
       "chat-1",
@@ -1195,7 +1194,6 @@ describe("chat routes", () => {
             schedule: {
               cronExpression: "not a cron",
               timezone: "Asia/Shanghai",
-              label: "daily noon",
             },
           },
         },

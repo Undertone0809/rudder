@@ -459,7 +459,6 @@ export function Automations() {
       if (draft.scheduleCron.trim()) {
         await automationsApi.createTrigger(automation.id, {
           kind: "schedule",
-          label: describeSchedule(draft.scheduleCron),
           cronExpression: draft.scheduleCron.trim(),
           timezone: getLocalTimezone(),
         });

@@ -673,7 +673,6 @@ export function chatRoutes(db: Db, storage: StorageService) {
       if (scheduleError) throw unprocessable(scheduleError);
       const scheduleTrigger = {
         kind: "schedule" as const,
-        label: automationCreate.schedule.label ?? "chat-requested schedule",
         enabled: automationCreate.schedule.enabled,
         cronExpression: automationCreate.schedule.cronExpression,
         timezone: automationCreate.schedule.timezone,

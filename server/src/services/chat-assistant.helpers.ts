@@ -468,7 +468,6 @@ export function buildResponseSchemaPromptSection(planMode: boolean) {
             schedule: {
               cronExpression: "required cron expression, for example 0 12 * * *",
               timezone: "required IANA timezone, for example Asia/Shanghai",
-              label: "optional short trigger label",
             },
           },
           richReferences: [

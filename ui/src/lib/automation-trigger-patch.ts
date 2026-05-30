@@ -1,7 +1,6 @@
 import type { AutomationTrigger } from "@rudderhq/shared";
 
 export type AutomationTriggerEditorDraft = {
-  label: string;
   cronExpression: string;
   signingMode: string;
   replayWindowSec: string;
@@ -12,9 +11,7 @@ export function buildAutomationTriggerPatch(
   draft: AutomationTriggerEditorDraft,
   fallbackTimezone: string,
 ) {
-  const patch: Record<string, unknown> = {
-    label: draft.label.trim() || null,
-  };
+  const patch: Record<string, unknown> = {};
 
   if (trigger.kind === "schedule") {
     patch.cronExpression = draft.cronExpression.trim();

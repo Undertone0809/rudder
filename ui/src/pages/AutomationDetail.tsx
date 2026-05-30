@@ -436,11 +436,8 @@ export function AutomationDetail() {
 
   const createTrigger = useMutation({
     mutationFn: async (): Promise<AutomationTriggerResponse> => {
-      const existingOfKind = (automation?.triggers ?? []).filter((t) => t.kind === newTrigger.kind).length;
-      const autoLabel = existingOfKind > 0 ? `${newTrigger.kind}-${existingOfKind + 1}` : newTrigger.kind;
       return automationsApi.createTrigger(automationId!, {
         kind: newTrigger.kind,
-        label: autoLabel,
         ...(newTrigger.kind === "schedule"
           ? { cronExpression: newTrigger.cronExpression.trim(), timezone: getLocalTimezone() }
           : {}),
