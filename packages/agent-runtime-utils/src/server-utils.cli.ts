@@ -562,6 +562,25 @@ export async function syncLocalCliCredentialHomeEntries(input: {
   return { linked, skipped };
 }
 
+export async function ensureManagedHomeEntrySnapshot(
+  target: string,
+  source: string,
+): Promise<"created" | "repaired" | "skipped"> {
+  const existing = await fs.lstat(target).catch(() => null);
+
+  if (existing) {
+    await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  const sourceStat = await fs.stat(source);
+  if (!sourceStat.isDirectory()) {
+    await fs.copyFile(source, target);
+    return existing ? "repaired" : "created";
+  }
+  await fs.cp(source, target, { recursive: true, dereference: true, force: true });
+  return existing ? "repaired" : "created";
+}
+
 export async function writeOperatorHomeShim(input: {
   shimDir: string;
   command: string;
@@ -944,10 +963,12 @@ export async function ensureRudderRuntimeSkillSymlinks(input: {
         `[rudder] ${result === "repaired" ? "Repaired" : actionVerb} ${input.runtimeLabel} skill "${entry.key}" into ${input.skillsHome}\n`,
       );
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       await input.onLog(
         "stderr",
-        `[rudder] Failed to inject ${input.runtimeLabel} skill "${entry.key}" into ${input.skillsHome}: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[rudder] Failed to inject ${input.runtimeLabel} skill "${entry.key}" into ${input.skillsHome}: ${message}\n`,
       );
+      throw new Error(`Failed to inject ${input.runtimeLabel} skill "${entry.key}" into ${input.skillsHome}: ${message}`);
     }
   }
 

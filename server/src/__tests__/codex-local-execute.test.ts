@@ -1690,6 +1690,10 @@ describe("codex execute", () => {
         "skills.bundled.enabled=false",
         "-",
       ]));
+      expect(capture.prompt).toContain("# Rudder Runtime Skill Boundary");
+      expect(capture.prompt).toContain("Enabled Rudder Agent Skills:");
+      expect(capture.prompt).toContain("rudder");
+      expect(capture.prompt).toContain("Rudder CLI access note:");
       expect(capture.prompt).toContain("Follow the rudder heartbeat.");
       expect(capture.rudderEnvKeys).toEqual(
         expect.arrayContaining([

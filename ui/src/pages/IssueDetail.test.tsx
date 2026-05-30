@@ -271,8 +271,10 @@ vi.mock("../api/heartbeats", () => ({
 }));
 
 vi.mock("../api/agents", () => ({
+  adapterModelConfigCacheKey: (config: Record<string, unknown>) => JSON.stringify(config),
   agentsApi: {
     list: vi.fn(),
+    agentAdapterModels: vi.fn(),
   },
 }));
 

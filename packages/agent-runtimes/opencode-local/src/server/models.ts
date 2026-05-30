@@ -1,15 +1,19 @@
 import { createHash } from "node:crypto";
 import os from "node:os";
-import type { AgentRuntimeModel } from "@rudderhq/agent-runtime-utils";
+import type { AgentRuntimeModel, AgentRuntimeModelListContext } from "@rudderhq/agent-runtime-utils";
 import {
   asString,
+  asStringArray,
   ensureAbsoluteDirectory,
   ensurePathInEnv,
+  parseObject,
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { applyManagedOpenCodeEnv, prepareManagedOpenCodeHome } from "./home.js";
 
 const MODELS_CACHE_TTL_MS = 60_000;
 const MODELS_DISCOVERY_TIMEOUT_MS = 20_000;
+const MODELS_DISCOVERY_RETRY_DELAY_MS = 1_500;
 
 function resolveOpenCodeCommand(input: unknown): string {
   const envOverride =
@@ -49,6 +53,15 @@ function firstNonEmptyLine(text: string): string {
       .map((line) => line.trim())
       .find(Boolean) ?? ""
   );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isOpenCodeMigrationRace(stdout: string, stderr: string): boolean {
+  const text = `${stdout}\n${stderr}`.toLowerCase();
+  return text.includes("database migration") || text.includes("sqlite-migration");
 }
 
 function parseModelsOutput(stdout: string): AgentRuntimeModel[] {
@@ -106,30 +119,31 @@ export async function discoverOpenCodeModels(input: {
   cwd?: unknown;
   env?: unknown;
   provider?: unknown;
+  pure?: unknown;
 } = {}): Promise<AgentRuntimeModel[]> {
   const command = resolveOpenCodeCommand(input.command);
   const cwd = asString(input.cwd, process.cwd());
   const env = normalizeEnv(input.env);
   const provider = asString(input.provider, "").trim();
+  const usePure = input.pure !== false;
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
-  // Ensure HOME points to the actual running user's home directory.
-  // When the server is started via `runuser -u <user>`, HOME may still
-  // reflect the parent process (e.g. /root), causing OpenCode to miss
-  // provider auth credentials stored under the target user's home.
   let resolvedHome: string | undefined;
-  try {
-    resolvedHome = os.userInfo().homedir || undefined;
-  } catch {
-    // os.userInfo() throws a SystemError when the current UID has no
-    // /etc/passwd entry (e.g. `docker run --user 1234` with a minimal
-    // image). Fall back to process.env.HOME.
+  if (typeof env.HOME !== "string" || env.HOME.trim().length === 0) {
+    try {
+      resolvedHome = os.userInfo().homedir || undefined;
+    } catch {
+      // os.userInfo() throws a SystemError when the current UID has no
+      // /etc/passwd entry (e.g. `docker run --user 1234` with a minimal
+      // image). Fall back to process.env.HOME.
+    }
   }
   const runtimeEnv = normalizeEnv(ensurePathInEnv({ ...process.env, ...env, ...(resolvedHome ? { HOME: resolvedHome } : {}) }));
 
-  const result = await runChildProcess(
+  const args = [...(usePure ? ["--pure"] : []), "models", ...(provider ? [provider] : [])];
+  const runDiscovery = () => runChildProcess(
     `opencode-models-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     command,
-    provider ? ["models", provider] : ["models"],
+    args,
     {
       cwd,
       env: runtimeEnv,
@@ -138,6 +152,12 @@ export async function discoverOpenCodeModels(input: {
       onLog: async () => {},
     },
   );
+
+  let result = await runDiscovery();
+  if (!result.timedOut && (result.exitCode ?? 1) !== 0 && isOpenCodeMigrationRace(result.stdout, result.stderr)) {
+    await sleep(MODELS_DISCOVERY_RETRY_DELAY_MS);
+    result = await runDiscovery();
+  }
 
   if (result.timedOut) {
     throw new Error(`\`opencode models\` timed out after ${MODELS_DISCOVERY_TIMEOUT_MS / 1000}s.`);
@@ -155,18 +175,20 @@ export async function discoverOpenCodeModelsCached(input: {
   cwd?: unknown;
   env?: unknown;
   provider?: unknown;
+  pure?: unknown;
 } = {}): Promise<AgentRuntimeModel[]> {
   const command = resolveOpenCodeCommand(input.command);
   const cwd = asString(input.cwd, process.cwd());
   const env = normalizeEnv(input.env);
   const provider = asString(input.provider, "").trim();
-  const key = `${discoveryCacheKey(command, cwd, env)}\nprovider=${provider}`;
+  const pure = input.pure !== false;
+  const key = `${discoveryCacheKey(command, cwd, env)}\nprovider=${provider}\npure=${pure ? "1" : "0"}`;
   const now = Date.now();
   pruneExpiredDiscoveryCache(now);
   const cached = discoveryCache.get(key);
   if (cached && cached.expiresAt > now) return cached.models;
 
-  const models = await discoverOpenCodeModels({ command, cwd, env, provider });
+  const models = await discoverOpenCodeModels({ command, cwd, env, provider, pure });
   discoveryCache.set(key, { expiresAt: now + MODELS_CACHE_TTL_MS, models });
   return models;
 }
@@ -176,18 +198,18 @@ export async function ensureOpenCodeModelConfiguredAndAvailable(input: {
   command?: unknown;
   cwd?: unknown;
   env?: unknown;
+  pure?: unknown;
 }): Promise<AgentRuntimeModel[]> {
   const model = asString(input.model, "").trim();
   if (!model) {
     throw new Error("OpenCode requires `agentRuntimeConfig.model` in provider/model format.");
   }
-  const provider = model.includes("/") ? model.slice(0, model.indexOf("/")).trim() : "";
-
   const models = await discoverOpenCodeModelsCached({
     command: input.command,
     cwd: input.cwd,
     env: input.env,
-    provider,
+    provider: "",
+    pure: input.pure,
   });
 
   if (models.length === 0) {
@@ -204,9 +226,42 @@ export async function ensureOpenCodeModelConfiguredAndAvailable(input: {
   return models;
 }
 
-export async function listOpenCodeModels(): Promise<AgentRuntimeModel[]> {
+export async function listOpenCodeModels(
+  ctx: AgentRuntimeModelListContext = {},
+): Promise<AgentRuntimeModel[]> {
   try {
-    return await discoverOpenCodeModelsCached();
+    const config = parseObject(ctx.config);
+    const command =
+      typeof config.command === "string" && config.command.trim().length > 0
+        ? config.command.trim()
+        : undefined;
+    const cwd = asString(config.cwd, process.cwd());
+    const envConfig = parseObject(config.env);
+    const env = normalizeEnv(envConfig);
+    const baseEnv = normalizeEnv({ ...process.env, ...env });
+    const extraArgs = (() => {
+      const fromExtraArgs = asStringArray(config.extraArgs);
+      if (fromExtraArgs.length > 0) return fromExtraArgs;
+      return asStringArray(config.args);
+    })();
+    const usePure = !extraArgs.includes("--no-pure");
+    const runtimeEnv = ctx.orgId
+      ? normalizeEnv(ensurePathInEnv(applyManagedOpenCodeEnv(
+          baseEnv,
+          await prepareManagedOpenCodeHome({
+            env: baseEnv,
+            orgId: ctx.orgId,
+            agentId: "model-list",
+          }),
+        )))
+      : undefined;
+
+    return await discoverOpenCodeModelsCached({
+      command,
+      cwd,
+      env: runtimeEnv,
+      pure: usePure,
+    });
   } catch {
     return [];
   }

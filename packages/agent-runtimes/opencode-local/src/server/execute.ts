@@ -1,5 +1,3 @@
-import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
@@ -30,16 +28,15 @@ import {
   loadAgentInstructionsPrefix,
   renderRudderRuntimeSkillBoundaryPrompt,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import {
+  applyManagedOpenCodeEnv,
+  prepareManagedOpenCodeHome,
+  resolveManagedOpenCodeSkillsDir,
+} from "./home.js";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl } from "./parse.js";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_RUDDER_INSTANCE_ID = "default";
-const SHARED_OPENCODE_HOME_ENTRIES = [
-  ".config/opencode",
-  ".local/share/opencode",
-  ".cache/opencode",
-] as const;
 
 function firstNonEmptyLine(text: string): string {
   return (
@@ -64,6 +61,10 @@ function resolveOpenCodeBiller(env: Record<string, string>, provider: string | n
 function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean {
   const raw = env[key];
   return typeof raw === "string" && raw.trim().length > 0;
+}
+
+function hasOpenCodePureArg(args: string[]): boolean {
+  return args.includes("--pure") || args.includes("--no-pure");
 }
 
 function renderRudderEnvNote(env: Record<string, string>): string {
@@ -95,48 +96,6 @@ function renderApiAccessNote(env: Record<string, string>): string {
     "",
     "",
   ].join("\n");
-}
-
-function nonEmpty(value: string | undefined): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-async function pathExists(candidate: string): Promise<boolean> {
-  return fs.access(candidate).then(() => true).catch(() => false);
-}
-
-async function ensureParentDir(target: string) {
-  await fs.mkdir(path.dirname(target), { recursive: true });
-}
-
-async function ensureSymlink(target: string, source: string) {
-  const existing = await fs.lstat(target).catch(() => null);
-  if (!existing) {
-    await ensureParentDir(target);
-    await fs.symlink(source, target);
-    return;
-  }
-  if (!existing.isSymbolicLink()) return;
-
-  const linkedPath = await fs.readlink(target).catch(() => null);
-  const resolvedLinkedPath = linkedPath ? path.resolve(path.dirname(target), linkedPath) : null;
-  if (resolvedLinkedPath === source) return;
-  await fs.unlink(target);
-  await fs.symlink(source, target);
-}
-
-function resolveSharedOpenCodeHomeDir(env: NodeJS.ProcessEnv): string {
-  return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
-}
-
-function resolveManagedOpenCodeHomeDir(env: NodeJS.ProcessEnv, orgId: string, agentId: string): string {
-  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
-  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "opencode-home", "agents", agentId);
-}
-
-function resolveManagedOpenCodeSkillsDir(homeDir: string): string {
-  return path.join(homeDir, ".claude", "skills");
 }
 
 async function resolveOpenCodeRuntimeSkillEntries(
@@ -171,32 +130,6 @@ async function resolveOpenCodeRuntimeSkillEntries(
     entries,
     desiredSkillNames,
   };
-}
-
-async function prepareManagedOpenCodeHome(
-  env: NodeJS.ProcessEnv,
-  onLog: AgentRuntimeExecutionContext["onLog"],
-  orgId: string,
-  agentId: string,
-): Promise<string> {
-  const sourceHome = resolveSharedOpenCodeHomeDir(env);
-  const targetHome = resolveManagedOpenCodeHomeDir(env, orgId, agentId);
-  if (targetHome === sourceHome) return targetHome;
-
-  await fs.mkdir(targetHome, { recursive: true });
-  await fs.mkdir(resolveManagedOpenCodeSkillsDir(targetHome), { recursive: true });
-
-  for (const relativeEntry of SHARED_OPENCODE_HOME_ENTRIES) {
-    const source = path.join(sourceHome, relativeEntry);
-    if (!(await pathExists(source))) continue;
-    await ensureSymlink(path.join(targetHome, relativeEntry), source);
-  }
-
-  await onLog(
-    "stdout",
-    `[rudder] Using Rudder-managed OpenCode home "${targetHome}" (seeded from "${sourceHome}").\n`,
-  );
-  return targetHome;
 }
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
@@ -295,7 +228,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
   const sourceEnv = { ...process.env, ...env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedOpenCodeHome(sourceEnv, onLog, agent.orgId, agent.id);
+  const managedHome = await prepareManagedOpenCodeHome({
+    env: sourceEnv,
+    orgId: agent.orgId,
+    agentId: agent.id,
+    onPrepared: (message) => onLog("stdout", message),
+  });
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
@@ -303,7 +241,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     sourceEnv,
     onLog,
   });
-  env.HOME = managedHome;
+  Object.assign(env, applyManagedOpenCodeEnv(env, managedHome));
   env.RUDDER_OPERATOR_HOME = operatorHome;
   if (!hasExplicitApiKey && authToken) {
     env.RUDDER_API_KEY = authToken;
@@ -334,13 +272,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (typeof runtimeEnv.RUDDER_CLI === "string") env.RUDDER_CLI = runtimeEnv.RUDDER_CLI;
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
-  await ensureOpenCodeModelConfiguredAndAvailable({
-    model,
-    command,
-    cwd,
-    env: runtimeEnv,
-  });
-
   const timeoutSec = asNumber(config.timeoutSec, 0);
   const graceSec = asNumber(config.graceSec, 20);
   const extraArgs = (() => {
@@ -348,6 +279,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (fromExtraArgs.length > 0) return fromExtraArgs;
     return asStringArray(config.args);
   })();
+  const usePureMode = !extraArgs.includes("--no-pure");
+
+  await ensureOpenCodeModelConfiguredAndAvailable({
+    model,
+    command,
+    cwd,
+    env: runtimeEnv,
+    pure: usePureMode,
+  });
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
   const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
@@ -467,7 +407,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   };
 
   const buildArgs = (resumeSessionId: string | null) => {
-    const args = ["run", "--format", "json"];
+    const args: string[] = [];
+    if (!hasOpenCodePureArg(extraArgs)) args.push("--pure");
+    args.push("run", "--format", "json");
     if (resumeSessionId) args.push("--session", resumeSessionId);
     if (model) args.push("--model", model);
     if (variant) args.push("--variant", variant);

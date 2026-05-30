@@ -12,6 +12,7 @@ import {
   ensurePathInEnv,
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { applyManagedOpenCodeEnv, prepareManagedOpenCodeHome } from "./home.js";
 import { discoverOpenCodeModels, ensureOpenCodeModelConfiguredAndAvailable } from "./models.js";
 import { parseOpenCodeJsonl } from "./parse.js";
 
@@ -45,6 +46,10 @@ function normalizeEnv(input: unknown): Record<string, string> {
     if (typeof value === "string") env[key] = value;
   }
   return env;
+}
+
+function hasOpenCodePureArg(args: string[]): boolean {
+  return args.includes("--pure") || args.includes("--no-pure");
 }
 
 const OPENCODE_AUTH_REQUIRED_RE =
@@ -90,7 +95,13 @@ export async function testEnvironment(
     });
   }
 
-  const runtimeEnv = normalizeEnv(ensurePathInEnv({ ...process.env, ...env }));
+  const baseEnv = normalizeEnv({ ...process.env, ...env });
+  const managedHome = await prepareManagedOpenCodeHome({
+    env: baseEnv,
+    orgId: ctx.orgId,
+    agentId: "environment-test",
+  });
+  const runtimeEnv = normalizeEnv(ensurePathInEnv(applyManagedOpenCodeEnv(baseEnv, managedHome)));
 
   const cwdInvalid = checks.some((check) => check.code === "opencode_cwd_invalid");
   if (cwdInvalid) {
@@ -123,10 +134,16 @@ export async function testEnvironment(
 
   let modelValidationPassed = false;
   const configuredModel = asString(config.model, "").trim();
+  const extraArgs = (() => {
+    const fromExtraArgs = asStringArray(config.extraArgs);
+    if (fromExtraArgs.length > 0) return fromExtraArgs;
+    return asStringArray(config.args);
+  })();
+  const usePureMode = !extraArgs.includes("--no-pure");
 
   if (canRunProbe && configuredModel) {
     try {
-      const discovered = await discoverOpenCodeModels({ command, cwd, env: runtimeEnv });
+      const discovered = await discoverOpenCodeModels({ command, cwd, env: runtimeEnv, pure: usePureMode });
       if (discovered.length > 0) {
         checks.push({
           code: "opencode_models_discovered",
@@ -162,7 +179,7 @@ export async function testEnvironment(
     }
   } else if (canRunProbe && !configuredModel) {
     try {
-      const discovered = await discoverOpenCodeModels({ command, cwd, env: runtimeEnv });
+      const discovered = await discoverOpenCodeModels({ command, cwd, env: runtimeEnv, pure: usePureMode });
       if (discovered.length > 0) {
         checks.push({
           code: "opencode_models_discovered",
@@ -201,6 +218,7 @@ export async function testEnvironment(
         command,
         cwd,
         env: runtimeEnv,
+        pure: usePureMode,
       });
       checks.push({
         code: "opencode_model_configured",
@@ -219,15 +237,12 @@ export async function testEnvironment(
   }
 
   if (canRunProbe && modelValidationPassed) {
-    const extraArgs = (() => {
-      const fromExtraArgs = asStringArray(config.extraArgs);
-      if (fromExtraArgs.length > 0) return fromExtraArgs;
-      return asStringArray(config.args);
-    })();
     const variant = asString(config.variant, "").trim();
     const probeModel = configuredModel;
 
-    const args = ["run", "--format", "json"];
+    const args: string[] = [];
+    if (!hasOpenCodePureArg(extraArgs)) args.push("--pure");
+    args.push("run", "--format", "json");
     args.push("--model", probeModel);
     if (variant) args.push("--variant", variant);
     if (extraArgs.length > 0) args.push(...extraArgs);

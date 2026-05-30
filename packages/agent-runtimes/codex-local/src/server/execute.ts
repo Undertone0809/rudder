@@ -20,6 +20,7 @@ import {
   syncLocalCliCredentialHomeEntries,
   readRudderRuntimeSkillEntries,
   resolveRudderDesiredSkillNames,
+  renderRudderRuntimeSkillBoundaryPrompt,
   renderTemplate,
   joinPromptSections,
   loadAgentInstructionsPrefix,
@@ -147,6 +148,37 @@ function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean 
 function resolveCodexBillingType(env: Record<string, string>): "api" | "subscription" {
   // Codex uses API-key auth when OPENAI_API_KEY is present; otherwise rely on local login/session auth.
   return hasNonEmptyEnvValue(env, "OPENAI_API_KEY") ? "api" : "subscription";
+}
+
+function renderRudderEnvNote(env: Record<string, string>): string {
+  const rudderKeys = Object.keys(env)
+    .filter((key) => key.startsWith("RUDDER_"))
+    .sort();
+  if (rudderKeys.length === 0) return "";
+  return [
+    "Rudder runtime note:",
+    `The following RUDDER_* environment variables are available in this run: ${rudderKeys.join(", ")}`,
+    "Do not assume these variables are missing without checking your shell environment.",
+    "",
+    "",
+  ].join("\n");
+}
+
+function renderApiAccessNote(env: Record<string, string>): string {
+  if (!hasNonEmptyEnvValue(env, "RUDDER_API_URL") || !hasNonEmptyEnvValue(env, "RUDDER_API_KEY")) return "";
+  return [
+    "Rudder CLI access note:",
+    "Use the runtime shell tool with the Rudder-managed CLI for Rudder control-plane work.",
+    "Read example:",
+    "  \"${RUDDER_CLI:-rudder}\" agent me --json",
+    "Common mutating examples:",
+    "  \"${RUDDER_CLI:-rudder}\" issue checkout {id} --json",
+    "  printf '%s\\n' \"progress\" | \"${RUDDER_CLI:-rudder}\" issue comment {id} --body-file - --json",
+    "  printf '%s\\n' \"done\" | \"${RUDDER_CLI:-rudder}\" issue done {id} --comment-file - --json",
+    "  \"${RUDDER_CLI:-rudder}\" agent hire --org-id \"$RUDDER_ORG_ID\" --payload '{\"name\":\"<requested helper name>\",\"role\":\"<requested helper role>\",\"title\":\"<requested helper title or name>\",\"capabilities\":\"<requested helper capabilities>\",\"desiredSkills\":[\"<requested org skill ref>\"],\"agentRuntimeType\":\"<requested runtime type>\",\"agentRuntimeConfig\":{}}' --json",
+    "",
+    "",
+  ].join("\n");
 }
 
 function resolveCodexBiller(env: Record<string, string>, billingType: "api" | "subscription"): string {
@@ -465,14 +497,18 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   /**
    * Final prompt assembly order is intentional and shared across runtimes:
    * 1) optional injected instructions prefix,
-   * 2) optional bootstrap prompt (only when not resuming a prior session),
-   * 3) optional session handoff markdown,
-   * 4) heartbeat prompt selected by wake trigger (assignment, mention, retry, fallback).
+   * 2) runtime skill boundary,
+   * 3) optional bootstrap prompt (only when not resuming a prior session),
+   * 4) optional session handoff markdown,
+   * 5) runtime/API access notes,
+   * 6) heartbeat prompt selected by wake trigger (assignment, mention, retry, fallback).
    *
    * Prompt example (assignment wakeup):
    * [instructions prefix]
+   * [skill boundary]
    * [bootstrap prompt]
    * [session handoff note]
+   * [runtime/API access notes]
    * You are agent agent-123 (Frontend Maintainer). You have been assigned to work on an issue.
    * Issue: "Fix onboarding redirect"
    * Description: "Users land on a blank page after login."
@@ -510,17 +546,25 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
+  const skillBoundaryPrompt = renderRudderRuntimeSkillBoundaryPrompt(loadedSkills);
+  const rudderEnvNote = renderRudderEnvNote(env);
+  const apiAccessNote = renderApiAccessNote(env);
   const prompt = joinPromptSections([
     instructionsPrefix,
+    skillBoundaryPrompt,
     renderedBootstrapPrompt,
     sessionHandoffNote,
+    rudderEnvNote,
+    apiAccessNote,
     renderedPrompt,
   ]);
   const promptMetrics = {
     promptChars: prompt.length,
     ...loadedInstructions.metrics,
+    skillBoundaryPromptChars: skillBoundaryPrompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
+    runtimeNoteChars: rudderEnvNote.length + apiAccessNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };
 

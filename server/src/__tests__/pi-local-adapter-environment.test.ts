@@ -9,6 +9,11 @@ async function writeFakePiCommand(binDir: string, mode: "success" | "stale-packa
   const script =
     mode === "success"
       ? `#!/usr/bin/env node
+const fs = require("node:fs");
+const envPath = process.env.RUDDER_TEST_ENV_PATH;
+if (envPath) {
+  fs.writeFileSync(envPath, JSON.stringify({ home: process.env.HOME }), "utf8");
+}
 if (process.argv.includes("--list-models")) {
   console.log("provider  model");
   console.log("openai    gpt-4.1-mini");
@@ -46,6 +51,8 @@ describe("pi_local environment diagnostics", () => {
     );
     const binDir = path.join(root, "bin");
     const cwd = path.join(root, "workspace");
+    const envCapturePath = path.join(root, "env.json");
+    const rudderHome = path.join(root, "rudder-home");
     await fs.mkdir(binDir, { recursive: true });
     await fs.mkdir(cwd, { recursive: true });
     await writeFakePiCommand(binDir, "success");
@@ -59,6 +66,9 @@ describe("pi_local environment diagnostics", () => {
         model: "openai/gpt-4.1-mini",
         env: {
           OPENAI_API_KEY: "test-key",
+          RUDDER_TEST_ENV_PATH: envCapturePath,
+          RUDDER_HOME: rudderHome,
+          RUDDER_INSTANCE_ID: "test-instance",
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         },
       },
@@ -67,6 +77,10 @@ describe("pi_local environment diagnostics", () => {
     expect(result.status).toBe("pass");
     expect(result.checks.some((check) => check.code === "pi_models_discovered")).toBe(true);
     expect(result.checks.some((check) => check.code === "pi_hello_probe_passed")).toBe(true);
+    const capturedEnv = JSON.parse(await fs.readFile(envCapturePath, "utf8")) as { home: string };
+    expect(capturedEnv.home).toBe(
+      path.join(rudderHome, "instances", "test-instance", "organizations", "organization-1", "pi-home", "agents", "environment-test"),
+    );
     await fs.rm(root, { recursive: true, force: true });
   });
 
@@ -94,7 +108,8 @@ describe("pi_local environment diagnostics", () => {
     });
 
     const stalePackageCheck = result.checks.find((check) => check.code === "pi_package_install_failed");
-    expect(stalePackageCheck?.level).toBe("warn");
+    expect(result.status).toBe("fail");
+    expect(stalePackageCheck?.level).toBe("error");
     expect(stalePackageCheck?.hint).toContain("Remove `npm:pi-driver`");
     await fs.rm(root, { recursive: true, force: true });
   });

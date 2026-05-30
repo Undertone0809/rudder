@@ -39,6 +39,8 @@ export const queryKeys = {
     configRevisions: (agentId: string) => ["agents", "config-revisions", agentId] as const,
     adapterModels: (orgId: string, agentRuntimeType: string) =>
       ["agents", orgId, "adapter-models", agentRuntimeType] as const,
+    agentAdapterModels: (orgId: string, agentId: string, agentRuntimeType: string) =>
+      ["agents", orgId, "agent-adapter-models", agentId, agentRuntimeType] as const,
   },
   issues: {
     list: (orgId: string) => ["issues", orgId] as const,

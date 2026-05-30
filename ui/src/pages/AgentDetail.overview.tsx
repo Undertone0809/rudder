@@ -11,6 +11,7 @@ import {
 import { useParams, useNavigate, Link, Navigate, useBeforeUnload } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  adapterModelConfigCacheKey,
   agentsApi,
   type AgentKey,
   type ClaudeLoginResult,
@@ -694,12 +695,16 @@ export function ConfigurationTab({
   const [awaitingRefreshAfterSave, setAwaitingRefreshAfterSave] = useState(false);
   const lastAgentRef = useRef(agent);
 
+  const adapterModelsConfigKey = adapterModelConfigCacheKey({});
   const { data: adapterModels } = useQuery({
     queryKey:
       orgId
-        ? queryKeys.agents.adapterModels(orgId, agent.agentRuntimeType)
-        : ["agents", "none", "adapter-models", agent.agentRuntimeType],
-    queryFn: () => agentsApi.adapterModels(orgId!, agent.agentRuntimeType),
+        ? [...queryKeys.agents.agentAdapterModels(orgId, agent.id, agent.agentRuntimeType), adapterModelsConfigKey]
+        : ["agents", "none", "agent-adapter-models", agent.id, agent.agentRuntimeType, adapterModelsConfigKey],
+    queryFn: () => agentsApi.agentAdapterModels(agent.id, orgId!, {
+      agentRuntimeType: agent.agentRuntimeType,
+      agentRuntimeConfigPatch: {},
+    }),
     enabled: Boolean(orgId),
   });
 

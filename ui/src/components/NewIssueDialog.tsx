@@ -6,7 +6,7 @@ import { useDialog } from "../context/DialogContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
-import { agentsApi } from "../api/agents";
+import { adapterModelConfigCacheKey, agentsApi } from "../api/agents";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { authApi } from "../api/auth";
 import { assetsApi } from "../api/assets";
@@ -222,13 +222,27 @@ export function NewIssueDialog() {
     }),
     [agents, allIssues, currentUserId, orderedProjects, skillMentionOptions],
   );
+  const assigneeAdapterConfigKey = adapterModelConfigCacheKey({});
   const { data: assigneeAgentRuntimeModels } = useQuery({
     queryKey:
-      effectiveCompanyId && assigneeAdapterType
-        ? queryKeys.agents.adapterModels(effectiveCompanyId, assigneeAdapterType)
-        : ["agents", "none", "adapter-models", assigneeAdapterType ?? "none"],
-    queryFn: () => agentsApi.adapterModels(effectiveCompanyId!, assigneeAdapterType!),
-    enabled: Boolean(effectiveCompanyId) && newIssueOpen && supportsAssigneeOverrides,
+      effectiveCompanyId && assigneeAdapterType && selectedAssigneeAgentId
+        ? [
+            ...queryKeys.agents.agentAdapterModels(effectiveCompanyId, selectedAssigneeAgentId, assigneeAdapterType),
+            assigneeAdapterConfigKey,
+          ]
+        : [
+            "agents",
+            "none",
+            "agent-adapter-models",
+            selectedAssigneeAgentId ?? "none",
+            assigneeAdapterType ?? "none",
+            assigneeAdapterConfigKey,
+          ],
+    queryFn: () => agentsApi.agentAdapterModels(selectedAssigneeAgentId!, effectiveCompanyId!, {
+      agentRuntimeType: assigneeAdapterType!,
+      agentRuntimeConfigPatch: {},
+    }),
+    enabled: Boolean(effectiveCompanyId) && Boolean(selectedAssigneeAgentId) && newIssueOpen && supportsAssigneeOverrides,
   });
   const clearPendingDraftSave = useCallback(() => {
     if (draftTimer.current) clearTimeout(draftTimer.current);

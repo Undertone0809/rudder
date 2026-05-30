@@ -30,7 +30,10 @@ async function writeFakeOpenCodeCommand(commandPath: string): Promise<void> {
 const fs = require("node:fs");
 ${gitIdentityCaptureSnippet}
 
-if (process.argv[2] === "models") {
+if (
+  process.argv[2] === "models" ||
+  (process.argv[2] === "--pure" && process.argv[3] === "models")
+) {
   console.log("openai/gpt-4.1-mini");
   process.exit(0);
 }

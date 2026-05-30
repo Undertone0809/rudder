@@ -3,6 +3,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentRoutes } from "../routes/agents.js";
 import { errorHandler } from "../middleware/index.js";
+import { listAgentRuntimeModels } from "../agent-runtimes/index.js";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -373,6 +374,46 @@ describe("agent skill routes", () => {
       expect.objectContaining({ agentRuntimeType: "codex_local" }),
       expect.objectContaining({ env: {} }),
     );
+  });
+
+  it("lists existing-agent adapter models from stored config without reusing redacted placeholders", async () => {
+    const listModelsMock = vi.mocked(listAgentRuntimeModels);
+    listModelsMock.mockResolvedValue([{ id: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro" }]);
+    mockSecretService.resolveAdapterConfigForRuntime.mockImplementation(async (_orgId: string, config: Record<string, unknown>) => ({
+      config,
+      secretKeys: new Set<string>(),
+    }));
+    mockAgentService.getById.mockResolvedValue({
+      ...makeAgent("pi_local"),
+      agentRuntimeConfig: {
+        model: "deepseek/deepseek-v4-pro",
+        env: {
+          HOME: { type: "plain", value: "/real/pi-home" },
+        },
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/agents/11111111-1111-4111-8111-111111111111/adapter-models?orgId=organization-1")
+      .send({
+        agentRuntimeType: "pi_local",
+        agentRuntimeConfigPatch: {
+          env: {
+            HOME: { type: "plain", value: "***REDACTED***" },
+          },
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toEqual([{ id: "deepseek/deepseek-v4-pro", label: "deepseek/deepseek-v4-pro" }]);
+    expect(listModelsMock).toHaveBeenCalledWith("pi_local", {
+      orgId: "organization-1",
+      config: expect.objectContaining({
+        env: expect.objectContaining({
+          HOME: { type: "plain", value: "/real/pi-home" },
+        }),
+      }),
+    });
   });
 
   it("skips runtime materialization when syncing Claude skills", async () => {

@@ -15,7 +15,7 @@ import type {
   EnvBinding,
 } from "@rudderhq/shared";
 import type { AgentRuntimeModel } from "../api/agents";
-import { agentsApi } from "../api/agents";
+import { adapterModelConfigCacheKey, agentsApi } from "../api/agents";
 import { secretsApi } from "../api/secrets";
 import { assetsApi } from "../api/assets";
 import {
@@ -220,41 +220,11 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const isLocal = LOCAL_MODEL_RUNTIME_TYPES.includes(agentRuntimeType as (typeof LOCAL_MODEL_RUNTIME_TYPES)[number]);
   const uiAdapter = useMemo(() => getUIAdapter(agentRuntimeType), [agentRuntimeType]);
 
-  // Fetch adapter models for the effective adapter type
-  const {
-    data: fetchedModels,
-    error: fetchedModelsError,
-  } = useQuery({
-    queryKey: selectedOrganizationId
-      ? queryKeys.agents.adapterModels(selectedOrganizationId, agentRuntimeType)
-      : ["agents", "none", "adapter-models", agentRuntimeType],
-    queryFn: () => agentsApi.adapterModels(selectedOrganizationId!, agentRuntimeType),
-    enabled: Boolean(selectedOrganizationId),
-  });
-  const models = useMemo(
-    () => resolveRuntimeModels(agentRuntimeType, fetchedModels, externalModels),
-    [agentRuntimeType, fetchedModels, externalModels],
-  );
-
   const { data: companyAgents = [] } = useQuery({
     queryKey: selectedOrganizationId ? queryKeys.agents.list(selectedOrganizationId) : ["agents", "none", "list"],
     queryFn: () => agentsApi.list(selectedOrganizationId!),
     enabled: Boolean(!isCreate && selectedOrganizationId),
   });
-
-  /** Props passed to adapter-specific config field components */
-  const adapterFieldProps = {
-    mode,
-    isCreate,
-    agentRuntimeType,
-    values: isCreate ? props.values : null,
-    set: isCreate ? (patch: Partial<CreateConfigValues>) => props.onChange(patch) : null,
-    config,
-    eff: eff as <T>(group: "agentRuntimeConfig", field: string, original: T) => T,
-    mark: mark as (group: "agentRuntimeConfig", field: string, value: unknown) => void,
-    models,
-    hideInstructionsFile,
-  };
 
   // Section toggle state — advanced always starts collapsed
   const [configurationAdvancedOpen, setConfigurationAdvancedOpen] = useState(false);
@@ -285,6 +255,57 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       : eff("agentRuntimeConfig", "modelFallbacks", config.modelFallbacks ?? []),
     primaryModelFallbackKey(agentRuntimeType, currentModelId),
   );
+  const adapterModelsConfig = buildAdapterConfigForTest();
+  const adapterModelsConfigKey = adapterModelConfigCacheKey(
+    !isCreate && !overlay.agentRuntimeType ? overlay.agentRuntimeConfig : adapterModelsConfig,
+  );
+  const useStoredAgentModelConfig = !isCreate && !overlay.agentRuntimeType;
+  const modelListAgentId = !isCreate ? props.agent.id : null;
+  const {
+    data: fetchedModels,
+    error: fetchedModelsError,
+  } = useQuery({
+    queryKey: selectedOrganizationId
+      ? useStoredAgentModelConfig
+        ? [
+            ...queryKeys.agents.agentAdapterModels(selectedOrganizationId, modelListAgentId!, agentRuntimeType),
+            adapterModelsConfigKey,
+          ]
+        : [...queryKeys.agents.adapterModels(selectedOrganizationId, agentRuntimeType), adapterModelsConfigKey]
+      : [
+          "agents",
+          "none",
+          useStoredAgentModelConfig ? "agent-adapter-models" : "adapter-models",
+          useStoredAgentModelConfig ? modelListAgentId : agentRuntimeType,
+          ...(useStoredAgentModelConfig ? [agentRuntimeType] : []),
+          adapterModelsConfigKey,
+        ],
+    queryFn: () => useStoredAgentModelConfig
+      ? agentsApi.agentAdapterModels(modelListAgentId!, selectedOrganizationId!, {
+          agentRuntimeType,
+          agentRuntimeConfigPatch: overlay.agentRuntimeConfig,
+        })
+      : agentsApi.adapterModels(selectedOrganizationId!, agentRuntimeType, adapterModelsConfig),
+    enabled: Boolean(selectedOrganizationId),
+  });
+  const models = useMemo(
+    () => resolveRuntimeModels(agentRuntimeType, fetchedModels, externalModels),
+    [agentRuntimeType, fetchedModels, externalModels],
+  );
+
+  /** Props passed to adapter-specific config field components */
+  const adapterFieldProps = {
+    mode,
+    isCreate,
+    agentRuntimeType,
+    values: isCreate ? props.values : null,
+    set: isCreate ? (patch: Partial<CreateConfigValues>) => props.onChange(patch) : null,
+    config,
+    eff: eff as <T>(group: "agentRuntimeConfig", field: string, original: T) => T,
+    mark: mark as (group: "agentRuntimeConfig", field: string, value: unknown) => void,
+    models,
+    hideInstructionsFile,
+  };
 
   function buildRuntimeEnvironmentTestTargets(): RuntimeEnvironmentTestTarget[] {
     const primaryConfig = { ...buildAdapterConfigForTest() };
@@ -541,6 +562,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               runtimeType={agentRuntimeType}
               model={currentModelId}
               config={isCreate ? uiAdapter.buildAdapterConfig(val!) : { ...config, ...overlay.agentRuntimeConfig }}
+              agentId={!isCreate && !overlay.agentRuntimeType ? props.agent.id : undefined}
+              agentRuntimeConfigPatch={!isCreate && !overlay.agentRuntimeType ? overlay.agentRuntimeConfig : undefined}
               selectedOrganizationId={selectedOrganizationId}
               externalModels={externalModels}
               availableSecrets={availableSecrets}

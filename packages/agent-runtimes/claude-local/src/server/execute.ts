@@ -18,6 +18,7 @@ import {
   redactEnvForLogs,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
+  ensureManagedHomeEntrySnapshot,
   ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
   ensurePathInEnv,
@@ -225,12 +226,12 @@ async function prepareManagedClaudeHome(
   for (const relativeEntry of SHARED_CLAUDE_HOME_ENTRIES) {
     const source = path.join(sourceHome, relativeEntry);
     if (!(await pathExists(source))) continue;
-    await ensureSymlink(path.join(targetHome, relativeEntry), source);
+    await ensureManagedHomeEntrySnapshot(path.join(targetHome, relativeEntry), source);
   }
 
   await onLog(
     "stdout",
-    `[rudder] Using per-agent Rudder-managed Claude home "${targetHome}" (seeded from "${sourceHome}").\n`,
+    `[rudder] Using per-agent Rudder-managed Claude home "${targetHome}" (credential/config snapshots seeded from "${sourceHome}").\n`,
   );
   return targetHome;
 }

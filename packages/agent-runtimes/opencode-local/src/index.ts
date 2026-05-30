@@ -34,9 +34,11 @@ Operational fields:
 
 Notes:
 - OpenCode supports multiple providers and models. Use \
-  \`opencode models\` to list available options in provider/model format.
+  \`opencode --pure models\` to list the default Rudder execution-mode options in provider/model format.
 - Rudder requires an explicit \`model\` value for \`opencode_local\` agents.
 - Rudder loads only the skills explicitly enabled on the agent's Skills page, including bundled Rudder skills when selected there; user-home Claude/OpenCode skills are discovery candidates until selected there.
-- Runs are executed with: opencode run --format json ...
+- Runs use a Rudder-managed HOME plus managed XDG_CONFIG_HOME, XDG_DATA_HOME, and XDG_CACHE_HOME. Rudder may link the host OpenCode auth file when present, but it does not share the host OpenCode database, cache, plugins, or config directory into the run.
+- Runs are executed with: opencode --pure run --format json ...
+- Pass --no-pure in extraArgs only when you intentionally want OpenCode to use its non-pure mode.
 - Sessions are resumed with --session when stored session cwd matches current cwd.
 `;

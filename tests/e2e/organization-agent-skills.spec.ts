@@ -127,8 +127,8 @@ async function writeLocalRuntimeBoundaryCaptureStub(
 import fs from "node:fs";
 import path from "node:path";
 
-if (${JSON.stringify(runtime)} === "opencode" && process.argv[2] === "models") {
-  console.log("deepseek/deepseek-v4-pro");
+if (${JSON.stringify(runtime)} === "opencode" && process.argv.includes("models")) {
+  console.log("opencode/deepseek-v4-flash-free");
   process.exit(0);
 }
 if (${JSON.stringify(runtime)} === "pi" && process.argv.includes("--list-models")) {
@@ -151,6 +151,11 @@ const payload = {
   rudderEnv: Object.fromEntries(
     Object.entries(process.env)
       .filter(([key]) => key.startsWith("RUDDER_"))
+      .sort(([left], [right]) => left.localeCompare(right)),
+  ),
+  xdgEnv: Object.fromEntries(
+    Object.entries(process.env)
+      .filter(([key]) => key.startsWith("XDG_"))
       .sort(([left], [right]) => left.localeCompare(right)),
   ),
 };
@@ -1039,11 +1044,14 @@ test.describe("Organization and agent skills", () => {
       await writeHostSkill(E2E_HOME, [...segments], "build-advisor");
       await writeHostSkill(E2E_HOME, [...segments], "code-review");
     }
+    const hostOpenCodeDb = path.join(E2E_HOME, ".local", "share", "opencode", "opencode.db");
+    await fs.mkdir(path.dirname(hostOpenCodeDb), { recursive: true });
+    await fs.writeFile(hostOpenCodeDb, "host-db-must-not-be-shared", "utf8");
 
     const cases = [
       { runtime: "gemini" as const, agentRuntimeType: "gemini_local", model: "deepseek-v4-pro" },
       { runtime: "cursor" as const, agentRuntimeType: "cursor", model: "auto" },
-      { runtime: "opencode" as const, agentRuntimeType: "opencode_local", model: "deepseek/deepseek-v4-pro" },
+      { runtime: "opencode" as const, agentRuntimeType: "opencode_local", model: "opencode/deepseek-v4-flash-free" },
       { runtime: "pi" as const, agentRuntimeType: "pi_local", model: "deepseek/deepseek-v4-pro" },
     ];
 
@@ -1096,6 +1104,7 @@ test.describe("Organization and agent skills", () => {
         skillsHome: string;
         skillEntries: string[];
         rudderEnv: Record<string, string>;
+        xdgEnv: Record<string, string>;
       };
 
       const promptArgIndex = capture.argv.indexOf("--prompt");
@@ -1115,6 +1124,15 @@ test.describe("Organization and agent skills", () => {
       expect(capture.skillEntries).toContain("runtime-selected");
       expect(capture.skillEntries).not.toContain("build-advisor");
       expect(capture.skillEntries).not.toContain("code-review");
+      if (item.runtime === "opencode") {
+        expect(capture.argv).toContain("--pure");
+        expect(capture.xdgEnv.XDG_CONFIG_HOME).toBe(path.join(capture.home, ".config"));
+        expect(capture.xdgEnv.XDG_DATA_HOME).toBe(path.join(capture.home, ".local", "share"));
+        expect(capture.xdgEnv.XDG_CACHE_HOME).toBe(path.join(capture.home, ".cache"));
+        await expect(fs.access(path.join(capture.home, ".local", "share", "opencode", "opencode.db"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }
     }
   });
 

@@ -12,6 +12,10 @@ const outPath = process.env.RUDDER_TEST_ARGS_PATH;
 if (outPath) {
   fs.writeFileSync(outPath, JSON.stringify(process.argv.slice(2)), "utf8");
 }
+const envPath = process.env.RUDDER_TEST_ENV_PATH;
+if (envPath) {
+  fs.writeFileSync(envPath, JSON.stringify({ home: process.env.HOME }), "utf8");
+}
 console.log(JSON.stringify({
   type: "assistant",
   message: { content: [{ type: "output_text", text: "hello" }] },
@@ -61,6 +65,8 @@ describe("cursor environment diagnostics", () => {
     const binDir = path.join(root, "bin");
     const cwd = path.join(root, "workspace");
     const argsCapturePath = path.join(root, "args.json");
+    const envCapturePath = path.join(root, "env.json");
+    const rudderHome = path.join(root, "rudder-home");
     await fs.mkdir(binDir, { recursive: true });
     await writeFakeCursorAgentCommand(binDir, argsCapturePath);
 
@@ -73,6 +79,9 @@ describe("cursor environment diagnostics", () => {
         env: {
           CURSOR_API_KEY: "test-key",
           RUDDER_TEST_ARGS_PATH: argsCapturePath,
+          RUDDER_TEST_ENV_PATH: envCapturePath,
+          RUDDER_HOME: rudderHome,
+          RUDDER_INSTANCE_ID: "test-instance",
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         },
       },
@@ -83,6 +92,10 @@ describe("cursor environment diagnostics", () => {
     expect(args).toContain("-f");
     expect(args).not.toContain("--workspace");
     expect(args).not.toContain("--mode");
+    const capturedEnv = JSON.parse(await fs.readFile(envCapturePath, "utf8")) as { home: string };
+    expect(capturedEnv.home).toBe(
+      path.join(rudderHome, "instances", "test-instance", "organizations", "organization-1", "cursor-home", "agents", "environment-test"),
+    );
     await fs.rm(root, { recursive: true, force: true });
   });
 

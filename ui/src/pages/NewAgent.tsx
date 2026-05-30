@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { useOrganization } from "../context/OrganizationContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
-import { agentsApi } from "../api/agents";
+import { adapterModelConfigCacheKey, agentsApi } from "../api/agents";
 import { organizationSkillsApi } from "../api/organizationSkills";
 import { queryKeys } from "../lib/queryKeys";
 import { AGENT_ROLES } from "@rudderhq/shared";
@@ -92,6 +92,8 @@ export function NewAgent() {
     enabled: !!selectedOrganizationId,
   });
 
+  const adapterModelsConfig = getUIAdapter(configValues.agentRuntimeType).buildAdapterConfig(configValues);
+  const adapterModelsConfigKey = adapterModelConfigCacheKey(adapterModelsConfig);
   const {
     data: adapterModels,
     error: adapterModelsError,
@@ -99,9 +101,13 @@ export function NewAgent() {
     isFetching: adapterModelsFetching,
   } = useQuery({
     queryKey: selectedOrganizationId
-      ? queryKeys.agents.adapterModels(selectedOrganizationId, configValues.agentRuntimeType)
-      : ["agents", "none", "adapter-models", configValues.agentRuntimeType],
-    queryFn: () => agentsApi.adapterModels(selectedOrganizationId!, configValues.agentRuntimeType),
+      ? [...queryKeys.agents.adapterModels(selectedOrganizationId, configValues.agentRuntimeType), adapterModelsConfigKey]
+      : ["agents", "none", "adapter-models", configValues.agentRuntimeType, adapterModelsConfigKey],
+    queryFn: () => agentsApi.adapterModels(
+      selectedOrganizationId!,
+      configValues.agentRuntimeType,
+      adapterModelsConfig,
+    ),
     enabled: Boolean(selectedOrganizationId),
   });
 

@@ -13,6 +13,7 @@ import {
   buildRudderEnv,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
+  ensureManagedHomeEntrySnapshot,
   ensureLocalCliCredentialShimsInPath,
   ensureRudderRuntimeSkillSymlinks,
   ensureRudderCliInPath,
@@ -97,26 +98,6 @@ async function pathExists(candidate: string): Promise<boolean> {
   return fs.access(candidate).then(() => true).catch(() => false);
 }
 
-async function ensureParentDir(target: string) {
-  await fs.mkdir(path.dirname(target), { recursive: true });
-}
-
-async function ensureSymlink(target: string, source: string) {
-  const existing = await fs.lstat(target).catch(() => null);
-  if (!existing) {
-    await ensureParentDir(target);
-    await fs.symlink(source, target);
-    return;
-  }
-  if (!existing.isSymbolicLink()) return;
-
-  const linkedPath = await fs.readlink(target).catch(() => null);
-  const resolvedLinkedPath = linkedPath ? path.resolve(path.dirname(target), linkedPath) : null;
-  if (resolvedLinkedPath === source) return;
-  await fs.unlink(target);
-  await fs.symlink(source, target);
-}
-
 function resolveSharedGeminiHomeDir(env: NodeJS.ProcessEnv): string {
   return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
 }
@@ -138,7 +119,7 @@ async function syncGeminiSharedHomeEntries(sourceHome: string, targetHome: strin
   await fs.mkdir(targetGeminiDir, { recursive: true });
   for (const entry of entries) {
     if (entry.name === "skills") continue;
-    await ensureSymlink(
+    await ensureManagedHomeEntrySnapshot(
       path.join(targetGeminiDir, entry.name),
       path.join(sourceGeminiDir, entry.name),
     );

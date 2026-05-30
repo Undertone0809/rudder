@@ -210,6 +210,32 @@ describe("rudder skill utils", () => {
     expect(await fs.realpath(conflict)).toBe(await fs.realpath(desiredSkill));
   });
 
+  it("fails fast when a selected runtime skill cannot be materialized", async () => {
+    const root = await makeTempDir("rudder-runtime-skill-link-failure-");
+    cleanupDirs.add(root);
+
+    const skillsHome = path.join(root, "managed-home", ".gemini", "skills");
+    const desiredSkill = path.join(root, "server", "resources", "bundled-skills", "rudder");
+    await fs.mkdir(skillsHome, { recursive: true });
+    await fs.mkdir(desiredSkill, { recursive: true });
+
+    const logs: string[] = [];
+    await expect(ensureRudderRuntimeSkillSymlinks({
+      onLog: async (_stream, chunk) => {
+        logs.push(chunk);
+      },
+      runtimeLabel: "Gemini",
+      skillsHome,
+      availableEntries: [{ key: "rudder/rudder", runtimeName: "rudder", source: desiredSkill }],
+      desiredSkillKeys: ["rudder/rudder"],
+      linkSkill: async () => {
+        throw new Error("permission denied");
+      },
+    })).rejects.toThrow('Failed to inject Gemini skill "rudder/rudder"');
+
+    expect(logs.some((line) => line.includes('Failed to inject Gemini skill "rudder/rudder"'))).toBe(true);
+  });
+
   it("renders the shared runtime skill boundary as a self-reporting contract", () => {
     const prompt = renderRudderRuntimeSkillBoundaryPrompt([
       {

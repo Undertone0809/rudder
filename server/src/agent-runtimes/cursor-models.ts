@@ -1,18 +1,41 @@
 import { spawnSync } from "node:child_process";
-import { models as cursorFallbackModels } from "@rudderhq/agent-runtime-cursor-local";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import {
+  DEFAULT_CURSOR_LOCAL_COMMAND,
+  models as cursorFallbackModels,
+} from "@rudderhq/agent-runtime-cursor-local";
+import type { AgentRuntimeModelListContext } from "@rudderhq/agent-runtime-utils";
+import {
+  asString,
+  ensureAbsoluteDirectory,
+  ensureManagedHomeEntrySnapshot,
+  ensurePathInEnv,
+  parseObject,
+} from "@rudderhq/agent-runtime-utils/server-utils";
 import type { AgentRuntimeModel } from "./types.js";
 
 const CURSOR_MODELS_TIMEOUT_MS = 5_000;
 const CURSOR_MODELS_CACHE_TTL_MS = 60_000;
 const MAX_BUFFER_BYTES = 512 * 1024;
+const DEFAULT_RUDDER_INSTANCE_ID = "default";
+const CURSOR_SKILL_HOME_ENTRIES = new Set(["skills", "skills-cursor"]);
 
-let cached: { expiresAt: number; models: AgentRuntimeModel[] } | null = null;
+const modelCache = new Map<string, { expiresAt: number; models: AgentRuntimeModel[] }>();
 
 type CursorModelsCommandResult = {
   status: number | null;
   stdout: string;
   stderr: string;
   hasError: boolean;
+};
+
+type CursorModelsCommandInput = {
+  command: string;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
 };
 
 function dedupeModels(models: AgentRuntimeModel[]): AgentRuntimeModel[] {
@@ -45,6 +68,66 @@ function pushModelId(target: AgentRuntimeModel[], raw: string) {
   const id = sanitizeModelId(raw);
   if (!isLikelyModelId(id)) return;
   target.push({ id, label: id });
+}
+
+function nonEmpty(value: string | undefined): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  return fs.access(candidate).then(() => true).catch(() => false);
+}
+
+async function removeManagedCursorEntry(targetCursorDir: string, entryName: string): Promise<void> {
+  const target = path.join(targetCursorDir, entryName);
+  const existing = await fs.lstat(target).catch(() => null);
+  if (!existing) return;
+  if (entryName === "skills" && existing.isDirectory() && !existing.isSymbolicLink()) return;
+  await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+}
+
+async function pruneManagedCursorConfigSnapshots(targetCursorDir: string): Promise<void> {
+  const entries = await fs.readdir(targetCursorDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (entry.name === "skills") continue;
+    await removeManagedCursorEntry(targetCursorDir, entry.name);
+  }
+}
+
+function resolveManagedCursorHomeDir(env: Record<string, string>, orgId: string, agentId: string): string {
+  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
+  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
+  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "cursor-home", "agents", agentId);
+}
+
+async function prepareManagedCursorHome(env: Record<string, string>, orgId: string, agentId: string): Promise<string> {
+  const targetHome = resolveManagedCursorHomeDir(env, orgId, agentId);
+  const sourceHome = nonEmpty(env.HOME);
+  const resolvedSourceHome = sourceHome ? path.resolve(sourceHome) : null;
+  if (resolvedSourceHome && targetHome === resolvedSourceHome) return targetHome;
+
+  const targetCursorDir = path.join(targetHome, ".cursor");
+  await fs.mkdir(path.join(targetCursorDir, "skills"), { recursive: true });
+  await pruneManagedCursorConfigSnapshots(targetCursorDir);
+
+  if (resolvedSourceHome) {
+    const sourceCursorDir = path.join(resolvedSourceHome, ".cursor");
+    if (await pathExists(sourceCursorDir)) {
+      const entries = await fs.readdir(sourceCursorDir, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        if (CURSOR_SKILL_HOME_ENTRIES.has(entry.name)) continue;
+        await ensureManagedHomeEntrySnapshot(path.join(targetCursorDir, entry.name), path.join(sourceCursorDir, entry.name));
+      }
+    }
+
+    if (process.platform === "darwin") {
+      const sourceKeychainsDir = path.join(resolvedSourceHome, "Library", "Keychains");
+      if (await pathExists(sourceKeychainsDir)) {
+        await ensureManagedHomeEntrySnapshot(path.join(targetHome, "Library", "Keychains"), sourceKeychainsDir);
+      }
+    }
+  }
+  return targetHome;
 }
 
 function collectFromJsonValue(value: unknown, target: AgentRuntimeModel[]) {
@@ -109,8 +192,10 @@ function mergedWithFallback(models: AgentRuntimeModel[]): AgentRuntimeModel[] {
   return dedupeModels([...models, ...cursorFallbackModels]);
 }
 
-function defaultCursorModelsRunner(): CursorModelsCommandResult {
-  const result = spawnSync("agent", ["models"], {
+function defaultCursorModelsRunner(input: CursorModelsCommandInput): CursorModelsCommandResult {
+  const result = spawnSync(input.command, input.args, {
+    cwd: input.cwd,
+    env: input.env,
     encoding: "utf8",
     timeout: CURSOR_MODELS_TIMEOUT_MS,
     maxBuffer: MAX_BUFFER_BYTES,
@@ -123,10 +208,10 @@ function defaultCursorModelsRunner(): CursorModelsCommandResult {
   };
 }
 
-let cursorModelsRunner: () => CursorModelsCommandResult = defaultCursorModelsRunner;
+let cursorModelsRunner: (input: CursorModelsCommandInput) => CursorModelsCommandResult = defaultCursorModelsRunner;
 
-function fetchCursorModelsFromCli(): AgentRuntimeModel[] {
-  const result = cursorModelsRunner();
+function fetchCursorModelsFromCli(input: CursorModelsCommandInput): AgentRuntimeModel[] {
+  const result = cursorModelsRunner(input);
   const { stdout, stderr } = result;
   if (result.hasError && stdout.trim().length === 0 && stderr.trim().length === 0) {
     return [];
@@ -138,19 +223,71 @@ function fetchCursorModelsFromCli(): AgentRuntimeModel[] {
   return parseCursorModelsOutput(stdout, stderr);
 }
 
-export async function listCursorModels(): Promise<AgentRuntimeModel[]> {
+function normalizeEnv(input: unknown): Record<string, string> {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return {};
+  return Object.fromEntries(
+    Object.entries(input as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+}
+
+function cacheKeyFor(input: CursorModelsCommandInput, orgId: string | undefined): string {
+  const envEntries = Object.entries(input.env)
+    .filter(([, value]) => typeof value === "string")
+    .sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify({
+    orgId: orgId ?? null,
+    command: input.command,
+    args: input.args,
+    cwd: input.cwd,
+    env: envEntries,
+  });
+}
+
+async function resolveCursorModelsCommandInput(ctx?: AgentRuntimeModelListContext): Promise<CursorModelsCommandInput> {
+  const config = parseObject(ctx?.config);
+  const command = asString(config.command, DEFAULT_CURSOR_LOCAL_COMMAND);
+  const cwd = asString(config.cwd, process.cwd());
+  await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
+
+  const envConfig = parseObject(config.env);
+  const configEnv = normalizeEnv(envConfig);
+  const baseEnv = normalizeEnv({ ...process.env, ...configEnv });
+  if (ctx?.orgId && !Object.prototype.hasOwnProperty.call(configEnv, "HOME")) {
+    delete baseEnv.HOME;
+  }
+  const managedHome = ctx?.orgId
+    ? await prepareManagedCursorHome(baseEnv, ctx.orgId, "model-list")
+    : (baseEnv.HOME ?? process.env.HOME ?? "");
+  const runtimeEnv = ensurePathInEnv({
+    ...baseEnv,
+    ...(managedHome ? { HOME: managedHome } : {}),
+  });
+  return {
+    command,
+    args: ["models"],
+    cwd,
+    env: runtimeEnv,
+  };
+}
+
+export async function listCursorModels(ctx?: AgentRuntimeModelListContext): Promise<AgentRuntimeModel[]> {
+  const commandInput = await resolveCursorModelsCommandInput(ctx);
+  const cacheKey = cacheKeyFor(commandInput, ctx?.orgId);
   const now = Date.now();
+  const cached = modelCache.get(cacheKey);
   if (cached && cached.expiresAt > now) {
     return cached.models;
   }
 
-  const discovered = fetchCursorModelsFromCli();
+  const discovered = fetchCursorModelsFromCli(commandInput);
   if (discovered.length > 0) {
     const merged = mergedWithFallback(discovered);
-    cached = {
+    modelCache.set(cacheKey, {
       expiresAt: now + CURSOR_MODELS_CACHE_TTL_MS,
       models: merged,
-    };
+    });
     return merged;
   }
 
@@ -162,9 +299,11 @@ export async function listCursorModels(): Promise<AgentRuntimeModel[]> {
 }
 
 export function resetCursorModelsCacheForTests() {
-  cached = null;
+  modelCache.clear();
 }
 
-export function setCursorModelsRunnerForTests(runner: (() => CursorModelsCommandResult) | null) {
+export function setCursorModelsRunnerForTests(
+  runner: ((input: CursorModelsCommandInput) => CursorModelsCommandResult) | null,
+) {
   cursorModelsRunner = runner ?? defaultCursorModelsRunner;
 }

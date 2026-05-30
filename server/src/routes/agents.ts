@@ -50,7 +50,7 @@ import type { StorageService } from "../storage/types.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 import { findServerAdapter, listAgentRuntimeModels } from "../agent-runtimes/index.js";
-import { redactEventPayload } from "../redaction.js";
+import { REDACTED_EVENT_VALUE, redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
@@ -786,6 +786,36 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     };
   }
 
+  function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+
+  function mergeRuntimeConfigPatch(
+    baseConfig: Record<string, unknown>,
+    patch: unknown,
+  ): Record<string, unknown> {
+    if (!isPlainObject(patch)) return { ...baseConfig };
+    const merged = { ...baseConfig };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined || value === REDACTED_EVENT_VALUE) continue;
+      if (key !== "env") {
+        merged[key] = value;
+        continue;
+      }
+
+      const baseEnv = isPlainObject(baseConfig.env) ? baseConfig.env : {};
+      const patchEnv = isPlainObject(value) ? value : {};
+      const nextEnv = { ...baseEnv };
+      for (const [envKey, envValue] of Object.entries(patchEnv)) {
+        if (envValue === undefined || envValue === REDACTED_EVENT_VALUE) continue;
+        if (isPlainObject(envValue) && envValue.value === REDACTED_EVENT_VALUE) continue;
+        nextEnv[envKey] = envValue;
+      }
+      merged.env = nextEnv;
+    }
+    return merged;
+  }
+
   function toLeanOrgNode(node: Record<string, unknown>): Record<string, unknown> {
     const reports = Array.isArray(node.reports)
       ? (node.reports as Array<Record<string, unknown>>).map((report) => toLeanOrgNode(report))
@@ -812,7 +842,28 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     const orgId = req.params.orgId as string;
     assertCompanyAccess(req, orgId);
     const type = req.params.type as string;
-    const models = await listAgentRuntimeModels(type);
+    const models = await listAgentRuntimeModels(type, { orgId });
+    res.json(models);
+  });
+
+  router.post("/orgs/:orgId/adapters/:type/models", async (req, res) => {
+    const orgId = req.params.orgId as string;
+    const type = req.params.type as string;
+    await assertCanReadConfigurations(req, orgId);
+
+    const inputAdapterConfig =
+      (req.body?.agentRuntimeConfig ?? {}) as Record<string, unknown>;
+    const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+      orgId,
+      inputAdapterConfig,
+      { strictMode: strictSecretsMode },
+    );
+    const { config: runtimeAdapterConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
+      orgId,
+      normalizedAdapterConfig,
+    );
+
+    const models = await listAgentRuntimeModels(type, { orgId, config: runtimeAdapterConfig });
     res.json(models);
   });
 
@@ -894,6 +945,34 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       endDate,
     });
     res.json(analytics);
+  });
+
+  router.post("/agents/:id/adapter-models", async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanReadAgent(req, agent);
+
+    const requestedRuntimeType =
+      typeof req.body?.agentRuntimeType === "string" && req.body.agentRuntimeType.trim().length > 0
+        ? req.body.agentRuntimeType.trim()
+        : agent.agentRuntimeType;
+    const baseConfig = requestedRuntimeType === agent.agentRuntimeType
+      ? (agent.agentRuntimeConfig ?? {}) as Record<string, unknown>
+      : {};
+    const patchedConfig = mergeRuntimeConfigPatch(baseConfig, req.body?.agentRuntimeConfigPatch);
+    const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
+      agent.orgId,
+      patchedConfig,
+    );
+    const models = await listAgentRuntimeModels(requestedRuntimeType, {
+      orgId: agent.orgId,
+      config: runtimeConfig,
+    });
+    res.json(models);
   });
 
   router.post(

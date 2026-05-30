@@ -243,11 +243,18 @@ export function getServerAdapter(type: string): ServerAgentRuntimeModule {
   return adapter;
 }
 
-export async function listAgentRuntimeModels(type: string): Promise<{ id: string; label: string }[]> {
+export async function listAgentRuntimeModels(
+  type: string,
+  ctx: { orgId?: string; config?: Record<string, unknown> } = {},
+): Promise<{ id: string; label: string }[]> {
   const adapter = adaptersByType.get(type);
   if (!adapter) return [];
   if (adapter.listModels) {
-    const discovered = await adapter.listModels();
+    const discovered = await adapter.listModels({
+      orgId: ctx.orgId,
+      agentRuntimeType: type,
+      config: ctx.config,
+    });
     if (discovered.length > 0) return discovered;
   }
   return adapter.models ?? [];

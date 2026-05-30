@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildIssueDocumentsPrompt,
+  ensureManagedHomeEntrySnapshot,
   ensureLocalCliCredentialShimsInPath,
   ensureRudderCliInPath,
   resolveLocalOperatorHome,
@@ -101,6 +102,41 @@ describe("ensureRudderCliInPath", () => {
 
       expect(env.RUDDER_CLI).toBe(shimPath);
       expect(shim).toContain(desktopCli);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ensureManagedHomeEntrySnapshot", () => {
+  it("recursively refreshes snapshots without preserving host symlinks", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-managed-home-snapshot-"));
+    const source = path.join(root, "source");
+    const target = path.join(root, "target");
+    const linkedFile = path.join(root, "linked-token.json");
+
+    try {
+      await fs.mkdir(path.join(source, "nested"), { recursive: true });
+      await fs.writeFile(path.join(source, "nested", "config.json"), "{\"version\":1}\n", "utf8");
+      await fs.writeFile(linkedFile, "{\"token\":\"initial\"}\n", "utf8");
+      await fs.symlink(linkedFile, path.join(source, "token.json"));
+
+      await fs.mkdir(path.join(target, "nested"), { recursive: true });
+      await fs.writeFile(path.join(target, "nested", "config.json"), "{\"version\":0}\n", "utf8");
+      await fs.writeFile(path.join(target, "stale.txt"), "stale\n", "utf8");
+
+      const result = await ensureManagedHomeEntrySnapshot(target, source);
+
+      expect(result).toBe("repaired");
+      expect(await fs.readFile(path.join(target, "nested", "config.json"), "utf8")).toBe("{\"version\":1}\n");
+      expect(await fs.readFile(path.join(target, "token.json"), "utf8")).toBe("{\"token\":\"initial\"}\n");
+      expect((await fs.lstat(path.join(target, "token.json"))).isSymbolicLink()).toBe(false);
+      await expect(fs.stat(path.join(target, "stale.txt"))).rejects.toThrow();
+
+      await fs.writeFile(path.join(source, "nested", "config.json"), "{\"version\":2}\n", "utf8");
+      await ensureManagedHomeEntrySnapshot(target, source);
+
+      expect(await fs.readFile(path.join(target, "nested", "config.json"), "utf8")).toBe("{\"version\":2}\n");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

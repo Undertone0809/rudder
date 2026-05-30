@@ -37,7 +37,10 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "agents" && queryKey[1] === "skills") {
       return { data: mockState.skills };
     }
-    if (queryKey[0] === "agents" && queryKey[2] === "adapter-models") return { data: mockState.adapterModels };
+    if (
+      queryKey[0] === "agents" &&
+      (queryKey[2] === "adapter-models" || queryKey[2] === "agent-adapter-models")
+    ) return { data: mockState.adapterModels };
     if (queryKey[0] === "agents") return { data: mockState.agents };
     if (queryKey[0] === "projects") return { data: mockState.projects };
     if (queryKey[0] === "issues" && queryKey[2] === "labels") return { data: mockState.labels };
@@ -119,7 +122,8 @@ vi.mock("../lib/recent-assignees", () => ({
 }));
 
 vi.mock("../api/agents", () => ({
-  agentsApi: { list: vi.fn(), adapterModels: vi.fn() },
+  adapterModelConfigCacheKey: (config: Record<string, unknown>) => JSON.stringify(config),
+  agentsApi: { list: vi.fn(), adapterModels: vi.fn(), agentAdapterModels: vi.fn() },
 }));
 
 vi.mock("../api/projects", () => ({

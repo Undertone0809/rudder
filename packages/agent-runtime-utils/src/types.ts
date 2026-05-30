@@ -237,6 +237,12 @@ export interface AgentRuntimeEnvironmentTestContext {
   };
 }
 
+export interface AgentRuntimeModelListContext {
+  orgId?: string;
+  agentRuntimeType?: string;
+  config?: Record<string, unknown>;
+}
+
 /** Payload for the onHireApproved adapter lifecycle hook (e.g. join-request or hire_agent approval). */
 export interface HireApprovedPayload {
   orgId: string;
@@ -300,7 +306,7 @@ export interface ServerAgentRuntimeModule {
   sessionManagement?: import("./session-compaction.js").AgentRuntimeSessionManagement;
   supportsLocalAgentJwt?: boolean;
   models?: AgentRuntimeModel[];
-  listModels?: () => Promise<AgentRuntimeModel[]>;
+  listModels?: (ctx?: AgentRuntimeModelListContext) => Promise<AgentRuntimeModel[]>;
   agentConfigurationDoc?: string;
   /**
    * Optional lifecycle hook when an agent is approved/hired (join-request or hire_agent approval).

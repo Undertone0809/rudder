@@ -41,7 +41,10 @@ vi.mock("@tanstack/react-query", () => ({
         },
       };
     }
-    if (queryKey[0] === "agents" && queryKey[2] === "adapter-models") {
+    if (
+      queryKey[0] === "agents" &&
+      (queryKey[2] === "adapter-models" || queryKey[2] === "agent-adapter-models")
+    ) {
       return { data: [] };
     }
     if (queryKey[0] === "agents") {
@@ -220,9 +223,11 @@ vi.mock("../lib/recent-assignees", () => ({
 }));
 
 vi.mock("../api/agents", () => ({
+  adapterModelConfigCacheKey: (config: Record<string, unknown>) => JSON.stringify(config),
   agentsApi: {
     list: vi.fn(),
     adapterModels: vi.fn(),
+    agentAdapterModels: vi.fn(),
   },
 }));
 

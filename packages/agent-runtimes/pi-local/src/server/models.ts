@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
-import type { AgentRuntimeModel } from "@rudderhq/agent-runtime-utils";
-import { asString, ensureAbsoluteDirectory, runChildProcess } from "@rudderhq/agent-runtime-utils/server-utils";
+import type { AgentRuntimeModel, AgentRuntimeModelListContext } from "@rudderhq/agent-runtime-utils";
+import {
+  asString,
+  ensureAbsoluteDirectory,
+  ensurePathInEnv,
+  parseObject,
+  runChildProcess,
+} from "@rudderhq/agent-runtime-utils/server-utils";
+import { prepareManagedPiHome } from "./home.js";
 
 const MODELS_CACHE_TTL_MS = 60_000;
 
@@ -196,9 +203,28 @@ export async function ensurePiModelConfiguredAndAvailable(input: {
   return models;
 }
 
-export async function listPiModels(): Promise<AgentRuntimeModel[]> {
+export async function listPiModels(ctx: AgentRuntimeModelListContext = {}): Promise<AgentRuntimeModel[]> {
   try {
-    return await discoverPiModelsCached();
+    const config = parseObject(ctx.config);
+    const command =
+      typeof config.command === "string" && config.command.trim().length > 0
+        ? config.command.trim()
+        : undefined;
+    const cwd = asString(config.cwd, process.cwd());
+    const env = normalizeEnv(parseObject(config.env));
+    const baseEnv = normalizeEnv({ ...process.env, ...env });
+    const runtimeEnv = ctx.orgId
+      ? normalizeEnv(ensurePathInEnv({
+          ...baseEnv,
+          HOME: await prepareManagedPiHome({
+            env: baseEnv,
+            orgId: ctx.orgId,
+            agentId: "model-list",
+          }),
+        }))
+      : undefined;
+
+    return await discoverPiModelsCached({ command, cwd, env: runtimeEnv });
   } catch {
     return [];
   }

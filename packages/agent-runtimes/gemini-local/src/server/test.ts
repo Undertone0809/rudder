@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type {
   AgentRuntimeEnvironmentCheck,
@@ -11,6 +13,7 @@ import {
   asStringArray,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
+  ensureManagedHomeEntrySnapshot,
   ensurePathInEnv,
   parseObject,
   runChildProcess,
@@ -18,6 +21,8 @@ import {
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "../index.js";
 import { detectGeminiAuthRequired, detectGeminiQuotaExhausted, parseGeminiJsonl } from "./parse.js";
 import { firstNonEmptyLine } from "./utils.js";
+
+const DEFAULT_RUDDER_INSTANCE_ID = "default";
 
 function summarizeStatus(checks: AgentRuntimeEnvironmentCheck[]): AgentRuntimeEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -40,6 +45,41 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
   const clean = raw.replace(/\s+/g, " ").trim();
   const max = 240;
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+function nonEmpty(value: string | undefined): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  return fs.access(candidate).then(() => true).catch(() => false);
+}
+
+function resolveManagedGeminiHomeDir(env: Record<string, string>, orgId: string, agentId: string): string {
+  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
+  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
+  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "gemini-home", "agents", agentId);
+}
+
+async function prepareManagedGeminiHome(env: Record<string, string>, orgId: string, agentId: string): Promise<string> {
+  const sourceHome = nonEmpty(env.HOME);
+  const resolvedSourceHome = sourceHome ? path.resolve(sourceHome) : null;
+  const targetHome = resolveManagedGeminiHomeDir(env, orgId, agentId);
+  if (resolvedSourceHome && targetHome === resolvedSourceHome) return targetHome;
+
+  const targetGeminiDir = path.join(targetHome, ".gemini");
+  await fs.mkdir(path.join(targetGeminiDir, "skills"), { recursive: true });
+  if (!resolvedSourceHome) return targetHome;
+
+  const sourceGeminiDir = path.join(resolvedSourceHome, ".gemini");
+  if (!(await pathExists(sourceGeminiDir))) return targetHome;
+
+  const entries = await fs.readdir(sourceGeminiDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (entry.name === "skills") continue;
+    await ensureManagedHomeEntrySnapshot(path.join(targetGeminiDir, entry.name), path.join(sourceGeminiDir, entry.name));
+  }
+  return targetHome;
 }
 
 export async function testEnvironment(
@@ -74,7 +114,20 @@ export async function testEnvironment(
   if (!isNonEmpty(env.GEMINI_CLI_TRUST_WORKSPACE)) {
     env.GEMINI_CLI_TRUST_WORKSPACE = "true";
   }
-  const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
+  const baseEnv = Object.fromEntries(
+    Object.entries({ ...process.env, ...env }).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+  if (!Object.prototype.hasOwnProperty.call(env, "HOME")) {
+    delete baseEnv.HOME;
+  }
+  const managedHome = await prepareManagedGeminiHome(baseEnv, ctx.orgId, "environment-test");
+  const runtimeEnv = Object.fromEntries(
+    Object.entries(ensurePathInEnv({ ...baseEnv, HOME: managedHome })).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
   try {
     await ensureCommandResolvable(command, cwd, runtimeEnv);
     checks.push({
@@ -161,7 +214,7 @@ export async function testEnvironment(
         args,
         {
           cwd,
-          env,
+          env: runtimeEnv,
           timeoutSec: helloProbeTimeoutSec,
           graceSec: 5,
           onLog: async () => { },

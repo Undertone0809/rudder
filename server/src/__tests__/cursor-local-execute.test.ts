@@ -517,14 +517,15 @@ describe("cursor execute", () => {
         ".cursor",
         "config.json",
       );
-      expect((await fs.lstat(bridgedCursorConfig)).isSymbolicLink()).toBe(true);
+      expect((await fs.lstat(bridgedCursorConfig)).isSymbolicLink()).toBe(false);
+      expect(await fs.readFile(bridgedCursorConfig, "utf8")).toBe("{}");
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });
     }
   });
 
-  it.runIf(process.platform === "darwin")("bridges the macOS Keychain search path into the managed Cursor home", async () => {
+  it.runIf(process.platform === "darwin")("seeds the macOS Keychain search path snapshot into the managed Cursor home", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-cursor-keychain-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "agent");
@@ -577,8 +578,8 @@ describe("cursor execute", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      expect((await fs.lstat(managedKeychainsDir)).isSymbolicLink()).toBe(true);
-      expect(await fs.realpath(managedKeychainsDir)).toBe(await fs.realpath(sourceKeychainsDir));
+      expect((await fs.lstat(managedKeychainsDir)).isSymbolicLink()).toBe(false);
+      expect(await fs.readFile(path.join(managedKeychainsDir, "login.keychain-db"), "utf8")).toBe("");
     } finally {
       restoreEnv();
       await fs.rm(root, { recursive: true, force: true });

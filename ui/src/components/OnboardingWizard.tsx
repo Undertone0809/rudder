@@ -11,7 +11,7 @@ import { useOrganization } from "../context/OrganizationContext";
 import { organizationsApi } from "../api/orgs";
 import { ApiError } from "../api/client";
 import { goalsApi } from "../api/goals";
-import { agentsApi } from "../api/agents";
+import { adapterModelConfigCacheKey, agentsApi } from "../api/agents";
 import { issuesApi } from "../api/issues";
 import { onboardingApi } from "../api/onboarding";
 import { projectsApi } from "../api/projects";
@@ -330,6 +330,8 @@ export function OnboardingWizard() {
       cancelled = true;
     };
   }, [effectiveOnboardingOpen, queryClient]);
+  const adapterModelsConfig = buildAdapterConfig();
+  const adapterModelsConfigKey = adapterModelConfigCacheKey(adapterModelsConfig);
   const {
     data: adapterModels,
     error: adapterModelsError,
@@ -337,9 +339,9 @@ export function OnboardingWizard() {
     isFetching: adapterModelsFetching
   } = useQuery({
     queryKey: createdCompanyId
-      ? queryKeys.agents.adapterModels(createdCompanyId, agentRuntimeType)
-      : ["agents", "none", "adapter-models", agentRuntimeType],
-    queryFn: () => agentsApi.adapterModels(createdCompanyId!, agentRuntimeType),
+      ? [...queryKeys.agents.adapterModels(createdCompanyId, agentRuntimeType), adapterModelsConfigKey]
+      : ["agents", "none", "adapter-models", agentRuntimeType, adapterModelsConfigKey],
+    queryFn: () => agentsApi.adapterModels(createdCompanyId!, agentRuntimeType, adapterModelsConfig),
     enabled: Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 2
   });
   const { data: nameSuggestion } = useQuery({

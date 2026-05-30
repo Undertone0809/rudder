@@ -14,6 +14,7 @@ import {
 import {
   asStringArray,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { prepareManagedPiHome } from "./home.js";
 import { discoverPiModelsCached } from "./models.js";
 import { parsePiJsonl } from "./parse.js";
 
@@ -57,7 +58,7 @@ function buildPiModelDiscoveryFailureCheck(message: string): AgentRuntimeEnviron
   if (PI_STALE_PACKAGE_RE.test(message)) {
     return {
       code: "pi_package_install_failed",
-      level: "warn",
+      level: "error",
       message: "Pi startup failed while installing configured package `npm:pi-driver`.",
       detail: message,
       hint: "Remove `npm:pi-driver` from ~/.pi/agent/settings.json or set adapter env HOME to a clean Pi profile, then retry `pi --list-models`.",
@@ -66,7 +67,7 @@ function buildPiModelDiscoveryFailureCheck(message: string): AgentRuntimeEnviron
 
   return {
     code: "pi_models_discovery_failed",
-    level: "warn",
+    level: "error",
     message,
     hint: "Run `pi --list-models` manually to verify provider auth and config.",
   };
@@ -101,7 +102,13 @@ export async function testEnvironment(
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
   }
-  const runtimeEnv = normalizeEnv(ensurePathInEnv({ ...process.env, ...env }));
+  const baseEnv = normalizeEnv({ ...process.env, ...env });
+  const managedHome = await prepareManagedPiHome({
+    env: baseEnv,
+    orgId: ctx.orgId,
+    agentId: "environment-test",
+  });
+  const runtimeEnv = normalizeEnv(ensurePathInEnv({ ...baseEnv, HOME: managedHome }));
 
   const cwdInvalid = checks.some((check) => check.code === "pi_cwd_invalid");
   if (cwdInvalid) {
@@ -132,9 +139,12 @@ export async function testEnvironment(
   const canRunProbe =
     checks.every((check) => check.code !== "pi_cwd_invalid" && check.code !== "pi_command_unresolvable");
 
+  let discoveredModels: Array<{ id: string }> | null = null;
+  let modelDiscoveryFailed = false;
   if (canRunProbe) {
     try {
       const discovered = await discoverPiModelsCached({ command, cwd, env: runtimeEnv });
+      discoveredModels = discovered;
       if (discovered.length > 0) {
         checks.push({
           code: "pi_models_discovered",
@@ -144,12 +154,13 @@ export async function testEnvironment(
       } else {
         checks.push({
           code: "pi_models_empty",
-          level: "warn",
+          level: "error",
           message: "Pi returned no models.",
           hint: "Run `pi --list-models` and verify provider authentication.",
         });
       }
     } catch (err) {
+      modelDiscoveryFailed = true;
       checks.push(
         buildPiModelDiscoveryFailureCheck(
           err instanceof Error ? err.message : "Pi model discovery failed.",
@@ -159,6 +170,7 @@ export async function testEnvironment(
   }
 
   const configuredModel = asString(config.model, "").trim();
+  let configuredModelAvailable = false;
   if (!configuredModel) {
     checks.push({
       code: "pi_model_required",
@@ -168,10 +180,10 @@ export async function testEnvironment(
     });
   } else if (canRunProbe) {
     // Verify model is in the list
-    try {
-      const discovered = await discoverPiModelsCached({ command, cwd, env: runtimeEnv });
-      const modelExists = discovered.some((m: { id: string }) => m.id === configuredModel);
+    if (discoveredModels) {
+      const modelExists = discoveredModels.some((m) => m.id === configuredModel);
       if (modelExists) {
+        configuredModelAvailable = true;
         checks.push({
           code: "pi_model_configured",
           level: "info",
@@ -180,22 +192,22 @@ export async function testEnvironment(
       } else {
         checks.push({
           code: "pi_model_not_found",
-          level: "warn",
+          level: "error",
           message: `Configured model "${configuredModel}" not found in available models.`,
           hint: "Run `pi --list-models` and choose a currently available provider/model ID.",
         });
       }
-    } catch {
-      // If we can't verify, just note it
+    } else if (!modelDiscoveryFailed) {
       checks.push({
-        code: "pi_model_configured",
-        level: "info",
-        message: `Configured model: ${configuredModel}`,
+        code: "pi_model_verification_failed",
+        level: "error",
+        message: `Configured model "${configuredModel}" could not be verified.`,
+        hint: "Run `pi --list-models` and choose a currently available provider/model ID.",
       });
     }
   }
 
-  if (canRunProbe && configuredModel) {
+  if (canRunProbe && configuredModel && configuredModelAvailable && !modelDiscoveryFailed) {
     // Parse model for probe
     const provider = configuredModel.includes("/") 
       ? configuredModel.slice(0, configuredModel.indexOf("/")) 

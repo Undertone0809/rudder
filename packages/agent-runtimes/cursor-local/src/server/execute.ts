@@ -13,6 +13,7 @@ import {
   redactEnvForLogs,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
+  ensureManagedHomeEntrySnapshot,
   ensureLocalCliCredentialShimsInPath,
   ensureRudderRuntimeSkillSymlinks,
   ensureRudderCliInPath,
@@ -125,26 +126,6 @@ async function pathExists(candidate: string): Promise<boolean> {
   return fs.access(candidate).then(() => true).catch(() => false);
 }
 
-async function ensureParentDir(target: string) {
-  await fs.mkdir(path.dirname(target), { recursive: true });
-}
-
-async function ensureSymlink(target: string, source: string) {
-  const existing = await fs.lstat(target).catch(() => null);
-  if (!existing) {
-    await ensureParentDir(target);
-    await fs.symlink(source, target);
-    return;
-  }
-  if (!existing.isSymbolicLink()) return;
-
-  const linkedPath = await fs.readlink(target).catch(() => null);
-  const resolvedLinkedPath = linkedPath ? path.resolve(path.dirname(target), linkedPath) : null;
-  if (resolvedLinkedPath === source) return;
-  await fs.unlink(target);
-  await fs.symlink(source, target);
-}
-
 function resolveSharedCursorHomeDir(env: NodeJS.ProcessEnv): string {
   return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
 }
@@ -161,7 +142,7 @@ function resolveManagedCursorSkillsDir(homeDir: string): string {
 
 const CURSOR_SKILL_HOME_ENTRIES = new Set(["skills", "skills-cursor"]);
 
-async function removeManagedCursorSkillEntry(targetCursorDir: string, entryName: string): Promise<void> {
+async function removeManagedCursorEntry(targetCursorDir: string, entryName: string): Promise<void> {
   const target = path.join(targetCursorDir, entryName);
   const existing = await fs.lstat(target).catch(() => null);
   if (!existing) return;
@@ -170,7 +151,15 @@ async function removeManagedCursorSkillEntry(targetCursorDir: string, entryName:
     return;
   }
 
-  await fs.rm(target, { recursive: true, force: true });
+  await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+}
+
+async function pruneManagedCursorConfigSnapshots(targetCursorDir: string): Promise<void> {
+  const entries = await fs.readdir(targetCursorDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (entry.name === "skills") continue;
+    await removeManagedCursorEntry(targetCursorDir, entry.name);
+  }
 }
 
 async function syncCursorSharedHomeEntries(sourceHome: string, targetHome: string) {
@@ -178,12 +167,10 @@ async function syncCursorSharedHomeEntries(sourceHome: string, targetHome: strin
   const entries = await fs.readdir(sourceCursorDir, { withFileTypes: true }).catch(() => []);
   const targetCursorDir = path.join(targetHome, ".cursor");
   await fs.mkdir(targetCursorDir, { recursive: true });
-  for (const entryName of CURSOR_SKILL_HOME_ENTRIES) {
-    await removeManagedCursorSkillEntry(targetCursorDir, entryName);
-  }
+  await pruneManagedCursorConfigSnapshots(targetCursorDir);
   for (const entry of entries) {
     if (CURSOR_SKILL_HOME_ENTRIES.has(entry.name)) continue;
-    await ensureSymlink(
+    await ensureManagedHomeEntrySnapshot(
       path.join(targetCursorDir, entry.name),
       path.join(sourceCursorDir, entry.name),
     );
@@ -196,14 +183,14 @@ async function syncCursorMacOSKeychainSearchPath(sourceHome: string, targetHome:
   const sourceKeychainsDir = path.join(sourceHome, "Library", "Keychains");
   if (!(await pathExists(sourceKeychainsDir))) return false;
 
-  await ensureSymlink(
+  await ensureManagedHomeEntrySnapshot(
     path.join(targetHome, "Library", "Keychains"),
     sourceKeychainsDir,
   );
   return true;
 }
 
-async function prepareManagedCursorHome(
+export async function prepareManagedCursorHome(
   env: NodeJS.ProcessEnv,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
@@ -226,7 +213,7 @@ async function prepareManagedCursorHome(
   if (keychainLinked) {
     await onLog(
       "stdout",
-      "[rudder] Shared macOS Keychain search path into managed Cursor home for subscription authentication.\n",
+      "[rudder] Seeded macOS Keychain search path snapshot into managed Cursor home for subscription authentication.\n",
     );
   }
   return targetHome;

@@ -73,7 +73,7 @@ describe("cursor local adapter skill injection", () => {
     expect((await fs.lstat(path.join(skillsHome, "rudder-create-agent"))).isSymbolicLink()).toBe(true);
   });
 
-  it("logs per-skill link failures and continues without throwing", async () => {
+  it("fails fast after logging per-skill link failures", async () => {
     const skillsDir = await makeTempDir("rudder-cursor-fail-src-");
     const skillsHome = await makeTempDir("rudder-cursor-fail-home-");
     cleanupDirs.add(skillsDir);
@@ -83,22 +83,27 @@ describe("cursor local adapter skill injection", () => {
     await createSkillDir(skillsDir, "fail-skill");
 
     const logs: string[] = [];
-    await ensureCursorSkillsInjected(
-      async (_stream, chunk) => {
-        logs.push(chunk);
-      },
-      {
-        skillsDir,
-        skillsHome,
-        desiredSkillKeys: ["ok-skill", "fail-skill"],
-        linkSkill: async (source, target) => {
-          if (target.endsWith(`${path.sep}fail-skill`)) {
-            throw new Error("simulated link failure");
-          }
-          await fs.symlink(source, target);
+    await expect(
+      ensureCursorSkillsInjected(
+        async (_stream, chunk) => {
+          logs.push(chunk);
         },
-      },
-    );
+        {
+          skillsEntries: [
+            { key: "ok-skill", runtimeName: "ok-skill", source: path.join(skillsDir, "ok-skill") },
+            { key: "fail-skill", runtimeName: "fail-skill", source: path.join(skillsDir, "fail-skill") },
+          ],
+          skillsHome,
+          desiredSkillKeys: ["ok-skill", "fail-skill"],
+          linkSkill: async (source, target) => {
+            if (target.endsWith(`${path.sep}fail-skill`)) {
+              throw new Error("simulated link failure");
+            }
+            await fs.symlink(source, target);
+          },
+        },
+      ),
+    ).rejects.toThrow('Failed to inject Cursor skill "fail-skill"');
 
     expect((await fs.lstat(path.join(skillsHome, "ok-skill"))).isSymbolicLink()).toBe(true);
     await expect(fs.lstat(path.join(skillsHome, "fail-skill"))).rejects.toThrow();

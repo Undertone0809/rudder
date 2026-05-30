@@ -15,7 +15,7 @@ import type {
   EnvBinding,
 } from "@rudderhq/shared";
 import type { AgentRuntimeModel } from "../api/agents";
-import { agentsApi } from "../api/agents";
+import { adapterModelConfigCacheKey, agentsApi } from "../api/agents";
 import { secretsApi } from "../api/secrets";
 import { assetsApi } from "../api/assets";
 import {
@@ -161,6 +161,8 @@ export function RuntimeProviderCard({
   runtimeType,
   model,
   config,
+  agentId,
+  agentRuntimeConfigPatch,
   selectedOrganizationId,
   externalModels,
   availableSecrets,
@@ -184,6 +186,8 @@ export function RuntimeProviderCard({
   runtimeType: string;
   model: string;
   config: Record<string, unknown>;
+  agentId?: string;
+  agentRuntimeConfigPatch?: Record<string, unknown>;
   selectedOrganizationId: string | null | undefined;
   externalModels?: AgentRuntimeModel[];
   availableSecrets: OrganizationSecret[];
@@ -206,11 +210,29 @@ export function RuntimeProviderCard({
   const [thinkingEffortOpen, setThinkingEffortOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const adapter = useMemo(() => getUIAdapter(runtimeType), [runtimeType]);
+  const adapterModelsConfigKey = adapterModelConfigCacheKey(agentId ? (agentRuntimeConfigPatch ?? {}) : config);
   const { data: fetchedModels } = useQuery({
     queryKey: selectedOrganizationId
-      ? queryKeys.agents.adapterModels(selectedOrganizationId, runtimeType)
-      : ["agents", "none", "adapter-models", runtimeType],
-    queryFn: () => agentsApi.adapterModels(selectedOrganizationId!, runtimeType),
+      ? agentId
+        ? [
+            ...queryKeys.agents.agentAdapterModels(selectedOrganizationId, agentId, runtimeType),
+            adapterModelsConfigKey,
+          ]
+        : [...queryKeys.agents.adapterModels(selectedOrganizationId, runtimeType), adapterModelsConfigKey]
+      : [
+          "agents",
+          "none",
+          agentId ? "agent-adapter-models" : "adapter-models",
+          agentId ?? runtimeType,
+          ...(agentId ? [runtimeType] : []),
+          adapterModelsConfigKey,
+        ],
+    queryFn: () => agentId
+      ? agentsApi.agentAdapterModels(agentId, selectedOrganizationId!, {
+          agentRuntimeType: runtimeType,
+          agentRuntimeConfigPatch: agentRuntimeConfigPatch ?? {},
+        })
+      : agentsApi.adapterModels(selectedOrganizationId!, runtimeType, config),
     enabled: Boolean(selectedOrganizationId),
   });
   const models = useMemo(

@@ -30,6 +30,38 @@ export interface AgentRuntimeModel {
   label: string;
 }
 
+export function adapterModelConfigCacheKey(config: Record<string, unknown>): string {
+  const hashString = (value: string): string => {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  };
+  const scrub = (value: unknown, key = ""): unknown => {
+    if (Array.isArray(value)) return value.map((item) => scrub(item));
+    if (typeof value !== "object" || value === null) {
+      return key === "value" && typeof value === "string" ? `<hash:${hashString(value)}>` : value;
+    }
+    const record = value as Record<string, unknown>;
+    if (record.type === "plain" && "value" in record) {
+      return { ...record, value: "<redacted>" };
+    }
+    return Object.fromEntries(
+      Object.entries(record)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([childKey, childValue]) => [
+          childKey,
+          key === "env" && typeof childValue === "string"
+            ? `<hash:${hashString(childValue)}>`
+            : scrub(childValue, childKey),
+        ]),
+    );
+  };
+  return JSON.stringify(scrub(config));
+}
+
 export interface ClaudeLoginResult {
   exitCode: number | null;
   signal: string | null;
@@ -185,9 +217,23 @@ export const agentsApi = {
     api.get<AgentTaskSession[]>(agentPath(id, orgId, "/task-sessions")),
   resetSession: (id: string, taskKey?: string | null, orgId?: string) =>
     api.post<void>(agentPath(id, orgId, "/runtime-state/reset-session"), { taskKey: taskKey ?? null }),
-  adapterModels: (orgId: string, type: string) =>
-    api.get<AgentRuntimeModel[]>(
+  adapterModels: (orgId: string, type: string, agentRuntimeConfig?: Record<string, unknown>) =>
+    agentRuntimeConfig
+      ? api.post<AgentRuntimeModel[]>(
+          `/orgs/${encodeURIComponent(orgId)}/adapters/${encodeURIComponent(type)}/models`,
+          { agentRuntimeConfig },
+        )
+      : api.get<AgentRuntimeModel[]>(
       `/orgs/${encodeURIComponent(orgId)}/adapters/${encodeURIComponent(type)}/models`,
+        ),
+  agentAdapterModels: (
+    agentId: string,
+    orgId: string | undefined,
+    data?: { agentRuntimeType?: string; agentRuntimeConfigPatch?: Record<string, unknown> },
+  ) =>
+    api.post<AgentRuntimeModel[]>(
+      agentPath(agentId, orgId, "/adapter-models"),
+      data ?? {},
     ),
   testEnvironment: (
     orgId: string,

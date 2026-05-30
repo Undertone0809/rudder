@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AgentRuntimeExecutionContext, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
@@ -28,11 +27,11 @@ import {
   runChildProcess,
   selectPromptTemplate,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { prepareManagedPiHome, resolvePiSessionsDir, resolvePiSkillsDir } from "./home.js";
 import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_RUDDER_INSTANCE_ID = "default";
 
 function firstNonEmptyLine(text: string): string {
   return (
@@ -91,107 +90,6 @@ function renderApiAccessNote(env: Record<string, string>): string {
     "",
     "",
   ].join("\n");
-}
-
-function nonEmpty(value: string | undefined): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-async function pathExists(candidate: string): Promise<boolean> {
-  return fs.access(candidate).then(() => true).catch(() => false);
-}
-
-async function ensureParentDir(target: string) {
-  await fs.mkdir(path.dirname(target), { recursive: true });
-}
-
-async function ensureSymlink(target: string, source: string) {
-  const existing = await fs.lstat(target).catch(() => null);
-  if (!existing) {
-    await ensureParentDir(target);
-    await fs.symlink(source, target);
-    return;
-  }
-  if (!existing.isSymbolicLink()) return;
-
-  const linkedPath = await fs.readlink(target).catch(() => null);
-  const resolvedLinkedPath = linkedPath ? path.resolve(path.dirname(target), linkedPath) : null;
-  if (resolvedLinkedPath === source) return;
-  await fs.unlink(target);
-  await fs.symlink(source, target);
-}
-
-function resolveSharedPiHomeDir(env: NodeJS.ProcessEnv): string {
-  return path.resolve(nonEmpty(env.HOME) ?? os.homedir());
-}
-
-function resolveManagedPiHomeDir(env: NodeJS.ProcessEnv, orgId: string, agentId: string): string {
-  const rudderHome = nonEmpty(env.RUDDER_HOME) ?? path.resolve(os.homedir(), ".rudder");
-  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? DEFAULT_RUDDER_INSTANCE_ID;
-  return path.resolve(rudderHome, "instances", instanceId, "organizations", orgId, "pi-home", "agents", agentId);
-}
-
-function resolvePiRoot(homeDir: string): string {
-  return path.join(homeDir, ".pi");
-}
-
-function resolvePiSessionsDir(homeDir: string): string {
-  return path.join(resolvePiRoot(homeDir), "paperclips");
-}
-
-function resolvePiSkillsDir(homeDir: string): string {
-  return path.join(resolvePiRoot(homeDir), "agent", "skills");
-}
-
-async function syncPiSharedHomeEntries(sourceHome: string, targetHome: string) {
-  const sourcePiDir = resolvePiRoot(sourceHome);
-  const targetPiDir = resolvePiRoot(targetHome);
-  await fs.mkdir(targetPiDir, { recursive: true });
-
-  const topEntries = await fs.readdir(sourcePiDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of topEntries) {
-    if (entry.name === "agent" || entry.name === "paperclips") continue;
-    await ensureSymlink(
-      path.join(targetPiDir, entry.name),
-      path.join(sourcePiDir, entry.name),
-    );
-  }
-
-  const sourceAgentDir = path.join(sourcePiDir, "agent");
-  if (!(await pathExists(sourceAgentDir))) return;
-  const targetAgentDir = path.join(targetPiDir, "agent");
-  await fs.mkdir(targetAgentDir, { recursive: true });
-  const agentEntries = await fs.readdir(sourceAgentDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of agentEntries) {
-    if (entry.name === "skills") continue;
-    await ensureSymlink(
-      path.join(targetAgentDir, entry.name),
-      path.join(sourceAgentDir, entry.name),
-    );
-  }
-}
-
-async function prepareManagedPiHome(
-  env: NodeJS.ProcessEnv,
-  onLog: AgentRuntimeExecutionContext["onLog"],
-  orgId: string,
-  agentId: string,
-): Promise<string> {
-  const sourceHome = resolveSharedPiHomeDir(env);
-  const targetHome = resolveManagedPiHomeDir(env, orgId, agentId);
-  if (targetHome === sourceHome) return targetHome;
-
-  await fs.mkdir(resolvePiSkillsDir(targetHome), { recursive: true });
-  await fs.mkdir(resolvePiSessionsDir(targetHome), { recursive: true });
-  if (await pathExists(resolvePiRoot(sourceHome))) {
-    await syncPiSharedHomeEntries(sourceHome, targetHome);
-  }
-
-  await onLog(
-    "stdout",
-    `[rudder] Using Rudder-managed Pi home "${targetHome}" (seeded from "${sourceHome}").\n`,
-  );
-  return targetHome;
 }
 
 function resolvePiBiller(env: Record<string, string>, provider: string | null): string {
@@ -260,7 +158,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
-  const managedHome = await prepareManagedPiHome(sourceEnv, onLog, agent.orgId, agent.id);
+  const managedHome = await prepareManagedPiHome({
+    env: sourceEnv,
+    orgId: agent.orgId,
+    agentId: agent.id,
+    onPrepared: (message) => onLog("stdout", message),
+  });
   await syncLocalCliCredentialHomeEntries({ sourceHome: operatorHome, targetHome: managedHome, onLog });
   const preparedGitIdentity = await ensureGitIdentityFileConfig({
     cwd,
