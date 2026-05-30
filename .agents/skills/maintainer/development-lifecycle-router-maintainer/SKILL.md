@@ -11,10 +11,10 @@ description: >
   must prove the terminal product workflow when the task affects an operator,
   agent, Desktop, release, or UI path. Also use for component-lab/catalog work,
   performance benchmark-to-implementation work, and destructive cleanup or
-  dirty-worktree recovery where the safe route is not yet clear. Prefer narrower
-  maintainer skills directly when the user clearly asks for a release, UI
-  polish, run transcript debug, local preview, data diagnosis, PR preview, or
-  review-only task.
+  dirty-worktree recovery where the safe route is not yet clear. Keep this
+  router thin: prefer narrower maintainer skills directly when the prompt
+  already names a release, UI polish, run/debug investigation, local preview,
+  data-path question, Desktop recovery, PR preview, or review-only task.
 ---
 
 # Development Lifecycle Router Maintainer
@@ -59,6 +59,35 @@ Do not use this skill as a substitute for a clearly matched narrow skill. If
 the user asks only to release, debug a run, review a Codex session, preview a
 PR, seed mock data, polish a screenshot, or stop dev processes, use the
 specialized skill directly.
+
+## Non-Use Gate
+
+Before taking ownership, ask whether the prompt already has a narrow owner.
+This router should only stay active when it adds value by choosing a stage,
+resolving ambiguity, sequencing multiple stages, or protecting a high-risk
+handoff.
+
+Use the narrow skill directly when all of these are true:
+
+- the user names a concrete surface, run, PR, release, screenshot, data path, or
+  local runtime problem
+- the next useful artifact is obvious for that surface
+- the task does not need cross-stage planning, reviewer orchestration, or
+  destructive recovery judgment before the narrow work can begin
+
+When the narrow route is clear, state the route in one sentence and then follow
+the downstream skill. Do not expand a lifecycle plan just because this router is
+available.
+
+Keep only these cases in the router:
+
+- the user asks which workflow or skill should handle the work
+- the request combines multiple stages and the earliest blocking stage is not
+  obvious
+- the task needs sequencing from requirements to implementation, verification,
+  review, commit, and handoff
+- the worktree or prior-session state must be reconstructed before any safe
+  edit, cleanup, or handoff
 
 ## Core Rule
 
@@ -128,6 +157,24 @@ If multiple stages are present, choose the earliest blocking stage. Example:
 ## Routing Matrix
 
 Use the smallest matching workflow:
+
+- If the prompt is already narrow, route out first:
+  - visible screenshot, label, alignment, menu, icon, empty state, or compact UI
+    behavior: `rudder-ui-polish-maintainer`
+  - missing, stale, wrong, unexplained, slow, or suspicious page data:
+    `rudder-data-path-diagnostician-maintainer`
+  - one run, recent run batch, transcript, stdout/stderr, runtime failure, or
+    run-quality investigation: `debug-run-transcript-maintainer`
+  - Desktop launch, local Electron shell, packaged startup, update, profile, or
+    local instance recovery: `rudder-desktop-dev-recovery-maintainer`
+  - review-only of a session, PR, commit, proposal, release, screenshot, or
+    agent outcome: `agent-work-reviewer-maintainer` or the more specific
+    session reviewer
+  - release, npm, GitHub Release, Desktop release assets, tags, dist-tags, or
+    install-smoke state: `release-maintainer`
+
+Only keep ownership after this table when the narrow owner cannot safely begin
+without lifecycle sequencing, dirty-state recovery, or stage-gate decisions.
 
 - Vague dissatisfaction, weak result, unclear product/design critique:
   `build-advisor`.
