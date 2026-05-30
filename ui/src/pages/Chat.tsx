@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react"; import { createPortal } from "react-dom"; import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Archive,
   ArrowUp,
   Boxes,
   Bot,
@@ -11,13 +12,18 @@ import {
   Folder,
   ListChecks,
   Loader2,
+  MoreHorizontal,
   Paperclip,
   Pencil,
+  Pin,
+  PinOff,
   Plus,
   RotateCcw,
   Settings2,
   Square,
-  Sparkles, X, } from "lucide-react";
+  Sparkles,
+  Trash2,
+  X, } from "lucide-react";
 import {
   type Agent,
   type Approval,
@@ -173,7 +179,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     pendingProjectPrefill,
     projects,
     searchParams,
-    selectedOrganizationId, visibleProjects, draftPreferredAgentId, ]); const selectedConversation = conversationQuery.data ?? conversationsQuery.data?.find((conversation) => conversation.id === conversationId) ?? null; const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
+    selectedOrganizationId, visibleProjects, draftPreferredAgentId, ]); const selectedConversation = conversationQuery.data ?? conversationsQuery.data?.find((conversation) => conversation.id === conversationId) ?? null; const selectedConversationGenerating = Boolean(selectedConversation && (streamDrafts[selectedConversation.id] || sendInFlightByChatId[selectedConversation.id])); const draftIssueContext = !selectedConversation ? resolveDraftIssueContext(issues, pendingIssueId) : null; const draftIssueContextId = !selectedConversation && pendingIssueId ? draftIssueContext?.id ?? pendingIssueId : null; const activeAgentId = selectedConversation?.preferredAgentId ?? draftPreferredAgentId; const selectedConversationProjectId = projectContextId(selectedConversation);
   const pendingSelectedConversationProjectId = selectedConversation && pendingProjectContextOverride?.chatId === selectedConversation.id ? pendingProjectContextOverride.projectId : undefined; const activeProjectId = selectedConversation ? (pendingSelectedConversationProjectId ?? selectedConversationProjectId ?? NO_PROJECT_ID) : draftProjectId; const activePlanMode = pendingPlanModeOverride ?? selectedConversation?.planMode ?? draftPlanMode; const activeSkillAgentId = activeAgentId === NO_CHAT_AGENT_ID ? null : activeAgentId; const activeSkillAgent = activeSkillAgentId ? (agents ?? []).find((agent) => agent.id === activeSkillAgentId) ?? null : null; const draftProjectScopeKey = `${selectedOrganizationId ?? "__none__"}:${conversationId ?? "new"}:${pendingIssueId || "__no_issue__"}`; const draftIssueProjectKey = draftIssueContext?.projectId ?? "__no_issue_project__"; const draftProjectDefaultKey = selectedConversation ? null : `${draftProjectScopeKey}:${activeSkillAgentId ?? "__no_agent__"}:${draftIssueProjectKey}`;
   const {
     data: organizationSkills,
@@ -291,6 +297,26 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     onError: (error) => {
       pushToast({
         title: "Failed to update conversation",
+        body: error instanceof Error ? error.message : "Try again.",
+        tone: "error", }); }, }); const updateConversationUserStateMutation = useMutation({
+    mutationFn: ({ chatId, pinned }: { chatId: string; pinned: boolean }) =>
+      chatsApi.updateUserState(chatId, { pinned }),
+    onSuccess: async (conversation) => {
+      upsertConversation(conversation); upsertMessengerThreadSummary(conversation);
+      await refreshChat(conversation.id); },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to update conversation",
+        body: error instanceof Error ? error.message : "Try again.",
+        tone: "error", }); }, }); const deleteConversationMutation = useMutation({
+    mutationFn: (chatId: string) => chatsApi.remove(chatId),
+    onSuccess: async (conversation) => {
+      if (conversation.id === selectedConversation?.id) {
+        navigate(chatRootPath); }
+      await refreshChat(conversation.id); },
+    onError: (error) => {
+      pushToast({
+        title: "Failed to delete conversation",
         body: error instanceof Error ? error.message : "Try again.",
         tone: "error", }); }, }); const updateProjectContextMutation = useMutation({
     mutationFn: ({ chatId, projectId }: { chatId: string; projectId: string | null; previousProjectId?: string | null;
@@ -933,7 +959,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 <PendingAttachmentPreview file={file} onOpenImage={setAttachmentPreview} onRemove={() => removePendingFile(fileKey)} /> </div> );
           })} </div> ) : null} {renderComposerContextMenu()} </div> );
   return (
-    <div className="chat-shell flex min-h-[calc(100dvh-8rem)] flex-col overflow-hidden text-foreground md:-mx-3.5 md:h-full md:min-h-0 md:px-0 lg:-mx-5">
+    <div className="chat-shell relative flex min-h-[calc(100dvh-8rem)] flex-col overflow-hidden text-foreground md:-mx-3.5 md:h-full md:min-h-0 md:px-0 lg:-mx-5">
       <ChatAttachmentPreviewDialog
         preview={attachmentPreview} onOpenChange={(open) => { if (!open) setAttachmentPreview(null);
         }} />
@@ -947,6 +973,59 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           {!selectedOrganizationId ? (
             <div className="flex flex-1 items-center justify-center px-6 py-12 text-sm text-muted-foreground">
               Select a organization first. </div> ) : selectedConversation ? ( <>
+              <div className="pointer-events-none absolute right-4 top-14 z-20 flex justify-end md:right-5 md:top-4">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="chat-actions-trigger"
+                      aria-label="Chat actions"
+                      className="pointer-events-auto inline-flex h-8 w-8 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="surface-overlay text-foreground">
+                    <DropdownMenuItem
+                      onClick={() => updateConversationUserStateMutation.mutate({
+                        chatId: selectedConversation.id,
+                        pinned: !selectedConversation.isPinned,
+                      })}
+                    >
+                      {selectedConversation.isPinned ? (
+                        <>
+                          <PinOff className="h-4 w-4" />
+                          Unpin Chat
+                        </>
+                      ) : (
+                        <>
+                          <Pin className="h-4 w-4" />
+                          Pin Chat
+                        </>
+                      )}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={selectedConversationGenerating}
+                      onClick={() => {
+                        if (typeof window !== "undefined" && !window.confirm(`Delete "${conversationDisplayTitle(selectedConversation)}"? This cannot be undone.`)) return;
+                        deleteConversationMutation.mutate(selectedConversation.id);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => updateConversationMutation.mutate({
+                        chatId: selectedConversation.id,
+                        data: { status: "archived" },
+                      })}
+                    >
+                      <Archive className="h-4 w-4" />
+                      Archive
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
               {isMobile && conversations.length > 0 ? (
                 <div className="shrink-0 border-b panel-divider px-4 py-2 md:hidden">
                   <div className="mx-auto w-full max-w-4xl">

@@ -552,6 +552,39 @@ export function chatService(db: Db) {
       return getById(id);
   }
 
+  async function listAttachmentsForConversation(conversationId: string) {
+    const rows = await db
+      .select({
+        id: chatAttachments.id,
+        orgId: chatAttachments.orgId,
+        assetId: chatAttachments.assetId,
+        objectKey: assets.objectKey,
+      })
+      .from(chatAttachments)
+      .innerJoin(assets, eq(chatAttachments.assetId, assets.id))
+      .where(eq(chatAttachments.conversationId, conversationId));
+    return rows;
+  }
+
+  async function remove(id: string) {
+    return db.transaction(async (tx) => {
+      const attachmentRows = await tx
+        .select({ assetId: chatAttachments.assetId })
+        .from(chatAttachments)
+        .where(eq(chatAttachments.conversationId, id));
+      const [deleted] = await tx
+        .delete(chatConversations)
+        .where(eq(chatConversations.id, id))
+        .returning();
+      if (!deleted) return null;
+      const assetIds = [...new Set(attachmentRows.map((row) => row.assetId))];
+      if (assetIds.length > 0) {
+        await tx.delete(assets).where(inArray(assets.id, assetIds));
+      }
+      return deleted;
+    });
+  }
+
   async function resolve(id: string) {
       const [updated] = await db
         .update(chatConversations)
@@ -1544,6 +1577,8 @@ export function chatService(db: Db) {
     getById,
     create,
     update,
+    listAttachmentsForConversation,
+    remove,
     resolve,
     markRead,
     markUnread,

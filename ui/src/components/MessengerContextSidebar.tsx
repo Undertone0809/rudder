@@ -18,6 +18,7 @@ import {
   PinOff,
   Plus,
   ShieldCheck,
+  Trash2,
   UserPlus,
   XCircle,
 } from "lucide-react";
@@ -265,6 +266,7 @@ function ChatThreadRow({
   onCommitRename,
   onStartRename,
   onArchive,
+  onDelete,
   onTogglePin,
   onToggleUnread,
   onCopyConversationLink,
@@ -280,6 +282,7 @@ function ChatThreadRow({
   onCommitRename: () => void;
   onStartRename: () => void;
   onArchive: () => void;
+  onDelete: () => void;
   onTogglePin: () => void;
   onToggleUnread: () => void;
   onCopyConversationLink: () => void;
@@ -432,6 +435,10 @@ function ChatThreadRow({
               <DropdownMenuItem onClick={onArchive}>
                 <Archive className="h-4 w-4" />
                 Archive
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={generating} onClick={onDelete}>
+                <Trash2 className="h-4 w-4" />
+                Delete
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -781,6 +788,16 @@ export function MessengerContextSidebar() {
     },
   });
 
+  const deleteConversationMutation = useMutation({
+    mutationFn: (chatId: string) => chatsApi.remove(chatId),
+    onSuccess: async (conversation) => {
+      if (route.kind === "chat" && route.conversationId === conversation.id) {
+        navigate("/messenger/chat");
+      }
+      await refreshChatViews(conversation.id);
+    },
+  });
+
   const updateConversationUserStateMutation = useMutation({
     mutationFn: ({
       chatId,
@@ -964,6 +981,10 @@ export function MessengerContextSidebar() {
                         chatId: conversation.id,
                         data: { status: "archived" },
                       });
+                    }}
+                    onDelete={() => {
+                      if (typeof window !== "undefined" && !window.confirm(`Delete "${conversationDisplayTitle(conversation)}"? This cannot be undone.`)) return;
+                      deleteConversationMutation.mutate(conversation.id);
                     }}
                     onTogglePin={() => {
                       updateConversationUserStateMutation.mutate({

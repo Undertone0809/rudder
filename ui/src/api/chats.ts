@@ -45,6 +45,7 @@ export const chatsApi = {
       resolvedAt: string | null;
     }>,
   ) => api.patch<ChatConversation>(`/chats/${chatId}`, data),
+  remove: (chatId: string) => api.delete<ChatConversation>(`/chats/${chatId}`),
   listMessages: (chatId: string) => api.get<ChatMessage[]>(`/chats/${chatId}/messages`),
   sendMessage: (chatId: string, body: string) =>
     api.post<{ messages: ChatMessage[] }>(`/chats/${chatId}/messages`, { body }),

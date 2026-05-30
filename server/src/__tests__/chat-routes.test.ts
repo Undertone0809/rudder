@@ -5,6 +5,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chatRoutes } from "../routes/chats.js";
 import { errorHandler } from "../middleware/index.js";
+import { claimChatGeneration } from "../services/chat-generation-locks.js";
 
 const mockWithExecutionObservation = vi.hoisted(() => vi.fn(async (_context, _input, fn) => fn(null)));
 const mockObserveExecutionEvent = vi.hoisted(() => vi.fn().mockResolvedValue(null));
@@ -28,6 +29,8 @@ const mockChatService = vi.hoisted(() => ({
   getById: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
+  listAttachmentsForConversation: vi.fn(),
+  remove: vi.fn(),
   markRead: vi.fn(),
   markUnread: vi.fn(),
   setPinned: vi.fn(),
@@ -92,6 +95,7 @@ const mockChatAssistantService = vi.hoisted(() => ({
 
 const mockStorage = vi.hoisted(() => ({
   putFile: vi.fn(),
+  deleteObject: vi.fn(),
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -192,18 +196,18 @@ function createMessage(id: string, role: "user" | "assistant" | "system", kind: 
   };
 }
 
-function createApp() {
+function createApp(actor: Record<string, unknown> = {
+  type: "board",
+  userId: "user-1",
+  orgIds: ["organization-1"],
+  source: "session",
+  isInstanceAdmin: false,
+  runId: null,
+}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
-      type: "board",
-      userId: "user-1",
-      orgIds: ["organization-1"],
-      source: "session",
-      isInstanceAdmin: false,
-      runId: null,
-    };
+    (req as any).actor = actor;
     next();
   });
   app.use(
@@ -314,6 +318,7 @@ describe("chat routes", () => {
       sha256: "sha256",
       originalFilename: "image.png",
     });
+    mockStorage.deleteObject.mockResolvedValue(undefined);
     mockChatService.addUserChatMessage.mockImplementation(async (_cid: string, _orgId: string, body: string) =>
       createMessage("message-user", "user", "message", body),
     );
@@ -361,6 +366,70 @@ describe("chat routes", () => {
     expect(mockChatService.markUnread).toHaveBeenCalledWith("chat-1", "organization-1", "user-1");
     expect(mockChatService.markRead).not.toHaveBeenCalled();
     expect(res.body.id).toBe("chat-1");
+  });
+
+  it("deletes a chat conversation and logs the activity", async () => {
+    const conversation = createConversation({ title: "Delete me" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listAttachmentsForConversation.mockResolvedValue([
+      {
+        id: "attachment-1",
+        orgId: "organization-1",
+        assetId: "asset-1",
+        objectKey: "orgs/organization-1/chats/chat-1/image.png",
+      },
+    ]);
+    mockChatService.remove.mockResolvedValue(conversation);
+
+    const res = await request(createApp())
+      .delete("/api/chats/chat-1");
+
+    expect(res.status).toBe(200);
+    expect(mockChatService.listAttachmentsForConversation).toHaveBeenCalledWith("chat-1");
+    expect(mockChatService.remove).toHaveBeenCalledWith("chat-1");
+    expect(mockStorage.deleteObject).toHaveBeenCalledWith(
+      "organization-1",
+      "orgs/organization-1/chats/chat-1/image.png",
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      orgId: "organization-1",
+      action: "chat.deleted",
+      entityType: "chat",
+      entityId: "chat-1",
+      details: { title: "Delete me" },
+    }));
+  });
+
+  it("requires board access to delete a chat conversation", async () => {
+    const res = await request(createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      runId: null,
+    }))
+      .delete("/api/chats/chat-1");
+
+    expect(res.status).toBe(403);
+    expect(mockChatService.getById).not.toHaveBeenCalled();
+    expect(mockChatService.remove).not.toHaveBeenCalled();
+  });
+
+  it("rejects deleting a chat conversation while a reply is in progress", async () => {
+    const conversation = createConversation({ title: "Generating chat" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    const release = claimChatGeneration(conversation.id);
+
+    try {
+      const res = await request(createApp())
+        .delete("/api/chats/chat-1");
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe("Cannot delete a chat while a reply is in progress");
+      expect(mockChatService.listAttachmentsForConversation).not.toHaveBeenCalled();
+      expect(mockChatService.remove).not.toHaveBeenCalled();
+    } finally {
+      release?.();
+    }
   });
 
   it("creates a conversation using the organization default issue creation mode", async () => {
