@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import {
   agentWakeupRequests,
   agents,
+  activityLog,
   applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
@@ -225,16 +226,21 @@ describe("heartbeat run concurrency", () => {
 
   async function seedIssueFixture(input: {
     orgId: string;
-    agentId: string;
+    agentId?: string;
+    reviewerAgentId?: string | null;
+    status?: string;
+    originKind?: string | null;
   }) {
     const issueId = randomUUID();
     await db.insert(issues).values({
       id: issueId,
       orgId: input.orgId,
       title: "Build concurrent execution",
-      status: "todo",
+      status: input.status ?? "todo",
       priority: "medium",
-      assigneeAgentId: input.agentId,
+      assigneeAgentId: input.agentId ?? null,
+      reviewerAgentId: input.reviewerAgentId ?? null,
+      ...(input.originKind ? { originKind: input.originKind } : {}),
     });
     return issueId;
   }
@@ -549,5 +555,130 @@ describe("heartbeat run concurrency", () => {
     expect(result).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
     await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
     expect(await listRunStatuses(agentId)).toHaveLength(1);
+  });
+
+  it("allows timer heartbeats when visible reviewer work exists", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T06:30:00.000Z");
+    const tickAt = new Date("2026-04-27T06:35:00.000Z");
+    const { orgId, agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
+    });
+    await seedIssueFixture({ orgId, reviewerAgentId: agentId, status: "in_review" });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
+    await waitForCondition(async () => mockRuntimeAdapter.calls.length === 1);
+    expect(await listRunStatuses(agentId)).toHaveLength(1);
+  });
+
+  it("skips timer heartbeats when only inbox-hidden automation execution work exists", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T07:00:00.000Z");
+    const tickAt = new Date("2026-04-27T07:05:00.000Z");
+    const { orgId, agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
+    });
+    await seedIssueFixture({ orgId, agentId, originKind: "automation_execution" });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 0, skipped: 1 });
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    expect(await listRunStatuses(agentId)).toHaveLength(0);
+
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups).toHaveLength(1);
+    expect(wakeups[0]).toMatchObject({
+      status: "skipped",
+      reason: "heartbeat.preflight.no_actionable_work",
+      runId: null,
+    });
+  });
+
+  it("skips timer heartbeats when only reviewer inbox-hidden automation execution work exists", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T08:00:00.000Z");
+    const tickAt = new Date("2026-04-27T08:05:00.000Z");
+    const { orgId, agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
+    });
+    await seedIssueFixture({
+      orgId,
+      reviewerAgentId: agentId,
+      status: "in_review",
+      originKind: "automation_execution",
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 0, skipped: 1 });
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    expect(await listRunStatuses(agentId)).toHaveLength(0);
+
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups).toHaveLength(1);
+    expect(wakeups[0]).toMatchObject({
+      status: "skipped",
+      reason: "heartbeat.preflight.no_actionable_work",
+      runId: null,
+    });
+  });
+
+  it("skips timer heartbeats when only confirmed blocked reviewer handoff work exists", async () => {
+    await disableExistingTimerAgents();
+    const createdAt = new Date("2026-04-27T09:00:00.000Z");
+    const tickAt = new Date("2026-04-27T09:05:00.000Z");
+    const { orgId, agentId } = await seedAgentFixture({
+      createdAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60 } },
+    });
+    const issueId = await seedIssueFixture({ orgId, reviewerAgentId: agentId, status: "blocked" });
+    await db.insert(activityLog).values([
+      {
+        orgId,
+        actorType: "agent",
+        actorId: agentId,
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: issueId,
+        agentId,
+        details: { status: "blocked" },
+        createdAt: new Date("2026-04-27T09:01:00.000Z"),
+      },
+      {
+        orgId,
+        actorType: "agent",
+        actorId: agentId,
+        action: "issue.review_decision_recorded",
+        entityType: "issue",
+        entityId: issueId,
+        agentId,
+        details: { decision: "blocked", outcome: "human_handoff", operatorActionRequired: true },
+        createdAt: new Date("2026-04-27T09:02:00.000Z"),
+      },
+    ]);
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.tickTimers(tickAt);
+
+    expect(result).toEqual({ checked: 1, enqueued: 0, skipped: 1 });
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    expect(await listRunStatuses(agentId)).toHaveLength(0);
+
+    const wakeups = await listWakeupRequestsForAgent(agentId);
+    expect(wakeups).toHaveLength(1);
+    expect(wakeups[0]).toMatchObject({
+      status: "skipped",
+      reason: "heartbeat.preflight.no_actionable_work",
+      runId: null,
+    });
   });
 });
