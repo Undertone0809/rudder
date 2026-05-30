@@ -48,6 +48,8 @@ The two fundamental heartbeat modes are:
 
 A heartbeat is a bounded, priority-aware work cycle. Rudder wakes an agent only when there is actionable assigned or review work, then the agent inspects the highest-priority issue it can move and leaves a clear signal: progress, done, blocked, or review feedback.
 
+![Reactive heartbeat flow](../images/heartbeat-reactive-loop-en.svg)
+
 This makes heartbeats reactive instead of wasteful. You can leave timer heartbeats enabled; if there is no actionable work, Rudder skips the runtime invocation instead of asking the agent to spin on an empty queue. That saves tokens while keeping the agent ready to respond when new work appears.
 
 Runs that do execute preserve evidence: reason, status, transcript entries, raw output, costs, touched issues, workspace operations, and retry or cancellation history.
