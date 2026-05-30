@@ -413,10 +413,19 @@ produced by spawned reviewer agents.
 When subagents are available, spawn reviewers after the stage artifact exists.
 Record execution mode as `spawned reviewers`.
 
-If subagents are unavailable, do not run a serial fallback. Record execution mode
-as `blocked: spawned reviewers unavailable`, include the artifact and validation
-evidence gathered so far, and stop before complete handoff unless the user
-explicitly changes the review policy.
+Before recording `blocked: spawned reviewers unavailable`, perform an explicit
+spawn availability probe. Absence of a visible spawn tool in the first tool list,
+uncertainty about the active harness, or not having used multi-agent tools yet is
+not enough. Probe the runtime by using the available tool-discovery path or the
+runtime's spawn mechanism directly. If the probe succeeds, spawn the reviewers
+and wait for verdicts. If the probe fails, include the failed probe evidence in
+the evidence ledger.
+
+If subagents are unavailable after that probe, do not run a serial fallback.
+Record execution mode as `blocked: spawned reviewers unavailable`, include the
+artifact, validation evidence gathered so far, and the failed probe evidence, and
+stop before complete handoff unless the user explicitly changes the review
+policy.
 
 Reviewer A owns scenario correctness:
 
