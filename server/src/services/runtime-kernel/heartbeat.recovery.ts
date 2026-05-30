@@ -416,87 +416,23 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       return { shouldRun: false, skipReason: "heartbeat.preflight.pending_wakeup_request" };
     }
 
-    const assigneeIssue = await db
-      .select({ id: issues.id })
-      .from(issues)
-      .where(
-        and(
-          eq(issues.orgId, agent.orgId),
-          eq(issues.assigneeAgentId, agent.id),
-          inArray(issues.status, ["todo", "in_progress", "blocked"]),
-          sql`${issues.hiddenAt} is null`,
-        ),
-      )
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (assigneeIssue) {
+    const assigneeIssues = await issuesSvc.list(agent.orgId, {
+      assigneeAgentId: agent.id,
+      status: "todo,in_progress,blocked",
+    });
+    if (assigneeIssues.length > 0) {
       return { shouldRun: true, reason: "assignee_issue" };
     }
 
-    const reviewerIssue = await db
-      .select({ id: issues.id })
-      .from(issues)
-      .where(
-        and(
-          eq(issues.orgId, agent.orgId),
-          eq(issues.reviewerAgentId, agent.id),
-          inArray(issues.status, ["in_review", "blocked"]),
-          sql`${issues.hiddenAt} is null`,
-          sql<boolean>`
-            NOT (
-              ${issues.status} = 'blocked'
-              AND EXISTS (
-                SELECT 1
-                FROM activity_log confirmed_blocked_review
-                WHERE confirmed_blocked_review.org_id = ${agent.orgId}
-                  AND confirmed_blocked_review.entity_type = 'issue'
-                  AND confirmed_blocked_review.entity_id = ${issues.id}::text
-                  AND confirmed_blocked_review.action = 'issue.review_decision_recorded'
-                  AND confirmed_blocked_review.actor_type = 'agent'
-                  AND confirmed_blocked_review.actor_id = ${agent.id}::text
-                  AND confirmed_blocked_review.details ->> 'decision' = 'blocked'
-                  AND confirmed_blocked_review.created_at >= COALESCE((
-                    SELECT MAX(material_activity.created_at)
-                    FROM activity_log material_activity
-                    WHERE material_activity.org_id = ${agent.orgId}
-                      AND material_activity.entity_type = 'issue'
-                      AND material_activity.entity_id = ${issues.id}::text
-                      AND (
-                        (
-                          material_activity.action = 'issue.updated'
-                          AND jsonb_typeof(material_activity.details) = 'object'
-                          AND EXISTS (
-                            SELECT 1
-                            FROM jsonb_object_keys(material_activity.details) AS detail_key(key)
-                            WHERE detail_key.key NOT IN (
-                              'identifier',
-                              'issueIdentifier',
-                              '_previous',
-                              'source',
-                              'reopened',
-                              'reopenedFrom',
-                              'normalizedFromStatus',
-                              'normalizedReason'
-                            )
-                          )
-                        )
-                        OR (
-                          material_activity.action = 'issue.comment_added'
-                          AND NOT (
-                            material_activity.actor_type = 'agent'
-                            AND material_activity.actor_id = ${agent.id}::text
-                          )
-                        )
-                      )
-                  ), to_timestamp(0))
-              )
-            )
-          `,
-        ),
-      )
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (reviewerIssue) {
+    // Timer admission must match the compact inbox contract. Otherwise hidden
+    // control-plane rows can wake an agent that immediately sees no work.
+    // Traceability: doc/plans/2026-05-30-heartbeat-inbox-admission.md
+    const reviewerIssues = await issuesSvc.list(agent.orgId, {
+      reviewerAgentId: agent.id,
+      status: "in_review,blocked",
+      excludeReviewerConfirmedBlockedHandoff: true,
+    });
+    if (reviewerIssues.length > 0) {
       return { shouldRun: true, reason: "reviewer_issue" };
     }
 
