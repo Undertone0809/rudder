@@ -269,9 +269,10 @@ const TimelineList = memo(function TimelineList({
           const toggleButton = (
             <button
               type="button"
+              aria-label={toggleLabel}
               aria-expanded={runExpanded}
               aria-controls={`run-output-${run.runId}`}
-              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background/70 px-2 py-0 font-medium text-muted-foreground motion-safe:transition-colors hover:bg-accent hover:text-foreground motion-reduce:transition-none"
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-background/70 text-muted-foreground motion-safe:transition-colors hover:bg-accent hover:text-foreground motion-reduce:transition-none"
               onClick={() => {
                 setRunExpandedOverrides((current) => ({
                   ...current,
@@ -280,7 +281,6 @@ const TimelineList = memo(function TimelineList({
               }}
             >
               <ChevronDown className={`h-3.5 w-3.5 motion-safe:transition-transform motion-reduce:transition-none ${runExpanded ? "rotate-180" : ""}`} />
-              {toggleLabel}
             </button>
           );
 

@@ -120,6 +120,7 @@ test("collapses inactive issue runs by default and keeps active runs expanded", 
 
   const succeededRunCard = page.locator(`[data-run-id="${succeededRunId}"]`);
   await expect(succeededRunCard.getByRole("button", { name: "Show details" })).toBeVisible();
+  await expect(succeededRunCard).not.toContainText("Show details");
   await expect(succeededRunCard).not.toContainText("No run output captured.");
   const succeededRunBox = await succeededRunCard.boundingBox();
   expect(succeededRunBox?.height).toBeLessThan(42);
@@ -130,6 +131,7 @@ test("collapses inactive issue runs by default and keeps active runs expanded", 
   await page.goto(issueUrl);
   const failedRunCard = page.locator(`[data-run-id="${failedRunId}"]`);
   await expect(failedRunCard.getByRole("button", { name: "Show details" })).toBeVisible();
+  await expect(failedRunCard).not.toContainText("Show details");
   await expect(failedRunCard).not.toContainText("No run output captured.");
   const collapsedRunBox = await failedRunCard.boundingBox();
   expect(collapsedRunBox?.height).toBeLessThan(42);
@@ -141,6 +143,7 @@ test("collapses inactive issue runs by default and keeps active runs expanded", 
   const failedRunCardForExpand = page.locator(`[data-run-id="${failedRunId}"]`);
   await failedRunCardForExpand.getByRole("button", { name: "Show details" }).click();
   await expect(failedRunCardForExpand.getByRole("button", { name: "Hide details" })).toBeVisible();
+  await expect(failedRunCardForExpand).not.toContainText("Hide details");
   await expect(failedRunCardForExpand).toContainText("No run output captured.");
   const expandedRunBox = await failedRunCardForExpand.boundingBox();
   expect(expandedRunBox?.height).toBeGreaterThan((collapsedRunBox?.height ?? 0) + 24);

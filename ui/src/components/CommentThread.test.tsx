@@ -280,7 +280,8 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain("Show details");
+    expect(html).toContain('aria-label="Show details"');
+    expect(html).not.toContain(">Show details<");
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("succeeded");
     expect(html).not.toContain("Transcript details");
@@ -305,7 +306,8 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(html).toContain("Hide details");
+    expect(html).toContain('aria-label="Hide details"');
+    expect(html).not.toContain(">Hide details<");
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain("Transcript details");
   });
