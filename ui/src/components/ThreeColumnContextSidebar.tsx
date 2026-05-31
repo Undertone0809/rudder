@@ -151,7 +151,7 @@ export function ThreeColumnContextSidebar() {
   const { data: chats } = useQuery({
     queryKey: queryKeys.chats.list(selectedOrganizationId ?? "__none__", "active"),
     queryFn: () => chatsApi.list(selectedOrganizationId!, "active"),
-    enabled: !!selectedOrganizationId,
+    enabled: !!selectedOrganizationId && isChatRoute,
   });
   const { data: calendarSources } = useQuery({
     queryKey: queryKeys.calendar.sources(selectedOrganizationId ?? "__none__"),

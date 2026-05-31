@@ -32,7 +32,9 @@ import {
   type MessengerSystemThreadKind,
   type MessengerThreadAction,
   type MessengerThreadDetail,
+  type MessengerThreadPageInfo,
   type MessengerThreadSummary,
+  type MessengerThreadSummaryPage,
 } from "@rudderhq/shared";
 import { chatService } from "./chats.js";
 import { budgetService } from "./budgets.js";
@@ -53,6 +55,8 @@ const ISSUE_ACTIVITY_ACTIONS = [
 ] as const;
 
 const ACTIONABLE_APPROVAL_STATUSES = new Set(["pending"]);
+const DEFAULT_THREAD_SUMMARY_LIMIT = 40;
+const MAX_THREAD_SUMMARY_LIMIT = 100;
 const DEFAULT_ISSUE_THREAD_DETAIL_LIMIT = 50;
 const MAX_ISSUE_THREAD_DETAIL_LIMIT = 100;
 type ThreadStateRow = typeof messengerThreadUserStates.$inferSelect;
@@ -76,6 +80,11 @@ type IssueThreadDetailOptions = {
 type IssueThreadCursor = {
   activityAt: string;
   issueId: string;
+};
+type ThreadSummaryCursor = {
+  activityAt: string;
+  title: string;
+  threadKey: string;
 };
 type IssueThreadEntry = {
   issue: IssueUniverseRow & { followed: boolean; assigned: boolean };
@@ -257,11 +266,13 @@ function maxDate(...values: Array<Date | string | null | undefined>) {
   return dates.sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
 }
 
-function compareLatestActivity<T extends { latestActivityAt: Date | null; title: string }>(a: T, b: T) {
+function compareLatestActivity<T extends { latestActivityAt: Date | null; title: string; threadKey?: string }>(a: T, b: T) {
   const aTime = a.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
   const bTime = b.latestActivityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
   if (aTime !== bTime) return bTime - aTime;
-  return a.title.localeCompare(b.title);
+  const titleDiff = a.title.localeCompare(b.title);
+  if (titleDiff !== 0) return titleDiff;
+  return (a.threadKey ?? "").localeCompare(b.threadKey ?? "");
 }
 
 function compareChronologicalActivity<T extends { latestActivityAt: Date | null; title: string }>(a: T, b: T) {
@@ -274,6 +285,55 @@ function compareChronologicalActivity<T extends { latestActivityAt: Date | null;
 function normalizeIssueThreadLimit(limit: number | null | undefined) {
   if (typeof limit !== "number" || !Number.isFinite(limit)) return DEFAULT_ISSUE_THREAD_DETAIL_LIMIT;
   return Math.min(MAX_ISSUE_THREAD_DETAIL_LIMIT, Math.max(1, Math.floor(limit)));
+}
+
+function normalizeThreadSummaryLimit(limit: number | null | undefined) {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) return DEFAULT_THREAD_SUMMARY_LIMIT;
+  return Math.min(MAX_THREAD_SUMMARY_LIMIT, Math.max(1, Math.floor(limit)));
+}
+
+function encodeThreadSummaryCursor(summary: MessengerThreadSummary) {
+  const payload: ThreadSummaryCursor = {
+    activityAt: (normalizeDate(summary.latestActivityAt) ?? new Date(0)).toISOString(),
+    title: summary.title,
+    threadKey: summary.threadKey,
+  };
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeThreadSummaryCursor(cursor: string | null | undefined): ThreadSummaryCursor | null {
+  if (!cursor) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<ThreadSummaryCursor>;
+    if (typeof decoded.activityAt !== "string" || Number.isNaN(new Date(decoded.activityAt).getTime())) return null;
+    if (typeof decoded.title !== "string") return null;
+    if (typeof decoded.threadKey !== "string" || decoded.threadKey.length === 0) return null;
+    return {
+      activityAt: decoded.activityAt,
+      title: decoded.title,
+      threadKey: decoded.threadKey,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function threadSummaryIsAfterCursor(summary: MessengerThreadSummary, cursor: ThreadSummaryCursor | null) {
+  if (!cursor) return true;
+  const summaryTime = normalizeDate(summary.latestActivityAt)?.getTime() ?? Number.NEGATIVE_INFINITY;
+  const cursorTime = new Date(cursor.activityAt).getTime();
+  if (summaryTime !== cursorTime) return summaryTime < cursorTime;
+  const titleDiff = summary.title.localeCompare(cursor.title);
+  if (titleDiff !== 0) return titleDiff > 0;
+  return summary.threadKey.localeCompare(cursor.threadKey) > 0;
+}
+
+function threadSummaryPageInfo(limit: number, items: MessengerThreadSummary[], hasMore: boolean): MessengerThreadPageInfo {
+  return {
+    limit,
+    nextCursor: hasMore && items.length > 0 ? encodeThreadSummaryCursor(items[items.length - 1]!) : null,
+    hasMore,
+  };
 }
 
 function encodeIssueThreadCursor(entry: IssueThreadEntry) {
@@ -1690,6 +1750,69 @@ export function messengerService(db: Db) {
     return threadSummaries;
   }
 
+  async function listThreadSummaryPage(
+    orgId: string,
+    userId: string,
+    options: { limit?: number; cursor?: string | null } = {},
+  ): Promise<MessengerThreadSummaryPage> {
+    const limit = normalizeThreadSummaryLimit(options.limit);
+    const cursor = decodeThreadSummaryCursor(options.cursor);
+    const syntheticThreadStates = loadThreadStates(db, orgId, userId, [
+      "issues",
+      "approvals",
+      "failed-runs",
+      "budget-alerts",
+      "join-requests",
+    ]);
+    const [
+      issueData,
+      approvalData,
+      failedRunData,
+      budgetData,
+      joinRequestData,
+    ] = await Promise.all([
+      loadIssueThreadSummaryData(orgId, userId, syntheticThreadStates),
+      loadApprovalThreadSummaryData(orgId, userId, syntheticThreadStates),
+      loadFailedRunSummaryData(orgId, userId, syntheticThreadStates),
+      loadBudgetAlertData(orgId, userId, syntheticThreadStates),
+      loadJoinRequestSummaryData(orgId, userId, syntheticThreadStates),
+    ]);
+
+    const syntheticSummaries: MessengerThreadSummary[] = [];
+    if (issueData.itemCount > 0) syntheticSummaries.push(issueData.summary);
+    if (approvalData.itemCount > 0) syntheticSummaries.push(approvalData.summary);
+    if (failedRunData.itemCount > 0) syntheticSummaries.push(failedRunData.summary);
+    if (budgetData.detail.items.length > 0) syntheticSummaries.push(budgetData.summary);
+    if (joinRequestData.itemCount > 0) syntheticSummaries.push(joinRequestData.summary);
+    const syntheticAfterCursor = syntheticSummaries.filter((summary) => threadSummaryIsAfterCursor(summary, cursor));
+    const chatLimit = limit + syntheticAfterCursor.length + 1;
+    const chatAfter = cursor
+      ? {
+        activityAt: new Date(cursor.activityAt),
+        title: cursor.title,
+        threadKey: cursor.threadKey,
+      }
+      : null;
+    const chats = await chatsSvc.listSummaries(orgId, {
+      status: "active",
+      limit: chatLimit,
+      after: chatAfter,
+    }, userId);
+    const combined = [
+      ...chats.map(chatSummary),
+      ...syntheticAfterCursor,
+    ]
+      .filter((summary) => threadSummaryIsAfterCursor(summary, cursor))
+      .sort(compareLatestActivity);
+    const items = combined.slice(0, limit);
+    const hasMore = combined.length > limit;
+
+    return {
+      items,
+      pageInfo: threadSummaryPageInfo(limit, items, hasMore),
+    };
+  }
+
   async function getIssuesThread(
     orgId: string,
     userId: string,
@@ -1772,6 +1895,7 @@ export function messengerService(db: Db) {
 
   return {
     listThreadSummaries,
+    listThreadSummaryPage,
     getChatThread,
     getIssuesThread,
     getApprovalsThread,

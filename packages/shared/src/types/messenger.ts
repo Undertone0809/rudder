@@ -62,6 +62,11 @@ export interface MessengerThreadPageInfo {
   hasMore: boolean;
 }
 
+export interface MessengerThreadSummaryPage {
+  items: MessengerThreadSummary[];
+  pageInfo: MessengerThreadPageInfo;
+}
+
 export interface MessengerThreadDetail<TItem = MessengerThreadItem> extends MessengerThreadSummary {
   description: string | null;
   items: TItem[];

@@ -407,12 +407,21 @@ reviewers or a serial two-role fallback when that distinction affects trust.
 - Read `doc/DESIGN.md` before judging.
 - Verify rendered states with Browser, screenshot, Desktop shell evidence, or
   Computer Use against the real packaged app when native behavior matters.
+- For alignment, row rhythm, avatar/text/time centering, truncation, or
+  column-layout reviews, require production-shaped fixture data and measurable
+  proof when practical. Strong evidence includes real agent avatars, long labels
+  or message text, timestamps/action controls, a screenshot, and DOM bounding
+  boxes or centerline deltas for the elements being aligned.
 - Treat visual hierarchy, density, interaction feedback, animation, native app
   affordances, and copy clarity as product quality, not nitpicks.
 - Check whether menus, hover actions, dialogs, keyboard behavior, and icons match
   expected Rudder patterns.
 - If no visual evidence exists, the verdict should usually be `needs more
   evidence` or `conditional accept`.
+- If the claimed fix is "aligned" but the proof only uses placeholder data,
+  isolated component tests, or screenshots that hide the relevant avatar,
+  timestamp, action, or long-text state, the verdict should usually be
+  `conditional accept` until the real row shape is verified.
 
 ### Functional Workflow Review
 
@@ -579,6 +588,23 @@ overflow, hover, dialog, or responsive state matters.
 
 Must not:
 Call a layout-sensitive UI change fully accepted from code review alone.
+
+### Case: Alignment Review With Placeholder Proof
+
+Input:
+"这里行对齐没有做好. Review the fix." The submitted proof includes a component
+test with placeholder icons but no real agent avatar, no timestamp, and no
+browser geometry or screenshot of the production row.
+
+Expected behavior:
+The review treats the fix as directionally plausible but not fully proven. It
+asks for production-shaped fixture proof, ideally a browser screenshot plus DOM
+bounding boxes or centerline deltas for avatar, text, timestamp, and row
+container.
+
+Must not:
+Accept the alignment fix as final from placeholder component tests or a cropped
+screenshot that does not show the elements whose alignment was questioned.
 
 ### Case: Explicit Review-Only Guard
 

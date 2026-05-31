@@ -23,6 +23,8 @@ Runs fail for several different reasons:
 - the transcript parser missed useful structure
 - the event stream is incomplete
 - the stored excerpts are too shallow
+- a tool call succeeded, but Rudder's message/run lifecycle marked the
+  workflow failed during stream finalization, persistence, or UI status mapping
 - the operator has only a partial run ID or limited context
 
 This skill helps diagnose those cases without getting stuck on the wrong data source.
@@ -131,6 +133,28 @@ If the debug stage finds the likely fix but the terminal workflow has not been
 rerun, say `fix proof missing` instead of calling the issue resolved. For
 agent-facing bugs, prefer rerunning a disposable agent issue or heartbeat path
 after implementation rather than only checking stored excerpts or database rows.
+
+### 1.3 Diagnose finalizer failures separately from tool failures
+
+When the user says a tool failed, or a UI surface shows `failed`, do not assume
+the named tool was the root cause. Split the execution into layers:
+
+1. Tool result: did the tool call return `isError`, stderr, HTTP error, or a
+   malformed payload?
+2. Assistant output: did the model produce a final answer, structured result,
+   or continuation after the tool result?
+3. Runtime process: did the adapter process exit cleanly, timeout, receive a
+   signal, or lose the session?
+4. Rudder finalizer: did stream close, message persistence, run status update,
+   transcript parsing, or result extraction mark the run/message failed?
+5. Terminal surface: did Messenger, Issue Detail, run-intelligence, or another
+   UI/API consumer show a failure state that disagrees with lower-level evidence?
+
+If tool results are successful but the UI or run row is failed, classify the
+root cause as `finalizer/status-mapping suspected` until proven otherwise. The
+next source of truth is the server log, stream route, adapter finalization path,
+run events, message status rows, and UI status mapping, not another inspection
+of the successful tool payload.
 
 ### 2. Preferred path: run-intelligence CLI helpers
 
@@ -290,16 +314,22 @@ When analyzing a run, focus on these in order:
 - tool call without matching tool result
 - tool result marked error
 - unexpectedly large tool payloads or truncation
+- successful tool results followed by a failed message/run status; treat this
+  as a lifecycle/finalizer problem, not as a tool-call problem, until logs prove
+  the tool caused the final failure
 
 ### Output problems
 - stderr that explains the failure more clearly than `error`
 - no parsed `result` entry even though raw log exists
 - transcript parser missing structure that is visible in raw log
+- assistant final text exists but Rudder still stored failed status
 
 ### Metadata problems
 - `status` inconsistent with `exit_code` or `error_code`
 - `usage_json` missing obvious token/cost fields
 - `result_json` present but too shallow to explain failure
+- message status, run status, and transcript terminal event disagree with each
+  other
 
 ### Session / continuity problems
 - surprising `session_id_before` / `session_id_after`
@@ -331,6 +361,7 @@ Error: unknown session
 - Error snippets
 - Relevant system / adapter.invoke events
 - Session / retry clues
+- Lifecycle/finalizer evidence when tool results and final UI status disagree
 
 ### 4. Raw Log
 

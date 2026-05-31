@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import type {
   MessengerApprovalThreadItem,
   MessengerEvent,
@@ -27,12 +27,17 @@ export interface MessengerModel {
   currentUserId: string | null;
   selectedOrganizationId: string | null;
   threadSummaries: MessengerThreadSummary[];
+  hasMoreThreadSummaries: boolean;
+  isFetchingMoreThreadSummaries: boolean;
+  loadMoreThreadSummaries: () => Promise<unknown>;
   issueThreadDetail: MessengerThreadDetail<MessengerIssueThreadItem> | null;
   approvalThreadDetail: MessengerThreadDetail<MessengerApprovalThreadItem> | null;
   systemThreadDetail: MessengerThreadDetail<MessengerEvent> | null;
   isLoading: boolean;
   error: Error | null;
 }
+
+const MESSENGER_THREAD_PAGE_SIZE = 40;
 
 function titleCaseThreadKind(kind: MessengerThreadKind): string {
   switch (kind) {
@@ -91,9 +96,14 @@ export function useMessengerModel() {
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
 
-  const threadsQuery = useQuery({
-    queryKey: queryKeys.messenger.threads(selectedOrganizationId ?? "__none__"),
-    queryFn: () => messengerApi.listThreads(selectedOrganizationId!),
+  const threadsQuery = useInfiniteQuery({
+    queryKey: queryKeys.messenger.threadPages(selectedOrganizationId ?? "__none__"),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => messengerApi.listThreadPage(selectedOrganizationId!, {
+      cursor: pageParam,
+      limit: MESSENGER_THREAD_PAGE_SIZE,
+    }),
+    getNextPageParam: (lastPage) => lastPage.pageInfo.hasMore ? lastPage.pageInfo.nextCursor : undefined,
     enabled: !!selectedOrganizationId,
   });
 
@@ -127,7 +137,10 @@ export function useMessengerModel() {
   return {
     currentUserId,
     selectedOrganizationId,
-    threadSummaries: threadsQuery.data ?? [],
+    threadSummaries: threadsQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    hasMoreThreadSummaries: Boolean(threadsQuery.hasNextPage),
+    isFetchingMoreThreadSummaries: threadsQuery.isFetchingNextPage,
+    loadMoreThreadSummaries: () => threadsQuery.fetchNextPage(),
     issueThreadDetail: issuesThreadQuery.data?.detail ?? null,
     approvalThreadDetail: approvalsThreadQuery.data?.detail ?? null,
     systemThreadDetail: systemThreadQuery.data?.detail ?? null,
